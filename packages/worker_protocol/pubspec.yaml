@@ -1,0 +1,17 @@
+name: worker_protocol
+version: 0.1.0
+description: Worker capability model and task dispatch
+publish_to: none
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+
+resolution: workspace
+
+dependencies:
+  platform_contracts:
+    path: ../platform_contracts
+  meta: ^1.16.0
+
+dev_dependencies:
+  test: ^1.25.2

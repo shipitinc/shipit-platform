@@ -1,0 +1,5 @@
+{
+  "allRequiredGatesMustPass": true,
+  "optionalGateFailuresAllowed": 0,
+  "waiverRequiresHumanDecision": true
+}

@@ -1,0 +1,31 @@
+{
+  "artifactId": "123e4567-e89b-12d3-a456-426614174006",
+  "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "manifest": {
+    "name": "my-app",
+    "version": "1.0.0",
+    "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+    "files": [
+      {
+        "path": "build/app.apk",
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "sizeBytes": 10485760,
+        "mediaType": "application/vnd.android.package-archive"
+      }
+    ],
+    "sbom": {
+      "format": "CycloneDX",
+      "version": "1.5",
+      "components": [
+        {
+          "name": "flutter",
+          "version": "3.22.0",
+          "type": "framework",
+          "purl": "pkg:pub/flutter@3.22.0"
+        }
+      ]
+    }
+  },
+  "builtAt": "2024-01-02T14:00:00Z",
+  "builtBy": "123e4567-e89b-12d3-a456-426614174004"
+}

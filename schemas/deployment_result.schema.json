@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/deployment_result.schema.json",
+  "title": "DeploymentResult",
+  "description": "Result of a deployment to a target environment. Includes health status, URLs, and rollback information.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["resultId", "requestId", "deploymentId", "artifactId", "targetId", "environment", "status", "deployedAt", "healthChecks"],
+  "properties": {
+    "resultId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this deployment result"
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "DeploymentRequest that triggered this deployment"
+    },
+    "deploymentId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Deployment record ID"
+    },
+    "artifactId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Artifact that was deployed"
+    },
+    "targetId": {
+      "type": "string",
+      "description": "Deployment target identifier (e.g., 'cloud-run-prod', 'testflight')"
+    },
+    "environment": {
+      "type": "string",
+      "enum": ["staging", "production", "mobile-staging", "mobile-production"],
+      "description": "Environment deployed to"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "deploying", "healthy", "unhealthy", "failed", "rolled_back"],
+      "description": "Current deployment status"
+    },
+    "deployedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when deployment completed"
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when deployment reached terminal state"
+    },
+    "healthChecks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status", "checkedAt"],
+        "properties": {
+          "name": { "type": "string" },
+          "status": { "type": "string", "enum": ["pass", "fail", "warn", "unknown"] },
+          "checkedAt": { "type": "string", "format": "date-time" },
+          "details": { "type": "object" },
+          "url": { "type": "string", "format": "uri" }
+        }
+      },
+      "description": "Health check results for the deployment"
+    },
+    "urls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "url"],
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string", "format": "uri" },
+          "type": { "type": "string", "enum": ["primary", "admin", "metrics", "logs", "custom"] }
+        }
+      },
+      "description": "Access URLs for the deployed service"
+    },
+    "version": {
+      "type": "string",
+      "description": "Deployed version (from artifact manifest)"
+    },
+    "rollbackOf": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Previous deployment ID if this is a rollback"
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "deploymentDurationMs": { "type": "integer" },
+        "healthCheckDurationMs": { "type": "integer" },
+        "resourceUsage": {
+          "type": "object",
+          "properties": {
+            "cpuPercent": { "type": "number" },
+            "memoryMb": { "type": "integer" },
+            "requestsPerSecond": { "type": "number" }
+          }
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "details": { "type": "object" },
+        "recoverable": { "type": "boolean" }
+      },
+      "description": "Error details if deployment failed"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Extensible metadata"
+    }
+  }
+}

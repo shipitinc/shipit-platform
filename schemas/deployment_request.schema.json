@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/deployment_request.schema.json",
+  "title": "DeploymentRequest",
+  "description": "Request to deploy an artifact to a target environment. Created by DeploymentProtocol after QA passes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "workItemId", "artifactId", "targetEnvironment", "promotionPath", "requestedBy", "requestedAt"],
+  "properties": {
+    "requestId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this deployment request"
+    },
+    "workItemId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Work item this deployment belongs to"
+    },
+    "artifactId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Artifact to deploy (content-addressed)"
+    },
+    "targetEnvironment": {
+      "type": "string",
+      "enum": ["staging", "production", "mobile-staging", "mobile-production"],
+      "description": "Target environment for this deployment"
+    },
+    "promotionPath": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Full promotion path from deployment contract"
+    },
+    "requestedBy": {
+      "type": "string",
+      "enum": ["system", "human"],
+      "description": "Whether triggered automatically or by human"
+    },
+    "humanDecisionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "HumanDecision ID if requested by human"
+    },
+    "requestedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of request"
+    },
+    "config": {
+      "type": "object",
+      "description": "Deployment-specific configuration (replicas, resources, feature flags)"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Extensible metadata"
+    }
+  }
+}

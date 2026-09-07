@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/qa_evidence.schema.json",
+  "title": "QAEvidence",
+  "description": "Immutable evidence and gate results collected by QA orchestration workers. Independent of agent opinion; agents may produce artifacts, workers validate them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["evidenceId", "gateId", "workItemId", "evidenceType", "artifactRef", "content", "collectedAt"],
+  "properties": {
+    "evidenceId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this evidence record"
+    },
+    "gateId": {
+      "type": "string",
+      "description": "QA gate that collected or required this evidence (e.g., 'static-analysis')"
+    },
+    "workItemId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Work item this evidence belongs to"
+    },
+    "evidenceType": {
+      "type": "string",
+      "description": "Evidence kind required by the QAContract (e.g., 'coverage-report', 'scan-results')"
+    },
+    "artifactRef": {
+      "type": "string",
+      "description": "Reference to the artifact/path the evidence was derived from"
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Structured evidence content (tool output, metrics, reports)"
+    },
+    "collectedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the evidence was collected"
+    },
+    "validatorId": {
+      "type": "string",
+      "description": "Worker or validator that collected this evidence"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Extensible metadata"
+    }
+  },
+  "definitions": {
+    "QAWaiver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decisionId", "reason", "waivedAt", "waivedBy"],
+      "properties": {
+        "decisionId": { "type": "string", "format": "uuid" },
+        "reason": { "type": "string", "minLength": 1 },
+        "waivedAt": { "type": "string", "format": "date-time" },
+        "waivedBy": { "type": "string", "format": "email" }
+      },
+      "description": "Human waiver attached to a gate that failed but was accepted"
+    },
+    "QAGateResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gateId", "workItemId", "status", "evidence", "evaluatedAt"],
+      "properties": {
+        "gateId": { "type": "string" },
+        "workItemId": { "type": "string", "format": "uuid" },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "running", "passed", "failed", "waived", "skipped"]
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "type": "object" },
+          "description": "List of QA evidence records for this gate"
+        },
+        "evaluatedAt": { "type": "string", "format": "date-time" },
+        "passedAt": { "type": "string", "format": "date-time" },
+        "waiver": { "$ref": "#/definitions/QAWaiver" },
+        "metadata": { "type": "object" }
+      },
+      "description": "Per-gate evaluation result consumed by the workflow engine"
+    }
+  }
+}

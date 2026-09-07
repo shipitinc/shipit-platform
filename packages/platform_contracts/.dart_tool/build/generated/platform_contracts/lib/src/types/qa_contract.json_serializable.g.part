@@ -1,0 +1,59 @@
+// **************************************************************************
+// JsonSerializableGenerator
+// **************************************************************************
+
+QAContract _$QAContractFromJson(Map<String, dynamic> json) => QAContract(
+  contractId: json['contractId'] as String,
+  workItemCategory: _workItemCategoryFromJson(
+    json['workItemCategory'] as String,
+  ),
+  gates: (json['gates'] as List<dynamic>)
+      .map((e) => QAGateDefinition.fromJson(e as Map<String, dynamic>))
+      .toList(),
+  version: json['version'] as String,
+  passCriteria: json['passCriteria'] == null
+      ? null
+      : QAPassCriteria.fromJson(json['passCriteria'] as Map<String, dynamic>),
+  createdAt: DateTime.parse(json['createdAt'] as String),
+  updatedAt: DateTime.parse(json['updatedAt'] as String),
+  metadata: json['metadata'] as Map<String, dynamic>?,
+);
+
+Map<String, dynamic> _$QAContractToJson(
+  QAContract instance,
+) => <String, dynamic>{
+  'contractId': instance.contractId,
+  'workItemCategory': _workItemCategoryToJson(instance.workItemCategory),
+  'gates': instance.gates.map((e) => e.toJson()).toList(),
+  'version': instance.version,
+  if (instance.passCriteria?.toJson() case final value?) 'passCriteria': value,
+  'createdAt': instance.createdAt.toIso8601String(),
+  'updatedAt': instance.updatedAt.toIso8601String(),
+  'metadata': instance.metadata,
+};
+
+QAGateDefinition _$QAGateDefinitionFromJson(Map<String, dynamic> json) =>
+    QAGateDefinition(
+      gateId: json['gateId'] as String,
+      type: json['type'] as String,
+      required: json['required'] as bool,
+      config: json['config'] as Map<String, dynamic>,
+      evidenceTypes: (json['evidenceTypes'] as List<dynamic>)
+          .map((e) => e as String)
+          .toList(),
+      workerCapabilities: _workerCapabilitiesFromJson(
+        json['workerCapabilities'] as List?,
+      ),
+    );
+
+Map<String, dynamic> _$QAGateDefinitionToJson(
+  QAGateDefinition instance,
+) => <String, dynamic>{
+  'gateId': instance.gateId,
+  'type': instance.type,
+  'required': instance.required,
+  'config': instance.config,
+  'evidenceTypes': instance.evidenceTypes,
+  if (_workerCapabilitiesToJson(instance.workerCapabilities) case final value?)
+    'workerCapabilities': value,
+};

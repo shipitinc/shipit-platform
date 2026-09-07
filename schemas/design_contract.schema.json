@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/design_contract.schema.json",
+  "title": "DesignContract",
+  "description": "Defines required design artifacts and review criteria for a work item. Published by AEF, enforced by ShipIt Platform.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractId", "workItemId", "requiredArtifacts", "reviewers", "approvalThreshold", "status", "createdAt"],
+  "properties": {
+    "contractId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this design contract"
+    },
+    "workItemId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Work item this contract applies to"
+    },
+    "requiredArtifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifactType", "description", "required"],
+        "properties": {
+          "artifactType": {
+            "type": "string",
+            "enum": ["architecture-decision-record", "api-spec", "ui-mockup", "data-model", "security-assessment", "performance-plan", "custom"]
+          },
+          "description": { "type": "string" },
+          "required": { "type": "boolean" },
+          "validationSchema": {
+            "type": "object",
+            "description": "Optional JSON Schema for artifact validation"
+          }
+        }
+      },
+      "minItems": 1,
+      "description": "Design artifacts required before agent execution"
+    },
+    "reviewers": {
+      "type": "array",
+      "items": { "type": "string", "format": "email" },
+      "minItems": 1,
+      "description": "Required reviewers for design approval"
+    },
+    "approvalThreshold": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of approvals required"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "under_review", "approved", "rejected", "expired"],
+      "description": "Current status of the design review"
+    },
+    "submittedArtifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifactType", "contentHash", "submittedBy", "submittedAt"],
+        "properties": {
+          "artifactType": { "type": "string" },
+          "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "submittedBy": { "type": "string", "format": "email" },
+          "submittedAt": { "type": "string", "format": "date-time" },
+          "location": { "type": "string" }
+        }
+      },
+      "description": "Artifacts submitted for review"
+    },
+    "decisions": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" },
+      "description": "HumanDecision IDs for this design contract"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of contract creation"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Optional expiration for time-boxed reviews"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Extensible metadata"
+    }
+  }
+}

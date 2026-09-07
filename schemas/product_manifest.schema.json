@@ -1,0 +1,186 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/product_manifest.schema.json",
+  "title": "ProductManifest",
+  "description": "Defines a product, its capabilities, environments, and governance contracts. Published by AEF, consumed by ShipIt Platform.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["productId", "name", "version", "capabilities", "environments", "contracts"],
+  "properties": {
+    "productId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Globally unique product identifier"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "Human-readable product name"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.-]+)?(\\+[a-zA-Z0-9.-]+)?$",
+      "description": "Semantic version of the product manifest"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 5000,
+      "description": "Product description"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["flutter", "android", "ios", "web", "backend", "cli", "library"]
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Platform capabilities this product targets"
+    },
+    "environments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "type", "config"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": ["development", "staging", "production", "mobile-staging", "mobile-production"]
+          },
+          "type": {
+            "type": "string",
+            "enum": ["cloud-run", "firebase-hosting", "testflight", "play-store-internal", "play-store-production", "custom"]
+          },
+          "config": {
+            "type": "object",
+            "description": "Environment-specific configuration (deployment target params)"
+          }
+        }
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Deployment environments for this product"
+    },
+    "contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workItemCategories", "designContract", "qaContract", "deploymentContract"],
+      "properties": {
+        "workItemCategories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["feature", "bugfix", "refactor", "docs", "chore", "security", "performance"]
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Allowed work item categories for this product"
+        },
+        "designContract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["requiredArtifacts", "reviewers", "approvalThreshold"],
+          "properties": {
+            "requiredArtifacts": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["architecture-decision-record", "api-spec", "ui-mockup", "data-model", "security-assessment", "performance-plan"]
+              },
+              "minItems": 1,
+              "description": "Design artifacts required before agent execution"
+            },
+            "reviewers": {
+              "type": "array",
+              "items": { "type": "string", "format": "email" },
+              "minItems": 1,
+              "description": "Required reviewers for design approval"
+            },
+            "approvalThreshold": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Number of approvals required"
+            }
+          },
+          "description": "Design phase contract"
+        },
+        "qaContract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["gates"],
+          "properties": {
+            "gates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["gateId", "type", "required", "config"],
+                "properties": {
+                  "gateId": { "type": "string" },
+                  "type": {
+                    "type": "string",
+                    "enum": ["static-analysis", "unit-tests", "integration-tests", "security-scan", "performance", "accessibility", "custom"]
+                  },
+                  "required": { "type": "boolean" },
+                  "config": { "type": "object" }
+                }
+              },
+              "minItems": 1
+            }
+          },
+          "description": "QA phase contract"
+        },
+        "deploymentContract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["promotionPath", "approvalGates"],
+          "properties": {
+            "promotionPath": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1,
+              "description": "Ordered list of environments for promotion"
+            },
+            "approvalGates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["environment", "approvers", "threshold"],
+                "properties": {
+                  "environment": { "type": "string" },
+                  "approvers": {
+                    "type": "array",
+                    "items": { "type": "string", "format": "email" },
+                    "minItems": 1
+                  },
+                  "threshold": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          },
+          "description": "Deployment phase contract"
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Extensible metadata for product-specific configuration"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of manifest creation"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update"
+    }
+  }
+}

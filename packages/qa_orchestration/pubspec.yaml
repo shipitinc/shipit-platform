@@ -1,0 +1,16 @@
+name: qa_orchestration
+version: 0.1.0
+description: QA gates, evidence collection, and validation
+publish_to: none
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+
+resolution: workspace
+
+dependencies:
+  platform_contracts:
+    path: ../platform_contracts
+
+dev_dependencies:
+  test: ^1.25.2

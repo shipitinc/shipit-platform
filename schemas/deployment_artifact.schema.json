@@ -1,0 +1,98 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/deployment_artifact.schema.json",
+  "title": "DeploymentArtifact",
+  "description": "Immutable, content-addressed deployment artifact with a manifest and software bill of materials.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactId", "contentHash", "manifest", "builtAt", "builtBy"],
+  "properties": {
+    "artifactId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this artifact"
+    },
+    "contentHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 over the canonical manifest JSON"
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "gitCommit", "files", "sbom"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "gitCommit": { "type": "string", "minLength": 1 },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256", "sizeBytes", "mediaType"],
+            "properties": {
+              "path": { "type": "string" },
+              "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+              "sizeBytes": { "type": "integer", "minimum": 0 },
+              "mediaType": { "type": "string" }
+            }
+          },
+          "description": "Files included in the artifact"
+        },
+        "sbom": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "version", "components"],
+          "properties": {
+            "format": { "type": "string", "const": "CycloneDX" },
+            "version": { "type": "string" },
+            "components": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "version", "type"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "version": { "type": "string" },
+                  "type": { "type": "string" },
+                  "purl": { "type": "string" },
+                  "hashes": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" }
+                  },
+                  "licenses": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "description": "Software bill of materials for the artifact"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Extensible string metadata"
+        }
+      },
+      "description": "Description of what was built"
+    },
+    "builtAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the artifact was built"
+    },
+    "builtBy": {
+      "type": "string",
+      "description": "Agent session or actor that built the artifact"
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Optional labels"
+    }
+  }
+}

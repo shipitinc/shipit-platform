@@ -1,0 +1,125 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/qa_contract.schema.json",
+  "title": "QAContract",
+  "description": "Defines required QA gates and evidence types per work item category. Published by AEF, enforced by ShipIt Platform QA Orchestration.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractId", "workItemCategory", "gates", "version", "createdAt"],
+  "properties": {
+    "contractId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this QA contract"
+    },
+    "workItemCategory": {
+      "type": "string",
+      "enum": ["feature", "bugfix", "refactor", "docs", "chore", "security", "performance"],
+      "description": "Work item category this contract applies to"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Contract version for evolution tracking"
+    },
+    "gates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gateId", "type", "required", "config", "evidenceTypes"],
+        "properties": {
+          "gateId": {
+            "type": "string",
+            "description": "Unique gate identifier within contract"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "static-analysis",
+              "unit-tests",
+              "integration-tests",
+              "security-scan",
+              "performance",
+              "accessibility",
+              "dependency-review",
+              "license-compliance",
+              "custom"
+            ]
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether this gate must pass for QA to pass"
+          },
+          "config": {
+            "type": "object",
+            "description": "Gate-specific configuration (thresholds, tools, etc.)"
+          },
+          "evidenceTypes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "test-report",
+                "coverage-report",
+                "static-analysis-report",
+                "security-scan-report",
+                "performance-metrics",
+                "accessibility-report",
+                "sbom",
+                "dependency-report",
+                "custom"
+              ]
+            },
+            "minItems": 1,
+            "description": "Types of evidence this gate produces/requires"
+          },
+          "workerCapabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["linux", "docker", "flutter", "android", "macos", "ios", "xcode"]
+            },
+            "description": "Worker capabilities required to run this gate"
+          }
+        }
+      },
+      "minItems": 1,
+      "description": "QA gates required for this work item category"
+    },
+    "passCriteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allRequiredGatesMustPass": {
+          "type": "boolean",
+          "default": true
+        },
+        "optionalGateFailuresAllowed": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "waiverRequiresHumanDecision": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "description": "Criteria for overall QA pass/fail"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of contract creation"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Extensible metadata"
+    }
+  }
+}

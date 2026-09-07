@@ -1,0 +1,29 @@
+{
+  "resultId": "123e4567-e89b-12d3-a456-426614174003",
+  "sessionId": "123e4567-e89b-12d3-a456-426614174004",
+  "workItemId": "123e4567-e89b-12d3-a456-426614174001",
+  "status": "completed",
+  "artifacts": [
+    {
+      "artifactId": "123e4567-e89b-12d3-a456-426614174005",
+      "type": "source-code",
+      "path": "lib/main.dart",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sizeBytes": 1024,
+      "mediaType": "text/plain"
+    }
+  ],
+  "diagnostics": {
+    "exitCode": 0,
+    "durationMs": 30000,
+    "toolCalls": 15,
+    "errors": [],
+    "warnings": []
+  },
+  "structuredResult": {
+    "testsPassed": 42,
+    "coverage": 0.85
+  },
+  "summary": "Added login feature",
+  "completedAt": "2024-01-02T13:00:00Z"
+}

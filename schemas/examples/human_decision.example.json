@@ -1,0 +1,19 @@
+{
+  "decisionId": "123e4567-e89b-12d3-a456-426614174002",
+  "workflowId": "123e4567-e89b-12d3-a456-426614174001",
+  "decisionType": "design_approval",
+  "decider": "alice@example.com",
+  "choice": "approve",
+  "rationale": "Design looks good",
+  "timestamp": "2024-01-02T12:00:00Z",
+  "signature": {
+    "algorithm": "Ed25519",
+    "publicKey": "base64key",
+    "signature": "base64sig",
+    "signedAt": "2024-01-02T12:00:01Z"
+  },
+  "context": {
+    "workflowState": "design_in_review",
+    "availableOptions": ["approve", "reject"]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "evidenceId": "123e4567-e89b-12d3-a456-426614174020",
+  "gateId": "static-analysis",
+  "workItemId": "123e4567-e89b-12d3-a456-426614174001",
+  "evidenceType": "analysis-report",
+  "artifactRef": "artifacts/static-analysis.json",
+  "content": {
+    "tool": "dart analyze",
+    "errorCount": 0,
+    "warningCount": 2
+  },
+  "collectedAt": "2024-01-02T10:00:00Z",
+  "validatorId": "worker-linux-1"
+}

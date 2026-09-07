@@ -1,0 +1,75 @@
+// **************************************************************************
+// JsonSerializableGenerator
+// **************************************************************************
+
+HumanDecision _$HumanDecisionFromJson(Map<String, dynamic> json) =>
+    HumanDecision(
+      decisionId: json['decisionId'] as String,
+      workflowId: json['workflowId'] as String,
+      decisionType: _humanDecisionTypeFromJson(json['decisionType'] as String),
+      decider: json['decider'] as String,
+      choice: _humanDecisionChoiceFromJson(json['choice'] as String),
+      rationale: json['rationale'] as String,
+      timestamp: DateTime.parse(json['timestamp'] as String),
+      signature: DecisionSignature.fromJson(
+        json['signature'] as Map<String, dynamic>,
+      ),
+      context: json['context'] == null
+          ? null
+          : DecisionContext.fromJson(json['context'] as Map<String, dynamic>),
+      expiration: json['expiration'] == null
+          ? null
+          : DateTime.parse(json['expiration'] as String),
+      metadata: json['metadata'] as Map<String, dynamic>?,
+    );
+
+Map<String, dynamic> _$HumanDecisionToJson(HumanDecision instance) =>
+    <String, dynamic>{
+      'decisionId': instance.decisionId,
+      'workflowId': instance.workflowId,
+      'decisionType': _humanDecisionTypeToJson(instance.decisionType),
+      'decider': instance.decider,
+      'choice': _humanDecisionChoiceToJson(instance.choice),
+      'rationale': instance.rationale,
+      'timestamp': instance.timestamp.toIso8601String(),
+      'signature': instance.signature.toJson(),
+      if (instance.context?.toJson() case final value?) 'context': value,
+      if (instance.expiration?.toIso8601String() case final value?)
+        'expiration': value,
+      if (instance.metadata case final value?) 'metadata': value,
+    };
+
+DecisionSignature _$DecisionSignatureFromJson(Map<String, dynamic> json) =>
+    DecisionSignature(
+      algorithm: json['algorithm'] as String,
+      publicKey: json['publicKey'] as String,
+      signature: json['signature'] as String,
+      signedAt: DateTime.parse(json['signedAt'] as String),
+    );
+
+Map<String, dynamic> _$DecisionSignatureToJson(DecisionSignature instance) =>
+    <String, dynamic>{
+      'algorithm': instance.algorithm,
+      'publicKey': instance.publicKey,
+      'signature': instance.signature,
+      'signedAt': instance.signedAt.toIso8601String(),
+    };
+
+DecisionContext _$DecisionContextFromJson(Map<String, dynamic> json) =>
+    DecisionContext(
+      workflowState: json['workflowState'] as String,
+      availableOptions: (json['availableOptions'] as List<dynamic>)
+          .map((e) => e as String)
+          .toList(),
+      relatedDecisions: (json['relatedDecisions'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList(),
+    );
+
+Map<String, dynamic> _$DecisionContextToJson(
+  DecisionContext instance,
+) => <String, dynamic>{
+  'workflowState': instance.workflowState,
+  'availableOptions': instance.availableOptions,
+  if (instance.relatedDecisions case final value?) 'relatedDecisions': value,
+};

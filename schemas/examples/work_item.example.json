@@ -1,0 +1,10 @@
+{
+  "workItemId": "123e4567-e89b-12d3-a456-426614174001",
+  "productId": "123e4567-e89b-12d3-a456-426614174000",
+  "category": "feature",
+  "title": "Add login feature",
+  "state": "design_in_review",
+  "designContractId": "123e4567-e89b-12d3-a456-42661417400a",
+  "createdAt": "2024-01-01T00:00:00Z",
+  "updatedAt": "2024-01-02T00:00:00Z"
+}

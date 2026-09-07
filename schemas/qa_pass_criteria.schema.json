@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/qa_pass_criteria.schema.json",
+  "title": "QAPassCriteria",
+  "description": "Policy for when a work item's QA is considered passed. All fields optional with defaults.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "allRequiredGatesMustPass": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether every required gate must pass for QA to be passed"
+    },
+    "optionalGateFailuresAllowed": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Number of non-required gate failures tolerated"
+    },
+    "waiverRequiresHumanDecision": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether waiving a failed gate requires a durable human decision"
+    }
+  }
+}

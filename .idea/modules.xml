@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+<module fileurl="file://$PROJECT_DIR$/packages/agent_runtime/melos_agent_runtime.iml" filepath="$PROJECT_DIR$/packages/agent_runtime/melos_agent_runtime.iml"/>
+<module fileurl="file://$PROJECT_DIR$/packages/deployment_protocol/melos_deployment_protocol.iml" filepath="$PROJECT_DIR$/packages/deployment_protocol/melos_deployment_protocol.iml"/>
+<module fileurl="file://$PROJECT_DIR$/packages/platform_contracts/melos_platform_contracts.iml" filepath="$PROJECT_DIR$/packages/platform_contracts/melos_platform_contracts.iml"/>
+<module fileurl="file://$PROJECT_DIR$/packages/qa_orchestration/melos_qa_orchestration.iml" filepath="$PROJECT_DIR$/packages/qa_orchestration/melos_qa_orchestration.iml"/>
+<module fileurl="file://$PROJECT_DIR$/packages/worker_protocol/melos_worker_protocol.iml" filepath="$PROJECT_DIR$/packages/worker_protocol/melos_worker_protocol.iml"/>
+<module fileurl="file://$PROJECT_DIR$/packages/workflow_engine/melos_workflow_engine.iml" filepath="$PROJECT_DIR$/packages/workflow_engine/melos_workflow_engine.iml"/>
+<module fileurl="file://$PROJECT_DIR$/melos_shipit_platform.iml" filepath="$PROJECT_DIR$/melos_shipit_platform.iml"/>
+    </modules>
+  </component>
+</project>

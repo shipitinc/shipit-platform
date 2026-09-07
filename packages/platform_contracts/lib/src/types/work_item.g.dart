@@ -1,0 +1,42 @@
+// GENERATED CODE - DO NOT MODIFY BY HAND
+
+part of 'work_item.dart';
+
+// **************************************************************************
+// JsonSerializableGenerator
+// **************************************************************************
+
+WorkItem _$WorkItemFromJson(Map<String, dynamic> json) => WorkItem(
+  workItemId: json['workItemId'] as String,
+  productId: json['productId'] as String,
+  category: _workItemCategoryFromJson(json['category'] as String),
+  title: json['title'] as String,
+  description: json['description'] as String?,
+  state: _workItemStateFromJson(json['state'] as String),
+  designContractId: json['designContractId'] as String?,
+  agentSessionId: json['agentSessionId'] as String?,
+  qaContractId: json['qaContractId'] as String?,
+  metadata: json['metadata'] as Map<String, dynamic>?,
+  createdAt: DateTime.parse(json['createdAt'] as String),
+  updatedAt: DateTime.parse(json['updatedAt'] as String),
+  completedAt: json['completedAt'] == null
+      ? null
+      : DateTime.parse(json['completedAt'] as String),
+);
+
+Map<String, dynamic> _$WorkItemToJson(WorkItem instance) => <String, dynamic>{
+  'workItemId': instance.workItemId,
+  'productId': instance.productId,
+  'category': _workItemCategoryToJson(instance.category),
+  'title': instance.title,
+  if (instance.description case final value?) 'description': value,
+  'state': _workItemStateToJson(instance.state),
+  if (instance.designContractId case final value?) 'designContractId': value,
+  if (instance.agentSessionId case final value?) 'agentSessionId': value,
+  if (instance.qaContractId case final value?) 'qaContractId': value,
+  if (instance.metadata case final value?) 'metadata': value,
+  'createdAt': instance.createdAt.toIso8601String(),
+  'updatedAt': instance.updatedAt.toIso8601String(),
+  if (instance.completedAt?.toIso8601String() case final value?)
+    'completedAt': value,
+};

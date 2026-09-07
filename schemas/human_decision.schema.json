@@ -1,0 +1,109 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/human_decision.schema.json",
+  "title": "HumanDecision",
+  "description": "Durable, auditable human decision. Must survive process restarts. Stored in PostgreSQL via Serverpod.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decisionId", "workflowId", "decisionType", "decider", "choice", "rationale", "timestamp", "signature"],
+  "properties": {
+    "decisionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this decision"
+    },
+    "workflowId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Workflow (work item, product, deployment) this decision applies to"
+    },
+    "decisionType": {
+      "type": "string",
+      "enum": [
+        "design_approval",
+        "design_rejection",
+        "qa_waiver",
+        "qa_rework",
+        "deployment_approval",
+        "deployment_rejection",
+        "rollback_approval",
+        "escalation",
+        "policy_exception"
+      ],
+      "description": "Type of decision for routing and policy evaluation"
+    },
+    "decider": {
+      "type": "string",
+      "format": "email",
+      "description": "Email of the human making the decision"
+    },
+    "choice": {
+      "type": "string",
+      "enum": ["approve", "reject", "waive", "rework"],
+      "description": "The decision choice. Approve/reject gate design and deployments; waive accepts a failed QA gate; rework returns a work item to design."
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 5000,
+      "description": "Human-readable justification for the decision"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when decision was made"
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "publicKey", "signature", "signedAt"],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "Ed25519",
+          "description": "Signature algorithm"
+        },
+        "publicKey": {
+          "type": "string",
+          "description": "Base64-encoded Ed25519 public key"
+        },
+        "signature": {
+          "type": "string",
+          "description": "Base64-encoded signature over decision payload"
+        },
+        "signedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of signing"
+        }
+      },
+      "description": "Cryptographic signature for non-repudiation"
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflowState", "availableOptions"],
+      "properties": {
+        "workflowState": { "type": "string" },
+        "availableOptions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "relatedDecisions": {
+          "type": "array",
+          "items": { "type": "string", "format": "uuid" }
+        }
+      },
+      "description": "Context at time of decision for audit trail"
+    },
+    "expiration": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Optional expiration timestamp (for time-limited approvals)"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Extensible metadata (e.g., Slack message link, meeting notes)"
+    }
+  }
+}

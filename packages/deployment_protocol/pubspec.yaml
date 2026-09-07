@@ -1,0 +1,18 @@
+name: deployment_protocol
+version: 0.1.0
+description: Artifact promotion and deployment
+publish_to: none
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+
+resolution: workspace
+
+dependencies:
+  platform_contracts:
+    path: ../platform_contracts
+  meta: ^1.16.0
+  crypto: ^3.0.5
+
+dev_dependencies:
+  test: ^1.25.2
