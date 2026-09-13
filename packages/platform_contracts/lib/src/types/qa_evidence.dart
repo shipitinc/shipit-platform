@@ -3,6 +3,7 @@ import 'package:json_annotation/json_annotation.dart';
 import 'package:equatable/equatable.dart';
 
 import '../enums/qa_gate_status.dart';
+import '../enums/qa_semantics.dart';
 
 part 'qa_evidence.g.dart';
 
@@ -61,6 +62,7 @@ class QAGateResult extends Equatable {
     required this.evaluatedAt,
     this.passedAt,
     this.waiver,
+    this.evidenceDeterminations,
     this.metadata,
   });
 
@@ -72,6 +74,7 @@ class QAGateResult extends Equatable {
   final DateTime evaluatedAt;
   final DateTime? passedAt;
   final QAWaiver? waiver;
+  final List<QAEvidenceDetermination>? evidenceDeterminations;
   final Map<String, dynamic>? metadata;
 
   factory QAGateResult.fromJson(Map<String, dynamic> json) =>
@@ -88,7 +91,53 @@ class QAGateResult extends Equatable {
     evaluatedAt,
     passedAt,
     waiver,
+    evidenceDeterminations,
     metadata,
+  ];
+}
+
+@JsonSerializable(explicitToJson: true, includeIfNull: false)
+@immutable
+class QAEvidenceDetermination extends Equatable {
+  const QAEvidenceDetermination({
+    required this.evidenceId,
+    required this.determination,
+    this.artifactRef,
+    this.params,
+    this.prerequisites,
+    this.reasons,
+    this.authorityRef,
+    this.evidenceRefs = const [],
+  });
+
+  final String evidenceId;
+  @JsonKey(
+    fromJson: _evidenceDeterminationFromJson,
+    toJson: _evidenceDeterminationToJson,
+  )
+  final EvidenceDetermination determination;
+  final String? artifactRef;
+  final String? params;
+  final String? prerequisites;
+  final String? reasons;
+  final String? authorityRef;
+  final List<String> evidenceRefs;
+
+  factory QAEvidenceDetermination.fromJson(Map<String, dynamic> json) =>
+      _$QAEvidenceDeterminationFromJson(json);
+
+  Map<String, dynamic> toJson() => _$QAEvidenceDeterminationToJson(this);
+
+  @override
+  List<Object?> get props => [
+    evidenceId,
+    determination,
+    artifactRef,
+    params,
+    prerequisites,
+    reasons,
+    authorityRef,
+    evidenceRefs,
   ];
 }
 
@@ -116,7 +165,33 @@ class QAWaiver extends Equatable {
   List<Object?> get props => [decisionId, reason, waivedAt, waivedBy];
 }
 
-QAGateStatus _qaGateStatusFromJson(String value) =>
-    QAGateStatus.values.byName(value);
+QAGateStatus _qaGateStatusFromJson(String value) => switch (value) {
+  'not_executed' => QAGateStatus.notExecuted,
+  'not_applicable' => QAGateStatus.notApplicable,
+  _ => QAGateStatus.values.firstWhere(
+    (s) => s.name == value,
+    orElse: () => throw FormatException('Unknown QA gate status: $value'),
+  ),
+};
 
-String _qaGateStatusToJson(QAGateStatus value) => value.name;
+String _qaGateStatusToJson(QAGateStatus value) => switch (value) {
+  QAGateStatus.notExecuted => 'not_executed',
+  QAGateStatus.notApplicable => 'not_applicable',
+  _ => value.name,
+};
+
+EvidenceDetermination _evidenceDeterminationFromJson(String value) =>
+    switch (value) {
+      'ready_not_executed' => EvidenceDetermination.readyNotExecuted,
+      _ => EvidenceDetermination.values.firstWhere(
+        (d) => d.name == value,
+        orElse: () =>
+            throw FormatException('Unknown evidence determination: $value'),
+      ),
+    };
+
+String _evidenceDeterminationToJson(EvidenceDetermination value) =>
+    switch (value) {
+      EvidenceDetermination.readyNotExecuted => 'ready_not_executed',
+      _ => value.name,
+    };

@@ -2,13 +2,14 @@ import 'package:meta/meta.dart';
 import 'package:json_annotation/json_annotation.dart';
 import 'package:equatable/equatable.dart';
 
+import '../enums/qa_semantics.dart';
 import '../enums/work_item_category.dart';
 import '../enums/worker_capability.dart';
 import 'qa_pass_criteria.dart';
 
 part 'qa_contract.g.dart';
 
-@JsonSerializable(explicitToJson: true)
+@JsonSerializable(explicitToJson: true, includeIfNull: false)
 @immutable
 class QAContract extends Equatable {
   const QAContract({
@@ -19,6 +20,7 @@ class QAContract extends Equatable {
     this.passCriteria,
     required this.createdAt,
     required this.updatedAt,
+    this.evidenceRows,
     this.metadata,
   });
 
@@ -31,6 +33,8 @@ class QAContract extends Equatable {
   final QAPassCriteria? passCriteria;
   final DateTime createdAt;
   final DateTime updatedAt;
+  @JsonKey(includeIfNull: false)
+  final List<QAEvidenceRow>? evidenceRows;
   final Map<String, dynamic>? metadata;
 
   factory QAContract.fromJson(Map<String, dynamic> json) =>
@@ -47,6 +51,7 @@ class QAContract extends Equatable {
     passCriteria,
     createdAt,
     updatedAt,
+    evidenceRows,
     metadata,
   ];
 }
@@ -96,8 +101,108 @@ class QAGateDefinition extends Equatable {
   ];
 }
 
+@JsonSerializable(explicitToJson: true, includeIfNull: false)
+@immutable
+class QAEvidenceRow extends Equatable {
+  const QAEvidenceRow({
+    required this.evidenceId,
+    required this.requirement,
+    required this.testMethod,
+    required this.contractDetermination,
+    this.title,
+    this.scope,
+    this.artifactRef,
+    this.params,
+    this.prerequisites,
+    this.traceabilityRefs = const [],
+    this.determinationReasons,
+  });
+
+  final String evidenceId;
+  final String? title;
+  final String? scope;
+  @JsonKey(
+    fromJson: _evidenceRowRequirementFromJson,
+    toJson: _evidenceRowRequirementToJson,
+  )
+  final EvidenceRowRequirement requirement;
+  @JsonKey(fromJson: _testMethodFromJson, toJson: _testMethodToJson)
+  final TestMethod testMethod;
+  final String? artifactRef;
+  final String? params;
+  final String? prerequisites;
+  final List<String> traceabilityRefs;
+  @JsonKey(
+    fromJson: _contractDeterminationFromJson,
+    toJson: _contractDeterminationToJson,
+  )
+  final ContractDetermination contractDetermination;
+  final String? determinationReasons;
+
+  factory QAEvidenceRow.fromJson(Map<String, dynamic> json) =>
+      _$QAEvidenceRowFromJson(json);
+
+  Map<String, dynamic> toJson() => _$QAEvidenceRowToJson(this);
+
+  @override
+  List<Object?> get props => [
+    evidenceId,
+    title,
+    scope,
+    requirement,
+    testMethod,
+    artifactRef,
+    params,
+    prerequisites,
+    traceabilityRefs,
+    contractDetermination,
+    determinationReasons,
+  ];
+}
+
 List<WorkerCapability>? _workerCapabilitiesFromJson(List<dynamic>? values) =>
     values?.map((v) => WorkerCapability.values.byName(v as String)).toList();
 
 List<String>? _workerCapabilitiesToJson(List<WorkerCapability>? values) =>
     values?.map((v) => v.name).toList();
+
+EvidenceRowRequirement _evidenceRowRequirementFromJson(String value) =>
+    switch (value) {
+      'not_applicable' => EvidenceRowRequirement.notApplicable,
+      _ => EvidenceRowRequirement.values.firstWhere(
+        (r) => r.name == value,
+        orElse: () =>
+            throw FormatException('Unknown evidence row requirement: $value'),
+      ),
+    };
+
+String _evidenceRowRequirementToJson(EvidenceRowRequirement value) =>
+    switch (value) {
+      EvidenceRowRequirement.notApplicable => 'not_applicable',
+      _ => value.name,
+    };
+
+TestMethod _testMethodFromJson(String value) => TestMethod.values.firstWhere(
+  (m) => m.name == value,
+  orElse: () => throw FormatException('Unknown test method: $value'),
+);
+
+String _testMethodToJson(TestMethod value) => value.name;
+
+ContractDetermination _contractDeterminationFromJson(String value) =>
+    switch (value) {
+      'expected_to_execute' => ContractDetermination.expectedToExecute,
+      'skipped_by_contract' => ContractDetermination.skippedByContract,
+      _ => ContractDetermination.values.firstWhere(
+        (d) => d.name == value,
+        orElse: () =>
+            throw FormatException('Unknown contract determination: $value'),
+      ),
+    };
+
+String _contractDeterminationToJson(ContractDetermination value) =>
+    switch (value) {
+      ContractDetermination.expectedToExecute => 'expected_to_execute',
+      ContractDetermination.skippedByContract => 'skipped_by_contract',
+      _ => value.name,
+    };

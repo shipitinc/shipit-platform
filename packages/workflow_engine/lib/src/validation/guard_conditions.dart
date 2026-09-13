@@ -179,12 +179,43 @@ class _AllRequiredGatesPassedGuard extends GuardCondition<WorkItemState> {
           false,
     );
 
-    final allPassed = requiredGates.every(
-      (g) => g.status == QAGateStatus.passed || g.status == QAGateStatus.waived,
-    );
-    return allPassed
+    final allSatisfied = requiredGates.every(_isGateSatisfied);
+    return allSatisfied
         ? GuardResult.pass(name)
-        : GuardResult.fail(name, 'All required QA gates must pass');
+        : GuardResult.fail(
+            name,
+            'All required QA gates must pass; a required gate left '
+            'not_executed or skipped without an authority reference '
+            'requires a formal determination rather than a silent pass',
+          );
+  }
+
+  bool _isGateSatisfied(QAGateResult result) {
+    switch (result.status) {
+      case QAGateStatus.passed:
+      case QAGateStatus.waived:
+      case QAGateStatus.notApplicable:
+        return true;
+      case QAGateStatus.skipped:
+        return _hasSkippedAuthority(result);
+      case QAGateStatus.pending:
+      case QAGateStatus.running:
+      case QAGateStatus.failed:
+      case QAGateStatus.notExecuted:
+        return false;
+    }
+  }
+
+  bool _hasSkippedAuthority(QAGateResult result) {
+    if (result.waiver != null) {
+      return true;
+    }
+    return result.evidenceDeterminations?.any(
+          (d) =>
+              d.determination == EvidenceDetermination.skipped &&
+              d.authorityRef != null,
+        ) ??
+        false;
   }
 }
 

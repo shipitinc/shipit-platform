@@ -2,14 +2,14 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://shipit.platform/schemas/qa_pass_criteria.schema.json",
   "title": "QAPassCriteria",
-  "description": "Policy for when a work item's QA is considered passed. All fields optional with defaults.",
+  "description": "Policy for when a work item's QA is considered passed. All fields optional with defaults. Enforcement follows AEF QA_GOVERNANCE.md 'Evidence Rows & Determinations': skipped-by-authority gates are respected (not treated as FAIL), NOT_EXECUTED gates are not silently passed and required-not-executed rows surface a formal determination path (Human Decision) rather than hanging, and optional/NOT_EXECUTED gates are non-blocking.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "allRequiredGatesMustPass": {
       "type": "boolean",
       "default": true,
-      "description": "Whether every required gate must pass for QA to be passed"
+      "description": "Whether every required gate must pass for QA to be passed. A gate is considered passing when passed, waived (SKIPPED with authority_ref), or not_applicable; a required gate left not_executed or skipped without an authority reference is blocking."
     },
     "optionalGateFailuresAllowed": {
       "type": "integer",

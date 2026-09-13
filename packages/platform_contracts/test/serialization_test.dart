@@ -258,5 +258,148 @@ void main() {
       expect(WorkItemState.draft.name, equals('draft'));
       expect(WorkItemState.done.name, equals('done'));
     });
+
+    test('QAGateStatus has AEF-aligned non-executed values', () {
+      expect(QAGateStatus.notExecuted.name, equals('notExecuted'));
+      expect(QAGateStatus.notApplicable.name, equals('notApplicable'));
+      expect(QAGateStatus.skipped, isNot(equals(QAGateStatus.notExecuted)));
+    });
+  });
+
+  group('QAContract serialization', () {
+    test('round-trips evidence rows with AEF wire enums', () {
+      final contract = QAContract(
+        contractId: '123e4567-e89b-12d3-a456-42661417400a',
+        workItemCategory: WorkItemCategory.feature,
+        gates: [
+          QAGateDefinition(
+            gateId: 'e2e',
+            type: 'integration-tests',
+            required: true,
+            config: {'device': 'headless'},
+            evidenceTypes: ['test-report'],
+          ),
+        ],
+        version: '1.0.0',
+        createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
+        updatedAt: DateTime.parse('2024-01-01T00:00:00Z'),
+        evidenceRows: [
+          QAEvidenceRow(
+            evidenceId: 'E-01',
+            title: 'App journey e2e',
+            requirement: EvidenceRowRequirement.required,
+            testMethod: TestMethod.automated,
+            artifactRef: 'apps/app/integration_test/app_journey_test.dart',
+            params: '--dart-define=E2E_VERIFICATION_CODE',
+            prerequisites: 'headless-device-job:ios',
+            traceabilityRefs: ['REQ-01'],
+            contractDetermination: ContractDetermination.expectedToExecute,
+          ),
+          QAEvidenceRow(
+            evidenceId: 'E-02',
+            requirement: EvidenceRowRequirement.optional,
+            testMethod: TestMethod.visual,
+            contractDetermination: ContractDetermination.skippedByContract,
+            determinationReasons: 'No visual baseline for this feature yet',
+          ),
+        ],
+      );
+
+      final json = contract.toJson();
+      expect(json['evidenceRows'], hasLength(2));
+      expect(json['evidenceRows'][0]['requirement'], equals('required'));
+      expect(
+        json['evidenceRows'][0]['contractDetermination'],
+        equals('expected_to_execute'),
+      );
+      expect(
+        json['evidenceRows'][1]['contractDetermination'],
+        equals('skipped_by_contract'),
+      );
+
+      final decoded = QAContract.fromJson(json);
+      expect(decoded.evidenceRows, hasLength(2));
+      expect(
+        decoded.evidenceRows![0].contractDetermination,
+        equals(ContractDetermination.expectedToExecute),
+      );
+      expect(decoded.evidenceRows![0].traceabilityRefs, equals(['REQ-01']));
+      expect(
+        decoded.evidenceRows![1].contractDetermination,
+        equals(ContractDetermination.skippedByContract),
+      );
+      expect(decoded.evidenceRows![1].determinationReasons, isNotNull);
+    });
+  });
+
+  group('QAGateResult serialization', () {
+    test('round-trips not_executed status and evidence determinations', () {
+      final result = QAGateResult(
+        gateId: 'e2e',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        status: QAGateStatus.notExecuted,
+        evidence: const [],
+        evaluatedAt: DateTime.parse('2024-01-02T10:00:00Z'),
+        evidenceDeterminations: [
+          QAEvidenceDetermination(
+            evidenceId: 'E-01',
+            determination: EvidenceDetermination.readyNotExecuted,
+            artifactRef: 'apps/app/integration_test/app_journey_test.dart',
+            params: '--dart-define=E2E_VERIFICATION_CODE',
+            prerequisites: 'headless-device-job:ios',
+            reasons: 'Headless iOS device job not yet provisioned',
+          ),
+          QAEvidenceDetermination(
+            evidenceId: 'E-02',
+            determination: EvidenceDetermination.skipped,
+            reasons: 'No visual baseline',
+            authorityRef: '123e4567-e89b-12d3-a456-42661417400b',
+          ),
+        ],
+      );
+
+      final json = result.toJson();
+      expect(json['status'], equals('not_executed'));
+      expect(json['evidenceDeterminations'], hasLength(2));
+      expect(
+        json['evidenceDeterminations'][0]['determination'],
+        equals('ready_not_executed'),
+      );
+      expect(
+        json['evidenceDeterminations'][1]['determination'],
+        equals('skipped'),
+      );
+      expect(json['evidenceDeterminations'][1]['authorityRef'], isNotNull);
+
+      final decoded = QAGateResult.fromJson(json);
+      expect(decoded.status, equals(QAGateStatus.notExecuted));
+      expect(decoded.evidenceDeterminations, hasLength(2));
+      expect(
+        decoded.evidenceDeterminations![0].determination,
+        equals(EvidenceDetermination.readyNotExecuted),
+      );
+      expect(
+        decoded.evidenceDeterminations![1].determination,
+        equals(EvidenceDetermination.skipped),
+      );
+      expect(decoded.evidenceDeterminations![1].authorityRef, isNotNull);
+    });
+
+    test('maps not_applicable to and from JSON', () {
+      final result = QAGateResult(
+        gateId: 'visual',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        status: QAGateStatus.notApplicable,
+        evidence: const [],
+        evaluatedAt: DateTime.parse('2024-01-02T10:00:00Z'),
+      );
+
+      final json = result.toJson();
+      expect(json['status'], equals('not_applicable'));
+      expect(
+        QAGateResult.fromJson(json).status,
+        equals(QAGateStatus.notApplicable),
+      );
+    });
   });
 }

@@ -70,7 +70,8 @@
         "workItemId": { "type": "string", "format": "uuid" },
         "status": {
           "type": "string",
-          "enum": ["pending", "running", "passed", "failed", "waived", "skipped"]
+          "enum": ["pending", "running", "passed", "failed", "waived", "skipped", "not_executed", "not_applicable"],
+          "description": "Per-gate result. Mirrors AEF QA Result gate_results (PASS | FAIL | N/A | NOT_EXECUTED | SKIPPED): not_executed means the gate has not run in this execution (distinct from a formal skip); not_applicable means the gate is N/A by contract; skipped/waived require an authority reference."
         },
         "evidence": {
           "type": "array",
@@ -80,9 +81,51 @@
         "evaluatedAt": { "type": "string", "format": "date-time" },
         "passedAt": { "type": "string", "format": "date-time" },
         "waiver": { "$ref": "#/definitions/QAWaiver" },
+        "evidenceDeterminations": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/QAEvidenceDetermination" },
+          "description": "Per-E_* evidence-row determinations, parallel to AEF evidence_determinations. Nothing is silently asserted: each row reports EXECUTED, READY_NOT_EXECUTED, or SKIPPED (with reasons and, for SKIPPED, an authority ref)."
+        },
         "metadata": { "type": "object" }
       },
       "description": "Per-gate evaluation result consumed by the workflow engine"
+    },
+    "QAEvidenceDetermination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceId", "determination"],
+      "properties": {
+        "evidenceId": {
+          "type": "string",
+          "pattern": "^E-[0-9]+$",
+          "description": "E_* row reference from the QA Contract"
+        },
+        "determination": {
+          "type": "string",
+          "enum": ["executed", "ready_not_executed", "skipped"],
+          "description": "Result-time determination for the row"
+        },
+        "artifactRef": {
+          "type": "string",
+          "description": "Feature-specific artifact that satisfies / would satisfy the row"
+        },
+        "params": { "type": "string" },
+        "prerequisites": { "type": "string" },
+        "reasons": {
+          "type": "string",
+          "description": "Mandatory unless determination is executed"
+        },
+        "authorityRef": {
+          "type": "string",
+          "description": "Required for skipped; references the recorded decision (Human Decision)"
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Evidence IDs backing this row"
+        }
+      },
+      "description": "Result-time determination for a contract E_* evidence row"
     }
   }
 }

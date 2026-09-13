@@ -105,7 +105,12 @@
           "default": true
         }
       },
-      "description": "Criteria for overall QA pass/fail"
+      "description": "Criteria for overall QA pass/fail. Enforcement follows AEF QA_GOVERNANCE.md 'Evidence Rows & Determinations': a SKIPPED-by-authority required gate is respected (not a FAIL), a NOT_EXECUTED required gate is not silently passed or silently blocking (a determination path is surfaced), and a permanently-unrunnable REQUIRED row must be formally determined rather than left latent."
+    },
+    "evidenceRows": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/QAEvidenceRow" },
+      "description": "First-class E_* evidence rows declared by the QA Architect at contract time, each binding a contract-mandated evidence requirement to the feature-specific artifact(s), run params, and prerequisites that will satisfy it."
     },
     "createdAt": {
       "type": "string",
@@ -120,6 +125,65 @@
     "metadata": {
       "type": "object",
       "description": "Extensible metadata"
+    }
+  },
+  "definitions": {
+    "QAEvidenceRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceId", "requirement", "testMethod", "contractDetermination"],
+      "properties": {
+        "evidenceId": {
+          "type": "string",
+          "pattern": "^E-[0-9]+$",
+          "description": "E_* row identifier, unique within the contract (e.g., E-01)"
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable title of the requirement the row evidences"
+        },
+        "scope": {
+          "type": "string",
+          "description": "Scope of the evidenced requirement"
+        },
+        "requirement": {
+          "type": "string",
+          "enum": ["required", "optional", "not_applicable"],
+          "description": "Whether this evidence row is required, optional, or not applicable"
+        },
+        "testMethod": {
+          "type": "string",
+          "enum": ["automated", "visual", "human", "combined"],
+          "description": "Execution method for the row"
+        },
+        "artifactRef": {
+          "type": "string",
+          "description": "Feature-specific artifact/file/URL that satisfies this row"
+        },
+        "params": {
+          "type": "string",
+          "description": "Run parameters the artifact needs (e.g., --dart-define=E2E_VERIFICATION_CODE)"
+        },
+        "prerequisites": {
+          "type": "string",
+          "description": "Runnable-lane facts the row depends on (CI device job, headless device, services, credentials, platform)"
+        },
+        "traceabilityRefs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Requirements/design refs the row evidences"
+        },
+        "contractDetermination": {
+          "type": "string",
+          "enum": ["expected_to_execute", "contingent", "skipped_by_contract"],
+          "description": "Contract-time determination declared at freeze"
+        },
+        "determinationReasons": {
+          "type": "string",
+          "description": "Mandatory prose when contractDetermination is not expected_to_execute"
+        }
+      },
+      "description": "A contract-mandated E_* evidence row binding a requirement to the feature-specific artifact, params, and prerequisites that will satisfy it. A REQUIRED row must reach EXECUTED or a formal SKIPPED; an OPTIONAL/NOT_APPLICABLE row may rest at READY_NOT_EXECUTED."
     }
   }
 }

@@ -4,6 +4,7 @@ export 'src/enums/workflow_state.dart';
 export 'src/enums/work_item_category.dart';
 export 'src/enums/worker_capability.dart';
 export 'src/enums/qa_gate_status.dart';
+export 'src/enums/qa_semantics.dart';
 export 'src/enums/deployment_status.dart';
 export 'src/enums/agent_session_status.dart';
 export 'src/enums/agent_result_status.dart';

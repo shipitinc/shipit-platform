@@ -7,6 +7,8 @@ export 'package:platform_contracts/platform_contracts.dart'
         QAGateResult,
         QAGateStatus,
         QAEvidence,
+        QAEvidenceDetermination,
+        EvidenceDetermination,
         QAPassCriteria,
         QAWaiver,
         WorkItemCategory,

@@ -45,6 +45,9 @@ QAGateResult _$QAGateResultFromJson(Map<String, dynamic> json) => QAGateResult(
   waiver: json['waiver'] == null
       ? null
       : QAWaiver.fromJson(json['waiver'] as Map<String, dynamic>),
+  evidenceDeterminations: (json['evidenceDeterminations'] as List<dynamic>?)
+      ?.map((e) => QAEvidenceDetermination.fromJson(e as Map<String, dynamic>))
+      .toList(),
   metadata: json['metadata'] as Map<String, dynamic>?,
 );
 
@@ -58,7 +61,42 @@ Map<String, dynamic> _$QAGateResultToJson(
   'evaluatedAt': instance.evaluatedAt.toIso8601String(),
   if (instance.passedAt?.toIso8601String() case final value?) 'passedAt': value,
   if (instance.waiver?.toJson() case final value?) 'waiver': value,
+  if (instance.evidenceDeterminations?.map((e) => e.toJson()).toList()
+      case final value?)
+    'evidenceDeterminations': value,
   if (instance.metadata case final value?) 'metadata': value,
+};
+
+QAEvidenceDetermination _$QAEvidenceDeterminationFromJson(
+  Map<String, dynamic> json,
+) => QAEvidenceDetermination(
+  evidenceId: json['evidenceId'] as String,
+  determination: _evidenceDeterminationFromJson(
+    json['determination'] as String,
+  ),
+  artifactRef: json['artifactRef'] as String?,
+  params: json['params'] as String?,
+  prerequisites: json['prerequisites'] as String?,
+  reasons: json['reasons'] as String?,
+  authorityRef: json['authorityRef'] as String?,
+  evidenceRefs:
+      (json['evidenceRefs'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList() ??
+      const [],
+);
+
+Map<String, dynamic> _$QAEvidenceDeterminationToJson(
+  QAEvidenceDetermination instance,
+) => <String, dynamic>{
+  'evidenceId': instance.evidenceId,
+  'determination': _evidenceDeterminationToJson(instance.determination),
+  if (instance.artifactRef case final value?) 'artifactRef': value,
+  if (instance.params case final value?) 'params': value,
+  if (instance.prerequisites case final value?) 'prerequisites': value,
+  if (instance.reasons case final value?) 'reasons': value,
+  if (instance.authorityRef case final value?) 'authorityRef': value,
+  'evidenceRefs': instance.evidenceRefs,
 };
 
 QAWaiver _$QAWaiverFromJson(Map<String, dynamic> json) => QAWaiver(

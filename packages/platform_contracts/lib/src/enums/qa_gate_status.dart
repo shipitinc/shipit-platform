@@ -1,1 +1,10 @@
-enum QAGateStatus { pending, running, passed, failed, waived, skipped }
+enum QAGateStatus {
+  pending,
+  running,
+  passed,
+  failed,
+  waived,
+  skipped,
+  notExecuted,
+  notApplicable,
+}

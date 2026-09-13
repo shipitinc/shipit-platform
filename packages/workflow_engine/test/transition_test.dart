@@ -285,6 +285,146 @@ void main() {
       );
     });
 
+    test(
+      'rejects qaInProgress -> qaPassed when required gate is not_executed',
+      () {
+        final gateResults = [
+          QAGateResult(
+            gateId: 'e2e',
+            workItemId: 'wi-1',
+            status: QAGateStatus.notExecuted,
+            evidence: [],
+            evaluatedAt: DateTime.now(),
+            evidenceDeterminations: [
+              QAEvidenceDetermination(
+                evidenceId: 'E-01',
+                determination: EvidenceDetermination.readyNotExecuted,
+                reasons: 'Headless iOS device job not yet provisioned',
+              ),
+            ],
+          ),
+        ];
+
+        final qaContract = QAContract(
+          contractId: 'qa-1',
+          workItemCategory: WorkItemCategory.feature,
+          gates: [
+            QAGateDefinition(
+              gateId: 'e2e',
+              type: 'integration-tests',
+              required: true,
+              config: {},
+              evidenceTypes: ['test-report'],
+            ),
+          ],
+          version: '1.0.0',
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+
+        final context = {'gateResults': gateResults, 'qaContract': qaContract};
+
+        expect(
+          () => engine.transitionWorkItem(
+            WorkItemState.qaInProgress,
+            WorkItemState.qaPassed,
+            TransitionTrigger.systemEvent,
+            context,
+          ),
+          throwsA(isA<InvalidTransitionException>()),
+        );
+      },
+    );
+
+    test('allows qaInProgress -> qaPassed when required gate is N/A', () {
+      final gateResults = [
+        QAGateResult(
+          gateId: 'visual',
+          workItemId: 'wi-1',
+          status: QAGateStatus.notApplicable,
+          evidence: [],
+          evaluatedAt: DateTime.now(),
+        ),
+      ];
+
+      final qaContract = QAContract(
+        contractId: 'qa-1',
+        workItemCategory: WorkItemCategory.feature,
+        gates: [
+          QAGateDefinition(
+            gateId: 'visual',
+            type: 'static-analysis',
+            required: true,
+            config: {},
+            evidenceTypes: ['accessibility-report'],
+          ),
+        ],
+        version: '1.0.0',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      final context = {'gateResults': gateResults, 'qaContract': qaContract};
+
+      final transition = engine.transitionWorkItem(
+        WorkItemState.qaInProgress,
+        WorkItemState.qaPassed,
+        TransitionTrigger.systemEvent,
+        context,
+      );
+
+      expect(transition.isValid, isTrue);
+    });
+
+    test('allows qaInProgress -> qaPassed when required gate is skipped with '
+        'an authority ref', () {
+      final gateResults = [
+        QAGateResult(
+          gateId: 'e2e',
+          workItemId: 'wi-1',
+          status: QAGateStatus.skipped,
+          evidence: [],
+          evaluatedAt: DateTime.now(),
+          evidenceDeterminations: [
+            QAEvidenceDetermination(
+              evidenceId: 'E-01',
+              determination: EvidenceDetermination.skipped,
+              reasons: 'Manual e2e charter covers this journey',
+              authorityRef: 'decision-123',
+            ),
+          ],
+        ),
+      ];
+
+      final qaContract = QAContract(
+        contractId: 'qa-1',
+        workItemCategory: WorkItemCategory.feature,
+        gates: [
+          QAGateDefinition(
+            gateId: 'e2e',
+            type: 'integration-tests',
+            required: true,
+            config: {},
+            evidenceTypes: ['test-report'],
+          ),
+        ],
+        version: '1.0.0',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      final context = {'gateResults': gateResults, 'qaContract': qaContract};
+
+      final transition = engine.transitionWorkItem(
+        WorkItemState.qaInProgress,
+        WorkItemState.qaPassed,
+        TransitionTrigger.systemEvent,
+        context,
+      );
+
+      expect(transition.isValid, isTrue);
+    });
+
     test('allows qaFailed -> qaPassed with waiver decision', () {
       final decision = HumanDecision(
         decisionId: 'dec-2',

@@ -158,6 +158,72 @@ void main() {
         _expectValid(_loadSchema('qa_pass_criteria'), criteria.toJson());
       },
     );
+
+    test('QAContract.toJson() conforms to qa_contract.schema.json', () {
+      final contract = QAContract(
+        contractId: '123e4567-e89b-12d3-a456-42661417400a',
+        workItemCategory: WorkItemCategory.feature,
+        gates: [
+          QAGateDefinition(
+            gateId: 'e2e',
+            type: 'integration-tests',
+            required: true,
+            config: {'device': 'headless'},
+            evidenceTypes: ['test-report'],
+          ),
+        ],
+        version: '1.0.0',
+        createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
+        updatedAt: DateTime.parse('2024-01-01T00:00:00Z'),
+        evidenceRows: [
+          QAEvidenceRow(
+            evidenceId: 'E-01',
+            title: 'App journey e2e',
+            requirement: EvidenceRowRequirement.required,
+            testMethod: TestMethod.automated,
+            artifactRef: 'apps/app/integration_test/app_journey_test.dart',
+            params: '--dart-define=E2E_VERIFICATION_CODE',
+            prerequisites: 'headless-device-job:ios',
+            traceabilityRefs: ['REQ-01'],
+            contractDetermination: ContractDetermination.expectedToExecute,
+          ),
+        ],
+      );
+
+      _expectValid(_loadSchema('qa_contract'), contract.toJson());
+    });
+
+    test('QAGateResult.toJson() conforms to qa_evidence.schema.json across '
+        'AEF-aligned statuses and determinations', () {
+      final result = QAGateResult(
+        gateId: 'static-analysis',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        status: QAGateStatus.notExecuted,
+        evidence: const [],
+        evaluatedAt: DateTime.parse('2024-01-02T10:00:00Z'),
+        evidenceDeterminations: [
+          QAEvidenceDetermination(
+            evidenceId: 'E-01',
+            determination: EvidenceDetermination.readyNotExecuted,
+            artifactRef: 'artifacts/static-analysis.json',
+            reasons: 'Analyzer lane not yet run',
+          ),
+          QAEvidenceDetermination(
+            evidenceId: 'E-02',
+            determination: EvidenceDetermination.skipped,
+            reasons: 'No DEX scan baseline in CI',
+            authorityRef: '123e4567-e89b-12d3-a456-42661417400b',
+          ),
+        ],
+        metadata: {'note': 'conformance smoke test'},
+      );
+
+      final gateResultSchema = _loadSchema(
+        'qa_evidence',
+      ).definitions['QAGateResult'];
+      expect(gateResultSchema, isNotNull);
+      _expectValid(gateResultSchema!, result.toJson());
+    });
   });
 
   group('Invalid enum values are rejected', () {
@@ -227,6 +293,30 @@ void main() {
             'decisionType': 'qa_waiver',
             'choice': 'maybe',
           }),
+          throwsFormatException,
+        );
+      },
+    );
+
+    test('QAGateResult.fromJson rejects an unknown gate status', () {
+      final json = {
+        'gateId': 'static-analysis',
+        'workItemId': '123e4567-e89b-12d3-a456-426614174001',
+        'status': 'not_a_status',
+        'evidence': <Object>[],
+        'evaluatedAt': '2024-01-02T10:00:00Z',
+      };
+
+      expect(() => QAGateResult.fromJson(json), throwsFormatException);
+    });
+
+    test(
+      'QAEvidenceDetermination.fromJson rejects an unknown determination',
+      () {
+        final json = {'evidenceId': 'E-01', 'determination': 'unknown'};
+
+        expect(
+          () => QAEvidenceDetermination.fromJson(json),
           throwsFormatException,
         );
       },
