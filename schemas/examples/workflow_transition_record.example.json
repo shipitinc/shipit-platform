@@ -1,0 +1,18 @@
+{
+  "transitionId": "123e4567-e89b-12d3-a456-426614174040",
+  "workItemId": "123e4567-e89b-12d3-a456-426614174001",
+  "fromState": "planned",
+  "toState": "design_required",
+  "trigger": "system_event",
+  "actorType": "orchestrator",
+  "actorId": "orch-1",
+  "outcome": "accepted",
+  "guardEvaluations": [
+    {
+      "guardName": "design_contract_exists",
+      "passed": true
+    }
+  ],
+  "idempotencyKey": "tx-001",
+  "occurredAt": "2024-01-02T12:00:00Z"
+}

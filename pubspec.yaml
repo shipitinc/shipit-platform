@@ -9,6 +9,7 @@ environment:
 workspace:
   - packages/platform_contracts
   - packages/workflow_engine
+  - packages/workflow_store
   - packages/agent_runtime
   - packages/worker_protocol
   - packages/qa_orchestration

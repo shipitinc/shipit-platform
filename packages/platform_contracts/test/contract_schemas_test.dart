@@ -31,6 +31,8 @@ void main() {
       'human_decision',
       'deployment_artifact',
       'qa_pass_criteria',
+      'workflow_transition_record',
+      'artifact_reference',
     ];
 
     for (final name in schemas) {
@@ -83,8 +85,10 @@ void main() {
     test('HumanDecision.toJson() conforms to human_decision.schema.json', () {
       final decision = HumanDecision(
         decisionId: '123e4567-e89b-12d3-a456-426614174002',
-        workflowId: '123e4567-e89b-12d3-a456-426614174001',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
         decisionType: HumanDecisionType.qaWaiver,
+        status: HumanDecisionStatus.resolved,
+        question: 'Accept the known issue and waive the failing gate?',
         decider: 'alice@example.com',
         choice: HumanDecisionChoice.waive,
         rationale: 'Known issue, accepting risk',
@@ -95,10 +99,41 @@ void main() {
           signature: 'base64sig',
           signedAt: DateTime.parse('2024-01-02T12:00:01Z'),
         ),
+        requestedAt: DateTime.parse('2024-01-02T11:00:00Z'),
+        updatedAt: DateTime.parse('2024-01-02T12:00:00Z'),
       );
 
       _expectValid(_loadSchema('human_decision'), decision.toJson());
     });
+
+    test(
+      'pending HumanDecision.toJson() conforms to human_decision.schema.json',
+      () {
+        final decision = HumanDecision(
+          decisionId: '123e4567-e89b-12d3-a456-426614174002',
+          workItemId: '123e4567-e89b-12d3-a456-426614174001',
+          decisionType: HumanDecisionType.engineeringReview,
+          status: HumanDecisionStatus.pending,
+          question: 'Approve the implementation?',
+          options: [
+            HumanDecisionOption(
+              optionId: 'approve',
+              label: 'Approve',
+              recommended: true,
+            ),
+            const HumanDecisionOption(optionId: 'rework', label: 'Rework'),
+          ],
+          recommendation: 'approve',
+          requestedAt: DateTime.parse('2024-01-02T11:00:00Z'),
+          updatedAt: DateTime.parse('2024-01-02T11:00:00Z'),
+        );
+
+        final json = decision.toJson();
+        expect(json.containsKey('choice'), isFalse);
+        expect(json.containsKey('signature'), isFalse);
+        _expectValid(_loadSchema('human_decision'), json);
+      },
+    );
 
     test(
       'DeploymentArtifact.toJson() conforms to deployment_artifact.schema.json',
@@ -224,6 +259,43 @@ void main() {
       expect(gateResultSchema, isNotNull);
       _expectValid(gateResultSchema!, result.toJson());
     });
+
+    test('WorkflowTransitionRecord.toJson() conforms to '
+        'workflow_transition_record.schema.json', () {
+      final record = WorkflowTransitionRecord(
+        transitionId: '123e4567-e89b-12d3-a456-426614174040',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        fromState: WorkItemState.planned,
+        toState: WorkItemState.designRequired,
+        trigger: TransitionTrigger.systemEvent,
+        actorType: ActorType.orchestrator,
+        actorId: 'orch-1',
+        outcome: TransitionOutcome.accepted,
+        occurredAt: DateTime.parse('2024-01-02T12:00:00Z'),
+        guardEvaluations: [
+          const TransitionGuardEvaluation(
+            guardName: 'design_contract_exists',
+            passed: true,
+          ),
+        ],
+      );
+
+      _expectValid(_loadSchema('workflow_transition_record'), record.toJson());
+    });
+
+    test(
+      'ArtifactReference.toJson() conforms to artifact_reference.schema.json',
+      () {
+        final ref = ArtifactReference(
+          artifactId: '123e4567-e89b-12d3-a456-426614174030',
+          artifactType: ArtifactType.qaEvidence,
+          uri: 'artifacts/static-analysis.json',
+          createdAt: DateTime.parse('2024-01-02T10:00:00Z'),
+        );
+
+        _expectValid(_loadSchema('artifact_reference'), ref.toJson());
+      },
+    );
   });
 
   group('Invalid enum values are rejected', () {
@@ -267,23 +339,30 @@ void main() {
       () {
         final base = {
           'decisionId': '123e4567-e89b-12d3-a456-426614174002',
-          'workflowId': '123e4567-e89b-12d3-a456-426614174001',
-          'decider': 'alice@example.com',
-          'rationale': 'why',
-          'timestamp': '2024-01-02T12:00:00Z',
-          'signature': {
-            'algorithm': 'Ed25519',
-            'publicKey': 'key',
-            'signature': 'sig',
-            'signedAt': '2024-01-02T12:00:01Z',
-          },
+          'workItemId': '123e4567-e89b-12d3-a456-426614174001',
+          'status': 'pending',
+          'updatedAt': '2024-01-02T12:00:00Z',
         };
 
         expect(
+          () => HumanDecision.fromJson({...base, 'decisionType': 'not_a_type'}),
+          throwsFormatException,
+        );
+        expect(
           () => HumanDecision.fromJson({
             ...base,
-            'decisionType': 'not_a_type',
-            'choice': 'approve',
+            'decisionType': 'qa_waiver',
+            'status': 'resolved',
+            'choice': 'maybe',
+            'decider': 'alice@example.com',
+            'rationale': 'why',
+            'timestamp': '2024-01-02T12:00:00Z',
+            'signature': {
+              'algorithm': 'Ed25519',
+              'publicKey': 'key',
+              'signature': 'sig',
+              'signedAt': '2024-01-02T12:00:01Z',
+            },
           }),
           throwsFormatException,
         );
@@ -291,7 +370,7 @@ void main() {
           () => HumanDecision.fromJson({
             ...base,
             'decisionType': 'qa_waiver',
-            'choice': 'maybe',
+            'status': 'not_a_status',
           }),
           throwsFormatException,
         );

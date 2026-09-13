@@ -4,14 +4,21 @@ import '../states/workflow_state.dart';
 import 'transition_validator.dart';
 
 class GuardConditions {
+  static GuardCondition<WorkItemState> actorAllowed(
+    Iterable<ActorType> allowed,
+  ) => _ActorAllowedGuard(allowed.toSet());
+
+  static GuardCondition<WorkItemState> actorIsNotSelf() =>
+      _ActorIsNotSelfGuard();
+
   static GuardCondition<WorkItemState> designContractExists() =>
       _DesignContractExistsGuard();
 
-  static GuardCondition<WorkItemState> humanDecisionApproved() =>
-      _HumanDecisionApprovedGuard();
+  static GuardCondition<WorkItemState> designContractUnderReview() =>
+      _DesignContractUnderReviewGuard();
 
-  static GuardCondition<WorkItemState> humanDecisionRejected() =>
-      _HumanDecisionRejectedGuard();
+  static GuardCondition<WorkItemState> planningEvidenceProvided() =>
+      _PlanningEvidenceProvidedGuard();
 
   static GuardCondition<WorkItemState> agentAvailable() =>
       _AgentAvailableGuard();
@@ -30,14 +37,81 @@ class GuardConditions {
   static GuardCondition<WorkItemState> humanApprovalForProduction() =>
       _HumanApprovalForProductionGuard();
 
-  static GuardCondition<WorkItemState> waiverDecisionExists() =>
-      _WaiverDecisionExistsGuard();
+  /// The work item must reference a pending/in-progress blocking human
+  /// decision of one of [types] with the matching workItemId.
+  static GuardCondition<WorkItemState> blockingHumanDecisionPendingOfType(
+    Iterable<HumanDecisionType> types,
+  ) => _BlockingHumanDecisionPendingGuard(types.toSet());
 
-  static GuardCondition<WorkItemState> reworkDecisionExists() =>
-      _ReworkDecisionExistsGuard();
+  /// The blocking human decision must be resolved with one of the exact
+  /// (decisionType, choice) pairs in [allowed] and must target the same work
+  /// item being transitioned.
+  static GuardCondition<WorkItemState> blockingHumanDecisionResolved(
+    Set<({HumanDecisionType type, HumanDecisionChoice choice})> allowed,
+  ) => _BlockingHumanDecisionResolvedGuard(allowed);
 
-  static GuardCondition<WorkItemState> rejectDecisionExists() =>
-      _RejectDecisionExistsGuard();
+  static GuardCondition<WorkItemState> decisionActorIsHuman() =>
+      _DecisionActorIsHumanGuard();
+}
+
+WorkflowActor? _actorOf(Map<String, dynamic>? context) =>
+    context?['actor'] as WorkflowActor?;
+
+HumanDecision? _decisionOf(Map<String, dynamic>? context) =>
+    context?['humanDecision'] as HumanDecision?;
+
+class _ActorAllowedGuard extends GuardCondition<WorkItemState> {
+  _ActorAllowedGuard(this.allowed);
+
+  final Set<ActorType> allowed;
+
+  @override
+  String get name => 'actor_allowed';
+
+  @override
+  GuardResult evaluate(
+    WorkflowState<WorkItemState> from,
+    WorkflowState<WorkItemState> to,
+    Map<String, dynamic>? context,
+  ) {
+    final actor = _actorOf(context);
+    if (actor == null || !allowed.contains(actor.actorType)) {
+      final seen = actor?.actorType.name ?? 'none';
+      return GuardResult.fail(
+        name,
+        'Actor $seen is not authorized for ${from.value} -> ${to.value}',
+      );
+    }
+    return GuardResult.pass(name);
+  }
+}
+
+class _ActorIsNotSelfGuard extends GuardCondition<WorkItemState> {
+  @override
+  String get name => 'actor_not_self';
+
+  @override
+  GuardResult evaluate(
+    WorkflowState<WorkItemState> from,
+    WorkflowState<WorkItemState> to,
+    Map<String, dynamic>? context,
+  ) {
+    final actor = _actorOf(context);
+    final producer = context?['producerActorId'] as String?;
+    if (producer == null) {
+      return GuardResult.fail(
+        name,
+        'Producer identity required to enforce no-self-approval',
+      );
+    }
+    if (actor != null && actor.actorId == producer) {
+      return GuardResult.fail(
+        name,
+        'Actor $producer cannot review or approve their own work',
+      );
+    }
+    return GuardResult.pass(name);
+  }
 }
 
 class _DesignContractExistsGuard extends GuardCondition<WorkItemState> {
@@ -55,14 +129,14 @@ class _DesignContractExistsGuard extends GuardCondition<WorkItemState> {
         ? GuardResult.pass(name)
         : GuardResult.fail(
             name,
-            'Design contract must exist before transitioning to design_in_review',
+            'Design contract must exist before design work is routed',
           );
   }
 }
 
-class _HumanDecisionApprovedGuard extends GuardCondition<WorkItemState> {
+class _DesignContractUnderReviewGuard extends GuardCondition<WorkItemState> {
   @override
-  String get name => 'human_decision_approved';
+  String get name => 'design_contract_under_review';
 
   @override
   GuardResult evaluate(
@@ -70,17 +144,19 @@ class _HumanDecisionApprovedGuard extends GuardCondition<WorkItemState> {
     WorkflowState<WorkItemState> to,
     Map<String, dynamic>? context,
   ) {
-    final decision = context?['humanDecision'] as HumanDecision?;
-    final approved = decision?.choice == HumanDecisionChoice.approve;
-    return approved
+    final status = context?['designContractStatus'] as DesignContractStatus?;
+    return status == DesignContractStatus.underReview
         ? GuardResult.pass(name)
-        : GuardResult.fail(name, 'Human decision must be "approve"');
+        : GuardResult.fail(
+            name,
+            'Design contract must be under review before design review starts',
+          );
   }
 }
 
-class _HumanDecisionRejectedGuard extends GuardCondition<WorkItemState> {
+class _PlanningEvidenceProvidedGuard extends GuardCondition<WorkItemState> {
   @override
-  String get name => 'human_decision_rejected';
+  String get name => 'planning_evidence_provided';
 
   @override
   GuardResult evaluate(
@@ -88,11 +164,14 @@ class _HumanDecisionRejectedGuard extends GuardCondition<WorkItemState> {
     WorkflowState<WorkItemState> to,
     Map<String, dynamic>? context,
   ) {
-    final decision = context?['humanDecision'] as HumanDecision?;
-    final rejected = decision?.choice == HumanDecisionChoice.reject;
-    return rejected
+    final hasEvidence =
+        context?['featureRef'] != null || context?['requirementRef'] != null;
+    return hasEvidence
         ? GuardResult.pass(name)
-        : GuardResult.fail(name, 'Human decision must be "reject"');
+        : GuardResult.fail(
+            name,
+            'Planning requires featureRef or requirementRef traceability',
+          );
   }
 }
 
@@ -151,7 +230,7 @@ class _QAContractExistsGuard extends GuardCondition<WorkItemState> {
         ? GuardResult.pass(name)
         : GuardResult.fail(
             name,
-            'QA contract must exist for this work item category',
+            'QA contract must exist before implementation completes',
           );
   }
 }
@@ -254,7 +333,7 @@ class _HumanApprovalForProductionGuard extends GuardCondition<WorkItemState> {
       return GuardResult.pass(name);
     }
 
-    final decision = context?['humanDecision'] as HumanDecision?;
+    final decision = _decisionOf(context);
     final approved =
         decision?.choice == HumanDecisionChoice.approve &&
         decision?.decisionType == HumanDecisionType.deploymentApproval;
@@ -262,14 +341,19 @@ class _HumanApprovalForProductionGuard extends GuardCondition<WorkItemState> {
         ? GuardResult.pass(name)
         : GuardResult.fail(
             name,
-            'Production deployment requires human approval',
+            'Production deployment requires human approval via the '
+            'waiting_for_human_decision gate',
           );
   }
 }
 
-class _WaiverDecisionExistsGuard extends GuardCondition<WorkItemState> {
+class _BlockingHumanDecisionPendingGuard extends GuardCondition<WorkItemState> {
+  _BlockingHumanDecisionPendingGuard(this.allowedTypes);
+
+  final Set<HumanDecisionType> allowedTypes;
+
   @override
-  String get name => 'waiver_decision_exists';
+  String get name => 'blocking_human_decision_pending';
 
   @override
   GuardResult evaluate(
@@ -277,22 +361,33 @@ class _WaiverDecisionExistsGuard extends GuardCondition<WorkItemState> {
     WorkflowState<WorkItemState> to,
     Map<String, dynamic>? context,
   ) {
-    final decision = context?['humanDecision'] as HumanDecision?;
-    final isWaiver =
-        decision?.choice == HumanDecisionChoice.waive &&
-        decision?.decisionType == HumanDecisionType.qaWaiver;
-    return isWaiver
+    final decision = _decisionOf(context);
+    final workItemId = context?['workItemId'] as String?;
+
+    final matches =
+        decision != null &&
+        !decision.status.isResolved &&
+        decision.blocking != false &&
+        allowedTypes.contains(decision.decisionType) &&
+        (workItemId == null || decision.workItemId == workItemId);
+    return matches
         ? GuardResult.pass(name)
         : GuardResult.fail(
             name,
-            'QA waiver requires human decision with choice "waive"',
+            'A pending blocking human decision of an allowed type for this '
+            'work item is required before entering the human decision gate',
           );
   }
 }
 
-class _ReworkDecisionExistsGuard extends GuardCondition<WorkItemState> {
+class _BlockingHumanDecisionResolvedGuard
+    extends GuardCondition<WorkItemState> {
+  _BlockingHumanDecisionResolvedGuard(this.allowed);
+
+  final Set<({HumanDecisionType type, HumanDecisionChoice choice})> allowed;
+
   @override
-  String get name => 'rework_decision_exists';
+  String get name => 'blocking_human_decision_resolved';
 
   @override
   GuardResult evaluate(
@@ -300,22 +395,40 @@ class _ReworkDecisionExistsGuard extends GuardCondition<WorkItemState> {
     WorkflowState<WorkItemState> to,
     Map<String, dynamic>? context,
   ) {
-    final decision = context?['humanDecision'] as HumanDecision?;
-    final isRework =
-        decision?.choice == HumanDecisionChoice.rework &&
-        decision?.decisionType == HumanDecisionType.qaRework;
-    return isRework
-        ? GuardResult.pass(name)
-        : GuardResult.fail(
-            name,
-            'QA rework requires human decision with choice "rework"',
-          );
+    final decision = _decisionOf(context);
+    final workItemId = context?['workItemId'] as String?;
+
+    final expired =
+        decision != null &&
+        decision.expiration != null &&
+        (decision.timestamp == null ||
+            !decision.timestamp!.isBefore(decision.expiration!));
+
+    final matchesResolution =
+        decision != null &&
+        decision.status.isResolved &&
+        !expired &&
+        (workItemId == null || decision.workItemId == workItemId) &&
+        decision.choice != null &&
+        allowed.contains((
+          type: decision.decisionType,
+          choice: decision.choice!,
+        ));
+
+    if (!matchesResolution) {
+      return GuardResult.fail(
+        name,
+        'Blocking human decision must be resolved with an allowed '
+        '(type, choice) pairing for the same work item',
+      );
+    }
+    return GuardResult.pass(name);
   }
 }
 
-class _RejectDecisionExistsGuard extends GuardCondition<WorkItemState> {
+class _DecisionActorIsHumanGuard extends GuardCondition<WorkItemState> {
   @override
-  String get name => 'reject_decision_exists';
+  String get name => 'decision_actor_is_human';
 
   @override
   GuardResult evaluate(
@@ -323,15 +436,12 @@ class _RejectDecisionExistsGuard extends GuardCondition<WorkItemState> {
     WorkflowState<WorkItemState> to,
     Map<String, dynamic>? context,
   ) {
-    final decision = context?['humanDecision'] as HumanDecision?;
-    final isReject =
-        decision?.choice == HumanDecisionChoice.reject &&
-        decision?.decisionType == HumanDecisionType.qaRework;
-    return isReject
+    final decision = _decisionOf(context);
+    return (decision?.decider != null)
         ? GuardResult.pass(name)
         : GuardResult.fail(
             name,
-            'QA rework requires human decision with choice "reject"',
+            'A resolved decision must be signed by a human decider',
           );
   }
 }

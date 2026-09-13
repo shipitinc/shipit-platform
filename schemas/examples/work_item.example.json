@@ -4,7 +4,10 @@
   "category": "feature",
   "title": "Add login feature",
   "state": "design_in_review",
+  "version": 4,
   "designContractId": "123e4567-e89b-12d3-a456-42661417400a",
+  "featureRef": "FEAT-PROGRAM-CREATE-001",
+  "requirementRef": "REQ-01",
   "createdAt": "2024-01-01T00:00:00Z",
   "updatedAt": "2024-01-02T00:00:00Z"
 }

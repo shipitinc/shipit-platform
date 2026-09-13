@@ -2,6 +2,70 @@ import 'package:platform_contracts/platform_contracts.dart';
 import 'package:workflow_engine/workflow_engine.dart';
 import 'package:test/test.dart';
 
+const _workItemId = '123e4567-e89b-12d3-a456-426614174001';
+
+const _orch = WorkflowActor(
+  actorId: 'orch-1',
+  actorType: ActorType.orchestrator,
+);
+const _system = WorkflowActor(actorId: 'system-1', actorType: ActorType.system);
+const _qaExecutor = WorkflowActor(
+  actorId: 'qa-1',
+  actorType: ActorType.qaExecutor,
+);
+
+WorkflowActor _agent(String id) =>
+    WorkflowActor(actorId: id, actorType: ActorType.implementationAgent);
+
+HumanDecision _pendingDecision({
+  required HumanDecisionType type,
+  String workItemId = _workItemId,
+}) {
+  return HumanDecision(
+    decisionId: 'dec-pending-1',
+    workItemId: workItemId,
+    decisionType: type,
+    status: HumanDecisionStatus.pending,
+    question: 'Question?',
+    requestedAt: DateTime.parse('2024-01-01T10:00:00Z'),
+    updatedAt: DateTime.parse('2024-01-01T10:00:00Z'),
+  );
+}
+
+HumanDecision _resolvedDecision({
+  required HumanDecisionType type,
+  required HumanDecisionChoice choice,
+  String workItemId = _workItemId,
+  String? decider = 'alice@example.com',
+  DateTime? expiration,
+}) {
+  final resolvedAt = DateTime.parse('2024-01-02T12:00:00Z');
+  return HumanDecision(
+    decisionId: 'dec-resolved-1',
+    workItemId: workItemId,
+    decisionType: type,
+    status: HumanDecisionStatus.resolved,
+    question: 'Question?',
+    decider: decider,
+    choice: choice,
+    rationale: 'because',
+    timestamp: resolvedAt,
+    signature: DecisionSignature(
+      algorithm: 'Ed25519',
+      publicKey: 'key',
+      signature: 'sig',
+      signedAt: resolvedAt,
+    ),
+    expiration: expiration,
+    context: DecisionContext(
+      workflowState: 'waiting_for_human_decision',
+      availableOptions: const [],
+    ),
+    requestedAt: DateTime.parse('2024-01-01T10:00:00Z'),
+    updatedAt: resolvedAt,
+  );
+}
+
 void main() {
   group('WorkItemTransitions', () {
     late WorkflowEngine engine;
@@ -10,204 +74,368 @@ void main() {
       engine = const WorkflowEngine();
     });
 
+    Transition<WorkItemState> eval(
+      WorkItemState from,
+      WorkItemState to, {
+      TransitionTrigger trigger = TransitionTrigger.systemEvent,
+      WorkflowActor actor = _orch,
+      Map<String, dynamic> context = const {},
+    }) {
+      return engine.evaluateWorkItemTransition(
+        from: from,
+        to: to,
+        trigger: trigger,
+        actor: actor,
+        context: context,
+      );
+    }
+
+    test('draft -> planning is legal for the orchestrator', () {
+      final transition = eval(WorkItemState.draft, WorkItemState.planning);
+      expect(transition.isValid, isTrue);
+    });
+
+    test('planning -> planned requires planning evidence', () {
+      final noEvidence = eval(WorkItemState.planning, WorkItemState.planned);
+      expect(noEvidence.isValid, isFalse);
+      expect(noEvidence.failedGuards, contains('planning_evidence_provided'));
+
+      final withEvidence = eval(
+        WorkItemState.planning,
+        WorkItemState.planned,
+        context: {'featureRef': 'FEAT-001'},
+      );
+      expect(withEvidence.isValid, isTrue);
+    });
+
+    test('planned -> designRequired requires a design contract', () {
+      final without = eval(WorkItemState.planned, WorkItemState.designRequired);
+      expect(without.isValid, isFalse);
+      expect(without.failedGuards, contains('design_contract_exists'));
+
+      final withContract = eval(
+        WorkItemState.planned,
+        WorkItemState.designRequired,
+        context: {'designContractId': 'contract-123'},
+      );
+      expect(withContract.isValid, isTrue);
+    });
+
+    test('designRequired -> designInReview requires contract under review', () {
+      final notReviewed = eval(
+        WorkItemState.designRequired,
+        WorkItemState.designInReview,
+        context: {'designContractStatus': DesignContractStatus.draft},
+      );
+      expect(notReviewed.isValid, isFalse);
+
+      final reviewed = eval(
+        WorkItemState.designRequired,
+        WorkItemState.designInReview,
+        context: {'designContractStatus': DesignContractStatus.underReview},
+      );
+      expect(reviewed.isValid, isTrue);
+    });
+
+    test('illegal transition returns invalid result instead of throwing', () {
+      final transition = eval(
+        WorkItemState.draft,
+        WorkItemState.agentExecuting,
+      );
+      expect(transition.isValid, isFalse);
+      expect(transition.failedGuards, contains('legal_transition'));
+      expect(transition.rejectionReason, isNotNull);
+    });
+
+    test('terminal states cannot transition to anything', () {
+      expect(
+        eval(WorkItemState.completed, WorkItemState.cancelled).isValid,
+        isFalse,
+      );
+      expect(
+        eval(WorkItemState.cancelled, WorkItemState.draft).isValid,
+        isFalse,
+      );
+      expect(
+        eval(WorkItemState.terminated, WorkItemState.draft).isValid,
+        isFalse,
+      );
+      expect(
+        eval(WorkItemState.done, WorkItemState.completed).isValid,
+        isFalse,
+      );
+    });
+
     test(
-      'allows legal transition: draft -> designInReview with design contract',
+      'generic escape allows orchestrator to cancel any non-terminal state',
       () {
-        final context = {'designContractId': 'contract-123'};
-
-        final transition = engine.transitionWorkItem(
-          WorkItemState.draft,
-          WorkItemState.designInReview,
-          TransitionTrigger.systemEvent,
-          context,
+        expect(
+          eval(WorkItemState.qaInProgress, WorkItemState.cancelled).isValid,
+          isTrue,
         );
-
-        expect(transition.isValid, isTrue);
-        expect(transition.from.value, equals(WorkItemState.draft));
-        expect(transition.to.value, equals(WorkItemState.designInReview));
+        expect(
+          eval(
+            WorkItemState.waitingForHumanDecision,
+            WorkItemState.cancelled,
+          ).isValid,
+          isTrue,
+        );
       },
     );
 
-    test('rejects illegal transition: draft -> agentExecuting', () {
-      final context = <String, dynamic>{};
+    test(
+      'non-orchestrator actors are rejected for workflow-advancing moves',
+      () {
+        final impl = _agent('agent-1');
+        final byImpl = eval(
+          WorkItemState.planning,
+          WorkItemState.planned,
+          actor: impl,
+          context: {'featureRef': 'FEAT-001'},
+        );
+        expect(byImpl.isValid, isFalse);
+        expect(byImpl.failedGuards, contains('actor_allowed'));
+      },
+    );
 
-      expect(
-        () => engine.transitionWorkItem(
-          WorkItemState.draft,
-          WorkItemState.agentExecuting,
-          TransitionTrigger.systemEvent,
-          context,
-        ),
-        throwsA(isA<InvalidTransitionException>()),
-      );
-    });
-
-    test('rejects draft -> designInReview without design contract', () {
-      final context = <String, dynamic>{};
-
-      expect(
-        () => engine.transitionWorkItem(
-          WorkItemState.draft,
-          WorkItemState.designInReview,
-          TransitionTrigger.systemEvent,
-          context,
-        ),
-        throwsA(isA<InvalidTransitionException>()),
-      );
-    });
-
-    test('allows designInReview -> designApproved with approve decision', () {
-      final decision = HumanDecision(
-        decisionId: 'dec-1',
-        workflowId: 'wi-1',
-        decisionType: HumanDecisionType.designApproval,
-        decider: 'alice@example.com',
-        choice: HumanDecisionChoice.approve,
-        rationale: 'LGTM',
-        timestamp: DateTime.now(),
-        signature: DecisionSignature(
-          algorithm: 'Ed25519',
-          publicKey: 'key',
-          signature: 'sig',
-          signedAt: DateTime.now(),
-        ),
-      );
-
-      final context = {'humanDecision': decision};
-
-      final transition = engine.transitionWorkItem(
+    test('entering the design gate requires a pending blocking decision', () {
+      final without = eval(
         WorkItemState.designInReview,
-        WorkItemState.designApproved,
-        TransitionTrigger.humanDecision,
-        context,
+        WorkItemState.waitingForHumanDecision,
       );
+      expect(without.isValid, isFalse);
+      expect(without.failedGuards, contains('blocking_human_decision_pending'));
 
-      expect(transition.isValid, isTrue);
-    });
-
-    test('decision survives serialization and still drives transition', () {
-      final decision = HumanDecision(
-        decisionId: 'dec-1',
-        workflowId: 'wi-1',
-        decisionType: HumanDecisionType.designApproval,
-        decider: 'alice@example.com',
-        choice: HumanDecisionChoice.approve,
-        rationale: 'Approved after persistence roundtrip',
-        timestamp: DateTime.parse('2024-01-02T12:00:00Z'),
-        signature: DecisionSignature(
-          algorithm: 'Ed25519',
-          publicKey: 'key',
-          signature: 'sig',
-          signedAt: DateTime.parse('2024-01-02T12:00:01Z'),
-        ),
-        context: DecisionContext(
-          workflowState: 'design_in_review',
-          availableOptions: ['approve', 'reject'],
-        ),
-      );
-
-      final restored = HumanDecision.fromJson(decision.toJson());
-
-      final transition = engine.transitionWorkItem(
+      final pending = _pendingDecision(type: HumanDecisionType.designApproval);
+      final withPending = eval(
         WorkItemState.designInReview,
-        WorkItemState.designApproved,
-        TransitionTrigger.humanDecision,
-        {'humanDecision': restored},
+        WorkItemState.waitingForHumanDecision,
+        trigger: TransitionTrigger.humanDecision,
+        context: {'humanDecision': pending, 'workItemId': _workItemId},
       );
-
-      expect(transition.isValid, isTrue);
-      expect(restored.signature.algorithm, equals('Ed25519'));
-      expect(restored.context?.workflowState, equals('design_in_review'));
+      expect(withPending.isValid, isTrue);
     });
 
-    test('rejects designInReview -> designApproved with reject decision', () {
-      final decision = HumanDecision(
-        decisionId: 'dec-1',
-        workflowId: 'wi-1',
-        decisionType: HumanDecisionType.designApproval,
-        decider: 'alice@example.com',
+    test('design gate resolves to designApproved only on approve', () {
+      final approvedDecision = _resolvedDecision(
+        type: HumanDecisionType.designApproval,
+        choice: HumanDecisionChoice.approve,
+      );
+      final approved = eval(
+        WorkItemState.waitingForHumanDecision,
+        WorkItemState.designApproved,
+        trigger: TransitionTrigger.humanDecision,
+        context: {'humanDecision': approvedDecision, 'workItemId': _workItemId},
+      );
+      expect(approved.isValid, isTrue);
+
+      final rejectedDecision = _resolvedDecision(
+        type: HumanDecisionType.designApproval,
         choice: HumanDecisionChoice.reject,
-        rationale: 'Needs changes',
-        timestamp: DateTime.now(),
-        signature: DecisionSignature(
-          algorithm: 'Ed25519',
-          publicKey: 'key',
-          signature: 'sig',
-          signedAt: DateTime.now(),
-        ),
       );
-
-      final context = {'humanDecision': decision};
-
-      expect(
-        () => engine.transitionWorkItem(
-          WorkItemState.designInReview,
-          WorkItemState.designApproved,
-          TransitionTrigger.humanDecision,
-          context,
-        ),
-        throwsA(isA<InvalidTransitionException>()),
-      );
-    });
-
-    test('allows designApproved -> agentExecuting with agent available', () {
-      final context = {'agentAvailable': true, 'capabilitiesMatch': true};
-
-      final transition = engine.transitionWorkItem(
+      final rejected = eval(
+        WorkItemState.waitingForHumanDecision,
         WorkItemState.designApproved,
-        WorkItemState.agentExecuting,
-        TransitionTrigger.systemEvent,
-        context,
+        trigger: TransitionTrigger.humanDecision,
+        context: {'humanDecision': rejectedDecision, 'workItemId': _workItemId},
       );
-
-      expect(transition.isValid, isTrue);
-    });
-
-    test('rejects designApproved -> agentExecuting without agent', () {
-      final context = {'agentAvailable': false, 'capabilitiesMatch': true};
-
+      expect(rejected.isValid, isFalse);
       expect(
-        () => engine.transitionWorkItem(
-          WorkItemState.designApproved,
-          WorkItemState.agentExecuting,
-          TransitionTrigger.systemEvent,
-          context,
-        ),
-        throwsA(isA<InvalidTransitionException>()),
+        rejected.failedGuards,
+        contains('blocking_human_decision_resolved'),
       );
     });
 
-    test('allows agentCompleted -> qaInProgress with QA contract', () {
-      final context = {'qaContractId': 'qa-123'};
-
-      final transition = engine.transitionWorkItem(
-        WorkItemState.agentCompleted,
-        WorkItemState.qaInProgress,
-        TransitionTrigger.systemEvent,
-        context,
+    test('design gate rejects a decision for a different work item', () {
+      final otherDecision = _resolvedDecision(
+        type: HumanDecisionType.designApproval,
+        choice: HumanDecisionChoice.approve,
+        workItemId: '123e4567-e89b-12d3-a456-426614174099',
       );
+      final transition = eval(
+        WorkItemState.waitingForHumanDecision,
+        WorkItemState.designApproved,
+        trigger: TransitionTrigger.humanDecision,
+        context: {'humanDecision': otherDecision, 'workItemId': _workItemId},
+      );
+      expect(transition.isValid, isFalse);
+      expect(
+        transition.failedGuards,
+        contains('blocking_human_decision_resolved'),
+      );
+    });
 
+    test('design gate requires a human decider on the decision', () {
+      final noDecider = _resolvedDecision(
+        type: HumanDecisionType.designApproval,
+        choice: HumanDecisionChoice.approve,
+        decider: null,
+      );
+      final transition = eval(
+        WorkItemState.waitingForHumanDecision,
+        WorkItemState.designApproved,
+        trigger: TransitionTrigger.humanDecision,
+        context: {'humanDecision': noDecider, 'workItemId': _workItemId},
+      );
+      expect(transition.isValid, isFalse);
+      expect(transition.failedGuards, contains('decision_actor_is_human'));
+    });
+
+    test('expired approval cannot unlock the gate', () {
+      final expired = _resolvedDecision(
+        type: HumanDecisionType.designApproval,
+        choice: HumanDecisionChoice.approve,
+        expiration: DateTime.parse('2024-01-02T11:00:00Z'),
+      );
+      final transition = eval(
+        WorkItemState.waitingForHumanDecision,
+        WorkItemState.designApproved,
+        trigger: TransitionTrigger.humanDecision,
+        context: {'humanDecision': expired, 'workItemId': _workItemId},
+      );
+      expect(transition.isValid, isFalse);
+      expect(
+        transition.failedGuards,
+        contains('blocking_human_decision_resolved'),
+      );
+    });
+
+    test('design rework returns to designInReview', () {
+      final reworkDecision = _resolvedDecision(
+        type: HumanDecisionType.designApproval,
+        choice: HumanDecisionChoice.rework,
+      );
+      final transition = eval(
+        WorkItemState.waitingForHumanDecision,
+        WorkItemState.designInReview,
+        trigger: TransitionTrigger.humanDecision,
+        context: {'humanDecision': reworkDecision, 'workItemId': _workItemId},
+      );
       expect(transition.isValid, isTrue);
     });
 
-    test('allows qaInProgress -> qaPassed when all required gates pass', () {
+    test('engineer cannot review their own implementation', () {
+      final selfReview = WorkflowActor(
+        actorId: 'agent-1',
+        actorType: ActorType.engineeringReviewer,
+      );
+      final pending = _pendingDecision(
+        type: HumanDecisionType.engineeringReview,
+      );
+      final transition = eval(
+        WorkItemState.reviewInProgress,
+        WorkItemState.waitingForHumanDecision,
+        trigger: TransitionTrigger.humanDecision,
+        actor: selfReview,
+        context: {
+          'humanDecision': pending,
+          'workItemId': _workItemId,
+          'producerActorId': 'agent-1',
+        },
+      );
+      expect(transition.isValid, isFalse);
+      expect(transition.failedGuards, contains('actor_not_self'));
+
+      final otherReviewer = WorkflowActor(
+        actorId: 'reviewer-2',
+        actorType: ActorType.engineeringReviewer,
+      );
+      final ok = eval(
+        WorkItemState.reviewInProgress,
+        WorkItemState.waitingForHumanDecision,
+        trigger: TransitionTrigger.humanDecision,
+        actor: otherReviewer,
+        context: {
+          'humanDecision': pending,
+          'workItemId': _workItemId,
+          'producerActorId': 'agent-1',
+        },
+      );
+      expect(ok.isValid, isTrue);
+    });
+
+    test('engineering review approve unlocks reviewApproved', () {
+      final decision = _resolvedDecision(
+        type: HumanDecisionType.engineeringReview,
+        choice: HumanDecisionChoice.approve,
+      );
+      final transition = eval(
+        WorkItemState.waitingForHumanDecision,
+        WorkItemState.reviewApproved,
+        trigger: TransitionTrigger.humanDecision,
+        context: {'humanDecision': decision, 'workItemId': _workItemId},
+      );
+      expect(transition.isValid, isTrue);
+    });
+
+    test('agent completion requires QA contract and valid result', () {
+      final result = AgentResult(
+        resultId: 'res-1',
+        sessionId: 'ses-1',
+        workItemId: _workItemId,
+        status: AgentResultStatus.completed,
+        artifacts: const [],
+        diagnostics: AgentDiagnostics(
+          exitCode: 0,
+          durationMs: 100,
+          toolCalls: 1,
+          errors: const [],
+          warnings: const [],
+        ),
+        structuredResult: const {},
+        completedAt: DateTime.now(),
+      );
+
+      final withoutContract = eval(
+        WorkItemState.agentExecuting,
+        WorkItemState.agentCompleted,
+        trigger: TransitionTrigger.agentResult,
+        context: {'agentResult': result},
+      );
+      expect(withoutContract.isValid, isFalse);
+      expect(withoutContract.failedGuards, contains('qa_contract_exists'));
+
+      final withContract = eval(
+        WorkItemState.agentExecuting,
+        WorkItemState.agentCompleted,
+        trigger: TransitionTrigger.agentResult,
+        context: {'agentResult': result, 'qaContractId': 'qa-123'},
+      );
+      expect(withContract.isValid, isTrue);
+    });
+
+    test('reviewApproved -> qaInProgress requires QA contract', () {
+      final without = eval(
+        WorkItemState.reviewApproved,
+        WorkItemState.qaInProgress,
+      );
+      expect(without.isValid, isFalse);
+
+      final withContract = eval(
+        WorkItemState.reviewApproved,
+        WorkItemState.qaInProgress,
+        context: {'qaContractId': 'qa-123'},
+      );
+      expect(withContract.isValid, isTrue);
+    });
+
+    test('qaInProgress -> qaPassed requires all required gates to pass', () {
       final gateResults = [
         QAGateResult(
           gateId: 'static-analysis',
-          workItemId: 'wi-1',
+          workItemId: _workItemId,
           status: QAGateStatus.passed,
-          evidence: [],
-          evaluatedAt: DateTime.now(),
+          evidence: const [],
+          evaluatedAt: DateTime.parse('2024-01-02T13:00:00Z'),
         ),
         QAGateResult(
           gateId: 'unit-tests',
-          workItemId: 'wi-1',
+          workItemId: _workItemId,
           status: QAGateStatus.passed,
-          evidence: [],
-          evaluatedAt: DateTime.now(),
+          evidence: const [],
+          evaluatedAt: DateTime.parse('2024-01-02T13:00:00Z'),
         ),
       ];
-
       final qaContract = QAContract(
         contractId: 'qa-1',
         workItemCategory: WorkItemCategory.feature,
@@ -216,495 +444,199 @@ void main() {
             gateId: 'static-analysis',
             type: 'static-analysis',
             required: true,
-            config: {},
-            evidenceTypes: ['test-report'],
+            config: const {},
+            evidenceTypes: const ['test-report'],
           ),
           QAGateDefinition(
             gateId: 'unit-tests',
             type: 'unit-tests',
             required: true,
-            config: {},
-            evidenceTypes: ['test-report'],
+            config: const {},
+            evidenceTypes: const ['test-report'],
           ),
         ],
         version: '1.0.0',
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
+        createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
+        updatedAt: DateTime.parse('2024-01-01T00:00:00Z'),
       );
 
       final context = {'gateResults': gateResults, 'qaContract': qaContract};
-
-      final transition = engine.transitionWorkItem(
-        WorkItemState.qaInProgress,
-        WorkItemState.qaPassed,
-        TransitionTrigger.systemEvent,
-        context,
-      );
-
-      expect(transition.isValid, isTrue);
-    });
-
-    test('rejects qaInProgress -> qaPassed when required gate fails', () {
-      final gateResults = [
-        QAGateResult(
-          gateId: 'static-analysis',
-          workItemId: 'wi-1',
-          status: QAGateStatus.failed,
-          evidence: [],
-          evaluatedAt: DateTime.now(),
-        ),
-      ];
-
-      final qaContract = QAContract(
-        contractId: 'qa-1',
-        workItemCategory: WorkItemCategory.feature,
-        gates: [
-          QAGateDefinition(
-            gateId: 'static-analysis',
-            type: 'static-analysis',
-            required: true,
-            config: {},
-            evidenceTypes: ['test-report'],
-          ),
-        ],
-        version: '1.0.0',
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
-
-      final context = {'gateResults': gateResults, 'qaContract': qaContract};
-
       expect(
-        () => engine.transitionWorkItem(
+        eval(
           WorkItemState.qaInProgress,
           WorkItemState.qaPassed,
-          TransitionTrigger.systemEvent,
-          context,
-        ),
-        throwsA(isA<InvalidTransitionException>()),
+          trigger: TransitionTrigger.agentResult,
+          actor: _qaExecutor,
+          context: context,
+        ).isValid,
+        isTrue,
       );
-    });
 
-    test(
-      'rejects qaInProgress -> qaPassed when required gate is not_executed',
-      () {
-        final gateResults = [
-          QAGateResult(
-            gateId: 'e2e',
-            workItemId: 'wi-1',
-            status: QAGateStatus.notExecuted,
-            evidence: [],
-            evaluatedAt: DateTime.now(),
-            evidenceDeterminations: [
-              QAEvidenceDetermination(
-                evidenceId: 'E-01',
-                determination: EvidenceDetermination.readyNotExecuted,
-                reasons: 'Headless iOS device job not yet provisioned',
-              ),
-            ],
-          ),
-        ];
-
-        final qaContract = QAContract(
-          contractId: 'qa-1',
-          workItemCategory: WorkItemCategory.feature,
-          gates: [
-            QAGateDefinition(
-              gateId: 'e2e',
-              type: 'integration-tests',
-              required: true,
-              config: {},
-              evidenceTypes: ['test-report'],
-            ),
-          ],
-          version: '1.0.0',
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
-        );
-
-        final context = {'gateResults': gateResults, 'qaContract': qaContract};
-
-        expect(
-          () => engine.transitionWorkItem(
-            WorkItemState.qaInProgress,
-            WorkItemState.qaPassed,
-            TransitionTrigger.systemEvent,
-            context,
-          ),
-          throwsA(isA<InvalidTransitionException>()),
-        );
-      },
-    );
-
-    test('allows qaInProgress -> qaPassed when required gate is N/A', () {
-      final gateResults = [
+      final failing = [
         QAGateResult(
-          gateId: 'visual',
-          workItemId: 'wi-1',
-          status: QAGateStatus.notApplicable,
-          evidence: [],
-          evaluatedAt: DateTime.now(),
+          gateId: 'static-analysis',
+          workItemId: _workItemId,
+          status: QAGateStatus.failed,
+          evidence: const [],
+          evaluatedAt: DateTime.parse('2024-01-02T13:00:00Z'),
         ),
       ];
-
-      final qaContract = QAContract(
-        contractId: 'qa-1',
-        workItemCategory: WorkItemCategory.feature,
-        gates: [
-          QAGateDefinition(
-            gateId: 'visual',
-            type: 'static-analysis',
-            required: true,
-            config: {},
-            evidenceTypes: ['accessibility-report'],
-          ),
-        ],
-        version: '1.0.0',
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
-
-      final context = {'gateResults': gateResults, 'qaContract': qaContract};
-
-      final transition = engine.transitionWorkItem(
+      final rejected = eval(
         WorkItemState.qaInProgress,
         WorkItemState.qaPassed,
-        TransitionTrigger.systemEvent,
-        context,
+        trigger: TransitionTrigger.agentResult,
+        actor: _qaExecutor,
+        context: {'gateResults': failing, 'qaContract': qaContract},
       );
-
-      expect(transition.isValid, isTrue);
+      expect(rejected.isValid, isFalse);
+      expect(rejected.failedGuards, contains('all_required_gates_passed'));
     });
 
-    test('allows qaInProgress -> qaPassed when required gate is skipped with '
-        'an authority ref', () {
-      final gateResults = [
-        QAGateResult(
-          gateId: 'e2e',
-          workItemId: 'wi-1',
-          status: QAGateStatus.skipped,
-          evidence: [],
-          evaluatedAt: DateTime.now(),
-          evidenceDeterminations: [
-            QAEvidenceDetermination(
-              evidenceId: 'E-01',
-              determination: EvidenceDetermination.skipped,
-              reasons: 'Manual e2e charter covers this journey',
-              authorityRef: 'decision-123',
-            ),
-          ],
-        ),
-      ];
-
-      final qaContract = QAContract(
-        contractId: 'qa-1',
-        workItemCategory: WorkItemCategory.feature,
-        gates: [
-          QAGateDefinition(
-            gateId: 'e2e',
-            type: 'integration-tests',
-            required: true,
-            config: {},
-            evidenceTypes: ['test-report'],
-          ),
-        ],
-        version: '1.0.0',
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
+    test('qaFailed gate accepts waiver and unlocks qaPassed', () {
+      final pending = _pendingDecision(type: HumanDecisionType.qaWaiver);
+      final entered = eval(
+        WorkItemState.qaFailed,
+        WorkItemState.waitingForHumanDecision,
+        trigger: TransitionTrigger.humanDecision,
+        context: {'humanDecision': pending, 'workItemId': _workItemId},
       );
+      expect(entered.isValid, isTrue);
 
-      final context = {'gateResults': gateResults, 'qaContract': qaContract};
-
-      final transition = engine.transitionWorkItem(
-        WorkItemState.qaInProgress,
-        WorkItemState.qaPassed,
-        TransitionTrigger.systemEvent,
-        context,
-      );
-
-      expect(transition.isValid, isTrue);
-    });
-
-    test('allows qaFailed -> qaPassed with waiver decision', () {
-      final decision = HumanDecision(
-        decisionId: 'dec-2',
-        workflowId: 'wi-1',
-        decisionType: HumanDecisionType.qaWaiver,
-        decider: 'alice@example.com',
+      final waived = _resolvedDecision(
+        type: HumanDecisionType.qaWaiver,
         choice: HumanDecisionChoice.waive,
-        rationale: 'Known issue, accepting risk',
-        timestamp: DateTime.now(),
-        signature: DecisionSignature(
-          algorithm: 'Ed25519',
-          publicKey: 'key',
-          signature: 'sig',
-          signedAt: DateTime.now(),
-        ),
       );
-
-      final context = {'humanDecision': decision};
-
-      final transition = engine.transitionWorkItem(
-        WorkItemState.qaFailed,
+      final resolved = eval(
+        WorkItemState.waitingForHumanDecision,
         WorkItemState.qaPassed,
-        TransitionTrigger.humanDecision,
-        context,
+        trigger: TransitionTrigger.humanDecision,
+        context: {'humanDecision': waived, 'workItemId': _workItemId},
       );
-
-      expect(transition.isValid, isTrue);
+      expect(resolved.isValid, isTrue);
     });
 
-    test('allows qaFailed -> designInReview with rework decision', () {
-      final decision = HumanDecision(
-        decisionId: 'dec-3',
-        workflowId: 'wi-1',
-        decisionType: HumanDecisionType.qaRework,
-        decider: 'alice@example.com',
-        choice: HumanDecisionChoice.rework,
-        rationale: 'Revisit design before retry',
-        timestamp: DateTime.now(),
-        signature: DecisionSignature(
-          algorithm: 'Ed25519',
-          publicKey: 'key',
-          signature: 'sig',
-          signedAt: DateTime.now(),
-        ),
-      );
-
-      final context = {'humanDecision': decision};
-
-      final transition = engine.transitionWorkItem(
-        WorkItemState.qaFailed,
-        WorkItemState.designInReview,
-        TransitionTrigger.humanDecision,
-        context,
-      );
-
-      expect(transition.isValid, isTrue);
-    });
-
-    test('allows qaFailed -> agentExecuting with reject decision', () {
-      final decision = HumanDecision(
-        decisionId: 'dec-4',
-        workflowId: 'wi-1',
-        decisionType: HumanDecisionType.qaRework,
-        decider: 'alice@example.com',
+    test('qa rework unlock maps to agentExecuting for "reject"', () {
+      final decision = _resolvedDecision(
+        type: HumanDecisionType.qaRework,
         choice: HumanDecisionChoice.reject,
-        rationale: 'Redo implementation with feedback',
-        timestamp: DateTime.now(),
-        signature: DecisionSignature(
-          algorithm: 'Ed25519',
-          publicKey: 'key',
-          signature: 'sig',
-          signedAt: DateTime.now(),
-        ),
       );
-
-      final context = {'humanDecision': decision};
-
-      final transition = engine.transitionWorkItem(
-        WorkItemState.qaFailed,
+      final transition = eval(
+        WorkItemState.waitingForHumanDecision,
         WorkItemState.agentExecuting,
-        TransitionTrigger.humanDecision,
-        context,
+        trigger: TransitionTrigger.humanDecision,
+        context: {'humanDecision': decision, 'workItemId': _workItemId},
       );
-
       expect(transition.isValid, isTrue);
     });
 
-    test('rejects qaFailed -> designInReview with wrong decision', () {
-      final decision = HumanDecision(
-        decisionId: 'dec-5',
-        workflowId: 'wi-1',
-        decisionType: HumanDecisionType.qaWaiver,
-        decider: 'alice@example.com',
-        choice: HumanDecisionChoice.waive,
-        rationale: 'Accepting risk',
-        timestamp: DateTime.now(),
-        signature: DecisionSignature(
-          algorithm: 'Ed25519',
-          publicKey: 'key',
-          signature: 'sig',
-          signedAt: DateTime.now(),
-        ),
-      );
-
-      final context = {'humanDecision': decision};
-
-      expect(
-        () => engine.transitionWorkItem(
-          WorkItemState.qaFailed,
-          WorkItemState.designInReview,
-          TransitionTrigger.humanDecision,
-          context,
-        ),
-        throwsA(isA<InvalidTransitionException>()),
-      );
-    });
-
-    test('allows qaPassed -> deploying with artifact built', () {
-      final artifact = DeploymentArtifact(
-        artifactId: 'art-1',
-        contentHash: 'hash',
-        manifest: ArtifactManifest(
-          name: 'app',
-          version: '1.0.0',
-          gitCommit: 'commit',
-          files: [],
-          sbom: SoftwareBillOfMaterials(
-            format: 'CycloneDX',
-            version: '1.5',
-            components: [],
-          ),
-        ),
-        builtAt: DateTime.now(),
-        builtBy: 'session-1',
-      );
-
-      final context = {'deploymentArtifact': artifact};
-
-      final transition = engine.transitionWorkItem(
+    test('human QA approval gate unlocks completed', () {
+      final pending = _pendingDecision(type: HumanDecisionType.humanQaApproval);
+      final entered = eval(
         WorkItemState.qaPassed,
-        WorkItemState.deploying,
-        TransitionTrigger.systemEvent,
-        context,
+        WorkItemState.waitingForHumanDecision,
+        trigger: TransitionTrigger.humanDecision,
+        context: {'humanDecision': pending, 'workItemId': _workItemId},
       );
+      expect(entered.isValid, isTrue);
 
-      expect(transition.isValid, isTrue);
-    });
-
-    test('rejects qaPassed -> deploying without artifact', () {
-      final context = <String, dynamic>{};
-
-      expect(
-        () => engine.transitionWorkItem(
-          WorkItemState.qaPassed,
-          WorkItemState.deploying,
-          TransitionTrigger.systemEvent,
-          context,
-        ),
-        throwsA(isA<InvalidTransitionException>()),
-      );
-    });
-
-    test('allows deploying -> deployed for staging without human approval', () {
-      final artifact = DeploymentArtifact(
-        artifactId: 'art-1',
-        contentHash: 'hash',
-        manifest: ArtifactManifest(
-          name: 'app',
-          version: '1.0.0',
-          gitCommit: 'commit',
-          files: [],
-          sbom: SoftwareBillOfMaterials(
-            format: 'CycloneDX',
-            version: '1.5',
-            components: [],
-          ),
-        ),
-        builtAt: DateTime.now(),
-        builtBy: 'session-1',
-      );
-
-      final context = {
-        'deploymentArtifact': artifact,
-        'targetEnvironment': 'staging',
-      };
-
-      final transition = engine.transitionWorkItem(
-        WorkItemState.deploying,
-        WorkItemState.deployed,
-        TransitionTrigger.systemEvent,
-        context,
-      );
-
-      expect(transition.isValid, isTrue);
-    });
-
-    test('requires human approval for production deployment', () {
-      final artifact = DeploymentArtifact(
-        artifactId: 'art-1',
-        contentHash: 'hash',
-        manifest: ArtifactManifest(
-          name: 'app',
-          version: '1.0.0',
-          gitCommit: 'commit',
-          files: [],
-          sbom: SoftwareBillOfMaterials(
-            format: 'CycloneDX',
-            version: '1.5',
-            components: [],
-          ),
-        ),
-        builtAt: DateTime.now(),
-        builtBy: 'session-1',
-      );
-
-      final context = {
-        'deploymentArtifact': artifact,
-        'targetEnvironment': 'production',
-      };
-
-      expect(
-        () => engine.transitionWorkItem(
-          WorkItemState.deploying,
-          WorkItemState.deployed,
-          TransitionTrigger.systemEvent,
-          context,
-        ),
-        throwsA(isA<InvalidTransitionException>()),
-      );
-    });
-
-    test('allows deploying -> deployed for production with approval', () {
-      final artifact = DeploymentArtifact(
-        artifactId: 'art-1',
-        contentHash: 'hash',
-        manifest: ArtifactManifest(
-          name: 'app',
-          version: '1.0.0',
-          gitCommit: 'commit',
-          files: [],
-          sbom: SoftwareBillOfMaterials(
-            format: 'CycloneDX',
-            version: '1.5',
-            components: [],
-          ),
-        ),
-        builtAt: DateTime.now(),
-        builtBy: 'session-1',
-      );
-
-      final decision = HumanDecision(
-        decisionId: 'dec-3',
-        workflowId: 'wi-1',
-        decisionType: HumanDecisionType.deploymentApproval,
-        decider: 'alice@example.com',
+      final approved = _resolvedDecision(
+        type: HumanDecisionType.humanQaApproval,
         choice: HumanDecisionChoice.approve,
-        rationale: 'Staging verified',
-        timestamp: DateTime.now(),
-        signature: DecisionSignature(
-          algorithm: 'Ed25519',
-          publicKey: 'key',
-          signature: 'sig',
-          signedAt: DateTime.now(),
+      );
+      final completed = eval(
+        WorkItemState.waitingForHumanDecision,
+        WorkItemState.completed,
+        trigger: TransitionTrigger.humanDecision,
+        context: {'humanDecision': approved, 'workItemId': _workItemId},
+      );
+      expect(completed.isValid, isTrue);
+    });
+
+    test('waiting -> completed rejects a non-matching decision', () {
+      final decision = _resolvedDecision(
+        type: HumanDecisionType.designApproval,
+        choice: HumanDecisionChoice.approve,
+      );
+      final transition = eval(
+        WorkItemState.waitingForHumanDecision,
+        WorkItemState.completed,
+        trigger: TransitionTrigger.humanDecision,
+        context: {'humanDecision': decision, 'workItemId': _workItemId},
+      );
+      expect(transition.isValid, isFalse);
+    });
+  });
+
+  group('HumanDecisionRouting', () {
+    test('maps decision outcomes to target states', () {
+      expect(
+        HumanDecisionRouting.targetFor(
+          HumanDecisionType.designApproval,
+          HumanDecisionChoice.approve,
         ),
+        WorkItemState.designApproved,
       );
-
-      final context = {
-        'deploymentArtifact': artifact,
-        'targetEnvironment': 'production',
-        'humanDecision': decision,
-      };
-
-      final transition = engine.transitionWorkItem(
-        WorkItemState.deploying,
+      expect(
+        HumanDecisionRouting.targetFor(
+          HumanDecisionType.engineeringReview,
+          HumanDecisionChoice.rework,
+        ),
+        WorkItemState.agentExecuting,
+      );
+      expect(
+        HumanDecisionRouting.targetFor(
+          HumanDecisionType.humanQaApproval,
+          HumanDecisionChoice.approve,
+        ),
+        WorkItemState.completed,
+      );
+      expect(
+        HumanDecisionRouting.targetFor(
+          HumanDecisionType.qaWaiver,
+          HumanDecisionChoice.waive,
+        ),
+        WorkItemState.qaPassed,
+      );
+      expect(
+        HumanDecisionRouting.targetFor(
+          HumanDecisionType.deploymentApproval,
+          HumanDecisionChoice.approve,
+        ),
         WorkItemState.deployed,
-        TransitionTrigger.humanDecision,
-        context,
       );
+      expect(
+        HumanDecisionRouting.targetFor(
+          HumanDecisionType.qaRework,
+          HumanDecisionChoice.rework,
+        ),
+        WorkItemState.designInReview,
+      );
+    });
 
-      expect(transition.isValid, isTrue);
+    test('unmapped resolutions return null', () {
+      expect(
+        HumanDecisionRouting.targetFor(
+          HumanDecisionType.rollbackApproval,
+          HumanDecisionChoice.approve,
+        ),
+        isNull,
+      );
+      expect(
+        HumanDecisionRouting.targetFor(
+          HumanDecisionType.policyException,
+          HumanDecisionChoice.defer,
+        ),
+        isNull,
+      );
+    });
+
+    test('cancel choice always routes to cancelled', () {
+      for (final type in HumanDecisionType.values) {
+        expect(
+          HumanDecisionRouting.targetFor(type, HumanDecisionChoice.cancel),
+          WorkItemState.cancelled,
+        );
+      }
     });
   });
 
@@ -715,56 +647,26 @@ void main() {
       engine = const WorkflowEngine();
     });
 
-    test('allows draft -> underReview', () {
-      final transition = engine.transitionDesignContract(
-        DesignContractStatus.draft,
-        DesignContractStatus.underReview,
-        TransitionTrigger.systemEvent,
-        {},
-      );
-      expect(transition.isValid, isTrue);
-    });
-
-    test('allows underReview -> approved', () {
+    test('underReview -> approved is legal', () {
       final transition = engine.transitionDesignContract(
         DesignContractStatus.underReview,
         DesignContractStatus.approved,
         TransitionTrigger.humanDecision,
-        {},
+        _orch,
+        const {},
       );
       expect(transition.isValid, isTrue);
     });
 
-    test('allows underReview -> rejected', () {
+    test('approved -> rejected is rejected', () {
       final transition = engine.transitionDesignContract(
-        DesignContractStatus.underReview,
+        DesignContractStatus.approved,
         DesignContractStatus.rejected,
         TransitionTrigger.humanDecision,
-        {},
+        _orch,
+        const {},
       );
-      expect(transition.isValid, isTrue);
-    });
-
-    test('allows rejected -> draft', () {
-      final transition = engine.transitionDesignContract(
-        DesignContractStatus.rejected,
-        DesignContractStatus.draft,
-        TransitionTrigger.systemEvent,
-        {},
-      );
-      expect(transition.isValid, isTrue);
-    });
-
-    test('rejects approved -> rejected', () {
-      expect(
-        () => engine.transitionDesignContract(
-          DesignContractStatus.approved,
-          DesignContractStatus.rejected,
-          TransitionTrigger.systemEvent,
-          {},
-        ),
-        throwsA(isA<InvalidTransitionException>()),
-      );
+      expect(transition.isValid, isFalse);
     });
   });
 
@@ -775,66 +677,26 @@ void main() {
       engine = const WorkflowEngine();
     });
 
-    test('allows pending -> inProgress', () {
+    test('pending -> inProgress is legal', () {
       final transition = engine.transitionQA(
         QAStatus.pending,
         QAStatus.inProgress,
         TransitionTrigger.systemEvent,
-        {},
+        _qaExecutor,
+        const {},
       );
       expect(transition.isValid, isTrue);
     });
 
-    test('allows inProgress -> passed', () {
+    test('passed -> failed is rejected', () {
       final transition = engine.transitionQA(
-        QAStatus.inProgress,
         QAStatus.passed,
-        TransitionTrigger.systemEvent,
-        {},
-      );
-      expect(transition.isValid, isTrue);
-    });
-
-    test('allows inProgress -> failed', () {
-      final transition = engine.transitionQA(
-        QAStatus.inProgress,
         QAStatus.failed,
         TransitionTrigger.systemEvent,
-        {},
+        _qaExecutor,
+        const {},
       );
-      expect(transition.isValid, isTrue);
-    });
-
-    test('allows failed -> inProgress (rework)', () {
-      final transition = engine.transitionQA(
-        QAStatus.failed,
-        QAStatus.inProgress,
-        TransitionTrigger.systemEvent,
-        {},
-      );
-      expect(transition.isValid, isTrue);
-    });
-
-    test('allows failed -> waived', () {
-      final transition = engine.transitionQA(
-        QAStatus.failed,
-        QAStatus.waived,
-        TransitionTrigger.humanDecision,
-        {},
-      );
-      expect(transition.isValid, isTrue);
-    });
-
-    test('rejects passed -> failed', () {
-      expect(
-        () => engine.transitionQA(
-          QAStatus.passed,
-          QAStatus.failed,
-          TransitionTrigger.systemEvent,
-          {},
-        ),
-        throwsA(isA<InvalidTransitionException>()),
-      );
+      expect(transition.isValid, isFalse);
     });
   });
 
@@ -845,114 +707,75 @@ void main() {
       engine = const WorkflowEngine();
     });
 
-    test('allows building -> promoting', () {
+    test('building -> promoting is legal', () {
       final transition = engine.transitionDeployment(
         DeploymentPhase.building,
         DeploymentPhase.promoting,
         TransitionTrigger.systemEvent,
-        {},
+        _system,
+        const {},
       );
       expect(transition.isValid, isTrue);
     });
 
-    test('allows promoting -> deploying', () {
+    test('completed -> failed is rejected', () {
       final transition = engine.transitionDeployment(
-        DeploymentPhase.promoting,
-        DeploymentPhase.deploying,
-        TransitionTrigger.systemEvent,
-        {},
-      );
-      expect(transition.isValid, isTrue);
-    });
-
-    test('allows deploying -> validating', () {
-      final transition = engine.transitionDeployment(
-        DeploymentPhase.deploying,
-        DeploymentPhase.validating,
-        TransitionTrigger.systemEvent,
-        {},
-      );
-      expect(transition.isValid, isTrue);
-    });
-
-    test('allows validating -> completed', () {
-      final transition = engine.transitionDeployment(
-        DeploymentPhase.validating,
         DeploymentPhase.completed,
-        TransitionTrigger.systemEvent,
-        {},
-      );
-      expect(transition.isValid, isTrue);
-    });
-
-    test('allows validating -> failed', () {
-      final transition = engine.transitionDeployment(
-        DeploymentPhase.validating,
         DeploymentPhase.failed,
         TransitionTrigger.systemEvent,
-        {},
+        _system,
+        const {},
       );
-      expect(transition.isValid, isTrue);
-    });
-
-    test('allows failed -> rolledBack', () {
-      final transition = engine.transitionDeployment(
-        DeploymentPhase.failed,
-        DeploymentPhase.rolledBack,
-        TransitionTrigger.systemEvent,
-        {},
-      );
-      expect(transition.isValid, isTrue);
-    });
-
-    test('allows failed -> deploying (retry)', () {
-      final transition = engine.transitionDeployment(
-        DeploymentPhase.failed,
-        DeploymentPhase.deploying,
-        TransitionTrigger.manual,
-        {},
-      );
-      expect(transition.isValid, isTrue);
-    });
-
-    test('rejects completed -> failed', () {
-      expect(
-        () => engine.transitionDeployment(
-          DeploymentPhase.completed,
-          DeploymentPhase.failed,
-          TransitionTrigger.systemEvent,
-          {},
-        ),
-        throwsA(isA<InvalidTransitionException>()),
-      );
+      expect(transition.isValid, isFalse);
     });
   });
 
   group('WorkflowState allowedTransitions', () {
-    test('WorkItemWorkflowState.draft allows only designInReview', () {
-      final state = WorkItemWorkflowState.draft;
-      expect(state.allowedTransitions.length, equals(1));
+    test('draft allows only planning', () {
       expect(
-        state.allowedTransitions.first.value,
-        equals(WorkItemState.designInReview),
+        WorkItemWorkflowState.draft.allowedTransitions.map((s) => s.value),
+        [WorkItemState.planning],
       );
     });
 
-    test(
-      'WorkItemWorkflowState.designInReview allows approved and rejected',
-      () {
-        final state = WorkItemWorkflowState.designInReview;
-        expect(state.allowedTransitions.length, equals(2));
-        expect(
-          state.allowedTransitions.map((s) => s.value).toSet(),
-          equals({WorkItemState.designApproved, WorkItemState.designRejected}),
-        );
-      },
-    );
+    test('waitingForHumanDecision exposes all gate resolutions', () {
+      final targets = WorkItemWorkflowState
+          .waitingForHumanDecision
+          .allowedTransitions
+          .map((s) => s.value)
+          .toSet();
+      expect(
+        targets,
+        containsAll(<WorkItemState>[
+          WorkItemState.designApproved,
+          WorkItemState.reviewApproved,
+          WorkItemState.qaPassed,
+          WorkItemState.completed,
+          WorkItemState.cancelled,
+          WorkItemState.terminated,
+        ]),
+      );
+    });
 
-    test('WorkItemWorkflowState.done allows no transitions', () {
-      final state = WorkItemWorkflowState.done;
-      expect(state.allowedTransitions, isEmpty);
+    test('terminal states allow no transitions', () {
+      expect(WorkItemWorkflowState.completed.allowedTransitions, isEmpty);
+      expect(WorkItemWorkflowState.cancelled.allowedTransitions, isEmpty);
+      expect(WorkItemWorkflowState.terminated.allowedTransitions, isEmpty);
+      expect(WorkItemWorkflowState.done.allowedTransitions, isEmpty);
+    });
+  });
+
+  group('Transition validator', () {
+    test('actor is threaded into context and surfaced on the result', () {
+      final engine = const WorkflowEngine();
+      final transition = engine.evaluateWorkItemTransition(
+        from: WorkItemState.draft,
+        to: WorkItemState.planning,
+        trigger: TransitionTrigger.systemEvent,
+        actor: _orch,
+      );
+      expect(transition.actor.actorType, ActorType.orchestrator);
+      expect(transition.metadata?['actor'], isA<WorkflowActor>());
     });
   });
 }

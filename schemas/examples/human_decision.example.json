@@ -1,7 +1,9 @@
 {
   "decisionId": "123e4567-e89b-12d3-a456-426614174002",
-  "workflowId": "123e4567-e89b-12d3-a456-426614174001",
+  "workItemId": "123e4567-e89b-12d3-a456-426614174001",
   "decisionType": "design_approval",
+  "status": "resolved",
+  "question": "Approve the design revision for the login feature?",
   "decider": "alice@example.com",
   "choice": "approve",
   "rationale": "Design looks good",
@@ -13,7 +15,9 @@
     "signedAt": "2024-01-02T12:00:01Z"
   },
   "context": {
-    "workflowState": "design_in_review",
+    "workflowState": "waiting_for_human_decision",
     "availableOptions": ["approve", "reject"]
-  }
+  },
+  "requestedAt": "2024-01-02T11:00:00Z",
+  "updatedAt": "2024-01-02T12:00:00Z"
 }

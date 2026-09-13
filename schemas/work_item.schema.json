@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://shipit.platform/schemas/work_item.schema.json",
   "title": "WorkItem",
-  "description": "A unit of work governed by the ShipIt workflow engine. State changes are legal only via the validated transition table.",
+  "description": "A unit of work governed by the ShipIt workflow engine. State changes are legal only via the validated transition table. The version field is bumped on every accepted transition and enables optimistic concurrency control.",
   "type": "object",
   "additionalProperties": false,
   "required": ["workItemId", "productId", "category", "title", "state", "createdAt", "updatedAt"],
@@ -35,21 +35,38 @@
       "type": "string",
       "enum": [
         "draft",
+        "planning",
+        "planned",
+        "design_required",
+        "design_not_required",
         "design_in_review",
         "design_approved",
         "design_rejected",
         "agent_executing",
         "agent_completed",
         "agent_failed",
+        "review_in_progress",
+        "review_approved",
+        "review_rejected",
         "qa_in_progress",
         "qa_passed",
         "qa_failed",
+        "waiting_for_human_decision",
         "deploying",
         "deployed",
         "deployment_failed",
+        "completed",
+        "cancelled",
+        "terminated",
         "done"
       ],
-      "description": "Current state in the work item state machine (see runtime-flow.md)"
+      "description": "Current state in the work item state machine (see runtime-flow.md). done is legacy and is never a legal transition target; terminal states are completed, cancelled and terminated."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "Optimistic concurrency version, bumped on every accepted transition"
     },
     "designContractId": {
       "type": "string",
@@ -65,6 +82,30 @@
       "type": "string",
       "format": "uuid",
       "description": "QA contract governing this work item"
+    },
+    "featureRef": {
+      "type": "string",
+      "description": "Traceability reference to the requested feature"
+    },
+    "requirementRef": {
+      "type": "string",
+      "description": "Traceability reference to the originating requirement"
+    },
+    "blockingHumanDecisionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "HumanDecision the work item is currently waiting on, set only while state is waiting_for_human_decision"
+    },
+    "blockingReason": {
+      "type": "string",
+      "description": "Human-readable reason the work item is waiting for a human decision"
+    },
+    "artifactRefs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ArtifactReference"
+      },
+      "description": "Artifacts produced for this work item (design revision, evidence, build artifact)"
     },
     "metadata": {
       "type": "object",
@@ -83,7 +124,57 @@
     "completedAt": {
       "type": "string",
       "format": "date-time",
-      "description": "ISO 8601 timestamp when the work item reached done"
+      "description": "ISO 8601 timestamp when the work item reached a terminal completed state"
+    },
+    "terminatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the work item was terminated or cancelled"
+    }
+  },
+  "definitions": {
+    "ArtifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "artifactType", "uri", "createdAt"],
+      "properties": {
+        "artifactId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "artifactType": {
+          "type": "string",
+          "enum": [
+            "design_contract",
+            "design_revision",
+            "code_diff",
+            "qa_contract",
+            "qa_evidence",
+            "build_artifact",
+            "deployment_record",
+            "human_decision",
+            "migration",
+            "other"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider": {
+          "type": "string"
+        },
+        "contentHash": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
     }
   }
 }

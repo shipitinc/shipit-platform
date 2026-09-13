@@ -23,6 +23,7 @@
 |---------|------|----------|
 | `platform_contracts` | Core types, enums, JSON schemas | Business logic, I/O |
 | `workflow_engine` | State machine, transitions, validation | Agent details, persistence |
+| `workflow_store` | Durable WorkItem/HumanDecision/history persistence, resume, CAS, idempotency | Workflow policy, agent details, DB beyond its own store |
 | `agent_runtime` | Provider interface, adapters | Workflow logic, QA logic |
 | `worker_protocol` | Capability model, task dispatch | Agent runtime, workflow |
 | `qa_orchestration` | Gates, evidence, validation | Agent runtime, deployment |
@@ -117,6 +118,7 @@ cd packages/platform_contracts && dart run build_runner build --delete-conflicti
 |------|----------|
 | New workflow state | `packages/workflow_engine/lib/src/states/` |
 | New transition rule | `packages/workflow_engine/lib/src/transitions/` |
+| WorkItem/decision persistence | `packages/workflow_store/lib/src/store/` (interface) + `packages/workflow_store/lib/src/durable_workflow_engine.dart` |
 | New agent adapter | `packages/agent_runtime/lib/src/adapters/` |
 | New worker capability | `packages/worker_protocol/lib/src/capabilities/` |
 | New QA gate | `packages/qa_orchestration/lib/src/gates/` |

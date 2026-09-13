@@ -6,7 +6,8 @@
 shipit-platform/
 ├── packages/
 │   ├── platform_contracts/      # Core types, enums, JSON schemas (NO business logic)
-│   ├── workflow_engine/         # State machine, transitions, validation
+│   ├── workflow_engine/         # State machine, transitions, validation (pure, no persistence)
+│   ├── workflow_store/          # Durable WorkItem/decision persistence + resume the engine
 │   ├── agent_runtime/           # Provider interface + adapters
 │   ├── worker_protocol/         # Capability model + task dispatch
 │   ├── qa_orchestration/        # Gates + evidence validation
@@ -75,11 +76,12 @@ workflow_engine/
 │   │   │   ├── work_item_transitions.dart      # WorkItemState legal transitions + guard map
 │   │   │   ├── design_transitions.dart         # DesignContractStatus transitions
 │   │   │   ├── qa_transitions.dart             # QAStatus transitions
-│   │   │   └── deployment_transitions.dart     # DeploymentPhase transitions
+│   │   │   ├── deployment_transitions.dart     # DeploymentPhase transitions
+│   │   │   └── human_decision_routing.dart     # (decisionType, choice) → target WorkItemState
 │   │   ├── validation/
 │   │   │   ├── transition_validator.dart
 │   │   │   └── guard_conditions.dart
-│   │   └── workflow_engine.dart                # Facade: transition*, validate*
+│   │   └── workflow_engine.dart                # Facade: evaluateWorkItemTransition, resolveHumanDecisionTarget
 │   └── workflow_engine.dart
 ├── test/
 │   └── transition_test.dart
@@ -90,6 +92,38 @@ workflow_engine/
 **Must Not:** Agent adapters, persistence, QA logic, deployment logic
 **Source of state machine truth:** `docs/architecture/runtime-flow.md`; `allowedTransitions`
 must stay in sync with `*_transitions.dart`.
+**Policy never throws:** rejected transitions are returned as invalid `Transition` results
+(actor-aware, non-throwing `WorkflowEngine.evaluateWorkItemTransition`).
+
+---
+
+## workflow_store
+
+**Durable persistence layer. Execution terminates at gates and resumes from stored state.**
+
+```
+workflow_store/
+├── lib/
+│   ├── src/
+│   │   ├── store/
+│   │   │   ├── workflow_store.dart             # WorkflowStore interface + store exceptions
+│   │   │   ├── in_memory_workflow_store.dart   # Test/single-instance store
+│   │   │   └── file_json_workflow_store.dart   # Atomic temp+rename JSON persistence
+│   │   └── durable_workflow_engine.dart        # CAS on work item version, idempotent transitions,
+│   │                                           # request/resolve human decisions + transition history
+│   └── workflow_store.dart
+├── test/
+│   └── durable_workflow_engine_test.dart       # Golden path + process-exit resume
+└── pubspec.yaml
+```
+
+**Owns:** persistence of `WorkItem`, `HumanDecision`, append-only `WorkflowTransitionRecord`
+history; durable resume semantics; concurrency (compare-and-swap on `WorkItem.version`)
+and idempotency (retry keys) for transitions and decision resolution.
+**Consumes (does not own):** `workflow_engine` for policy, `platform_contracts` for types.
+**Must Not:** Agent adapters, QA logic, deployment logic, workflow policy (policy stays in `workflow_engine`)
+**Planned:** in `control_plane/server`, this package is replaced by PostgreSQL-backed stores
+implementing the same `WorkflowStore` interface; `DurableWorkflowEngine` is reused unchanged.
 
 ---
 
@@ -245,12 +279,15 @@ and frontend tests under `test/`.
 
 ```
 platform_contracts ◄── workflow_engine
+platform_contracts ◄── workflow_store
+workflow_engine   ◄── workflow_store
 platform_contracts ◄── agent_runtime
 platform_contracts ◄── worker_protocol
 platform_contracts ◄── qa_orchestration
 platform_contracts ◄── deployment_protocol
 
 workflow_engine ◄── control_plane/server (services)      (forthcoming)
+workflow_store  ◄── control_plane/server (services)      (forthcoming)
 agent_runtime   ◄── control_plane/server (agent_service) (forthcoming)
 worker_protocol ◄── control_plane/server (worker_service)(forthcoming)
 qa_orchestration◄── control_plane/server (qa_service)    (forthcoming)
@@ -260,6 +297,7 @@ deployment_protocol◄─ control_plane/server (deployment_service) (forthcoming
 ## Forbidden Dependencies
 
 - ❌ `workflow_engine` → `agent_runtime` / `worker_protocol` / `qa_orchestration` / `deployment_protocol`
+- ❌ `workflow_store` → `agent_runtime` / `worker_protocol` / `qa_orchestration` / `deployment_protocol`
 - ❌ `agent_runtime` → `workflow_engine` / `qa_orchestration` / `deployment_protocol` / `worker_protocol`
 - ❌ `qa_orchestration` → `agent_runtime` / `deployment_protocol` / `workflow_engine` / `worker_protocol`
 - ❌ `deployment_protocol` → `workflow_engine` / `agent_runtime` / `qa_orchestration` / `worker_protocol`

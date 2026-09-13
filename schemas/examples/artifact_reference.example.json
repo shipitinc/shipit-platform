@@ -1,0 +1,9 @@
+{
+  "artifactId": "123e4567-e89b-12d3-a456-426614174030",
+  "artifactType": "qa_evidence",
+  "uri": "artifacts/static-analysis.json",
+  "provider": "ci",
+  "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "description": "Static analysis report for the login feature",
+  "createdAt": "2024-01-02T10:00:00Z"
+}

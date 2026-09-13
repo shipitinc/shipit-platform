@@ -20,42 +20,138 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
 
   @override
   List<WorkflowState<WorkItemState>> get allowedTransitions => switch (value) {
-    WorkItemState.draft => [WorkItemWorkflowState.designInReview],
-    WorkItemState.designInReview => [
-      WorkItemWorkflowState.designApproved,
-      WorkItemWorkflowState.designRejected,
+    WorkItemState.draft => [WorkItemWorkflowState.planning],
+    WorkItemState.planning => [
+      WorkItemWorkflowState.planned,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
     ],
-    WorkItemState.designApproved => [WorkItemWorkflowState.agentExecuting],
-    WorkItemState.designRejected => [WorkItemWorkflowState.draft],
+    WorkItemState.planned => [
+      WorkItemWorkflowState.designRequired,
+      WorkItemWorkflowState.designNotRequired,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
+    WorkItemState.designRequired => [
+      WorkItemWorkflowState.designInReview,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
+    WorkItemState.designNotRequired => [
+      WorkItemWorkflowState.agentExecuting,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
+    WorkItemState.designInReview => [
+      WorkItemWorkflowState.waitingForHumanDecision,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
+    WorkItemState.designApproved => [
+      WorkItemWorkflowState.agentExecuting,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
+    WorkItemState.designRejected => [
+      WorkItemWorkflowState.designInReview,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
     WorkItemState.agentExecuting => [
       WorkItemWorkflowState.agentCompleted,
       WorkItemWorkflowState.agentFailed,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
     ],
-    WorkItemState.agentCompleted => [WorkItemWorkflowState.qaInProgress],
+    WorkItemState.agentCompleted => [
+      WorkItemWorkflowState.reviewInProgress,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
     WorkItemState.agentFailed => [
       WorkItemWorkflowState.agentExecuting,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
+    WorkItemState.reviewInProgress => [
+      WorkItemWorkflowState.waitingForHumanDecision,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
+    WorkItemState.reviewApproved => [
+      WorkItemWorkflowState.qaInProgress,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
+    WorkItemState.reviewRejected => [
+      WorkItemWorkflowState.agentExecuting,
       WorkItemWorkflowState.designInReview,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
     ],
     WorkItemState.qaInProgress => [
       WorkItemWorkflowState.qaPassed,
       WorkItemWorkflowState.qaFailed,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
     ],
-    WorkItemState.qaPassed => [WorkItemWorkflowState.deploying],
+    WorkItemState.qaPassed => [
+      WorkItemWorkflowState.waitingForHumanDecision,
+      WorkItemWorkflowState.deploying,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
     WorkItemState.qaFailed => [
+      WorkItemWorkflowState.waitingForHumanDecision,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
+    WorkItemState.waitingForHumanDecision => [
+      WorkItemWorkflowState.designApproved,
+      WorkItemWorkflowState.designRejected,
+      WorkItemWorkflowState.designInReview,
+      WorkItemWorkflowState.reviewApproved,
+      WorkItemWorkflowState.reviewRejected,
       WorkItemWorkflowState.agentExecuting,
       WorkItemWorkflowState.qaPassed,
-      WorkItemWorkflowState.designInReview,
-    ],
-    WorkItemState.deploying => [
       WorkItemWorkflowState.deployed,
       WorkItemWorkflowState.deploymentFailed,
+      WorkItemWorkflowState.completed,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
     ],
-    WorkItemState.deployed => [WorkItemWorkflowState.done],
-    WorkItemState.deploymentFailed => [WorkItemWorkflowState.deploying],
+    WorkItemState.deploying => [
+      WorkItemWorkflowState.waitingForHumanDecision,
+      WorkItemWorkflowState.deployed,
+      WorkItemWorkflowState.deploymentFailed,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
+    WorkItemState.deployed => [
+      WorkItemWorkflowState.completed,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
+    WorkItemState.deploymentFailed => [
+      WorkItemWorkflowState.deploying,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
+    WorkItemState.completed => [],
+    WorkItemState.cancelled => [],
+    WorkItemState.terminated => [],
     WorkItemState.done => [],
   };
 
   static const draft = WorkItemWorkflowState(WorkItemState.draft);
+  static const planning = WorkItemWorkflowState(WorkItemState.planning);
+  static const planned = WorkItemWorkflowState(WorkItemState.planned);
+  static const designRequired = WorkItemWorkflowState(
+    WorkItemState.designRequired,
+  );
+  static const designNotRequired = WorkItemWorkflowState(
+    WorkItemState.designNotRequired,
+  );
   static const designInReview = WorkItemWorkflowState(
     WorkItemState.designInReview,
   );
@@ -72,14 +168,29 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
     WorkItemState.agentCompleted,
   );
   static const agentFailed = WorkItemWorkflowState(WorkItemState.agentFailed);
+  static const reviewInProgress = WorkItemWorkflowState(
+    WorkItemState.reviewInProgress,
+  );
+  static const reviewApproved = WorkItemWorkflowState(
+    WorkItemState.reviewApproved,
+  );
+  static const reviewRejected = WorkItemWorkflowState(
+    WorkItemState.reviewRejected,
+  );
   static const qaInProgress = WorkItemWorkflowState(WorkItemState.qaInProgress);
   static const qaPassed = WorkItemWorkflowState(WorkItemState.qaPassed);
   static const qaFailed = WorkItemWorkflowState(WorkItemState.qaFailed);
+  static const waitingForHumanDecision = WorkItemWorkflowState(
+    WorkItemState.waitingForHumanDecision,
+  );
   static const deploying = WorkItemWorkflowState(WorkItemState.deploying);
   static const deployed = WorkItemWorkflowState(WorkItemState.deployed);
   static const deploymentFailed = WorkItemWorkflowState(
     WorkItemState.deploymentFailed,
   );
+  static const completed = WorkItemWorkflowState(WorkItemState.completed);
+  static const cancelled = WorkItemWorkflowState(WorkItemState.cancelled);
+  static const terminated = WorkItemWorkflowState(WorkItemState.terminated);
   static const done = WorkItemWorkflowState(WorkItemState.done);
 }
 

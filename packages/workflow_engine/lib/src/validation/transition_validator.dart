@@ -1,32 +1,46 @@
+import 'package:platform_contracts/platform_contracts.dart';
+
 import '../states/workflow_state.dart';
 
+/// Result of a validated transition attempt.
+///
+/// A transition is never rejected by throwing; policy rejections are returned
+/// as a [Transition] whose [Transition.isValid] is false. The first failed
+/// guard is reported via [Transition.rejectionReason].
 class Transition<T> {
   const Transition({
     required this.from,
     required this.to,
     required this.trigger,
-    this.guardResults,
+    required this.actor,
+    this.guardResults = const [],
+    this.decisionId,
     this.metadata,
   });
 
   final WorkflowState<T> from;
   final WorkflowState<T> to;
   final TransitionTrigger trigger;
-  final List<GuardResult>? guardResults;
+  final WorkflowActor actor;
+  final List<GuardResult> guardResults;
+  final String? decisionId;
   final Map<String, dynamic>? metadata;
 
-  bool get isValid => guardResults?.every((g) => g.passed) ?? true;
+  bool get isValid => guardResults.every((g) => g.passed);
 
   List<String> get failedGuards =>
-      guardResults?.where((g) => !g.passed).map((g) => g.name).toList() ?? [];
-}
+      guardResults.where((g) => !g.passed).map((g) => g.name).toList();
 
-enum TransitionTrigger {
-  humanDecision,
-  agentResult,
-  systemEvent,
-  timer,
-  manual,
+  String? get rejectionReason {
+    for (final guard in guardResults) {
+      if (!guard.passed) {
+        return guard.message ??
+            'Guard "${guard.name}" failed for '
+                '${from.value} -> ${to.value}';
+      }
+    }
+    return null;
+  }
 }
 
 class GuardResult {
@@ -47,30 +61,27 @@ class TransitionValidator {
   Transition<T> validate<T>(
     WorkflowState<T> from,
     WorkflowState<T> to,
-    TransitionTrigger trigger, {
+    TransitionTrigger trigger,
+    WorkflowActor actor, {
     required List<GuardCondition<T>> guards,
     Map<String, dynamic>? metadata,
+    String? decisionId,
   }) {
-    final guardResults = <GuardResult>[];
+    final ctx = {if (metadata != null) ...metadata, 'actor': actor};
 
-    for (final guard in guards) {
-      final result = guard.evaluate(from, to, metadata);
-      guardResults.add(result);
-    }
+    final guardResults = <GuardResult>[
+      for (final guard in guards) guard.evaluate(from, to, ctx),
+    ];
 
-    final transition = Transition<T>(
+    return Transition<T>(
       from: from,
       to: to,
       trigger: trigger,
+      actor: actor,
       guardResults: guardResults,
-      metadata: metadata,
+      decisionId: decisionId,
+      metadata: ctx,
     );
-
-    if (!transition.isValid) {
-      throw InvalidTransitionException(transition);
-    }
-
-    return transition;
   }
 }
 
@@ -82,14 +93,4 @@ abstract class GuardCondition<T> {
     WorkflowState<T> to,
     Map<String, dynamic>? context,
   );
-}
-
-class InvalidTransitionException implements Exception {
-  const InvalidTransitionException(this.transition);
-
-  final Transition<dynamic> transition;
-
-  @override
-  String toString() =>
-      'Invalid transition: ${transition.from.value} -> ${transition.to.value}. Failed guards: ${transition.failedGuards.join(', ')}';
 }

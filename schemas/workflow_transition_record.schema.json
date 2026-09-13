@@ -1,0 +1,142 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/workflow_transition_record.schema.json",
+  "title": "WorkflowTransitionRecord",
+  "description": "Append-only audit record of a work item transition attempt, accepted or rejected. History is durable and supports replay, idempotency and audit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["transitionId", "workItemId", "fromState", "toState", "trigger", "actorType", "outcome", "occurredAt"],
+  "properties": {
+    "transitionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this transition record"
+    },
+    "workItemId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Work item this transition applies to"
+    },
+    "fromState": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "planning",
+        "planned",
+        "design_required",
+        "design_not_required",
+        "design_in_review",
+        "design_approved",
+        "design_rejected",
+        "agent_executing",
+        "agent_completed",
+        "agent_failed",
+        "review_in_progress",
+        "review_approved",
+        "review_rejected",
+        "qa_in_progress",
+        "qa_passed",
+        "qa_failed",
+        "waiting_for_human_decision",
+        "deploying",
+        "deployed",
+        "deployment_failed",
+        "completed",
+        "cancelled",
+        "terminated",
+        "done"
+      ]
+    },
+    "toState": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "planning",
+        "planned",
+        "design_required",
+        "design_not_required",
+        "design_in_review",
+        "design_approved",
+        "design_rejected",
+        "agent_executing",
+        "agent_completed",
+        "agent_failed",
+        "review_in_progress",
+        "review_approved",
+        "review_rejected",
+        "qa_in_progress",
+        "qa_passed",
+        "qa_failed",
+        "waiting_for_human_decision",
+        "deploying",
+        "deployed",
+        "deployment_failed",
+        "completed",
+        "cancelled",
+        "terminated",
+        "done"
+      ]
+    },
+    "trigger": {
+      "type": "string",
+      "enum": ["human_decision", "agent_result", "system_event", "timer", "manual"]
+    },
+    "actorType": {
+      "type": "string",
+      "enum": [
+        "orchestrator",
+        "human",
+        "implementation_agent",
+        "design_agent",
+        "design_reviewer",
+        "engineering_reviewer",
+        "qa_architect",
+        "qa_executor",
+        "release_engineer",
+        "deployment_authority",
+        "system"
+      ]
+    },
+    "actorId": {
+      "type": "string",
+      "description": "Identifier of the actor that requested the transition"
+    },
+    "decisionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "HumanDecision that authorized/produced this transition, when applicable"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["accepted", "rejected"],
+      "description": "accepted applies the transition; rejected records a blocked attempt with state unchanged"
+    },
+    "reason": {
+      "type": "string",
+      "description": "Rejection reason for rejected attempts; informational summary otherwise"
+    },
+    "guardEvaluations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["guardName", "passed"],
+        "properties": {
+          "guardName": { "type": "string" },
+          "passed": { "type": "boolean" },
+          "message": { "type": "string" }
+        }
+      },
+      "description": "Evaluations of each guard for this transition attempt"
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "description": "Optional caller-provided key. Replaying the same key dedupes and returns the original record."
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the transition was attempted"
+    }
+  }
+}

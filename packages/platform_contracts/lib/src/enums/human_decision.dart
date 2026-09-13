@@ -7,7 +7,15 @@ enum HumanDecisionType {
   deploymentRejection('deployment_rejection'),
   rollbackApproval('rollback_approval'),
   escalation('escalation'),
-  policyException('policy_exception');
+  policyException('policy_exception'),
+  productDecision('product_decision'),
+  architectureDecision('architecture_decision'),
+  engineeringReview('engineering_review'),
+  humanQaApproval('human_qa_approval'),
+  destructiveMigrationApproval('destructive_migration_approval'),
+  securityDecision('security_decision'),
+  infrastructureDecision('infrastructure_decision'),
+  otherConsequential('other_consequential');
 
   const HumanDecisionType(this.wire);
 
@@ -23,7 +31,9 @@ enum HumanDecisionChoice {
   approve('approve'),
   reject('reject'),
   waive('waive'),
-  rework('rework');
+  rework('rework'),
+  cancel('cancel'),
+  defer('defer');
 
   const HumanDecisionChoice(this.wire);
 
@@ -33,5 +43,26 @@ enum HumanDecisionChoice {
     (choice) => choice.wire == value,
     orElse: () =>
         throw FormatException('Unknown human decision choice: $value'),
+  );
+}
+
+enum HumanDecisionStatus {
+  pending('pending'),
+  inProgress('in_progress'),
+  resolved('resolved'),
+  escalated('escalated'),
+  deferred('deferred'),
+  cancelled('cancelled');
+
+  const HumanDecisionStatus(this.wire);
+
+  final String wire;
+
+  bool get isResolved => this == HumanDecisionStatus.resolved;
+
+  static HumanDecisionStatus fromWire(String value) => values.firstWhere(
+    (status) => status.wire == value,
+    orElse: () =>
+        throw FormatException('Unknown human decision status: $value'),
   );
 }

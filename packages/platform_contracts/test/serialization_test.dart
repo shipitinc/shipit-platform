@@ -129,11 +129,13 @@ void main() {
   });
 
   group('HumanDecision serialization', () {
-    test('serializes to JSON and back', () {
+    test('serializes a resolved decision to JSON and back', () {
       final decision = HumanDecision(
         decisionId: '123e4567-e89b-12d3-a456-426614174002',
-        workflowId: '123e4567-e89b-12d3-a456-426614174001',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
         decisionType: HumanDecisionType.designApproval,
+        status: HumanDecisionStatus.resolved,
+        question: 'Approve the design revision for the login feature?',
         decider: 'alice@example.com',
         choice: HumanDecisionChoice.approve,
         rationale: 'Design looks good',
@@ -145,17 +147,56 @@ void main() {
           signedAt: DateTime.parse('2024-01-01T12:00:00Z'),
         ),
         context: DecisionContext(
-          workflowState: 'design_in_review',
+          workflowState: 'waiting_for_human_decision',
           availableOptions: ['approve', 'reject'],
         ),
+        requestedAt: DateTime.parse('2024-01-01T10:00:00Z'),
+        updatedAt: DateTime.parse('2024-01-01T12:00:00Z'),
       );
 
       final json = decision.toJson();
       final decoded = HumanDecision.fromJson(json);
 
       expect(decoded.decisionId, equals(decision.decisionId));
+      expect(decoded.workItemId, equals(decision.workItemId));
+      expect(decoded.status, equals(HumanDecisionStatus.resolved));
       expect(decoded.choice, equals(HumanDecisionChoice.approve));
-      expect(decoded.signature.algorithm, equals('Ed25519'));
+      expect(decoded.signature!.algorithm, equals('Ed25519'));
+      expect(json['status'], equals('resolved'));
+      expect(json['workItemId'], isNotNull);
+      expect(json.containsKey('workflowId'), isFalse);
+    });
+
+    test('pending decision omits resolution fields', () {
+      final decision = HumanDecision(
+        decisionId: '123e4567-e89b-12d3-a456-426614174002',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        decisionType: HumanDecisionType.engineeringReview,
+        status: HumanDecisionStatus.pending,
+        question: 'Does this implementation satisfy the design contract?',
+        options: [
+          HumanDecisionOption(
+            optionId: 'approve',
+            label: 'Approve',
+            recommended: true,
+          ),
+          const HumanDecisionOption(optionId: 'reject', label: 'Reject'),
+          const HumanDecisionOption(optionId: 'rework', label: 'Rework'),
+        ],
+        recommendation: 'approve',
+        requestedAt: DateTime.parse('2024-01-01T10:00:00Z'),
+        updatedAt: DateTime.parse('2024-01-01T10:00:00Z'),
+      );
+
+      final json = decision.toJson();
+      final decoded = HumanDecision.fromJson(json);
+
+      expect(decoded.status, equals(HumanDecisionStatus.pending));
+      expect(decoded.choice, isNull);
+      expect(decoded.decider, isNull);
+      expect(decoded.signature, isNull);
+      expect(json.containsKey('choice'), isFalse);
+      expect(json.containsKey('decider'), isFalse);
     });
   });
 
@@ -254,9 +295,17 @@ void main() {
     });
 
     test('WorkItemState has expected values', () {
-      expect(WorkItemState.values.length, equals(14));
+      expect(WorkItemState.values.length, equals(25));
       expect(WorkItemState.draft.name, equals('draft'));
-      expect(WorkItemState.done.name, equals('done'));
+      expect(WorkItemState.completed.isTerminal, isTrue);
+      expect(WorkItemState.cancelled.isTerminal, isTrue);
+      expect(WorkItemState.terminated.isTerminal, isTrue);
+      expect(WorkItemState.done.isTerminal, isTrue);
+      expect(WorkItemState.designApproved.isTerminal, isFalse);
+      expect(
+        WorkItemState.waitingForHumanDecision.isWaitingForHumanDecision,
+        isTrue,
+      );
     });
 
     test('QAGateStatus has AEF-aligned non-executed values', () {
@@ -400,6 +449,96 @@ void main() {
         QAGateResult.fromJson(json).status,
         equals(QAGateStatus.notApplicable),
       );
+    });
+  });
+
+  group('ArtifactReference serialization', () {
+    test('round-trips with wire artifact type', () {
+      final ref = ArtifactReference(
+        artifactId: '123e4567-e89b-12d3-a456-426614174030',
+        artifactType: ArtifactType.qaEvidence,
+        uri: 'artifacts/static-analysis.json',
+        provider: 'ci',
+        contentHash: 'c' * 64,
+        createdAt: DateTime.parse('2024-01-02T10:00:00Z'),
+      );
+
+      final json = ref.toJson();
+      expect(json['artifactType'], equals('qa_evidence'));
+      final decoded = ArtifactReference.fromJson(json);
+      expect(decoded.artifactType, equals(ArtifactType.qaEvidence));
+      expect(decoded.uri, equals(ref.uri));
+    });
+  });
+
+  group('WorkflowActor serialization', () {
+    test('round-trips with wire actor type', () {
+      const actor = WorkflowActor(
+        actorId: 'orch-1',
+        actorType: ActorType.orchestrator,
+        displayName: 'ShipIt Orchestrator',
+      );
+
+      final json = actor.toJson();
+      expect(json['actorType'], equals('orchestrator'));
+      final decoded = WorkflowActor.fromJson(json);
+      expect(decoded.actorType, equals(ActorType.orchestrator));
+      expect(decoded.displayName, equals('ShipIt Orchestrator'));
+    });
+  });
+
+  group('WorkflowTransitionRecord serialization', () {
+    test('round-trips accepted transition with guard evaluations', () {
+      final record = WorkflowTransitionRecord(
+        transitionId: '123e4567-e89b-12d3-a456-426614174040',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        fromState: WorkItemState.planned,
+        toState: WorkItemState.designRequired,
+        trigger: TransitionTrigger.systemEvent,
+        actorType: ActorType.orchestrator,
+        actorId: 'orch-1',
+        outcome: TransitionOutcome.accepted,
+        occurredAt: DateTime.parse('2024-01-02T12:00:00Z'),
+        guardEvaluations: [
+          TransitionGuardEvaluation(
+            guardName: 'design_contract_exists',
+            passed: true,
+          ),
+        ],
+        idempotencyKey: 'tx-001',
+      );
+
+      final json = record.toJson();
+      expect(json['outcome'], equals('accepted'));
+      expect(json['fromState'], equals('planned'));
+      expect(json['actorType'], equals('orchestrator'));
+      expect(json['trigger'], equals('system_event'));
+
+      final decoded = WorkflowTransitionRecord.fromJson(json);
+      expect(decoded.outcome, equals(TransitionOutcome.accepted));
+      expect(decoded.fromState, equals(WorkItemState.planned));
+      expect(decoded.toState, equals(WorkItemState.designRequired));
+      expect(decoded.trigger, equals(TransitionTrigger.systemEvent));
+      expect(decoded.guardEvaluations.single.passed, isTrue);
+    });
+
+    test('round-trips rejected transition', () {
+      final record = WorkflowTransitionRecord(
+        transitionId: '123e4567-e89b-12d3-a456-426614174041',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        fromState: WorkItemState.draft,
+        toState: WorkItemState.agentExecuting,
+        trigger: TransitionTrigger.systemEvent,
+        actorType: ActorType.orchestrator,
+        actorId: 'orch-1',
+        outcome: TransitionOutcome.rejected,
+        reason: 'Transition from draft to agent_executing is not allowed',
+        occurredAt: DateTime.parse('2024-01-02T12:00:00Z'),
+      );
+
+      final decoded = WorkflowTransitionRecord.fromJson(record.toJson());
+      expect(decoded.outcome, equals(TransitionOutcome.rejected));
+      expect(decoded.reason, isNotNull);
     });
   });
 }
