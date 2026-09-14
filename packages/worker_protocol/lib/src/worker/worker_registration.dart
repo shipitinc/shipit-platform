@@ -15,6 +15,7 @@ class WorkerRegistration {
     required this.maxConcurrency,
     required this.lastHeartbeat,
     this.artifactCache,
+    this.platform,
   });
 
   final String workerId;
@@ -26,9 +27,20 @@ class WorkerRegistration {
   final DateTime lastHeartbeat;
   final Map<String, ArtifactCacheEntry>? artifactCache;
 
+  /// Host platform descriptor (provider-neutral, e.g. `macos-14`, `linux-x64`).
+  /// Optional: capability matching never depends on this string; it is carried
+  /// for observability and future pinning policy.
+  final String? platform;
+
   bool get isAvailable =>
       status == WorkerStatus.idle ||
       (status == WorkerStatus.busy && currentLoad < maxConcurrency);
+
+  /// Capacity-1 lease: can this worker take one more execution right now?
+  bool get isAcquirable =>
+      status != WorkerStatus.offline &&
+      status != WorkerStatus.draining &&
+      currentLoad < maxConcurrency;
 }
 
 @immutable

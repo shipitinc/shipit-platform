@@ -395,14 +395,16 @@ void main() {
 
   group('Enums', () {
     test('WorkerCapability has expected values', () {
-      expect(WorkerCapability.values.length, equals(7));
+      expect(WorkerCapability.values.length, equals(9));
       expect(WorkerCapability.linux.name, equals('linux'));
+      expect(WorkerCapability.macos.name, equals('macos'));
       expect(WorkerCapability.docker.name, equals('docker'));
       expect(WorkerCapability.flutter.name, equals('flutter'));
+      expect(WorkerCapability.web.name, equals('web'));
       expect(WorkerCapability.android.name, equals('android'));
-      expect(WorkerCapability.macos.name, equals('macos'));
       expect(WorkerCapability.ios.name, equals('ios'));
       expect(WorkerCapability.xcode.name, equals('xcode'));
+      expect(WorkerCapability.gpu.name, equals('gpu'));
     });
 
     test('WorkItemState has expected values', () {

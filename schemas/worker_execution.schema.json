@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/worker_execution.schema.json",
+  "title": "WorkerExecution",
+  "description": "Durable record of one worker execution, distinct from the WorkItem, the AgentExecution, and any runtime session.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workerExecutionId",
+    "workItemId",
+    "repositoryPath",
+    "requestedStartingRevision",
+    "requiredCapabilities",
+    "status",
+    "cleanupPolicy",
+    "version"
+  ],
+  "properties": {
+    "workerExecutionId": { "type": "string" },
+    "workItemId": { "type": "string" },
+    "repositoryPath": { "type": "string" },
+    "requestedStartingRevision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "requiredCapabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["linux", "macos", "docker", "flutter", "web", "android", "ios", "xcode", "gpu"]
+      },
+      "uniqueItems": true
+    },
+    "status": {
+      "type": "string",
+      "enum": ["acquiring", "workspacePreparing", "agentExecuting", "finalizing", "executedPass", "executedFail", "prepareFailed", "cancelled", "timedOut", "orphaned"]
+    },
+    "cleanupPolicy": {
+      "type": "string",
+      "enum": ["removeAlways", "preserveOnFailure"]
+    },
+    "workerId": { "type": "string" },
+    "workspaceId": { "type": "string" },
+    "agentExecutionId": { "type": "string" },
+    "resultId": { "type": "string" },
+    "endingRevision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "cleanupStatus": {
+      "type": "string",
+      "enum": ["notApplicable", "pending", "removed", "preservedPerPolicy", "cleanupFailed"]
+    },
+    "failureCode": {
+      "type": "string",
+      "enum": ["none", "noCompatibleWorker", "prepareFailed", "agentFailed", "timedOut", "cancelled", "cleanupFailed"]
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "endedAt": { "type": "string", "format": "date-time" },
+    "reason": { "type": "string" },
+    "version": { "type": "integer", "minimum": 1 }
+  }
+}

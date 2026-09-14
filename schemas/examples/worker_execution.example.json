@@ -1,0 +1,20 @@
+{
+  "workerExecutionId": "123e4567-e89b-12d3-a456-426614174020",
+  "workItemId": "123e4567-e89b-12d3-a456-426614174001",
+  "repositoryPath": "/home/ci/checkouts/shipit-platform",
+  "requestedStartingRevision": "f0f3494957bb90df0a1c15a9fb4734ca6e49634d",
+  "requiredCapabilities": ["linux", "flutter"],
+  "status": "executedPass",
+  "cleanupPolicy": "removeAlways",
+  "workerId": "worker-local-1",
+  "workspaceId": "ws-001",
+  "agentExecutionId": "123e4567-e89b-12d3-a456-426614174011",
+  "resultId": "123e4567-e89b-12d3-a456-426614174003",
+  "endingRevision": "f0f3494957bb90df0a1c15a9fb4734ca6e49634d",
+  "cleanupStatus": "removed",
+  "failureCode": "none",
+  "createdAt": "2024-01-02T12:00:00Z",
+  "startedAt": "2024-01-02T12:00:01Z",
+  "endedAt": "2024-01-02T12:03:45Z",
+  "version": 3
+}

@@ -78,7 +78,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["linux", "docker", "flutter", "android", "macos", "ios", "xcode"]
+              "enum": ["linux", "macos", "docker", "flutter", "web", "android", "ios", "xcode", "gpu"]
             },
             "description": "Worker capabilities required to run this gate"
           }

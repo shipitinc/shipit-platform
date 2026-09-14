@@ -32,6 +32,7 @@ class AgentSessionConfig {
     this.runtimeConfig = const {},
     this.allowedPaths,
     this.sessionId,
+    this.environment,
   });
 
   final String executionId;
@@ -51,4 +52,8 @@ class AgentSessionConfig {
 
   /// When set, the session is a resumption of this existing ACP session.
   final String? sessionId;
+
+  /// Additive environment overrides for the runtime process. Never secrets;
+  /// these come from a worker [EnvironmentPolicy] allowlist (ADR 0015).
+  final Map<String, String>? environment;
 }

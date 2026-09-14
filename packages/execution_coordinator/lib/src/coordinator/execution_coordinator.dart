@@ -155,6 +155,7 @@ class ExecutionCoordinator {
           timeout: Duration(seconds: request.timeoutSeconds),
           runtimeConfig: request.runtimeConfig ?? const {},
           allowedPaths: request.workspace.allowedPaths,
+          environment: request.environment,
         ),
       );
     } on TimeoutException catch (e) {

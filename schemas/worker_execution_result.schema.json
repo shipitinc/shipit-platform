@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/worker_execution_result.schema.json",
+  "title": "WorkerExecutionResult",
+  "description": "Typed terminal outcome of a worker execution. Agent outcome and platform verification are carried separately and never conflated.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workerExecutionId",
+    "workItemId",
+    "status",
+    "workerId",
+    "workspaceId",
+    "startingRevision",
+    "cleanupStatus",
+    "failureCode",
+    "startedAt",
+    "endedAt"
+  ],
+  "properties": {
+    "workerExecutionId": { "type": "string" },
+    "workItemId": { "type": "string" },
+    "workerId": { "type": "string" },
+    "workspaceId": { "type": "string" },
+    "agentExecutionId": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["executedPass", "executedFail", "prepareFailed", "cancelled", "timedOut", "orphaned"]
+    },
+    "startingRevision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "endingRevision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "agentResultStatus": {
+      "type": "string",
+      "enum": ["completed", "failed", "cancelled", "partial"]
+    },
+    "verificationId": { "type": "string" },
+    "verificationPassed": { "type": "boolean" },
+    "changedFiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "operation"],
+        "properties": {
+          "path": { "type": "string" },
+          "operation": { "type": "string", "enum": ["modified", "added", "deleted", "renamed"] },
+          "beforeSha": { "type": "string" },
+          "afterSha": { "type": "string" }
+        }
+      },
+      "description": "Git-observed file changes (the platform's view, not the agent's claims)"
+    },
+    "diffSummary": { "type": "string" },
+    "diffRef": { "type": "string" },
+    "cleanupStatus": {
+      "type": "string",
+      "enum": ["notApplicable", "pending", "removed", "preservedPerPolicy", "cleanupFailed"]
+    },
+    "failureCode": {
+      "type": "string",
+      "enum": ["none", "noCompatibleWorker", "prepareFailed", "agentFailed", "timedOut", "cancelled", "cleanupFailed"]
+    },
+    "failureDetail": { "type": "string" },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "endedAt": { "type": "string", "format": "date-time" }
+  }
+}

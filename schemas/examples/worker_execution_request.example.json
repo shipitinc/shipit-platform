@@ -1,0 +1,16 @@
+{
+  "workerExecutionId": "123e4567-e89b-12d3-a456-426614174020",
+  "workItemId": "123e4567-e89b-12d3-a456-426614174001",
+  "repositoryPath": "/home/ci/checkouts/shipit-platform",
+  "startingRevision": "f0f3494957bb90df0a1c15a9fb4734ca6e49634d",
+  "requiredCapabilities": ["linux", "flutter"],
+  "role": "IMPLEMENTER",
+  "instruction": "Implement the calculator add function so the verify script passes.",
+  "timeoutSeconds": 300,
+  "runtimeTypeId": "opencode",
+  "cleanupPolicy": "removeAlways",
+  "envAllowlist": ["PATH", "HOME", "LANG"],
+  "environment": { "SHIPIT_WORKER": "local-1" },
+  "runtimeConfig": { "pure": "true" },
+  "createdAt": "2024-01-02T12:00:00Z"
+}

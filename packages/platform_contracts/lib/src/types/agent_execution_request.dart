@@ -79,6 +79,7 @@ class AgentExecutionRequest extends Equatable {
     this.expectedResult,
     this.expectedArtifacts = const [],
     this.runtimeConfig,
+    this.environment,
     this.createdAt,
   });
 
@@ -103,6 +104,10 @@ class AgentExecutionRequest extends Equatable {
   /// Runtime configuration, e.g. {'model': <provider-model>}, {'executable':
   /// <path>}. Values are opaque to the workflow layer.
   final Map<String, String>? runtimeConfig;
+
+  /// Explicit runtime variables (never production secrets) the worker layer
+  /// derived from its environment policy. Recorded for traceability.
+  final Map<String, String>? environment;
   final DateTime? createdAt;
 
   factory AgentExecutionRequest.fromJson(Map<String, dynamic> json) =>
@@ -123,6 +128,7 @@ class AgentExecutionRequest extends Equatable {
     expectedResult,
     expectedArtifacts,
     runtimeConfig,
+    environment,
     createdAt,
   ];
 }

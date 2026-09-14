@@ -15,6 +15,7 @@ workspace:
   - packages/qa_orchestration
   - packages/deployment_protocol
   - packages/execution_coordinator
+  - packages/worker_runtime
 
 dev_dependencies:
   melos: ^8.0.0

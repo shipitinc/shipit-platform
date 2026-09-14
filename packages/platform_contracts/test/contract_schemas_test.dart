@@ -30,6 +30,11 @@ void main() {
       'agent_execution',
       'agent_event_record',
       'platform_verification',
+      'worker_execution_request',
+      'worker_execution',
+      'worker_execution_result',
+      'workspace_descriptor',
+      'worker_event_record',
       'work_item',
       'qa_evidence',
       'human_decision',
@@ -185,6 +190,115 @@ void main() {
         _expectValid(_loadSchema('agent_event_record'), event.toJson());
       },
     );
+
+    test('WorkerExecutionRequest.toJson() conforms to '
+        'worker_execution_request.schema.json', () {
+      final request = WorkerExecutionRequest(
+        workerExecutionId: '123e4567-e89b-12d3-a456-426614174020',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        repositoryPath: '/home/ci/checkouts/shipit-platform',
+        startingRevision: 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+        requiredCapabilities: const {
+          WorkerCapability.linux,
+          WorkerCapability.flutter,
+        },
+        role: AgentRole.implementer,
+        instruction: 'Implement add(2,3) == 5.',
+        timeoutSeconds: 300,
+        runtimeTypeId: 'opencode',
+      );
+
+      _expectValid(_loadSchema('worker_execution_request'), request.toJson());
+    });
+
+    test(
+      'WorkerExecution.toJson() conforms to worker_execution.schema.json',
+      () {
+        final execution = WorkerExecution(
+          workerExecutionId: '123e4567-e89b-12d3-a456-426614174020',
+          workItemId: '123e4567-e89b-12d3-a456-426614174001',
+          repositoryPath: '/home/ci/checkouts/shipit-platform',
+          requestedStartingRevision: 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+          requiredCapabilities: const {WorkerCapability.linux},
+          status: WorkerExecutionStatus.executedPass,
+          cleanupPolicy: WorkerCleanupPolicy.removeAlways,
+          workerId: 'worker-local-1',
+          workspaceId: 'ws-001',
+          agentExecutionId: 'agx-wx-1',
+          cleanupStatus: WorkerCleanupStatus.removed,
+          failureCode: WorkerFailureCode.none,
+          createdAt: DateTime.parse('2024-01-02T12:00:00Z'),
+          startedAt: DateTime.parse('2024-01-02T12:00:01Z'),
+          endedAt: DateTime.parse('2024-01-02T12:03:45Z'),
+          version: 3,
+        );
+
+        _expectValid(_loadSchema('worker_execution'), execution.toJson());
+      },
+    );
+
+    test('WorkerExecutionResult.toJson() conforms to '
+        'worker_execution_result.schema.json', () {
+      final result = WorkerExecutionResult(
+        workerExecutionId: '123e4567-e89b-12d3-a456-426614174020',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        status: WorkerExecutionStatus.executedPass,
+        workerId: 'worker-local-1',
+        workspaceId: 'ws-001',
+        startingRevision: 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+        endingRevision: 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+        agentExecutionId: 'agx-wx-1',
+        agentResultStatus: AgentResultStatus.completed,
+        verificationId: 'ver-1',
+        verificationPassed: true,
+        changedFiles: const [
+          ChangedFile(
+            path: 'lib/calculator.dart',
+            operation: ChangedFileOperation.modified,
+          ),
+        ],
+        diffSummary: 'lib/calculator.dart | 2 +-',
+        cleanupStatus: WorkerCleanupStatus.removed,
+        failureCode: WorkerFailureCode.none,
+        startedAt: DateTime.parse('2024-01-02T12:00:01Z'),
+        endedAt: DateTime.parse('2024-01-02T12:03:45Z'),
+      );
+
+      _expectValid(_loadSchema('worker_execution_result'), result.toJson());
+    });
+
+    test(
+      'WorkerEventRecord.toJson() conforms to worker_event_record.schema.json',
+      () {
+        final event = WorkerEventRecord(
+          eventId: 'evt-1',
+          workerExecutionId: '123e4567-e89b-12d3-a456-426614174020',
+          workItemId: '123e4567-e89b-12d3-a456-426614174001',
+          sequence: 2,
+          type: WorkerEventType.verificationStarted,
+          occurredAt: DateTime.parse('2024-01-02T12:31:05Z'),
+          payload: const {'verificationId': 'ver-1'},
+        );
+
+        _expectValid(_loadSchema('worker_event_record'), event.toJson());
+      },
+    );
+
+    test('WorkspaceDescriptor.toJson() conforms to '
+        'workspace_descriptor.schema.json', () {
+      final descriptor = WorkspaceDescriptor(
+        workspaceId: 'ws-001',
+        workerExecutionId: '123e4567-e89b-12d3-a456-426614174020',
+        workerId: 'worker-local-1',
+        repositoryPath: '/home/ci/checkouts/shipit-platform',
+        startingRevision: 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+        worktreePath: '/workspaces/ws-001',
+        detached: true,
+        createdAt: DateTime.parse('2024-01-02T12:00:01Z'),
+      );
+
+      _expectValid(_loadSchema('workspace_descriptor'), descriptor.toJson());
+    });
 
     test('PlatformVerification.toJson() conforms to '
         'platform_verification.schema.json', () {
@@ -579,6 +693,44 @@ void main() {
       };
 
       expect(() => PlatformVerification.fromJson(json), throwsFormatException);
+    });
+
+    test('WorkerEventRecord.fromJson rejects an unknown type', () {
+      final json = {
+        'eventId': 'evt-x',
+        'workerExecutionId': '123e4567-e89b-12d3-a456-426614174020',
+        'workItemId': '123e4567-e89b-12d3-a456-426614174001',
+        'sequence': 1,
+        'type': 'not_a_worker_type',
+        'occurredAt': '2024-01-02T12:30:05Z',
+      };
+
+      expect(() => WorkerEventRecord.fromJson(json), throwsFormatException);
+    });
+
+    test('WorkerExecutionRequest round-trips required capability tokens', () {
+      final request = WorkerExecutionRequest.fromJson({
+        'workerExecutionId': '123e4567-e89b-12d3-a456-426614174020',
+        'workItemId': '123e4567-e89b-12d3-a456-426614174001',
+        'repositoryPath': '/checkouts/repo',
+        'startingRevision': 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+        'requiredCapabilities': ['macos', 'xcode'],
+        'role': 'IMPLEMENTER',
+        'instruction': 'do the thing',
+        'timeoutSeconds': 300,
+        'runtimeTypeId': 'opencode',
+        'cleanupPolicy': 'preserveOnFailure',
+      });
+
+      expect(
+        request.requiredCapabilities,
+        containsAll(const {WorkerCapability.macos, WorkerCapability.xcode}),
+      );
+      expect(request.cleanupPolicy, WorkerCleanupPolicy.preserveOnFailure);
+
+      final decoded = WorkerExecutionRequest.fromJson(request.toJson());
+      expect(decoded.requiredCapabilities, request.requiredCapabilities);
+      expect(decoded.startingRevision, request.startingRevision);
     });
   });
 }

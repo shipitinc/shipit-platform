@@ -1,0 +1,25 @@
+{
+  "workerExecutionId": "123e4567-e89b-12d3-a456-426614174020",
+  "workItemId": "123e4567-e89b-12d3-a456-426614174001",
+  "workerId": "worker-local-1",
+  "workspaceId": "ws-001",
+  "agentExecutionId": "123e4567-e89b-12d3-a456-426614174011",
+  "status": "executedPass",
+  "startingRevision": "f0f3494957bb90df0a1c15a9fb4734ca6e49634d",
+  "endingRevision": "f0f3494957bb90df0a1c15a9fb4734ca6e49634d",
+  "agentResultStatus": "completed",
+  "verificationId": "123e4567-e89b-12d3-a456-426614174012",
+  "verificationPassed": true,
+  "changedFiles": [
+    {
+      "path": "lib/calculator.dart",
+      "operation": "modified"
+    }
+  ],
+  "diffSummary": "diff --git a/lib/calculator.dart b/lib/calculator.dart\n--- a/lib/calculator.dart\n+++ b/lib/calculator.dart\n@@ -1,1 +1,1 @@\n-int add(int a, int b) => throw UnimplementedError();\n+int add(int a, int b) => a + b;\n",
+  "diffRef": "file:///var/shipit/exec-123/diff.patch",
+  "cleanupStatus": "removed",
+  "failureCode": "none",
+  "startedAt": "2024-01-02T12:00:01Z",
+  "endedAt": "2024-01-02T12:03:45Z"
+}

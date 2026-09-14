@@ -317,6 +317,8 @@ void main() {
       expect(health.healthy, isFalse);
     });
   });
+
+  _environmentSeamingTests();
 }
 
 class MockAgentAdapter implements AgentAdapter {
@@ -574,4 +576,34 @@ Future<void> _settleEvents() async {
   for (var i = 0; i < 5; i++) {
     await Future<void>.delayed(Duration.zero);
   }
+}
+
+// Environment seaming: worker policy env reaches the spawned transport.
+void _environmentSeamingTests() {
+  test(
+    'defaultAcpTransport passes AgentSessionConfig.environment through',
+    () async {
+      final transport = await defaultAcpTransport(
+        AgentSessionConfig(
+          executionId: 'e1',
+          workItemId: 'w1',
+          workingDirectory: '/tmp',
+          environment: {'SHIPIT_POOL': 'linux-a', 'MAX_JOBS': '4'},
+        ),
+      );
+      final spawned = transport as dynamic;
+      expect(spawned.environment, {'SHIPIT_POOL': 'linux-a', 'MAX_JOBS': '4'});
+    },
+  );
+
+  test('absent environment stays null', () async {
+    final transport = await defaultAcpTransport(
+      AgentSessionConfig(
+        executionId: 'e2',
+        workItemId: 'w2',
+        workingDirectory: '/tmp',
+      ),
+    );
+    expect((transport as dynamic).environment, isNull);
+  });
 }

@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/workspace_descriptor.schema.json",
+  "title": "WorkspaceDescriptor",
+  "description": "Durable ownership metadata for a platform-created execution workspace. Written outside the worktree so reconciliation never infers ownership from directory naming.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workspaceId",
+    "workerExecutionId",
+    "workerId",
+    "repositoryPath",
+    "startingRevision",
+    "worktreePath",
+    "detached",
+    "createdAt"
+  ],
+  "properties": {
+    "workspaceId": { "type": "string" },
+    "workerExecutionId": { "type": "string" },
+    "workerId": { "type": "string" },
+    "repositoryPath": { "type": "string" },
+    "startingRevision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "worktreePath": { "type": "string" },
+    "branch": { "type": "string" },
+    "detached": { "type": "boolean" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "cleanedAt": { "type": "string", "format": "date-time" }
+  }
+}

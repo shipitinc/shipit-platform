@@ -10,11 +10,30 @@ class CapabilityMatcher {
     List<WorkerRegistration> availableWorkers,
   ) {
     return availableWorkers.where((worker) {
-      return _workerMatchesRequirements(worker, requirements);
+      if (!_matchesCapabilities(worker, requirements)) return false;
+      return worker.status == WorkerStatus.idle ||
+          worker.status == WorkerStatus.busy;
     }).toList();
   }
 
-  bool _workerMatchesRequirements(
+  /// Capability-and-version matching only; availability and status are
+  /// ignored so a caller can distinguish "no compatible worker exists" from
+  /// "a compatible worker exists but is not currently acquirable".
+  List<WorkerRegistration> matchIgnoreAvailability(
+    TaskRequirements requirements,
+    List<WorkerRegistration> pool,
+  ) {
+    return pool
+        .where((worker) => _matchesCapabilities(worker, requirements))
+        .toList();
+  }
+
+  bool matchesCapabilities(
+    WorkerRegistration worker,
+    TaskRequirements requirements,
+  ) => _matchesCapabilities(worker, requirements);
+
+  bool _matchesCapabilities(
     WorkerRegistration worker,
     TaskRequirements requirements,
   ) {
@@ -27,9 +46,7 @@ class CapabilityMatcher {
         return false;
       }
     }
-
-    return worker.status == WorkerStatus.idle ||
-        worker.status == WorkerStatus.busy;
+    return true;
   }
 
   bool _versionSatisfies(String current, String minimum) {

@@ -25,6 +25,7 @@ Future<AcpTransport> defaultAcpTransport(AgentSessionConfig config) async {
     cwd: config.workingDirectory,
     pure: pure,
     extraArgs: args == null ? const [] : args.split(' '),
+    environment: config.environment,
   );
 }
 

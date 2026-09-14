@@ -1,0 +1,11 @@
+{
+  "workspaceId": "ws-001",
+  "workerExecutionId": "123e4567-e89b-12d3-a456-426614174020",
+  "workerId": "worker-local-1",
+  "repositoryPath": "/home/ci/checkouts/shipit-platform",
+  "startingRevision": "f0f3494957bb90df0a1c15a9fb4734ca6e49634d",
+  "worktreePath": "/var/shipit/workers/worker-local-1/exec-123/worktree",
+  "detached": true,
+  "createdAt": "2024-01-02T12:00:01Z",
+  "cleanedAt": "2024-01-02T12:03:46Z"
+}

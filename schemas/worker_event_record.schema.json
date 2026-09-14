@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/worker_event_record.schema.json",
+  "title": "WorkerEventRecord",
+  "description": "A normalized, durable worker-layer event. Kept deliberately sparser than the agent event stream.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventId", "workerExecutionId", "workItemId", "sequence", "type", "occurredAt"],
+  "properties": {
+    "eventId": { "type": "string" },
+    "workerExecutionId": { "type": "string", "format": "uuid" },
+    "workItemId": { "type": "string", "format": "uuid" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "type": {
+      "type": "string",
+      "enum": ["worker_acquired", "workspace_preparing", "workspace_ready", "execution_started", "verification_started", "finalizing", "workspace_cleaned", "worker_released", "prepare_failed", "execution_failed", "cleanup_failed"]
+    },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

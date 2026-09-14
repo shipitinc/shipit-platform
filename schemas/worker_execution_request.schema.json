@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/worker_execution_request.schema.json",
+  "title": "WorkerExecutionRequest",
+  "description": "A single runnable worker execution request: one repository starting at an explicit committed revision, on a worker capable of the required tasks. Requirements only; the worker layer decides placement, environment and workspace lifecycle.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workerExecutionId",
+    "workItemId",
+    "repositoryPath",
+    "startingRevision",
+    "requiredCapabilities",
+    "role",
+    "instruction",
+    "timeoutSeconds",
+    "runtimeTypeId",
+    "cleanupPolicy"
+  ],
+  "properties": {
+    "workerExecutionId": { "type": "string" },
+    "workItemId": { "type": "string" },
+    "repositoryPath": { "type": "string" },
+    "startingRevision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Explicit committed SHA the worktree must start at"
+    },
+    "requiredCapabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["linux", "macos", "docker", "flutter", "web", "android", "ios", "xcode", "gpu"]
+      },
+      "uniqueItems": true
+    },
+    "role": {
+      "type": "string",
+      "enum": ["IMPLEMENTER", "ENGINEERING_REVIEWER", "DESIGN_AGENT", "DESIGN_REVIEWER", "QA_ARCHITECT", "QA_EXECUTOR", "RELEASE_ENGINEER", "DEPLOYMENT_AUTHORITY", "CORRECTION_IMPLEMENTER", "FOCUSED_REVIEWER", "INTEGRATOR"]
+    },
+    "instruction": { "type": "string" },
+    "timeoutSeconds": { "type": "integer", "minimum": 1 },
+    "runtimeTypeId": { "type": "string" },
+    "expectedArtifacts": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/expectedArtifact" }
+    },
+    "cleanupPolicy": {
+      "type": "string",
+      "enum": ["removeAlways", "preserveOnFailure"]
+    },
+    "envAllowlist": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "runtimeConfig": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "createdAt": { "type": "string", "format": "date-time" }
+  },
+  "definitions": {
+    "expectedArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description"],
+      "properties": {
+        "description": { "type": "string" },
+        "pathPattern": { "type": "string" },
+        "required": { "type": "boolean" }
+      }
+    }
+  }
+}

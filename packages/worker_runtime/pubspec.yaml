@@ -1,0 +1,21 @@
+name: worker_runtime
+version: 0.1.0
+description: Worker execution layer - environment ownership, workspace isolation, cleanup
+publish_to: none
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+
+resolution: workspace
+
+dependencies:
+  execution_coordinator:
+    path: ../execution_coordinator
+  meta: ^1.16.0
+  platform_contracts:
+    path: ../platform_contracts
+  worker_protocol:
+    path: ../worker_protocol
+
+dev_dependencies:
+  test: ^1.25.2

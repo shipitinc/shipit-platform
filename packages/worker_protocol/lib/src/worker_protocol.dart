@@ -3,6 +3,15 @@ import 'capabilities/capability_requirements.dart';
 import 'dispatch/task_dispatch.dart';
 import 'worker/worker_registration.dart';
 
+export 'capabilities/capability_matcher.dart';
+export 'capabilities/capability_requirements.dart';
+export 'capabilities/capability_spec.dart';
+export 'dispatch/task_dispatch.dart';
+export 'dispatch/worker_selector.dart';
+export 'worker/worker_registration.dart';
+export 'worker/worker_status.dart';
+export 'worker/worker_heartbeat.dart';
+
 class WorkerProtocol {
   const WorkerProtocol({
     CapabilityMatcher? matcher,

@@ -59,6 +59,9 @@ AgentExecutionRequest _$AgentExecutionRequestFromJson(
   runtimeConfig: (json['runtimeConfig'] as Map<String, dynamic>?)?.map(
     (k, e) => MapEntry(k, e as String),
   ),
+  environment: (json['environment'] as Map<String, dynamic>?)?.map(
+    (k, e) => MapEntry(k, e as String),
+  ),
   createdAt: json['createdAt'] == null
       ? null
       : DateTime.parse(json['createdAt'] as String),
@@ -80,6 +83,7 @@ Map<String, dynamic> _$AgentExecutionRequestToJson(
       .map((e) => e.toJson())
       .toList(),
   if (instance.runtimeConfig case final value?) 'runtimeConfig': value,
+  if (instance.environment case final value?) 'environment': value,
   if (instance.createdAt?.toIso8601String() case final value?)
     'createdAt': value,
 };
