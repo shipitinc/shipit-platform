@@ -1,0 +1,25 @@
+{
+  "executionId": "123e4567-e89b-12d3-a456-426614174010",
+  "workItemId": "123e4567-e89b-12d3-a456-426614174001",
+  "role": "IMPLEMENTER",
+  "runtimeTypeId": "opencode",
+  "workspace": {
+    "workspaceId": "ws-001",
+    "path": "/tmp/shipit-fixture-work-2026",
+    "startingRevision": "HEAD"
+  },
+  "instruction": "Implement the add function in lib/calculator.dart so that the existing test passes. Do not modify the test. Do not add dependencies. Do not run anything outside the workspace.",
+  "timeoutSeconds": 300,
+  "permittedScope": "Implement calculator.add",
+  "expectedArtifacts": [
+    {
+      "description": "Modified lib/calculator.dart implementing add",
+      "pathPattern": "lib/calculator.dart",
+      "required": true
+    }
+  ],
+  "runtimeConfig": {
+    "model": "opencode/big-pickle"
+  },
+  "createdAt": "2024-01-02T12:30:00Z"
+}

@@ -1,0 +1,18 @@
+{
+  "executionId": "123e4567-e89b-12d3-a456-426614174010",
+  "workItemId": "123e4567-e89b-12d3-a456-426614174001",
+  "requestId": "123e4567-e89b-12d3-a456-426614174011",
+  "runtimeTypeId": "opencode",
+  "role": "IMPLEMENTER",
+  "status": "completed",
+  "workspace": {
+    "workspaceId": "ws-001",
+    "path": "/tmp/shipit-fixture-work-2026",
+    "startingRevision": "HEAD"
+  },
+  "sessionId": "ses_ab01cdef2345",
+  "resultId": "123e4567-e89b-12d3-a456-426614174003",
+  "startedAt": "2024-01-02T12:30:01Z",
+  "completedAt": "2024-01-02T12:33:45Z",
+  "version": 1
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/platform_verification.schema.json",
+  "title": "PlatformVerification",
+  "description": "Platform-internal evidence of an independent validation run (e.g. `dart test` executed by the harness). Never produced by the agent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "verificationId",
+    "executionId",
+    "workItemId",
+    "checkName",
+    "status",
+    "mechanism",
+    "command",
+    "capturedAt",
+    "evidenceKind"
+  ],
+  "properties": {
+    "verificationId": { "type": "string", "format": "uuid" },
+    "executionId": { "type": "string", "format": "uuid" },
+    "workItemId": { "type": "string", "format": "uuid" },
+    "checkName": { "type": "string" },
+    "status": { "type": "string", "enum": ["passed", "failed"] },
+    "mechanism": { "type": "string" },
+    "command": { "type": "string" },
+    "capturedAt": { "type": "string", "format": "date-time" },
+    "evidenceKind": {
+      "type": "string",
+      "const": "platform_verified_evidence"
+    },
+    "outputRef": { "type": "string" },
+    "detail": { "type": "string" },
+    "resultPath": { "type": "string" }
+  }
+}

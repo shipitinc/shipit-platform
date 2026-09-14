@@ -1,0 +1,11 @@
+{
+  "eventId": "123e4567-e89b-12d3-a456-426614174020",
+  "executionId": "123e4567-e89b-12d3-a456-426614174010",
+  "workItemId": "123e4567-e89b-12d3-a456-426614174001",
+  "sequence": 1,
+  "type": "message",
+  "occurredAt": "2024-01-02T12:30:05Z",
+  "payload": {
+    "text": "Starting implementation"
+  }
+}

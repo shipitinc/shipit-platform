@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/agent_event_record.schema.json",
+  "title": "AgentEventRecord",
+  "description": "A normalized, durable execution event. Raw provider events may be preserved for diagnostics, but the platform persists these records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventId", "executionId", "workItemId", "sequence", "type", "occurredAt"],
+  "properties": {
+    "eventId": { "type": "string", "format": "uuid" },
+    "executionId": { "type": "string", "format": "uuid" },
+    "workItemId": { "type": "string", "format": "uuid" },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "type": {
+      "type": "string",
+      "enum": ["execution_started", "message", "tool_started", "tool_completed", "tool_failed", "artifact_produced", "warning", "execution_completed", "execution_failed", "execution_cancelled"]
+    },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

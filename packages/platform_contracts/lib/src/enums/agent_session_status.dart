@@ -5,4 +5,5 @@ enum AgentSessionStatus {
   failed,
   cancelled,
   interrupted,
+  orphaned,
 }

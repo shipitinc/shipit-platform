@@ -1,5 +1,7 @@
 {
   "resultId": "123e4567-e89b-12d3-a456-426614174003",
+  "executionId": "123e4567-e89b-12d3-a456-426614174010",
+  "role": "IMPLEMENTER",
   "sessionId": "123e4567-e89b-12d3-a456-426614174004",
   "workItemId": "123e4567-e89b-12d3-a456-426614174001",
   "status": "completed",
@@ -11,6 +13,20 @@
       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "sizeBytes": 1024,
       "mediaType": "text/plain"
+    }
+  ],
+  "changedFiles": [
+    {
+      "path": "lib/calculator.dart",
+      "operation": "modified"
+    }
+  ],
+  "claimedChecks": [
+    {
+      "checkName": "dart test",
+      "status": "passed",
+      "evidenceKind": "agent_claimed_evidence",
+      "command": "dart test"
     }
   ],
   "diagnostics": {

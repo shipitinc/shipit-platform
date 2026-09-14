@@ -12,6 +12,9 @@ export 'src/enums/human_decision.dart';
 export 'src/enums/transition_trigger.dart';
 export 'src/enums/workflow_actor.dart';
 export 'src/enums/artifact_type.dart';
+export 'src/enums/agent_role.dart';
+export 'src/enums/agent_event_type.dart';
+export 'src/enums/evidence_kind.dart';
 
 export 'src/types/product_manifest.dart';
 export 'src/types/work_item.dart';
@@ -28,3 +31,7 @@ export 'src/types/deployment_artifact.dart';
 export 'src/types/artifact_reference.dart';
 export 'src/types/workflow_actor.dart';
 export 'src/types/workflow_transition_record.dart';
+export 'src/types/agent_execution_request.dart';
+export 'src/types/agent_execution.dart';
+export 'src/types/agent_event_record.dart';
+export 'src/types/platform_verification.dart';

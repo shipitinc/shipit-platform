@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/agent_execution_request.schema.json",
+  "title": "AgentExecutionRequest",
+  "description": "Structured, typed input for a single agent execution. Provider/model selection lives in runtimeConfig, never in workflow contracts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "executionId",
+    "workItemId",
+    "role",
+    "runtimeTypeId",
+    "workspace",
+    "instruction",
+    "timeoutSeconds",
+    "expectedArtifacts"
+  ],
+  "properties": {
+    "executionId": { "type": "string", "format": "uuid" },
+    "workItemId": { "type": "string", "format": "uuid" },
+    "role": {
+      "type": "string",
+      "enum": ["IMPLEMENTER", "ENGINEERING_REVIEWER", "DESIGN_AGENT", "DESIGN_REVIEWER", "QA_ARCHITECT", "QA_EXECUTOR", "RELEASE_ENGINEER", "DEPLOYMENT_AUTHORITY", "CORRECTION_IMPLEMENTER", "FOCUSED_REVIEWER", "INTEGRATOR"]
+    },
+    "runtimeTypeId": {
+      "type": "string",
+      "description": "Provider-neutral runtime identifier, e.g. 'opencode'"
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaceId", "path"],
+      "properties": {
+        "workspaceId": { "type": "string" },
+        "path": { "type": "string" },
+        "startingRevision": { "type": "string" },
+        "allowedPaths": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "instruction": { "type": "string" },
+    "timeoutSeconds": { "type": "integer", "minimum": 1 },
+    "permittedScope": { "type": "string" },
+    "expectedResult": {
+      "type": "object",
+      "description": "Expected structured result contract (AEF result envelope)",
+      "additionalProperties": true
+    },
+    "expectedArtifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["description"],
+        "properties": {
+          "description": { "type": "string" },
+          "pathPattern": { "type": "string" },
+          "required": { "type": "boolean" }
+        }
+      }
+    },
+    "runtimeConfig": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Opaque runtime configuration (e.g. model, executable path)"
+    },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}

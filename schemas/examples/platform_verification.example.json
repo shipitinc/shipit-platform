@@ -1,0 +1,13 @@
+{
+  "verificationId": "123e4567-e89b-12d3-a456-426614174030",
+  "executionId": "123e4567-e89b-12d3-a456-426614174010",
+  "workItemId": "123e4567-e89b-12d3-a456-426614174001",
+  "checkName": "dart test (independent)",
+  "status": "passed",
+  "mechanism": "process_dart_test",
+  "command": "dart test",
+  "capturedAt": "2024-01-02T12:34:00Z",
+  "evidenceKind": "platform_verified_evidence",
+  "outputRef": "file:///var/log/shipit/verifications/123e4567.log",
+  "resultPath": "/tmp/shipit-fixture-work-2026"
+}

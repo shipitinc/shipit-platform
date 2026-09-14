@@ -26,6 +26,10 @@ void main() {
   group('JSON Schema examples conform to their schema', () {
     const schemas = [
       'agent_result',
+      'agent_execution_request',
+      'agent_execution',
+      'agent_event_record',
+      'platform_verification',
       'work_item',
       'qa_evidence',
       'human_decision',
@@ -80,6 +84,122 @@ void main() {
       );
 
       _expectValid(_loadSchema('agent_result'), result.toJson());
+    });
+
+    test('AgentResult.toJson() with execution fields conforms to '
+        'agent_result.schema.json', () {
+      final result = AgentResult(
+        resultId: '123e4567-e89b-12d3-a456-426614174003',
+        executionId: '123e4567-e89b-12d3-a456-426614174010',
+        role: AgentRole.implementer,
+        sessionId: '123e4567-e89b-12d3-a456-426614174004',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        status: AgentResultStatus.completed,
+        artifacts: [],
+        changedFiles: const [
+          ChangedFile(
+            path: 'lib/calculator.dart',
+            operation: ChangedFileOperation.modified,
+          ),
+        ],
+        claimedChecks: const [
+          AgentClaimedCheck(
+            checkName: 'dart test',
+            status: AgentClaimStatus.passed,
+          ),
+        ],
+        diagnostics: AgentDiagnostics(
+          exitCode: 0,
+          durationMs: 30000,
+          toolCalls: 15,
+          errors: [],
+          warnings: [],
+        ),
+        structuredResult: {'testsPassed': 42},
+        completedAt: DateTime.parse('2024-01-02T13:00:00Z'),
+      );
+
+      _expectValid(_loadSchema('agent_result'), result.toJson());
+    });
+
+    test('AgentExecutionRequest.toJson() conforms to '
+        'agent_execution_request.schema.json', () {
+      final request = AgentExecutionRequest(
+        executionId: '123e4567-e89b-12d3-a456-426614174010',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        role: AgentRole.implementer,
+        runtimeTypeId: 'opencode',
+        workspace: const AgentWorkspace(
+          workspaceId: 'ws-001',
+          path: '/tmp/shipit-fixture-work-2026',
+          startingRevision: 'HEAD',
+        ),
+        instruction: 'Implement add so the test passes.',
+        timeoutSeconds: 300,
+        expectedArtifacts: const [
+          ExpectedArtifact(
+            description: 'Modified lib/calculator.dart',
+            pathPattern: 'lib/calculator.dart',
+            required: true,
+          ),
+        ],
+        runtimeConfig: const {'model': 'opencode/big-pickle'},
+        createdAt: DateTime.parse('2024-01-02T12:30:00Z'),
+      );
+
+      _expectValid(_loadSchema('agent_execution_request'), request.toJson());
+    });
+
+    test('AgentExecution.toJson() conforms to agent_execution.schema.json', () {
+      final execution = AgentExecution(
+        executionId: '123e4567-e89b-12d3-a456-426614174010',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        requestId: '123e4567-e89b-12d3-a456-426614174011',
+        runtimeTypeId: 'opencode',
+        role: AgentRole.implementer,
+        status: AgentSessionStatus.running,
+        workspace: const AgentWorkspace(
+          workspaceId: 'ws-001',
+          path: '/tmp/shipit-fixture-work-2026',
+        ),
+        sessionId: 'ses_ab01cdef2345',
+        startedAt: DateTime.parse('2024-01-02T12:30:01Z'),
+      );
+
+      _expectValid(_loadSchema('agent_execution'), execution.toJson());
+    });
+
+    test(
+      'AgentEventRecord.toJson() conforms to agent_event_record.schema.json',
+      () {
+        final event = AgentEventRecord(
+          eventId: '123e4567-e89b-12d3-a456-426614174020',
+          executionId: '123e4567-e89b-12d3-a456-426614174010',
+          workItemId: '123e4567-e89b-12d3-a456-426614174001',
+          sequence: 1,
+          type: AgentEventType.message,
+          occurredAt: DateTime.parse('2024-01-02T12:30:05Z'),
+          payload: const {'text': 'Starting implementation'},
+        );
+
+        _expectValid(_loadSchema('agent_event_record'), event.toJson());
+      },
+    );
+
+    test('PlatformVerification.toJson() conforms to '
+        'platform_verification.schema.json', () {
+      final verification = PlatformVerification(
+        verificationId: '123e4567-e89b-12d3-a456-426614174030',
+        executionId: '123e4567-e89b-12d3-a456-426614174010',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        checkName: 'dart test (independent)',
+        status: AgentClaimStatus.passed,
+        mechanism: 'process_dart_test',
+        command: 'dart test',
+        capturedAt: DateTime.parse('2024-01-02T12:34:00Z'),
+      );
+
+      _expectValid(_loadSchema('platform_verification'), verification.toJson());
     });
 
     test('HumanDecision.toJson() conforms to human_decision.schema.json', () {
@@ -400,5 +520,65 @@ void main() {
         );
       },
     );
+
+    test('AgentExecutionRequest.fromJson rejects an unknown role and an '
+        'orphaned-free status is not relevant here', () {
+      final base = {
+        'executionId': '123e4567-e89b-12d3-a456-426614174010',
+        'workItemId': '123e4567-e89b-12d3-a456-426614174001',
+        'role': 'NOT_A_ROLE',
+        'runtimeTypeId': 'opencode',
+        'workspace': {'workspaceId': 'ws-001', 'path': '/tmp/ws'},
+        'instruction': 'instr',
+        'timeoutSeconds': 60,
+        'expectedArtifacts': <Object>[],
+      };
+
+      expect(() => AgentExecutionRequest.fromJson(base), throwsFormatException);
+    });
+
+    test('AgentExecution.fromJson rejects an unknown status', () {
+      final base = {
+        'executionId': '123e4567-e89b-12d3-a456-426614174010',
+        'workItemId': '123e4567-e89b-12d3-a456-426614174001',
+        'requestId': '123e4567-e89b-12d3-a456-426614174011',
+        'runtimeTypeId': 'opencode',
+        'role': 'IMPLEMENTER',
+        'status': 'not_a_status',
+        'workspace': {'workspaceId': 'ws-001', 'path': '/tmp/ws'},
+        'version': 1,
+      };
+
+      expect(() => AgentExecution.fromJson(base), throwsA(anything));
+    });
+
+    test('AgentEventRecord.fromJson rejects an unknown type', () {
+      final json = {
+        'eventId': '123e4567-e89b-12d3-a456-426614174020',
+        'executionId': '123e4567-e89b-12d3-a456-426614174010',
+        'workItemId': '123e4567-e89b-12d3-a456-426614174001',
+        'sequence': 1,
+        'type': 'not_a_type',
+        'occurredAt': '2024-01-02T12:30:05Z',
+      };
+
+      expect(() => AgentEventRecord.fromJson(json), throwsFormatException);
+    });
+
+    test('PlatformVerification.fromJson rejects an unknown status', () {
+      final json = {
+        'verificationId': '123e4567-e89b-12d3-a456-426614174030',
+        'executionId': '123e4567-e89b-12d3-a456-426614174010',
+        'workItemId': '123e4567-e89b-12d3-a456-426614174001',
+        'checkName': 'check',
+        'status': 'unknown',
+        'mechanism': 'm',
+        'command': 'c',
+        'capturedAt': '2024-01-02T12:34:00Z',
+        'evidenceKind': 'platform_verified_evidence',
+      };
+
+      expect(() => PlatformVerification.fromJson(json), throwsFormatException);
+    });
   });
 }

@@ -12,6 +12,47 @@
       "format": "uuid",
       "description": "Unique identifier for this agent result"
     },
+    "executionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "AgentExecutionRequest.executionId this result belongs to"
+    },
+    "role": {
+      "type": "string",
+      "enum": ["IMPLEMENTER", "ENGINEERING_REVIEWER", "DESIGN_AGENT", "DESIGN_REVIEWER", "QA_ARCHITECT", "QA_EXECUTOR", "RELEASE_ENGINEER", "DEPLOYMENT_AUTHORITY", "CORRECTION_IMPLEMENTER", "FOCUSED_REVIEWER", "INTEGRATOR"],
+      "description": "AEF role granted by the execution request. Stamped by the coordinator, never asserted by the agent."
+    },
+    "changedFiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "operation"],
+        "properties": {
+          "path": { "type": "string" },
+          "operation": { "type": "string", "enum": ["modified", "added", "deleted", "renamed"] },
+          "beforeSha": { "type": "string" },
+          "afterSha": { "type": "string" }
+        }
+      },
+      "description": "Files the agent reports changing"
+    },
+    "claimedChecks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["checkName", "status", "evidenceKind"],
+        "properties": {
+          "checkName": { "type": "string" },
+          "status": { "type": "string", "enum": ["passed", "failed"] },
+          "evidenceKind": { "type": "string", "const": "agent_claimed_evidence" },
+          "command": { "type": "string" },
+          "detail": { "type": "string" }
+        }
+      },
+      "description": "Validation the AGENT claims. Distinct from platform-verified evidence."
+    },
     "sessionId": {
       "type": "string",
       "format": "uuid",

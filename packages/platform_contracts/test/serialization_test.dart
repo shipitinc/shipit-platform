@@ -238,6 +238,117 @@ void main() {
     });
   });
 
+  group('AgentExecution records serialization', () {
+    test('AgentExecutionRequest round-trips role, workspace, config', () {
+      final request = AgentExecutionRequest(
+        executionId: '123e4567-e89b-12d3-a456-426614174010',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        role: AgentRole.implementer,
+        runtimeTypeId: 'opencode',
+        workspace: const AgentWorkspace(
+          workspaceId: 'ws-001',
+          path: '/tmp/ws',
+          startingRevision: 'HEAD',
+        ),
+        instruction: 'Implement add so the test passes.',
+        timeoutSeconds: 300,
+        expectedArtifacts: const [
+          ExpectedArtifact(
+            description: 'Modified calculator',
+            pathPattern: 'lib/calculator.dart',
+            required: true,
+          ),
+        ],
+        runtimeConfig: const {'model': 'opencode/big-pickle'},
+        createdAt: DateTime.parse('2024-01-02T12:30:00Z'),
+      );
+
+      final decoded = AgentExecutionRequest.fromJson(request.toJson());
+      expect(decoded.role, equals(AgentRole.implementer));
+      expect(decoded.runtimeTypeId, equals('opencode'));
+      expect(decoded.workspace.path, equals('/tmp/ws'));
+      expect(decoded.runtimeConfig, equals({'model': 'opencode/big-pickle'}));
+      expect(decoded.expectedArtifacts[0].required, isTrue);
+    });
+
+    test('AgentExecution round-trips status and session linkage', () {
+      final execution = AgentExecution(
+        executionId: '123e4567-e89b-12d3-a456-426614174010',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        requestId: '123e4567-e89b-12d3-a456-426614174011',
+        runtimeTypeId: 'opencode',
+        role: AgentRole.implementer,
+        status: AgentSessionStatus.orphaned,
+        workspace: const AgentWorkspace(workspaceId: 'ws-001', path: '/tmp/ws'),
+        sessionId: 'ses_ab01',
+        startedAt: DateTime.parse('2024-01-02T12:30:01Z'),
+        reason: 'child process exited before result capture',
+      );
+
+      final decoded = AgentExecution.fromJson(execution.toJson());
+      expect(decoded.status, equals(AgentSessionStatus.orphaned));
+      expect(decoded.sessionId, equals('ses_ab01'));
+      expect(decoded.isTerminal, isTrue);
+    });
+
+    test('AgentExecution copyWith preserves terminal status fields', () {
+      final execution = AgentExecution(
+        executionId: '123e4567-e89b-12d3-a456-426614174010',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        requestId: '123e4567-e89b-12d3-a456-426614174011',
+        runtimeTypeId: 'opencode',
+        role: AgentRole.implementer,
+        status: AgentSessionStatus.running,
+        workspace: const AgentWorkspace(workspaceId: 'ws-001', path: '/tmp/ws'),
+      );
+      final updated = execution.copyWith(
+        status: AgentSessionStatus.completed,
+        sessionId: null,
+      );
+      expect(updated.status, equals(AgentSessionStatus.completed));
+      expect(updated.sessionId, isNull);
+    });
+
+    test('AgentEventRecord round-trips wire event type', () {
+      final event = AgentEventRecord(
+        eventId: '123e4567-e89b-12d3-a456-426614174020',
+        executionId: '123e4567-e89b-12d3-a456-426614174010',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        sequence: 1,
+        type: AgentEventType.toolCompleted,
+        occurredAt: DateTime.parse('2024-01-02T12:30:05Z'),
+        payload: const {'tool': 'write'},
+      );
+
+      final json = event.toJson();
+      expect(json['type'], equals('tool_completed'));
+      final decoded = AgentEventRecord.fromJson(json);
+      expect(decoded.type, equals(AgentEventType.toolCompleted));
+    });
+
+    test('PlatformVerification round-trips evidence kind', () {
+      final verification = PlatformVerification(
+        verificationId: '123e4567-e89b-12d3-a456-426614174030',
+        executionId: '123e4567-e89b-12d3-a456-426614174010',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        checkName: 'dart test (independent)',
+        status: AgentClaimStatus.passed,
+        mechanism: 'process_dart_test',
+        command: 'dart test',
+        capturedAt: DateTime.parse('2024-01-02T12:34:00Z'),
+      );
+
+      final json = verification.toJson();
+      expect(json['evidenceKind'], equals('platform_verified_evidence'));
+      final decoded = PlatformVerification.fromJson(json);
+      expect(
+        decoded.evidenceKind,
+        equals(EvidenceKind.platformVerifiedEvidence),
+      );
+      expect(decoded.status, equals(AgentClaimStatus.passed));
+    });
+  });
+
   group('DeploymentArtifact serialization', () {
     test('serializes to JSON and back', () {
       final artifact = DeploymentArtifact(
