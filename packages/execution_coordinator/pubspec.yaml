@@ -1,0 +1,22 @@
+name: execution_coordinator
+version: 0.1.0
+description: Coordinates durable single agent executions for ShipIt Platform work items
+publish_to: none
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+
+resolution: workspace
+
+dependencies:
+  platform_contracts:
+    path: ../platform_contracts
+  workflow_engine:
+    path: ../workflow_engine
+  workflow_store:
+    path: ../workflow_store
+  agent_runtime:
+    path: ../agent_runtime
+
+dev_dependencies:
+  test: ^1.25.2

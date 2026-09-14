@@ -28,6 +28,7 @@
 | `worker_protocol` | Capability model, task dispatch | Agent runtime, workflow |
 | `qa_orchestration` | Gates, evidence, validation | Agent runtime, deployment |
 | `deployment_protocol` | Artifact promotion, deployments | Workflow logic, agent runtime |
+| `execution_coordinator` | One bounded, durable agent execution; role stamping; independent verification; orphan reconciliation | Provider specifics, workflow policy, agents choosing their own role |
 
 ### 4. Testing Requirements
 
