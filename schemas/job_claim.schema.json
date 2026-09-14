@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/job_claim.schema.json",
+  "title": "JobClaim",
+  "description": "Durable claim/lease on a Job. Claiming is a compare-and-swap on the job version; the lease expiry is what makes a crashed scheduler's claim recoverable.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["claimId", "jobId", "ownerId", "leasedUntil", "createdAt"],
+  "properties": {
+    "claimId": { "type": "string" },
+    "jobId": { "type": "string" },
+    "ownerId": { "type": "string" },
+    "leasedUntil": { "type": "string", "format": "date-time" },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}

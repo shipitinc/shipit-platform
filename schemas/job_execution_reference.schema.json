@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/job_execution_reference.schema.json",
+  "title": "JobExecutionReference",
+  "description": "Reference from a Job to the underlying durable WorkerExecution. Traceability chain: WorkItem -> Job -> WorkerExecution -> AgentExecution -> AgentResult -> PlatformVerification -> artifacts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workerExecutionId", "createdAt"],
+  "properties": {
+    "workerExecutionId": { "type": "string" },
+    "agentExecutionId": { "type": "string" },
+    "resultId": { "type": "string" },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}

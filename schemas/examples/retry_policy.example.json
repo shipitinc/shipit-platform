@@ -1,0 +1,5 @@
+{
+  "maxAttempts": 2,
+  "retryDelaySeconds": 60,
+  "retryableCodes": ["executionInterrupted"]
+}

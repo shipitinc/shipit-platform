@@ -30,6 +30,7 @@
 | `deployment_protocol` | Artifact promotion, deployments | Workflow logic, agent runtime |
 | `execution_coordinator` | One bounded, durable agent execution; role stamping; independent verification; orphan reconciliation | Provider specifics, workflow policy, agents choosing their own role |
 | `worker_runtime` | Worker selection/lease, worktree isolation pinned to a revision, worker lifecycle + cleanup policy, stranding recovery | Workflow policy, provider specifics, creating worktrees in `agent_runtime`, deleting anything without `WorkspaceDescriptor` ownership |
+| `scheduler` | Durable job queue (dedupe/claim-CAS/lease reconciliation), tick loop, capacity-aware dispatch, single-selector orchestration | Workflow policy itself, provider specifics, mutating `WorkItem` state directly |
 
 ### 4. Testing Requirements
 
@@ -124,6 +125,7 @@ cd packages/platform_contracts && dart run build_runner build --delete-conflicti
 | New agent adapter | `packages/agent_runtime/lib/src/adapters/` |
 | New worker capability | `packages/worker_protocol/lib/src/capabilities/` |
 | New worker (lease/worktree/lifecycle) | `packages/worker_runtime/lib/src/` |
+| New job queue/claim-CAS/tick logic | `packages/scheduler/lib/src/` |
 | New QA gate | `packages/qa_orchestration/lib/src/gates/` |
 | New deployment target | `packages/deployment_protocol/lib/src/targets/` |
 | New domain type | `packages/platform_contracts/lib/src/types/` |

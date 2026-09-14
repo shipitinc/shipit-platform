@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/scheduler_event_record.schema.json",
+  "title": "SchedulerEventRecord",
+  "description": "Normalized scheduler lifecycle event, persisted with the job queue so the traceability chain is reconstructible from durable records alone.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventId", "jobId", "workItemId", "sequence", "type", "occurredAt"],
+  "properties": {
+    "eventId": { "type": "string" },
+    "jobId": { "type": "string" },
+    "workItemId": { "type": "string" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "type": { "type": "string", "enum": ["job_queued", "job_claimed", "job_dispatched", "job_deferred", "job_retry_scheduled", "job_completed", "job_failed", "job_cancelled"] },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "payload": { "type": "object" }
+  }
+}

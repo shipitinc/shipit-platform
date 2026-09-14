@@ -42,6 +42,11 @@ void main() {
       'qa_pass_criteria',
       'workflow_transition_record',
       'artifact_reference',
+      'job',
+      'job_claim',
+      'job_execution_reference',
+      'scheduler_event_record',
+      'retry_policy',
     ];
 
     for (final name in schemas) {
@@ -731,6 +736,110 @@ void main() {
       final decoded = WorkerExecutionRequest.fromJson(request.toJson());
       expect(decoded.requiredCapabilities, request.requiredCapabilities);
       expect(decoded.startingRevision, request.startingRevision);
+    });
+
+    test('Job.toJson() conforms to job.schema.json', () {
+      final job = Job(
+        jobId: 'job-001',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        jobType: JobType.implementFeature,
+        requiredRole: AgentRole.implementer,
+        requiredCapabilities: const {
+          WorkerCapability.linux,
+          WorkerCapability.flutter,
+        },
+        priority: JobPriority.normal,
+        state: JobState.running,
+        dedupeKey:
+            '123e4567-e89b-12d3-a456-426614174001:design_not_required:'
+            'implement_feature:IMPLEMENTER',
+        createdAt: DateTime.parse('2024-01-02T12:00:00Z'),
+        instruction: 'Implement the feature described in the work item.',
+        attempt: 1,
+        maxAttempts: 2,
+        startedAt: DateTime.parse('2024-01-02T12:00:02Z'),
+        executionReference: JobExecutionReference(
+          workerExecutionId: 'wx-job-001',
+          agentExecutionId: 'agx-wx-job-001',
+          resultId: '123e4567-e89b-12d3-a456-426614174003',
+          createdAt: DateTime.parse('2024-01-02T12:00:02Z'),
+        ),
+        workerId: 'worker-local-1',
+        version: 3,
+      );
+
+      _expectValid(_loadSchema('job'), job.toJson());
+    });
+
+    test('JobClaim.toJson() conforms to job_claim.schema.json', () {
+      final claim = JobClaim(
+        claimId: 'claim-001',
+        jobId: 'job-001',
+        ownerId: 'scheduler-1',
+        leasedUntil: DateTime.parse('2024-01-02T12:10:00Z'),
+        createdAt: DateTime.parse('2024-01-02T12:00:01Z'),
+      );
+
+      _expectValid(_loadSchema('job_claim'), claim.toJson());
+    });
+
+    test('JobExecutionReference.toJson() conforms to '
+        'job_execution_reference.schema.json', () {
+      final reference = JobExecutionReference(
+        workerExecutionId: 'wx-job-001',
+        agentExecutionId: 'agx-wx-job-001',
+        resultId: '123e4567-e89b-12d3-a456-426614174003',
+        createdAt: DateTime.parse('2024-01-02T12:00:02Z'),
+      );
+
+      _expectValid(_loadSchema('job_execution_reference'), reference.toJson());
+    });
+
+    test('SchedulerEventRecord.toJson() conforms to '
+        'scheduler_event_record.schema.json', () {
+      final event = SchedulerEventRecord(
+        eventId: 'se-job-001-1',
+        jobId: 'job-001',
+        workItemId: '123e4567-e89b-12d3-a456-426614174001',
+        sequence: 1,
+        type: SchedulerEventType.jobQueued,
+        occurredAt: DateTime.parse('2024-01-02T12:00:00Z'),
+        payload: const {'priority': 'normal'},
+      );
+
+      _expectValid(_loadSchema('scheduler_event_record'), event.toJson());
+    });
+
+    test('Job round-trips enums exactly (Dart <-> JSON)', () {
+      final job = Job(
+        jobId: 'job-rt',
+        workItemId: 'wi-rt',
+        jobType: JobType.implementFeature,
+        requiredRole: AgentRole.implementer,
+        requiredCapabilities: const {WorkerCapability.linux},
+        priority: JobPriority.critical,
+        state: JobState.retryWaiting,
+        dedupeKey: 'wi-rt:design_approved:implement_feature:IMPLEMENTER',
+        createdAt: DateTime.parse('2024-01-02T12:00:00Z'),
+        instruction: 'go',
+        attempt: 2,
+        maxAttempts: 2,
+        availableAt: DateTime.parse('2024-01-02T12:01:00Z'),
+        failure: const JobFailure(
+          code: JobFailureCode.executionInterrupted,
+          kind: JobFailureKind.transient,
+          reason: 'session interrupted',
+        ),
+        version: 4,
+      );
+
+      final decoded = Job.fromJson(job.toJson());
+      expect(decoded.jobType, JobType.implementFeature);
+      expect(decoded.priority, JobPriority.critical);
+      expect(decoded.state, JobState.retryWaiting);
+      expect(decoded.failure!.code, JobFailureCode.executionInterrupted);
+      expect(decoded.failure!.kind, JobFailureKind.transient);
+      expect(decoded.dedupeKey, job.dedupeKey);
     });
   });
 }

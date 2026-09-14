@@ -32,6 +32,11 @@ class WorkerDispatcher {
   final WorkerRegistry _registry;
   final WorkerSelector _selector;
 
+  /// The pool this dispatcher places work on, exposed so a host (e.g. the
+  /// scheduler layer) can reach a specific worker for cancellation without
+  /// owning worker lifecycle itself.
+  WorkerRegistry get registry => _registry;
+
   /// Pure selection (no side effects). Distinguishes "no compatible worker"
   /// from "compatible but busy" for the reporting contract.
   WorkerSelection select(WorkerExecutionRequest request) {

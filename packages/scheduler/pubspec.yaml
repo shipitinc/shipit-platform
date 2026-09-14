@@ -1,0 +1,25 @@
+name: scheduler
+version: 0.1.0
+description: Durable persistent scheduler and job queue for ShipIt Platform
+publish_to: none
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+
+resolution: workspace
+
+dependencies:
+  meta: ^1.16.0
+  platform_contracts:
+    path: ../platform_contracts
+  workflow_engine:
+    path: ../workflow_engine
+  workflow_store:
+    path: ../workflow_store
+  worker_protocol:
+    path: ../worker_protocol
+  worker_runtime:
+    path: ../worker_runtime
+
+dev_dependencies:
+  test: ^1.25.2

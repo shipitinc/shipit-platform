@@ -16,6 +16,7 @@ workspace:
   - packages/deployment_protocol
   - packages/execution_coordinator
   - packages/worker_runtime
+  - packages/scheduler
 
 dev_dependencies:
   melos: ^8.0.0

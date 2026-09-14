@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/retry_policy.schema.json",
+  "title": "RetryPolicy",
+  "description": "Bounded, conservative retry policy. Only transient infra failures may ever retry; a failed coding result routes through workflow correction/review, never through an automatic LLM re-run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["maxAttempts", "retryDelaySeconds", "retryableCodes"],
+  "properties": {
+    "maxAttempts": { "type": "integer", "minimum": 1 },
+    "retryDelaySeconds": { "type": "integer", "minimum": 0 },
+    "retryableCodes": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["none", "workspacePrepareFailed", "executionFailed", "executionInterrupted", "cancelled"] },
+      "uniqueItems": true
+    }
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/job.schema.json",
+  "title": "Job",
+  "description": "A single durable, disposable unit of scheduled work. Connects a runnable WorkItem to a WorkerExecution; never embeds the full WorkItem and never carries workflow policy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "jobId",
+    "workItemId",
+    "jobType",
+    "requiredRole",
+    "requiredCapabilities",
+    "priority",
+    "state",
+    "dedupeKey",
+    "createdAt",
+    "instruction",
+    "attempt",
+    "maxAttempts",
+    "version"
+  ],
+  "properties": {
+    "jobId": { "type": "string" },
+    "workItemId": { "type": "string" },
+    "jobType": { "type": "string", "enum": ["implement_feature"] },
+    "requiredRole": { "type": "string", "enum": ["IMPLEMENTER", "ENGINEERING_REVIEWER", "DESIGN_AGENT", "DESIGN_REVIEWER", "QA_ARCHITECT", "QA_EXECUTOR", "RELEASE_ENGINEER", "DEPLOYMENT_AUTHORITY", "CORRECTION_IMPLEMENTER", "FOCUSED_REVIEWER", "INTEGRATOR"] },
+    "requiredCapabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["linux", "macos", "docker", "flutter", "web", "android", "ios", "xcode", "gpu"]
+      },
+      "uniqueItems": true
+    },
+    "priority": { "type": "string", "enum": ["low", "normal", "high", "critical"] },
+    "state": { "type": "string", "enum": ["queued", "claimed", "running", "retryWaiting", "succeeded", "failed", "cancelled"] },
+    "dedupeKey": { "type": "string" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "availableAt": { "type": "string", "format": "date-time" },
+    "instruction": { "type": "string" },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "maxAttempts": { "type": "integer", "minimum": 1 },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "executionReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workerExecutionId", "createdAt"],
+      "properties": {
+        "workerExecutionId": { "type": "string" },
+        "agentExecutionId": { "type": "string" },
+        "resultId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "workerId": { "type": "string" },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "kind"],
+      "properties": {
+        "code": { "type": "string", "enum": ["none", "workspacePrepareFailed", "executionFailed", "executionInterrupted", "cancelled"] },
+        "kind": { "type": "string", "enum": ["none", "permanent", "transient", "cancelled"] },
+        "reason": { "type": "string" }
+      }
+    },
+    "cancelReason": { "type": "string" },
+    "version": { "type": "integer", "minimum": 1 }
+  }
+}

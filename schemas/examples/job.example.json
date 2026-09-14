@@ -1,0 +1,15 @@
+{
+  "jobId": "job-001",
+  "workItemId": "123e4567-e89b-12d3-a456-426614174001",
+  "jobType": "implement_feature",
+  "requiredRole": "IMPLEMENTER",
+  "requiredCapabilities": ["linux", "flutter"],
+  "priority": "normal",
+  "state": "queued",
+  "dedupeKey": "123e4567-e89b-12d3-a456-426614174001:design_not_required:implement_feature:IMPLEMENTER",
+  "createdAt": "2024-01-02T12:00:00Z",
+  "instruction": "Implement the feature described in the work item.",
+  "attempt": 1,
+  "maxAttempts": 2,
+  "version": 1
+}
