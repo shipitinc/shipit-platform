@@ -1,0 +1,29 @@
+class: HumanDecisionRow
+table: human_decision
+serverOnly: true
+indexes:
+  human_decision_id_unique:
+    fields: decisionId
+    unique: true
+  human_decision_work_item_idx:
+    fields: workItemId
+fields:
+  decisionId: String
+  workItemId: String
+  decisionType: String
+  status: String
+  question: String?
+  contextJson: String?
+  optionsJson: String?
+  recommendation: String?
+  blocking: bool?
+  requestedAt: DateTime?
+  expiration: DateTime?
+  decider: String?
+  choice: String?
+  rationale: String?
+  timestamp: DateTime?
+  signatureJson: String?
+  resolvedOptionId: String?
+  metadataJson: String?
+  updatedAt: DateTime

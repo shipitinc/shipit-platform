@@ -1,0 +1,22 @@
+class: AgentResultRow
+table: agent_result
+serverOnly: true
+indexes:
+  agent_result_execution_unique:
+    fields: executionId
+    unique: true
+fields:
+  resultId: String
+  sessionId: String
+  workItemId: String
+  status: String
+  artifactsJson: String
+  diagnosticsJson: String
+  structuredResultJson: String
+  executionId: String?
+  role: String?
+  changedFilesJson: String?
+  claimedChecksJson: String?
+  summary: String?
+  completedAt: DateTime
+  metadataJson: String?

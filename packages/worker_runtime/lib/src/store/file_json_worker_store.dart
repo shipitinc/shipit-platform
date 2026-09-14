@@ -48,6 +48,11 @@ class FileJsonWorkerStore implements WorkerStore {
   }
 
   @override
+  Future<T> inTransaction<T>(
+    Future<T> Function(WorkerStore store) body,
+  ) async => body(this);
+
+  @override
   Future<void> saveWorkerExecution(
     WorkerExecution execution, {
     int? expectedVersion,

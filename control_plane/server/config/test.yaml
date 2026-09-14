@@ -1,0 +1,41 @@
+# Test configuration for the control plane server.
+# Ports are set to zero so serverpod finds the next available port and tests
+# may run concurrently.
+
+# Configuration for the main API test server.
+apiServer:
+  port: 0
+  publicHost: localhost
+  publicPort: 0
+  publicScheme: http
+
+# Configuration for the Insights test server.
+insightsServer:
+  port: 0
+  publicHost: localhost
+  publicPort: 0
+  publicScheme: http
+
+# Configuration for the web test server.
+webServer:
+  port: 0
+  publicHost: localhost
+  publicPort: 0
+  publicScheme: http
+
+# This is the database setup for your test server.
+database:
+  host: localhost
+  port: 9090
+  name: control_plane_test
+  user: postgres
+  #maxConnectionCount: 10 # Defaults to 10, a negative or null value removes the limit
+
+# No Redis: the control plane does not use Redis.
+redis:
+  enabled: false
+
+sessionLogs:
+  persistentEnabled: true
+  consoleEnabled: true
+  consoleLogFormat: text

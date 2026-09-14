@@ -1,0 +1,30 @@
+name: control_plane
+
+services:
+  # Development Postgres for the control plane (no Redis - not used).
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "8090:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: control_plane
+      POSTGRES_PASSWORD: "control_plane_dev_pw"
+    volumes:
+      - control_plane_pg_data:/var/lib/postgresql/data
+
+  # Test Postgres for the control plane test suite (no Redis - not used).
+  postgres_test:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "9090:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: control_plane_test
+      POSTGRES_PASSWORD: "control_plane_test_pw"
+    volumes:
+      - control_plane_pg_test_data:/var/lib/postgresql/data
+
+volumes:
+  control_plane_pg_data:
+  control_plane_pg_test_data:

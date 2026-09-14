@@ -1,0 +1,14 @@
+executionEndpoints:
+  - list:
+  - inspect:
+schedulerEndpoints:
+  - listJobs:
+  - inspect:
+workerEndpoints:
+  - listWorkers:
+  - listExecutions:
+  - inspect:
+workflowEndpoints:
+  - inspect:
+  - listDecisions:
+  - resolveDecision:

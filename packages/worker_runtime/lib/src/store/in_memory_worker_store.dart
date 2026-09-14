@@ -8,6 +8,11 @@ class InMemoryWorkerStore implements WorkerStore {
   final Map<String, WorkerExecutionResult> _results = {};
 
   @override
+  Future<T> inTransaction<T>(
+    Future<T> Function(WorkerStore store) body,
+  ) async => body(this);
+
+  @override
   Future<void> saveWorkerExecution(
     WorkerExecution execution, {
     int? expectedVersion,

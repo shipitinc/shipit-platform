@@ -11,6 +11,11 @@ class InMemoryExecutionStore implements ExecutionStore {
   final Map<String, PlatformVerification> _verifications = {};
 
   @override
+  Future<T> inTransaction<T>(
+    Future<T> Function(ExecutionStore store) body,
+  ) async => body(this);
+
+  @override
   Future<void> saveRequest(AgentExecutionRequest request) async {
     _requests[request.executionId] = request;
   }

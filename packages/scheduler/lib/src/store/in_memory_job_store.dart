@@ -10,6 +10,10 @@ class InMemoryJobStore implements JobStore {
   final Map<String, List<SchedulerEventRecord>> _events = {};
 
   @override
+  Future<T> inTransaction<T>(Future<T> Function(JobStore store) body) async =>
+      body(this);
+
+  @override
   Future<void> saveJob(Job job, {int? expectedVersion}) async {
     if (expectedVersion != null) {
       final current = _jobs[job.jobId];

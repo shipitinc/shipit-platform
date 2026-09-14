@@ -17,6 +17,9 @@ workspace:
   - packages/execution_coordinator
   - packages/worker_runtime
   - packages/scheduler
+  - packages/store_contract_tests
+  - control_plane/client
+  - control_plane/server
 
 dev_dependencies:
   melos: ^8.0.0
@@ -42,11 +45,24 @@ melos:
       exec:
         command: dart test
         concurrency: 4
+        packageFilters:
+          include: 'packages/*'
 
     "test:coverage":
       exec:
         command: dart test --coverage=coverage
         concurrency: 2
+        packageFilters:
+          include: 'packages/*'
+
+    # Runs the control plane integration suite against a live PostgreSQL
+    # database. Requires `control_plane/server` Postgres to be running:
+    #   cd control_plane/server && docker compose up -d
+    # The integration test groups all target the same database, so they must
+    # run serially (`-j 1`) — a parallel runner lets one group's TRUNCATE
+    # cleanup invalidate another group's in-flight write.
+    "test:control-plane":
+      run: cd control_plane/server && dart test -j 1
 
     build:
       exec:

@@ -83,6 +83,10 @@ class FileJsonJobStore implements JobStore {
   }
 
   @override
+  Future<T> inTransaction<T>(Future<T> Function(JobStore store) body) async =>
+      body(this);
+
+  @override
   Future<void> saveJob(Job job, {int? expectedVersion}) async {
     if (expectedVersion != null) {
       final current = _jobs[job.jobId];

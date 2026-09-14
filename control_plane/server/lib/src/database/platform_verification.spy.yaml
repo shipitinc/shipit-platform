@@ -1,0 +1,22 @@
+class: PlatformVerificationRow
+table: platform_verification
+serverOnly: true
+indexes:
+  platform_verification_id_unique:
+    fields: verificationId
+    unique: true
+  platform_verification_execution_idx:
+    fields: executionId
+fields:
+  verificationId: String
+  executionId: String
+  workItemId: String
+  checkName: String
+  status: String
+  mechanism: String
+  command: String
+  capturedAt: DateTime
+  evidenceKind: String
+  outputRef: String?
+  detail: String?
+  resultPath: String?

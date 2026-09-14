@@ -1,0 +1,24 @@
+class: AgentExecutionRow
+table: agent_execution
+serverOnly: true
+indexes:
+  agent_execution_id_unique:
+    fields: executionId
+    unique: true
+  agent_execution_work_item_idx:
+    fields: workItemId
+fields:
+  executionId: String
+  workItemId: String
+  requestId: String
+  runtimeTypeId: String
+  role: String
+  status: String
+  workspaceJson: String
+  sessionId: String?
+  resultId: String?
+  startedAt: DateTime?
+  completedAt: DateTime?
+  reason: String?
+  metadataJson: String?
+  version: int

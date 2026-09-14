@@ -1,0 +1,21 @@
+class: AgentExecutionRequestRow
+table: agent_execution_request
+serverOnly: true
+indexes:
+  agent_execution_request_id_unique:
+    fields: executionId
+    unique: true
+fields:
+  executionId: String
+  workItemId: String
+  role: String
+  runtimeTypeId: String
+  workspaceJson: String
+  instruction: String
+  timeoutSeconds: int
+  permittedScope: String?
+  expectedResultJson: String?
+  expectedArtifactsJson: String
+  runtimeConfigJson: String?
+  environmentJson: String?
+  createdAt: DateTime

@@ -1,0 +1,29 @@
+class: WorkerExecutionRow
+table: worker_execution
+serverOnly: true
+indexes:
+  worker_execution_id_unique:
+    fields: workerExecutionId
+    unique: true
+  worker_execution_work_item_idx:
+    fields: workItemId
+fields:
+  workerExecutionId: String
+  workItemId: String
+  repositoryPath: String
+  requestedStartingRevision: String
+  requiredCapabilitiesJson: String?
+  status: String
+  cleanupPolicy: String
+  workerId: String?
+  workspaceId: String?
+  agentExecutionId: String?
+  resultId: String?
+  endingRevision: String?
+  cleanupStatus: String?
+  failureCode: String?
+  createdAt: DateTime?
+  startedAt: DateTime?
+  endedAt: DateTime?
+  reason: String?
+  version: int

@@ -1,0 +1,41 @@
+# Local development configuration for the control plane server.
+
+# Configuration for the main API server.
+apiServer:
+  port: 8095
+  publicHost: localhost
+  publicPort: 8095
+  publicScheme: http
+
+# Configuration for the Insights server.
+insightsServer:
+  port: 8096
+  publicHost: localhost
+  publicPort: 8096
+  publicScheme: http
+
+# Configuration for the web server.
+webServer:
+  port: 8097
+  publicHost: localhost
+  publicPort: 8097
+  publicScheme: http
+
+# This is the database setup for your server.
+database:
+  host: localhost
+  port: 8090
+  name: control_plane
+  user: postgres
+  #maxConnectionCount: 10 # Defaults to 10, a negative or null value removes the limit
+
+# No Redis: the control plane does not use Redis.
+redis:
+  enabled: false
+
+maxRequestSize: 524288 # The maximum size of requests allowed in bytes
+
+sessionLogs:
+  persistentEnabled: true
+  consoleEnabled: true
+  consoleLogFormat: text # Defaults to "json", options are "text" or "json"

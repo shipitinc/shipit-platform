@@ -1,0 +1,26 @@
+class: WorkItemTransitionRow
+table: work_item_transition
+serverOnly: true
+indexes:
+  work_item_transition_id_unique:
+    fields: transitionId
+    unique: true
+  work_item_transition_work_item_idx:
+    fields: workItemId
+  work_item_transition_idempotency_unique:
+    fields: workItemId, idempotencyKey
+    unique: true
+fields:
+  transitionId: String
+  workItemId: String
+  fromState: String
+  toState: String
+  trigger: String
+  actorType: String
+  actorId: String?
+  decisionId: String?
+  outcome: String
+  reason: String?
+  guardEvaluationsJson: String?
+  idempotencyKey: String?
+  occurredAt: DateTime

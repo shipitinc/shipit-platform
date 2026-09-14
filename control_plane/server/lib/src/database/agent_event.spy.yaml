@@ -1,0 +1,20 @@
+class: AgentEventRow
+table: agent_event
+serverOnly: true
+indexes:
+  agent_event_id_unique:
+    fields: eventId
+    unique: true
+  agent_event_execution_idx:
+    fields: executionId
+  agent_event_execution_sequence_unique:
+    fields: executionId, sequence
+    unique: true
+fields:
+  eventId: String
+  executionId: String
+  workItemId: String
+  sequence: int
+  type: String
+  occurredAt: DateTime
+  payloadJson: String?

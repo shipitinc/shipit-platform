@@ -468,4 +468,9 @@ class DirichletExecutionStore implements ExecutionStore {
   @override
   Future<void> saveVerification(PlatformVerification verification) =>
       _store.saveVerification(verification);
+
+  @override
+  Future<T> inTransaction<T>(
+    Future<T> Function(ExecutionStore store) body,
+  ) async => body(this);
 }

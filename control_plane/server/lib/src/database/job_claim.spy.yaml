@@ -1,0 +1,16 @@
+class: JobClaimRow
+table: job_claim
+serverOnly: true
+indexes:
+  job_claim_id_unique:
+    fields: claimId
+    unique: true
+  job_claim_job_unique:
+    fields: jobId
+    unique: true
+fields:
+  claimId: String
+  jobId: String
+  ownerId: String
+  leasedUntil: DateTime
+  createdAt: DateTime

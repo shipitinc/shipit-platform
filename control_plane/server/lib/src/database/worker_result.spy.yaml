@@ -1,0 +1,29 @@
+class: WorkerResultRow
+table: worker_result
+serverOnly: true
+indexes:
+  worker_result_execution_unique:
+    fields: workerExecutionId
+    unique: true
+  worker_result_work_item_idx:
+    fields: workItemId
+fields:
+  workerExecutionId: String
+  workItemId: String
+  status: String
+  workerId: String
+  workspaceId: String
+  startingRevision: String
+  endingRevision: String?
+  agentExecutionId: String?
+  agentResultStatus: String?
+  verificationId: String?
+  verificationPassed: bool?
+  changedFilesJson: String?
+  diffSummary: String?
+  diffRef: String?
+  cleanupStatus: String
+  failureCode: String
+  failureDetail: String?
+  startedAt: DateTime
+  endedAt: DateTime

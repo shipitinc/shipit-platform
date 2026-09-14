@@ -24,6 +24,11 @@ class FileJsonWorkflowStore implements WorkflowStore {
   final Map<String, WorkflowTransitionRecord> _records = {};
 
   @override
+  Future<T> inTransaction<T>(
+    Future<T> Function(WorkflowStore store) body,
+  ) async => body(this);
+
+  @override
   Future<WorkItem> readWorkItem(String workItemId) async {
     final item = _workItems[workItemId];
     if (item == null) {

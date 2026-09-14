@@ -113,32 +113,35 @@ class ExecutionCoordinator {
       );
     }
 
-    await store.saveRequest(request);
-    final startedAt = DateTime.now();
-    final execution = AgentExecution(
-      executionId: request.executionId,
-      workItemId: request.workItemId,
-      requestId: request.executionId,
-      runtimeTypeId: request.runtimeTypeId,
-      role: request.role,
-      status: AgentSessionStatus.starting,
-      workspace: request.workspace,
-      startedAt: startedAt,
-      version: 1,
-    );
-    await store.saveExecution(execution);
+    await store.inTransaction((tx) async {
+      await tx.saveRequest(request);
+      final startedAt = DateTime.now();
+      final execution = AgentExecution(
+        executionId: request.executionId,
+        workItemId: request.workItemId,
+        requestId: request.executionId,
+        runtimeTypeId: request.runtimeTypeId,
+        role: request.role,
+        status: AgentSessionStatus.starting,
+        workspace: request.workspace,
+        startedAt: startedAt,
+        version: 1,
+      );
+      await tx.saveExecution(execution);
 
-    _eventSequences[request.executionId] = 0;
-    await _appendEvent(
-      executionId: request.executionId,
-      workItemId: request.workItemId,
-      type: AgentEventType.executionStarted,
-      payload: {
-        'role': request.role.wire,
-        'runtimeTypeId': request.runtimeTypeId,
-        'timeoutSeconds': request.timeoutSeconds,
-      },
-    );
+      _eventSequences[request.executionId] = 0;
+      await _appendEvent(
+        executionId: request.executionId,
+        workItemId: request.workItemId,
+        type: AgentEventType.executionStarted,
+        payload: {
+          'role': request.role.wire,
+          'runtimeTypeId': request.runtimeTypeId,
+          'timeoutSeconds': request.timeoutSeconds,
+        },
+        via: tx,
+      );
+    });
 
     final terminal = Completer<AgentEvent>();
     _terminalContracts[request.executionId] = terminal;
@@ -239,13 +242,16 @@ class ExecutionCoordinator {
         completedAt: now,
         version: execution.version + 1,
       );
-      await store.saveExecution(orphaned, expectedVersion: execution.version);
-      await _appendEvent(
-        executionId: execution.executionId,
-        workItemId: execution.workItemId,
-        type: AgentEventType.executionFailed,
-        payload: {'kind': 'orphaned', 'reason': reason},
-      );
+      await store.inTransaction((tx) async {
+        await tx.saveExecution(orphaned, expectedVersion: execution.version);
+        await _appendEvent(
+          executionId: execution.executionId,
+          workItemId: execution.workItemId,
+          type: AgentEventType.executionFailed,
+          payload: {'kind': 'orphaned', 'reason': reason},
+          via: tx,
+        );
+      });
 
       if (item.state == WorkItemState.agentExecuting) {
         await workflowEngine.transition(
@@ -283,26 +289,30 @@ class ExecutionCoordinator {
 
       final results = await _complete(request, session, terminalEvent);
 
-      await _appendEvent(
-        executionId: executionId,
-        workItemId: request.workItemId,
-        type: results.eventType,
-        payload: results.eventPayload,
-      );
+      await store.inTransaction((tx) async {
+        await _appendEvent(
+          executionId: executionId,
+          workItemId: request.workItemId,
+          type: results.eventType,
+          payload: results.eventPayload,
+          via: tx,
+        );
+
+        final recorded = await tx.readExecution(executionId);
+        await tx.saveExecution(
+          recorded.copyWith(
+            status: results.status,
+            resultId: results.result.resultId,
+            reason: results.reason,
+            completedAt: DateTime.now(),
+            version: recorded.version + 1,
+          ),
+          expectedVersion: recorded.version,
+        );
+      });
 
       await session?.close();
 
-      final recorded = await store.readExecution(executionId);
-      await store.saveExecution(
-        recorded.copyWith(
-          status: results.status,
-          resultId: results.result.resultId,
-          reason: results.reason,
-          completedAt: DateTime.now(),
-          version: recorded.version + 1,
-        ),
-        expectedVersion: recorded.version,
-      );
       final finalRecord = await store.readExecution(executionId);
       _releaseExecution(executionId, record: finalRecord);
       return finalRecord;
@@ -310,24 +320,27 @@ class ExecutionCoordinator {
       await session?.close();
       _releaseExecution(executionId, error: error);
       try {
-        await _appendEvent(
-          executionId: executionId,
-          workItemId: request.workItemId,
-          type: AgentEventType.executionFailed,
-          payload: {'error': error.toString()},
-        );
-        final stalled = await store.readExecutionOrNull(executionId);
-        if (stalled != null && !stalled.isTerminal) {
-          await store.saveExecution(
-            stalled.copyWith(
-              status: AgentSessionStatus.failed,
-              reason: 'coordinator finalize error: $error',
-              completedAt: DateTime.now(),
-              version: stalled.version + 1,
-            ),
-            expectedVersion: stalled.version,
+        await store.inTransaction((tx) async {
+          await _appendEvent(
+            executionId: executionId,
+            workItemId: request.workItemId,
+            type: AgentEventType.executionFailed,
+            payload: {'error': error.toString()},
+            via: tx,
           );
-        }
+          final stalled = await tx.readExecutionOrNull(executionId);
+          if (stalled != null && !stalled.isTerminal) {
+            await tx.saveExecution(
+              stalled.copyWith(
+                status: AgentSessionStatus.failed,
+                reason: 'coordinator finalize error: $error',
+                completedAt: DateTime.now(),
+                version: stalled.version + 1,
+              ),
+              expectedVersion: stalled.version,
+            );
+          }
+        });
       } catch (_) {
         // Fail-sealed: the original error is the primary signal, and the
         // settled contract already carries it (see `_releaseExecution`).
@@ -658,7 +671,9 @@ class ExecutionCoordinator {
     required String workItemId,
     required AgentEventType type,
     Map<String, dynamic> payload = const {},
+    ExecutionStore? via,
   }) {
+    final store = via ?? this.store;
     final sequence = _nextSequence(executionId);
     return store.appendEvent(
       AgentEventRecord(

@@ -1,0 +1,20 @@
+class: SchedulerEventRow
+table: scheduler_event
+serverOnly: true
+indexes:
+  scheduler_event_id_unique:
+    fields: eventId
+    unique: true
+  scheduler_event_job_idx:
+    fields: jobId
+  scheduler_event_job_sequence_unique:
+    fields: jobId, sequence
+    unique: true
+fields:
+  eventId: String
+  jobId: String
+  workItemId: String
+  sequence: int
+  type: String
+  occurredAt: DateTime
+  payloadJson: String?

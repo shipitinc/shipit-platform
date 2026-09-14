@@ -117,8 +117,10 @@ class LocalWorker implements Worker {
       createdAt: startedAt,
       startedAt: startedAt,
     );
-    await workerStore.saveWorkerExecution(execution);
-    await _event(execution, WorkerEventType.workerAcquired);
+    await workerStore.inTransaction((tx) async {
+      await tx.saveWorkerExecution(execution);
+      await _event(execution, WorkerEventType.workerAcquired, via: tx);
+    });
 
     WorkspaceDescriptor? descriptor;
     var cleanupStatus = WorkerCleanupStatus.notApplicable;
@@ -409,42 +411,44 @@ class LocalWorker implements Worker {
       endedAt: DateTime.now().toUtc(),
       version: current.version + 1,
     );
-    await workerStore.saveWorkerExecution(
-      terminal,
-      expectedVersion: current.version,
-    );
+    late final WorkerExecutionResult result;
 
-    final result = WorkerExecutionResult(
-      workerExecutionId: terminal.workerExecutionId,
-      workItemId: terminal.workItemId,
-      status: finalStatus,
-      startingRevision: terminal.requestedStartingRevision,
-      endingRevision: endingRevision,
-      workerId: workerId,
-      workspaceId: terminal.workspaceId ?? '',
-      agentExecutionId: agentExecutionId,
-      agentResultStatus: agentResultStatus,
-      verificationId: verificationId,
-      verificationPassed: verificationPassed,
-      changedFiles: changedFiles,
-      diffSummary: diffSummary,
-      cleanupStatus: cleanupStatus,
-      failureCode: failureCode,
-      failureDetail: failureDetail,
-      startedAt: terminal.startedAt ?? DateTime.now().toUtc(),
-      endedAt: terminal.endedAt ?? DateTime.now().toUtc(),
-    );
-    await workerStore.saveResult(result);
+    await workerStore.inTransaction((tx) async {
+      await tx.saveWorkerExecution(terminal, expectedVersion: current.version);
 
-    await _event(
-      terminal,
-      cleanupStatus == WorkerCleanupStatus.cleanupFailed
-          ? WorkerEventType.cleanupFailed
-          : finalStatus == WorkerExecutionStatus.executedPass
-          ? WorkerEventType.workspaceCleaned
-          : WorkerEventType.workerReleased,
-      payload: {'status': finalStatus.name},
-    );
+      result = WorkerExecutionResult(
+        workerExecutionId: terminal.workerExecutionId,
+        workItemId: terminal.workItemId,
+        status: finalStatus,
+        startingRevision: terminal.requestedStartingRevision,
+        endingRevision: endingRevision,
+        workerId: workerId,
+        workspaceId: terminal.workspaceId ?? '',
+        agentExecutionId: agentExecutionId,
+        agentResultStatus: agentResultStatus,
+        verificationId: verificationId,
+        verificationPassed: verificationPassed,
+        changedFiles: changedFiles,
+        diffSummary: diffSummary,
+        cleanupStatus: cleanupStatus,
+        failureCode: failureCode,
+        failureDetail: failureDetail,
+        startedAt: terminal.startedAt ?? DateTime.now().toUtc(),
+        endedAt: terminal.endedAt ?? DateTime.now().toUtc(),
+      );
+      await tx.saveResult(result);
+
+      await _event(
+        terminal,
+        cleanupStatus == WorkerCleanupStatus.cleanupFailed
+            ? WorkerEventType.cleanupFailed
+            : finalStatus == WorkerExecutionStatus.executedPass
+            ? WorkerEventType.workspaceCleaned
+            : WorkerEventType.workerReleased,
+        payload: {'status': finalStatus.name},
+        via: tx,
+      );
+    });
     _leased = false;
     _activeAgentExecutionId = null;
     return result;
@@ -477,7 +481,9 @@ class LocalWorker implements Worker {
     WorkerExecution execution,
     WorkerEventType type, {
     Map<String, dynamic>? payload,
+    WorkerStore? via,
   }) async {
+    final store = via ?? workerStore;
     final record = WorkerEventRecord(
       eventId: 'we-${execution.workerExecutionId}-${_sequence++}',
       workerExecutionId: execution.workerExecutionId,
@@ -487,7 +493,7 @@ class LocalWorker implements Worker {
       occurredAt: DateTime.now().toUtc(),
       payload: payload,
     );
-    await workerStore.appendEvent(record);
+    await store.appendEvent(record);
     eventSink?.call(record);
   }
 

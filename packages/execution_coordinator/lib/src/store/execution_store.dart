@@ -30,6 +30,14 @@ abstract interface class ExecutionStore {
   Future<void> saveVerification(PlatformVerification verification);
 
   Future<List<PlatformVerification>> readVerifications(String executionId);
+
+  /// Runs [body] within a single store transaction. Implementations that back a
+  /// transaction-capable database must make every store call inside [body]
+  /// atomic and rollback together on error. The default implementation has no
+  /// transaction and simply forwards.
+  Future<T> inTransaction<T>(
+    Future<T> Function(ExecutionStore store) body,
+  ) async => body(this);
 }
 
 class ExecutionNotFoundException implements Exception {

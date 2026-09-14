@@ -1,0 +1,20 @@
+class: WorkerEventRow
+table: worker_event
+serverOnly: true
+indexes:
+  worker_event_id_unique:
+    fields: eventId
+    unique: true
+  worker_event_execution_idx:
+    fields: workerExecutionId
+  worker_event_execution_sequence_unique:
+    fields: workerExecutionId, sequence
+    unique: true
+fields:
+  eventId: String
+  workerExecutionId: String
+  workItemId: String
+  sequence: int
+  type: String
+  occurredAt: DateTime
+  payloadJson: String?

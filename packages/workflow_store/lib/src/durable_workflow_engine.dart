@@ -183,12 +183,14 @@ class DurableWorkflowEngine {
           : updated.terminatedAt,
     );
 
-    try {
-      await _store.saveWorkItem(finalItem, expectedVersion: item.version);
-    } on ConcurrentModificationException {
-      rethrow;
-    }
-    await _store.appendTransitionRecord(record);
+    await _store.inTransaction((tx) async {
+      try {
+        await tx.saveWorkItem(finalItem, expectedVersion: item.version);
+      } on ConcurrentModificationException {
+        rethrow;
+      }
+      await tx.appendTransitionRecord(record);
+    });
     return finalItem;
   }
 
@@ -293,41 +295,43 @@ class DurableWorkflowEngine {
       throw WorkflowTransitionRejectedException(record);
     }
 
-    await _store.saveHumanDecision(decision);
+    await _store.inTransaction((tx) async {
+      await tx.saveHumanDecision(decision);
 
-    final now2 = DateTime.now();
-    final updated = item.copyWith(
-      state: WorkItemState.waitingForHumanDecision,
-      blockingHumanDecisionId: id,
-      blockingReason: question ?? 'Awaiting human decision',
-      updatedAt: now2,
-      version: item.version + 1,
-    );
+      final now2 = DateTime.now();
+      final updated = item.copyWith(
+        state: WorkItemState.waitingForHumanDecision,
+        blockingHumanDecisionId: id,
+        blockingReason: question ?? 'Awaiting human decision',
+        updatedAt: now2,
+        version: item.version + 1,
+      );
 
-    try {
-      await _store.saveWorkItem(updated, expectedVersion: item.version);
-    } on ConcurrentModificationException {
-      rethrow;
-    }
+      try {
+        await tx.saveWorkItem(updated, expectedVersion: item.version);
+      } on ConcurrentModificationException {
+        rethrow;
+      }
 
-    final acceptedRecord = _buildRecord(
-      item,
-      from: item.state,
-      to: WorkItemState.waitingForHumanDecision,
-      trigger: TransitionTrigger.humanDecision,
-      actor: actor,
-      decisionId: id,
-      guardEvaluations: gateEntry.guardResults
-          .map(
-            (g) => TransitionGuardEvaluation(
-              guardName: g.name,
-              passed: g.passed,
-              message: g.message,
-            ),
-          )
-          .toList(),
-    );
-    await _store.appendTransitionRecord(acceptedRecord);
+      final acceptedRecord = _buildRecord(
+        item,
+        from: item.state,
+        to: WorkItemState.waitingForHumanDecision,
+        trigger: TransitionTrigger.humanDecision,
+        actor: actor,
+        decisionId: id,
+        guardEvaluations: gateEntry.guardResults
+            .map(
+              (g) => TransitionGuardEvaluation(
+                guardName: g.name,
+                passed: g.passed,
+                message: g.message,
+              ),
+            )
+            .toList(),
+      );
+      await tx.appendTransitionRecord(acceptedRecord);
+    });
 
     return decision;
   }
@@ -474,31 +478,33 @@ class DurableWorkflowEngine {
           : updated.terminatedAt,
     );
 
-    try {
-      await _store.saveWorkItem(finalItem, expectedVersion: item.version);
-    } on ConcurrentModificationException {
-      rethrow;
-    }
+    await _store.inTransaction((tx) async {
+      try {
+        await tx.saveWorkItem(finalItem, expectedVersion: item.version);
+      } on ConcurrentModificationException {
+        rethrow;
+      }
 
-    await _store.appendTransitionRecord(
-      _buildRecord(
-        item,
-        from: WorkItemState.waitingForHumanDecision,
-        to: target,
-        trigger: TransitionTrigger.humanDecision,
-        actor: _defaultActor,
-        decisionId: decisionId,
-        guardEvaluations: unlock.guardResults
-            .map(
-              (g) => TransitionGuardEvaluation(
-                guardName: g.name,
-                passed: g.passed,
-                message: g.message,
-              ),
-            )
-            .toList(),
-      ),
-    );
+      await tx.appendTransitionRecord(
+        _buildRecord(
+          item,
+          from: WorkItemState.waitingForHumanDecision,
+          to: target,
+          trigger: TransitionTrigger.humanDecision,
+          actor: _defaultActor,
+          decisionId: decisionId,
+          guardEvaluations: unlock.guardResults
+              .map(
+                (g) => TransitionGuardEvaluation(
+                  guardName: g.name,
+                  passed: g.passed,
+                  message: g.message,
+                ),
+              )
+              .toList(),
+        ),
+      );
+    });
     return finalItem;
   }
 

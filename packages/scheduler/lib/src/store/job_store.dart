@@ -33,6 +33,13 @@ abstract interface class JobStore {
   Future<void> appendEvent(SchedulerEventRecord event);
 
   Future<List<SchedulerEventRecord>> readEvents(String jobId);
+
+  /// Runs [body] within a single store transaction. Implementations that back a
+  /// transaction-capable database must make every store call inside [body]
+  /// atomic and rollback together on error. The default implementation has no
+  /// transaction and simply forwards.
+  Future<T> inTransaction<T>(Future<T> Function(JobStore store) body) async =>
+      body(this);
 }
 
 class JobNotFoundException implements Exception {
@@ -59,4 +66,19 @@ class ConcurrentJobModificationException implements Exception {
   String toString() =>
       'Concurrent modification of job $jobId '
       '(expected version $expectedVersion, actual $actualVersion)';
+}
+
+/// Raised by a store when a job insert violates the active-state deduplication
+/// constraint: an active job (queued/claimed/running/retryWaiting) with the
+/// same [dedupeKey] already exists. Callers re-read the existing job and treat
+/// the enqueue as a no-op.
+class DuplicateActiveJobException implements Exception {
+  DuplicateActiveJobException({required this.jobId, required this.dedupeKey});
+
+  final String jobId;
+  final String dedupeKey;
+
+  @override
+  String toString() =>
+      'An active job already exists for dedupe key $dedupeKey (job $jobId)';
 }

@@ -31,6 +31,7 @@
 | `execution_coordinator` | One bounded, durable agent execution; role stamping; independent verification; orphan reconciliation | Provider specifics, workflow policy, agents choosing their own role |
 | `worker_runtime` | Worker selection/lease, worktree isolation pinned to a revision, worker lifecycle + cleanup policy, stranding recovery | Workflow policy, provider specifics, creating worktrees in `agent_runtime`, deleting anything without `WorkspaceDescriptor` ownership |
 | `scheduler` | Durable job queue (dedupe/claim-CAS/lease reconciliation), tick loop, capacity-aware dispatch, single-selector orchestration | Workflow policy itself, provider specifics, mutating `WorkItem` state directly |
+| `control_plane/server` (persistence) | PostgreSQL-backed implementations of the store contracts (`workflow`, `job`, `worker`, `worker_registration`, `execution`), migration/DML for them, `StructuredLogger`, and read-only Serverpod endpoints observing durable state | Domain/policy logic (stays in the platform `packages/`), ever setting `WorkItem.state` from an endpoint, dictating scheduler policy |
 
 ### 4. Testing Requirements
 

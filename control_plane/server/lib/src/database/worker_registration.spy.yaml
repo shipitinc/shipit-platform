@@ -1,0 +1,17 @@
+class: WorkerRegistrationRow
+table: worker_registration
+serverOnly: true
+indexes:
+  worker_registration_id_unique:
+    fields: workerId
+    unique: true
+fields:
+  workerId: String
+  poolId: String
+  capabilitiesJson: String
+  status: String
+  currentLoad: int
+  maxConcurrency: int
+  lastHeartbeat: DateTime
+  artifactCacheJson: String?
+  platform: String?
