@@ -1,15 +1,14 @@
-import 'dart:async';
-
-import 'package:platform_contracts/platform_contracts.dart';
-
 import '../../interface/agent_adapter.dart';
 import '../../interface/agent_capability.dart';
-import '../../interface/agent_event.dart';
-import '../../interface/agent_instruction.dart';
 import '../../interface/agent_session.dart';
-import '../../models/agent_session_state.dart';
+import 'opencode_session.dart';
 
 class OpencodeAdapter implements AgentAdapter {
+  OpencodeAdapter({AcpTransportFactory? transportFactory})
+    : _transportFactory = transportFactory ?? defaultAcpTransport;
+
+  final AcpTransportFactory _transportFactory;
+
   @override
   final String providerId = 'opencode';
 
@@ -17,69 +16,66 @@ class OpencodeAdapter implements AgentAdapter {
   final String displayName = 'OpenCode ACP';
 
   @override
-  final List<AgentCapability> capabilities = const [
-    AgentCapability(
-      name: 'code_generation',
-      description: 'Generate source code',
-      supported: true,
-    ),
-    AgentCapability(
-      name: 'code_editing',
-      description: 'Edit existing code',
-      supported: true,
-    ),
-    AgentCapability(
-      name: 'file_operations',
-      description: 'Read/write files',
-      supported: true,
-    ),
-    AgentCapability(
-      name: 'shell_commands',
-      description: 'Execute shell commands',
-      supported: true,
-    ),
-    AgentCapability(
-      name: 'git_operations',
-      description: 'Git commands',
-      supported: true,
-    ),
-    AgentCapability(name: 'testing', description: 'Run tests', supported: true),
-    AgentCapability(
-      name: 'resume_session',
-      description: 'Resume interrupted session',
-      supported: true,
-    ),
-  ];
-
-  final OpencodeClient _client;
-
-  OpencodeAdapter({OpencodeClient? client})
-    : _client = client ?? OpencodeClient();
+  final RuntimeCapabilities capabilities = const RuntimeCapabilities(
+    supported: {
+      RuntimeCapability.readFiles,
+      RuntimeCapability.modifyFiles,
+      RuntimeCapability.runShell,
+      RuntimeCapability.runTests,
+      RuntimeCapability.gitOperations,
+      RuntimeCapability.resumeSession,
+      RuntimeCapability.cancellable,
+    },
+  );
 
   @override
   Future<AgentSession> createSession(AgentSessionConfig config) async {
-    final session = OpencodeSession();
+    final session = OpenCodeSession(
+      executionId: config.executionId,
+      workItemId: config.workItemId,
+      transportFactory: _transportFactory,
+    );
+    await session.start(config);
+    return session;
+  }
+
+  @override
+  Future<AgentSession> resumeSession(AgentSessionConfig config) async {
+    final session = OpenCodeSession(
+      executionId: config.executionId,
+      workItemId: config.workItemId,
+      transportFactory: _transportFactory,
+    );
     await session.start(config);
     return session;
   }
 
   @override
   Future<bool> canResume(String sessionId) async {
-    return await _client.canResume(sessionId);
-  }
-
-  @override
-  Future<AgentSession> resumeSession(String sessionId) async {
-    final session = OpencodeSession();
-    await session.resume(sessionId);
-    return session;
+    // The runtime advertises ACP session resume in initialize; establishing it
+    // requires a live transport. This slice resolves platform orphans at the
+    // execution level, so resume capability is reported rather than probed.
+    return capabilities.supports(RuntimeCapability.resumeSession);
   }
 
   @override
   Future<AdapterHealth> checkHealth() async {
     try {
-      final version = await _client.getVersion();
-      return AdapterHealth(healthy: true, version: version);
+      final probe = await _transportFactory(
+        AgentSessionConfig(
+          executionId: 'health-check',
+          workItemId: 'health-check',
+          workingDirectory: '/tmp',
+        ),
+      );
+      final result = await probe.initialize();
+      final agentInfo = result.agentInfo;
+      await probe.close();
+      return AdapterHealth(
+        healthy: true,
+        version: (agentInfo['version'] as String?) ?? 'unknown',
+        details: {'agentName': agentInfo['name']},
+      );
     } catch (e) {
       return AdapterHealth(healthy: false, details: {'error': e.toString()});
     }
@@ -87,113 +83,6 @@ class OpencodeAdapter implements AgentAdapter {
 
   @override
   Future<void> shutdown() async {
-    await _client.shutdown();
-  }
-}
-
-class OpencodeClient {
-  Future<String> getVersion() async => '1.0.0';
-  Future<bool> canResume(String sessionId) async => true;
-  Future<void> shutdown() async {}
-}
-
-class OpencodeSession implements AgentSession {
-  @override
-  String sessionId = '';
-
-  @override
-  String workItemId = '';
-
-  AgentSessionState _state = AgentSessionState.starting;
-
-  @override
-  AgentSessionState get state => _state;
-
-  final _eventController = StreamController<AgentEvent>.broadcast();
-
-  @override
-  Stream<AgentEvent> get eventStream => _eventController.stream;
-
-  @override
-  Future<void> start(AgentSessionConfig config) async {
-    _state = AgentSessionState.running;
-    sessionId = 'opencode-${DateTime.now().millisecondsSinceEpoch}';
-    workItemId = config.workItemId;
-    _eventController.add(
-      SessionStarted(
-        eventId: 'evt-1',
-        timestamp: DateTime.now(),
-        sessionId: sessionId,
-        workItemId: workItemId,
-      ),
-    );
-    // TODO: Start OpenCode process via ACP
-  }
-
-  @override
-  Future<void> sendInstruction(AgentInstruction instruction) async {
-    _eventController.add(
-      InstructionSent(
-        eventId: 'evt-${DateTime.now().millisecondsSinceEpoch}',
-        timestamp: DateTime.now(),
-        instructionId: instruction.instructionId,
-        content: instruction.content,
-      ),
-    );
-    // TODO: Send instruction via ACP
-  }
-
-  @override
-  Future<void> cancel(String reason) async {
-    _state = AgentSessionState.cancelled;
-    _eventController.add(
-      SessionCancelled(
-        eventId: 'evt-${DateTime.now().millisecondsSinceEpoch}',
-        timestamp: DateTime.now(),
-        reason: reason,
-      ),
-    );
-    // TODO: Cancel via ACP
-  }
-
-  @override
-  Future<void> resume(String sessionId) async {
-    _state = AgentSessionState.running;
-    this.sessionId = sessionId;
-    _eventController.add(
-      SessionStarted(
-        eventId: 'evt-${DateTime.now().millisecondsSinceEpoch}',
-        timestamp: DateTime.now(),
-        sessionId: sessionId,
-        workItemId: workItemId,
-      ),
-    );
-    // TODO: Resume via ACP
-  }
-
-  @override
-  Future<AgentResult> getResult() async {
-    // TODO: Collect final result
-    return AgentResult(
-      resultId: 'result-$sessionId',
-      sessionId: sessionId,
-      workItemId: workItemId,
-      status: AgentResultStatus.completed,
-      artifacts: [],
-      diagnostics: AgentDiagnostics(
-        exitCode: 0,
-        durationMs: 0,
-        toolCalls: 0,
-        errors: [],
-        warnings: [],
-      ),
-      structuredResult: {},
-      completedAt: DateTime.now(),
-    );
-  }
-
-  @override
-  Future<List<AgentArtifact>> getArtifacts() async {
-    return [];
+    // The adapter holds no long-lived transport; sessions own their processes.
   }
 }

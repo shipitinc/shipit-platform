@@ -1,5 +1,8 @@
 import 'package:platform_contracts/platform_contracts.dart';
 
+/// Runtime-level events. The coordinator normalizes these into durable
+/// [AgentEventRecord] instances where relevant; raw conversations are never
+/// persisted.
 sealed class AgentEvent {
   const AgentEvent();
 
@@ -37,6 +40,40 @@ class InstructionSent extends AgentEvent {
   final DateTime timestamp;
   final String instructionId;
   final String content;
+}
+
+class AgentMessageChunk extends AgentEvent {
+  const AgentMessageChunk({
+    required this.eventId,
+    required this.timestamp,
+    required this.messageId,
+    required this.text,
+  });
+
+  @override
+  final String eventId;
+  @override
+  final DateTime timestamp;
+  final String messageId;
+  final String text;
+}
+
+class UsageUpdate extends AgentEvent {
+  const UsageUpdate({
+    required this.eventId,
+    required this.timestamp,
+    required this.used,
+    required this.size,
+    required this.cost,
+  });
+
+  @override
+  final String eventId;
+  @override
+  final DateTime timestamp;
+  final double used;
+  final double size;
+  final double cost;
 }
 
 class ToolCallStarted extends AgentEvent {
@@ -173,6 +210,20 @@ class SessionFailed extends AgentEvent {
 
 class SessionCancelled extends AgentEvent {
   const SessionCancelled({
+    required this.eventId,
+    required this.timestamp,
+    required this.reason,
+  });
+
+  @override
+  final String eventId;
+  @override
+  final DateTime timestamp;
+  final String reason;
+}
+
+class SessionInterrupted extends AgentEvent {
+  const SessionInterrupted({
     required this.eventId,
     required this.timestamp,
     required this.reason,

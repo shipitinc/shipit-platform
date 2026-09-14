@@ -21,13 +21,13 @@ class AgentRuntime {
 
   Future<AgentSession> resumeSession({
     required String providerId,
-    required String sessionId,
+    required AgentSessionConfig config,
   }) async {
     final adapter = _registry.get(providerId);
     if (adapter == null) {
       throw AgentAdapterNotFoundException(providerId);
     }
-    return adapter.resumeSession(sessionId);
+    return adapter.resumeSession(config);
   }
 
   List<AgentAdapter> get availableAdapters => _registry.all;
