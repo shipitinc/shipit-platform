@@ -17,5 +17,5 @@ Map<String, dynamic> _$WorkflowActorToJson(WorkflowActor instance) =>
     <String, dynamic>{
       'actorId': instance.actorId,
       'actorType': _actorTypeToJson(instance.actorType),
-      if (instance.displayName case final value?) 'displayName': value,
+      'displayName': ?instance.displayName,
     };

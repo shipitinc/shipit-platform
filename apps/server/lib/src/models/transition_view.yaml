@@ -1,0 +1,8 @@
+class: TransitionView
+fields:
+  transitionId: String
+  workItemId: String
+  fromState: String
+  toState: String
+  transitionedAt: DateTime
+  reason: String?

@@ -1,0 +1,11 @@
+### A repository belonging to exactly one Product (S-1 DIRECT scope).
+class: RepositoryReferenceView
+fields:
+  repositoryId: String
+  productId: String
+  ### frontend | backend | infra | monorepo | app | ...
+  kind: String
+  uri: String
+  provider: String
+  addedAt: DateTime
+  version: int

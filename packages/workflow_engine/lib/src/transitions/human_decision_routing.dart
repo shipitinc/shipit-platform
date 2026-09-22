@@ -45,6 +45,15 @@ class HumanDecisionRouting {
       (HumanDecisionType.humanQaApproval, HumanDecisionChoice.reject) =>
         WorkItemState.agentExecuting,
       (_, HumanDecisionChoice.cancel) => WorkItemState.cancelled,
+      // An escalation is a failure handed to a human: the operator either
+      // puts the work back in flight or sends it back to be re-planned.
+      // (`cancel` is already covered by the catch-all above.) Without these
+      // routes a resolved escalation leaves the item parked at its gate with
+      // the decision already answered.
+      (HumanDecisionType.escalation, HumanDecisionChoice.approve) =>
+        WorkItemState.agentExecuting,
+      (HumanDecisionType.escalation, HumanDecisionChoice.rework) =>
+        WorkItemState.planning,
       _ => null,
     };
   }

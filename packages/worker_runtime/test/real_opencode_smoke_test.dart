@@ -90,6 +90,8 @@ void main() {
       productId: 'prod-1',
       category: WorkItemCategory.feature,
       title: 'Implement calculator add',
+      description:
+          'Implement the calculator add function for the contract suite',
       qaContractId: 'qa-1',
       featureRef: 'feature/calc',
     );

@@ -4,7 +4,13 @@
 /// chains (those arrive in later slices with their own gate policies).
 enum JobType {
   /// Drive one bounded implementer execution for a runnable work item.
-  implementFeature('implement_feature');
+  implementFeature('implement_feature'),
+
+  /// Produce a design revision in Penpot for a work item.
+  designRevision('design_revision'),
+
+  /// Independently review a design revision produced by a different worker.
+  designReview('design_review');
 
   const JobType(this.wire);
 

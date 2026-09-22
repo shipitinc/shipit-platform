@@ -1,0 +1,25 @@
+class: StandingPolicyRow
+table: standing_policy
+serverOnly: true
+### ADR 0019 — a signed decision authorising a class of future actions.
+### Revoked policies are never deleted: what was authorised, by whom, and when
+### it stopped must stay readable.
+indexes:
+  standing_policy_id_unique:
+    fields: policyId
+    unique: true
+  standing_policy_product_idx:
+    fields: productId
+fields:
+  policyId: String
+  productId: String
+  actionsJson: String
+  authorisingDecisionId: String
+  authorisedBy: String
+  rationale: String
+  authorisedAt: DateTime
+  revokedAt: DateTime?
+  revokedBy: String?
+  revocationDecisionId: String?
+  revocationReason: String?
+  version: int

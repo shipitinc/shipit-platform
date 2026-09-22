@@ -11,4 +11,8 @@ enum WorkerCapability {
   ios,
   xcode,
   gpu,
+  penpotRead,
+  penpotWrite,
+  visualDesign,
+  designReview,
 }

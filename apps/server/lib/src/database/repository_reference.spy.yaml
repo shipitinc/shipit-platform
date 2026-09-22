@@ -1,0 +1,17 @@
+class: RepositoryReferenceRow
+table: repository_reference
+serverOnly: true
+indexes:
+  repository_reference_id_unique:
+    fields: repositoryId
+    unique: true
+  repository_reference_product_idx:
+    fields: productId
+fields:
+  repositoryId: String
+  productId: String
+  kind: String
+  uri: String
+  provider: String
+  addedAt: DateTime
+  version: int

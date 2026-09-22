@@ -1,0 +1,6 @@
+class: DecisionOptionView
+fields:
+  optionId: String
+  label: String
+  description: String?
+  recommended: bool

@@ -1,0 +1,10 @@
+{
+  "onboardingId": "ob-shipit-1",
+  "productId": "prod-shipit",
+  "currentBaselineRevision": 1,
+  "pendingClarifications": 1,
+  "completed": false,
+  "createdAt": "2026-09-16T12:00:00Z",
+  "updatedAt": "2026-09-16T12:00:00Z",
+  "version": 1
+}

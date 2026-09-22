@@ -13,7 +13,7 @@ shipit-platform/
 │   ├── qa_orchestration/        # Gates + evidence validation
 │   └── deployment_protocol/     # Artifact promotion + deployment interface
 ├── schemas/                     # JSON Schema (source of truth, generated into platform_contracts)
-├── control_plane/               # Forthcoming: Serverpod server + Flutter Web client
+├── apps/               # Forthcoming: Serverpod server + Flutter Web client
 ├── docker/                      # Forthcoming
 ├── infrastructure/              # Forthcoming
 └── tooling/                     # Generators, CI helpers (forthcoming)
@@ -122,7 +122,7 @@ history; durable resume semantics; concurrency (compare-and-swap on `WorkItem.ve
 and idempotency (retry keys) for transitions and decision resolution.
 **Consumes (does not own):** `workflow_engine` for policy, `platform_contracts` for types.
 **Must Not:** Agent adapters, QA logic, deployment logic, workflow policy (policy stays in `workflow_engine`)
-**Planned:** in `control_plane/server`, this package is replaced by PostgreSQL-backed stores
+**Planned:** in `apps/server`, this package is replaced by PostgreSQL-backed stores
 implementing the same `WorkflowStore` interface; `DurableWorkflowEngine` is reused unchanged.
 
 ---
@@ -248,16 +248,16 @@ deployment_protocol/
 **Consumes (does not own):** `DeploymentArtifact`, `DeploymentResult`, `ArtifactManifest`, `HealthCheckResult`,
 `DeploymentStatus` from `platform_contracts`
 **Must Not:** Workflow logic, agent runtime, QA logic, concrete cloud/ad-hoc target implementations
-(concrete targets ship with `control_plane/server` once deployment is implemented)
+(concrete targets ship with `apps/server` once deployment is implemented)
 
 ---
 
-## control_plane/server (Serverpod) — forthcoming
+## apps/server (Serverpod) — forthcoming
 
 **Persistence, API, orchestration coordination.** Not yet created; planned layout:
 
 ```
-control_plane/server/
+apps/server/
 ├── lib/src/
 │   ├── endpoints/        # product, work_item, design, agent, qa, deployment
 │   ├── persistence/      # tables, repositories, migrations (PostgreSQL)
@@ -268,7 +268,7 @@ control_plane/server/
 
 ---
 
-## control_plane/client (Flutter Web) — forthcoming
+## packages/control_plane_client (Flutter Web) — forthcoming
 
 **Human-facing dashboard.** Not yet created; planned layout leaves pages/ under `lib/src/pages/`
 and frontend tests under `test/`.
@@ -286,12 +286,12 @@ platform_contracts ◄── worker_protocol
 platform_contracts ◄── qa_orchestration
 platform_contracts ◄── deployment_protocol
 
-workflow_engine ◄── control_plane/server (services)      (forthcoming)
-workflow_store  ◄── control_plane/server (services)      (forthcoming)
-agent_runtime   ◄── control_plane/server (agent_service) (forthcoming)
-worker_protocol ◄── control_plane/server (worker_service)(forthcoming)
-qa_orchestration◄── control_plane/server (qa_service)    (forthcoming)
-deployment_protocol◄─ control_plane/server (deployment_service) (forthcoming)
+workflow_engine ◄── apps/server (services)      (forthcoming)
+workflow_store  ◄── apps/server (services)      (forthcoming)
+agent_runtime   ◄── apps/server (agent_service) (forthcoming)
+worker_protocol ◄── apps/server (worker_service)(forthcoming)
+qa_orchestration◄── apps/server (qa_service)    (forthcoming)
+deployment_protocol◄─ apps/server (deployment_service) (forthcoming)
 ```
 
 ## Forbidden Dependencies
@@ -301,5 +301,5 @@ deployment_protocol◄─ control_plane/server (deployment_service) (forthcoming
 - ❌ `agent_runtime` → `workflow_engine` / `qa_orchestration` / `deployment_protocol` / `worker_protocol`
 - ❌ `qa_orchestration` → `agent_runtime` / `deployment_protocol` / `workflow_engine` / `worker_protocol`
 - ❌ `deployment_protocol` → `workflow_engine` / `agent_runtime` / `qa_orchestration` / `worker_protocol`
-- ❌ Any package → `control_plane/server` (except via interfaces)
-- ❌ Direct PostgreSQL access outside `control_plane/server`
+- ❌ Any package → `apps/server` (except via interfaces)
+- ❌ Direct PostgreSQL access outside `apps/server`

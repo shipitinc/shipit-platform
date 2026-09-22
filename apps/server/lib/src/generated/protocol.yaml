@@ -1,0 +1,34 @@
+executionEndpoints:
+  - list:
+  - inspect:
+homeEndpoints:
+  - overview:
+  - listWorkItems:
+  - recentDecisions:
+  - pendingDecisions:
+productRegistryEndpoints:
+  - listProducts:
+  - listProductSummaries:
+  - productDetail:
+  - productContext:
+  - requestBaselineApproval:
+  - requestLifecycleDecision:
+  - resolveLifecycleDecision:
+  - requestPolicyAuthorisation:
+  - resolvePolicyAuthorisation:
+  - revokeStandingPolicy:
+  - resolveBaselineApproval:
+  - baselineApproval:
+  - answerClarification:
+schedulerEndpoints:
+  - listJobs:
+  - inspect:
+workerEndpoints:
+  - listWorkers:
+  - listExecutions:
+  - inspect:
+workflowEndpoints:
+  - jobsForWorkItem:
+  - inspect:
+  - listDecisions:
+  - resolveDecision:

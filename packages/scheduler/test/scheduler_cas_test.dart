@@ -156,6 +156,7 @@ void main() {
       productId: 'prod-1',
       category: WorkItemCategory.feature,
       title: 'Second',
+      description: 'Second work item seed for scheduler CAS tests',
       qaContractId: 'qa-2',
       featureRef: 'feature/two',
     );

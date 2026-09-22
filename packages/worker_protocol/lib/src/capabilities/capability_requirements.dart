@@ -9,6 +9,7 @@ class TaskRequirements {
     this.estimatedDuration,
     this.maxRetries = 3,
     this.environment,
+    this.excludedExecutionIds = const [],
   });
 
   final Set<WorkerCapability> requiredCapabilities;
@@ -16,4 +17,8 @@ class TaskRequirements {
   final Duration? estimatedDuration;
   final int maxRetries;
   final Map<String, String>? environment;
+
+  /// Worker execution IDs that must not be assigned this task (independence
+  /// at dispatch: design review must not go to the designer's execution).
+  final List<String> excludedExecutionIds;
 }

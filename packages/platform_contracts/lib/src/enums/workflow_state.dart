@@ -1,5 +1,3 @@
-enum ProductState { draft, active, archived, deprecated }
-
 enum WorkItemState {
   draft('draft'),
   planning('planning'),

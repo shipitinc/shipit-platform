@@ -1,0 +1,20 @@
+class: BaselineFactRow
+table: baseline_fact
+serverOnly: true
+indexes:
+  baseline_fact_id_unique:
+    fields: factId, baselineId
+    unique: true
+  baseline_fact_baseline_idx:
+    fields: baselineId
+fields:
+  factId: String
+  baselineId: String
+  section: String
+  claim: String
+  provenance: String
+  maturity: String
+  evidenceRefsJson: String?
+  assumptionNote: String?
+  redacted: bool
+  version: int

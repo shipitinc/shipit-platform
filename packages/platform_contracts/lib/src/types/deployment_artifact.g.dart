@@ -27,7 +27,7 @@ Map<String, dynamic> _$DeploymentArtifactToJson(DeploymentArtifact instance) =>
       'manifest': instance.manifest.toJson(),
       'builtAt': instance.builtAt.toIso8601String(),
       'builtBy': instance.builtBy,
-      if (instance.labels case final value?) 'labels': value,
+      'labels': ?instance.labels,
     };
 
 ArtifactManifest _$ArtifactManifestFromJson(Map<String, dynamic> json) =>
@@ -53,7 +53,7 @@ Map<String, dynamic> _$ArtifactManifestToJson(ArtifactManifest instance) =>
       'gitCommit': instance.gitCommit,
       'files': instance.files.map((e) => e.toJson()).toList(),
       'sbom': instance.sbom.toJson(),
-      if (instance.metadata case final value?) 'metadata': value,
+      'metadata': ?instance.metadata,
     };
 
 ArtifactFile _$ArtifactFileFromJson(Map<String, dynamic> json) => ArtifactFile(
@@ -108,7 +108,7 @@ Map<String, dynamic> _$SBOMComponentToJson(SBOMComponent instance) =>
       'name': instance.name,
       'version': instance.version,
       'type': instance.type,
-      if (instance.purl case final value?) 'purl': value,
-      if (instance.hashes case final value?) 'hashes': value,
-      if (instance.licenses case final value?) 'licenses': value,
+      'purl': ?instance.purl,
+      'hashes': ?instance.hashes,
+      'licenses': ?instance.licenses,
     };

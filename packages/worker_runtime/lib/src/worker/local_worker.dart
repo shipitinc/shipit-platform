@@ -90,6 +90,7 @@ class LocalWorker implements Worker {
       maxConcurrency: 1,
       lastHeartbeat: DateTime.now().toUtc(),
       platform: platform,
+      currentExecutionId: _activeAgentExecutionId,
     );
   }
 

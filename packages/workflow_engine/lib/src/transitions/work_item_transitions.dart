@@ -33,11 +33,19 @@ class WorkItemTransitions {
       GuardConditions.actorAllowed([ActorType.orchestrator]),
       GuardConditions.designContractUnderReview(),
     ],
+    (WorkItemState.designRequired, WorkItemState.agentExecuting): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+      GuardConditions.agentAvailable(),
+    ],
     (WorkItemState.designInReview, WorkItemState.waitingForHumanDecision): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
       GuardConditions.blockingHumanDecisionPendingOfType([
         HumanDecisionType.designApproval,
       ]),
+    ],
+    (WorkItemState.designInReview, WorkItemState.agentExecuting): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+      GuardConditions.agentAvailable(),
     ],
     (WorkItemState.waitingForHumanDecision, WorkItemState.designApproved): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
@@ -98,6 +106,10 @@ class WorkItemTransitions {
       GuardConditions.actorAllowed([ActorType.orchestrator]),
       GuardConditions.agentResultValid(),
     ],
+    (WorkItemState.agentCompleted, WorkItemState.designInReview): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+      GuardConditions.designContractUnderReview(),
+    ],
     (WorkItemState.reviewInProgress, WorkItemState.waitingForHumanDecision): [
       GuardConditions.actorAllowed([
         ActorType.orchestrator,
@@ -140,6 +152,25 @@ class WorkItemTransitions {
         (
           type: HumanDecisionType.humanQaApproval,
           choice: HumanDecisionChoice.reject,
+        ),
+        // A human chose to resume after a failure was escalated to them.
+        (
+          type: HumanDecisionType.escalation,
+          choice: HumanDecisionChoice.approve,
+        ),
+      }),
+      GuardConditions.decisionActorIsHuman(),
+    ],
+    // Escalation outcome: send the work back to be re-planned. Resuming is
+    // handled by the guard on (waitingForHumanDecision -> agentExecuting),
+    // and stopping is already covered by the generic orchestrator escape to
+    // `cancelled`, which must not be narrowed here.
+    (WorkItemState.waitingForHumanDecision, WorkItemState.planning): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+      GuardConditions.blockingHumanDecisionResolved({
+        (
+          type: HumanDecisionType.escalation,
+          choice: HumanDecisionChoice.rework,
         ),
       }),
       GuardConditions.decisionActorIsHuman(),

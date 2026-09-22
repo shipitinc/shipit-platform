@@ -9,10 +9,14 @@ environment:
 resolution: workspace
 
 dependencies:
+  design_governance:
+    path: ../design_governance
   execution_coordinator:
     path: ../execution_coordinator
   platform_contracts:
     path: ../platform_contracts
+  product_registry:
+    path: ../product_registry
   scheduler:
     path: ../scheduler
   worker_protocol:

@@ -61,7 +61,7 @@ services:
 
   server:
     build:
-      context: ../control_plane/server
+      context: ../apps/server
       dockerfile: ../../docker/Dockerfile.server
     environment:
       SERVERPOD_DATABASE_HOST: postgres
@@ -74,12 +74,12 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ../control_plane/server:/app
+      - ../apps/server:/app
       - /app/.dart_tool  # Cache isolation
 
   client:
     build:
-      context: ../control_plane/client
+      context: ../packages/control_plane_client
       dockerfile: ../../docker/Dockerfile.client
     ports:
       - "8081:8081"
@@ -87,7 +87,7 @@ services:
       SERVERPOD_CLIENT_ORIGIN: http://localhost:8081
       SERVERPOD_API_URL: http://server:8080
     volumes:
-      - ../control_plane/client:/app
+      - ../packages/control_plane_client:/app
       - /app/.dart_tool
 
   worker-linux:

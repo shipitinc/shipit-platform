@@ -1,0 +1,8 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/design_revision_status.schema.json",
+  "title": "DesignRevisionStatus",
+  "description": "Status of a design revision in the design governance lifecycle",
+  "type": "string",
+  "enum": ["draft", "in_review", "changes_required", "review_passed", "human_approval_required", "approved", "superseded"]
+}

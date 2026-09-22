@@ -1,0 +1,21 @@
+### Everything the Product Detail screen reads, in one call.
+###
+### Composed rather than fetched piecemeal so the screen cannot show a
+### half-loaded product. Every field is durable state.
+class: ProductDetailView
+fields:
+  product: ProductView
+  ### True only for `governed`. Mirrors ProductState.allowsDispatch.
+  allowsDispatch: bool
+  repositories: List<RepositoryReferenceView>
+  ### One credential per repository; absent where none has been generated.
+  credentials: List<RepositoryCredentialView>
+  activeBaseline: ProductBaselineView?
+  ### The candidate awaiting a human, when in baseline_review.
+  pendingBaseline: ProductBaselineView?
+  ### Whether that candidate carries a worker attestation (AGENTS.md §12).
+  pendingBaselineVerified: bool
+  allBaselines: List<ProductBaselineView>
+  openClarifications: List<ClarificationView>
+  ### Active first; revoked ones are retained and still readable.
+  policies: List<StandingPolicyView>

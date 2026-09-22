@@ -43,6 +43,11 @@ WorkerExecutionRequest _$WorkerExecutionRequestFromJson(
   createdAt: json['createdAt'] == null
       ? null
       : DateTime.parse(json['createdAt'] as String),
+  excludedExecutionIds:
+      (json['excludedExecutionIds'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList() ??
+      const [],
 );
 
 Map<String, dynamic> _$WorkerExecutionRequestToJson(
@@ -52,9 +57,9 @@ Map<String, dynamic> _$WorkerExecutionRequestToJson(
   'workItemId': instance.workItemId,
   'repositoryPath': instance.repositoryPath,
   'startingRevision': instance.startingRevision,
-  if (_workerCapabilitiesToJson(instance.requiredCapabilities)
-      case final value?)
-    'requiredCapabilities': value,
+  'requiredCapabilities': ?_workerCapabilitiesToJson(
+    instance.requiredCapabilities,
+  ),
   'role': _agentRoleToJson(instance.role),
   'instruction': instance.instruction,
   'timeoutSeconds': instance.timeoutSeconds,
@@ -63,11 +68,11 @@ Map<String, dynamic> _$WorkerExecutionRequestToJson(
       .map((e) => e.toJson())
       .toList(),
   'cleanupPolicy': _$WorkerCleanupPolicyEnumMap[instance.cleanupPolicy]!,
-  if (instance.envAllowlist case final value?) 'envAllowlist': value,
-  if (instance.environment case final value?) 'environment': value,
-  if (instance.runtimeConfig case final value?) 'runtimeConfig': value,
-  if (instance.createdAt?.toIso8601String() case final value?)
-    'createdAt': value,
+  'envAllowlist': ?instance.envAllowlist,
+  'environment': ?instance.environment,
+  'runtimeConfig': ?instance.runtimeConfig,
+  'createdAt': ?instance.createdAt?.toIso8601String(),
+  'excludedExecutionIds': instance.excludedExecutionIds,
 };
 
 const _$WorkerCleanupPolicyEnumMap = {

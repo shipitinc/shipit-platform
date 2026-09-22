@@ -45,34 +45,28 @@ HumanDecision _$HumanDecisionFromJson(Map<String, dynamic> json) =>
       updatedAt: DateTime.parse(json['updatedAt'] as String),
     );
 
-Map<String, dynamic> _$HumanDecisionToJson(
-  HumanDecision instance,
-) => <String, dynamic>{
-  'decisionId': instance.decisionId,
-  'workItemId': instance.workItemId,
-  'decisionType': _humanDecisionTypeToJson(instance.decisionType),
-  'status': _humanDecisionStatusToJson(instance.status),
-  if (instance.question case final value?) 'question': value,
-  if (instance.context?.toJson() case final value?) 'context': value,
-  if (instance.options?.map((e) => e.toJson()).toList() case final value?)
-    'options': value,
-  if (instance.recommendation case final value?) 'recommendation': value,
-  if (instance.blocking case final value?) 'blocking': value,
-  if (instance.requestedAt?.toIso8601String() case final value?)
-    'requestedAt': value,
-  if (instance.expiration?.toIso8601String() case final value?)
-    'expiration': value,
-  if (instance.decider case final value?) 'decider': value,
-  if (_humanDecisionChoiceToJson(instance.choice) case final value?)
-    'choice': value,
-  if (instance.rationale case final value?) 'rationale': value,
-  if (instance.timestamp?.toIso8601String() case final value?)
-    'timestamp': value,
-  if (instance.signature?.toJson() case final value?) 'signature': value,
-  if (instance.resolvedOptionId case final value?) 'resolvedOptionId': value,
-  if (instance.metadata case final value?) 'metadata': value,
-  'updatedAt': instance.updatedAt.toIso8601String(),
-};
+Map<String, dynamic> _$HumanDecisionToJson(HumanDecision instance) =>
+    <String, dynamic>{
+      'decisionId': instance.decisionId,
+      'workItemId': instance.workItemId,
+      'decisionType': _humanDecisionTypeToJson(instance.decisionType),
+      'status': _humanDecisionStatusToJson(instance.status),
+      'question': ?instance.question,
+      'context': ?instance.context?.toJson(),
+      'options': ?instance.options?.map((e) => e.toJson()).toList(),
+      'recommendation': ?instance.recommendation,
+      'blocking': ?instance.blocking,
+      'requestedAt': ?instance.requestedAt?.toIso8601String(),
+      'expiration': ?instance.expiration?.toIso8601String(),
+      'decider': ?instance.decider,
+      'choice': ?_humanDecisionChoiceToJson(instance.choice),
+      'rationale': ?instance.rationale,
+      'timestamp': ?instance.timestamp?.toIso8601String(),
+      'signature': ?instance.signature?.toJson(),
+      'resolvedOptionId': ?instance.resolvedOptionId,
+      'metadata': ?instance.metadata,
+      'updatedAt': instance.updatedAt.toIso8601String(),
+    };
 
 HumanDecisionOption _$HumanDecisionOptionFromJson(Map<String, dynamic> json) =>
     HumanDecisionOption(
@@ -87,8 +81,8 @@ Map<String, dynamic> _$HumanDecisionOptionToJson(
 ) => <String, dynamic>{
   'optionId': instance.optionId,
   'label': instance.label,
-  if (instance.description case final value?) 'description': value,
-  if (instance.recommended case final value?) 'recommended': value,
+  'description': ?instance.description,
+  'recommended': ?instance.recommended,
 };
 
 DecisionSignature _$DecisionSignatureFromJson(Map<String, dynamic> json) =>
@@ -118,10 +112,9 @@ DecisionContext _$DecisionContextFromJson(Map<String, dynamic> json) =>
           .toList(),
     );
 
-Map<String, dynamic> _$DecisionContextToJson(
-  DecisionContext instance,
-) => <String, dynamic>{
-  'workflowState': instance.workflowState,
-  'availableOptions': instance.availableOptions,
-  if (instance.relatedDecisions case final value?) 'relatedDecisions': value,
-};
+Map<String, dynamic> _$DecisionContextToJson(DecisionContext instance) =>
+    <String, dynamic>{
+      'workflowState': instance.workflowState,
+      'availableOptions': instance.availableOptions,
+      'relatedDecisions': ?instance.relatedDecisions,
+    };

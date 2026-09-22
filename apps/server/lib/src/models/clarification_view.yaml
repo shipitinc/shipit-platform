@@ -1,0 +1,15 @@
+### A durable request for human input on a material unknown. Survives
+### restart and resumes the same Product/onboarding lineage.
+class: ClarificationView
+fields:
+  clarificationId: String
+  productId: String
+  onboardingId: String
+  section: String
+  question: String
+  ### needs_answer | answered | withdrawn
+  status: String
+  answer: String?
+  createdAt: DateTime
+  answeredAt: DateTime?
+  answeredBy: String?

@@ -16,6 +16,7 @@ class WorkerRegistration {
     required this.lastHeartbeat,
     this.artifactCache,
     this.platform,
+    this.currentExecutionId,
   });
 
   final String workerId;
@@ -31,6 +32,11 @@ class WorkerRegistration {
   /// Optional: capability matching never depends on this string; it is carried
   /// for observability and future pinning policy.
   final String? platform;
+
+  /// The worker execution ID currently running on this worker, if any.
+  /// Used for independence at dispatch (e.g. design review must not go to
+  /// the same execution that produced the design).
+  final String? currentExecutionId;
 
   bool get isAvailable =>
       status == WorkerStatus.idle ||

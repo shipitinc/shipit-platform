@@ -27,8 +27,8 @@ Map<String, dynamic> _$QAEvidenceToJson(QAEvidence instance) =>
       'artifactRef': instance.artifactRef,
       'content': instance.content,
       'collectedAt': instance.collectedAt.toIso8601String(),
-      if (instance.validatorId case final value?) 'validatorId': value,
-      if (instance.metadata case final value?) 'metadata': value,
+      'validatorId': ?instance.validatorId,
+      'metadata': ?instance.metadata,
     };
 
 QAGateResult _$QAGateResultFromJson(Map<String, dynamic> json) => QAGateResult(
@@ -51,21 +51,20 @@ QAGateResult _$QAGateResultFromJson(Map<String, dynamic> json) => QAGateResult(
   metadata: json['metadata'] as Map<String, dynamic>?,
 );
 
-Map<String, dynamic> _$QAGateResultToJson(
-  QAGateResult instance,
-) => <String, dynamic>{
-  'gateId': instance.gateId,
-  'workItemId': instance.workItemId,
-  'status': _qaGateStatusToJson(instance.status),
-  'evidence': instance.evidence.map((e) => e.toJson()).toList(),
-  'evaluatedAt': instance.evaluatedAt.toIso8601String(),
-  if (instance.passedAt?.toIso8601String() case final value?) 'passedAt': value,
-  if (instance.waiver?.toJson() case final value?) 'waiver': value,
-  if (instance.evidenceDeterminations?.map((e) => e.toJson()).toList()
-      case final value?)
-    'evidenceDeterminations': value,
-  if (instance.metadata case final value?) 'metadata': value,
-};
+Map<String, dynamic> _$QAGateResultToJson(QAGateResult instance) =>
+    <String, dynamic>{
+      'gateId': instance.gateId,
+      'workItemId': instance.workItemId,
+      'status': _qaGateStatusToJson(instance.status),
+      'evidence': instance.evidence.map((e) => e.toJson()).toList(),
+      'evaluatedAt': instance.evaluatedAt.toIso8601String(),
+      'passedAt': ?instance.passedAt?.toIso8601String(),
+      'waiver': ?instance.waiver?.toJson(),
+      'evidenceDeterminations': ?instance.evidenceDeterminations
+          ?.map((e) => e.toJson())
+          .toList(),
+      'metadata': ?instance.metadata,
+    };
 
 QAEvidenceDetermination _$QAEvidenceDeterminationFromJson(
   Map<String, dynamic> json,
@@ -91,11 +90,11 @@ Map<String, dynamic> _$QAEvidenceDeterminationToJson(
 ) => <String, dynamic>{
   'evidenceId': instance.evidenceId,
   'determination': _evidenceDeterminationToJson(instance.determination),
-  if (instance.artifactRef case final value?) 'artifactRef': value,
-  if (instance.params case final value?) 'params': value,
-  if (instance.prerequisites case final value?) 'prerequisites': value,
-  if (instance.reasons case final value?) 'reasons': value,
-  if (instance.authorityRef case final value?) 'authorityRef': value,
+  'artifactRef': ?instance.artifactRef,
+  'params': ?instance.params,
+  'prerequisites': ?instance.prerequisites,
+  'reasons': ?instance.reasons,
+  'authorityRef': ?instance.authorityRef,
   'evidenceRefs': instance.evidenceRefs,
 };
 

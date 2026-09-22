@@ -1,0 +1,21 @@
+class: DesignReviewResultRow
+table: design_review_result
+serverOnly: true
+indexes:
+  design_review_result_id_unique:
+    fields: reviewResultId
+    unique: true
+  design_review_result_revision_idx:
+    fields: revisionId
+  design_review_result_execution_idx:
+    fields: reviewExecutionId
+fields:
+  reviewResultId: String
+  revisionId: String
+  reviewExecutionId: String
+  verdict: String
+  findingsJson: String
+  assessedDimensionsJson: String
+  reviewScopeJson: String?
+  createdAt: DateTime
+  version: int

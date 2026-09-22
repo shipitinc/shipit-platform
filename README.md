@@ -63,18 +63,21 @@ shipit-platform/
 │   ├── architecture/            # System architecture documentation
 │   └── adr/                     # Architecture Decision Records
 ├── schemas/                     # JSON Schema contracts (consumed by AEF)
-└── packages/                    # Dart workspace packages
+├── apps/                        # Application runnables
+│   ├── server/                  # Control plane API (Serverpod + PostgreSQL persistence)
+│   └── control_plane/           # Control plane operator UI (Flutter Web)
+└── packages/                    # Dart workspace packages (shared libraries)
     ├── platform_contracts/      # Core domain types, enums, contracts
     ├── workflow_engine/         # State machine, transitions, validation
     ├── agent_runtime/           # Provider-neutral agent interface
     ├── worker_protocol/         # Worker capabilities, task dispatch
     ├── qa_orchestration/        # QA gates, evidence, validation
-    └── deployment_protocol/     # Artifact promotion, deployments
+    ├── deployment_protocol/     # Artifact promotion, deployments
+    └── control_plane_client/    # Generated Serverpod protocol client
 ```
 
 Components below are forthcoming (not yet in this repository):
 
-- `control_plane/` - Serverpod backend + Flutter Web frontend
 - `docker/` - Docker Compose for local development
 - `infrastructure/` - OpenTofu modules for production
 - `tooling/` - Scripts, generators, CI helpers

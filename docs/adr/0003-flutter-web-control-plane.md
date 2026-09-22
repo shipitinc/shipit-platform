@@ -58,7 +58,7 @@ Alternatives considered:
 
 ## Implementation
 ```
-control_plane/client/
+packages/control_plane_client/
 ├── lib/
 │   ├── src/
 │   │   ├── pages/           # Route-level pages

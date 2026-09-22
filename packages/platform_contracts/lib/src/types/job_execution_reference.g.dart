@@ -19,7 +19,7 @@ Map<String, dynamic> _$JobExecutionReferenceToJson(
   JobExecutionReference instance,
 ) => <String, dynamic>{
   'workerExecutionId': instance.workerExecutionId,
-  if (instance.agentExecutionId case final value?) 'agentExecutionId': value,
-  if (instance.resultId case final value?) 'resultId': value,
+  'agentExecutionId': ?instance.agentExecutionId,
+  'resultId': ?instance.resultId,
   'createdAt': instance.createdAt.toIso8601String(),
 };

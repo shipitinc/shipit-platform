@@ -1,0 +1,9 @@
+{
+  "clarificationId": "clar-1",
+  "productId": "prod-shipit",
+  "onboardingId": "ob-shipit-1",
+  "section": "deployment",
+  "question": "What is the deployment target for this product?",
+  "status": "needs_answer",
+  "createdAt": "2026-09-16T12:00:00Z"
+}

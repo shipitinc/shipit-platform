@@ -1,0 +1,23 @@
+class: DecisionView
+fields:
+  decisionId: String
+  workItemId: String
+  workItemTitle: String
+  ### Plain-language description of the gated work item. The operator surface
+  ### leads with this and keeps [workItemTitle] for technical details.
+  workItemDescription: String?
+  decisionType: String
+  status: String
+  question: String?
+  context: DecisionContextView?
+  options: List<DecisionOptionView>?
+  recommendation: String?
+  blocking: bool
+  requestedAt: DateTime?
+  expiration: DateTime?
+  artifactRefs: List<ArtifactReferenceView>?
+  choice: String?
+  decider: String?
+  rationale: String?
+  resolvedAt: DateTime?
+  signature: String?

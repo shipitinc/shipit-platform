@@ -16,14 +16,13 @@ AgentWorkspace _$AgentWorkspaceFromJson(Map<String, dynamic> json) =>
           .toList(),
     );
 
-Map<String, dynamic> _$AgentWorkspaceToJson(
-  AgentWorkspace instance,
-) => <String, dynamic>{
-  'workspaceId': instance.workspaceId,
-  'path': instance.path,
-  if (instance.startingRevision case final value?) 'startingRevision': value,
-  if (instance.allowedPaths case final value?) 'allowedPaths': value,
-};
+Map<String, dynamic> _$AgentWorkspaceToJson(AgentWorkspace instance) =>
+    <String, dynamic>{
+      'workspaceId': instance.workspaceId,
+      'path': instance.path,
+      'startingRevision': ?instance.startingRevision,
+      'allowedPaths': ?instance.allowedPaths,
+    };
 
 ExpectedArtifact _$ExpectedArtifactFromJson(Map<String, dynamic> json) =>
     ExpectedArtifact(
@@ -35,7 +34,7 @@ ExpectedArtifact _$ExpectedArtifactFromJson(Map<String, dynamic> json) =>
 Map<String, dynamic> _$ExpectedArtifactToJson(ExpectedArtifact instance) =>
     <String, dynamic>{
       'description': instance.description,
-      if (instance.pathPattern case final value?) 'pathPattern': value,
+      'pathPattern': ?instance.pathPattern,
       'required': instance.required,
     };
 
@@ -77,13 +76,12 @@ Map<String, dynamic> _$AgentExecutionRequestToJson(
   'workspace': instance.workspace.toJson(),
   'instruction': instance.instruction,
   'timeoutSeconds': instance.timeoutSeconds,
-  if (instance.permittedScope case final value?) 'permittedScope': value,
-  if (instance.expectedResult case final value?) 'expectedResult': value,
+  'permittedScope': ?instance.permittedScope,
+  'expectedResult': ?instance.expectedResult,
   'expectedArtifacts': instance.expectedArtifacts
       .map((e) => e.toJson())
       .toList(),
-  if (instance.runtimeConfig case final value?) 'runtimeConfig': value,
-  if (instance.environment case final value?) 'environment': value,
-  if (instance.createdAt?.toIso8601String() case final value?)
-    'createdAt': value,
+  'runtimeConfig': ?instance.runtimeConfig,
+  'environment': ?instance.environment,
+  'createdAt': ?instance.createdAt?.toIso8601String(),
 };

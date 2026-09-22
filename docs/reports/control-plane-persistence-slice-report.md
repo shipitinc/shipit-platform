@@ -53,7 +53,7 @@ policy bypass.
 
 ## 4. FILES CHANGED (New / Modified)
 
-### New — `control_plane/server`
+### New — `apps/server`
 - `lib/src/persistence/persistence_database.dart` — `PersistenceDatabase` over
   raw `Session.db`; `inTransaction` uses Serverpod's eager transaction
 - `lib/src/persistence/postgres_{workflow,job,worker,worker_registration,execution}_store.dart`
@@ -91,7 +91,7 @@ policy bypass.
 - `execution_coordinator` — `ExecutionStore.inTransaction`;
   `ExecutionCoordinator` create/orphan/finalize paths transactional
 - Root `pubspec.yaml` — `store_contract_tests` in workspace + `test:control-plane`
-  script; `AGENTS.md` — `control_plane/server` persistence row
+  script; `AGENTS.md` — `apps/server` persistence row
 
 ### New docs
 - `docs/adr/0017-postgresql-backed-stores.md`
@@ -113,9 +113,9 @@ policy bypass.
 | worker_runtime | 17 (+1 skipped) | all pass |
 | scheduler | 23 | all pass |
 | store_contract_tests | smoke (in-memory) | all pass |
-| **control_plane/server (integration)** | **52** | **all pass** |
+| **apps/server (integration)** | **52** | **all pass** |
 
-### control_plane/server integration breakdown (52)
+### apps/server integration breakdown (52)
 
 **`store_contracts_postgres_test.dart` (32)** — the shared `store_contract_tests`
 suites executed against all five Postgres stores, proving the Postgres
@@ -190,7 +190,7 @@ restart with no shared in-memory state:
 ## 7. ARCHITECTURE (What's Wired)
 
 ```
-control_plane/server
+apps/server
  ├─ PersistenceDatabase (raw Session.db) — single eager-transaction slot
  │    ├─ PostgresWorkflowStore      → workflow_store.WorkflowStore
  │    ├─ PostgresJobStore           → scheduler.JobStore (+ JobQueue)
@@ -218,7 +218,7 @@ or the domain packages.
 | Package | Change type | Key contents |
 |---|---|---|
 | `store_contract_tests` | **NEW** | shared contract suites (`workflow/job/worker/worker_registration/execution`) with async factories; smoke run against in-memory stores |
-| `control_plane/server` | **NEW (integration)** | 5 Postgres stores, `PersistenceDatabase`, `ControlPlaneService`, `StructuredLogger`, 4 endpoint classes, regenerated `endpoints.dart`, migration + 52 integration tests |
+| `apps/server` | **NEW (integration)** | 5 Postgres stores, `PersistenceDatabase`, `ControlPlaneService`, `StructuredLogger`, 4 endpoint classes, regenerated `endpoints.dart`, migration + 52 integration tests |
 | `workflow_store` | modified | `inTransaction` on interface + implementations; engine write paths transactional |
 | `scheduler` | modified | `JobStore.inTransaction`; `JobQueue` multi-write sequences transactional |
 | `worker_runtime` | modified | `WorkerStore.inTransaction`; `LocalWorker` transactional drive/finish; new `WorkerRegistrationStore` contract + in-memory/file impls |
@@ -228,7 +228,7 @@ or the domain packages.
 
 ## 9. POSTGRES SCHEMA (Migration)
 
-One Serverpod migration (`control_plane/server/migrations/20260914041810984/
+One Serverpod migration (`apps/server/migrations/20260914041810984/
 migration.sql` + `definition.sql`) creates every platform table on Postgres:
 `work_item`, `work_item_transition`, `human_decision`, `job`, `job_claim`,
 `scheduler_event`, `worker_registration`, `worker_execution`, `worker_result`,
@@ -253,7 +253,7 @@ migration.sql` + `definition.sql`) creates every platform table on Postgres:
 
 `packages/store_contract_tests/` centralizes the store contracts' behavioural
 suite. `test/smoke_test.dart` runs all five suites against `InMemory*`, and
-`control_plane/server/test/integration/store_contracts_postgres_test.dart`
+`apps/server/test/integration/store_contracts_postgres_test.dart`
 runs the exact same suites against the five Postgres stores (32/32) — the
 schema-compliance-by-behaviour proof that the file/memory and Postgres stores
 are interchangeable behind the contracts.
@@ -313,7 +313,7 @@ of durable records. `WorkflowEndpoints.resolveDecision` is the one behavioral
 endpoint and delegates to `DurableWorkflowEngine.resolveHumanDecision`, which
 routes through the validated `Transition` table (`designApproval+approve →
 designApproved`, etc.). There is no path from an endpoint to
-`WorkItem.state = ...`; `control_plane/server` never imports a state setter.
+`WorkItem.state = ...`; `apps/server` never imports a state setter.
 Serverpod lacks a generic `ServerpodException`, so endpoint errors are
 structured-logged and re-thrown — the server never fabricates HTTP semantics
 for domain errors.
@@ -424,9 +424,9 @@ is pinned to `dart test -j 1`.
 
 | Rule | Compliance |
 |---|---|
-| Postgres persistence confined to `control_plane/server` | ✅ |
+| Postgres persistence confined to `apps/server` | ✅ |
 | No `Map<String, dynamic>` for domain objects | ✅ typed contracts only; JSON text columns carry serialized contracts |
-| No DB access outside `control_plane/server` | ✅ domain packages see only store interfaces |
+| No DB access outside `apps/server` | ✅ domain packages see only store interfaces |
 | Endpoints never set `WorkItem.state` | ✅ read-only + `resolveHumanDecision` only |
 | Agent conversations ≠ system state | ✅ only `AgentResult`/`HumanDecision`/evidence persisted |
 | Provider-neutral agent code | ✅ no provider logic in workflow/qa/store code |
@@ -437,12 +437,12 @@ is pinned to `dart test -j 1`.
 
 ## 24. AGENTS.md + ADR STATUS
 
-- `AGENTS.md` boundary table gains the `control_plane/server` (persistence) row:
+- `AGENTS.md` boundary table gains the `apps/server` (persistence) row:
   owns "PostgreSQL-backed implementations of the store contracts (workflow,
   job, worker, worker_registration, execution), migration/DML for them,
   `StructuredLogger`, and read-only Serverpod endpoints observing durable
   state"; must not own "domain/policy logic, ever setting `WorkItem.state` from
-  an endpoint, dictating scheduler policy". Quick-reference adds `control_plane/
+  an endpoint, dictating scheduler policy". Quick-reference adds `apps/
   server/lib/src/endpoints/`.
 - `docs/adr/0017-postgresql-backed-stores.md` accepted: five Postgres stores
   behind contracts, session-scoped transactions, CAS/Dedupe at the database,
@@ -484,7 +484,7 @@ Reviewer re-examined the highest-risk invariants independently of the author:
    backstop. A race yields a `duplicate key` violation on the index — the insert
    is aborted, never a silent second job. Confirmed unconditionally safe even if
    the app-level check were removed.
-2. **"Can an endpoint move state?"** — Grep of `control_plane/server` for
+2. **"Can an endpoint move state?"** — Grep of `apps/server` for
    `WorkItemState`/`transition(`/`state =` shows reads only; the single write
    endpoint calls `DurableWorkflowEngine.resolveHumanDecision`, which routes
    through the `Transition` table and never accepts a target state from the

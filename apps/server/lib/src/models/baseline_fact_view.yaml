@@ -1,0 +1,14 @@
+### A single baseline claim with its provenance. Provenance is part of the
+### wire contract so a consumer can never mistake an `assumed` fact for an
+### `observed` one.
+class: BaselineFactView
+fields:
+  factId: String
+  section: String
+  claim: String
+  ### observed | human_provided | derived | assumed | unknown
+  provenance: String
+  evidenceRefs: List<String>
+  assumptionNote: String?
+  ### True when the claim references a redacted secret placeholder.
+  redacted: bool

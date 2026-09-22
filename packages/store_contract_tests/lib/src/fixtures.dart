@@ -435,3 +435,103 @@ WorkerRegistration buildRegistration({
     platform: 'linux-x64',
   );
 }
+
+const kRevisionId = 'DES-R001';
+const kReviewExecutionId = 'rev-exec-1';
+const kFindingId = 'FD-001';
+
+DesignRevision buildDesignRevision({
+  String revisionId = kRevisionId,
+  String workItemId = kWorkItemId,
+  String? parentRevisionId,
+  DesignRevisionStatus status = DesignRevisionStatus.draft,
+  int version = 1,
+  DateTime? instant,
+}) {
+  final now = instant ?? DateTime.utc(2026, 1, 1, 12);
+  return DesignRevision(
+    revisionId: revisionId,
+    workItemId: workItemId,
+    productId: kProductId,
+    parentRevisionId: parentRevisionId,
+    designSystemRevision: 'dsr-1',
+    provider: DesignProviderType.penpot,
+    penpotFileId: 'pf-1',
+    penpotPageId: 'pp-1',
+    boardIdsJson: '["board-1", "board-2"]',
+    responsiveTargetsJson: '["mobile", "desktop"]',
+    statesRepresentedJson: '["default", "hover", "focus"]',
+    artifactRefsJson: '["art-1", "art-2"]',
+    designerExecutionId: 'designer-exec-1',
+    reviewExecutionIdsJson: '["rev-exec-1", "rev-exec-2"]',
+    status: status,
+    riskTier: DesignRiskTier.medium,
+    reviewScopeJson: {'scope': 'full'},
+    carriedForwardFromRevisionId: null,
+    supersededByRevisionId: null,
+    createdAt: now,
+    updatedAt: now,
+    approvedAt: status == DesignRevisionStatus.approved ? now : null,
+    version: version,
+  );
+}
+
+DesignReviewResult buildDesignReviewResult({
+  String reviewExecutionId = kReviewExecutionId,
+  String revisionId = kRevisionId,
+  DesignReviewVerdict verdict = DesignReviewVerdict.approved,
+  int version = 1,
+}) {
+  return DesignReviewResult(
+    reviewExecutionId: reviewExecutionId,
+    revisionId: revisionId,
+    verdict: verdict,
+    findings: const [],
+    assessedDimensions: ['requirements', 'design-system'],
+    reviewScopeJson: {'scope': 'full'},
+    createdAt: DateTime.utc(2026, 1, 1, 13),
+    version: version,
+  );
+}
+
+DesignFinding buildDesignFinding({
+  String findingId = kFindingId,
+  String revisionId = kRevisionId,
+  String reviewExecutionId = kReviewExecutionId,
+  DesignFindingCategory category = DesignFindingCategory.requirementCoverage,
+  DesignFindingSeverity severity = DesignFindingSeverity.major,
+  String? resolvedByRevisionId,
+  int version = 1,
+}) {
+  return DesignFinding(
+    findingId: findingId,
+    revisionId: revisionId,
+    reviewExecutionId: reviewExecutionId,
+    category: category,
+    severity: severity,
+    dimension: 'Button component',
+    evidence: 'Missing required variant',
+    requiredCorrection: 'Add disabled variant',
+    affectedSurface: 'Button component',
+    createdAt: DateTime.utc(2026, 1, 1, 13, 5),
+    resolvedByRevisionId: resolvedByRevisionId,
+    version: version,
+  );
+}
+
+DesignRevisionEvent buildDesignRevisionEvent({
+  String eventId = 'evt-1',
+  String designRevisionId = kRevisionId,
+  String eventType = 'created',
+  String payloadJson = '{}',
+  int sequence = 1,
+}) {
+  return DesignRevisionEvent(
+    eventId: eventId,
+    designRevisionId: designRevisionId,
+    eventType: eventType,
+    payloadJson: payloadJson,
+    sequence: sequence,
+    createdAt: DateTime.utc(2026, 1, 1, 12),
+  );
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/repository_reference.schema.json",
+  "title": "RepositoryReference",
+  "description": "A repository owned by exactly one Product (checkpoint 006 §8). Durable identity is separate from any temporary checkout/worktree/path.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "repositoryId",
+    "productId",
+    "kind",
+    "uri",
+    "provider",
+    "addedAt",
+    "version"
+  ],
+  "properties": {
+    "repositoryId": { "type": "string", "minLength": 1 },
+    "productId": { "type": "string", "minLength": 1 },
+    "kind": {
+      "type": "string",
+      "enum": ["monorepo", "frontend", "backend", "infrastructure", "library", "app"]
+    },
+    "uri": { "type": "string", "minLength": 1 },
+    "provider": {
+      "type": "string",
+      "enum": ["github", "gitlab", "local"]
+    },
+    "addedAt": { "type": "string", "format": "date-time" },
+    "version": { "type": "integer", "minimum": 1 }
+  }
+}

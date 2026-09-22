@@ -41,7 +41,7 @@ the only writer of workflow state:
   decision and re-attempts only the unlock.
 - **The store interface is PostgreSQL-ready.** `WorkflowStore` is an interface;
   `FileJsonWorkflowStore` (atomic temp-file + rename) is the local durability
-  layer. `control_plane/server` later supplies Serverpod/PostgreSQL stores
+  layer. `apps/server` later supplies Serverpod/PostgreSQL stores
   implementing the same interface and reuses `DurableWorkflowEngine` unchanged.
 
 ## Persistence Model
@@ -120,4 +120,4 @@ same pairs so a decision can never leak through the wrong exit.
 - Persistent decision-write-before-unlock ordering keeps crash recovery
   deterministic; replay re-attempts only the unlock.
 - The interface is versioned and unchanged by backend swap; store integration
-  tests are deferred to `control_plane/server/test` per the testing rules.
+  tests are deferred to `apps/server/test` per the testing rules.

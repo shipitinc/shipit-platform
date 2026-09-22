@@ -166,6 +166,7 @@ void main() {
       productId: 'prod-1',
       category: WorkItemCategory.feature,
       title: 'Blocked',
+      description: 'Blocked work item for restart durability',
       designContractId: 'dc-1',
       featureRef: 'feature/blocked',
     );

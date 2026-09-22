@@ -1,0 +1,8 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/design_provider_type.schema.json",
+  "title": "DesignProviderType",
+  "description": "Design tool provider type",
+  "type": "string",
+  "enum": ["penpot"]
+}

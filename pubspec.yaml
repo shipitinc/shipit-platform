@@ -17,9 +17,12 @@ workspace:
   - packages/execution_coordinator
   - packages/worker_runtime
   - packages/scheduler
+  - packages/product_registry
   - packages/store_contract_tests
-  - control_plane/client
-  - control_plane/server
+  - packages/control_plane_client
+  - packages/design_governance
+  - apps/server
+  - apps/control_plane
 
 dev_dependencies:
   melos: ^8.0.0
@@ -56,15 +59,44 @@ melos:
           include: 'packages/*'
 
     # Runs the control plane integration suite against a live PostgreSQL
-    # database. Requires `control_plane/server` Postgres to be running:
-    #   cd control_plane/server && docker compose up -d
+    # database. Requires `apps/server` Postgres to be running:
+    #   cd apps/server && docker compose up -d
     # The integration test groups all target the same database, so they must
     # run serially (`-j 1`) — a parallel runner lets one group's TRUNCATE
     # cleanup invalidate another group's in-flight write.
     "test:control-plane":
-      run: cd control_plane/server && dart test -j 1
+      run: cd apps/server && dart test -j 1
 
     build:
       exec:
         command: dart run build_runner build --delete-conflicting-outputs
         concurrency: 2
+
+    # Regenerates Serverpod model/protocol code from the `.spy.yaml` models in
+    # apps/server/lib/src/database/. Run after adding or changing any model.
+    "serverpod:generate":
+      run: cd apps/server && serverpod generate
+
+    # Creates a migration from the diff between the generated models and the
+    # last migration. Review the emitted SQL before applying — Serverpod will
+    # happily emit a destructive diff if a field was removed.
+    #
+    # AFTERWARDS you MUST re-append the `job_active_dedupe_unique` partial
+    # index to the new migration's definition.sql. The generator rebuilds that
+    # file from the models, which cannot express a partial index, so the target
+    # schema silently loses the job dedupe constraint and a repair migration
+    # would DROP it. `melos run verify:schema-deviations` checks this.
+    "serverpod:migration":
+      run: cd apps/server && serverpod create-migration
+
+    # Guards hand-maintained schema deviations that Serverpod's generator
+    # cannot express and therefore drops on every regeneration.
+    "verify:schema-deviations":
+      run: |
+        latest=$(ls -1 apps/server/migrations | grep -E '^[0-9]+$' | sort | tail -1)
+        if ! grep -q 'job_active_dedupe_unique' "apps/server/migrations/$latest/definition.sql"; then
+          echo "FAIL: job_active_dedupe_unique missing from migrations/$latest/definition.sql"
+          echo "      Re-append it (see the block in an earlier migration)."
+          exit 1
+        fi
+        echo "OK: job_active_dedupe_unique present in migrations/$latest/definition.sql"

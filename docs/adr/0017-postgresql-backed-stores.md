@@ -31,7 +31,7 @@ exposed durable state to the control-plane client. This ADR closes that gap:
   `Transition` routing.
 
 ## Decision
-**Implement five PostgreSQL-backed store classes in `control_plane/server`
+**Implement five PostgreSQL-backed store classes in `apps/server`
 (`PostgresWorkflowStore`, `PostgresJobStore`, `PostgresWorkerStore`,
 `PostgresWorkerRegistrationStore`, `PostgresExecutionStore`) that satisfy the
 existing store contracts, statelessly over a Serverpod `Session`. Drive them

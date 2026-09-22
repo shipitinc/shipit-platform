@@ -1,0 +1,21 @@
+name: design_governance
+version: 0.1.0
+description: Design governance store interfaces and implementations for ShipIt Platform
+publish_to: none
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+
+resolution: workspace
+
+dependencies:
+  platform_contracts:
+    path: ../platform_contracts
+  workflow_store:
+    path: ../workflow_store
+
+dev_dependencies:
+  lints: '>=3.0.0 <7.0.0'
+  test: ^1.25.5
+  store_contract_tests:
+    path: ../store_contract_tests

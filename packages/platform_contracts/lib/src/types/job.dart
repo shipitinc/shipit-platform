@@ -222,9 +222,9 @@ JobPriority _jobPriorityFromJson(String value) =>
 
 String _jobPriorityToJson(JobPriority value) => value.name;
 
-JobState _jobStateFromJson(String value) => JobState.values.byName(value);
+JobState _jobStateFromJson(String value) => JobState.fromWire(value);
 
-String _jobStateToJson(JobState value) => value.name;
+String _jobStateToJson(JobState value) => value.wire;
 
 JobFailureCode _jobFailureCodeFromJson(String value) =>
     JobFailureCode.values.byName(value);

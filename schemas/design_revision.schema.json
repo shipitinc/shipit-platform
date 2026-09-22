@@ -1,0 +1,117 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/design_revision.schema.json",
+  "title": "DesignRevision",
+  "description": "A versioned design artifact submitted for review. Immutable once approved.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["revisionId", "workItemId", "productId", "designSystemRevision", "provider", "penpotFileId", "penpotPageId", "boardIdsJson", "responsiveTargetsJson", "statesRepresentedJson", "artifactRefsJson", "designerExecutionId", "reviewExecutionIdsJson", "status", "riskTier", "createdAt", "updatedAt", "version"],
+  "properties": {
+    "revisionId": {
+      "type": "string",
+      "pattern": "^DES-R[0-9]+$",
+      "description": "Unique identifier for this design revision (DES-R<N> format)"
+    },
+    "workItemId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Work item this revision belongs to"
+    },
+    "productId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Product this revision belongs to"
+    },
+    "parentRevisionId": {
+      "type": ["string", "null"],
+      "pattern": "^DES-R[0-9]+$",
+      "description": "Parent revision ID for lineage (null for root revision)"
+    },
+    "designSystemRevision": {
+      "type": "string",
+      "description": "Design system revision this revision targets"
+    },
+    "provider": {
+      "type": "string",
+      "enum": ["penpot"],
+      "description": "Design tool provider (e.g., penpot)"
+    },
+    "penpotFileId": {
+      "type": ["string", "null"],
+      "description": "Penpot file identifier"
+    },
+    "penpotPageId": {
+      "type": ["string", "null"],
+      "description": "Penpot page identifier"
+    },
+    "boardIdsJson": {
+      "type": "string",
+      "description": "JSON array of board IDs in the design file"
+    },
+    "responsiveTargetsJson": {
+      "type": "string",
+      "description": "JSON array of responsive breakpoints targeted"
+    },
+    "statesRepresentedJson": {
+      "type": "string",
+      "description": "JSON array of UI states represented (default, hover, focus, etc.)"
+    },
+    "artifactRefsJson": {
+      "type": "string",
+      "description": "JSON array of artifact references"
+    },
+    "designerExecutionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Agent execution that produced this revision"
+    },
+    "reviewExecutionIdsJson": {
+      "type": "string",
+      "description": "JSON array of review execution IDs"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "in_review", "changes_required", "review_passed", "human_approval_required", "approved", "superseded"],
+      "description": "Current status in the review lifecycle"
+    },
+    "riskTier": {
+      "type": "string",
+      "enum": ["low", "medium", "high"],
+      "description": "Risk classification determining review rigor"
+    },
+    "reviewScopeJson": {
+      "type": ["object", "null"],
+      "description": "Optional structured review scope (subset of design contract)"
+    },
+    "carriedForwardFromRevisionId": {
+      "type": ["string", "null"],
+      "pattern": "^DES-R[0-9]+$",
+      "description": "Revision from which findings were carried forward"
+    },
+    "supersededByRevisionId": {
+      "type": ["string", "null"],
+      "pattern": "^DES-R[0-9]+$",
+      "description": "Revision that supersedes this one (if applicable)"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of revision creation"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update"
+    },
+    "approvedAt": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Timestamp when revision was approved (if applicable)"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Optimistic locking version for CAS updates"
+    }
+  }
+}

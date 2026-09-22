@@ -1,0 +1,9 @@
+class: ArtifactReferenceView
+fields:
+  artifactId: String
+  artifactType: String
+  uri: String
+  provider: String?
+  contentHash: String?
+  description: String?
+  createdAt: DateTime?

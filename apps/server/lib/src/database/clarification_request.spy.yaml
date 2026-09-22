@@ -1,0 +1,22 @@
+class: ClarificationRequestRow
+table: clarification_request
+serverOnly: true
+indexes:
+  clarification_request_id_unique:
+    fields: clarificationId
+    unique: true
+  clarification_request_product_idx:
+    fields: productId
+  clarification_request_status_idx:
+    fields: status
+fields:
+  clarificationId: String
+  productId: String
+  onboardingId: String
+  section: String
+  question: String
+  status: String
+  answer: String?
+  createdAt: DateTime
+  answeredAt: DateTime?
+  answeredBy: String?

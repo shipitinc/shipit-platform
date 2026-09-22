@@ -1,0 +1,30 @@
+{
+  "baselineId": "bl-shipit-1",
+  "productId": "prod-shipit",
+  "revision": 1,
+  "status": "proposed",
+  "facts": [
+    {
+      "factId": "fact-1",
+      "section": "tech_stack",
+      "claim": "Native Dart workspace orchestrated with melos",
+      "provenance": "observed",
+      "maturity": "implemented",
+      "evidenceRefs": ["pubspec.yaml", "melos.yaml"]
+    },
+    {
+      "factId": "fact-2",
+      "section": "known_gaps",
+      "claim": "Deployment target unknown",
+      "provenance": "unknown",
+      "maturity": "unknown",
+      "assumptionNote": "No deployment/IaC evidence inspected yet"
+    }
+  ],
+  "contentHash": "abc123",
+  "contentHashVersion": 2,
+  "proposedAt": "2026-09-16T12:00:00Z",
+  "createdAt": "2026-09-16T12:00:00Z",
+  "updatedAt": "2026-09-16T12:00:00Z",
+  "version": 1
+}

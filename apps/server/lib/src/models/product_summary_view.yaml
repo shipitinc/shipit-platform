@@ -1,0 +1,34 @@
+### One row of the Products list.
+###
+### Richer than `ProductView` so the list does not need an N+1 call per
+### product. Every field is read from durable state — nothing here is derived
+### for display only.
+class: ProductSummaryView
+fields:
+  productId: String
+  name: String
+  ### registered | baseline_pending | baseline_blocked | baseline_review |
+  ### governed | paused | archived
+  state: String
+  ### True only for `governed`. Mirrors ProductState.allowsDispatch so the UI
+  ### never re-implements the rule.
+  allowsDispatch: bool
+  ### Accepted baseline, when one exists. A product without one is not governed.
+  activeBaselineId: String?
+  activeBaselineRevision: int?
+  ### The candidate awaiting a human, when the product is in baseline_review.
+  pendingBaselineId: String?
+  pendingBaselineRevision: int?
+  ### Whether the pending candidate has been verified by a worker (AGENTS.md
+  ### §12). The approval gate refuses to open without it.
+  pendingBaselineVerified: bool
+  ### Number of baseline facts on the active (else latest) revision. This is a
+  ### count of recorded claims, NOT a file count — the registry does not track
+  ### file counts.
+  baselineFactCount: int
+  openClarifications: int
+  ### Repositories attributed to this product, and how many of them currently
+  ### have a credential that can actually reach them.
+  repositoryCount: int
+  reachableRepositoryCount: int
+  updatedAt: DateTime

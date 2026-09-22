@@ -1,0 +1,4 @@
+class: WorkItemDetailView
+fields:
+  workItem: WorkItemView
+  transitionHistory: List<TransitionView>

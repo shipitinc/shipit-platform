@@ -31,26 +31,23 @@ AgentResult _$AgentResultFromJson(Map<String, dynamic> json) => AgentResult(
   metadata: json['metadata'] as Map<String, dynamic>?,
 );
 
-Map<String, dynamic> _$AgentResultToJson(
-  AgentResult instance,
-) => <String, dynamic>{
-  'resultId': instance.resultId,
-  'sessionId': instance.sessionId,
-  'workItemId': instance.workItemId,
-  'status': _agentResultStatusToJson(instance.status),
-  'artifacts': instance.artifacts.map((e) => e.toJson()).toList(),
-  'diagnostics': instance.diagnostics.toJson(),
-  'structuredResult': instance.structuredResult,
-  if (instance.executionId case final value?) 'executionId': value,
-  if (_agentRoleToJson(instance.role) case final value?) 'role': value,
-  if (instance.changedFiles?.map((e) => e.toJson()).toList() case final value?)
-    'changedFiles': value,
-  if (instance.claimedChecks?.map((e) => e.toJson()).toList() case final value?)
-    'claimedChecks': value,
-  if (instance.summary case final value?) 'summary': value,
-  'completedAt': instance.completedAt.toIso8601String(),
-  if (instance.metadata case final value?) 'metadata': value,
-};
+Map<String, dynamic> _$AgentResultToJson(AgentResult instance) =>
+    <String, dynamic>{
+      'resultId': instance.resultId,
+      'sessionId': instance.sessionId,
+      'workItemId': instance.workItemId,
+      'status': _agentResultStatusToJson(instance.status),
+      'artifacts': instance.artifacts.map((e) => e.toJson()).toList(),
+      'diagnostics': instance.diagnostics.toJson(),
+      'structuredResult': instance.structuredResult,
+      'executionId': ?instance.executionId,
+      'role': ?_agentRoleToJson(instance.role),
+      'changedFiles': ?instance.changedFiles?.map((e) => e.toJson()).toList(),
+      'claimedChecks': ?instance.claimedChecks?.map((e) => e.toJson()).toList(),
+      'summary': ?instance.summary,
+      'completedAt': instance.completedAt.toIso8601String(),
+      'metadata': ?instance.metadata,
+    };
 
 ChangedFile _$ChangedFileFromJson(Map<String, dynamic> json) => ChangedFile(
   path: json['path'] as String,
@@ -63,8 +60,8 @@ Map<String, dynamic> _$ChangedFileToJson(ChangedFile instance) =>
     <String, dynamic>{
       'path': instance.path,
       'operation': _operationToJson(instance.operation),
-      if (instance.beforeSha case final value?) 'beforeSha': value,
-      if (instance.afterSha case final value?) 'afterSha': value,
+      'beforeSha': ?instance.beforeSha,
+      'afterSha': ?instance.afterSha,
     };
 
 AgentClaimedCheck _$AgentClaimedCheckFromJson(Map<String, dynamic> json) =>
@@ -83,8 +80,8 @@ Map<String, dynamic> _$AgentClaimedCheckToJson(AgentClaimedCheck instance) =>
       'checkName': instance.checkName,
       'status': _claimStatusToJson(instance.status),
       'evidenceKind': _evidenceKindToJson(instance.evidenceKind),
-      if (instance.command case final value?) 'command': value,
-      if (instance.detail case final value?) 'detail': value,
+      'command': ?instance.command,
+      'detail': ?instance.detail,
     };
 
 AgentArtifact _$AgentArtifactFromJson(Map<String, dynamic> json) =>
@@ -106,7 +103,7 @@ Map<String, dynamic> _$AgentArtifactToJson(AgentArtifact instance) =>
       'sha256': instance.sha256,
       'sizeBytes': instance.sizeBytes,
       'mediaType': instance.mediaType,
-      if (instance.description case final value?) 'description': value,
+      'description': ?instance.description,
     };
 
 AgentDiagnostics _$AgentDiagnosticsFromJson(Map<String, dynamic> json) =>
@@ -134,8 +131,7 @@ Map<String, dynamic> _$AgentDiagnosticsToJson(AgentDiagnostics instance) =>
       'toolCalls': instance.toolCalls,
       'errors': instance.errors.map((e) => e.toJson()).toList(),
       'warnings': instance.warnings.map((e) => e.toJson()).toList(),
-      if (instance.resourceUsage?.toJson() case final value?)
-        'resourceUsage': value,
+      'resourceUsage': ?instance.resourceUsage?.toJson(),
     };
 
 DiagnosticEntry _$DiagnosticEntryFromJson(Map<String, dynamic> json) =>
@@ -152,8 +148,8 @@ Map<String, dynamic> _$DiagnosticEntryToJson(DiagnosticEntry instance) =>
       'code': instance.code,
       'message': instance.message,
       'severity': instance.severity,
-      if (instance.location case final value?) 'location': value,
-      if (instance.suggestion case final value?) 'suggestion': value,
+      'location': ?instance.location,
+      'suggestion': ?instance.suggestion,
     };
 
 ResourceUsage _$ResourceUsageFromJson(Map<String, dynamic> json) =>
@@ -165,7 +161,7 @@ ResourceUsage _$ResourceUsageFromJson(Map<String, dynamic> json) =>
 
 Map<String, dynamic> _$ResourceUsageToJson(ResourceUsage instance) =>
     <String, dynamic>{
-      if (instance.peakMemoryMb case final value?) 'peakMemoryMb': value,
-      if (instance.cpuSeconds case final value?) 'cpuSeconds': value,
-      if (instance.networkBytes case final value?) 'networkBytes': value,
+      'peakMemoryMb': ?instance.peakMemoryMb,
+      'cpuSeconds': ?instance.cpuSeconds,
+      'networkBytes': ?instance.networkBytes,
     };

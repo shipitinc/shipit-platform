@@ -22,8 +22,8 @@ Map<String, dynamic> _$ArtifactReferenceToJson(ArtifactReference instance) =>
       'artifactId': instance.artifactId,
       'artifactType': _artifactTypeToJson(instance.artifactType),
       'uri': instance.uri,
-      if (instance.provider case final value?) 'provider': value,
-      if (instance.contentHash case final value?) 'contentHash': value,
-      if (instance.description case final value?) 'description': value,
+      'provider': ?instance.provider,
+      'contentHash': ?instance.contentHash,
+      'description': ?instance.description,
       'createdAt': instance.createdAt.toIso8601String(),
     };

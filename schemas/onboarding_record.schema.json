@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/onboarding_record.schema.json",
+  "title": "OnboardingRecord",
+  "description": "Durable onboarding progress for one Product; the bounded bootstrap record resumed by a restarted execution (checkpoint 006). Product lifecycle stays on the existing ProductState enum.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "onboardingId",
+    "productId",
+    "currentBaselineRevision",
+    "pendingClarifications",
+    "completed",
+    "createdAt",
+    "updatedAt",
+    "version"
+  ],
+  "properties": {
+    "onboardingId": { "type": "string", "minLength": 1 },
+    "productId": { "type": "string", "minLength": 1 },
+    "currentBaselineRevision": { "type": "integer", "minimum": 0 },
+    "pendingClarifications": { "type": "integer", "minimum": 0 },
+    "completed": { "type": "boolean" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "version": { "type": "integer", "minimum": 1 }
+  }
+}

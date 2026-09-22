@@ -1,0 +1,28 @@
+### Summary counts and supporting detail for the operator Overview screen.
+###
+### Shape is driven by the Penpot board `BP · Home` (light/dark): three metric
+### columns, a live freshness stamp, and the "Machines and next steps" strip.
+class: Overview
+fields:
+  ### Work in flight: non-terminal and not blocked on a human.
+  running: int
+  ### Blocked on this operator.
+  waitingOnYou: int
+  ### Terminal in the last 24h.
+  recentlyFinished: int
+  ### Of [recentlyFinished], how many reached a successful terminal state.
+  ### Renders as "in the last day · N passed, M failed".
+  finishedPassed: int
+  ### Of [recentlyFinished], how many ended in cancellation or termination.
+  finishedFailed: int
+  ### Server clock at the moment this snapshot was assembled. Drives the
+  ### "LIVE / updated N seconds ago" stamp; the client measures freshness
+  ### against this rather than trusting its own wall clock.
+  generatedAt: DateTime
+  ### Jobs that are queued or running, newest first. Powers the
+  ### "Machines and next steps" strip.
+  jobs: List<JobSummaryView>
+  ### Workers currently executing.
+  machinesBusy: int
+  ### Workers registered and considered available.
+  machinesTotal: int

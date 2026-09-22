@@ -34,6 +34,7 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
     ],
     WorkItemState.designRequired => [
       WorkItemWorkflowState.designInReview,
+      WorkItemWorkflowState.agentExecuting,
       WorkItemWorkflowState.cancelled,
       WorkItemWorkflowState.terminated,
     ],
@@ -44,6 +45,7 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
     ],
     WorkItemState.designInReview => [
       WorkItemWorkflowState.waitingForHumanDecision,
+      WorkItemWorkflowState.agentExecuting,
       WorkItemWorkflowState.cancelled,
       WorkItemWorkflowState.terminated,
     ],
@@ -65,6 +67,7 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
     ],
     WorkItemState.agentCompleted => [
       WorkItemWorkflowState.reviewInProgress,
+      WorkItemWorkflowState.designInReview,
       WorkItemWorkflowState.cancelled,
       WorkItemWorkflowState.terminated,
     ],

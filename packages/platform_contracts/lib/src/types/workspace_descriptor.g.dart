@@ -31,9 +31,8 @@ Map<String, dynamic> _$WorkspaceDescriptorToJson(
   'repositoryPath': instance.repositoryPath,
   'startingRevision': instance.startingRevision,
   'worktreePath': instance.worktreePath,
-  if (instance.branch case final value?) 'branch': value,
+  'branch': ?instance.branch,
   'detached': instance.detached,
   'createdAt': instance.createdAt.toIso8601String(),
-  if (instance.cleanedAt?.toIso8601String() case final value?)
-    'cleanedAt': value,
+  'cleanedAt': ?instance.cleanedAt?.toIso8601String(),
 };

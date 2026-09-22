@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/baseline_fact.schema.json",
+  "title": "BaselineFactRow",
+  "description": "Individual fact row for a ProductBaseline. Normalized from the JSON document for queryable provenance/maturity/section (checkpoint 006).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "factId",
+    "baselineId",
+    "section",
+    "claim",
+    "provenance",
+    "maturity"
+  ],
+  "properties": {
+    "factId": { "type": "string", "minLength": 1 },
+    "baselineId": { "type": "string", "minLength": 1 },
+    "section": {
+      "type": "string",
+      "enum": [
+        "repository",
+        "tech_stack",
+        "architecture",
+        "design",
+        "qa",
+        "ci_cd",
+        "environments",
+        "data",
+        "deployment",
+        "governance",
+        "known_gaps"
+      ]
+    },
+    "claim": { "type": "string", "minLength": 1 },
+    "provenance": {
+      "type": "string",
+      "enum": [
+        "observed",
+        "human_provided",
+        "derived",
+        "assumed",
+        "unknown"
+      ]
+    },
+    "maturity": {
+      "type": "string",
+      "enum": [
+        "implemented",
+        "policy",
+        "planned",
+        "deferred",
+        "not_implemented",
+        "unknown"
+      ]
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "assumptionNote": { "type": "string" },
+    "redacted": { "type": "boolean" },
+    "version": { "type": "integer", "minimum": 1 }
+  }
+}

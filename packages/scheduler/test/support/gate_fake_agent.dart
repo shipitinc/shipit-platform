@@ -164,6 +164,287 @@ class GateFakeAgentSession implements AgentSession {
   }
 }
 
+/// A fake agent session that always fails immediately with a transient failure
+/// (for testing retries).
+class FailingFakeAgentSession implements AgentSession {
+  FailingFakeAgentSession({
+    required this.executionId,
+    required this.workItemId,
+    this.sessionId = 'ses-failing',
+  });
+
+  final String executionId;
+  final String workItemId;
+  String sessionId;
+
+  final StreamController<AgentEvent> _events =
+      StreamController<AgentEvent>.broadcast(sync: true);
+  AgentSessionStatus _status = AgentSessionStatus.starting;
+  bool _started = false;
+
+  @override
+  AgentSessionStatus get status => _status;
+
+  @override
+  Stream<AgentEvent> get eventStream => _events.stream;
+
+  @override
+  Future<void> start(AgentSessionConfig config) async {
+    _events.add(
+      SessionStarted(
+        eventId: 'evt-start',
+        timestamp: DateTime.now(),
+        sessionId: sessionId,
+        workItemId: workItemId,
+      ),
+    );
+    _status = AgentSessionStatus.running;
+    _started = true;
+  }
+
+  bool get wasStarted => _started;
+
+  @override
+  Future<void> sendInstruction(AgentInstruction instruction) async {
+    _status = AgentSessionStatus.interrupted; // Transient failure
+    _events.add(
+      SessionFailed(
+        eventId: 'evt-fail',
+        timestamp: DateTime.now(),
+        error: 'Intentional test timeout',
+        recoverable: true,
+      ),
+    );
+  }
+
+  @override
+  Future<void> cancel(String reason) async {
+    _status = AgentSessionStatus.cancelled;
+    _events.add(
+      SessionCancelled(
+        eventId: 'evt-cancel',
+        timestamp: DateTime.now(),
+        reason: reason,
+      ),
+    );
+  }
+
+  @override
+  Future<AgentResult> getResult() async {
+    return AgentResult(
+      resultId: 'result-$sessionId',
+      sessionId: sessionId,
+      workItemId: workItemId,
+      status: AgentResultStatus.partial, // Interrupted
+      artifacts: const [],
+      diagnostics: AgentDiagnostics(
+        exitCode: 124, // Timeout exit code
+        durationMs: 1,
+        toolCalls: 1,
+        errors: const [
+          DiagnosticEntry(
+            code: 'TEST_TIMEOUT',
+            message: 'Intentional test timeout',
+            severity: 'error',
+          ),
+        ],
+        warnings: const [],
+      ),
+      structuredResult: const {},
+      summary: 'Intentional test timeout',
+      completedAt: DateTime.now().toUtc(),
+    );
+  }
+
+  @override
+  Future<List<AgentArtifact>> getArtifacts() async => const [];
+
+  @override
+  Future<void> close() async {}
+}
+
+/// A fake agent session that never completes (for testing lease reconciliation).
+class HangingFakeAgentSession implements AgentSession {
+  HangingFakeAgentSession({
+    required this.executionId,
+    required this.workItemId,
+    this.sessionId = 'ses-hanging',
+  });
+
+  final String executionId;
+  final String workItemId;
+  String sessionId;
+
+  final StreamController<AgentEvent> _events =
+      StreamController<AgentEvent>.broadcast(sync: true);
+  AgentSessionStatus _status = AgentSessionStatus.starting;
+  bool _started = false;
+
+  @override
+  AgentSessionStatus get status => _status;
+
+  @override
+  Stream<AgentEvent> get eventStream => _events.stream;
+
+  @override
+  Future<void> start(AgentSessionConfig config) async {
+    _events.add(
+      SessionStarted(
+        eventId: 'evt-start',
+        timestamp: DateTime.now(),
+        sessionId: sessionId,
+        workItemId: workItemId,
+      ),
+    );
+    _status = AgentSessionStatus.running;
+    _started = true;
+  }
+
+  bool get wasStarted => _started;
+
+  @override
+  Future<void> sendInstruction(AgentInstruction instruction) async {
+    _status = AgentSessionStatus.running;
+    // Never complete - hangs forever
+  }
+
+  @override
+  Future<void> cancel(String reason) async {
+    _status = AgentSessionStatus.cancelled;
+    _events.add(
+      SessionCancelled(
+        eventId: 'evt-cancel',
+        timestamp: DateTime.now(),
+        reason: reason,
+      ),
+    );
+  }
+
+  @override
+  Future<AgentResult> getResult() async {
+    return AgentResult(
+      resultId: 'result-$sessionId',
+      sessionId: sessionId,
+      workItemId: workItemId,
+      status: AgentResultStatus.failed,
+      artifacts: const [],
+      diagnostics: AgentDiagnostics(
+        exitCode: 1,
+        durationMs: 1,
+        toolCalls: 1,
+        errors: const [
+          DiagnosticEntry(
+            code: 'TEST_HANG',
+            message: 'Session was cancelled',
+            severity: 'error',
+          ),
+        ],
+        warnings: const [],
+      ),
+      structuredResult: const {},
+      summary: 'Session was cancelled',
+      completedAt: DateTime.now().toUtc(),
+    );
+  }
+
+  @override
+  Future<List<AgentArtifact>> getArtifacts() async => const [];
+
+  @override
+  Future<void> close() async {}
+}
+
+
+/// Adapter for the hanging fake agent session.
+class HangingFakeAgentAdapter implements AgentAdapter {
+  HangingFakeAgentAdapter(this._session);
+
+  final HangingFakeAgentSession _session;
+
+  @override
+  final String providerId = 'fake-runtime';
+
+  @override
+  final String displayName = 'Hanging Fake Runtime';
+
+  @override
+  final RuntimeCapabilities capabilities = RuntimeCapabilities(
+    supported: {
+      RuntimeCapability.readFiles,
+      RuntimeCapability.modifyFiles,
+      RuntimeCapability.runTests,
+      RuntimeCapability.cancellable,
+    },
+  );
+
+  @override
+  Future<AgentSession> createSession(AgentSessionConfig config) async {
+    await _session.start(config);
+    return _session;
+  }
+
+  @override
+  Future<AgentSession> resumeSession(AgentSessionConfig config) async {
+    await _session.start(config);
+    return _session;
+  }
+
+  @override
+  Future<bool> canResume(String sessionId) async => false;
+
+  @override
+  Future<AdapterHealth> checkHealth() async =>
+      const AdapterHealth(healthy: true);
+
+  @override
+  Future<void> shutdown() async {}
+}
+
+/// Adapter for the failing fake agent session.
+class FailingFakeAgentAdapter implements AgentAdapter {
+  FailingFakeAgentAdapter(this._session);
+
+  final FailingFakeAgentSession _session;
+
+  @override
+  final String providerId = 'fake-runtime';
+
+  @override
+  final String displayName = 'Failing Fake Runtime';
+
+  @override
+  final RuntimeCapabilities capabilities = RuntimeCapabilities(
+    supported: {
+      RuntimeCapability.readFiles,
+      RuntimeCapability.modifyFiles,
+      RuntimeCapability.runTests,
+      RuntimeCapability.cancellable,
+    },
+  );
+
+  @override
+  Future<AgentSession> createSession(AgentSessionConfig config) async {
+    await _session.start(config);
+    return _session;
+  }
+
+  @override
+  Future<AgentSession> resumeSession(AgentSessionConfig config) async {
+    await _session.start(config);
+    return _session;
+  }
+
+  @override
+  Future<bool> canResume(String sessionId) async => false;
+
+  @override
+  Future<AdapterHealth> checkHealth() async =>
+      const AdapterHealth(healthy: true);
+
+  @override
+  Future<void> shutdown() async {}
+}
+
 class GateFakeAgentAdapter implements AgentAdapter {
   GateFakeAgentAdapter(this._session);
 

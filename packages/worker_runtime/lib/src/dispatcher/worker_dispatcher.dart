@@ -43,6 +43,7 @@ class WorkerDispatcher {
     return _selector.select(
       requirements: TaskRequirements(
         requiredCapabilities: request.requiredCapabilities,
+        excludedExecutionIds: request.excludedExecutionIds,
       ),
       pool: _registry.registrations(),
     );

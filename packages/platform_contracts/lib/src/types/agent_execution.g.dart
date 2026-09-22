@@ -39,14 +39,12 @@ Map<String, dynamic> _$AgentExecutionToJson(AgentExecution instance) =>
       'role': _agentRoleToJson(instance.role),
       'status': _$AgentSessionStatusEnumMap[instance.status]!,
       'workspace': instance.workspace.toJson(),
-      if (instance.sessionId case final value?) 'sessionId': value,
-      if (instance.resultId case final value?) 'resultId': value,
-      if (instance.startedAt?.toIso8601String() case final value?)
-        'startedAt': value,
-      if (instance.completedAt?.toIso8601String() case final value?)
-        'completedAt': value,
-      if (instance.reason case final value?) 'reason': value,
-      if (instance.metadata case final value?) 'metadata': value,
+      'sessionId': ?instance.sessionId,
+      'resultId': ?instance.resultId,
+      'startedAt': ?instance.startedAt?.toIso8601String(),
+      'completedAt': ?instance.completedAt?.toIso8601String(),
+      'reason': ?instance.reason,
+      'metadata': ?instance.metadata,
       'version': instance.version,
     };
 

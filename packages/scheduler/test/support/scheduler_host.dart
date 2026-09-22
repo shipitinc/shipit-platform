@@ -105,6 +105,7 @@ class SchedulerHost {
       productId: productId,
       category: WorkItemCategory.feature,
       title: title,
+      description: 'Runnable calculator item exercising scheduler capacity',
       qaContractId: 'qa-1',
       featureRef: 'feature/calc',
     );
@@ -139,6 +140,7 @@ class SchedulerHost {
       productId: productId,
       category: WorkItemCategory.feature,
       title: title,
+      description: 'Blocked item awaiting a human decision',
       designContractId: 'dc-$workItemId',
       qaContractId: 'qa-$workItemId',
       featureRef: 'feature/blocked',

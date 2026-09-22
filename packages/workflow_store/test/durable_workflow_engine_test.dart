@@ -134,6 +134,7 @@ void main() {
         productId: 'prod-1',
         category: WorkItemCategory.feature,
         title: 'Golden path',
+        description: 'Golden path item through all workflow gates',
         workItemId: _workItemId,
         featureRef: 'FEAT-001',
       );
@@ -257,6 +258,7 @@ void main() {
           productId: 'prod-1',
           category: WorkItemCategory.feature,
           title: 'Reject route',
+          description: 'Reject route through the engineering review gate',
           workItemId: _workItemId,
         );
         await pushToDesignInReview(engine);
@@ -360,6 +362,7 @@ void main() {
           productId: 'prod-1',
           category: WorkItemCategory.feature,
           title: 'Rejected',
+          description: 'Work item that the policy rejects',
           workItemId: _workItemId,
         );
 
@@ -388,6 +391,7 @@ void main() {
         productId: 'prod-1',
         category: WorkItemCategory.feature,
         title: 'Same state',
+        description: 'Same-state transition rejection probe',
         workItemId: _workItemId,
       );
       await expectLater(
@@ -408,6 +412,7 @@ void main() {
           productId: 'prod-1',
           category: WorkItemCategory.feature,
           title: 'Idempotent',
+          description: 'Idempotent transition replay probe',
           workItemId: _workItemId,
         );
 
@@ -445,6 +450,7 @@ void main() {
           productId: 'prod-1',
           category: WorkItemCategory.feature,
           title: 'Resume resolve',
+          description: 'Resume resolve of a blocking human decision',
           workItemId: _workItemId,
         );
         await pushToDesignInReview(engine);
@@ -484,6 +490,7 @@ void main() {
           productId: 'prod-1',
           category: WorkItemCategory.feature,
           title: 'CAS',
+          description: 'Concurrent compare-and-swap probe',
           workItemId: _workItemId,
         );
         final stale = await store.readWorkItem(_workItemId);
@@ -529,6 +536,7 @@ void main() {
           productId: 'prod-1',
           category: WorkItemCategory.feature,
           title: 'Process exit resume',
+          description: 'Process exit resume after a durable decision',
           workItemId: _workItemId,
         );
         await pushToDesignInReview(engineA);
@@ -656,6 +664,7 @@ void main() {
         productId: 'prod-1',
         category: WorkItemCategory.feature,
         title: 'Rejected attempt',
+        description: 'Work item whose retried attempt is rejected',
         workItemId: _workItemId,
       );
       await expectLater(

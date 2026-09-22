@@ -27,5 +27,5 @@ Map<String, dynamic> _$SchedulerEventRecordToJson(
   'sequence': instance.sequence,
   'type': _schedulerEventTypeToJson(instance.type),
   'occurredAt': instance.occurredAt.toIso8601String(),
-  if (instance.payload case final value?) 'payload': value,
+  'payload': ?instance.payload,
 };

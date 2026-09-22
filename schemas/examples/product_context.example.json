@@ -1,0 +1,69 @@
+{
+  "product": {
+    "productId": "prod-shipit",
+    "name": "ShipIt",
+    "state": "draft",
+    "createdAt": "2026-09-16T12:00:00Z",
+    "updatedAt": "2026-09-16T12:00:00Z",
+    "version": 1
+  },
+  "repositories": [
+    {
+      "repositoryId": "repo-shipit-main",
+      "productId": "prod-shipit",
+      "kind": "monorepo",
+      "uri": "https://github.com/shipit/shipit-platform",
+      "provider": "github",
+      "addedAt": "2026-09-16T12:00:00Z",
+      "version": 1
+    }
+  ],
+  "activeBaseline": {
+    "baselineId": "bl-shipit-1",
+    "productId": "prod-shipit",
+    "revision": 1,
+    "status": "accepted",
+    "facts": [
+      {
+        "factId": "f-shipit-repo",
+        "section": "repository",
+        "claim": "ShipIt is a single monorepo containing apps/ and packages/",
+        "provenance": "observed",
+        "evidenceRefs": ["pubspec.yaml", "melos.yaml"],
+        "redacted": false
+      }
+    ],
+    "contentHash": "abc123",
+    "acceptedAt": "2026-09-16T13:00:00Z",
+    "acceptedBy": "operator",
+    "createdAt": "2026-09-16T12:00:00Z",
+    "updatedAt": "2026-09-16T13:00:00Z",
+    "version": 1
+  },
+  "allBaselines": [
+    {
+      "baselineId": "bl-shipit-1",
+      "productId": "prod-shipit",
+      "revision": 1,
+      "status": "accepted",
+      "facts": [
+        {
+          "factId": "f-shipit-repo",
+          "section": "repository",
+          "claim": "ShipIt is a single monorepo containing apps/ and packages/",
+          "provenance": "observed",
+          "evidenceRefs": ["pubspec.yaml", "melos.yaml"],
+          "redacted": false
+        }
+      ],
+      "contentHash": "abc123",
+      "acceptedAt": "2026-09-16T13:00:00Z",
+      "acceptedBy": "operator",
+      "createdAt": "2026-09-16T12:00:00Z",
+      "updatedAt": "2026-09-16T13:00:00Z",
+      "version": 1
+    }
+  ],
+  "openClarifications": [],
+  "snapshotId": "snap-shipit-pinned"
+}

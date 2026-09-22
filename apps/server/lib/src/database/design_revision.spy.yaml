@@ -1,0 +1,37 @@
+class: DesignRevisionRow
+table: design_revision
+serverOnly: true
+indexes:
+  design_revision_id_unique:
+    fields: revisionId
+    unique: true
+  design_revision_work_item_idx:
+    fields: workItemId
+  design_revision_status_idx:
+    fields: status
+  design_revision_designer_execution_idx:
+    fields: designerExecutionId
+fields:
+  revisionId: String
+  workItemId: String
+  productId: String
+  parentRevisionId: String?
+  designSystemRevision: String
+  providerType: String
+  penpotFileId: String?
+  penpotPageId: String?
+  boardIdsJson: String
+  responsiveTargetsJson: String
+  statesRepresentedJson: String
+  artifactRefsJson: String
+  designerExecutionId: String
+  reviewExecutionIdsJson: String
+  status: String
+  riskTier: String
+  reviewScopeJson: String?
+  carriedForwardFromRevisionId: String?
+  supersededByRevisionId: String?
+  createdAt: DateTime
+  updatedAt: DateTime
+  approvedAt: DateTime?
+  version: int

@@ -475,7 +475,7 @@ exposes exactly the seams the Serverpod control plane needs:
 - `SchedulerWorkload` (repository, revision, timeout, runtime) — the control
   plane's payload when RPC-dispatching jobs
 - Real-stack harness + `ControlledDispatcher` reusable as the deterministic
-  substrate for server-level integration tests (`control_plane/server/test`)
+  substrate for server-level integration tests (`apps/server/test`)
 
 ---
 

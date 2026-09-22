@@ -1,0 +1,165 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/product_context.schema.json",
+  "title": "ProductContext",
+  "description": "Bounded, authoritative Product context loaded at an execution boundary by productId. Structured/bounded: no repository concatenation into a prompt.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["product"],
+  "properties": {
+    "product": { "$ref": "#/definitions/Product" },
+    "repositories": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/RepositoryReference" }
+    },
+    "activeBaseline": { "$ref": "#/definitions/ProductBaseline" },
+    "allBaselines": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/ProductBaseline" }
+    },
+    "openClarifications": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/ClarificationRequest" }
+    },
+    "snapshotId": { "type": "string" }
+  },
+  "definitions": {
+    "Product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["productId", "name", "state", "createdAt", "updatedAt", "version"],
+      "properties": {
+        "productId": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "manifestVersion": { "type": "string" },
+        "state": {
+          "type": "string",
+          "enum": ["draft", "active", "archived", "deprecated"]
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "RepositoryReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositoryId", "productId", "kind", "uri", "provider", "addedAt", "version"],
+      "properties": {
+        "repositoryId": { "type": "string", "minLength": 1 },
+        "productId": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": ["monorepo", "frontend", "backend", "infrastructure", "library", "app"]
+        },
+        "uri": { "type": "string", "minLength": 1 },
+        "provider": {
+          "type": "string",
+          "enum": ["github", "gitlab", "local"]
+        },
+        "addedAt": { "type": "string", "format": "date-time" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ProductBaselineFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["factId", "section", "claim", "provenance"],
+      "properties": {
+        "factId": { "type": "string", "minLength": 1 },
+        "section": {
+          "type": "string",
+          "enum": [
+            "repository",
+            "tech_stack",
+            "architecture",
+            "design",
+            "qa",
+            "ci_cd",
+            "environments",
+            "data",
+            "deployment",
+            "governance",
+            "known_gaps"
+          ]
+        },
+        "claim": { "type": "string", "minLength": 1 },
+        "provenance": {
+          "type": "string",
+          "enum": ["observed", "human_provided", "derived", "assumed", "unknown"]
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "assumptionNote": { "type": "string" },
+        "redacted": { "type": "boolean" }
+      }
+    },
+    "ProductBaseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baselineId", "productId", "revision", "status", "facts", "contentHash", "version"],
+      "properties": {
+        "baselineId": { "type": "string", "minLength": 1 },
+        "productId": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 1 },
+        "status": {
+          "type": "string",
+          "enum": ["proposed", "accepted", "superseded", "rejected"]
+        },
+        "facts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/ProductBaselineFact" }
+        },
+        "contentHash": { "type": "string", "minLength": 1 },
+        "supersedesBaselineId": { "type": "string" },
+        "proposedAt": { "type": "string", "format": "date-time" },
+        "reviewedAt": { "type": "string", "format": "date-time" },
+        "acceptedAt": { "type": "string", "format": "date-time" },
+        "acceptedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ClarificationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clarificationId", "productId", "onboardingId", "section", "question", "status", "createdAt"],
+      "properties": {
+        "clarificationId": { "type": "string", "minLength": 1 },
+        "productId": { "type": "string", "minLength": 1 },
+        "onboardingId": { "type": "string", "minLength": 1 },
+        "section": {
+          "type": "string",
+          "enum": [
+            "repository",
+            "tech_stack",
+            "architecture",
+            "design",
+            "qa",
+            "ci_cd",
+            "environments",
+            "data",
+            "deployment",
+            "governance",
+            "known_gaps"
+          ]
+        },
+        "question": { "type": "string", "minLength": 1 },
+        "status": {
+          "type": "string",
+          "enum": ["needs_answer", "answered"]
+        },
+        "answer": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "answeredAt": { "type": "string", "format": "date-time" },
+        "answeredBy": { "type": "string" }
+      }
+    }
+  }
+}

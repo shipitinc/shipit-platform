@@ -1,0 +1,19 @@
+class: DesignRevisionEventRow
+table: design_revision_event
+serverOnly: true
+indexes:
+  design_revision_event_id_unique:
+    fields: eventId
+    unique: true
+  design_revision_event_revision_idx:
+    fields: designRevisionId
+  design_revision_event_sequence_idx:
+    fields: designRevisionId,sequence
+    unique: true
+fields:
+  eventId: String
+  designRevisionId: String
+  eventType: String
+  payloadJson: String
+  sequence: int
+  createdAt: DateTime

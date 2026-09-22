@@ -25,5 +25,5 @@ Map<String, dynamic> _$WorkerEventRecordToJson(WorkerEventRecord instance) =>
       'sequence': instance.sequence,
       'type': _workerEventTypeToJson(instance.type),
       'occurredAt': instance.occurredAt.toIso8601String(),
-      if (instance.payload case final value?) 'payload': value,
+      'payload': ?instance.payload,
     };

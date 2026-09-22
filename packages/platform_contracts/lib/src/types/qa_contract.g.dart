@@ -26,20 +26,18 @@ QAContract _$QAContractFromJson(Map<String, dynamic> json) => QAContract(
   metadata: json['metadata'] as Map<String, dynamic>?,
 );
 
-Map<String, dynamic> _$QAContractToJson(
-  QAContract instance,
-) => <String, dynamic>{
-  'contractId': instance.contractId,
-  'workItemCategory': _workItemCategoryToJson(instance.workItemCategory),
-  'gates': instance.gates.map((e) => e.toJson()).toList(),
-  'version': instance.version,
-  if (instance.passCriteria?.toJson() case final value?) 'passCriteria': value,
-  'createdAt': instance.createdAt.toIso8601String(),
-  'updatedAt': instance.updatedAt.toIso8601String(),
-  if (instance.evidenceRows?.map((e) => e.toJson()).toList() case final value?)
-    'evidenceRows': value,
-  if (instance.metadata case final value?) 'metadata': value,
-};
+Map<String, dynamic> _$QAContractToJson(QAContract instance) =>
+    <String, dynamic>{
+      'contractId': instance.contractId,
+      'workItemCategory': _workItemCategoryToJson(instance.workItemCategory),
+      'gates': instance.gates.map((e) => e.toJson()).toList(),
+      'version': instance.version,
+      'passCriteria': ?instance.passCriteria?.toJson(),
+      'createdAt': instance.createdAt.toIso8601String(),
+      'updatedAt': instance.updatedAt.toIso8601String(),
+      'evidenceRows': ?instance.evidenceRows?.map((e) => e.toJson()).toList(),
+      'metadata': ?instance.metadata,
+    };
 
 QAGateDefinition _$QAGateDefinitionFromJson(Map<String, dynamic> json) =>
     QAGateDefinition(
@@ -63,8 +61,7 @@ Map<String, dynamic> _$QAGateDefinitionToJson(
   'required': instance.required,
   'config': instance.config,
   'evidenceTypes': instance.evidenceTypes,
-  if (_workerCapabilitiesToJson(instance.workerCapabilities) case final value?)
-    'workerCapabilities': value,
+  'workerCapabilities': ?_workerCapabilitiesToJson(instance.workerCapabilities),
 };
 
 QAEvidenceRow _$QAEvidenceRowFromJson(Map<String, dynamic> json) =>
@@ -93,17 +90,16 @@ QAEvidenceRow _$QAEvidenceRowFromJson(Map<String, dynamic> json) =>
 Map<String, dynamic> _$QAEvidenceRowToJson(QAEvidenceRow instance) =>
     <String, dynamic>{
       'evidenceId': instance.evidenceId,
-      if (instance.title case final value?) 'title': value,
-      if (instance.scope case final value?) 'scope': value,
+      'title': ?instance.title,
+      'scope': ?instance.scope,
       'requirement': _evidenceRowRequirementToJson(instance.requirement),
       'testMethod': _testMethodToJson(instance.testMethod),
-      if (instance.artifactRef case final value?) 'artifactRef': value,
-      if (instance.params case final value?) 'params': value,
-      if (instance.prerequisites case final value?) 'prerequisites': value,
+      'artifactRef': ?instance.artifactRef,
+      'params': ?instance.params,
+      'prerequisites': ?instance.prerequisites,
       'traceabilityRefs': instance.traceabilityRefs,
       'contractDetermination': _contractDeterminationToJson(
         instance.contractDetermination,
       ),
-      if (instance.determinationReasons case final value?)
-        'determinationReasons': value,
+      'determinationReasons': ?instance.determinationReasons,
     };

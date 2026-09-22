@@ -1,0 +1,139 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/design_brief.schema.json",
+  "title": "DesignBrief",
+  "description": "Structured brief for design jobs, providing context to designers",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["briefId", "workItemId", "productId", "title", "context", "requirements", "constraints", "acceptanceCriteria", "createdAt", "updatedAt", "version"],
+  "properties": {
+    "briefId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this design brief"
+    },
+    "workItemId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Work item this brief applies to"
+    },
+    "productId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Product this brief belongs to"
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 256,
+      "description": "Brief title"
+    },
+    "context": {
+      "type": "string",
+      "description": "Business and user context for the design work"
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requirementId", "description", "priority"],
+        "properties": {
+          "requirementId": {
+            "type": "string",
+            "description": "Unique identifier for this requirement"
+          },
+          "description": {
+            "type": "string",
+            "description": "Requirement description"
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["must", "should", "could", "wont"],
+            "description": "MoSCoW priority"
+          },
+          "traceabilityRef": {
+            "type": "string",
+            "description": "Optional traceability reference (e.g., REQ-001)"
+          }
+        }
+      },
+      "description": "Functional and non-functional requirements"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["constraintId", "description", "type"],
+        "properties": {
+          "constraintId": {
+            "type": "string",
+            "description": "Unique identifier for this constraint"
+          },
+          "description": {
+            "type": "string",
+            "description": "Constraint description"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["technical", "brand", "accessibility", "regulatory", "platform", "design_system"],
+            "description": "Constraint type"
+          }
+        }
+      },
+      "description": "Design constraints to observe"
+    },
+    "acceptanceCriteria": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Acceptance criteria for design completion"
+    },
+    "referenceArtifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifactType", "location"],
+        "properties": {
+          "artifactType": {
+            "type": "string",
+            "description": "Type of reference artifact"
+          },
+          "location": {
+            "type": "string",
+            "description": "Location or reference to the artifact"
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional description of the artifact"
+          }
+        }
+      },
+      "description": "Reference designs, existing components, or research"
+    },
+    "designSystemTokens": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Design system token references to use"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of brief creation"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Optimistic locking version for CAS updates"
+    }
+  }
+}

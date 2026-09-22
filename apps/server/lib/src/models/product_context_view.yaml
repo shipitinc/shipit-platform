@@ -1,0 +1,11 @@
+### The bounded ProductContext(productId) projection: exactly one Product and
+### everything scoped to it. A row whose scope does not match the requested
+### productId is rejected at the boundary, never silently filtered.
+class: ProductContextView
+fields:
+  product: ProductView
+  repositories: List<RepositoryReferenceView>
+  activeBaseline: ProductBaselineView?
+  allBaselines: List<ProductBaselineView>
+  openClarifications: List<ClarificationView>
+  snapshotId: String?

@@ -56,7 +56,7 @@ Alternatives considered:
 
 ## Implementation
 ```
-control_plane/server/
+apps/server/
 ├── lib/
 │   ├── src/
 │   │   ├── endpoints/       # Serverpod endpoints

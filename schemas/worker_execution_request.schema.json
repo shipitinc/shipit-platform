@@ -30,7 +30,7 @@
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["linux", "macos", "docker", "flutter", "web", "android", "ios", "xcode", "gpu"]
+        "enum": ["linux", "macos", "docker", "flutter", "web", "android", "ios", "xcode", "gpu", "penpotRead", "penpotWrite", "visualDesign", "designReview"]
       },
       "uniqueItems": true
     },
@@ -61,7 +61,12 @@
       "type": "object",
       "additionalProperties": { "type": "string" }
     },
-    "createdAt": { "type": "string", "format": "date-time" }
+    "createdAt": { "type": "string", "format": "date-time" },
+    "excludedExecutionIds": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Worker execution IDs that must not be assigned this work (independence at dispatch for design reviews)"
+    }
   },
   "definitions": {
     "expectedArtifact": {

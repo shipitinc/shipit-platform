@@ -63,7 +63,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/build-push-action@v5
         with:
-          context: ./control_plane/server
+          context: ./apps/server
           file: ./docker/Dockerfile.server
           push: false
           load: true
@@ -75,7 +75,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/build-push-action@v5
         with:
-          context: ./control_plane/client
+          context: ./packages/control_plane_client
           file: ./docker/Dockerfile.client
           push: false
           load: true
@@ -124,7 +124,7 @@ jobs:
           sleep 30
       - name: Run integration tests
         run: |
-          cd control_plane/server
+          cd apps/server
           dart test integration_test/
       - name: Teardown
         if: always()
@@ -153,7 +153,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v5
         with:
-          context: ./control_plane/server
+          context: ./apps/server
           file: ./docker/Dockerfile.server
           push: true
           tags: |
@@ -161,7 +161,7 @@ jobs:
             ghcr.io/${{ github.repository }}/server:latest
       - uses: docker/build-push-action@v5
         with:
-          context: ./control_plane/client
+          context: ./packages/control_plane_client
           file: ./docker/Dockerfile.client
           push: true
           tags: |
@@ -214,7 +214,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run iOS tests
         run: |
-          cd control_plane/client
+          cd packages/control_plane_client
           flutter test integration_test/ios_test.dart
 ```
 

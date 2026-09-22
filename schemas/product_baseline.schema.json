@@ -1,0 +1,174 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/product_baseline.schema.json",
+  "title": "ProductBaseline",
+  "description": "Durable, versioned, structured Product understanding. Accepted revisions are immutable historical authority; new material changes become a new revision, never silent mutation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "baselineId",
+    "productId",
+    "revision",
+    "status",
+    "facts",
+    "contentHash",
+    "version"
+  ],
+  "properties": {
+    "baselineId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "productId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "accepted",
+        "superseded",
+        "rejected"
+      ]
+    },
+    "facts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "factId",
+          "section",
+          "claim",
+          "provenance",
+          "maturity"
+        ],
+        "properties": {
+          "factId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "section": {
+            "type": "string",
+            "enum": [
+              "repository",
+              "tech_stack",
+              "architecture",
+              "design",
+              "qa",
+              "ci_cd",
+              "environments",
+              "data",
+              "deployment",
+              "governance",
+              "known_gaps"
+            ]
+          },
+          "claim": {
+            "type": "string",
+            "minLength": 1
+          },
+          "provenance": {
+            "type": "string",
+            "enum": [
+              "observed",
+              "human_provided",
+              "derived",
+              "assumed",
+              "unknown"
+            ]
+          },
+          "maturity": {
+            "type": "string",
+            "enum": [
+              "implemented",
+              "policy",
+              "planned",
+              "deferred",
+              "not_implemented",
+              "unknown"
+            ]
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "assumptionNote": {
+            "type": "string"
+          },
+          "redacted": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "contentHash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "supersedesBaselineId": {
+      "type": "string"
+    },
+    "proposedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "reviewedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "acceptedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "acceptedBy": {
+      "type": "string"
+    },
+    "acceptedDecisionId": {
+      "type": "string"
+    },
+    "contentHashVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "verifiedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this revision was verified. Absent means unverified."
+    },
+    "verifiedBy": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Worker identity that performed the verification. AGENTS.md \u00a712: workers validate, agents never attest to their own output."
+    },
+    "verificationKind": {
+      "type": "string",
+      "enum": [
+        "agent_claimed_evidence",
+        "platform_verified_evidence"
+      ],
+      "description": "Only platform_verified_evidence counts as independent verification."
+    }
+  }
+}

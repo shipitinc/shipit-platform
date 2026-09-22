@@ -65,7 +65,7 @@ Alternatives considered:
 
 ## Implementation
 - All `packages/*` written in Dart
-- `control_plane/server` uses Serverpod (Dart)
-- `control_plane/client` uses Flutter Web (Dart)
+- `apps/server` uses Serverpod (Dart)
+- `packages/control_plane_client` uses Flutter Web (Dart)
 - Root `pubspec.yaml` defines the workspace
 - `workspace:` list + `melos` for cross-package commands

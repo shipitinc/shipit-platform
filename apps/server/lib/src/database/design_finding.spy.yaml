@@ -1,0 +1,26 @@
+class: DesignFindingRow
+table: design_finding
+serverOnly: true
+indexes:
+  design_finding_id_unique:
+    fields: findingId
+    unique: true
+  design_finding_revision_idx:
+    fields: revisionId
+  design_finding_review_execution_idx:
+    fields: reviewExecutionId
+  design_finding_resolved_by_idx:
+    fields: resolvedByRevisionId
+fields:
+  findingId: String
+  revisionId: String
+  reviewExecutionId: String
+  category: String
+  severity: String
+  dimension: String
+  evidence: String
+  requiredCorrection: String
+  affectedSurface: String
+  resolvedByRevisionId: String?
+  createdAt: DateTime
+  version: int

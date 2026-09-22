@@ -1,0 +1,16 @@
+class: OnboardingRecordRow
+table: onboarding_record
+serverOnly: true
+indexes:
+  onboarding_product_unique:
+    fields: productId
+    unique: true
+fields:
+  onboardingId: String
+  productId: String
+  currentBaselineRevision: int
+  pendingClarifications: int
+  completed: bool
+  createdAt: DateTime
+  updatedAt: DateTime
+  version: int

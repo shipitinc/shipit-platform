@@ -25,5 +25,5 @@ Map<String, dynamic> _$AgentEventRecordToJson(AgentEventRecord instance) =>
       'sequence': instance.sequence,
       'type': _agentEventTypeToJson(instance.type),
       'occurredAt': instance.occurredAt.toIso8601String(),
-      if (instance.payload case final value?) 'payload': value,
+      'payload': ?instance.payload,
     };

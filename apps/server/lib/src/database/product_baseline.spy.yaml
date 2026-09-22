@@ -1,0 +1,34 @@
+class: ProductBaselineRow
+table: product_baseline
+serverOnly: true
+indexes:
+  product_baseline_id_unique:
+    fields: baselineId
+    unique: true
+  product_baseline_product_revision_unique:
+    fields: productId, revision
+    unique: true
+  product_baseline_product_idx:
+    fields: productId
+fields:
+  baselineId: String
+  productId: String
+  revision: int
+  status: String
+  factsJson: String
+  contentHash: String
+  contentHashVersion: int
+  supersedesBaselineId: String?
+  proposedAt: DateTime?
+  reviewedAt: DateTime?
+  acceptedAt: DateTime?
+  acceptedBy: String?
+  acceptedDecisionId: String?
+  # AGENTS.md §12 — who attested to this baseline, and whether that attestation
+  # was a platform verification or merely the producing agent's own claim.
+  verifiedAt: DateTime?
+  verifiedBy: String?
+  verificationKind: String?
+  createdAt: DateTime?
+  updatedAt: DateTime?
+  version: int

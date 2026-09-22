@@ -1,0 +1,8 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/design_review_verdict.schema.json",
+  "title": "DesignReviewVerdict",
+  "description": "Verdict of a design review",
+  "type": "string",
+  "enum": ["approved", "approved_with_minor_findings", "changes_required", "rejected"]
+}

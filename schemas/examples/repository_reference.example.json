@@ -1,0 +1,9 @@
+{
+  "repositoryId": "repo-shipit-main",
+  "productId": "prod-shipit",
+  "kind": "monorepo",
+  "uri": "https://github.com/shipit/shipit-platform",
+  "provider": "github",
+  "addedAt": "2026-09-16T12:00:00Z",
+  "version": 1
+}

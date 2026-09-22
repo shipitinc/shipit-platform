@@ -1,0 +1,10 @@
+{
+  "productId": "prod-shipit",
+  "name": "ShipIt",
+  "description": "ShipIt Platform - Executable runtime for the Agentic Engineering Framework",
+  "manifestVersion": "0.1.0",
+  "state": "draft",
+  "createdAt": "2026-09-16T12:00:00Z",
+  "updatedAt": "2026-09-16T12:00:00Z",
+  "version": 1
+}

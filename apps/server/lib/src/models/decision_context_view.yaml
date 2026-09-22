@@ -1,0 +1,4 @@
+class: DecisionContextView
+fields:
+  workflowState: String
+  availableOptions: List<String>

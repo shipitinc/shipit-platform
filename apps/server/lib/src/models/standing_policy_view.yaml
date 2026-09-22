@@ -1,0 +1,18 @@
+### A signed decision authorising a class of future actions (ADR 0019).
+###
+### Bounded to one product. Production promotion, baseline approval and
+### offboarding are non-delegable and cannot appear in `actions`.
+class: StandingPolicyView
+fields:
+  policyId: String
+  ### push | merge
+  actions: List<String>
+  ### The gated HumanDecision that created this policy.
+  authorisingDecisionId: String
+  authorisedBy: String
+  rationale: String
+  authorisedAt: DateTime
+  isRevoked: bool
+  revokedAt: DateTime?
+  revokedBy: String?
+  revocationReason: String?

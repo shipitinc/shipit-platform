@@ -1,0 +1,21 @@
+### A pinned, per-Product baseline revision. Acceptance binds to the exact
+### `revision` + `contentHash`; an accepted revision is immutable.
+class: ProductBaselineView
+fields:
+  baselineId: String
+  productId: String
+  revision: int
+  ### proposed | accepted | superseded | rejected
+  status: String
+  facts: List<BaselineFactView>
+  contentHash: String
+  contentHashVersion: int
+  supersedesBaselineId: String?
+  proposedAt: DateTime?
+  reviewedAt: DateTime?
+  acceptedAt: DateTime?
+  acceptedBy: String?
+  acceptedDecisionId: String?
+  createdAt: DateTime?
+  updatedAt: DateTime?
+  version: int

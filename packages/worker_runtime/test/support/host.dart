@@ -82,6 +82,7 @@ class WorkerHost {
       productId: 'prod-1',
       category: WorkItemCategory.feature,
       title: 'Implement calculator add',
+      description: 'Work item for the worker runtime contract suite',
       qaContractId: 'qa-1',
       featureRef: 'feature/calc',
     );

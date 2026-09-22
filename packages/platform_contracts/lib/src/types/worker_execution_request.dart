@@ -32,6 +32,7 @@ class WorkerExecutionRequest extends Equatable {
     this.environment,
     this.runtimeConfig,
     this.createdAt,
+    this.excludedExecutionIds = const [],
   });
 
   final String workerExecutionId;
@@ -80,6 +81,10 @@ class WorkerExecutionRequest extends Equatable {
   final Map<String, String>? runtimeConfig;
   final DateTime? createdAt;
 
+  /// Execution IDs that MUST NOT be assigned this work (independence at
+  /// dispatch for design reviews: exclude the designer's execution).
+  final List<String> excludedExecutionIds;
+
   factory WorkerExecutionRequest.fromJson(Map<String, dynamic> json) =>
       _$WorkerExecutionRequestFromJson(json);
 
@@ -102,6 +107,7 @@ class WorkerExecutionRequest extends Equatable {
     environment,
     runtimeConfig,
     createdAt,
+    excludedExecutionIds,
   ];
 }
 

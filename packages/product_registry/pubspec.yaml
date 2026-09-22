@@ -1,0 +1,19 @@
+name: product_registry
+description: Product registry, onboarding, baseline, discovery boundary, clarification, and ProductContext for ShipIt S-1.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+
+resolution: workspace
+
+dependencies:
+  platform_contracts:
+    path: ../platform_contracts
+  workflow_engine:
+    path: ../workflow_engine
+  crypto: ^3.0.5
+
+dev_dependencies:
+  test: ^1.25.2

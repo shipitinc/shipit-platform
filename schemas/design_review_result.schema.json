@@ -1,0 +1,114 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/design_review_result.schema.json",
+  "title": "DesignReviewResult",
+  "description": "Result of a design review execution",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reviewExecutionId", "revisionId", "verdict", "findings", "assessedDimensions", "createdAt", "version"],
+  "properties": {
+    "reviewExecutionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this review execution"
+    },
+    "revisionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Design revision that was reviewed"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["approved", "approved_with_minor_findings", "changes_required", "rejected"],
+      "description": "Overall review verdict"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["findingId", "revisionId", "reviewExecutionId", "category", "severity", "dimension", "evidence", "requiredCorrection", "affectedSurface", "createdAt", "version"],
+        "properties": {
+          "findingId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier for this finding"
+          },
+          "revisionId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Design revision this finding applies to"
+          },
+          "reviewExecutionId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Review execution that produced this finding"
+          },
+          "category": {
+            "type": "string",
+            "enum": ["requirement_coverage", "design_system_compliance", "interaction_completeness", "responsive_coverage", "accessibility", "feasibility", "asset_integrity", "design_system_change_impact"],
+            "description": "Category of the finding"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["blocker", "major", "minor", "advisory"],
+            "description": "Severity of the finding"
+          },
+          "dimension": {
+            "type": "string",
+            "description": "Specific design dimension assessed (e.g., 'login-screen', 'navigation-bar')"
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Evidence supporting the finding (screenshot reference, spec quote, etc.)"
+          },
+          "requiredCorrection": {
+            "type": "string",
+            "description": "Description of what must be corrected"
+          },
+          "affectedSurface": {
+            "type": "string",
+            "description": "Affected design surface (e.g., component name, screen, flow)"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when finding was created"
+          },
+          "resolvedByRevisionId": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "Revision that resolved this finding (if applicable)"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optimistic locking version for CAS updates"
+          }
+        }
+      },
+      "description": "All findings from this review"
+    },
+    "assessedDimensions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Dimensions that were assessed in this review"
+    },
+    "reviewScopeJson": {
+      "type": "object",
+      "description": "Optional structured review scope that was used"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when review completed"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Optimistic locking version for CAS updates"
+    }
+  }
+}

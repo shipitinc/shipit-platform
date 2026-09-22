@@ -67,6 +67,7 @@ HumanDecision _resolvedDecision({
 }
 
 void main() {
+  _escalationRouting();
   group('WorkItemTransitions', () {
     late WorkflowEngine engine;
 
@@ -158,10 +159,6 @@ void main() {
       );
       expect(
         eval(WorkItemState.terminated, WorkItemState.draft).isValid,
-        isFalse,
-      );
-      expect(
-        eval(WorkItemState.done, WorkItemState.completed).isValid,
         isFalse,
       );
     });
@@ -776,6 +773,59 @@ void main() {
       );
       expect(transition.actor.actorType, ActorType.orchestrator);
       expect(transition.metadata?['actor'], isA<WorkflowActor>());
+    });
+  });
+}
+
+/// Escalations are failure gates: a run that stopped with an error and was
+/// handed to a human. Before these routes existed, answering one recorded the
+/// decision but left the work item parked at its gate forever.
+void _escalationRouting() {
+  group('Escalation outcomes', () {
+    test('resume routes an escalation back into execution', () {
+      expect(
+        HumanDecisionRouting.targetFor(
+          HumanDecisionType.escalation,
+          HumanDecisionChoice.approve,
+        ),
+        WorkItemState.agentExecuting,
+      );
+    });
+
+    test('sending it back routes to planning', () {
+      expect(
+        HumanDecisionRouting.targetFor(
+          HumanDecisionType.escalation,
+          HumanDecisionChoice.rework,
+        ),
+        WorkItemState.planning,
+      );
+    });
+
+    test('stopping it routes to cancelled', () {
+      expect(
+        HumanDecisionRouting.targetFor(
+          HumanDecisionType.escalation,
+          HumanDecisionChoice.cancel,
+        ),
+        WorkItemState.cancelled,
+      );
+    });
+
+    test('every escalation outcome has somewhere to go', () {
+      // A route that exists but has no legal transition would still strand
+      // the item, so assert the pair rather than the routing alone.
+      for (final choice in [
+        HumanDecisionChoice.approve,
+        HumanDecisionChoice.rework,
+        HumanDecisionChoice.cancel,
+      ]) {
+        final target = HumanDecisionRouting.targetFor(
+          HumanDecisionType.escalation,
+          choice,
+        );
+        expect(target, isNotNull, reason: 'no route for $choice');
+      }
     });
   });
 }

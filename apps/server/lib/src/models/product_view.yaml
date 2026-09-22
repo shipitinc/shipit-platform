@@ -1,0 +1,15 @@
+### Registry row for one Product. `productId` is the durable identity; it is
+### never the repository URL, path, cwd, or a process-global.
+class: ProductView
+fields:
+  productId: String
+  name: String
+  description: String?
+  manifestVersion: String?
+  ### registered | baseline_pending | baseline_blocked | baseline_review |
+  ### governed | paused | archived.
+  ### draft/active/deprecated are legacy parse-only values (ADR 0018).
+  state: String
+  createdAt: DateTime
+  updatedAt: DateTime
+  version: int

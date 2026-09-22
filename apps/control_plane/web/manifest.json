@@ -1,0 +1,8 @@
+{
+  "name": "ShipIt Control Plane",
+  "short_name": "ShipIt",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#182020",
+  "theme_color": "#f09038"
+}

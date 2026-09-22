@@ -19,7 +19,7 @@ Map<String, dynamic> _$TransitionGuardEvaluationToJson(
 ) => <String, dynamic>{
   'guardName': instance.guardName,
   'passed': instance.passed,
-  if (instance.message case final value?) 'message': value,
+  'message': ?instance.message,
 };
 
 WorkflowTransitionRecord _$WorkflowTransitionRecordFromJson(
@@ -56,11 +56,11 @@ Map<String, dynamic> _$WorkflowTransitionRecordToJson(
   'toState': _workItemStateToJson(instance.toState),
   'trigger': _transitionTriggerToJson(instance.trigger),
   'actorType': _actorTypeToJson(instance.actorType),
-  if (instance.actorId case final value?) 'actorId': value,
-  if (instance.decisionId case final value?) 'decisionId': value,
+  'actorId': ?instance.actorId,
+  'decisionId': ?instance.decisionId,
   'outcome': _transitionOutcomeToJson(instance.outcome),
-  if (instance.reason case final value?) 'reason': value,
+  'reason': ?instance.reason,
   'guardEvaluations': instance.guardEvaluations.map((e) => e.toJson()).toList(),
-  if (instance.idempotencyKey case final value?) 'idempotencyKey': value,
+  'idempotencyKey': ?instance.idempotencyKey,
   'occurredAt': instance.occurredAt.toIso8601String(),
 };

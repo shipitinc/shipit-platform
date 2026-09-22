@@ -1,0 +1,8 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/design_finding_category.schema.json",
+  "title": "DesignFindingCategory",
+  "description": "Category of a design finding",
+  "type": "string",
+  "enum": ["requirement_coverage", "design_system_compliance", "interaction_completeness", "responsive_coverage", "accessibility", "feasibility", "asset_integrity", "design_system_change_impact"]
+}

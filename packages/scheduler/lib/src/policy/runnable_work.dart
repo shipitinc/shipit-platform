@@ -30,6 +30,8 @@ class JobDefinition {
     required this.entryStates,
     this.priority = JobPriority.normal,
     this.maxAttempts = 2,
+    this.targetState = WorkItemState.agentExecuting,
+    this.skipWorkflowPolicyCheck = false,
   });
 
   final JobType jobType;
@@ -38,6 +40,14 @@ class JobDefinition {
   final Set<WorkItemState> entryStates;
   final JobPriority priority;
   final int maxAttempts;
+
+  /// The workflow state that a successful execution should transition to.
+  /// Defaults to [WorkItemState.agentExecuting] for standard agent jobs.
+  final WorkItemState targetState;
+
+  /// If true, skip the workflow policy check (for design/review jobs that
+  /// don't map to standard agentExecuting transitions).
+  final bool skipWorkflowPolicyCheck;
 }
 
 /// Derives, for one work item, whether the scheduler may dispatch it, by
@@ -74,10 +84,16 @@ class RunnableWorkEvaluator {
       return RunnableWorkStatus.noAction;
     }
 
+    // Design/review jobs may skip workflow policy check if they don't map
+    // to standard agentExecuting transitions.
+    if (definition.skipWorkflowPolicyCheck) {
+      return RunnableWorkStatus.runnable;
+    }
+
     // Ask the policy, never a local copy of the graph.
     final transition = policy.evaluateWorkItemTransition(
       from: item.state,
-      to: WorkItemState.agentExecuting,
+      to: definition.targetState,
       trigger: TransitionTrigger.systemEvent,
       actor: _scheduler,
       context: const {'agentAvailable': true, 'capabilitiesMatch': true},

@@ -31,6 +31,19 @@ class SchedulerWorkload {
   final WorkerCleanupPolicy cleanupPolicy;
 }
 
+/// Function to build a dedupe key for a work item.
+typedef DedupeKeyBuilder = String Function(WorkItem item, JobDefinition definition);
+
+/// Function to build an instruction for a work item.
+typedef InstructionBuilder = String Function(WorkItem item, JobDefinition definition);
+
+/// Function to build a worker execution request for a job.
+typedef RequestBuilder = WorkerExecutionRequest Function(
+  Job job,
+  SchedulerWorkload workload,
+  WorkItem item,
+);
+
 /// What one [Scheduler.tick] did, for tests and for the audit tail.
 @immutable
 class SchedulerTickResult {
@@ -68,6 +81,9 @@ class Scheduler {
     DateTime Function()? clock,
     this.claimLease = const Duration(minutes: 10),
     WorkflowEngine? policy,
+    DedupeKeyBuilder? dedupeKeyBuilder,
+    InstructionBuilder? instructionBuilder,
+    RequestBuilder? requestBuilder,
   }) : schedulerId = schedulerId,
        _workflowStore = workflowStore,
        _jobStore = jobStore,
@@ -79,7 +95,10 @@ class Scheduler {
        _evaluator = RunnableWorkEvaluator(
          policy: policy ?? const WorkflowEngine(),
        ),
-       _queue = JobQueue(store: jobStore, clock: clock);
+       _queue = JobQueue(store: jobStore, clock: clock),
+       _dedupeKeyBuilder = dedupeKeyBuilder ?? _defaultDedupeKey,
+       _instructionBuilder = instructionBuilder ?? _defaultInstruction,
+       _requestBuilder = requestBuilder ?? _defaultRequest;
 
   final String schedulerId;
   final Duration claimLease;
@@ -94,8 +113,37 @@ class Scheduler {
   final RunnableWorkEvaluator _evaluator;
   final JobQueue _queue;
   final RetryPolicy _retryPolicy = const RetryPolicy();
+  final DedupeKeyBuilder _dedupeKeyBuilder;
+  final InstructionBuilder _instructionBuilder;
+  final RequestBuilder _requestBuilder;
 
   JobQueue get queue => _queue;
+
+  static String _defaultDedupeKey(WorkItem item, JobDefinition definition) =>
+      '${item.workItemId}:${item.state.wire}:${definition.jobType.wire}:'
+      '${definition.requiredRole.wire}';
+
+  static String _defaultInstruction(WorkItem item, JobDefinition definition) =>
+      'Implement "${item.title}" (${item.workItemId}) inside the worktree.';
+
+  static WorkerExecutionRequest _defaultRequest(
+    Job job,
+    SchedulerWorkload workload,
+    WorkItem item,
+  ) {
+    return WorkerExecutionRequest(
+      workerExecutionId: 'wx-${job.jobId}',
+      workItemId: job.workItemId,
+      repositoryPath: workload.repositoryPath,
+      startingRevision: workload.startingRevision,
+      requiredCapabilities: job.requiredCapabilities,
+      role: job.requiredRole,
+      instruction: job.instruction,
+      timeoutSeconds: workload.timeoutSeconds,
+      runtimeTypeId: workload.runtimeTypeId,
+      cleanupPolicy: workload.cleanupPolicy,
+    );
+  }
 
   /// One full, synchronous pass over the durable state. Deterministic:
   /// ordering is fixed, the process is event-loop serialized, and every step
@@ -147,8 +195,8 @@ class Scheduler {
         case RunnableWorkStatus.noAction:
           break;
         case RunnableWorkStatus.runnable:
-          final dedupeKey = _dedupeKey(item);
-          final instruction = _instructionFor(item);
+          final dedupeKey = _dedupeKeyBuilder(item, _definition);
+          final instruction = _instructionBuilder(item, _definition);
           final result = await _queue.enqueueIfAbsent(
             workItemId: item.workItemId,
             definition: _definition,
@@ -237,7 +285,8 @@ class Scheduler {
       return const _DispatchOutcome();
     }
 
-    final request = _requestFor(current);
+    final item = await _workflowStore.readWorkItem(current.workItemId);
+    final request = _requestBuilder(current, _workload, item);
     final selection = _dispatch.select(request);
     if (!selection.isDispatched) {
       await _queue.recordDeferred(job: current, outcome: selection.outcome);
@@ -437,29 +486,6 @@ class Scheduler {
         return job;
     }
   }
-
-  String _dedupeKey(WorkItem item) =>
-      '${item.workItemId}:${item.state.wire}:${_definition.jobType.wire}:'
-      '${_definition.requiredRole.wire}';
-
-  String _instructionFor(WorkItem item) =>
-      'Implement "${item.title}" (${item.workItemId}) inside the worktree.';
-
-  WorkerExecutionRequest _requestFor(Job job) {
-    final itemWorkItemId = job.workItemId;
-    return WorkerExecutionRequest(
-      workerExecutionId: 'wx-${job.jobId}',
-      workItemId: itemWorkItemId,
-      repositoryPath: _workload.repositoryPath,
-      startingRevision: _workload.startingRevision,
-      requiredCapabilities: job.requiredCapabilities,
-      role: job.requiredRole,
-      instruction: job.instruction,
-      timeoutSeconds: _workload.timeoutSeconds,
-      runtimeTypeId: _workload.runtimeTypeId,
-      cleanupPolicy: _workload.cleanupPolicy,
-    );
-  }
 }
 
 /// Default definition registered for the demo and used by
@@ -473,7 +499,95 @@ const JobDefinition defaultImplementFeatureDefinition = JobDefinition(
   maxAttempts: 2,
 );
 
-/// Result of a single dispatch attempt.
+/// Design revision job: produces a design revision in Penpot.
+const JobDefinition designRevisionDefinition = JobDefinition(
+  jobType: JobType.designRevision,
+  requiredRole: AgentRole.designAgent,
+  requiredCapabilities: {WorkerCapability.penpotWrite, WorkerCapability.visualDesign},
+  entryStates: {WorkItemState.designRequired, WorkItemState.designRejected},
+  priority: JobPriority.normal,
+  maxAttempts: 3,
+  skipWorkflowPolicyCheck: true,
+);
+
+/// Design review job: independently reviews a design revision produced by
+/// a different worker. Must exclude the designer's execution.
+const JobDefinition designReviewDefinition = JobDefinition(
+  jobType: JobType.designReview,
+  requiredRole: AgentRole.designReviewer,
+  requiredCapabilities: {WorkerCapability.penpotRead, WorkerCapability.designReview},
+  entryStates: {WorkItemState.designInReview},
+  priority: JobPriority.high,
+  maxAttempts: 2,
+  skipWorkflowPolicyCheck: true,
+);
+
+/// Builds a dedupe key for design revision jobs: (workItemId, jobType).
+/// Only one active design revision job per work item at a time.
+String designRevisionDedupeKey(WorkItem item, JobDefinition definition) =>
+    '${item.workItemId}:${definition.jobType.wire}';
+
+/// Builds a dedupe key for design review jobs: (workItemId, designRevisionId, jobType).
+/// Prevents duplicate reviews of the same revision. Reads designRevisionId from
+/// WorkItem.metadata['designRevisionId'] (set by workflow on transition to designInReview).
+String designReviewDedupeKey(WorkItem item, JobDefinition definition) {
+  final revisionId = item.metadata?['designRevisionId'] as String?;
+  return '${item.workItemId}:${revisionId ?? 'unknown'}:${definition.jobType.wire}';
+}
+
+/// Builds an instruction for design revision jobs.
+String designRevisionInstruction(WorkItem item, JobDefinition definition) =>
+    'Produce a design revision for "${item.title}" (${item.workItemId}) in Penpot.';
+
+/// Builds an instruction for design review jobs.
+String designReviewInstruction(WorkItem item, JobDefinition definition) =>
+    'Review the design revision for "${item.title}" (${item.workItemId}) in Penpot. '
+    'Provide independent assessment without consulting the designer.';
+
+/// Builds a worker execution request for design revision jobs.
+WorkerExecutionRequest designRevisionRequest(
+  Job job,
+  SchedulerWorkload workload,
+  WorkItem item,
+) {
+  return WorkerExecutionRequest(
+    workerExecutionId: 'wx-${job.jobId}',
+    workItemId: job.workItemId,
+    repositoryPath: workload.repositoryPath,
+    startingRevision: workload.startingRevision,
+    requiredCapabilities: job.requiredCapabilities,
+    role: job.requiredRole,
+    instruction: job.instruction,
+    timeoutSeconds: workload.timeoutSeconds,
+    runtimeTypeId: workload.runtimeTypeId,
+    cleanupPolicy: workload.cleanupPolicy,
+  );
+}
+
+/// Builds a worker execution request for design review jobs.
+/// Includes excludedExecutionIds to enforce independence at dispatch.
+/// Reads designerExecutionId from WorkItem.metadata['designerExecutionId']
+/// (set by workflow on transition to designInReview).
+WorkerExecutionRequest designReviewRequest(
+  Job job,
+  SchedulerWorkload workload,
+  WorkItem item,
+) {
+  final designerExecutionId = item.metadata?['designerExecutionId'] as String?;
+  return WorkerExecutionRequest(
+    workerExecutionId: 'wx-${job.jobId}',
+    workItemId: job.workItemId,
+    repositoryPath: workload.repositoryPath,
+    startingRevision: workload.startingRevision,
+    requiredCapabilities: job.requiredCapabilities,
+    role: job.requiredRole,
+    instruction: job.instruction,
+    timeoutSeconds: workload.timeoutSeconds,
+    runtimeTypeId: workload.runtimeTypeId,
+    cleanupPolicy: workload.cleanupPolicy,
+    excludedExecutionIds: designerExecutionId != null ? [designerExecutionId] : const [],
+  );
+}
 class _DispatchOutcome {
   const _DispatchOutcome({this.dispatched = false, this.terminalJob});
 

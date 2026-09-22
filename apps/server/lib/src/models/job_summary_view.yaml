@@ -1,0 +1,22 @@
+### A queued or running job as shown in the Overview "Machines and next steps"
+### strip (Penpot: `Job Id` / `Job State` / `Job Desc`).
+###
+### Read-only projection of the durable job record. The operator surface never
+### mutates jobs.
+class: JobSummaryView
+fields:
+  jobId: String
+  workItemId: String
+  ### Durable `JobState` wire value. The UI maps this to plain language and
+  ### only shows the raw value under "Show technical details".
+  state: String
+  ### Durable `JobType` wire value.
+  jobType: String
+  createdAt: DateTime
+  ### Set when the job is not yet eligible to run (retry backoff).
+  availableAt: DateTime?
+  ### True when this job cannot proceed because a human decision is pending on
+  ### its work item. Renders as "needs your approval first".
+  blockedOnDecision: bool
+  attempt: int
+  maxAttempts: int

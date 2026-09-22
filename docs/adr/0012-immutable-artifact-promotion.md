@@ -1,7 +1,37 @@
 # ADR 0012: Immutable Artifact Promotion
 
 ## Status
-Accepted
+Accepted (amended 2026-09-18 — see §Amendments; A1 canonical artifact store = Google Cloud Storage)
+
+## Amendments
+
+Amendments are recorded by revision, not by silent rewrite. Superseded wording
+is retained in-place and marked **SUPERSEDED (A1)**.
+
+| Rev | Date | Change | Reason |
+|-----|------|--------|--------|
+| A1 | 2026-09-18 | Production `ArtifactStore` implementation: ~Google Artifact Registry / AWS S3 + DynamoDB index~ → **Google Cloud Storage** (metadata index in **PostgreSQL**, not DynamoDB) | Consistent with ADR 0004 (PostgreSQL as state store) and checkpoint 002 R2 (GcsArtifactStore production backend) |
+
+### A1 — Canonical artifact store is Google Cloud Storage
+
+- **Previous (superseded):** production `ArtifactStore` = Google Artifact Registry
+  or AWS S3 + DynamoDB index.
+- **Current:** production binary `ArtifactStore` = **Google Cloud Storage**,
+  exposed through the same provider-neutral `ArtifactStore` interface. PostgreSQL
+  is the **metadata-only** index (ADR 0004); binary bytes never live in PostgreSQL.
+  Google Artifact Registry is **NOT** the canonical store.
+- **Reason:** cloud artifact-storage decision shared across ShipIt Platform
+  products; aligns with `GcsArtifactStore` in checkpoint 002 (§9/§9A) security
+  model (private bucket, opaque `objectRef`, no permanent public URLs, no GCP
+  credentials in the client).
+
+### A1 GCS security posture (inherited from checkpoint 002 §9A)
+
+- Private buckets only; no public object ACLs
+- `ArtifactStore` interface stays provider-neutral — GCP SDK confined to the
+  `GcsArtifactStore` implementation
+- Identity = `artifactId` + opaque `objectRef`; no permanent public URL persisted
+- Credentials referenced by name only (AGENTS.md §13 convention)
 
 ## Context
 Deployments must promote immutable artifacts across environments:
@@ -65,7 +95,8 @@ abstract interface class ArtifactStore {
 
 Implementations:
 - **Local**: File system + SQLite index (Docker Compose)
-- **Production**: Google Artifact Registry / AWS S3 + DynamoDB index
+- **Production (SUPERSEDED (A1))**: ~~Google Artifact Registry / AWS S3 + DynamoDB index~~
+- **Production (A1)**: Google Cloud Storage (+ PostgreSQL metadata index per ADR 0004)
 
 ## Promotion Engine
 

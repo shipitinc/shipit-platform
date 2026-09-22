@@ -1,0 +1,24 @@
+class: ProductRegistryAuditRow
+table: product_registry_audit
+serverOnly: true
+### Append-only audit log for all product registry mutations. Every write
+### operation (create/update/transition) records an entry here. Never deleted,
+### never updated — only inserted.
+indexes:
+  product_registry_audit_id_unique:
+    fields: auditId
+    unique: true
+  product_registry_audit_product_idx:
+    fields: productId
+  product_registry_audit_timestamp_idx:
+    fields: timestamp
+fields:
+  auditId: String
+  productId: String
+  entityType: String
+  entityId: String
+  action: String
+  beforeJson: String?
+  afterJson: String?
+  actor: String?
+  timestamp: DateTime

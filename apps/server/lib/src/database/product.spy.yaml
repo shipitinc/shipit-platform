@@ -1,0 +1,16 @@
+class: ProductRow
+table: product
+serverOnly: true
+indexes:
+  product_id_unique:
+    fields: productId
+    unique: true
+fields:
+  productId: String
+  name: String
+  description: String?
+  manifestVersion: String?
+  state: String
+  createdAt: DateTime
+  updatedAt: DateTime
+  version: int

@@ -48,27 +48,23 @@ Map<String, dynamic> _$JobToJson(Job instance) => <String, dynamic>{
   'workItemId': instance.workItemId,
   'jobType': _jobTypeToJson(instance.jobType),
   'requiredRole': _agentRoleToJson(instance.requiredRole),
-  if (_workerCapabilitiesToJson(instance.requiredCapabilities)
-      case final value?)
-    'requiredCapabilities': value,
+  'requiredCapabilities': ?_workerCapabilitiesToJson(
+    instance.requiredCapabilities,
+  ),
   'priority': _jobPriorityToJson(instance.priority),
   'state': _jobStateToJson(instance.state),
   'dedupeKey': instance.dedupeKey,
   'createdAt': instance.createdAt.toIso8601String(),
-  if (instance.availableAt?.toIso8601String() case final value?)
-    'availableAt': value,
+  'availableAt': ?instance.availableAt?.toIso8601String(),
   'instruction': instance.instruction,
   'attempt': instance.attempt,
   'maxAttempts': instance.maxAttempts,
-  if (instance.startedAt?.toIso8601String() case final value?)
-    'startedAt': value,
-  if (instance.completedAt?.toIso8601String() case final value?)
-    'completedAt': value,
-  if (instance.executionReference?.toJson() case final value?)
-    'executionReference': value,
-  if (instance.workerId case final value?) 'workerId': value,
-  if (instance.failure?.toJson() case final value?) 'failure': value,
-  if (instance.cancelReason case final value?) 'cancelReason': value,
+  'startedAt': ?instance.startedAt?.toIso8601String(),
+  'completedAt': ?instance.completedAt?.toIso8601String(),
+  'executionReference': ?instance.executionReference?.toJson(),
+  'workerId': ?instance.workerId,
+  'failure': ?instance.failure?.toJson(),
+  'cancelReason': ?instance.cancelReason,
   'version': instance.version,
 };
 
@@ -82,5 +78,5 @@ Map<String, dynamic> _$JobFailureToJson(JobFailure instance) =>
     <String, dynamic>{
       'code': _jobFailureCodeToJson(instance.code),
       'kind': _jobFailureKindToJson(instance.kind),
-      if (instance.reason case final value?) 'reason': value,
+      'reason': ?instance.reason,
     };

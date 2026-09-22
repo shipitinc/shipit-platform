@@ -47,6 +47,12 @@ void main() {
       'job_execution_reference',
       'scheduler_event_record',
       'retry_policy',
+      'product',
+      'repository_reference',
+      'product_baseline',
+      'clarification_request',
+      'onboarding_record',
+      'product_context',
     ];
 
     for (final name in schemas) {
@@ -535,6 +541,168 @@ void main() {
         _expectValid(_loadSchema('artifact_reference'), ref.toJson());
       },
     );
+
+    test('DesignRevision.toJson() conforms to design_revision.schema.json', () {
+      final revision = DesignRevision(
+        revisionId: 'DES-R001',
+        workItemId: '123e4567-e89b-12d3-a456-426614174002',
+        productId: '123e4567-e89b-12d3-a456-426614174000',
+        parentRevisionId: null,
+        designSystemRevision: 'dsr-1',
+        provider: DesignProviderType.penpot,
+        penpotFileId: 'penpot-file-123',
+        penpotPageId: 'penpot-page-123',
+        boardIdsJson: '["board-1", "board-2"]',
+        responsiveTargetsJson: '["mobile", "desktop"]',
+        statesRepresentedJson: '["default", "hover"]',
+        artifactRefsJson: '["art-1", "art-2"]',
+        designerExecutionId: '123e4567-e89b-12d3-a456-426614174010',
+        reviewExecutionIdsJson: '["rev-exec-1", "rev-exec-2"]',
+        status: DesignRevisionStatus.inReview,
+        riskTier: DesignRiskTier.medium,
+        reviewScopeJson: {'screens': ['login', 'register']},
+        carriedForwardFromRevisionId: null,
+        supersededByRevisionId: null,
+        createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
+        updatedAt: DateTime.parse('2024-01-02T00:00:00Z'),
+        approvedAt: null,
+        version: 1,
+      );
+
+      _expectValid(_loadSchema('design_revision'), revision.toJson());
+    });
+
+    test('DesignRevision.toJson() with approved status conforms', () {
+      final revision = DesignRevision(
+        revisionId: 'DES-R002',
+        workItemId: '123e4567-e89b-12d3-a456-426614174002',
+        productId: '123e4567-e89b-12d3-a456-426614174000',
+        parentRevisionId: 'DES-R001',
+        designSystemRevision: 'dsr-1',
+        provider: DesignProviderType.penpot,
+        penpotFileId: 'penpot-file-123',
+        penpotPageId: 'penpot-page-123',
+        boardIdsJson: '["board-1"]',
+        responsiveTargetsJson: '["mobile", "desktop"]',
+        statesRepresentedJson: '["default"]',
+        artifactRefsJson: '["art-1"]',
+        designerExecutionId: '123e4567-e89b-12d3-a456-426614174010',
+        reviewExecutionIdsJson: '["rev-exec-1"]',
+        status: DesignRevisionStatus.approved,
+        riskTier: DesignRiskTier.high,
+        reviewScopeJson: {'screens': ['payment']},
+        carriedForwardFromRevisionId: null,
+        supersededByRevisionId: null,
+        createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
+        updatedAt: DateTime.parse('2024-01-03T00:00:00Z'),
+        approvedAt: DateTime.parse('2024-01-03T00:00:00Z'),
+        version: 2,
+      );
+
+      _expectValid(_loadSchema('design_revision'), revision.toJson());
+    });
+
+    test('DesignReviewResult.toJson() conforms to design_review_result.schema.json', () {
+      final reviewResult = DesignReviewResult(
+        reviewExecutionId: '123e4567-e89b-12d3-a456-426614174020',
+        revisionId: 'DES-R001',
+        verdict: DesignReviewVerdict.approvedWithMinorFindings,
+        findings: [
+          DesignFinding(
+            findingId: '123e4567-e89b-12d3-a456-426614174030',
+            revisionId: 'DES-R001',
+            reviewExecutionId: '123e4567-e89b-12d3-a456-426614174020',
+            category: DesignFindingCategory.accessibility,
+            severity: DesignFindingSeverity.minor,
+            dimension: 'login-form',
+            evidence: 'Color contrast ratio 3.5:1 on submit button',
+            requiredCorrection: 'Increase contrast to 4.5:1 minimum',
+            affectedSurface: 'LoginScreen.submitButton',
+            createdAt: DateTime.parse('2024-01-02T10:00:00Z'),
+            resolvedByRevisionId: null,
+            version: 1,
+          ),
+        ],
+        assessedDimensions: ['accessibility', 'interaction_completeness'],
+        reviewScopeJson: {'screens': ['login']},
+        createdAt: DateTime.parse('2024-01-02T11:00:00Z'),
+        version: 1,
+      );
+
+      _expectValid(_loadSchema('design_review_result'), reviewResult.toJson());
+    });
+
+    test('DesignFinding.toJson() conforms to design_finding.schema.json', () {
+      final finding = DesignFinding(
+        findingId: '123e4567-e89b-12d3-a456-426614174030',
+        revisionId: 'DES-R001',
+        reviewExecutionId: '123e4567-e89b-12d3-a456-426614174020',
+        category: DesignFindingCategory.feasibility,
+        severity: DesignFindingSeverity.blocker,
+        dimension: 'payment-integration',
+        evidence: 'API requires 3D Secure which is not implemented',
+        requiredCorrection: 'Add 3D Secure flow before payment submission',
+        affectedSurface: 'PaymentScreen',
+        createdAt: DateTime.parse('2024-01-02T10:00:00Z'),
+        resolvedByRevisionId: 'DES-R002',
+        version: 1,
+      );
+
+      _expectValid(_loadSchema('design_finding'), finding.toJson());
+    });
+
+    test('DesignBrief.toJson() conforms to design_brief.schema.json', () {
+      final brief = DesignBrief(
+        briefId: '123e4567-e89b-12d3-a456-426614174040',
+        workItemId: '123e4567-e89b-12d3-a456-426614174002',
+        productId: '123e4567-e89b-12d3-a456-426614174000',
+        title: 'Redesign user onboarding flow',
+        context: 'New users drop off at step 3 of onboarding',
+        requirements: [
+          DesignRequirement(
+            requirementId: 'req-1',
+            description: 'Reduce onboarding steps from 5 to 3',
+            priority: DesignRequirementPriority.must,
+            traceabilityRef: 'REQ-001',
+          ),
+          DesignRequirement(
+            requirementId: 'req-2',
+            description: 'Add progress indicator',
+            priority: DesignRequirementPriority.should,
+            traceabilityRef: 'REQ-002',
+          ),
+        ],
+        constraints: [
+          DesignConstraint(
+            constraintId: 'con-1',
+            description: 'Must use existing design system components',
+            type: DesignConstraintType.designSystem,
+          ),
+          DesignConstraint(
+            constraintId: 'con-2',
+            description: 'WCAG 2.1 AA compliance required',
+            type: DesignConstraintType.accessibility,
+          ),
+        ],
+        acceptanceCriteria: [
+          'User completes onboarding in under 2 minutes',
+          'Drop-off rate at each step < 10%',
+        ],
+        referenceArtifacts: [
+          ReferenceArtifact(
+            artifactType: 'user-research',
+            location: 'research/onboarding-study-2024.pdf',
+            description: 'User research on current onboarding friction',
+          ),
+        ],
+        designSystemTokens: ['color-primary', 'spacing-lg', 'border-radius-md'],
+        createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
+        updatedAt: DateTime.parse('2024-01-01T00:00:00Z'),
+        version: 1,
+      );
+
+      _expectValid(_loadSchema('design_brief'), brief.toJson());
+    });
   });
 
   group('Invalid enum values are rejected', () {
@@ -840,6 +1008,287 @@ void main() {
       expect(decoded.failure!.code, JobFailureCode.executionInterrupted);
       expect(decoded.failure!.kind, JobFailureKind.transient);
       expect(decoded.dedupeKey, job.dedupeKey);
+    });
+
+    test('Product.toJson() conforms to product.schema.json', () {
+      final product = Product(
+        productId: '123e4567-e89b-12d3-a456-426614174000',
+        name: 'ShipIt',
+        description: 'Product platform',
+        state: ProductState.active,
+        createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
+        updatedAt: DateTime.parse('2024-01-02T00:00:00Z'),
+        version: 1,
+      );
+      _expectValid(_loadSchema('product'), product.toJson());
+      expect(product.toJson().containsKey('description'), isTrue);
+      expect(product.toJson().containsKey('manifestVersion'), isFalse);
+    });
+
+    test('RepositoryReference.toJson() conforms to '
+        'repository_reference.schema.json', () {
+      final ref = RepositoryReference(
+        repositoryId: 'repo-shipit-main',
+        productId: '123e4567-e89b-12d3-a456-426614174000',
+        kind: RepositoryKind.monorepo,
+        uri: 'https://github.com/shipit/shipit-platform',
+        provider: RepositoryProvider.github,
+        addedAt: DateTime.parse('2024-01-01T00:00:00Z'),
+        version: 1,
+      );
+      _expectValid(_loadSchema('repository_reference'), ref.toJson());
+    });
+
+    test(
+      'ProductBaseline.toJson() conforms to product_baseline.schema.json and '
+      'contentHash round-trips',
+      () {
+        final baseline = ProductBaseline(
+          baselineId: 'bl-shipit-1',
+          productId: '123e4567-e89b-12d3-a456-426614174000',
+          revision: 1,
+          status: ProductBaselineStatus.proposed,
+          facts: [
+            BaselineFact(
+              factId: 'fact-1',
+              section: BaselineSectionKey.techStack,
+              claim: 'Native Dart workspace orchestrated with melos',
+              provenance: Provenance.observed,
+              maturity: BaselineMaturity.implemented,
+              evidenceRefs: const ['pubspec.yaml', 'melos.yaml'],
+              redacted: false,
+            ),
+          ],
+          contentHash: 'abc123',
+          proposedAt: DateTime.parse('2024-01-01T00:00:00Z'),
+          createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
+          updatedAt: DateTime.parse('2024-01-01T00:00:00Z'),
+          version: 1,
+        );
+        _expectValid(_loadSchema('product_baseline'), baseline.toJson());
+
+        final decoded = ProductBaseline.fromJson(baseline.toJson());
+        expect(decoded.facts.single.provenance, Provenance.observed);
+        expect(decoded.status, ProductBaselineStatus.proposed);
+      },
+    );
+
+    test('ClarificationRequest.toJson() conforms to '
+        'clarification_request.schema.json', () {
+      final request = ClarificationRequest(
+        clarificationId: 'clar-1',
+        productId: '123e4567-e89b-12d3-a456-426614174000',
+        onboardingId: 'ob-1',
+        section: BaselineSectionKey.deployment,
+        question: 'Where does ShipIt deploy?',
+        status: ClarificationStatus.needsAnswer,
+        createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
+      );
+      _expectValid(_loadSchema('clarification_request'), request.toJson());
+    });
+
+    test('ProductContext.toJson() conforms to product_context.schema.json', () {
+      final configuration = ProductContext(
+        product: Product(
+          productId: '123e4567-e89b-12d3-a456-426614174000',
+          name: 'ShipIt',
+          state: ProductState.draft,
+          createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
+          updatedAt: DateTime.parse('2024-01-01T00:00:00Z'),
+          version: 1,
+        ),
+        repositories: const [],
+        allBaselines: const [],
+        openClarifications: const [],
+        snapshotId: 'snap-1',
+      );
+      _expectValid(_loadSchema('product_context'), configuration.toJson());
+    });
+  });
+
+  group('Design Governance enum rejection', () {
+    test('DesignRevision.fromJson rejects unknown status', () {
+      final json = {
+        'revisionId': 'DES-R1',
+        'workItemId': '123e4567-e89b-12d3-a456-426614174002',
+        'productId': '123e4567-e89b-12d3-a456-426614174000',
+        'parentRevisionId': null,
+        'designSystemRevision': 'ds-1',
+        'provider': 'penpot',
+        'penpotFileId': 'file-1',
+        'penpotPageId': 'page-1',
+        'boardIdsJson': '[]',
+        'responsiveTargetsJson': '[]',
+        'statesRepresentedJson': '[]',
+        'artifactRefsJson': '[]',
+        'designerExecutionId': '123e4567-e89b-12d3-a456-426614174010',
+        'reviewExecutionIdsJson': '[]',
+        'status': 'not_a_status',
+        'riskTier': 'medium',
+        'reviewScopeJson': null,
+        'carriedForwardFromRevisionId': null,
+        'supersededByRevisionId': null,
+        'createdAt': '2024-01-01T00:00:00Z',
+        'updatedAt': '2024-01-01T00:00:00Z',
+        'approvedAt': null,
+        'version': 1,
+      };
+      expect(() => DesignRevision.fromJson(json), throwsFormatException);
+    });
+
+    test('DesignRevision.fromJson rejects unknown riskTier', () {
+      final json = {
+        'revisionId': 'DES-R1',
+        'workItemId': '123e4567-e89b-12d3-a456-426614174002',
+        'productId': '123e4567-e89b-12d3-a456-426614174000',
+        'parentRevisionId': null,
+        'designSystemRevision': 'ds-1',
+        'provider': 'penpot',
+        'penpotFileId': 'file-1',
+        'penpotPageId': 'page-1',
+        'boardIdsJson': '[]',
+        'responsiveTargetsJson': '[]',
+        'statesRepresentedJson': '[]',
+        'artifactRefsJson': '[]',
+        'designerExecutionId': '123e4567-e89b-12d3-a456-426614174010',
+        'reviewExecutionIdsJson': '[]',
+        'status': 'draft',
+        'riskTier': 'not_a_tier',
+        'reviewScopeJson': null,
+        'carriedForwardFromRevisionId': null,
+        'supersededByRevisionId': null,
+        'createdAt': '2024-01-01T00:00:00Z',
+        'updatedAt': '2024-01-01T00:00:00Z',
+        'approvedAt': null,
+        'version': 1,
+      };
+      expect(() => DesignRevision.fromJson(json), throwsFormatException);
+    });
+
+    test('DesignRevision.fromJson rejects unknown provider', () {
+      final json = {
+        'revisionId': 'DES-R1',
+        'workItemId': '123e4567-e89b-12d3-a456-426614174002',
+        'productId': '123e4567-e89b-12d3-a456-426614174000',
+        'parentRevisionId': null,
+        'designSystemRevision': 'ds-1',
+        'provider': 'not_a_provider',
+        'penpotFileId': 'file-1',
+        'penpotPageId': 'page-1',
+        'boardIdsJson': '[]',
+        'responsiveTargetsJson': '[]',
+        'statesRepresentedJson': '[]',
+        'artifactRefsJson': '[]',
+        'designerExecutionId': '123e4567-e89b-12d3-a456-426614174010',
+        'reviewExecutionIdsJson': '[]',
+        'status': 'draft',
+        'riskTier': 'medium',
+        'reviewScopeJson': null,
+        'carriedForwardFromRevisionId': null,
+        'supersededByRevisionId': null,
+        'createdAt': '2024-01-01T00:00:00Z',
+        'updatedAt': '2024-01-01T00:00:00Z',
+        'approvedAt': null,
+        'version': 1,
+      };
+      expect(() => DesignRevision.fromJson(json), throwsFormatException);
+    });
+
+    test('DesignReviewResult.fromJson rejects unknown verdict', () {
+      final json = {
+        'reviewExecutionId': '123e4567-e89b-12d3-a456-426614174020',
+        'revisionId': '123e4567-e89b-12d3-a456-426614174001',
+        'verdict': 'not_a_verdict',
+        'findings': <Object>[],
+        'assessedDimensions': <Object>[],
+        'createdAt': '2024-01-02T11:00:00Z',
+        'version': 1,
+      };
+      expect(() => DesignReviewResult.fromJson(json), throwsFormatException);
+    });
+
+    test('DesignFinding.fromJson rejects unknown category', () {
+      final json = {
+        'findingId': '123e4567-e89b-12d3-a456-426614174030',
+        'revisionId': '123e4567-e89b-12d3-a456-426614174001',
+        'reviewExecutionId': '123e4567-e89b-12d3-a456-426614174020',
+        'category': 'not_a_category',
+        'severity': 'minor',
+        'dimension': 'test',
+        'evidence': 'evidence',
+        'requiredCorrection': 'fix it',
+        'affectedSurface': 'screen',
+        'createdAt': '2024-01-02T10:00:00Z',
+        'version': 1,
+      };
+      expect(() => DesignFinding.fromJson(json), throwsFormatException);
+    });
+
+    test('DesignFinding.fromJson rejects unknown severity', () {
+      final json = {
+        'findingId': '123e4567-e89b-12d3-a456-426614174030',
+        'revisionId': '123e4567-e89b-12d3-a456-426614174001',
+        'reviewExecutionId': '123e4567-e89b-12d3-a456-426614174020',
+        'category': 'accessibility',
+        'severity': 'not_a_severity',
+        'dimension': 'test',
+        'evidence': 'evidence',
+        'requiredCorrection': 'fix it',
+        'affectedSurface': 'screen',
+        'createdAt': '2024-01-02T10:00:00Z',
+        'version': 1,
+      };
+      expect(() => DesignFinding.fromJson(json), throwsFormatException);
+    });
+
+    test('DesignBrief.fromJson rejects unknown requirement priority', () {
+      final json = {
+        'briefId': '123e4567-e89b-12d3-a456-426614174040',
+        'workItemId': '123e4567-e89b-12d3-a456-426614174002',
+        'productId': '123e4567-e89b-12d3-a456-426614174000',
+        'title': 'Test',
+        'context': 'context',
+        'requirements': [
+          {
+            'requirementId': 'req-1',
+            'description': 'desc',
+            'priority': 'not_a_priority',
+          },
+        ],
+        'constraints': <Object>[],
+        'acceptanceCriteria': <Object>[],
+        'referenceArtifacts': <Object>[],
+        'designSystemTokens': <Object>[],
+        'createdAt': '2024-01-01T00:00:00Z',
+        'updatedAt': '2024-01-01T00:00:00Z',
+        'version': 1,
+      };
+      expect(() => DesignBrief.fromJson(json), throwsFormatException);
+    });
+
+    test('DesignBrief.fromJson rejects unknown constraint type', () {
+      final json = {
+        'briefId': '123e4567-e89b-12d3-a456-426614174040',
+        'workItemId': '123e4567-e89b-12d3-a456-426614174002',
+        'productId': '123e4567-e89b-12d3-a456-426614174000',
+        'title': 'Test',
+        'context': 'context',
+        'requirements': <Object>[],
+        'constraints': [
+          {
+            'constraintId': 'con-1',
+            'description': 'desc',
+            'type': 'not_a_type',
+          },
+        ],
+        'acceptanceCriteria': <Object>[],
+        'referenceArtifacts': <Object>[],
+        'designSystemTokens': <Object>[],
+        'createdAt': '2024-01-01T00:00:00Z',
+        'updatedAt': '2024-01-01T00:00:00Z',
+        'version': 1,
+      };
+      expect(() => DesignBrief.fromJson(json), throwsFormatException);
     });
   });
 }

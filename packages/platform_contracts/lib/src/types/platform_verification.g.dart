@@ -37,7 +37,7 @@ Map<String, dynamic> _$PlatformVerificationToJson(
   'command': instance.command,
   'capturedAt': instance.capturedAt.toIso8601String(),
   'evidenceKind': _evidenceKindToJson(instance.evidenceKind),
-  if (instance.outputRef case final value?) 'outputRef': value,
-  if (instance.detail case final value?) 'detail': value,
-  if (instance.resultPath case final value?) 'resultPath': value,
+  'outputRef': ?instance.outputRef,
+  'detail': ?instance.detail,
+  'resultPath': ?instance.resultPath,
 };

@@ -43,35 +43,30 @@ WorkerExecution _$WorkerExecutionFromJson(Map<String, dynamic> json) =>
       version: (json['version'] as num?)?.toInt() ?? 1,
     );
 
-Map<String, dynamic> _$WorkerExecutionToJson(
-  WorkerExecution instance,
-) => <String, dynamic>{
-  'workerExecutionId': instance.workerExecutionId,
-  'workItemId': instance.workItemId,
-  'repositoryPath': instance.repositoryPath,
-  'requestedStartingRevision': instance.requestedStartingRevision,
-  if (_workerCapabilitiesToJson(instance.requiredCapabilities)
-      case final value?)
-    'requiredCapabilities': value,
-  'status': _$WorkerExecutionStatusEnumMap[instance.status]!,
-  'cleanupPolicy': _$WorkerCleanupPolicyEnumMap[instance.cleanupPolicy]!,
-  if (instance.workerId case final value?) 'workerId': value,
-  if (instance.workspaceId case final value?) 'workspaceId': value,
-  if (instance.agentExecutionId case final value?) 'agentExecutionId': value,
-  if (instance.resultId case final value?) 'resultId': value,
-  if (instance.endingRevision case final value?) 'endingRevision': value,
-  if (_$WorkerCleanupStatusEnumMap[instance.cleanupStatus] case final value?)
-    'cleanupStatus': value,
-  if (_workerFailureCodeToJson(instance.failureCode) case final value?)
-    'failureCode': value,
-  if (instance.createdAt?.toIso8601String() case final value?)
-    'createdAt': value,
-  if (instance.startedAt?.toIso8601String() case final value?)
-    'startedAt': value,
-  if (instance.endedAt?.toIso8601String() case final value?) 'endedAt': value,
-  if (instance.reason case final value?) 'reason': value,
-  'version': instance.version,
-};
+Map<String, dynamic> _$WorkerExecutionToJson(WorkerExecution instance) =>
+    <String, dynamic>{
+      'workerExecutionId': instance.workerExecutionId,
+      'workItemId': instance.workItemId,
+      'repositoryPath': instance.repositoryPath,
+      'requestedStartingRevision': instance.requestedStartingRevision,
+      'requiredCapabilities': ?_workerCapabilitiesToJson(
+        instance.requiredCapabilities,
+      ),
+      'status': _$WorkerExecutionStatusEnumMap[instance.status]!,
+      'cleanupPolicy': _$WorkerCleanupPolicyEnumMap[instance.cleanupPolicy]!,
+      'workerId': ?instance.workerId,
+      'workspaceId': ?instance.workspaceId,
+      'agentExecutionId': ?instance.agentExecutionId,
+      'resultId': ?instance.resultId,
+      'endingRevision': ?instance.endingRevision,
+      'cleanupStatus': ?_$WorkerCleanupStatusEnumMap[instance.cleanupStatus],
+      'failureCode': ?_workerFailureCodeToJson(instance.failureCode),
+      'createdAt': ?instance.createdAt?.toIso8601String(),
+      'startedAt': ?instance.startedAt?.toIso8601String(),
+      'endedAt': ?instance.endedAt?.toIso8601String(),
+      'reason': ?instance.reason,
+      'version': instance.version,
+    };
 
 const _$WorkerExecutionStatusEnumMap = {
   WorkerExecutionStatus.acquiring: 'acquiring',

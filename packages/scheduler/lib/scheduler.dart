@@ -12,3 +12,13 @@ export 'src/scheduler.dart';
 export 'src/store/file_json_job_store.dart';
 export 'src/store/in_memory_job_store.dart';
 export 'src/store/job_store.dart';
+
+export 'src/scheduler.dart' show
+  designRevisionDefinition,
+  designReviewDefinition,
+  designRevisionDedupeKey,
+  designReviewDedupeKey,
+  designRevisionInstruction,
+  designReviewInstruction,
+  designRevisionRequest,
+  designReviewRequest;

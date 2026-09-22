@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/design_finding.schema.json",
+  "title": "DesignFinding",
+  "description": "A single finding from a design review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["findingId", "revisionId", "reviewExecutionId", "category", "severity", "dimension", "evidence", "requiredCorrection", "affectedSurface", "createdAt", "version"],
+  "properties": {
+    "findingId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this finding"
+    },
+    "revisionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Design revision this finding applies to"
+    },
+    "reviewExecutionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Review execution that produced this finding"
+    },
+    "category": {
+      "type": "string",
+      "enum": ["requirement_coverage", "design_system_compliance", "interaction_completeness", "responsive_coverage", "accessibility", "feasibility", "asset_integrity", "design_system_change_impact"],
+      "description": "Category of the finding"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["blocker", "major", "minor", "advisory"],
+      "description": "Severity of the finding"
+    },
+    "dimension": {
+      "type": "string",
+      "description": "Specific design dimension assessed (e.g., 'login-screen', 'navigation-bar')"
+    },
+    "evidence": {
+      "type": "string",
+      "description": "Evidence supporting the finding (screenshot reference, spec quote, etc.)"
+    },
+    "requiredCorrection": {
+      "type": "string",
+      "description": "Description of what must be corrected"
+    },
+    "affectedSurface": {
+      "type": "string",
+      "description": "Affected design surface (e.g., component name, screen, flow)"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when finding was created"
+    },
+    "resolvedByRevisionId": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Revision that resolved this finding (if applicable)"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Optimistic locking version for CAS updates"
+    }
+  }
+}

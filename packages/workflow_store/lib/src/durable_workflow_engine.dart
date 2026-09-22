@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:workflow_engine/workflow_engine.dart';
 
+import 'human_facing_description.dart';
 import 'store/workflow_store.dart';
 
 /// Thrown when the workflow policy rejects a transition. The rejected attempt
@@ -41,12 +42,19 @@ class DurableWorkflowEngine {
     actorType: ActorType.orchestrator,
   );
 
+  /// Creates a new work item at the authoritative application boundary.
+  ///
+  /// [description] is required and must be meaningful human-readable prose
+  /// (PL-6, effective 2026-09-15): every new `WorkItem` is eligible for a
+  /// human-facing control-plane surface. `String?` on the persisted type
+  /// remains for legacy records; stores stay permissive so pre-contract data
+  /// and tooling can round-trip untouched.
   Future<WorkItem> createWorkItem({
     required String productId,
     required WorkItemCategory category,
     required String title,
+    required String description,
     String? workItemId,
-    String? description,
     String? designContractId,
     String? agentSessionId,
     String? qaContractId,
@@ -56,6 +64,13 @@ class DurableWorkflowEngine {
     Map<String, dynamic>? metadata,
     DateTime? createdAt,
   }) async {
+    final violation = humanFacingDescriptionViolation(
+      description,
+      title: title,
+    );
+    if (violation != null) {
+      throw ArgumentError.value(description, 'description', violation);
+    }
     final now = createdAt ?? DateTime.now();
     final item = WorkItem(
       workItemId: workItemId ?? _newId('wi'),
