@@ -222,7 +222,6 @@ class DurableWorkflowEngine {
     String? recommendation,
     bool blocking = true,
     DateTime? requestedAt,
-    DateTime? expiration,
     Map<String, dynamic>? metadata,
     WorkflowActor actor = _defaultActor,
     Map<String, dynamic> extraContext = const {},
@@ -267,7 +266,6 @@ class DurableWorkflowEngine {
       recommendation: recommendation,
       blocking: blocking,
       requestedAt: now,
-      expiration: expiration,
       metadata: metadata,
       updatedAt: now,
     );
@@ -398,7 +396,6 @@ class DurableWorkflowEngine {
       recommendation: decision.recommendation,
       blocking: decision.blocking,
       requestedAt: decision.requestedAt,
-      expiration: decision.expiration,
       decider: effectiveDecider,
       choice: effectiveChoice,
       rationale: effectiveRationale,

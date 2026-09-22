@@ -27,7 +27,6 @@ class HumanDecision extends Equatable {
     this.recommendation,
     this.blocking = true,
     this.requestedAt,
-    this.expiration,
     this.decider,
     this.choice,
     this.rationale,
@@ -57,7 +56,6 @@ class HumanDecision extends Equatable {
   final String? recommendation;
   final bool? blocking;
   final DateTime? requestedAt;
-  final DateTime? expiration;
   final String? decider;
   @JsonKey(
     fromJson: _humanDecisionChoiceFromJson,
@@ -90,7 +88,6 @@ class HumanDecision extends Equatable {
     recommendation,
     blocking,
     requestedAt,
-    expiration,
     decider,
     choice,
     rationale,

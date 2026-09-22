@@ -363,7 +363,6 @@ class ProductRegistryEndpoints extends Endpoint {
       recommendation: decision.recommendation,
       blocking: decision.blocking ?? false,
       requestedAt: decision.requestedAt,
-      expiration: decision.expiration,
       choice: decision.choice?.wire,
       decider: decision.decider,
       rationale: decision.rationale,

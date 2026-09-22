@@ -26,9 +26,6 @@ HumanDecision _$HumanDecisionFromJson(Map<String, dynamic> json) =>
       requestedAt: json['requestedAt'] == null
           ? null
           : DateTime.parse(json['requestedAt'] as String),
-      expiration: json['expiration'] == null
-          ? null
-          : DateTime.parse(json['expiration'] as String),
       decider: json['decider'] as String?,
       choice: _humanDecisionChoiceFromJson(json['choice'] as String?),
       rationale: json['rationale'] as String?,
@@ -57,7 +54,6 @@ Map<String, dynamic> _$HumanDecisionToJson(HumanDecision instance) =>
       'recommendation': ?instance.recommendation,
       'blocking': ?instance.blocking,
       'requestedAt': ?instance.requestedAt?.toIso8601String(),
-      'expiration': ?instance.expiration?.toIso8601String(),
       'decider': ?instance.decider,
       'choice': ?_humanDecisionChoiceToJson(instance.choice),
       'rationale': ?instance.rationale,

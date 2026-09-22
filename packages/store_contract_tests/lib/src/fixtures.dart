@@ -67,7 +67,6 @@ HumanDecision buildHumanDecision({
     recommendation: 'approve',
     blocking: true,
     requestedAt: DateTime.utc(2026, 1, 1, 12),
-    expiration: DateTime.utc(2026, 1, 8, 12),
     decider: status == HumanDecisionStatus.resolved ? 'reviewer-2' : null,
     choice: status == HumanDecisionStatus.resolved
         ? HumanDecisionChoice.approve

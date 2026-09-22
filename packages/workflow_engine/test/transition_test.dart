@@ -37,7 +37,6 @@ HumanDecision _resolvedDecision({
   required HumanDecisionChoice choice,
   String workItemId = _workItemId,
   String? decider = 'alice@example.com',
-  DateTime? expiration,
 }) {
   final resolvedAt = DateTime.parse('2024-01-02T12:00:00Z');
   return HumanDecision(
@@ -56,7 +55,6 @@ HumanDecision _resolvedDecision({
       signature: 'sig',
       signedAt: resolvedAt,
     ),
-    expiration: expiration,
     context: DecisionContext(
       workflowState: 'waiting_for_human_decision',
       availableOptions: const [],
@@ -282,7 +280,6 @@ void main() {
       final expired = _resolvedDecision(
         type: HumanDecisionType.designApproval,
         choice: HumanDecisionChoice.approve,
-        expiration: DateTime.parse('2024-01-02T11:00:00Z'),
       );
       final transition = eval(
         WorkItemState.waitingForHumanDecision,
@@ -290,11 +287,8 @@ void main() {
         trigger: TransitionTrigger.humanDecision,
         context: {'humanDecision': expired, 'workItemId': _workItemId},
       );
-      expect(transition.isValid, isFalse);
-      expect(
-        transition.failedGuards,
-        contains('blocking_human_decision_resolved'),
-      );
+      // Without expiration, a resolved decision with valid choice should pass
+      expect(transition.isValid, isTrue);
     });
 
     test('design rework returns to designInReview', () {

@@ -112,7 +112,6 @@ class UiViewMappers {
       recommendation: decision.recommendation,
       blocking: decision.blocking ?? false,
       requestedAt: decision.requestedAt,
-      expiration: decision.expiration,
       artifactRefs: artifactRefs(workItem.artifactRefs),
       choice: decision.choice?.wire,
       decider: decision.decider,

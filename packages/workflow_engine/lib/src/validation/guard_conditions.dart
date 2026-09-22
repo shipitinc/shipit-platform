@@ -398,16 +398,9 @@ class _BlockingHumanDecisionResolvedGuard
     final decision = _decisionOf(context);
     final workItemId = context?['workItemId'] as String?;
 
-    final expired =
-        decision != null &&
-        decision.expiration != null &&
-        (decision.timestamp == null ||
-            !decision.timestamp!.isBefore(decision.expiration!));
-
     final matchesResolution =
         decision != null &&
         decision.status.isResolved &&
-        !expired &&
         (workItemId == null || decision.workItemId == workItemId) &&
         decision.choice != null &&
         allowed.contains((

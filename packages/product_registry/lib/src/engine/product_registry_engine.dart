@@ -661,7 +661,6 @@ class ProductRegistryEngine {
       recommendation: decision.recommendation,
       blocking: decision.blocking,
       requestedAt: decision.requestedAt,
-      expiration: decision.expiration,
       decider: effectiveDecider,
       choice: effectiveChoice,
       rationale: effectiveRationale,
@@ -1161,7 +1160,6 @@ class ProductRegistryEngine {
       recommendation: decision.recommendation,
       blocking: decision.blocking,
       requestedAt: decision.requestedAt,
-      expiration: decision.expiration,
       decider: alreadyResolved && decision.decider != null
           ? decision.decider!
           : decider,
@@ -1398,7 +1396,6 @@ class ProductRegistryEngine {
         recommendation: decision.recommendation,
         blocking: decision.blocking,
         requestedAt: decision.requestedAt,
-        expiration: decision.expiration,
         decider: decider,
         choice: choice,
         rationale: rationale,
