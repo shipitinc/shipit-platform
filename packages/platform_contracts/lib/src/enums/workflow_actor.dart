@@ -9,6 +9,7 @@ enum ActorType {
   qaExecutor('qa_executor'),
   releaseEngineer('release_engineer'),
   deploymentAuthority('deployment_authority'),
+  triageAgent('triage_agent'),
   system('system');
 
   const ActorType(this.wire);

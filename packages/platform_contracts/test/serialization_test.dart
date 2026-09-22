@@ -395,7 +395,7 @@ void main() {
 
   group('Enums', () {
     test('WorkerCapability has expected values', () {
-      expect(WorkerCapability.values.length, equals(13));
+      expect(WorkerCapability.values.length, equals(14));
       expect(WorkerCapability.linux.name, equals('linux'));
       expect(WorkerCapability.macos.name, equals('macos'));
       expect(WorkerCapability.docker.name, equals('docker'));
@@ -409,6 +409,7 @@ void main() {
       expect(WorkerCapability.penpotWrite.name, equals('penpotWrite'));
       expect(WorkerCapability.visualDesign.name, equals('visualDesign'));
       expect(WorkerCapability.designReview.name, equals('designReview'));
+      expect(WorkerCapability.git.name, equals('git'));
     });
 
     test('WorkItemState has expected values', () {

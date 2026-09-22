@@ -15,4 +15,5 @@ enum WorkerCapability {
   penpotWrite,
   visualDesign,
   designReview,
+  git,
 }

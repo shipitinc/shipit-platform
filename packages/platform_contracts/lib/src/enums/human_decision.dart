@@ -15,7 +15,9 @@ enum HumanDecisionType {
   destructiveMigrationApproval('destructive_migration_approval'),
   securityDecision('security_decision'),
   infrastructureDecision('infrastructure_decision'),
-  otherConsequential('other_consequential');
+  otherConsequential('other_consequential'),
+  defectClarification('defect_clarification'),
+  defectFixVerification('defect_fix_verification');
 
   const HumanDecisionType(this.wire);
 
@@ -33,7 +35,10 @@ enum HumanDecisionChoice {
   waive('waive'),
   rework('rework'),
   cancel('cancel'),
-  defer('defer');
+  defer('defer'),
+  fixed('fixed'),
+  stillBroken('still_broken'),
+  partiallyFixed('partially_fixed');
 
   const HumanDecisionChoice(this.wire);
 

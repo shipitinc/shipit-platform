@@ -9,7 +9,8 @@ enum AgentRole {
   deploymentAuthority('DEPLOYMENT_AUTHORITY'),
   correctionImplementer('CORRECTION_IMPLEMENTER'),
   focusedReviewer('FOCUSED_REVIEWER'),
-  integrator('INTEGRATOR');
+  integrator('INTEGRATOR'),
+  triageDefect('TRIAGE_DEFECT');
 
   const AgentRole(this.wire);
 

@@ -10,7 +10,15 @@ enum JobType {
   designRevision('design_revision'),
 
   /// Independently review a design revision produced by a different worker.
-  designReview('design_review');
+  designReview('design_review'),
+
+  /// Onboard a Product: clone repository at pinned revision, run baseline
+  /// build + test, write WorkspaceDescriptor. Runs independently of any
+  /// work item; scoped by productId via the onboarding record.
+  onboardProduct('onboard_product'),
+
+  /// AI triage of a human-reported defect.
+  triageDefect('triage_defect');
 
   const JobType(this.wire);
 

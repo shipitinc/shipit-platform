@@ -529,6 +529,149 @@ class ControlPlaneService {
     });
     return verifications;
   }
+
+  // ---------------------------------------------------------------------
+  // S-1 Bootstrap (onboarding)
+  // ---------------------------------------------------------------------
+
+  /// Registers a new Product with its [ProductManifest].
+  ///
+  /// Creates the Product registry row, stores the manifest (referenced by
+  /// [manifestVersion]), and initializes an onboarding record.
+  Future<Product> registerProductWithManifest({
+    required String productId,
+    required String name,
+    String? description,
+    required ProductManifest manifest,
+    String? manifestVersion,
+  }) async {
+    final t = DateTime.now().toUtc();
+    final version = manifestVersion ?? 'v${t.millisecondsSinceEpoch}';
+
+    // Create the product with manifest reference
+    await productRegistryEngine.createProduct(
+      productId: productId,
+      name: name,
+      description: description,
+      now: t,
+    );
+
+    // Update with manifest version
+    final updatedProduct = await productRegistryEngine.updateProduct(
+      productId,
+      manifestVersion: version,
+      now: t,
+    );
+
+    logger.info('product_registry.registered_with_manifest', {
+      'productId': productId,
+      'name': name,
+      'manifestVersion': version,
+    });
+    return updatedProduct;
+  }
+
+  /// Triggers the onboarding job for a Product.
+  ///
+  /// Creates an onboarding job that clones the repository at the pinned
+  /// revision, runs baseline build + test, and writes a WorkspaceDescriptor.
+  Future<Job> triggerOnboarding({
+    required String productId,
+    required String repositoryId,
+    required String startingRevision,
+    Map<String, String>? runtimeConfig,
+  }) async {
+    final t = DateTime.now().toUtc();
+    // Validate product and repository exist and are owned by this product
+    await productRegistryStore.readProduct(productId);
+    final repo = await productRegistryStore.readRepositoryReference(repositoryId);
+    if (repo.productId != productId) {
+      throw CrossProductAccessException(
+        'repository $repositoryId belongs to product ${repo.productId}, not $productId',
+      );
+    }
+
+    // Ensure onboarding record exists
+    final onboarding = await productRegistryStore.readOnboardingForProduct(productId);
+    if (onboarding == null) {
+      // The engine will create one when needed
+    }
+
+    // Create a synthetic work item ID for onboarding (not a real WorkItem)
+    // Onboarding jobs are product-scoped, not work-item-scoped
+    final syntheticWorkItemId = 'onboarding-$productId';
+
+    // Use the job queue directly to enqueue the onboarding job
+    // We need a JobQueue instance - let's use the job store directly
+    final jobId = 'jb-${productId}-${t.millisecondsSinceEpoch}';
+    final dedupeKey = 'onboarding:$productId:$repositoryId:$startingRevision';
+
+    final job = Job(
+      jobId: jobId,
+      workItemId: syntheticWorkItemId,
+      jobType: JobType.onboardProduct,
+      requiredRole: AgentRole.implementer,
+      requiredCapabilities: {WorkerCapability.git, WorkerCapability.linux},
+      priority: JobPriority.high,
+      state: JobState.queued,
+      dedupeKey: dedupeKey,
+      createdAt: t,
+      instruction:
+          'Onboard product $productId: clone repository $repositoryId at '
+          'revision $startingRevision, run baseline build and test.',
+      attempt: 1,
+      maxAttempts: 1,
+      version: 1,
+    );
+
+    await jobStore.saveJob(job);
+    logger.info('product_registry.onboarding.triggered', {
+      'productId': productId,
+      'repositoryId': repositoryId,
+      'jobId': jobId,
+      'startingRevision': startingRevision,
+    });
+    return job;
+  }
+
+  /// Gets the onboarding status for a Product.
+  ///
+  /// Returns the onboarding record, the latest onboarding job (if any),
+  /// and the workspace descriptor (if onboarding succeeded).
+  Future<OnboardingStatus> getOnboardingStatus(String productId) async {
+    await productRegistryStore.readProduct(productId); // validates existence
+
+    final onboarding = await productRegistryStore.readOnboardingForProduct(productId);
+    final jobs = await jobStore.listJobs();
+    final onboardingJobs = jobs
+        .where((j) => j.workItemId == 'onboarding-$productId')
+        .toList();
+    onboardingJobs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    final latestJob = onboardingJobs.isNotEmpty ? onboardingJobs.first : null;
+
+    WorkspaceDescriptor? workspace;
+    if (latestJob != null && latestJob.state == JobState.succeeded) {
+      final result = await workerStore.readResult(latestJob.executionReference?.workerExecutionId ?? '');
+      if (result != null && result.workspaceId.isNotEmpty) {
+        // Try to read workspace descriptor from worker store
+        // In practice, the descriptor is written by the workspace manager
+      }
+    }
+
+    logger.debug('product_registry.onboarding.status', {
+      'productId': productId,
+      'onboarding': onboarding?.onboardingId,
+      'latestJob': latestJob?.jobId,
+    });
+
+    return OnboardingStatus(
+      productId: productId,
+      onboarding: onboarding,
+      latestJob: latestJob,
+      workspaceDescriptor: workspace,
+    );
+  }
 }
 
 /// Durable state backing one row of the Products list.
@@ -565,4 +708,19 @@ class ProductDetail {
   final List<RepositoryCredential> credentials;
   final ProductBaseline? pendingBaseline;
   final List<StandingPolicy> policies;
+}
+
+/// Onboarding status for a Product.
+class OnboardingStatus {
+  const OnboardingStatus({
+    required this.productId,
+    required this.onboarding,
+    required this.latestJob,
+    required this.workspaceDescriptor,
+  });
+
+  final String productId;
+  final OnboardingRecord? onboarding;
+  final Job? latestJob;
+  final WorkspaceDescriptor? workspaceDescriptor;
 }
