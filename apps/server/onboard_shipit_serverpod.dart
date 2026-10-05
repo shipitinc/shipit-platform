@@ -46,11 +46,14 @@ Future<void> main() async {
     );
 
     stdout.writeln('Starting Serverpod...');
-    // Don't await pod.start() - it waits for server shutdown, not startup.
+    // Serverpod.start() returns once startup completes - it does not wait for
+    // server shutdown, so awaiting it would not hang; `bin/test_pod.dart` awaits
+    // it and still reaches `shutdown()`. Startup is deliberately left
+    // un-awaited so the onboarding below runs concurrently with it.
     // The database is initialized synchronously during start().
-    // `unawaited` is a no-op marker that records the deliberate fire-and-forget
-    // intent in code; awaiting here would block until shutdown and the
-    // onboarding below would never run.
+    // `unawaited` is a no-op wrapper (`void unawaited(Future<void>? f) {}`) that
+    // discards the future so `unawaited_futures` stays satisfied and the
+    // deliberate fire-and-forget intent is explicit in code.
     unawaited(pod.start());
     stdout.writeln('Serverpod starting (non-blocking)...');
     // Best-effort flushes, deliberately not awaited: `unawaited` keeps them

@@ -954,14 +954,17 @@ class ControlPlaneRepository {
     // the server-side write matters, so the call is awaited without capturing
     // its result.
     //
-    // NOTE (lint cleanup, behaviour unchanged): the discarded ProductDetailView
-    // carries `pendingBaselineDecisionId`, the id of the fresh approval gate
-    // the engine opens after it cancels the superseded one. This method instead
-    // synthesises a DecisionView with a made-up
-    // `baseline-claim:<microsecondsSinceEpoch>` id that exists nowhere
-    // server-side, so the caller cannot act on the real decision. Surfacing
-    // `pendingBaselineDecisionId` would change the returned payload and is a
-    // product decision, not a lint fix -- reported, not done here.
+    // NOTE (lint cleanup, behaviour unchanged): this method fabricates a
+    // DecisionView. Its id `baseline-claim:<microsecondsSinceEpoch>` exists
+    // nowhere server-side, and `status`/`options` are hardcoded ('pending', [])
+    // rather than read from a real decision, so the caller cannot resolve it.
+    // The discarded ProductDetailView is no substitute: amending a baseline
+    // only cancels unresolved approval decisions, it never opens a fresh gate,
+    // and `pendingBaselineDecisionId` is derived from unresolved decisions only,
+    // so it is normally null here. The caller must request approval again
+    // against the new revision. Returning a real decision would change the
+    // returned payload and is a product decision, not a lint fix -- reported,
+    // not done here.
     await _client.productRegistryEndpoints.addHumanBaselineClaim(
       productId: productId,
       baselineId: baselineId,
