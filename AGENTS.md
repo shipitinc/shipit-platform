@@ -62,6 +62,37 @@ at runtime and is not generated content.
 - Orchestration conventions (see `aef-orchestrator` skill § 3 — override the defaults for every
   convention your project does not want defaulted): TBD
 
+### Test resource hygiene
+
+Human-mandated rule: **every test database, container, volume and compose project created for
+testing is removed when the run finishes — on success, on failure and on interrupt alike.** It is
+enforced by tooling, not by discipline.
+
+- Any script, `Makefile` target or workflow step that creates test infrastructure must remove it
+  before returning. In shell, that means a `trap ... EXIT INT TERM`; in Docker Compose, `down -v`
+  (never `stop`) under a named project so the removal cannot hit someone else's stack.
+- Cleanup must be unconditional and must not change the verdict the run already reached — but a
+  teardown that FAILS is the leak this rule exists to prevent, so never discard its output. Print
+  what `down` said on failure and, where possible, the exact command to finish the job. Silencing a
+  teardown with `> /dev/null 2>&1 || true` turns a leaked container into a silent pass; that mistake
+  shipped here once already.
+- A cleanup `trap` runs after the recipe has `cd`-ed, so it must resolve paths absolutely (from the
+  Makefile's own location), never relative to the current directory.
+- A workflow that creates no compose project has no teardown step to write. The `Integration` job's
+  database is its `postgres` service container, which the Actions runner removes itself; the previous
+  `Teardown test resources` step there silenced its exit code with `|| true` while `-p shipit_test`
+  named a stack a developer also uses, so it was removed rather than repaired.
+- A long-lived developer database is not a test resource, but a test run must never target one that
+  someone else owns. Anything a run creates is its own; point it at a throwaway instance.
+- The current sites: `make test-integration` (disposable Postgres, self-cleaning), and
+  `make test-env-test` and `make e2e-test` (both trap a `down -v`). Each trap reports CLEANUP FAILED
+  only when a labelled container, volume or network for its project actually exists, so a compose file
+  that cannot be parsed never produces a false leak report.
+- A mandatory Compose variable (`${VAR:?...}`) in a shared compose file breaks every command that
+  reads that file, not just the one service that needs it: Compose interpolates the whole file before
+  filtering profiles, and it interpolates even for read-only commands like `ps`. Keep such a value
+  optional at the file level and fail closed at the call site that needs it.
+
 ## Framework provenance
 - Framework revision: 693cfbc29e75 — the **authoritative, immutable** provenance identifier.
 - Framework version: TBD — human-readable metadata only (revision controls provenance if they differ).

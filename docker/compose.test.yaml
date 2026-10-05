@@ -15,6 +15,54 @@ services:
     ports:
       - "5433:5432"
 
+  # Disposable database for the apps/server integration suite.
+  #
+  # Behind the `integration` profile so it is never started by `test-env-up`,
+  # which runs the full E2E stack above. `make test-integration` brings this up
+  # under its own compose project with a `down -v` trap, so nothing survives the
+  # run.
+  #
+  # PORT is overridable because the committed default must not be a collision
+  # waiting to happen: this suite needs a published port, and a developer who
+  # already has something on 9199 sets SHIPIT_TEST_DB_PORT rather than getting a
+  # confusing "address already in use" from the suite.
+  #
+  # tmpfs, not a volume: the data has no life beyond the run, so there is
+  # nothing for `down -v` to leak and nothing for a crashed run to leave behind.
+  #
+  # THE PASSWORD IS NOT INTERPOLATED AS REQUIRED, AND THAT IS DELIBERATE. Do not
+  # "harden" it to `${SERVERPOD_DATABASE_PASSWORD:?...}`: Compose interpolates
+  # the WHOLE file before it applies profile filtering, so a mandatory variable
+  # on this one service makes every command that reads this file fail without
+  # the credential — `test-env-up`, `test-env-down`, `test-env-logs`,
+  # `test-env-ps`, `make ps`, `make clean` — even though none of them start this
+  # service. That regression shipped here once already.
+  #
+  # Fails closed anyway, twice: `make test-integration` checks the variable
+  # BEFORE it runs `compose up`, so the run stops with an actionable message
+  # instead of starting a database Serverpod cannot authenticate against; and if
+  # it were somehow reached empty, the postgres image refuses to initialise a
+  # data directory with no superuser password, so `up --wait` fails.
+  #
+  # The value must equal test.database in apps/server/config/passwords.yaml,
+  # which is what Serverpod connects with.
+  postgres_integration:
+    profiles: [integration]
+    image: postgres:16
+    environment:
+      POSTGRES_DB: control_plane_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "${SERVERPOD_DATABASE_PASSWORD:-}"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d control_plane_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "${SHIPIT_TEST_DB_PORT:-9199}:5432"
+
   triage-seed:
     image: alpine/git:latest
     entrypoint: ["/bin/sh", "-c"]

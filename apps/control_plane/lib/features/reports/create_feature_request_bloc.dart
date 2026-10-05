@@ -11,12 +11,8 @@ import 'create_feature_request_state.dart';
 /// products the request can be filed against, and submits.
 class CreateFeatureRequestBloc
     extends Bloc<CreateFeatureRequestEvent, CreateFeatureRequestState> {
-  CreateFeatureRequestBloc({
-    required ControlPlaneRepository repository,
-    required String reporter,
-  }) : _repository = repository,
-       _reporter = reporter,
-       super(const CreateFeatureRequestState()) {
+  CreateFeatureRequestBloc({required this._repository, required this._reporter})
+    : super(const CreateFeatureRequestState()) {
     on<CreateFeatureRequestTitleChanged>(_onTitleChanged);
     on<CreateFeatureRequestDescriptionChanged>(_onDescriptionChanged);
     on<CreateFeatureRequestProductChanged>(_onProductChanged);

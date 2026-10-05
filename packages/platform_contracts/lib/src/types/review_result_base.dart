@@ -12,5 +12,7 @@ enum ReviewVerdict {
     orElse: () => throw FormatException('Unknown review verdict: $value'),
   );
 
-  bool get isPassing => this == ReviewVerdict.approved || this == ReviewVerdict.approvedWithMinorFindings;
+  bool get isPassing =>
+      this == ReviewVerdict.approved ||
+      this == ReviewVerdict.approvedWithMinorFindings;
 }

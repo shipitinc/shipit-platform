@@ -558,7 +558,9 @@ class ExecutionCoordinator {
     };
   }
 
-  (AgentSessionStatus, AgentEventType, String) _failureDetails(AgentEvent terminalEvent) {
+  (AgentSessionStatus, AgentEventType, String) _failureDetails(
+    AgentEvent terminalEvent,
+  ) {
     return switch (terminalEvent) {
       SessionCancelled(:final reason) => (
         AgentSessionStatus.cancelled,

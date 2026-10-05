@@ -43,18 +43,19 @@ class EngineeringReviewResult extends Equatable {
 
   @override
   List<Object?> get props => [
-        reviewExecutionId,
-        workItemId,
-        verdict,
-        findings,
-        assessedDimensions,
-        reviewScopeJson,
-        createdAt,
-        version,
-        reviewerRole,
-      ];
+    reviewExecutionId,
+    workItemId,
+    verdict,
+    findings,
+    assessedDimensions,
+    reviewScopeJson,
+    createdAt,
+    version,
+    reviewerRole,
+  ];
 
-  String get findingsJson => _encodeJson(findings.map((f) => f.toJson()).toList());
+  String get findingsJson =>
+      _encodeJson(findings.map((f) => f.toJson()).toList());
   String get assessedDimensionsJson => _encodeJson(assessedDimensions);
 
   static String _encodeJson(Object? value) {
@@ -63,7 +64,8 @@ class EngineeringReviewResult extends Equatable {
   }
 }
 
-ReviewVerdict _reviewVerdictFromJson(String value) => ReviewVerdict.fromWire(value);
+ReviewVerdict _reviewVerdictFromJson(String value) =>
+    ReviewVerdict.fromWire(value);
 String _reviewVerdictToJson(ReviewVerdict value) => value.wire;
 
 AgentRole _agentRoleFromJson(String value) => AgentRole.fromWire(value);

@@ -51,7 +51,9 @@ class MaturityClassifier {
     final authorityEvidence = evidencePaths.any(_isAuthorityEvidence);
     final planningAuthority = evidencePaths.any(_isPlanningAuthority);
     final currentEvidence = evidencePaths.any(_isCurrentStateEvidence);
-    final structuralSourceEvidence = _hasStructuralSourceEvidence(evidencePaths);
+    final structuralSourceEvidence = _hasStructuralSourceEvidence(
+      evidencePaths,
+    );
 
     // Assumed provenance is never evidence — an assumption records an unknown.
     if (provenance == Provenance.assumed) return BaselineMaturity.unknown;
@@ -63,7 +65,9 @@ class MaturityClassifier {
 
     // Absence must be explicitly claimed; NOT_IMPLEMENTED never implies planned.
     if (assertsAbsence && !assertsCurrentState) {
-      if (currentEvidence || structuralSourceEvidence || provenance == Provenance.observed) {
+      if (currentEvidence ||
+          structuralSourceEvidence ||
+          provenance == Provenance.observed) {
         return BaselineMaturity.notImplemented;
       }
       if (authorityEvidence && assertsDeferred) {
@@ -102,7 +106,9 @@ class MaturityClassifier {
 
     // Current-state existence backed by concrete current-state evidence.
     if (assertsCurrentState) {
-      if (currentEvidence || structuralSourceEvidence || provenance == Provenance.humanProvided) {
+      if (currentEvidence ||
+          structuralSourceEvidence ||
+          provenance == Provenance.humanProvided) {
         return BaselineMaturity.implemented;
       }
       // A claim about current state with no concrete evidence is unproven.
@@ -116,7 +122,7 @@ class MaturityClassifier {
   // Claim semantics
   // ---------------------------------------------------------------------
 
-bool _assertsCurrentState(String c) {
+  bool _assertsCurrentState(String c) {
     const markers = <String>[
       ' is implemented',
       ' is present',
@@ -352,7 +358,9 @@ bool _assertsCurrentState(String c) {
     };
     for (final path in evidencePaths) {
       final p = path.toLowerCase();
-      if (structuralExtensions.any((ext) => p.endsWith(ext) || p.contains('/$ext'))) {
+      if (structuralExtensions.any(
+        (ext) => p.endsWith(ext) || p.contains('/$ext'),
+      )) {
         return true;
       }
       // Also match paths under packages/ that are pubspec.yaml

@@ -13,8 +13,6 @@ import 'package:platform_contracts/platform_contracts.dart'
         DesignContractSpec,
         QAContractSpec,
         DeploymentContractSpec,
-        QAGateSpec,
-        ApprovalGateSpec,
         EvidenceKind,
         RepositoryKind,
         RepositoryProvider;
@@ -454,7 +452,9 @@ class ProductRegistryEndpoints extends Endpoint {
     final service = ControlPlaneService(session);
     try {
       ProductManifest manifest;
-      if (manifestJson == null || manifestJson.trim().isEmpty || manifestJson.trim() == '{}') {
+      if (manifestJson == null ||
+          manifestJson.trim().isEmpty ||
+          manifestJson.trim() == '{}') {
         // Create a minimal default manifest for product registration
         final now = DateTime.now().toUtc();
         manifest = ProductManifest(
@@ -481,7 +481,9 @@ class ProductRegistryEndpoints extends Endpoint {
           updatedAt: now,
         );
       } else {
-        manifest = ProductManifest.fromJson(jsonDecode(manifestJson) as Map<String, dynamic>);
+        manifest = ProductManifest.fromJson(
+          jsonDecode(manifestJson) as Map<String, dynamic>,
+        );
       }
       final product = await service.registerProductWithManifest(
         productId: productId,
@@ -569,7 +571,8 @@ class ProductRegistryEndpoints extends Endpoint {
     required String claim,
     required String author,
     List<String>? evidenceRefs,
-    String? maturity, // BaselineMaturity.wire (e.g. 'implemented', 'policy', 'not_implemented')
+    String?
+    maturity, // BaselineMaturity.wire (e.g. 'implemented', 'policy', 'not_implemented')
   }) async {
     final service = ControlPlaneService(session);
     try {

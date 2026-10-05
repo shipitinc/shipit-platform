@@ -5,9 +5,8 @@ import 'direction_inbox_event.dart';
 
 class DirectionInboxBloc
     extends Bloc<DirectionInboxEvent, DirectionInboxState> {
-  DirectionInboxBloc({required ControlPlaneRepository repository})
-    : _repository = repository,
-      super(const DirectionInboxState()) {
+  DirectionInboxBloc({required this._repository})
+    : super(const DirectionInboxState()) {
     on<DirectionInboxLoaded>(_onLoaded);
     on<DirectionInboxCreateRequested>(_onCreateRequested);
     on<DirectionInboxActionRequested>(_onActionRequested);
@@ -62,7 +61,7 @@ class DirectionInboxBloc
         assignedTo: event.assignedTo,
       );
       emit(state.copyWith(isCreating: false, clearError: true));
-      add(DirectionInboxRefreshRequested());
+      add(const DirectionInboxRefreshRequested());
     } catch (e) {
       emit(state.copyWith(isCreating: false, errorMessage: e.toString()));
     }
@@ -115,7 +114,7 @@ class DirectionInboxBloc
           break;
       }
       emit(state.copyWith(clearProcessing: true, clearError: true));
-      add(DirectionInboxRefreshRequested());
+      add(const DirectionInboxRefreshRequested());
     } catch (e) {
       emit(state.copyWith(clearProcessing: true, errorMessage: e.toString()));
     }

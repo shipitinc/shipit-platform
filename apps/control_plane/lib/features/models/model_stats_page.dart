@@ -6,8 +6,7 @@ import '../../core/theme.dart';
 import '../../data/client_provider.dart';
 import '../../data/control_plane_repository.dart';
 import '../../shared/design_primitives.dart';
-import '../../shared/mobile_chrome.dart'
-    show isMobile;
+import '../../shared/mobile_chrome.dart' show isMobile;
 import '../../shared/state_views.dart';
 import 'model_stats_bloc.dart';
 
@@ -50,7 +49,10 @@ class _ModelStatsViewState extends State<_ModelStatsView> {
     return BlocBuilder<ModelStatsBloc, ModelStatsState>(
       builder: (context, state) {
         if (state.isLoading && state.stats == null) {
-          return const DesignLoadingSkeleton(title: 'Model Stats', showColumns: false);
+          return const DesignLoadingSkeleton(
+            title: 'Model Stats',
+            showColumns: false,
+          );
         }
         if (state.errorMessage != null && state.stats == null) {
           return DesignErrorState(
@@ -119,7 +121,8 @@ class _ModelStatsViewState extends State<_ModelStatsView> {
                 _ChartsSection(stats: stats, groupBy: _groupBy),
                 const SizedBox(height: 46),
                 TechnicalDetails(
-                  note: 'Stats are aggregated from durable execution records. Costs in USD.',
+                  note:
+                      'Stats are aggregated from durable execution records. Costs in USD.',
                   lines: [
                     'range=${_timeRange.label}${_customRange != null ? ' (${_customRange!.start.toIso8601String()}..${_customRange!.end.toIso8601String()})' : ''}',
                     'groupBy=${_groupBy.name}',
@@ -161,11 +164,9 @@ class _ModelStatsViewState extends State<_ModelStatsView> {
         to = _customRange?.end;
     }
 
-    context.read<ModelStatsBloc>().add(ModelStatsLoaded(
-          from: from,
-          to: to,
-          groupBy: _groupBy.apiValue,
-        ));
+    context.read<ModelStatsBloc>().add(
+      ModelStatsLoaded(from: from, to: to, groupBy: _groupBy.apiValue),
+    );
   }
 
   String _formatTokens(int tokens) {
@@ -195,11 +196,11 @@ enum _GroupBy {
   final String label;
 
   String get apiValue => switch (this) {
-        _GroupBy.modelId => 'modelId',
-        _GroupBy.provider => 'provider',
-        _GroupBy.taskType => 'taskType',
-        _GroupBy.role => 'role',
-      };
+    _GroupBy.modelId => 'modelId',
+    _GroupBy.provider => 'provider',
+    _GroupBy.taskType => 'taskType',
+    _GroupBy.role => 'role',
+  };
 }
 
 class _ControlBar extends StatelessWidget {
@@ -229,7 +230,12 @@ class _ControlBar extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text('Controls', style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary)),
+              Text(
+                'Controls',
+                style: ShipItType.sectionTitle.copyWith(
+                  color: palette.inkPrimary,
+                ),
+              ),
               const Spacer(),
               if (timeRange == _TimeRange.custom && customRange != null)
                 TextButton.icon(
@@ -288,10 +294,7 @@ class _ControlBar extends StatelessWidget {
 }
 
 class _DateRangePicker extends StatelessWidget {
-  const _DateRangePicker({
-    required this.value,
-    required this.onChanged,
-  });
+  const _DateRangePicker({required this.value, required this.onChanged});
 
   final DateTimeRange? value;
   final ValueChanged<DateTimeRange?> onChanged;
@@ -311,7 +314,10 @@ class _DateRangePicker extends StatelessWidget {
                 borderRadius: BorderRadius.circular(ShipItMetrics.radius),
                 borderSide: BorderSide(color: palette.cardBorder),
               ),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 12,
+              ),
             ),
             child: Text(
               value?.start != null
@@ -332,7 +338,10 @@ class _DateRangePicker extends StatelessWidget {
                 borderRadius: BorderRadius.circular(ShipItMetrics.radius),
                 borderSide: BorderSide(color: palette.cardBorder),
               ),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 12,
+              ),
             ),
             child: Text(
               value?.end != null
@@ -349,7 +358,9 @@ class _DateRangePicker extends StatelessWidget {
   Future<void> _pickDate(BuildContext context, bool isStart) async {
     final now = DateTime.now();
     final initialDate = isStart ? value?.start : value?.end;
-    final firstDate = isStart ? DateTime(2020) : (value?.start ?? DateTime(2020));
+    final firstDate = isStart
+        ? DateTime(2020)
+        : (value?.start ?? DateTime(2020));
     final lastDate = isStart ? (value?.end ?? now) : now;
 
     final picked = await showDatePicker(
@@ -378,13 +389,39 @@ class _SummaryCards extends StatelessWidget {
     final palette = context.palette;
     return Row(
       children: [
-        Expanded(child: _SummaryCard(label: 'Total Cost', value: '\$${stats.totalCostUsd.toStringAsFixed(2)}', color: palette.accent)),
+        Expanded(
+          child: _SummaryCard(
+            label: 'Total Cost',
+            value: '\$${stats.totalCostUsd.toStringAsFixed(2)}',
+            color: palette.accent,
+          ),
+        ),
         const SizedBox(width: 16),
-        Expanded(child: _SummaryCard(label: 'Total Tokens', value: _formatTokens(stats.totalTokens), color: palette.positive)),
+        Expanded(
+          child: _SummaryCard(
+            label: 'Total Tokens',
+            value: _formatTokens(stats.totalTokens),
+            color: palette.positive,
+          ),
+        ),
         const SizedBox(width: 16),
-        Expanded(child: _SummaryCard(label: 'Executions', value: stats.totalExecutions.toString(), color: palette.inkSecondary)),
+        Expanded(
+          child: _SummaryCard(
+            label: 'Executions',
+            value: stats.totalExecutions.toString(),
+            color: palette.inkSecondary,
+          ),
+        ),
         const SizedBox(width: 16),
-        Expanded(child: _SummaryCard(label: 'Success Rate', value: '${(stats.successRate * 100).toStringAsFixed(1)}%', color: stats.successRate >= 0.95 ? palette.positive : palette.attention)),
+        Expanded(
+          child: _SummaryCard(
+            label: 'Success Rate',
+            value: '${(stats.successRate * 100).toStringAsFixed(1)}%',
+            color: stats.successRate >= 0.95
+                ? palette.positive
+                : palette.attention,
+          ),
+        ),
       ],
     );
   }
@@ -397,7 +434,11 @@ class _SummaryCards extends StatelessWidget {
 }
 
 class _SummaryCard extends StatelessWidget {
-  const _SummaryCard({required this.label, required this.value, required this.color});
+  const _SummaryCard({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
 
   final String label;
   final String value;
@@ -448,7 +489,10 @@ class _ChartsSection extends StatelessWidget {
             Expanded(
               child: _ChartCard(
                 title: 'Success Rate by Model',
-                child: _BarChart(data: stats.successRateByModel, formatValue: (v) => '${(v * 100).toStringAsFixed(1)}%'),
+                child: _BarChart(
+                  data: stats.successRateByModel,
+                  formatValue: (v) => '${(v * 100).toStringAsFixed(1)}%',
+                ),
               ),
             ),
           ],
@@ -466,7 +510,10 @@ class _ChartsSection extends StatelessWidget {
             Expanded(
               child: _ChartCard(
                 title: 'Cost by Task Type',
-                child: _BarChart(data: stats.costByTaskType, formatValue: (v) => '\$${v.toStringAsFixed(2)}'),
+                child: _BarChart(
+                  data: stats.costByTaskType,
+                  formatValue: (v) => '\$${v.toStringAsFixed(2)}',
+                ),
               ),
             ),
           ],
@@ -490,7 +537,10 @@ class _ChartCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary)),
+          Text(
+            title,
+            style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary),
+          ),
           const SizedBox(height: 16),
           SizedBox(height: 300, child: child),
         ],
@@ -507,7 +557,14 @@ class _CostOverTimeChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (points.isEmpty) {
-      return Center(child: Text('No data', style: ShipItType.bodySmall.copyWith(color: context.palette.inkTertiary)));
+      return Center(
+        child: Text(
+          'No data',
+          style: ShipItType.bodySmall.copyWith(
+            color: context.palette.inkTertiary,
+          ),
+        ),
+      );
     }
 
     final palette = context.palette;
@@ -530,10 +587,7 @@ class _CostOverTimeChart extends StatelessWidget {
 }
 
 class _BarChart extends StatelessWidget {
-  const _BarChart({
-    required this.data,
-    this.formatValue,
-  });
+  const _BarChart({required this.data, this.formatValue});
 
   final List<GroupedStatResponse> data;
   final String Function(double)? formatValue;
@@ -541,7 +595,14 @@ class _BarChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (data.isEmpty) {
-      return Center(child: Text('No data', style: ShipItType.bodySmall.copyWith(color: context.palette.inkTertiary)));
+      return Center(
+        child: Text(
+          'No data',
+          style: ShipItType.bodySmall.copyWith(
+            color: context.palette.inkTertiary,
+          ),
+        ),
+      );
     }
 
     final palette = context.palette;
@@ -569,7 +630,14 @@ class _EscalationChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (data.isEmpty) {
-      return Center(child: Text('No data', style: ShipItType.bodySmall.copyWith(color: context.palette.inkTertiary)));
+      return Center(
+        child: Text(
+          'No data',
+          style: ShipItType.bodySmall.copyWith(
+            color: context.palette.inkTertiary,
+          ),
+        ),
+      );
     }
 
     final palette = context.palette;
@@ -577,7 +645,15 @@ class _EscalationChart extends StatelessWidget {
 
     return CustomPaint(
       painter: _BarChartPainter(
-        data: data.map((d) => GroupedStatResponse(key: 'Esc ${d.escalationIndex}', value: d.count.toDouble(), count: d.count)).toList(),
+        data: data
+            .map(
+              (d) => GroupedStatResponse(
+                key: 'Esc ${d.escalationIndex}',
+                value: d.count.toDouble(),
+                count: d.count,
+              ),
+            )
+            .toList(),
         maxValue: maxValue.toDouble(),
         color: palette.attention,
         ruleColor: palette.rule,
@@ -612,12 +688,13 @@ class _LineChartPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (points.isEmpty) return;
 
-    final padding = 40.0;
+    const padding = 40.0;
     final chartWidth = size.width - 2 * padding;
     final chartHeight = size.height - 2 * padding;
 
     final xScale = chartWidth / (points.length - 1).clamp(1, double.infinity);
-    final yScale = chartHeight / (maxValue - minValue).clamp(0.001, double.infinity);
+    final yScale =
+        chartHeight / (maxValue - minValue).clamp(0.001, double.infinity);
 
     final path = Path();
     for (var i = 0; i < points.length; i++) {
@@ -634,8 +711,16 @@ class _LineChartPainter extends CustomPainter {
     final axisPaint = Paint()
       ..color = ruleColor
       ..strokeWidth = 1;
-    canvas.drawLine(Offset(padding, padding), Offset(padding, size.height - padding), axisPaint);
-    canvas.drawLine(Offset(padding, size.height - padding), Offset(size.width - padding, size.height - padding), axisPaint);
+    canvas.drawLine(
+      const Offset(padding, padding),
+      Offset(padding, size.height - padding),
+      axisPaint,
+    );
+    canvas.drawLine(
+      Offset(padding, size.height - padding),
+      Offset(size.width - padding, size.height - padding),
+      axisPaint,
+    );
 
     // Draw line
     final linePaint = Paint()
@@ -653,11 +738,29 @@ class _LineChartPainter extends CustomPainter {
     }
 
     // Draw labels
-    final textStyle = ShipItType.monoMeta.copyWith(color: labelColor, fontSize: 10);
-    final maxText = TextPainter(text: TextSpan(text: formatValue(maxValue), style: textStyle), textDirection: TextDirection.ltr)..layout();
-    maxText.paint(canvas, Offset(padding - maxText.width - 8, padding - maxText.height / 2));
-    final minText = TextPainter(text: TextSpan(text: formatValue(minValue), style: textStyle), textDirection: TextDirection.ltr)..layout();
-    minText.paint(canvas, Offset(padding - minText.width - 8, size.height - padding - minText.height / 2));
+    final textStyle = ShipItType.monoMeta.copyWith(
+      color: labelColor,
+      fontSize: 10,
+    );
+    final maxText = TextPainter(
+      text: TextSpan(text: formatValue(maxValue), style: textStyle),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    maxText.paint(
+      canvas,
+      Offset(padding - maxText.width - 8, padding - maxText.height / 2),
+    );
+    final minText = TextPainter(
+      text: TextSpan(text: formatValue(minValue), style: textStyle),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    minText.paint(
+      canvas,
+      Offset(
+        padding - minText.width - 8,
+        size.height - padding - minText.height / 2,
+      ),
+    );
   }
 
   @override
@@ -685,7 +788,7 @@ class _BarChartPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (data.isEmpty) return;
 
-    final padding = 40.0;
+    const padding = 40.0;
     final chartWidth = size.width - 2 * padding;
     final chartHeight = size.height - 2 * padding;
     final barWidth = chartWidth / data.length * 0.6;
@@ -695,12 +798,23 @@ class _BarChartPainter extends CustomPainter {
     final axisPaint = Paint()
       ..color = ruleColor
       ..strokeWidth = 1;
-    canvas.drawLine(Offset(padding, padding), Offset(padding, size.height - padding), axisPaint);
-    canvas.drawLine(Offset(padding, size.height - padding), Offset(size.width - padding, size.height - padding), axisPaint);
+    canvas.drawLine(
+      const Offset(padding, padding),
+      Offset(padding, size.height - padding),
+      axisPaint,
+    );
+    canvas.drawLine(
+      Offset(padding, size.height - padding),
+      Offset(size.width - padding, size.height - padding),
+      axisPaint,
+    );
 
     // Draw bars
     final barPaint = Paint()..color = color;
-    final textStyle = ShipItType.monoMeta.copyWith(color: labelColor, fontSize: 10);
+    final textStyle = ShipItType.monoMeta.copyWith(
+      color: labelColor,
+      fontSize: 10,
+    );
 
     for (var i = 0; i < data.length; i++) {
       final x = padding + i * (barWidth + spacing) + spacing / 2;
@@ -714,12 +828,27 @@ class _BarChartPainter extends CustomPainter {
       canvas.drawRRect(rect, barPaint);
 
       // Draw value on top
-      final valueText = TextPainter(text: TextSpan(text: formatValue(data[i].value), style: textStyle), textDirection: TextDirection.ltr)..layout();
-      valueText.paint(canvas, Offset(x + barWidth / 2 - valueText.width / 2, y - valueText.height - 4));
+      final valueText = TextPainter(
+        text: TextSpan(text: formatValue(data[i].value), style: textStyle),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      valueText.paint(
+        canvas,
+        Offset(
+          x + barWidth / 2 - valueText.width / 2,
+          y - valueText.height - 4,
+        ),
+      );
 
       // Draw key below
-      final keyText = TextPainter(text: TextSpan(text: data[i].key, style: textStyle), textDirection: TextDirection.ltr)..layout();
-      keyText.paint(canvas, Offset(x + barWidth / 2 - keyText.width / 2, size.height - padding + 4));
+      final keyText = TextPainter(
+        text: TextSpan(text: data[i].key, style: textStyle),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      keyText.paint(
+        canvas,
+        Offset(x + barWidth / 2 - keyText.width / 2, size.height - padding + 4),
+      );
     }
   }
 
@@ -762,9 +891,15 @@ class _MobileModelStats extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Model Stats', style: ShipItType.pageTitle.copyWith(color: palette.inkPrimary)),
+            Text(
+              'Model Stats',
+              style: ShipItType.pageTitle.copyWith(color: palette.inkPrimary),
+            ),
             const SizedBox(height: 6),
-            Text(_buildSubtitle(stats), style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary)),
+            Text(
+              _buildSubtitle(stats),
+              style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary),
+            ),
             const SizedBox(height: 18),
             const ContentRule(strong: true),
             _SummaryCards(stats: stats),
@@ -828,9 +963,18 @@ class _MobileControlBar extends StatelessWidget {
       children: [
         Row(
           children: [
-            Text('Controls', style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary)),
+            Text(
+              'Controls',
+              style: ShipItType.sectionTitle.copyWith(
+                color: palette.inkPrimary,
+              ),
+            ),
             const Spacer(),
-            IconButton(onPressed: onRefresh, icon: const Icon(Icons.refresh), tooltip: 'Refresh'),
+            IconButton(
+              onPressed: onRefresh,
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Refresh',
+            ),
           ],
         ),
         const SizedBox(height: 12),
@@ -859,7 +1003,9 @@ class _MobileControlBar extends StatelessWidget {
         const SizedBox(height: 8),
         DropdownMenu<_GroupBy>(
           initialSelection: groupBy,
-          dropdownMenuEntries: _GroupBy.values.map((g) => DropdownMenuEntry(value: g, label: g.label)).toList(),
+          dropdownMenuEntries: _GroupBy.values
+              .map((g) => DropdownMenuEntry(value: g, label: g.label))
+              .toList(),
           onSelected: (g) => onGroupByChanged(g!),
         ),
       ],
@@ -878,15 +1024,36 @@ class _MobileChartsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _MobileChartCard(title: 'Cost Over Time', child: _CostOverTimeChart(points: stats.costOverTime)),
+        _MobileChartCard(
+          title: 'Cost Over Time',
+          child: _CostOverTimeChart(points: stats.costOverTime),
+        ),
         const SizedBox(height: 16),
-        _MobileChartCard(title: 'Tokens by Provider', child: _BarChart(data: stats.tokensByProvider)),
+        _MobileChartCard(
+          title: 'Tokens by Provider',
+          child: _BarChart(data: stats.tokensByProvider),
+        ),
         const SizedBox(height: 16),
-        _MobileChartCard(title: 'Success Rate by Model', child: _BarChart(data: stats.successRateByModel, formatValue: (v) => '${(v * 100).toStringAsFixed(1)}%')),
+        _MobileChartCard(
+          title: 'Success Rate by Model',
+          child: _BarChart(
+            data: stats.successRateByModel,
+            formatValue: (v) => '${(v * 100).toStringAsFixed(1)}%',
+          ),
+        ),
         const SizedBox(height: 16),
-        _MobileChartCard(title: 'Escalation Frequency', child: _EscalationChart(data: stats.escalationFrequency)),
+        _MobileChartCard(
+          title: 'Escalation Frequency',
+          child: _EscalationChart(data: stats.escalationFrequency),
+        ),
         const SizedBox(height: 16),
-        _MobileChartCard(title: 'Cost by Task Type', child: _BarChart(data: stats.costByTaskType, formatValue: (v) => '\$${v.toStringAsFixed(2)}')),
+        _MobileChartCard(
+          title: 'Cost by Task Type',
+          child: _BarChart(
+            data: stats.costByTaskType,
+            formatValue: (v) => '\$${v.toStringAsFixed(2)}',
+          ),
+        ),
       ],
     );
   }
@@ -904,7 +1071,10 @@ class _MobileChartCard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary)),
+        Text(
+          title,
+          style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary),
+        ),
         const SizedBox(height: 12),
         SizedBox(height: 250, child: child),
         const SizedBox(height: 8),

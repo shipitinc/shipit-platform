@@ -26,6 +26,19 @@ jobs:
   # generator knows about but never renders. Without it a fresh database would
   # be built without the table. A non-zero exit fails the job, so this blocks a
   # merge.
+  #
+  # The three greps below cannot see the class of drift that actually bit this
+  # repository: Serverpod applies only the LATEST `definition.sql` to a fresh
+  # database, so everything the generator cannot express — the design-revision
+  # immutability trigger, the design-review independence trigger and the
+  # one-approved-revision-per-work-item index — is absent from every fresh
+  # database while this check reported green. Those objects live in
+  # apps/server/tool/schema_bootstrap.sql instead, and the second step below
+  # guards them: it fails if the asset and the chain-migrated migration stop
+  # agreeing, if a generated definition.sql is edited to claim them, or if
+  # either wiring site (CI, Makefile) stops applying them. The runtime half —
+  # a real fresh database rejecting a tampered approved revision — is asserted
+  # in integration.yaml by the "Apply schema bootstrap" step.
   schema-guard:
     runs-on: ubuntu-latest
     steps:
@@ -39,6 +52,8 @@ jobs:
         run: melos bootstrap
       - name: Verify schema deviations
         run: melos run verify:schema-deviations
+      - name: Verify the hand-maintained schema bootstrap
+        run: apps/server/tool/verify_schema_bootstrap.sh
 
   # Pure-Dart package tests. `--no-select` skips melos's interactive
   # package-choice prompt, which would otherwise block a non-interactive run.

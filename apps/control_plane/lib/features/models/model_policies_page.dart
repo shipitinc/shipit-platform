@@ -57,8 +57,9 @@ class _ModelPoliciesViewState extends State<_ModelPoliciesView> {
           return DesignErrorState(
             title: "We could not reach the system's records.",
             detail: state.errorMessage!,
-            onRetry: () =>
-                context.read<ModelPoliciesBloc>().add(const ModelPoliciesLoaded()),
+            onRetry: () => context.read<ModelPoliciesBloc>().add(
+              const ModelPoliciesLoaded(),
+            ),
           );
         }
 
@@ -119,7 +120,8 @@ class _ModelPoliciesViewState extends State<_ModelPoliciesView> {
                 ),
                 const SizedBox(height: 46),
                 TechnicalDetails(
-                  note: 'Model policies are durable records. Changes require a human decision citation.',
+                  note:
+                      'Model policies are durable records. Changes require a human decision citation.',
                   lines: [
                     'policies=${state.policies.length}',
                     for (final p in state.policies)
@@ -159,7 +161,7 @@ class _ModelPoliciesViewState extends State<_ModelPoliciesView> {
 
   void _addStep() {
     setState(() {
-      _stepEditors.add(ModelStepEditor());
+      _stepEditors.add(const ModelStepEditor());
     });
   }
 
@@ -208,15 +210,15 @@ class _ModelPoliciesViewState extends State<_ModelPoliciesView> {
       if (mounted) {
         context.read<ModelPoliciesBloc>().add(const ModelPoliciesLoaded());
         _cancelEditing();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Policy updated')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Policy updated')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to save: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to save: $e')));
       }
     }
   }
@@ -265,7 +267,12 @@ class _PolicyTable extends StatelessWidget {
             ),
           )
         else
-          for (final policy in policies) _PolicyTableRow(policy: policy, onEdit: onEdit, isEditing: editingPolicy?.role == policy.role),
+          for (final policy in policies)
+            _PolicyTableRow(
+              policy: policy,
+              onEdit: onEdit,
+              isEditing: editingPolicy?.role == policy.role,
+            ),
       ],
     );
   }
@@ -285,7 +292,9 @@ class _PolicyTableRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    final activeColor = policy.isActive ? palette.positive : palette.inkTertiary;
+    final activeColor = policy.isActive
+        ? palette.positive
+        : palette.inkTertiary;
     return Column(
       children: [
         SizedBox(
@@ -297,7 +306,9 @@ class _PolicyTableRow extends StatelessWidget {
                 child: Row(
                   children: [
                     AccentTick(
-                      color: policy.isActive ? palette.positive : palette.inkTertiary,
+                      color: policy.isActive
+                          ? palette.positive
+                          : palette.inkTertiary,
                       height: ShipItMetrics.rowTickHeight,
                     ),
                     const SizedBox(width: ShipItMetrics.colRefInset - 2),
@@ -321,7 +332,11 @@ class _PolicyTableRow extends StatelessWidget {
                     for (var i = 0; i < policy.chain.length; i++) ...[
                       if (i > 0) ...[
                         const SizedBox(width: 6),
-                        Icon(Icons.arrow_forward_ios, size: 10, color: palette.inkTertiary),
+                        Icon(
+                          Icons.arrow_forward_ios,
+                          size: 10,
+                          color: palette.inkTertiary,
+                        ),
                         const SizedBox(width: 6),
                       ],
                       _ModelBadge(
@@ -333,7 +348,9 @@ class _PolicyTableRow extends StatelessWidget {
                     if (policy.chain.isEmpty)
                       Text(
                         '(no steps)',
-                        style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
+                        style: ShipItType.monoMeta.copyWith(
+                          color: palette.inkTertiary,
+                        ),
                       ),
                   ],
                 ),
@@ -342,7 +359,9 @@ class _PolicyTableRow extends StatelessWidget {
                 width: 120,
                 child: Text(
                   'v${policy.version}',
-                  style: ShipItType.status.copyWith(color: palette.inkSecondary),
+                  style: ShipItType.status.copyWith(
+                    color: palette.inkSecondary,
+                  ),
                 ),
               ),
               SizedBox(
@@ -358,7 +377,9 @@ class _PolicyTableRow extends StatelessWidget {
                   policy.updatedByDecisionId,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
+                  style: ShipItType.monoMeta.copyWith(
+                    color: palette.inkTertiary,
+                  ),
                 ),
               ),
               SizedBox(
@@ -420,9 +441,13 @@ class _ModelBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        color: isActive ? palette.positive.withValues(alpha: 0.1) : palette.card,
+        color: isActive
+            ? palette.positive.withValues(alpha: 0.1)
+            : palette.card,
         border: Border.all(
-          color: isActive ? palette.positive.withValues(alpha: 0.5) : palette.cardBorder,
+          color: isActive
+              ? palette.positive.withValues(alpha: 0.5)
+              : palette.cardBorder,
           width: ShipItMetrics.hairline,
         ),
         borderRadius: BorderRadius.circular(ShipItMetrics.radius),
@@ -500,7 +525,9 @@ class _PolicyEditorPanel extends StatelessWidget {
             children: [
               Text(
                 'Editing ${policy.roleLabel} (v${policy.version} → v${policy.version + 1})',
-                style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary),
+                style: ShipItType.sectionTitle.copyWith(
+                  color: palette.inkPrimary,
+                ),
               ),
               const Spacer(),
               TextButton(onPressed: onCancel, child: const Text('Cancel')),
@@ -523,7 +550,8 @@ class _PolicyEditorPanel extends StatelessWidget {
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       itemCount: stepEditors.length,
-                      onReorderItem: (int oldIndex, int newIndex) => onReorderStep(oldIndex, newIndex),
+                      onReorderItem: (int oldIndex, int newIndex) =>
+                          onReorderStep(oldIndex, newIndex),
                       buildDefaultDragHandles: true,
                       itemBuilder: (context, index) {
                         final editor = stepEditors[index];
@@ -533,7 +561,8 @@ class _PolicyEditorPanel extends StatelessWidget {
                           editor: editor,
                           knownModels: knownModels,
                           providerHealth: providerHealth,
-                          onChanged: (newEditor) => onStepChanged(index, newEditor),
+                          onChanged: (newEditor) =>
+                              onStepChanged(index, newEditor),
                           onRemove: () => onRemoveStep(index),
                         );
                       },
@@ -550,8 +579,16 @@ class _PolicyEditorPanel extends StatelessWidget {
                     const SizedBox(height: 8),
                     _EscalationPreview(
                       chain: stepEditors
-                          .where((e) => e.modelId.isNotEmpty && e.provider.isNotEmpty)
-                          .map((e) => ModelStepResponse(modelId: e.modelId, provider: e.provider))
+                          .where(
+                            (e) =>
+                                e.modelId.isNotEmpty && e.provider.isNotEmpty,
+                          )
+                          .map(
+                            (e) => ModelStepResponse(
+                              modelId: e.modelId,
+                              provider: e.provider,
+                            ),
+                          )
                           .toList(),
                     ),
                   ],
@@ -635,14 +672,18 @@ class _StepEditorRow extends StatelessWidget {
                 Expanded(
                   flex: 2,
                   child: DropdownMenu<String>(
-                    initialSelection: editor.provider.isEmpty ? null : editor.provider,
+                    initialSelection: editor.provider.isEmpty
+                        ? null
+                        : editor.provider,
                     label: const Text('Provider'),
                     dropdownMenuEntries: providers
                         .map((p) => DropdownMenuEntry(value: p, label: p))
                         .toList(),
                     onSelected: (value) {
                       if (value != null) {
-                        onChanged(editor.copyWith(provider: value, modelId: ''));
+                        onChanged(
+                          editor.copyWith(provider: value, modelId: ''),
+                        );
                       }
                     },
                   ),
@@ -651,13 +692,17 @@ class _StepEditorRow extends StatelessWidget {
                 Expanded(
                   flex: 3,
                   child: DropdownMenu<String>(
-                    initialSelection: editor.modelId.isEmpty ? null : editor.modelId,
+                    initialSelection: editor.modelId.isEmpty
+                        ? null
+                        : editor.modelId,
                     label: const Text('Model'),
                     dropdownMenuEntries: modelsForProvider
-                        .map((m) => DropdownMenuEntry(
-                              value: m.modelId,
-                              label: m.displayName ?? m.modelId,
-                            ))
+                        .map(
+                          (m) => DropdownMenuEntry(
+                            value: m.modelId,
+                            label: m.displayName ?? m.modelId,
+                          ),
+                        )
                         .toList(),
                     onSelected: (value) {
                       if (value != null) {
@@ -681,18 +726,20 @@ class _StepEditorRow extends StatelessWidget {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  index == 0 ? 'Currently active model' : 'Escalation step ${index}',
+                  index == 0
+                      ? 'Currently active model'
+                      : 'Escalation step $index',
                   style: ShipItType.monoMeta.copyWith(
                     color: index == 0 ? palette.positive : palette.inkTertiary,
                   ),
                 ),
-],
-                  ),
-                  const ContentRule(),
               ],
             ),
-          ),
-        );
+            const ContentRule(),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -731,7 +778,7 @@ class _EscalationPreview extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      i == 0 ? 'Primary' : 'Escalation ${i}',
+                      i == 0 ? 'Primary' : 'Escalation $i',
                       style: ShipItType.ref.copyWith(
                         color: i == 0 ? palette.positive : palette.inkSecondary,
                         fontWeight: i == 0 ? FontWeight.w600 : FontWeight.w400,
@@ -739,7 +786,9 @@ class _EscalationPreview extends StatelessWidget {
                     ),
                     Text(
                       '${chain[i].modelId} (${chain[i].provider})',
-                      style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
+                      style: ShipItType.monoMeta.copyWith(
+                        color: palette.inkTertiary,
+                      ),
                     ),
                   ],
                 ),
@@ -796,7 +845,10 @@ class _MobileModelPolicies extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Model Policies', style: ShipItType.pageTitle.copyWith(color: palette.inkPrimary)),
+            Text(
+              'Model Policies',
+              style: ShipItType.pageTitle.copyWith(color: palette.inkPrimary),
+            ),
             const SizedBox(height: 6),
             Text(
               '${policies.where((p) => p.isActive).length} active of ${policies.length} roles',
@@ -826,12 +878,18 @@ class _MobileModelPolicies extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 child: Text(
                   'No model policies configured.',
-                  style: ShipItType.bodySmall.copyWith(color: palette.inkTertiary),
+                  style: ShipItType.bodySmall.copyWith(
+                    color: palette.inkTertiary,
+                  ),
                 ),
               )
             else
               for (final policy in policies)
-                _MobilePolicyCard(policy: policy, onEdit: onEdit, isEditing: editingPolicy?.role == policy.role),
+                _MobilePolicyCard(
+                  policy: policy,
+                  onEdit: onEdit,
+                  isEditing: editingPolicy?.role == policy.role,
+                ),
           ],
         ),
       ),
@@ -854,7 +912,7 @@ class _MobilePolicyCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final innerColumn = _buildInnerColumn(context, palette);
-    
+
     return Column(
       children: [
         InkWell(
@@ -888,19 +946,26 @@ class _MobilePolicyCard extends StatelessWidget {
                     children: [
                       Text(
                         policy.roleLabel,
-                        style: ShipItType.rowTitle.copyWith(color: palette.inkPrimary),
+                        style: ShipItType.rowTitle.copyWith(
+                          color: palette.inkPrimary,
+                        ),
                       ),
                       const SizedBox(width: 8),
                       if (policy.isActive)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: palette.positive.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
                             'ACTIVE',
-                            style: ShipItType.microLabel.copyWith(color: palette.positive),
+                            style: ShipItType.microLabel.copyWith(
+                              color: palette.positive,
+                            ),
                           ),
                         ),
                     ],
@@ -919,14 +984,18 @@ class _MobilePolicyCard extends StatelessWidget {
                       if (policy.chain.isEmpty)
                         Text(
                           '(no steps)',
-                          style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
+                          style: ShipItType.monoMeta.copyWith(
+                            color: palette.inkTertiary,
+                          ),
                         ),
                     ],
                   ),
                   const SizedBox(height: 4),
                   Text(
                     'v${policy.version} · ${_formatDate(policy.updatedAt)} · by ${policy.updatedByDecisionId}',
-                    style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
+                    style: ShipItType.monoMeta.copyWith(
+                      color: palette.inkTertiary,
+                    ),
                   ),
                 ],
               ),
@@ -977,7 +1046,9 @@ class _MobilePolicyEditor extends StatelessWidget {
           children: [
             Text(
               'Editing ${policy.roleLabel}',
-              style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary),
+              style: ShipItType.sectionTitle.copyWith(
+                color: palette.inkPrimary,
+              ),
             ),
             const Spacer(),
             TextButton(onPressed: onCancel, child: const Text('Cancel')),
@@ -992,7 +1063,8 @@ class _MobilePolicyEditor extends StatelessWidget {
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           itemCount: stepEditors.length,
-          onReorderItem: (int oldIndex, int newIndex) => onReorderStep(oldIndex, newIndex),
+          onReorderItem: (int oldIndex, int newIndex) =>
+              onReorderStep(oldIndex, newIndex),
           buildDefaultDragHandles: true,
           itemBuilder: (context, index) {
             final editor = stepEditors[index];
@@ -1028,7 +1100,10 @@ class _MobilePolicyEditor extends StatelessWidget {
         _EscalationPreview(
           chain: stepEditors
               .where((e) => e.modelId.isNotEmpty && e.provider.isNotEmpty)
-              .map((e) => ModelStepResponse(modelId: e.modelId, provider: e.provider))
+              .map(
+                (e) =>
+                    ModelStepResponse(modelId: e.modelId, provider: e.provider),
+              )
               .toList(),
         ),
       ],
@@ -1037,10 +1112,7 @@ class _MobilePolicyEditor extends StatelessWidget {
 }
 
 class ModelStepEditor {
-  const ModelStepEditor({
-    this.modelId = '',
-    this.provider = '',
-  });
+  const ModelStepEditor({this.modelId = '', this.provider = ''});
 
   final String modelId;
   final String provider;

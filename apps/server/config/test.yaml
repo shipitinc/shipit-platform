@@ -24,12 +24,41 @@ webServer:
   publicScheme: http
 
 # This is the database setup for your test server.
+#
+# PORT CONTRACT. 9099 is the one committed port for the test database. It
+# must stay equal to the `postgres_test` published port in
+# `apps/server/docker-compose.yaml` and to the service `ports` mapping in
+# `.github/workflows/integration.yaml`. Serverpod reads this file verbatim and
+# has no fallback, so a disagreement does not fail fast: the suite simply
+# connects to whatever else is listening on the configured port. 9090 was the
+# value in compose and CI; it is withdrawn because 9090 is held on developer
+# machines by `partnerhub-test-db`, a different project, so a 9090 contract
+# would apply this project's migrations to that database. Provenance: the
+# throwaway `shipit-test-port-override.yaml`
+# (`postgres_test: ports: !override ["9099:5432"]`) that first put this
+# container on 9099 is superseded by the committed compose file; do not
+# re-derive 9099 from it.
+#
+# CREDENTIAL CONTRACT. There is deliberately no `password:` key. Serverpod
+# 3.4.13 never reads one: `PostgresDatabaseConfig._fromJson`
+# (serverpod_shared/lib/src/config.dart:563-608) takes the password only from
+# the passwords map, and `_validateJsonConfig` ignores unrecognised keys, so a
+# literal here is dead weight that merely looks authoritative. The single
+# authoritative value is the `SERVERPOD_DATABASE_PASSWORD` environment
+# variable, which Serverpod prefers over `test.database` in
+# `config/passwords.yaml` (serverpod_shared/lib/src/password_manager.dart:34-54).
+# It must equal the `POSTGRES_PASSWORD` that compose and CI give the test
+# database.
+#
+# host/port/name/user are overridable per run for the same reason, via
+# `SERVERPOD_DATABASE_HOST`, `SERVERPOD_DATABASE_PORT`,
+# `SERVERPOD_DATABASE_NAME` and `SERVERPOD_DATABASE_USER` — that is how the
+# suite is pointed at a disposable database without editing this file.
 database:
   host: localhost
   port: 9099
   name: control_plane_test
   user: postgres
-  password: control_plane_test_pw
 
 # No Redis: the control plane does not use Redis.
 redis:

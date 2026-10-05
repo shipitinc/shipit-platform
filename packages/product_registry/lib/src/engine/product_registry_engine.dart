@@ -560,9 +560,11 @@ class ProductRegistryEngine {
       provenance: Provenance.humanProvided,
       // Operator may specify explicit maturity; otherwise unknown pending review.
       maturity: maturity ?? BaselineMaturity.unknown,
-      evidenceRefs:
-          evidenceRefs.isEmpty ? ['authored by $author'] : evidenceRefs,
-      assumptionNote: 'Authored by $author on '
+      evidenceRefs: evidenceRefs.isEmpty
+          ? ['authored by $author']
+          : evidenceRefs,
+      assumptionNote:
+          'Authored by $author on '
           '${t.toIso8601String().split('T').first}. Not machine-verified.',
     );
     final facts = <BaselineFact>[...baseline.facts, fact];
@@ -585,7 +587,9 @@ class ProductRegistryEngine {
     // resolving it would fabricate a human choice that never happened.
     final scope = BaselineApprovalBinding.scopeFor(productId);
     for (final decision in await _decisions.readHumanDecisionsForScope(scope)) {
-      final binding = BaselineApprovalBinding.tryFromMetadata(decision.metadata);
+      final binding = BaselineApprovalBinding.tryFromMetadata(
+        decision.metadata,
+      );
       if (binding == null ||
           binding.baselineId != baselineId ||
           decision.status.isResolved) {
@@ -599,8 +603,8 @@ class ProductRegistryEngine {
             ...?decision.metadata,
             'cancelled_reason':
                 'Baseline amended, so this decision\'s content-hash binding '
-                    'no longer describes the candidate. No human choice was '
-                    'recorded.',
+                'no longer describes the candidate. No human choice was '
+                'recorded.',
             'cancelled_at': t.toIso8601String(),
           },
         ),

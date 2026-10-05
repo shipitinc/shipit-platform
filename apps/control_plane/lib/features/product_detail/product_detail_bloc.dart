@@ -46,9 +46,8 @@ class BaselineApprovalResolved extends ProductDetailEvent {
 }
 
 class ProductDetailBloc extends Bloc<ProductDetailEvent, ProductDetailState> {
-  ProductDetailBloc({required ControlPlaneRepository repository})
-    : _repository = repository,
-      super(const ProductDetailState()) {
+  ProductDetailBloc({required this._repository})
+    : super(const ProductDetailState()) {
     on<ProductDetailLoaded>(_onLoaded);
     on<GovernanceActionRequested>(_onGovernanceActionRequested);
     on<BaselineApprovalResolved>(_onBaselineApprovalResolved);
@@ -154,15 +153,10 @@ class ProductDetailBloc extends Bloc<ProductDetailEvent, ProductDetailState> {
       // clears the pending baseline, so the screen reflects the registry
       // rather than assuming the transition succeeded.
       final detail = await _repository.getProductDetail(event.productId);
-      emit(
-        ProductDetailState(isLoading: false, detail: detail),
-      );
+      emit(ProductDetailState(isLoading: false, detail: detail));
     } catch (e) {
       emit(
-        state.copyWith(
-          isResolvingBaseline: false,
-          errorMessage: e.toString(),
-        ),
+        state.copyWith(isResolvingBaseline: false, errorMessage: e.toString()),
       );
     }
   }

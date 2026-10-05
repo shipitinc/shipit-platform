@@ -22,7 +22,9 @@ class PostgresQaReviewResultStore {
     final result = await _db.query(
       '''SELECT * FROM "qa_review_result"
          WHERE "reviewExecutionId" = @reviewExecutionId''',
-      parameters: QueryParameters.named({'reviewExecutionId': reviewExecutionId}),
+      parameters: QueryParameters.named({
+        'reviewExecutionId': reviewExecutionId,
+      }),
     );
     if (result.isEmpty) {
       throw QaReviewResultNotFoundException(reviewExecutionId);
@@ -122,8 +124,7 @@ class PostgresQaReviewResultStore {
               .toList(growable: false),
       reviewScopeJson: m['reviewScopeJson'] == null
           ? null
-          : jsonDecode(m['reviewScopeJson'] as String)
-              as Map<String, dynamic>,
+          : jsonDecode(m['reviewScopeJson'] as String) as Map<String, dynamic>,
       createdAt: decodeUtc(m['createdAt'])!,
       version: m['version'] as int,
       reviewerRole: AgentRole.fromWire(m['reviewerRole'] as String),
@@ -135,7 +136,9 @@ class PostgresQaReviewResultStore {
       'reviewExecutionId': result.reviewExecutionId,
       'workItemId': result.workItemId,
       'verdict': result.verdict.wire,
-      'findingsJson': jsonEncode(result.findings.map((f) => f.toJson()).toList()),
+      'findingsJson': jsonEncode(
+        result.findings.map((f) => f.toJson()).toList(),
+      ),
       'assessedDimensionsJson': jsonEncode(result.assessedDimensions),
       'reviewScopeJson': result.reviewScopeJson == null
           ? null

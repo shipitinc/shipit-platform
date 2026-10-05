@@ -152,7 +152,7 @@ void main() {
             reason: 'root pubspec declares a Dart workspace',
           );
 
-          BaselineMaturity _maturityFromProvenance(Provenance p) => switch (p) {
+          BaselineMaturity maturityFromProvenance(Provenance p) => switch (p) {
             Provenance.observed => BaselineMaturity.implemented,
             Provenance.derived => BaselineMaturity.implemented,
             Provenance.humanProvided => BaselineMaturity.implemented,
@@ -167,7 +167,7 @@ void main() {
                 section: observations[i].section,
                 claim: observations[i].claim,
                 provenance: observations[i].provenance,
-                maturity: _maturityFromProvenance(observations[i].provenance),
+                maturity: maturityFromProvenance(observations[i].provenance),
                 evidenceRefs: observations[i].evidencePaths,
                 assumptionNote: observations[i].assumptionNote,
                 redacted: observations[i].redacted,

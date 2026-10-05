@@ -13,9 +13,7 @@ class ProductsLoaded extends ProductsEvent {
 }
 
 class ProductsBloc extends Bloc<ProductsEvent, ProductsState> {
-  ProductsBloc({required ControlPlaneRepository repository})
-    : _repository = repository,
-      super(const ProductsState()) {
+  ProductsBloc({required this._repository}) : super(const ProductsState()) {
     on<ProductsLoaded>(_onLoaded);
   }
 

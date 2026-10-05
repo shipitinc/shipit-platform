@@ -1,9 +1,7 @@
 import 'dart:convert';
 
 import 'package:platform_contracts/platform_contracts.dart'
-    show ModelPolicy, ModelStep, AgentRole;
-import 'package:platform_contracts/src/store/model_policy_store.dart'
-    show ModelPolicyStore;
+    show ModelPolicy, ModelStep, AgentRole, ModelPolicyStore;
 import 'package:serverpod/database.dart';
 
 import 'persistence_database.dart';
@@ -21,6 +19,7 @@ class PostgresModelPolicyStore implements ModelPolicyStore {
     return _db.inTransaction<T>(() => body(this));
   }
 
+  @override
   Future<ModelPolicy?> getPolicy(AgentRole role) async {
     final rows = await _db.query(
       'SELECT * FROM "model_policy" WHERE "role" = @role',
@@ -30,6 +29,7 @@ class PostgresModelPolicyStore implements ModelPolicyStore {
     return _fromRow(rows.first);
   }
 
+  @override
   Future<void> upsertPolicy(ModelPolicy policy) async {
     await _db.execute(
       '''INSERT INTO "model_policy" ("role", "chainJson", "version", "updatedAt", "updatedByDecisionId")
@@ -49,6 +49,7 @@ class PostgresModelPolicyStore implements ModelPolicyStore {
     );
   }
 
+  @override
   Future<List<ModelPolicy>> getAllPolicies() async {
     final rows = await _db.query('SELECT * FROM "model_policy"');
     return rows.map(_fromRow).toList();

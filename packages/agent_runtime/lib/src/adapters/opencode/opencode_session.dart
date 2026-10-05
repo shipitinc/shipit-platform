@@ -47,10 +47,7 @@ ProviderErrorType _detectProviderErrorType(String message) {
 }
 
 /// Creates a [ProviderError] from an exception and provider name.
-ProviderError _providerErrorFromException(
-  Object exception,
-  String provider,
-) {
+ProviderError _providerErrorFromException(Object exception, String provider) {
   final message = exception.toString();
   return ProviderError(
     type: _detectProviderErrorType(message),
@@ -739,7 +736,8 @@ class OpenCodeSession implements AgentSession {
         'usage': {'used': _used, 'size': _size, 'cost': _cost},
         'chunkCount': _chunks.length,
         'escalationIndex': _escalationIndex,
-        if (_lastProviderError != null) 'providerError': _lastProviderError!.toJson(),
+        if (_lastProviderError != null)
+          'providerError': _lastProviderError!.toJson(),
       },
     );
   }

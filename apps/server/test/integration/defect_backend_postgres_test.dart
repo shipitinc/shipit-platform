@@ -3,7 +3,6 @@ import 'package:control_plane_server/src/persistence/postgres_workflow_store.dar
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:product_registry/product_registry.dart'
     show ProductNotFoundException;
-import 'package:serverpod/database.dart' show QueryParameters;
 import 'package:serverpod/serverpod.dart';
 import 'package:test/test.dart';
 import 'package:workflow_store/workflow_store.dart' show DurableWorkflowEngine;

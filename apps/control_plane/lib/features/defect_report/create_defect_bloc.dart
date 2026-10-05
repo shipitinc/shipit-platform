@@ -11,13 +11,11 @@ import 'create_defect_state.dart';
 /// registration and submission to the backend.
 class CreateDefectBloc extends Bloc<CreateDefectEvent, CreateDefectState> {
   CreateDefectBloc({
-    required ControlPlaneRepository repository,
-    required String reporter,
+    required this._repository,
+    required this._reporter,
     this.prefilledWorkItemId,
     this.prefilledRunId,
-  }) : _repository = repository,
-       _reporter = reporter,
-       super(
+  }) : super(
          CreateDefectState(
            prefilledWorkItemId: prefilledWorkItemId,
            prefilledRunId: prefilledRunId,

@@ -14,14 +14,33 @@ services:
       - control_plane_pg_data:/var/lib/postgresql/data
 
   # Test Postgres for the control plane test suite (no Redis - not used).
+  #
+  # PORT CONTRACT. The published port must stay equal to `database.port` in
+  # `apps/server/config/test.yaml` and to the service `ports` mapping in
+  # `.github/workflows/integration.yaml`, because Serverpod reads test.yaml
+  # verbatim and connects to whatever answers on that port. 9099, not 9090:
+  # 9090 is held on developer machines by `partnerhub-test-db`, a different
+  # project, so a 9090 contract here would point this project's test harness
+  # — and its nine migrations — at that database. Provenance: the throwaway
+  # `shipit-test-port-override.yaml`
+  # (`postgres_test: ports: !override ["9099:5432"]`) that first produced this
+  # port is superseded by this file; do not re-derive 9099 from it.
+  #
+  # CREDENTIAL CONTRACT. The password is read from SERVERPOD_DATABASE_PASSWORD
+  # and has no committed default: `${VAR:?msg}` makes compose refuse to start
+  # with that message rather than bring up a test database nobody can
+  # authenticate to. The value must be the same one Serverpod reads —
+  # SERVERPOD_DATABASE_PASSWORD, else `test.database` in
+  # `apps/server/config/passwords.yaml`. It is a throwaway credential for a
+  # local test database; it is not a secret and is never committed.
   postgres_test:
     image: pgvector/pgvector:pg16
     ports:
-      - "9090:5432"
+      - "9099:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_DB: control_plane_test
-      POSTGRES_PASSWORD: "control_plane_test_pw"
+      POSTGRES_PASSWORD: "${SERVERPOD_DATABASE_PASSWORD:?export SERVERPOD_DATABASE_PASSWORD; it must match test.database in apps/server/config/passwords.yaml, which is the value Serverpod connects with}"
     volumes:
       - control_plane_pg_test_data:/var/lib/postgresql/data
 

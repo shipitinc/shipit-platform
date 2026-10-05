@@ -11,9 +11,7 @@ import 'home_event.dart';
 /// They are fetched together so the single `LIVE / updated …` stamp is honest
 /// about all of them.
 class HomeBloc extends Bloc<HomeEvent, HomeState> {
-  HomeBloc({required ControlPlaneRepository repository})
-    : _repository = repository,
-      super(const HomeState()) {
+  HomeBloc({required this._repository}) : super(const HomeState()) {
     on<HomeLoaded>(_onLoaded);
   }
 

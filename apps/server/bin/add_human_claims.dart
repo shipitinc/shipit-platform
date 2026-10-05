@@ -29,8 +29,10 @@ Future<void> main(List<String> argv) async {
     password: _env('SERVERPOD_DATABASE_PASSWORD', 'shipit'),
   );
 
-  print('Adding human claims to $productId / $baselineId');
-  print('  database   : ${database.host}:${database.port}/${database.name}');
+  stdout.writeln('Adding human claims to $productId / $baselineId');
+  stdout.writeln(
+    '  database   : ${database.host}:${database.port}/${database.name}',
+  );
 
   final pod = Serverpod(
     ['--mode', 'development', '--apply-migrations'],
@@ -46,7 +48,9 @@ Future<void> main(List<String> argv) async {
   await pod.start();
 
   try {
-    final session = await Serverpod.instance.createSession(enableLogging: false);
+    final session = await Serverpod.instance.createSession(
+      enableLogging: false,
+    );
     final db = PersistenceDatabase(session.db);
     final workflowStore = PostgresWorkflowStore(db);
     final decisions = PostgresHumanDecisionStore(workflowStore);
@@ -58,12 +62,36 @@ Future<void> main(List<String> argv) async {
 
     // Add human domain claims
     final claims = [
-      (section: BaselineSectionKey.architecture, claim: 'ShipIt Platform is a self-hosted developer automation platform that lets one operator run many products by orchestrating agents, workers, and durable workflows.'),
-      (section: BaselineSectionKey.governance, claim: 'All agent executions are durable, auditable, and require human gates for production promotion — no autonomous production changes.'),
-      (section: BaselineSectionKey.environments, claim: 'Local development uses Docker Compose with a seeded triage repository; production targets Kubernetes via OpenTofu.'),
-      (section: BaselineSectionKey.techStack, claim: 'Core platform is Dart/Flutter; workers run on Linux/macOS with OpenCode ACP; scheduler uses PostgreSQL CAS job queue.'),
-      (section: BaselineSectionKey.knownGaps, claim: 'Real OpenCode execution requires Google auth which is not yet configured; Anthropic fallback has insufficient credit.'),
-      (section: BaselineSectionKey.deployment, claim: 'Artifacts are promoted via immutable artifact references bound to a verified baseline; no direct container push bypass.'),
+      (
+        section: BaselineSectionKey.architecture,
+        claim:
+            'ShipIt Platform is a self-hosted developer automation platform that lets one operator run many products by orchestrating agents, workers, and durable workflows.',
+      ),
+      (
+        section: BaselineSectionKey.governance,
+        claim:
+            'All agent executions are durable, auditable, and require human gates for production promotion — no autonomous production changes.',
+      ),
+      (
+        section: BaselineSectionKey.environments,
+        claim:
+            'Local development uses Docker Compose with a seeded triage repository; production targets Kubernetes via OpenTofu.',
+      ),
+      (
+        section: BaselineSectionKey.techStack,
+        claim:
+            'Core platform is Dart/Flutter; workers run on Linux/macOS with OpenCode ACP; scheduler uses PostgreSQL CAS job queue.',
+      ),
+      (
+        section: BaselineSectionKey.knownGaps,
+        claim:
+            'Real OpenCode execution requires Google auth which is not yet configured; Anthropic fallback has insufficient credit.',
+      ),
+      (
+        section: BaselineSectionKey.deployment,
+        claim:
+            'Artifacts are promoted via immutable artifact references bound to a verified baseline; no direct container push bypass.',
+      ),
     ];
 
     for (final c in claims) {
@@ -73,9 +101,11 @@ Future<void> main(List<String> argv) async {
         section: c.section,
         claim: c.claim,
         author: 'operator',
-        evidenceRefs: ['authored by operator on ${DateTime.now().toIso8601String().split('T').first}'],
+        evidenceRefs: [
+          'authored by operator on ${DateTime.now().toIso8601String().split('T').first}',
+        ],
       );
-      print('Added claim: ${c.section.wire}');
+      stdout.writeln('Added claim: ${c.section.wire}');
     }
 
     // Check new baseline
@@ -84,20 +114,20 @@ Future<void> main(List<String> argv) async {
         .where((b) => b.status == ProductBaselineStatus.proposed)
         .reduce((a, b) => a.revision > b.revision ? a : b);
 
-    print('\nNew proposed baseline:');
-    print('  baselineId: ${proposed.baselineId}');
-    print('  revision: ${proposed.revision}');
-    print('  fact count: ${proposed.facts.length}');
-    print('  contentHash: ${proposed.contentHash}');
+    stdout.writeln('\nNew proposed baseline:');
+    stdout.writeln('  baselineId: ${proposed.baselineId}');
+    stdout.writeln('  revision: ${proposed.revision}');
+    stdout.writeln('  fact count: ${proposed.facts.length}');
+    stdout.writeln('  contentHash: ${proposed.contentHash}');
 
     // Request approval for the new revision
     final decision = await engine.requestBaselineApproval(
       productId: productId,
       baselineId: proposed.baselineId,
     );
-    print('\nAWAITING HUMAN APPROVAL');
-    print('  decisionId: ${decision.decisionId}');
-    print('  question  : ${decision.question}');
+    stdout.writeln('\nAWAITING HUMAN APPROVAL');
+    stdout.writeln('  decisionId: ${decision.decisionId}');
+    stdout.writeln('  question  : ${decision.question}');
   } finally {
     await pod.shutdown(exitProcess: true);
   }

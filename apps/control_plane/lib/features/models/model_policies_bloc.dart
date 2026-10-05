@@ -11,9 +11,8 @@ class ModelPoliciesLoaded extends ModelPoliciesEvent {
 }
 
 class ModelPoliciesBloc extends Bloc<ModelPoliciesEvent, ModelPoliciesState> {
-  ModelPoliciesBloc({required ControlPlaneRepository repository})
-    : _repository = repository,
-      super(const ModelPoliciesState()) {
+  ModelPoliciesBloc({required this._repository})
+    : super(const ModelPoliciesState()) {
     on<ModelPoliciesLoaded>(_onLoaded);
   }
 
@@ -58,7 +57,9 @@ class ModelPoliciesState {
   final ProviderHealthResponse? providerHealth;
   final String? errorMessage;
 
-  ProviderHealthResponse get safeProviderHealth => providerHealth ?? ProviderHealthResponse(providers: [], knownModels: []);
+  ProviderHealthResponse get safeProviderHealth =>
+      providerHealth ??
+      const ProviderHealthResponse(providers: [], knownModels: []);
 
   ModelPoliciesState copyWith({
     bool? isLoading,

@@ -50,8 +50,10 @@ class ModelExecutionStats {
       totalInputTokens: groups.fold(0, (sum, g) => sum + g.totalInputTokens),
       totalOutputTokens: groups.fold(0, (sum, g) => sum + g.totalOutputTokens),
       totalTokens: groups.fold(0, (sum, g) => sum + g.totalTokens),
-      totalCachedReadTokens:
-          groups.fold(0, (sum, g) => sum + g.totalCachedReadTokens),
+      totalCachedReadTokens: groups.fold(
+        0,
+        (sum, g) => sum + g.totalCachedReadTokens,
+      ),
       totalCostUsd: groups.fold(0.0, (sum, g) => sum + g.totalCostUsd),
       avgCostUsd: groups.isEmpty
           ? 0.0
@@ -102,6 +104,7 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
     return _db.inTransaction<T>(() => body(this));
   }
 
+  @override
   Future<void> insert(ModelExecutionRecord record) async {
     await _db.execute(
       '''INSERT INTO "model_execution_record"
@@ -118,6 +121,7 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
     );
   }
 
+  @override
   Future<void> insertAll(List<ModelExecutionRecord> records) async {
     if (records.isEmpty) return;
     await _db.inTransaction(() async {
@@ -139,6 +143,7 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
     });
   }
 
+  @override
   Future<List<ModelExecutionRecord>> getByWorkItem(String workItemId) async {
     final rows = await _db.query(
       'SELECT * FROM "model_execution_record" WHERE "workItemId" = @workItemId ORDER BY "startedAt" ASC',
@@ -147,6 +152,7 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
     return rows.map(_fromRow).toList();
   }
 
+  @override
   Future<List<ModelExecutionRecord>> getByJob(String jobId) async {
     final rows = await _db.query(
       'SELECT * FROM "model_execution_record" WHERE "jobId" = @jobId ORDER BY "startedAt" ASC',
@@ -193,9 +199,7 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
     final whereClause = where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}';
     final groupByClause = groupBy != null ? 'GROUP BY $groupByColumn' : '';
 
-    final selectColumns = groupBy != null
-        ? '$groupByColumn, '
-        : '';
+    final selectColumns = groupBy != null ? '$groupByColumn, ' : '';
 
     final rows = await _db.query(
       '''SELECT $selectColumns

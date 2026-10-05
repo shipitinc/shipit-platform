@@ -127,6 +127,46 @@ make test-env-logs    # View test environment logs
 make test-env-ps      # Show test environment status
 ```
 
+None of these needs a credential or a secret. In particular they do **not** need
+`SERVERPOD_DATABASE_PASSWORD`: that variable belongs to the integration-profile
+database used by `make test-integration` (see below), and requiring it in the
+shared `docker/compose.test.yaml` would break every command above, because
+Compose interpolates a whole compose file before it applies profile filtering.
+
+### Compose projects: `test-env-test` does not share one with `test-env-up`
+
+The two ways of running these tests use different compose projects on purpose,
+and it matters when you are cleaning up:
+
+| Command | Compose project | Cleanup |
+|---------|-----------------|---------|
+| `test-env-up`, `test-env-down`, `test-env-logs`, `test-env-ps` | the default one, derived from the `docker/` directory | `make test-env-down` (or `make clean`) |
+| `test-env-test` | its own, `shipit_test` | itself — it traps `down -v`, so nothing survives the run |
+
+So `make test-env-test` is self-contained and leaves nothing behind, and
+`make test-env-down` will not stop a `test-env-test` run because there is nothing
+left of it to stop. If you want to inspect a `test-env-test` stack after the fact,
+run the compose commands yourself under that project name:
+
+```bash
+docker compose -p shipit_test -f docker/compose.test.yaml ps
+docker compose -p shipit_test -f docker/compose.test.yaml logs -f
+```
+
+Conversely, `make test-env-up && make test-env-test` does not put the runner in
+front of the `test-env-up` stack — `test-env-test` builds and starts its own.
+
+### `make test-integration` (separate, and the only target that needs a credential)
+
+`make test-integration` runs the `apps/server` suite against a disposable
+Postgres published on `SHIPIT_TEST_DB_PORT` (default 9199). It requires
+`SERVERPOD_DATABASE_PASSWORD`, which must equal `test.database` in
+`apps/server/config/passwords.yaml` because it is the value Serverpod connects
+with. The target checks the variable **before** it starts any container and exits
+2 with an actionable message if it is missing, so a run without it fails at once
+rather than starting a database the suite cannot authenticate against. It also
+uses its own per-run compose project and destroys it in a trap.
+
 ## Test Runner Details
 
 The test runner image includes:
