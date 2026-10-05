@@ -61,6 +61,15 @@ context:
       - metric: Merge shape
         value: "merge-base main baseline = bfbbd68; main...baseline = 0/1; clean fast-forward, no conflicts"
         source: integrator
+      - metric: "NEW — dart analyze packages apps/server (run by no prior lane)"
+        value: "FAIL - exit 3, 10 compile errors, 2 warnings, 433 info. CI is red on arrival."
+        source: review-baseline-0d5d132
+      - metric: "NEW — CI format gate (melos run format equivalent)"
+        value: "FAIL - 40 files across 8 of 17 packages"
+        source: review-baseline-0d5d132
+      - metric: "NEW — baseline's own committed verdict"
+        value: "RELEASE_CORRECTION_REQUIRED with 3 open non-human blockers + 3 OPEN human gates"
+        source: S2_NON_VISUAL_RELEASE_BLOCKER_CLOSURE.md:236-245, :172-181
       - metric: Unpushed commits on main
         value: "3 - 693cfbc, 9d98efe, bfbbd68 (pushing main would publish all three)"
         source: git rev-list --left-right --count origin/main...main
@@ -102,18 +111,16 @@ context:
           (apps/server/bin/test_pod.dart). Neither is a reason to withhold the baseline,
           but both need tracked follow-up before staging.
   recommendation:
-    recommended_option: OPTION_B
+    recommended_option: OPTION_C
     rationale: >-
-      Land the baseline on main, but make the independent review of it a tracked,
-      blocking follow-up rather than a retroactive justification. The baseline is a
-      recovery of the owner's own uncommitted work under explicit human authorization
-      (HD 130f3a7e OPTION_C), every deterministic gate is green, and it is the hard
-      precondition for lane isolation — so withholding it blocks all feature work while
-      protecting an invariant against code the owner authored and has been running
-      locally. The honest form of this choice is to schedule the baseline review as real
-      work, not to let "it was a baseline" stand in for review. Option B differs from
-      Option A only in that the review is committed to the ledger as blocking follow-up
-      before staging.
+      SUPERSEDED. The earlier recommendation (OPTION_B — land now, review blocking) rested
+      on the integrator's evidence that every deterministic gate was green. The independent
+      review of 0d5d132 refuted that premise: the tree does not analyze (10 compile errors,
+      CI red on arrival) and its own committed record declares it RELEASE_CORRECTION_REQUIRED.
+      Recommendation is now to NOT integrate 0d5d132 in any form until a mechanical correction
+      lane clears B1/B2/M2/M3 — which the reviewer states requires no human judgement — after
+      which the genuinely human decisions (security credential, ADR 0021, migration validation
+      against a real Postgres) must be resolved before any merge.
     confidence: MEDIUM
 options:
   - option_id: OPTION_A
@@ -167,4 +174,4 @@ resolution:
   follow_up_actions: []
 created_by: orchestrator-main
 created_at: 2026-10-05T01:01:56Z
-updated_at: 2026-10-05T01:01:56Z
+updated_at: 2026-10-05T01:22:40Z

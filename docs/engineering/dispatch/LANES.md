@@ -36,8 +36,9 @@ Register-product button disabled / required-field convention · isolated test en
 | task_id | type | state | worktree | branch | base_sha | head_sha | routing_class | result | next action |
 |---|---|---|---|---|---|---|---|---|---|
 | review-runtime-config-interop | review | CLOSED | canonical checkout (read-only) | main | bfbbd68 | bfbbd68 | STANDARD | `APPROVE_WITH_NON_BLOCKING_FOLLOWUP` — 0 blockers, CORRECTION_REQUIRED: NO | follow-ups recorded; change included in baseline |
-| integrate-baseline-product | integrate | CLOSED — BLOCKED | canonical checkout + throwaway worktree | baseline/product-2026-10-05 | bfbbd68 | 0d5d132 | STANDARD | `INTEGRATION_BLOCKED` — B1 missing review, B2 ledger, B3–B7 non-blocking | await review of 0d5d132 + decision 70b47372 |
-| (feature lanes) | — | NOT DISPATCHED | — | — | — | — | — | — | blocked on integration of 0d5d132 |
+| integrate-baseline-product | integrate | CLOSED — BLOCKED | canonical checkout + throwaway worktree | baseline/product-2026-10-05 | bfbbd68 | 0d5d132 | STANDARD | `INTEGRATION_BLOCKED` — B1 missing review, B2 ledger, B3–B7 non-blocking | superseded in substance by review-baseline-0d5d132 |
+| review-baseline-0d5d132 | review | CLOSED — BLOCKED | /private/tmp/shipit-review-baseline (removed) | (detached) | bfbbd68 | 0d5d132 | PRECISION | `DO_NOT_MERGE` — CORRECTION_REQUIRED: YES, HUMAN_DECISION_REQUIRED: YES | parked; mechanical corrections + 2 human decisions required |
+| (feature lanes) | — | NOT DISPATCHED | — | — | — | — | — | — | blocked: no reviewed, buildable BASE_SHA exists |
 
 ## Current session — product baseline
 

@@ -4,11 +4,13 @@ Manager-owned lifecycle ledger for `aef-orchestrator`. Git is authoritative for 
 state; this file is bookkeeping and never authorizes a gate.
 
 ## Current state
-- Status: INTEGRATION_BLOCKED (baseline created and verified; integration parked)
+- Status: DO_NOT_MERGE — parked on baseline 0d5d132
 - Active workflow orchestrator: `orchestrator-main` (this session)
-- Current lifecycle step (see framework WORKFLOW): Phase 0 Foundation complete;
-  integration-readiness verification returned `RESULT: INTEGRATION_BLOCKED`. No feature
-  lane has been dispatched for FEATURE c46b6807.
+- Current lifecycle step (see framework WORKFLOW): Phase 0 Foundation. The baseline that
+  Foundation required now exists and is verified functional in isolation, but independent
+  review returned `RESULT: DO_NOT_MERGE` with `HUMAN_DECISION_REQUIRED: YES`. No feature lane
+  has been dispatched for FEATURE c46b6807; none can be until a reviewed, buildable BASE_SHA
+  exists on `main`.
 
 ## Architecture
 - Decision record(s): none for this work item. Baseline/repository-state decision is
@@ -34,7 +36,7 @@ state; this file is bookkeeping and never authorizes a gate.
 ---
 
 ## WORK_ITEM: FEATURE c46b6807 — favicon, Add-a-product row + Register button, isolated test env
-STATE: INTEGRATION_BLOCKED (inherits baseline blocker)
+STATE: DO_NOT_MERGE (inherits baseline blockers — no buildable reviewed BASE_SHA exists)
 OWNERSHIP: none declared — no writer dispatched
 LANE: (none dispatched)
 REVIEW_RESULT: n/a
@@ -59,7 +61,8 @@ BLOCKERS:
       lane-worktree variants and four stranded design/QA artifacts still need reconciling.
 DECISIONS:
   - resolved: 130f3a7e-c364-4c1e-acd5-409d7af80675 (INFRASTRUCTURE, OPTION_C)
-  - open: 6f1c9d84-3a5e-4c17-9b62-1e8a4f70d5c3 (OTHER_CONSEQUENTIAL — may an
+  - open: 70b47372-8814-4098-81b2-6614497bad12 (OTHER_CONSEQUENTIAL — premise refuted by review)
+  - open: 048f3367-5836-43c8-af05-747dbc9d3afd (SECURITY — credential + API authentication)
     explicitly-unreviewed baseline land on `main` as the isolation anchor?)
 DEPENDENCIES:
   - Independent review of `0d5d132` before integration.
@@ -109,59 +112,102 @@ CONVENTIONS_USED: (project declares none — root `AGENTS.md` § Product-specifi
 
 ---
 
-## WORK_ITEM: Product baseline — INTEGRATION_BLOCKED
-STATE: INTEGRATION_BLOCKED
-LANE: integrate-baseline-product, type integrate, worktree canonical checkout,
-  branch baseline/product-2026-10-05, base_sha bfbbd68, head_sha 0d5d132, routing STANDARD
+## WORK_ITEM: Product baseline — DO_NOT_MERGE
+STATE: DO_NOT_MERGE (review-baseline-0d5d132)
+LANE: review-baseline-0d5d132, type review, worktree /private/tmp/shipit-review-baseline
+  (created and removed), branch detached at 0d5d132, base_sha bfbbd68, head_sha 0d5d132,
+  routing PRECISION
 REVIEW_RESULT: >-
-  Partial. `review-runtime-config-interop` returned
-  `RESULT: APPROVE_WITH_NON_BLOCKING_FOLLOWUP` (no blockers, CORRECTION_REQUIRED: NO)
-  for the runtime-config interop change only. The other 584 files are unreviewed.
-DEPLOYMENT_RESULT: n/a
+  RESULT: DO_NOT_MERGE. CORRECTION_REQUIRED: YES. HUMAN_DECISION_REQUIRED: YES.
+  Report: `docs/engineering/dispatch/tasks/review-baseline-0d5d132/report.md`.
+  Explicitly a RISK-STRATIFIED review, not line-by-line; the reviewer published an
+  explicit coverage statement listing what it did NOT review.
+GATES_AT_0d5d132:
+  - "flutter pub get": pass
+  - "flutter analyze --no-pub (apps/control_plane)": 0 errors, 33 info, 0 warnings, exit 1
+  - "flutter test --no-pub": 190/190 pass
+  - "flutter build web --no-pub": pass (needed one retry; first attempt SIGTERM from host load)
+  - "dart analyze packages apps/server": **FAIL — exit 3, 10 compile errors** (no prior lane ran this)
+  - "melos run format equivalent": **FAIL — 40 files across 8 of 17 packages**
 BLOCKERS:
-  - type: MISSING_INDEPENDENT_REVIEW
+  - type: COMPILE_FAILURE
     detail: >-
-      B1. 585 files / +203997 lines have no independent engineering review. Sole hard
-      blocker. Resolution: dispatch `engineering-reviewer` on `0d5d132`.
-  - type: LEDGER_INCONSISTENT
+      B1. `apps/server` does not analyze. 10 errors, all in four dead scratch scripts newly
+      added by the baseline and referenced nowhere: `bin/onboard_simple.dart` (6),
+      `bin/onboard_direct.dart` (2), `bin/onboard_fixed.dart` (1),
+      `bin/add_human_claims_mature.dart` (1). The real entrypoint is `bin/main.dart`
+      (`apps/server/pubspec.yaml:49`). CI is red on arrival because
+      `.github/workflows/ci.yaml:17` runs `melos run analyze` per package. Fix is mechanical:
+      delete or repair the four scripts.
+  - type: FORMAT_GATE_FAILURE
     detail: >-
-      B2. RESOLVED for this session: the baseline commit had been created while
-      `.decisions/130f3a7e...yaml` still read `IN_PROGRESS` with an empty `resolution`
-      block, so `0d5d132` carried no committed authorization. The RESOLVED
-      OPTION_C state is now committed alongside this ledger.
-  - type: MIGRATION_UNVALIDATED
-    detail: >-
-      B3. `20260925181113034/migration.sql` becomes an ACTIVE migration at `0d5d132`
-      (its directory previously held only `definition.sql`). It creates `defect` and
-      `defect_clarification` plus 8 indexes, and has never executed in any environment.
-      Must be validated against real Postgres before staging. Not a merge blocker.
+      B2. CI format gate fails on 40 files across agent_runtime (1),
+      execution_coordinator (2), platform_contracts (8), product_registry (4), scheduler (1),
+      workflow_engine (1), apps/server (9), apps/control_plane (14). Fix is mechanical:
+      `dart format lib test` per package. Note melos' format script covers only `lib` and
+      `test`, which is why B1's unformatted `bin/` scripts survived.
   - type: SECURITY_FINDING
     detail: >-
-      B4. A hardcoded Postgres superuser password
-      (`fd6239170e2e5511e8ac0fa79a03695f28781037d4c8b644`) was removed from
-      `apps/server/bin/onboard_shipit_dev.dart` but propagated into a new file,
-      `apps/server/bin/test_pod.dart`. Pre-existing at `bfbbd68`, dev-loopback only.
-      Whether a committed credential blocks merge is a security-policy call for the
-      human. Clean up in a FOLLOW-UP commit; do not rewrite `0d5d132`.
-  - type: HYGIENE
+      B3. Hardcoded PostgreSQL SUPERUSER password at `apps/server/bin/test_pod.dart:16`.
+      Escalated as Human Decision 048f3367.
+  - type: SELF_DECLARED_UNMERGEABLE
     detail: >-
-      B5. `apps/server/lib/src/endpoints/human_direction_endpoints.dart.bak`
-      (247-line editor backup) committed as a new file. Follow-up removal.
-      B7. New `.gitignore` entries `**/test/failures/` and `.idea/` are ineffective
-      for already-tracked files (80 PNGs + `.idea/`). Follow-up `git rm --cached`.
+      B4. The baseline contradicts its own committed status record.
+      `S2_NON_VISUAL_RELEASE_BLOCKER_CLOSURE.md:236-245` ends in
+      "## FINAL VERDICT -> RELEASE_CORRECTION_REQUIRED" with three open non-human blockers
+      (triage execution path not green; migration clean-chain unproven via stale
+      20260927120000000; Phase 6 durable boundary unresolved — ADR 0021 decision and
+      confidence semantics), and `:172-181` leaves HUMAN_GOLDEN_REVIEW_REQUIRED,
+      HUMAN_DECISION_REQUIRED and HUMAN_SECURITY_DECISION_REQUIRED all OPEN. The tree
+      therefore cannot serve as BASE_SHA while it says so.
+HIGH:
+  - H1. Nine migrations are activated for the first time in 0d5d132, none ever executed. Prior
+    lanes described one migration of 2 tables/8 indexes; it is 4 tables/17 indexes. Mechanism
+    verified against serverpod-3.4.13 source: `listVersions()` ignores `migration_registry.txt`
+    and sorts directories lexically; `_getVersionsToApply` is positional; with no installed
+    version only the latest `definition.sql` runs. So a FRESH database never executes them, but
+    an EXISTING database runs all nine at once, order-dependent, with zero execution history.
+  - H2. Migration-lineage brick unremediated. `migration_manager.dart:169-172` throws when a
+    database's recorded version has no directory; the baseline deletes `20260921_defect_tables`
+    and had already deleted `20260927120000000` while a test DB still recorded it. Such a
+    database cannot start the server at all.
+  - H3. Every Postgres-backed durability claim is unverified —
+    `S2_NON_VISUAL_RELEASE_BLOCKER_CLOSURE.md:79-84` records Defect, Product Registry and
+    Triage PostgreSQL suites as NOT RUN, so the CAS / multi-replica race claims in
+    `docs/reports/control-plane-persistence-slice-report.md:274-288` have no evidence.
+  - M1. A PRE-EXISTING shipped migration was edited with a factually incorrect rationale
+    (`20260920232118956/migration.sql` claims a fresh DB replays migrations in order; per
+    serverpod-3.4.13 it does not). Migration-history hash drift plus a false technical claim.
+  - M4. The entire control-plane API is unauthenticated (`apps/server/lib/server.dart:71-72`)
+    justified by a "SECURITY ASSUMPTION" that appears nowhere in the repository. Escalated as
+    Human Decision 048f3367.
 DECISIONS:
-  - resolved: 130f3a7e-c364-4c1e-acd5-409d7af80675
-  - open: 6f1c9d84-3a5e-4c17-9b62-1e8a4f70d5c3
-DEPENDENCIES: none
+  - resolved: 130f3a7e-c364-4c1e-acd5-409d7af80675 (INFRASTRUCTURE, OPTION_C)
+  - open: 70b47372-8814-4098-81b2-6614497bad12 (OTHER_CONSEQUENTIAL — premise refuted,
+    recommendation superseded to OPTION_C)
+  - open: 048f3367-5836-43c8-af05-747dbc9d3afd (SECURITY — credential + API authentication)
 SAFE_PARALLEL: >-
-  read-only review of `0d5d132`; AGENTS.md policy fill-in; stale worktree reconciliation.
+  B1/B2/M2/M3 are mechanical and need no human judgement — a correction lane may delete the
+  four dead scripts, format the 8 packages, remove the `.bak`, and relocate the root report.
+  Read-only design/requirement/QA-contract authoring is unblocked. Documentation under `docs/`.
 PROHIBITED_PARALLEL: >-
-  any merge/push of `0d5d132` to `main` or `origin`; FEATURE c46b6807
-  production-writing lanes; staging/production migration runs.
+  Any production-writing lane branching from 0d5d132 as BASE_SHA (B1/B2 make the tree CI-red, so
+  every such lane's gate fails for reasons outside its own diff). Any lane touching
+  `apps/server/bin`, `apps/server/migrations`, `.github/workflows`, `packages/product_registry`,
+  `agent_runtime`, `scheduler`, `execution_coordinator`, `control_plane_client`,
+  `platform_contracts`, or `apps/server/lib/src/triage`. Any credential rotation. Any merge or push.
 NEXT_AUTOMATIC_ACTION: >-
-  Re-dispatch `integrator` once `0d5d132` is independently reviewed and the open decision
-  is resolved. Integration authority remains with the human; fast-forward only, never
-  rebase/squash, so the reviewed `client_provider.dart` provenance survives.
+  Dispatch a correction lane for the mechanical findings (B1, B2, M2, M3), then present
+  decisions 048f3367 and 70b47372, then establish a real Postgres and run the never-executed
+  migration chain (H1-H3) before any staging. Only then scope the remaining review as bounded
+  parallel lanes, per the reviewer's proposal.
+SELF_EDITS: >-
+  Production source: the `client_provider.dart` JS-interop fix, made under explicit human
+  authorization (HD 130f3a7e OPTION_C), NOT under the §2 escape hatch, and independently
+  reviewed (`APPROVE_WITH_NON_BLOCKING_FOLLOWUP`) before inclusion in the baseline. Bookkeeping
+  under §2 "Workflow bookkeeping": `docs/engineering/WORK_STATE.md`,
+  `docs/engineering/dispatch/{LANES,DECISIONS}.md`, `docs/engineering/dispatch/tasks/*/{prompt,report}.md`,
+  and Human Decision objects under `.decisions/`.
 
 ## Known leaked processes (not terminated by any lane)
 - Four orphaned `flutter_tester` processes — PIDs 77709, 77710, 77711, 78174 — started

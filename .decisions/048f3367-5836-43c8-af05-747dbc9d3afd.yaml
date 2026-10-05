@@ -1,0 +1,156 @@
+# human-decision.yaml
+decision_id: 048f3367-5836-43c8-af05-747dbc9d3afd
+type: SECURITY
+status: PENDING
+question: >-
+  A hardcoded PostgreSQL superuser password is committed in the baseline, and the
+  entire control-plane API is unauthenticated. What is the required security action?
+context:
+  summary: >-
+    Independent review of baseline commit 0d5d132 confirmed a hardcoded PostgreSQL
+    SUPERUSER password at apps/server/bin/test_pod.dart:16 and found two further
+    committed dev credentials. Separately, apps/server/lib/server.dart:71-72 declares
+    the whole control-plane API unauthenticated, justified by a "SECURITY ASSUMPTION in
+    the control-plane persistence slice report" that does not exist anywhere in the
+    repository — the cited report's security section documents data minimisation
+    instead. That API can create and execute jobs and resolve human decisions, i.e. it
+    can drive the governance lifecycle with no caller authentication. Both findings
+    were already flagged as OPEN human gates in the baseline's own committed status
+    record (S2_NON_VISUAL_RELEASE_BLOCKER_CLOSURE.md:172-181,
+    HUMAN_SECURITY_DECISION_REQUIRED). Neither can be resolved by an agent: credential
+    rotation is an action only the human can authorise, and the authentication posture
+    of the API is a security-policy decision.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: c46b6807-a15c-4c3c-911b-cd34f6b21195
+    item_ref: >-
+      Security posture of baseline 0d5d132, transitively FEATURE c46b6807 and all
+      staging/deployment gates
+  evidence:
+    documents:
+      - type: OTHER
+        id: 0d5d132
+        url: docs/engineering/dispatch/tasks/review-baseline-0d5d132/report.md
+      - type: OTHER
+        id: 0d5d132
+        url: .decisions/70b47372-8814-4098-81b2-6614497bad12.yaml
+    quantitative_data:
+      - metric: Committed superuser credential
+        value: "apps/server/bin/test_pod.dart:16 — account `postgres` (superuser), password fd6239170e2e5511e8ac0fa79a03695f28781037d4c8b644"
+        source: review-baseline-0d5d132 finding B3
+      - metric: Further committed dev credentials
+        value: "apps/server/bin/onboard_shipit.dart:28 `control_plane_test_pw`; apps/server/onboard_shipit_serverpod.dart:38 `shipit` (matches .env.example:18)"
+        source: review-baseline-0d5d132 finding L5
+      - metric: Credential sweep result
+        value: "1 confirmed real (B3), 1 benign test fixture (packages/product_registry/test/credential_test.dart:60 fake OpenSSH key), 0 cloud tokens, 0 JWTs, 0 PEM blocks, 0 postgres://user:pass@ strings"
+        source: review-baseline-0d5d132
+      - metric: Credential history
+        value: "Present at bfbbd68 (pre-existing), NOT newly invented; the baseline removed it from onboard_shipit_dev.dart but propagated it into the new test_pod.dart"
+        source: integrator + reviewer
+      - metric: Authentication on the control-plane API
+        value: "None. apps/server/lib/server.dart:71-72"
+        source: review-baseline-0d5d132 finding M4
+      - metric: Dangling justification
+        value: "The cited `SECURITY ASSUMPTION` appears nowhere in the repository; report section 22 documents data minimisation, not the auth assumption"
+        source: review-baseline-0d5d132 finding M4
+      - metric: Pre-existing human gate
+        value: "HUMAN_SECURITY_DECISION_REQUIRED recorded OPEN in S2_NON_VISUAL_RELEASE_BLOCKER_CLOSURE.md:172-181"
+        source: baseline commit
+      - metric: Environment exposure
+        value: "Dev-loopback only in current compose files; CI builds images but does not deploy (per .env.example:87-91)"
+        source: .env.example
+    qualitative_tradeoffs:
+      - dimension: Credential exposure
+        option_a: Rotate and remove before any push
+        option_b: Remove the literal but keep the credential live
+        assessment: >-
+          Once 0d5d132 is pushed to origin the credential is in shared history and
+          reachable by anyone with repository access, so rotation-after-push does not
+          undo disclosure. Removing the literal without rotating leaves a live secret
+          that must then be treated as compromised.
+      - dimension: Blast radius of rotation
+        option_a: Rotate immediately
+        option_b: Rotate only if the credential is live
+        assessment: >-
+          If any local or shared Postgres instance was ever initialised from
+          `onboard_shipit_dev.dart` or `test_pod.dart` with this password, every such
+          instance is compromised. The human is the only party who knows which of those
+          instances exist and which are shared.
+      - dimension: API authentication
+        option_a: Treat unauthenticated local API as accepted for now
+        option_b: Require authentication before any non-local deployment
+        assessment: >-
+          The API can execute jobs and resolve human decisions, so an unauthenticated
+          reachable API is a governance bypass, not merely an information leak. But
+          adding auth is a substantial architecture change that must not be smuggled in
+          as a side effect of a baseline fix.
+recommendation:
+  recommended_option: OPTION_A
+  rationale: >-
+    Remove all three committed credential literals in a follow-up commit — never by
+    rewriting 0d5d132, so the reviewed provenance of that commit survives — and rotate
+    the PostgreSQL superuser password if any instance was ever initialised with it.
+    Separately, record the unauthenticated-API posture as an explicit, dated accepted
+    risk scoped to loopback-only use, and make authentication a blocking precondition for
+    any non-loopback or staging deployment rather than an implicit assumption. Both halves
+    are already flagged as OPEN human gates in the repository's own committed status record,
+    so recording them is finishing work the owner already started, not new scope.
+  confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Remove and rotate now
+    description: >-
+      Follow-up commit removes the superuser literal from test_pod.dart and the two dev
+      credential literals, replacing them with env/config reads. Rotate the PostgreSQL
+      superuser password if any instance was initialised with it. Record the
+      unauthenticated API as a dated accepted risk, loopback-only, with authentication
+      required before any non-loopback or staging deployment.
+    implications: >-
+      Closes the committed-secret finding before the credential reaches shared history.
+      Requires the human to identify and rotate any affected database instances. Adds an
+      explicit security gate ahead of staging. Does not add authentication now.
+    estimated_effort: "small commit; human action required for rotation and instance inventory"
+    risk_level: LOW
+  - option_id: OPTION_B
+    label: Remove literals, decide rotation later
+    description: >-
+      Remove the three credential literals in a follow-up commit but defer the rotation
+      decision, and defer any statement about the API's authentication posture.
+    implications: >-
+      Removes the literal from new commits but leaves an unknown number of live
+      instances possibly still using a now-published password, and leaves the
+      unauthenticated-API risk undocumented rather than explicitly accepted.
+    estimated_effort: "small commit; rotation deferred indefinitely"
+    risk_level: MEDIUM
+  - option_id: OPTION_C
+    label: Fix and add authentication
+    description: >-
+      As OPTION_A, and additionally implement authentication on the control-plane API in
+      the same workstream before anything is staged.
+    implications: >-
+      Closes both findings properly, but authentication is a substantial architecture
+      change touching every endpoint and client. Large, and it would compete with the
+      mechanical corrections (B1/B2) and the feature work for the same lanes.
+    estimated_effort: "substantial; cross-cutting architecture change"
+    risk_level: MEDIUM
+  - option_id: OPTION_D
+    label: Accept as-is for local dev
+    description: >-
+      Keep the committed credentials and the unauthenticated API, on the grounds that the
+      stack is loopback-only and dev-only.
+    implications: >-
+      The credential enters shared history on first push and cannot be un-published.
+      The unauthenticated job-execution and decision-resolution API remains a governance
+      bypass if the stack is ever bound beyond loopback. Contradicts the repository's own
+      OPEN HUMAN_SECURITY_DECISION_REQUIRED.
+    estimated_effort: "none"
+    risk_level: HIGH
+resolution:
+  selected_option: ""
+  decided_by: ""
+  decided_at: ""
+  rationale: ""
+  follow_up_actions: []
+created_by: orchestrator-main
+created_at: 2026-10-05T01:42:04Z
+updated_at: 2026-10-05T01:42:04Z
