@@ -25,25 +25,30 @@ class ModelPolicy extends Equatable {
   final DateTime updatedAt;
   final String updatedByDecisionId;
 
-  factory ModelPolicy.fromJson(Map<String, dynamic> json) => _$ModelPolicyFromJson(json);
+  factory ModelPolicy.fromJson(Map<String, dynamic> json) =>
+      _$ModelPolicyFromJson(json);
   Map<String, dynamic> toJson() => _$ModelPolicyToJson(this);
 
   @override
-  List<Object?> get props => [role, chain, version, updatedAt, updatedByDecisionId];
+  List<Object?> get props => [
+    role,
+    chain,
+    version,
+    updatedAt,
+    updatedByDecisionId,
+  ];
 }
 
 @JsonSerializable(explicitToJson: true)
 @immutable
 class ModelStep extends Equatable {
-  const ModelStep({
-    required this.modelId,
-    required this.provider,
-  });
+  const ModelStep({required this.modelId, required this.provider});
 
   final String modelId;
   final String provider;
 
-  factory ModelStep.fromJson(Map<String, dynamic> json) => _$ModelStepFromJson(json);
+  factory ModelStep.fromJson(Map<String, dynamic> json) =>
+      _$ModelStepFromJson(json);
   Map<String, dynamic> toJson() => _$ModelStepToJson(this);
 
   @override

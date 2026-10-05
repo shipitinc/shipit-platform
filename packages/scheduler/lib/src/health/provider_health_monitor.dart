@@ -93,7 +93,8 @@ class ProviderHealthMonitor {
   }
 
   Future<bool> _probeProvider(String provider) async {
-    final apiKey = Platform.environment['OPENCODE_${provider.toUpperCase()}_API_KEY'];
+    final apiKey =
+        Platform.environment['OPENCODE_${provider.toUpperCase()}_API_KEY'];
     if (apiKey == null || apiKey.isEmpty) {
       return false;
     }
@@ -106,11 +107,13 @@ class ProviderHealthMonitor {
     );
 
     try {
-      final result = await process.exitCode
-          .timeout(probeTimeout, onTimeout: () {
-            process.kill(ProcessSignal.sigterm);
-            throw TimeoutException('Provider probe timed out', probeTimeout);
-          });
+      final result = await process.exitCode.timeout(
+        probeTimeout,
+        onTimeout: () {
+          process.kill(ProcessSignal.sigterm);
+          throw TimeoutException('Provider probe timed out', probeTimeout);
+        },
+      );
       return result == 0;
     } on TimeoutException {
       return false;
@@ -126,7 +129,8 @@ class ProviderHealthMonitor {
     }
 
     final decision = HumanDecision(
-      decisionId: 'hd-provider-$provider-${DateTime.now().microsecondsSinceEpoch}',
+      decisionId:
+          'hd-provider-$provider-${DateTime.now().microsecondsSinceEpoch}',
       workItemId: 'system:provider-health',
       decisionType: HumanDecisionType.infrastructureDecision,
       status: HumanDecisionStatus.pending,

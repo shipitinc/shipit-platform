@@ -311,7 +311,9 @@ class _GateSubmit extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
             decoration: BoxDecoration(
-              border: Border.all(color: enabled ? palette.accent : palette.rule),
+              border: Border.all(
+                color: enabled ? palette.accent : palette.rule,
+              ),
             ),
             child: Text(
               label,
@@ -399,9 +401,8 @@ class _ProductDetailView extends StatelessWidget {
                   _BaselineApprovalGate(
                     detail: detail,
                     isResolving: state.isResolvingBaseline,
-                    onResolve: (choice, rationale) => context
-                        .read<ProductDetailBloc>()
-                        .add(
+                    onResolve: (choice, rationale) =>
+                        context.read<ProductDetailBloc>().add(
                           BaselineApprovalResolved(
                             productId: detail.productId,
                             choice: choice,
@@ -920,10 +921,7 @@ const _baselineSectionOrder = <String>[
 
 /// Sections whose wire names are acronyms, which title-casing alone renders as
 /// nonsense ("Qa", "Ci Cd").
-const _sectionLabels = <String, String>{
-  'qa': 'QA',
-  'ci_cd': 'CI/CD',
-};
+const _sectionLabels = <String, String>{'qa': 'QA', 'ci_cd': 'CI/CD'};
 
 String _humaniseWire(String wire) {
   final override = _sectionLabels[wire];
@@ -967,9 +965,7 @@ class _BaselineFactsState extends State<_BaselineFacts> {
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          border: Border.all(color: palette.negative),
-        ),
+        decoration: BoxDecoration(border: Border.all(color: palette.negative)),
         child: Text(
           'This candidate asserts nothing. It has no facts, so approving it '
           'would govern the product with no understanding of it to govern '
@@ -985,7 +981,9 @@ class _BaselineFactsState extends State<_BaselineFacts> {
     }
     final sections = _baselineSectionOrder
         .where(bySection.containsKey)
-        .followedBy(bySection.keys.where((k) => !_baselineSectionOrder.contains(k)))
+        .followedBy(
+          bySection.keys.where((k) => !_baselineSectionOrder.contains(k)),
+        )
         .toList();
 
     final maturityCounts = <String, int>{};
@@ -1067,7 +1065,8 @@ class _FactRow extends StatelessWidget {
     final palette = context.palette;
     // An assumed or unknown claim is not established fact, so it is marked
     // rather than presented in the same voice as an observed one.
-    final tentative = fact.maturity == 'unknown' || fact.provenance == 'assumed';
+    final tentative =
+        fact.maturity == 'unknown' || fact.provenance == 'assumed';
 
     return Container(
       width: double.infinity,
@@ -1097,7 +1096,8 @@ class _FactRow extends StatelessWidget {
               color: tentative ? palette.attention : palette.inkTertiary,
             ),
           ),
-          if (fact.assumptionNote != null && fact.assumptionNote!.isNotEmpty) ...[
+          if (fact.assumptionNote != null &&
+              fact.assumptionNote!.isNotEmpty) ...[
             const SizedBox(height: 3),
             Text(
               'Assumes: ${fact.assumptionNote}',

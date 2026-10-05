@@ -51,30 +51,31 @@ class ModelExecutionRecord extends Equatable {
   final int escalationIndex;
   final String taskType;
 
-  factory ModelExecutionRecord.fromJson(Map<String, dynamic> json) => _$ModelExecutionRecordFromJson(json);
+  factory ModelExecutionRecord.fromJson(Map<String, dynamic> json) =>
+      _$ModelExecutionRecordFromJson(json);
   Map<String, dynamic> toJson() => _$ModelExecutionRecordToJson(this);
 
   @override
   List<Object?> get props => [
-        workItemId,
-        jobId,
-        agentExecutionId,
-        role,
-        modelId,
-        provider,
-        inputTokens,
-        outputTokens,
-        totalTokens,
-        cachedReadTokens,
-        costUsd,
-        currency,
-        startedAt,
-        finishedAt,
-        success,
-        error,
-        escalationIndex,
-        taskType,
-      ];
+    workItemId,
+    jobId,
+    agentExecutionId,
+    role,
+    modelId,
+    provider,
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    cachedReadTokens,
+    costUsd,
+    currency,
+    startedAt,
+    finishedAt,
+    success,
+    error,
+    escalationIndex,
+    taskType,
+  ];
 }
 
 AgentRole _agentRoleFromJson(String value) => AgentRole.fromWire(value);

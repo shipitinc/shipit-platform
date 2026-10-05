@@ -119,10 +119,12 @@ class InMemoryModelPolicyStore implements ModelPolicyStore {
   Future<ModelPolicy?> getPolicy(AgentRole role) async => _policies[role];
 
   @override
-  Future<void> upsertPolicy(ModelPolicy policy) async => _policies[policy.role] = policy;
+  Future<void> upsertPolicy(ModelPolicy policy) async =>
+      _policies[policy.role] = policy;
 
   @override
-  Future<List<ModelPolicy>> getAllPolicies() async => _policies.values.toList(growable: false);
+  Future<List<ModelPolicy>> getAllPolicies() async =>
+      _policies.values.toList(growable: false);
 
   void addPolicy(ModelPolicy policy) => _policies[policy.role] = policy;
   void clear() => _policies.clear();

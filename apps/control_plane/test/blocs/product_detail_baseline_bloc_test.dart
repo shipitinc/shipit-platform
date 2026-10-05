@@ -99,14 +99,22 @@ void main() {
       return loaded.canApproveBaseline;
     }
 
-    test('is offered only when a verified candidate has an open decision', () async {
-      expect(await gateOffered(_BaselineRepository(detail: _detail())), isTrue);
-    });
+    test(
+      'is offered only when a verified candidate has an open decision',
+      () async {
+        expect(
+          await gateOffered(_BaselineRepository(detail: _detail())),
+          isTrue,
+        );
+      },
+    );
 
     test('is withheld when no worker attestation exists', () async {
       // AGENTS.md §12: the gate cannot open without independent verification.
       expect(
-        await gateOffered(_BaselineRepository(detail: _detail(verified: false))),
+        await gateOffered(
+          _BaselineRepository(detail: _detail(verified: false)),
+        ),
         isFalse,
       );
     });
@@ -146,7 +154,8 @@ void main() {
           rationale: 'Baseline matches how the platform actually behaves.',
         ),
       );
-      await bloc.stream.firstWhere((s) => !s.isResolvingBaseline && s.detail != null)
+      await bloc.stream
+          .firstWhere((s) => !s.isResolvingBaseline && s.detail != null)
           .timeout(const Duration(seconds: 5));
 
       expect(repository.resolutions, hasLength(1));
@@ -231,7 +240,10 @@ void main() {
           .timeout(const Duration(seconds: 5));
 
       expect(repository.resolutions, isEmpty);
-      expect(failed.errorMessage, contains('No baseline-approval gate is open'));
+      expect(
+        failed.errorMessage,
+        contains('No baseline-approval gate is open'),
+      );
     });
 
     test('surfaces a server refusal instead of claiming approval', () async {

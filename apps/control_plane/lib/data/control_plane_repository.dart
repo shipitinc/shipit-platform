@@ -946,7 +946,8 @@ class ControlPlaneRepository {
     required String claim,
     required String author,
     List<String> evidenceRefs = const [],
-    String? maturity, // BaselineMaturity.wire (e.g. 'implemented', 'policy', 'not_implemented')
+    String?
+    maturity, // BaselineMaturity.wire (e.g. 'implemented', 'policy', 'not_implemented')
   }) async {
     final result = await _client.productRegistryEndpoints.addHumanBaselineClaim(
       productId: productId,
@@ -960,22 +961,24 @@ class ControlPlaneRepository {
     revision.value++;
     // The generated endpoint returns ProductDetailView; the caller will refetch
     // the detail surface. We just bump the shared revision.
-    return _decisionResponse(DecisionView(
-      decisionId: 'baseline-claim:${DateTime.now().microsecondsSinceEpoch}',
-      workItemId: 'product-baseline:$productId',
-      workItemTitle: 'Baseline claim',
-      decisionType: 'product_decision',
-      status: 'pending',
-      question: 'Operator claim added — request approval for new revision',
-      context: null,
-      options: [],
-      recommendation: null,
-      blocking: false,
-      requestedAt: DateTime.now(),
-      decider: null,
-      choice: null,
-      rationale: null,
-    ));
+    return _decisionResponse(
+      DecisionView(
+        decisionId: 'baseline-claim:${DateTime.now().microsecondsSinceEpoch}',
+        workItemId: 'product-baseline:$productId',
+        workItemTitle: 'Baseline claim',
+        decisionType: 'product_decision',
+        status: 'pending',
+        question: 'Operator claim added — request approval for new revision',
+        context: null,
+        options: [],
+        recommendation: null,
+        blocking: false,
+        requestedAt: DateTime.now(),
+        decider: null,
+        choice: null,
+        rationale: null,
+      ),
+    );
   }
 
   Future<DecisionResponse> requestBaselineApproval({
@@ -1171,9 +1174,7 @@ class ControlPlaneRepository {
   }) async {
     final result = await _client.providerHealthEndpoints.updateModelPolicy(
       role: role,
-      chainJson: jsonEncode(
-        chain.map((s) => s.toJson()).toList(),
-      ),
+      chainJson: jsonEncode(chain.map((s) => s.toJson()).toList()),
       version: version,
       updatedByDecisionId: updatedByDecisionId,
     );
@@ -1506,16 +1507,17 @@ class BaselineFactClaim {
     this.redacted = false,
   });
 
-  factory BaselineFactClaim.fromProtocol(BaselineFactView v) => BaselineFactClaim(
-    factId: v.factId,
-    section: v.section,
-    claim: v.claim,
-    provenance: v.provenance,
-    maturity: v.maturity,
-    evidenceRefs: v.evidenceRefs,
-    assumptionNote: v.assumptionNote,
-    redacted: v.redacted,
-  );
+  factory BaselineFactClaim.fromProtocol(BaselineFactView v) =>
+      BaselineFactClaim(
+        factId: v.factId,
+        section: v.section,
+        claim: v.claim,
+        provenance: v.provenance,
+        maturity: v.maturity,
+        evidenceRefs: v.evidenceRefs,
+        assumptionNote: v.assumptionNote,
+        redacted: v.redacted,
+      );
 
   final String factId;
 
@@ -2289,8 +2291,11 @@ class ModelPolicyResponse {
   factory ModelPolicyResponse.fromJson(Map<String, dynamic> json) {
     return ModelPolicyResponse(
       role: json['role'] as String,
-      chain: (json['chain'] as List<dynamic>?)
-              ?.map((s) => ModelStepResponse.fromJson(s as Map<String, dynamic>))
+      chain:
+          (json['chain'] as List<dynamic>?)
+              ?.map(
+                (s) => ModelStepResponse.fromJson(s as Map<String, dynamic>),
+              )
               .toList() ??
           const [],
       version: (json['version'] as num).toInt(),
@@ -2302,10 +2307,7 @@ class ModelPolicyResponse {
 }
 
 class ModelStepResponse {
-  const ModelStepResponse({
-    required this.modelId,
-    required this.provider,
-  });
+  const ModelStepResponse({required this.modelId, required this.provider});
 
   final String modelId;
   final String provider;
@@ -2317,25 +2319,16 @@ class ModelStepResponse {
     );
   }
 
-  Map<String, dynamic> toJson() => {
-        'modelId': modelId,
-        'provider': provider,
-      };
+  Map<String, dynamic> toJson() => {'modelId': modelId, 'provider': provider};
 }
 
 class ModelStepRequest {
-  const ModelStepRequest({
-    required this.modelId,
-    required this.provider,
-  });
+  const ModelStepRequest({required this.modelId, required this.provider});
 
   final String modelId;
   final String provider;
 
-  Map<String, dynamic> toJson() => {
-        'modelId': modelId,
-        'provider': provider,
-      };
+  Map<String, dynamic> toJson() => {'modelId': modelId, 'provider': provider};
 }
 
 class ProviderHealthResponse {
@@ -2349,12 +2342,19 @@ class ProviderHealthResponse {
 
   factory ProviderHealthResponse.fromJson(Map<String, dynamic> json) {
     return ProviderHealthResponse(
-      providers: (json['providers'] as List<dynamic>?)
-              ?.map((p) => ProviderStatusResponse.fromJson(p as Map<String, dynamic>))
+      providers:
+          (json['providers'] as List<dynamic>?)
+              ?.map(
+                (p) =>
+                    ProviderStatusResponse.fromJson(p as Map<String, dynamic>),
+              )
               .toList() ??
           const [],
-      knownModels: (json['knownModels'] as List<dynamic>?)
-              ?.map((m) => KnownModelResponse.fromJson(m as Map<String, dynamic>))
+      knownModels:
+          (json['knownModels'] as List<dynamic>?)
+              ?.map(
+                (m) => KnownModelResponse.fromJson(m as Map<String, dynamic>),
+              )
               .toList() ??
           const [],
     );
@@ -2421,8 +2421,13 @@ class ModelExecutionsPageResponse {
 
   factory ModelExecutionsPageResponse.fromJson(Map<String, dynamic> json) {
     return ModelExecutionsPageResponse(
-      items: (json['items'] as List<dynamic>?)
-              ?.map((e) => ModelExecutionRecordResponse.fromJson(e as Map<String, dynamic>))
+      items:
+          (json['items'] as List<dynamic>?)
+              ?.map(
+                (e) => ModelExecutionRecordResponse.fromJson(
+                  e as Map<String, dynamic>,
+                ),
+              )
               .toList() ??
           const [],
       totalCount: (json['totalCount'] as num?)?.toInt() ?? 0,
@@ -2526,24 +2531,41 @@ class ModelStatsResponse {
       totalTokens: (json['totalTokens'] as num?)?.toInt() ?? 0,
       totalExecutions: (json['totalExecutions'] as num?)?.toInt() ?? 0,
       successRate: (json['successRate'] as num?)?.toDouble() ?? 0.0,
-      costOverTime: (json['costOverTime'] as List<dynamic>?)
-              ?.map((p) => TimeSeriesPointResponse.fromJson(p as Map<String, dynamic>))
+      costOverTime:
+          (json['costOverTime'] as List<dynamic>?)
+              ?.map(
+                (p) =>
+                    TimeSeriesPointResponse.fromJson(p as Map<String, dynamic>),
+              )
               .toList() ??
           const [],
-      tokensByProvider: (json['tokensByProvider'] as List<dynamic>?)
-              ?.map((p) => GroupedStatResponse.fromJson(p as Map<String, dynamic>))
+      tokensByProvider:
+          (json['tokensByProvider'] as List<dynamic>?)
+              ?.map(
+                (p) => GroupedStatResponse.fromJson(p as Map<String, dynamic>),
+              )
               .toList() ??
           const [],
-      successRateByModel: (json['successRateByModel'] as List<dynamic>?)
-              ?.map((p) => GroupedStatResponse.fromJson(p as Map<String, dynamic>))
+      successRateByModel:
+          (json['successRateByModel'] as List<dynamic>?)
+              ?.map(
+                (p) => GroupedStatResponse.fromJson(p as Map<String, dynamic>),
+              )
               .toList() ??
           const [],
-      escalationFrequency: (json['escalationFrequency'] as List<dynamic>?)
-              ?.map((p) => EscalationStatResponse.fromJson(p as Map<String, dynamic>))
+      escalationFrequency:
+          (json['escalationFrequency'] as List<dynamic>?)
+              ?.map(
+                (p) =>
+                    EscalationStatResponse.fromJson(p as Map<String, dynamic>),
+              )
               .toList() ??
           const [],
-      costByTaskType: (json['costByTaskType'] as List<dynamic>?)
-              ?.map((p) => GroupedStatResponse.fromJson(p as Map<String, dynamic>))
+      costByTaskType:
+          (json['costByTaskType'] as List<dynamic>?)
+              ?.map(
+                (p) => GroupedStatResponse.fromJson(p as Map<String, dynamic>),
+              )
               .toList() ??
           const [],
     );
@@ -2551,10 +2573,7 @@ class ModelStatsResponse {
 }
 
 class TimeSeriesPointResponse {
-  const TimeSeriesPointResponse({
-    required this.timestamp,
-    required this.value,
-  });
+  const TimeSeriesPointResponse({required this.timestamp, required this.value});
 
   final DateTime timestamp;
   final double value;

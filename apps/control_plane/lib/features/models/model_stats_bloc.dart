@@ -7,11 +7,7 @@ sealed class ModelStatsEvent {
 }
 
 class ModelStatsLoaded extends ModelStatsEvent {
-  const ModelStatsLoaded({
-    this.from,
-    this.to,
-    this.groupBy,
-  });
+  const ModelStatsLoaded({this.from, this.to, this.groupBy});
 
   final DateTime? from;
   final DateTime? to;
@@ -38,12 +34,7 @@ class ModelStatsBloc extends Bloc<ModelStatsEvent, ModelStatsState> {
         to: event.to,
         groupBy: event.groupBy,
       );
-      emit(
-        ModelStatsState(
-          isLoading: false,
-          stats: stats,
-        ),
-      );
+      emit(ModelStatsState(isLoading: false, stats: stats));
     } catch (e) {
       emit(state.copyWith(isLoading: false, errorMessage: e.toString()));
     }

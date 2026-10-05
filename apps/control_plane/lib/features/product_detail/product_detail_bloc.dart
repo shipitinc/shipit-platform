@@ -154,15 +154,10 @@ class ProductDetailBloc extends Bloc<ProductDetailEvent, ProductDetailState> {
       // clears the pending baseline, so the screen reflects the registry
       // rather than assuming the transition succeeded.
       final detail = await _repository.getProductDetail(event.productId);
-      emit(
-        ProductDetailState(isLoading: false, detail: detail),
-      );
+      emit(ProductDetailState(isLoading: false, detail: detail));
     } catch (e) {
       emit(
-        state.copyWith(
-          isResolvingBaseline: false,
-          errorMessage: e.toString(),
-        ),
+        state.copyWith(isResolvingBaseline: false, errorMessage: e.toString()),
       );
     }
   }

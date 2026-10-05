@@ -47,16 +47,21 @@ void main() {
       expect(obs.any((o) => o.redacted), isFalse);
     });
 
-    test('secret-shaped files are silently skipped without value ingestion', () async {
-      final f = write('.env', 'GITHUB_TOKEN=ghp_faketoken0123456789abcdef');
-      expect(f.existsSync(), isTrue);
+    test(
+      'secret-shaped files are silently skipped without value ingestion',
+      () async {
+        final f = write('.env', 'GITHUB_TOKEN=ghp_faketoken0123456789abcdef');
+        expect(f.existsSync(), isTrue);
 
-      final obs = await ReadOnlyRepositoryReader(snapshotRoot: root).inspect();
-      // Secret files are not reported as claims; they are silently skipped.
-      // The value must not appear anywhere.
-      final flattened = jsonEncode(obs.map((o) => o.toJson()).toList());
-      expect(flattened, isNot(contains('ghp_faketoken')));
-    });
+        final obs = await ReadOnlyRepositoryReader(
+          snapshotRoot: root,
+        ).inspect();
+        // Secret files are not reported as claims; they are silently skipped.
+        // The value must not appear anywhere.
+        final flattened = jsonEncode(obs.map((o) => o.toJson()).toList());
+        expect(flattened, isNot(contains('ghp_faketoken')));
+      },
+    );
 
     test('inline secret values are redacted from scanned content', () async {
       write(
@@ -100,17 +105,22 @@ void main() {
       expect(claims, isNot(contains('prompt-injection')));
     });
 
-    test('toolchain and OS junk files are not reported as product facts', () async {
-      // `.DS_Store` is unreadable, so a per-file reader used to surface it as
-      // "unreadable file (read refused)" — noise a reviewer must read past.
-      File('${root.path}/.DS_Store').writeAsStringSync('junk');
-      write('pubspec.yaml', 'name: shipit\nworkspace:\n  - packages/x\n');
+    test(
+      'toolchain and OS junk files are not reported as product facts',
+      () async {
+        // `.DS_Store` is unreadable, so a per-file reader used to surface it as
+        // "unreadable file (read refused)" — noise a reviewer must read past.
+        File('${root.path}/.DS_Store').writeAsStringSync('junk');
+        write('pubspec.yaml', 'name: shipit\nworkspace:\n  - packages/x\n');
 
-      final obs = await ReadOnlyRepositoryReader(snapshotRoot: root).inspect();
-      final claims = obs.map((o) => o.claim).join(' | ');
-      expect(claims, isNot(contains('.DS_Store')));
-      expect(claims, isNot(contains('unreadable')));
-    });
+        final obs = await ReadOnlyRepositoryReader(
+          snapshotRoot: root,
+        ).inspect();
+        final claims = obs.map((o) => o.claim).join(' | ');
+        expect(claims, isNot(contains('.DS_Store')));
+        expect(claims, isNot(contains('unreadable')));
+      },
+    );
 
     test('a repeated detector fires once with a single claim', () async {
       // 1 fact per matching file would let a codebase restate one fact 54
@@ -131,10 +141,7 @@ void main() {
     });
 
     test('package inventory reports authored descriptions', () async {
-      write(
-        'pubspec.yaml',
-        'name: root\nworkspace:\n  - packages/alpha\n',
-      );
+      write('pubspec.yaml', 'name: root\nworkspace:\n  - packages/alpha\n');
       write(
         'pubspec.yaml',
         'name: alpha\ndescription: Does the alpha thing.\n',
@@ -178,8 +185,7 @@ void main() {
       final obs = await ReadOnlyRepositoryReader(snapshotRoot: root).inspect();
       expect(
         obs.any(
-          (o) =>
-              o.claim.contains('2 services') && o.claim.contains('postgres'),
+          (o) => o.claim.contains('2 services') && o.claim.contains('postgres'),
         ),
         isTrue,
       );
@@ -206,11 +212,11 @@ void main() {
       write(
         'docs-note.md',
         '# Per-Product Git Credentials\n'
-        'Credentials are issued per repository.\n'
-        '\n'
-        'Some later prose that must survive.\n'
-        '\n'
-        'unrelated = value\n',
+            'Credentials are issued per repository.\n'
+            '\n'
+            'Some later prose that must survive.\n'
+            '\n'
+            'unrelated = value\n',
         sub: 'adr-ish',
       );
       final redacted = Redactor.redact(

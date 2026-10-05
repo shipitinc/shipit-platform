@@ -58,7 +58,8 @@ class ModelPoliciesState {
   final ProviderHealthResponse? providerHealth;
   final String? errorMessage;
 
-  ProviderHealthResponse get safeProviderHealth => providerHealth ?? ProviderHealthResponse(providers: [], knownModels: []);
+  ProviderHealthResponse get safeProviderHealth =>
+      providerHealth ?? ProviderHealthResponse(providers: [], knownModels: []);
 
   ModelPoliciesState copyWith({
     bool? isLoading,

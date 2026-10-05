@@ -25,7 +25,9 @@ class ProviderHealthEndpoints extends Endpoint {
       // In a full implementation, this would query the health monitor state
       // For now, return the list of known providers from policies
       return {
-        'providers': providers.map((p) => {'provider': p, 'healthy': null}).toList(),
+        'providers': providers
+            .map((p) => {'provider': p, 'healthy': null})
+            .toList(),
         'allProvidersDown': <Map<String, dynamic>>[],
       };
     } catch (error, stackTrace) {
@@ -62,7 +64,9 @@ class ProviderHealthEndpoints extends Endpoint {
     try {
       final policy = ModelPolicy(
         role: AgentRole.fromWire(role),
-        chain: jsonDecode(chainJson).map<ModelStep>((c) => ModelStep.fromJson(c)).toList(growable: false),
+        chain: jsonDecode(
+          chainJson,
+        ).map<ModelStep>((c) => ModelStep.fromJson(c)).toList(growable: false),
         version: version,
         updatedAt: DateTime.now().toUtc(),
         updatedByDecisionId: updatedByDecisionId,
@@ -95,7 +99,9 @@ class ProviderHealthEndpoints extends Endpoint {
       // For now, return all records for a work item if specified
       List<ModelExecutionRecord> records;
       if (workItemId != null) {
-        records = await service.modelExecutionRecordStore.getByWorkItem(workItemId);
+        records = await service.modelExecutionRecordStore.getByWorkItem(
+          workItemId,
+        );
       } else {
         // This would need a listAll or similar method
         records = [];
@@ -158,18 +164,20 @@ class ProviderHealthEndpoints extends Endpoint {
         'successCount': stats.successCount,
         'failureCount': stats.failureCount,
         'byGroup': stats.byGroup
-            .map((g) => {
-                  'groupKey': g.groupKey,
-                  'count': g.count,
-                  'totalInputTokens': g.totalInputTokens,
-                  'totalOutputTokens': g.totalOutputTokens,
-                  'totalTokens': g.totalTokens,
-                  'totalCachedReadTokens': g.totalCachedReadTokens,
-                  'totalCostUsd': g.totalCostUsd,
-                  'avgCostUsd': g.avgCostUsd,
-                  'successCount': g.successCount,
-                  'failureCount': g.failureCount,
-                })
+            .map(
+              (g) => {
+                'groupKey': g.groupKey,
+                'count': g.count,
+                'totalInputTokens': g.totalInputTokens,
+                'totalOutputTokens': g.totalOutputTokens,
+                'totalTokens': g.totalTokens,
+                'totalCachedReadTokens': g.totalCachedReadTokens,
+                'totalCostUsd': g.totalCostUsd,
+                'avgCostUsd': g.avgCostUsd,
+                'successCount': g.successCount,
+                'failureCount': g.failureCount,
+              },
+            )
             .toList(),
       };
     } catch (error, stackTrace) {

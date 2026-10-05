@@ -342,7 +342,9 @@ class _ModelExecutionsSection extends StatelessWidget {
         if (reviews.isNotEmpty) ...[
           Text(
             'Review Models',
-            style: ShipItType.sectionTitleSmall.copyWith(color: palette.inkPrimary),
+            style: ShipItType.sectionTitleSmall.copyWith(
+              color: palette.inkPrimary,
+            ),
           ),
           const SizedBox(height: 8),
           for (final review in reviews) ...[
@@ -382,9 +384,7 @@ class _ModelExecutionsSection extends StatelessWidget {
 
   List<ModelExecutionRecordResponse> _getReviewExecutions() {
     return executions
-        .where((e) =>
-            e.role != 'IMPLEMENTER' ||
-            e.escalationIndex > 0)
+        .where((e) => e.role != 'IMPLEMENTER' || e.escalationIndex > 0)
         .toList()
       ..sort((a, b) => a.escalationIndex.compareTo(b.escalationIndex));
   }
@@ -456,7 +456,9 @@ class _ModelExecutionCard extends StatelessWidget {
                 child: Text(
                   execution.success ? 'SUCCESS' : 'FAILED',
                   style: ShipItType.microLabel.copyWith(
-                    color: execution.success ? palette.positive : palette.negative,
+                    color: execution.success
+                        ? palette.positive
+                        : palette.negative,
                   ),
                 ),
               ),
@@ -471,12 +473,16 @@ class _ModelExecutionCard extends StatelessWidget {
                   children: [
                     Text(
                       execution.modelId,
-                      style: ShipItType.rowTitle.copyWith(color: palette.inkPrimary),
+                      style: ShipItType.rowTitle.copyWith(
+                        color: palette.inkPrimary,
+                      ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       execution.provider,
-                      style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
+                      style: ShipItType.monoMeta.copyWith(
+                        color: palette.inkTertiary,
+                      ),
                     ),
                   ],
                 ),
@@ -487,12 +493,16 @@ class _ModelExecutionCard extends StatelessWidget {
                 children: [
                   Text(
                     '\$${execution.costUsd.toStringAsFixed(4)}',
-                    style: ShipItType.duration.copyWith(color: palette.inkPrimary),
+                    style: ShipItType.duration.copyWith(
+                      color: palette.inkPrimary,
+                    ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     '${execution.totalTokens} tokens',
-                    style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
+                    style: ShipItType.monoMeta.copyWith(
+                      color: palette.inkTertiary,
+                    ),
                   ),
                 ],
               ),
@@ -549,7 +559,9 @@ class _EscalationHistory extends StatelessWidget {
         const SizedBox(height: 8),
         Text(
           'Escalation History',
-          style: ShipItType.sectionTitleSmall.copyWith(color: palette.inkPrimary),
+          style: ShipItType.sectionTitleSmall.copyWith(
+            color: palette.inkPrimary,
+          ),
         ),
         const SizedBox(height: 8),
         for (final esc in escalations)
@@ -561,7 +573,9 @@ class _EscalationHistory extends StatelessWidget {
                   width: 24,
                   height: 24,
                   decoration: BoxDecoration(
-                    color: esc.success ? palette.positive.withValues(alpha: 0.1) : palette.negative.withValues(alpha: 0.1),
+                    color: esc.success
+                        ? palette.positive.withValues(alpha: 0.1)
+                        : palette.negative.withValues(alpha: 0.1),
                     border: Border.all(
                       color: esc.success ? palette.positive : palette.negative,
                     ),
@@ -571,7 +585,9 @@ class _EscalationHistory extends StatelessWidget {
                     child: Text(
                       esc.escalationIndex.toString(),
                       style: ShipItType.ref.copyWith(
-                        color: esc.success ? palette.positive : palette.negative,
+                        color: esc.success
+                            ? palette.positive
+                            : palette.negative,
                         fontWeight: FontWeight.w600,
                         fontSize: 12,
                       ),
@@ -585,11 +601,17 @@ class _EscalationHistory extends StatelessWidget {
                     children: [
                       Text(
                         '${esc.modelId} (${esc.provider})',
-                        style: ShipItType.monoMeta.copyWith(color: palette.inkSecondary),
+                        style: ShipItType.monoMeta.copyWith(
+                          color: palette.inkSecondary,
+                        ),
                       ),
                       Text(
-                        _formatRole(esc.role) + ' · \$${esc.costUsd.toStringAsFixed(4)} · ${esc.totalTokens} tokens',
-                        style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary, fontSize: 10),
+                        _formatRole(esc.role) +
+                            ' · \$${esc.costUsd.toStringAsFixed(4)} · ${esc.totalTokens} tokens',
+                        style: ShipItType.monoMeta.copyWith(
+                          color: palette.inkTertiary,
+                          fontSize: 10,
+                        ),
                       ),
                     ],
                   ),

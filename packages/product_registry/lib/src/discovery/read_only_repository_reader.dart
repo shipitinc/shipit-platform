@@ -342,9 +342,9 @@ class _Survey {
   final Map<String, List<String>> _deployment = {};
   final Map<String, List<String>> _governance = {};
   final Map<String, List<String>> _knownGaps = {};
-  final List<Map<String, String?>> _packages = [];      // package inventory
-  final List<Map<String, String>> _adrs = [];           // ADR titles
-  final List<String> _readmes = [];                     // README paths
+  final List<Map<String, String?>> _packages = []; // package inventory
+  final List<Map<String, String>> _adrs = []; // ADR titles
+  final List<String> _readmes = []; // README paths
 
   void noteToolchain(String claim, String path) =>
       _techStack.putIfAbsent(claim, () => []).add(path);
@@ -376,7 +376,12 @@ class _Survey {
   List<DiscoveryObservation> toObservations(int maxEvidence) {
     final out = <DiscoveryObservation>[];
 
-    void emitMap(String section, Map<String, List<String>> items, BaselineSectionKey key, Provenance provenance) {
+    void emitMap(
+      String section,
+      Map<String, List<String>> items,
+      BaselineSectionKey key,
+      Provenance provenance,
+    ) {
       for (final entry in items.entries) {
         final paths = entry.value;
         out.add(
@@ -390,12 +395,37 @@ class _Survey {
       }
     }
 
-    emitMap('tech_stack', _techStack, BaselineSectionKey.techStack, Provenance.derived);
+    emitMap(
+      'tech_stack',
+      _techStack,
+      BaselineSectionKey.techStack,
+      Provenance.derived,
+    );
     emitMap('qa', _qa, BaselineSectionKey.qa, Provenance.observed);
-    emitMap('environments', _environments, BaselineSectionKey.environments, Provenance.observed);
-    emitMap('deployment', _deployment, BaselineSectionKey.deployment, Provenance.observed);
-    emitMap('governance', _governance, BaselineSectionKey.governance, Provenance.observed);
-    emitMap('known_gaps', _knownGaps, BaselineSectionKey.knownGaps, Provenance.observed);
+    emitMap(
+      'environments',
+      _environments,
+      BaselineSectionKey.environments,
+      Provenance.observed,
+    );
+    emitMap(
+      'deployment',
+      _deployment,
+      BaselineSectionKey.deployment,
+      Provenance.observed,
+    );
+    emitMap(
+      'governance',
+      _governance,
+      BaselineSectionKey.governance,
+      Provenance.observed,
+    );
+    emitMap(
+      'known_gaps',
+      _knownGaps,
+      BaselineSectionKey.knownGaps,
+      Provenance.observed,
+    );
 
     // Package inventory — authored descriptions, so this is real signal about
     // what the workspace is for, not an inferred guess.

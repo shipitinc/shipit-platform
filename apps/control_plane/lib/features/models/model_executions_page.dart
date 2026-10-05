@@ -8,8 +8,7 @@ import '../../data/client_provider.dart';
 import '../../data/control_plane_repository.dart';
 import '../../shared/design_primitives.dart';
 import '../../shared/form_primitives.dart';
-import '../../shared/mobile_chrome.dart'
-    show isMobile;
+import '../../shared/mobile_chrome.dart' show isMobile;
 import '../../shared/state_views.dart';
 import 'model_executions_bloc.dart';
 
@@ -74,8 +73,9 @@ class _ModelExecutionsViewState extends State<_ModelExecutionsView> {
           return DesignErrorState(
             title: "We could not reach the system's records.",
             detail: state.errorMessage!,
-            onRetry: () =>
-                context.read<ModelExecutionsBloc>().add(const ModelExecutionsLoaded()),
+            onRetry: () => context.read<ModelExecutionsBloc>().add(
+              const ModelExecutionsLoaded(),
+            ),
           );
         }
 
@@ -152,7 +152,8 @@ class _ModelExecutionsViewState extends State<_ModelExecutionsView> {
                 ),
                 const SizedBox(height: 46),
                 TechnicalDetails(
-                  note: 'Executions are read from durable records. Costs are in USD.',
+                  note:
+                      'Executions are read from durable records. Costs are in USD.',
                   lines: [
                     'page=${_page + 1} · size=$_pageSize · total=${state.totalCount}',
                     'filters: wi=${_workItemIdController.text.isEmpty ? 'all' : _workItemIdController.text} '
@@ -181,17 +182,19 @@ class _ModelExecutionsViewState extends State<_ModelExecutionsView> {
       _dateRange = filters.dateRange;
       _page = 0;
     });
-    context.read<ModelExecutionsBloc>().add(ModelExecutionsLoaded(
-          workItemId: filters.workItemId.isEmpty ? null : filters.workItemId,
-          provider: filters.provider.isEmpty ? null : filters.provider,
-          modelId: filters.modelId.isEmpty ? null : filters.modelId,
-          taskType: filters.taskType,
-          success: filters.success,
-          from: filters.dateRange?.start,
-          to: filters.dateRange?.end,
-          limit: _pageSize,
-          offset: 0,
-        ));
+    context.read<ModelExecutionsBloc>().add(
+      ModelExecutionsLoaded(
+        workItemId: filters.workItemId.isEmpty ? null : filters.workItemId,
+        provider: filters.provider.isEmpty ? null : filters.provider,
+        modelId: filters.modelId.isEmpty ? null : filters.modelId,
+        taskType: filters.taskType,
+        success: filters.success,
+        from: filters.dateRange?.start,
+        to: filters.dateRange?.end,
+        limit: _pageSize,
+        offset: 0,
+      ),
+    );
   }
 
   void _clearFilters() {
@@ -212,29 +215,39 @@ class _ModelExecutionsViewState extends State<_ModelExecutionsView> {
       _dateRange = range;
       _page = 0;
     });
-    _onFilterChanged(_Filters(
-      workItemId: _workItemIdController.text,
-      provider: _providerController.text,
-      modelId: _modelIdController.text,
-      taskType: _taskTypeFilter,
-      success: _successFilter,
-      dateRange: range,
-    ));
+    _onFilterChanged(
+      _Filters(
+        workItemId: _workItemIdController.text,
+        provider: _providerController.text,
+        modelId: _modelIdController.text,
+        taskType: _taskTypeFilter,
+        success: _successFilter,
+        dateRange: range,
+      ),
+    );
   }
 
   void _onPageChanged(int page) {
     setState(() => _page = page);
-    context.read<ModelExecutionsBloc>().add(ModelExecutionsLoaded(
-          workItemId: _workItemIdController.text.isEmpty ? null : _workItemIdController.text,
-          provider: _providerController.text.isEmpty ? null : _providerController.text,
-          modelId: _modelIdController.text.isEmpty ? null : _modelIdController.text,
-          taskType: _taskTypeFilter,
-          success: _successFilter,
-          from: _dateRange?.start,
-          to: _dateRange?.end,
-          limit: _pageSize,
-          offset: page * _pageSize,
-        ));
+    context.read<ModelExecutionsBloc>().add(
+      ModelExecutionsLoaded(
+        workItemId: _workItemIdController.text.isEmpty
+            ? null
+            : _workItemIdController.text,
+        provider: _providerController.text.isEmpty
+            ? null
+            : _providerController.text,
+        modelId: _modelIdController.text.isEmpty
+            ? null
+            : _modelIdController.text,
+        taskType: _taskTypeFilter,
+        success: _successFilter,
+        from: _dateRange?.start,
+        to: _dateRange?.end,
+        limit: _pageSize,
+        offset: page * _pageSize,
+      ),
+    );
   }
 }
 
@@ -291,10 +304,18 @@ class _FilterPanel extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text('Filters', style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary)),
+              Text(
+                'Filters',
+                style: ShipItType.sectionTitle.copyWith(
+                  color: palette.inkPrimary,
+                ),
+              ),
               const Spacer(),
               if (_hasActiveFilters())
-                TextButton(onPressed: onClearFilters, child: const Text('Clear all')),
+                TextButton(
+                  onPressed: onClearFilters,
+                  child: const Text('Clear all'),
+                ),
             ],
           ),
           const SizedBox(height: 16),
@@ -342,7 +363,9 @@ class _FilterPanel extends StatelessWidget {
                     for (final t in taskTypes)
                       DropdownMenuEntry(value: t, label: t),
                   ],
-                  onSelected: (value) => _applyFilters(taskType: value?.isEmpty == true ? null : value),
+                  onSelected: (value) => _applyFilters(
+                    taskType: value?.isEmpty == true ? null : value,
+                  ),
                 ),
               ),
               SizedBox(
@@ -381,26 +404,22 @@ class _FilterPanel extends StatelessWidget {
         dateRange != null;
   }
 
-  void _applyFilters({
-    String? taskType,
-    bool? success,
-  }) {
-    onFilterChanged(_Filters(
-      workItemId: workItemIdController.text,
-      provider: providerController.text,
-      modelId: modelIdController.text,
-      taskType: taskType ?? taskTypeFilter,
-      success: success ?? successFilter,
-      dateRange: dateRange,
-    ));
+  void _applyFilters({String? taskType, bool? success}) {
+    onFilterChanged(
+      _Filters(
+        workItemId: workItemIdController.text,
+        provider: providerController.text,
+        modelId: modelIdController.text,
+        taskType: taskType ?? taskTypeFilter,
+        success: success ?? successFilter,
+        dateRange: dateRange,
+      ),
+    );
   }
 }
 
 class _DateRangeField extends StatelessWidget {
-  const _DateRangeField({
-    required this.value,
-    required this.onChanged,
-  });
+  const _DateRangeField({required this.value, required this.onChanged});
 
   final DateTimeRange? value;
   final ValueChanged<DateTimeRange?> onChanged;
@@ -418,7 +437,10 @@ class _DateRangeField extends StatelessWidget {
             borderRadius: BorderRadius.circular(ShipItMetrics.radius),
             borderSide: BorderSide(color: palette.cardBorder),
           ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 12,
+          ),
         ),
         child: Text(
           value == null
@@ -430,9 +452,11 @@ class _DateRangeField extends StatelessWidget {
     );
   }
 
-Future<void> _pickRange(BuildContext context) async {
+  Future<void> _pickRange(BuildContext context) async {
     final now = DateTime.now();
-    final initialRange = value ?? DateTimeRange(start: now.subtract(const Duration(days: 7)), end: now);
+    final initialRange =
+        value ??
+        DateTimeRange(start: now.subtract(const Duration(days: 7)), end: now);
     final picked = await showDateRangePicker(
       context: context,
       firstDate: DateTime(2020),
@@ -448,10 +472,7 @@ String _formatDate(DateTime date) {
 }
 
 class _ExecutionsTable extends StatelessWidget {
-  const _ExecutionsTable({
-    required this.rows,
-    required this.emptyMessage,
-  });
+  const _ExecutionsTable({required this.rows, required this.emptyMessage});
 
   final List<ModelExecutionRecordResponse> rows;
   final String emptyMessage;
@@ -466,7 +487,10 @@ class _ExecutionsTable extends StatelessWidget {
           padding: EdgeInsets.only(bottom: 7),
           child: Row(
             children: [
-              SizedBox(width: ShipItMetrics.colWhat, child: MicroLabel('WORK ITEM')),
+              SizedBox(
+                width: ShipItMetrics.colWhat,
+                child: MicroLabel('WORK ITEM'),
+              ),
               SizedBox(width: 100, child: MicroLabel('JOB')),
               SizedBox(width: 120, child: MicroLabel('ROLE')),
               SizedBox(width: 160, child: MicroLabel('MODEL')),
@@ -527,14 +551,18 @@ class _ExecutionTableRow extends StatelessWidget {
                     row.jobId,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
+                    style: ShipItType.monoMeta.copyWith(
+                      color: palette.inkTertiary,
+                    ),
                   ),
                 ),
                 SizedBox(
                   width: 120,
                   child: Text(
                     _formatRole(row.role),
-                    style: ShipItType.monoMeta.copyWith(color: palette.inkSecondary),
+                    style: ShipItType.monoMeta.copyWith(
+                      color: palette.inkSecondary,
+                    ),
                   ),
                 ),
                 SizedBox(
@@ -550,7 +578,9 @@ class _ExecutionTableRow extends StatelessWidget {
                   width: 100,
                   child: Text(
                     row.provider,
-                    style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
+                    style: ShipItType.monoMeta.copyWith(
+                      color: palette.inkTertiary,
+                    ),
                   ),
                 ),
                 SizedBox(
@@ -559,7 +589,9 @@ class _ExecutionTableRow extends StatelessWidget {
                     row.taskType,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: ShipItType.monoMeta.copyWith(color: palette.inkSecondary),
+                    style: ShipItType.monoMeta.copyWith(
+                      color: palette.inkSecondary,
+                    ),
                   ),
                 ),
                 SizedBox(
@@ -567,7 +599,9 @@ class _ExecutionTableRow extends StatelessWidget {
                   child: Text(
                     '\$${row.costUsd.toStringAsFixed(4)}',
                     textAlign: TextAlign.right,
-                    style: ShipItType.duration.copyWith(color: palette.inkPrimary),
+                    style: ShipItType.duration.copyWith(
+                      color: palette.inkPrimary,
+                    ),
                   ),
                 ),
                 SizedBox(
@@ -575,7 +609,9 @@ class _ExecutionTableRow extends StatelessWidget {
                   child: Text(
                     '${_formatTokens(row.totalTokens)}',
                     textAlign: TextAlign.right,
-                    style: ShipItType.duration.copyWith(color: palette.inkTertiary),
+                    style: ShipItType.duration.copyWith(
+                      color: palette.inkTertiary,
+                    ),
                   ),
                 ),
                 SizedBox(
@@ -586,7 +622,9 @@ class _ExecutionTableRow extends StatelessWidget {
                         width: 6,
                         height: 6,
                         decoration: BoxDecoration(
-                          color: row.success ? palette.positive : palette.negative,
+                          color: row.success
+                              ? palette.positive
+                              : palette.negative,
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -594,7 +632,9 @@ class _ExecutionTableRow extends StatelessWidget {
                       Text(
                         row.success ? 'OK' : 'FAIL',
                         style: ShipItType.status.copyWith(
-                          color: row.success ? palette.positive : palette.negative,
+                          color: row.success
+                              ? palette.positive
+                              : palette.negative,
                         ),
                       ),
                     ],
@@ -606,8 +646,12 @@ class _ExecutionTableRow extends StatelessWidget {
                     row.escalationIndex.toString(),
                     textAlign: TextAlign.center,
                     style: ShipItType.monoMeta.copyWith(
-                      color: row.escalationIndex > 0 ? palette.attention : palette.inkTertiary,
-                      fontWeight: row.escalationIndex > 0 ? FontWeight.w600 : FontWeight.w400,
+                      color: row.escalationIndex > 0
+                          ? palette.attention
+                          : palette.inkTertiary,
+                      fontWeight: row.escalationIndex > 0
+                          ? FontWeight.w600
+                          : FontWeight.w400,
                     ),
                   ),
                 ),
@@ -615,7 +659,9 @@ class _ExecutionTableRow extends StatelessWidget {
                   width: 160,
                   child: Text(
                     _formatDateTime(row.startedAt),
-                    style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
+                    style: ShipItType.monoMeta.copyWith(
+                      color: palette.inkTertiary,
+                    ),
                   ),
                 ),
               ],
@@ -677,7 +723,9 @@ class _PaginationControls extends StatelessWidget {
           style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary),
         ),
         IconButton(
-          onPressed: page < totalPages - 1 ? () => onPageChanged(page + 1) : null,
+          onPressed: page < totalPages - 1
+              ? () => onPageChanged(page + 1)
+              : null,
           icon: const Icon(Icons.chevron_right),
         ),
       ],
@@ -722,7 +770,10 @@ class _MobileModelExecutions extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Model Executions', style: ShipItType.pageTitle.copyWith(color: palette.inkPrimary)),
+            Text(
+              'Model Executions',
+              style: ShipItType.pageTitle.copyWith(color: palette.inkPrimary),
+            ),
             const SizedBox(height: 6),
             Text(
               '${rows.length} of $totalCount executions',
@@ -743,7 +794,9 @@ class _MobileModelExecutions extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 child: Text(
                   'No executions match the current filters.',
-                  style: ShipItType.bodySmall.copyWith(color: palette.inkTertiary),
+                  style: ShipItType.bodySmall.copyWith(
+                    color: palette.inkTertiary,
+                  ),
                 ),
               )
             else
@@ -783,7 +836,12 @@ class _MobileFilterCard extends StatelessWidget {
       children: [
         Row(
           children: [
-            Text('Filters', style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary)),
+            Text(
+              'Filters',
+              style: ShipItType.sectionTitle.copyWith(
+                color: palette.inkPrimary,
+              ),
+            ),
             const Spacer(),
             if (_hasActiveFilters())
               TextButton(onPressed: onClearFilters, child: const Text('Clear')),
@@ -813,10 +871,11 @@ class _MobileFilterCard extends StatelessWidget {
           label: const Text('Task Type'),
           dropdownMenuEntries: [
             const DropdownMenuEntry(value: '', label: 'All types'),
-            for (final t in taskTypes)
-              DropdownMenuEntry(value: t, label: t),
+            for (final t in taskTypes) DropdownMenuEntry(value: t, label: t),
           ],
-          onSelected: (v) => onFilterChanged(filters.copyWith(taskType: v?.isEmpty == true ? null : v)),
+          onSelected: (v) => onFilterChanged(
+            filters.copyWith(taskType: v?.isEmpty == true ? null : v),
+          ),
         ),
         const SizedBox(height: 12),
         DropdownMenu<bool?>(
@@ -860,7 +919,10 @@ class _MobileExecutionCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                AccentTick(color: row.success ? palette.positive : palette.negative, height: 40),
+                AccentTick(
+                  color: row.success ? palette.positive : palette.negative,
+                  height: 40,
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -868,11 +930,18 @@ class _MobileExecutionCard extends StatelessWidget {
                     children: [
                       Row(
                         children: [
-                          Text(row.workItemId, style: ShipItType.rowTitle.copyWith(color: palette.inkPrimary)),
+                          Text(
+                            row.workItemId,
+                            style: ShipItType.rowTitle.copyWith(
+                              color: palette.inkPrimary,
+                            ),
+                          ),
                           const SizedBox(width: 8),
                           Text(
                             row.jobId,
-                            style: ShipItType.ref.copyWith(color: palette.inkTertiary),
+                            style: ShipItType.ref.copyWith(
+                              color: palette.inkTertiary,
+                            ),
                           ),
                         ],
                       ),
@@ -881,12 +950,27 @@ class _MobileExecutionCard extends StatelessWidget {
                         spacing: 8,
                         runSpacing: 4,
                         children: [
-                          _Chip(label: _formatRole(row.role), color: palette.accent),
-                          _Chip(label: row.modelId, color: palette.inkSecondary),
-                          _Chip(label: row.provider, color: palette.inkTertiary),
-                          _Chip(label: row.taskType, color: palette.inkTertiary),
+                          _Chip(
+                            label: _formatRole(row.role),
+                            color: palette.accent,
+                          ),
+                          _Chip(
+                            label: row.modelId,
+                            color: palette.inkSecondary,
+                          ),
+                          _Chip(
+                            label: row.provider,
+                            color: palette.inkTertiary,
+                          ),
+                          _Chip(
+                            label: row.taskType,
+                            color: palette.inkTertiary,
+                          ),
                           if (row.escalationIndex > 0)
-                            _Chip(label: 'Escalation ${row.escalationIndex}', color: palette.attention),
+                            _Chip(
+                              label: 'Escalation ${row.escalationIndex}',
+                              color: palette.attention,
+                            ),
                         ],
                       ),
                       const SizedBox(height: 4),
@@ -894,14 +978,18 @@ class _MobileExecutionCard extends StatelessWidget {
                         children: [
                           Text(
                             '\$${row.costUsd.toStringAsFixed(4)} · ${_formatTokens(row.totalTokens)} tokens',
-                            style: ShipItType.monoMeta.copyWith(color: palette.inkSecondary),
+                            style: ShipItType.monoMeta.copyWith(
+                              color: palette.inkSecondary,
+                            ),
                           ),
                           const SizedBox(width: 12),
                           Container(
                             width: 6,
                             height: 6,
                             decoration: BoxDecoration(
-                              color: row.success ? palette.positive : palette.negative,
+                              color: row.success
+                                  ? palette.positive
+                                  : palette.negative,
                               shape: BoxShape.circle,
                             ),
                           ),
@@ -909,14 +997,18 @@ class _MobileExecutionCard extends StatelessWidget {
                           Text(
                             row.success ? 'Success' : 'Failed',
                             style: ShipItType.status.copyWith(
-                              color: row.success ? palette.positive : palette.negative,
+                              color: row.success
+                                  ? palette.positive
+                                  : palette.negative,
                             ),
                           ),
                         ],
                       ),
                       Text(
                         _formatDateTime(row.startedAt),
-                        style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
+                        style: ShipItType.monoMeta.copyWith(
+                          color: palette.inkTertiary,
+                        ),
                       ),
                     ],
                   ),

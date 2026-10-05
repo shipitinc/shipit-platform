@@ -50,8 +50,10 @@ class ModelExecutionStats {
       totalInputTokens: groups.fold(0, (sum, g) => sum + g.totalInputTokens),
       totalOutputTokens: groups.fold(0, (sum, g) => sum + g.totalOutputTokens),
       totalTokens: groups.fold(0, (sum, g) => sum + g.totalTokens),
-      totalCachedReadTokens:
-          groups.fold(0, (sum, g) => sum + g.totalCachedReadTokens),
+      totalCachedReadTokens: groups.fold(
+        0,
+        (sum, g) => sum + g.totalCachedReadTokens,
+      ),
       totalCostUsd: groups.fold(0.0, (sum, g) => sum + g.totalCostUsd),
       avgCostUsd: groups.isEmpty
           ? 0.0
@@ -193,9 +195,7 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
     final whereClause = where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}';
     final groupByClause = groupBy != null ? 'GROUP BY $groupByColumn' : '';
 
-    final selectColumns = groupBy != null
-        ? '$groupByColumn, '
-        : '';
+    final selectColumns = groupBy != null ? '$groupByColumn, ' : '';
 
     final rows = await _db.query(
       '''SELECT $selectColumns
