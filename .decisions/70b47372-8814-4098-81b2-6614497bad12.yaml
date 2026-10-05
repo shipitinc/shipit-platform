@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 70b47372-8814-4098-81b2-6614497bad12
 type: OTHER_CONSEQUENTIAL
-status: PENDING
+status: RESOLVED
 question: >-
   May the explicitly-unreviewed 585-file product baseline commit 0d5d132 be
   fast-forwarded onto main as the isolation anchor, on the condition that a full
@@ -167,11 +167,62 @@ options:
     estimated_effort: "low now; permanent provenance confusion later"
     risk_level: MEDIUM
 resolution:
-  selected_option: ""
-  decided_by: ""
-  decided_at: ""
-  rationale: ""
-  follow_up_actions: []
+  selected_option: OPTION_B
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-05T10:30:58Z
+  rationale: >-
+    The human approved integration of the baseline: "I approve decision 70b47372
+    (integration)". Recorded as OPTION_B — integrate, with independent review tracked as a
+    blocking precondition — rather than OPTION_A (review as non-blocking follow-up),
+    because the independent review of 0d5d132 has already returned DO_NOT_MERGE and that
+    result is a fact rather than a deferrable preference.
+
+    The human did not select an option id; the interpretation is stated explicitly so it
+    can be corrected. No other option matches "approve integration" while respecting the
+    existing DO_NOT_MERGE result: OPTION_C ("review before landing") has effectively already
+    run and returned DO_NOT_MERGE, and OPTION_D ("do not integrate") contradicts the
+    instruction.
+
+    THIS AUTHORISATION IS RECORDED BUT NOT YET EXECUTABLE. Integration cannot physically
+    proceed while the tree is CI-red and the correction lane is blocked:
+      - `dart analyze packages apps/server` exits 2 (0 errors, but 2 pre-existing warnings
+        and 303 pre-existing infos in format-only paths). `.github/workflows/ci.yaml:17`
+        runs `melos run analyze`, so CI is red on arrival.
+      - The melos format gate now passes 16/16 after correction 07c48ed.
+      - `control_plane_test_pw` remains committed across 4 sites that must agree
+        (apps/server/config/test.yaml:32 with port 9099 against 9090 everywhere else,
+        apps/server/docker-compose.yaml:24, .github/workflows/integration.yaml:23,
+        apps/server/tool/seed_overview_qa.sql:9), and 2 of those paths are PROHIBITED to
+        any dispatched lane.
+      - The baseline's own committed record still says RELEASE_CORRECTION_REQUIRED
+        (docs/reports/S2_NON_VISUAL_RELEASE_BLOCKER_CLOSURE.md:236-245).
+    Approving integration authorises the merge; it does not make the gates pass.
+  follow_up_actions:
+    - action: >-
+        Resolve the correction lane's Blocker A: either widen ownership to a lint pass, or
+        amend the acceptance criterion to its verified substance (zero errors). 303 of the
+        305 remaining issues are `avoid_print` in 6 operator/seed files, so scoping
+        `avoid_print` off for bin/ and tool/ would clear 272 of them.
+      owner: repository owner
+    - action: >-
+        Resolve Blocker B: authorise a lane owning apps/server/config/**,
+        apps/server/docker-compose.yaml, .github/workflows/integration.yaml and
+        apps/server/tool/seed_overview_qa.sql to (a) resolve the 9090 vs 9099 port
+        mismatch in config/test.yaml, (b) move all four credential sites to one
+        env-sourced value, and (c) re-run `dart test test/integration/` against a real
+        Postgres, which also closes the H1-H3 finding that no Postgres-backed suite has
+        ever run.
+      owner: repository owner
+    - action: >-
+        Reconcile the baseline's own RELEASE_CORRECTION_REQUIRED verdict, or supersede it
+        explicitly, before merging a tree that declares itself unmergeable.
+      owner: repository owner
+    - action: >-
+        Merge by fast-forward only when the gates above are green. Never rebase or squash,
+        so the reviewed provenance of
+        apps/control_plane/lib/data/{client_provider,runtime_config_web,runtime_config_stub}.dart
+        at 0d5d132 survives. Do not push without explicit authorisation.
+      owner: orchestrator-main
 created_by: orchestrator-main
 created_at: 2026-10-05T01:01:56Z
-updated_at: 2026-10-05T01:22:40Z
+updated_at: 2026-10-05T10:30:58Z

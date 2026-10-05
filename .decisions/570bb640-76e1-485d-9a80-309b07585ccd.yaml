@@ -1,0 +1,190 @@
+# human-decision.yaml
+decision_id: 570bb640-76e1-485d-9a80-309b07585ccd
+type: DEPLOYMENT_AUTHORITY
+status: RESOLVED
+question: >-
+  Given that SHIP IT will run locally only for the foreseeable future, is
+  authentication of the control-plane API required now, and what is its disposition?
+context:
+  summary: >-
+    Supersedes the authentication half of decision 048f3367, which resolved as OPTION_C
+    ("fix and add authentication"). The human has since determined that SHIP IT will run
+    locally only for the foreseeable future, and therefore no API authentication is
+    required at this time. The decision is to record the unauthenticated API as an
+    ACCEPTED RISK scoped to local/QA use, and to make authentication a BLOCKING
+    PRECONDITION for any production deployment. The credential-literal half of 048f3367
+    (removal of the three committed passwords) is unaffected and still stands.
+
+    Recorded as a NEW decision rather than an amendment to 048f3367 because
+    `docs/engineering/HUMAN_DECISIONS.md` requires the audit trail to be immutable and
+    amendments to create a new decision object.
+
+    MATERIAL FINDING the human should be aware of, discovered while verifying the scope of
+    "local only": that property is currently NOT enforced by anything in the repository.
+    No Docker Compose file pins a host interface. Every binding is an unqualified
+    "PORT:PORT" mapping, which Docker publishes on 0.0.0.0 — every interface, including
+    the LAN:
+
+      docker/compose.qa.yaml     5432:5432 (postgres)  8080:8080 (server)  8081:8081 (client)
+      docker/compose.yaml        5432:5432            8080:8080            8081:8081
+      docker/compose.test.yaml   5433:5432            8082:8080            8083:8081
+      apps/server/docker-compose.yaml  8090:5432 (dev)  9090:5432 (test)
+
+    So on any shared network — coffee shop, office, hotel — the unauthenticated API that
+    can create and execute jobs and resolve human decisions is reachable by anyone, and
+    PostgreSQL on 5432 is reachable with the documented default credentials
+    (POSTGRES_USER=shipit, POSTGRES_PASSWORD=shipit, `.env.example:15-18`). The accepted
+    risk is therefore real and currently unenforced, not merely theoretical.
+  blocking_work_item:
+    item_type: DEPLOYMENT
+    item_id: c46b6807-a15c-4c3c-911b-cd34f6b21195
+    item_ref: >-
+      Control-plane API authentication posture; gate on any production deployment
+  evidence:
+    documents:
+      - type: OTHER
+        id: 048f3367
+        url: .decisions/048f3367-5836-43c8-af05-747dbc9d3afd.yaml
+      - type: OTHER
+        id: 0d5d132
+        url: docs/engineering/dispatch/tasks/review-baseline-0d5d132/report.md
+      - type: OTHER
+        id: 2f018af
+        url: docker/compose.qa.yaml
+      - type: OTHER
+        id: 2f018af
+        url: .env.example
+    quantitative_data:
+      - metric: Unauthenticated endpoints
+        value: "Entire control-plane API; apps/server/lib/server.dart:71-72 declares it unauthenticated"
+        source: review-baseline-0d5d132 finding M4
+      - metric: Capability exposed without authentication
+        value: "Create and execute jobs; resolve human decisions — i.e. drive the governance lifecycle"
+        source: review-baseline-0d5d132 finding M4
+      - metric: Dangling justification
+        value: "The cited `SECURITY ASSUMPTION in the control-plane persistence slice report` exists nowhere in the repository; that report's section 22 documents data minimisation instead"
+        source: review-baseline-0d5d132 finding M4
+      - metric: Compose bindings pinned to loopback
+        value: "0 of 10 port mappings across 4 compose files use a 127.0.0.1 host prefix; grep for `127.0.0.1:` in docker/*.yaml returns nothing"
+        source: direct inspection
+      - metric: Published interfaces
+        value: "All 10 mappings resolve to 0.0.0.0 — postgres 5432/5433/8090/9090, server 8080/8082, client 8081/8083"
+        source: docker compose semantics
+      - metric: Documented default DB credentials
+        value: "POSTGRES_USER=shipit, POSTGRES_PASSWORD=shipit, POSTGRES_DB=shipit"
+        source: .env.example:15-18
+      - metric: Deployment topology
+        value: "Local Docker Compose only; CI builds images but does not deploy (.env.example:87-91). No production environment exists."
+        source: .env.example, .github/workflows/release.yaml
+    qualitative_tradeoffs:
+      - dimension: Risk acceptance vs enforcement
+        option_a: Accept as local-only, no auth
+        option_b: Accept as local-only, and pin bindings to loopback
+        assessment: >-
+          The human's premise — local only — is currently a promise, not a control.
+          Pinning every mapping to `127.0.0.1:` makes the accepted risk true by
+          construction at essentially zero cost, whereas leaving it unenforced means the
+          exposure silently persists on any shared network.
+      - dimension: Blast radius of a compromise on a shared network
+        option_a: Accept as local-only, no auth
+        option_b: Accept as local-only, and pin bindings to loopback
+        assessment: >-
+          An unauthenticated API that executes jobs and resolves human decisions is a
+          governance bypass, not merely an information leak. With 0.0.0.0 bindings it is
+          reachable without any credential.
+recommendation:
+  recommended_option: OPTION_B
+  rationale: >-
+    Adopt the human's decision — no API authentication now — but make the "local only"
+    premise technically true rather than assumed, by pinning every compose port mapping to
+    127.0.0.1. This costs one mechanical change and converts an unenforced operational
+    promise into an enforced control, which is what makes the accepted risk defensible.
+    Authentication then waits as a hard production gate, where it belongs, instead of
+    being paid for in a system that will not leave the machine.
+  confidence: HIGH
+options:
+  - option_id: OPTION_A
+    label: Accept local-only, no auth
+    description: >-
+      Record the unauthenticated API as an accepted risk for local/QA use, with
+      authentication as a blocking production precondition. Change nothing about compose
+      bindings.
+    implications: >-
+      Matches the human's intent exactly. Leaves all 10 port mappings on 0.0.0.0, so the
+      accepted risk is unenforced and applies on every shared network.
+    estimated_effort: "none"
+    risk_level: MEDIUM
+  - option_id: OPTION_B
+    label: Accept local-only, pin loopback
+    description: >-
+      As OPTION_A, and additionally pin every compose port mapping to `127.0.0.1:` so the
+      local-only premise is enforced by the runtime rather than assumed.
+    implications: >-
+      Same accepted-risk scope as the human decided, but made true by construction. Costs
+      one mechanical change across 4 compose files. No functional change to local access.
+      Anyone relying on LAN access to the QA stack would lose it — which is the point.
+    estimated_effort: "small; one mechanical change across 4 compose files"
+    risk_level: LOW
+  - option_id: OPTION_C
+    label: Require auth for QA too
+    description: >-
+      Implement API authentication before any QA use, as 048f3367 OPTION_C originally required.
+    implications: >-
+      Strictest posture, but pays a cross-cutting architecture change for a system that
+      will not leave the machine, and competes with the outstanding mechanical corrections.
+    estimated_effort: "substantial; cross-cutting architecture change"
+    risk_level: LOW
+resolution:
+  selected_option: OPTION_B
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-05T10:30:58Z
+  rationale: >-
+    The human's instruction was: SHIP IT will run locally only for the foreseeable future,
+    there is no need to authenticate the API now, document the decision as a production
+    blocker, and the unauthenticated posture is acceptable for the local QA environment.
+    That directive is adopted in full.
+
+    The option selected is OPTION_B rather than OPTION_A solely because the human's own
+    stated premise — local only — is not enforced by anything in the repository: all 10
+    compose port mappings publish on 0.0.0.0, and PostgreSQL on 5432 carries documented
+    default credentials. Recording an accepted risk without recording that the risk is
+    currently live on every network would misrepresent it. Pinning the bindings to
+    127.0.0.1 makes the accepted scope true by construction, costs one mechanical change,
+    and alters nothing about local usage. It implements the human's decision rather than
+    substituting a different one. If the human prefers to leave bindings untouched, this
+    resolves to OPTION_A with no other consequence — that change is trivially reversible.
+
+    Interpretation is stated explicitly because the human did not select an option id:
+    "approve 70b47372 (integration) and API authentication" is read as authorising
+    integration and resolving the authentication question, with authentication deferred to
+    a production gate rather than implemented now.
+  follow_up_actions:
+    - action: >-
+        Pin every port mapping in docker/compose.yaml, docker/compose.qa.yaml,
+        docker/compose.test.yaml and apps/server/docker-compose.yaml to `127.0.0.1:` so the
+        accepted local-only scope is enforced rather than assumed.
+      owner: orchestrator-main
+    - action: >-
+        Record API authentication as a BLOCKING precondition on any production deployment.
+        It must be enforced by the deployment lane, not merely written down, so a future
+        promotion cannot skip it.
+      owner: orchestrator-main
+    - action: >-
+        Correct the dangling justification at apps/server/lib/server.dart:71-72, which cites
+        a "SECURITY ASSUMPTION in the control-plane persistence slice report" that exists
+        nowhere in the repository. Replace it with a pointer to this decision id and the
+        enforced local-only scope.
+      owner: orchestrator-main
+    - action: >-
+        Rotate the PostgreSQL superuser password if any instance was initialised from
+        onboard_shipit_dev.dart or test_pod.dart, and inventory which instances exist and
+        which are shared. Unaffected by this decision; still open from 048f3367.
+      owner: repository owner
+    - action: >-
+        Note that the unauthenticated-API finding M4 and the "local only" scope make the
+        staging and production phases of aef-run-feature moot for now; the workflow should
+        stop at merge plus local QA until a production target exists.
+      owner: orchestrator-main
+created_by: orchestrator-main
+created_at: 2026-10-05T10:30:58Z
+updated_at: 2026-10-05T10:30:58Z
