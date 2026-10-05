@@ -4,7 +4,7 @@ Manager-owned lifecycle ledger for `aef-orchestrator`. Git is authoritative for 
 state; this file is bookkeeping and never authorizes a gate.
 
 ## Current state
-- Status: DO_NOT_MERGE — parked on baseline 0d5d132
+- Status: AUTONOMOUS_WORKFLOW_BLOCKED — parked on baseline 0d5d132 / correction 07c48ed
 - Active workflow orchestrator: `orchestrator-main` (this session)
 - Current lifecycle step (see framework WORKFLOW): Phase 0 Foundation. The baseline that
   Foundation required now exists and is verified functional in isolation, but independent
