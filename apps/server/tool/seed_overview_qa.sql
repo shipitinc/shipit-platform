@@ -5,10 +5,19 @@
 -- durable tables the read endpoints actually query — nothing is stubbed in the
 -- UI layer.
 --
--- Usage (test database on :9090):
---   PGPASSWORD=control_plane_test_pw /opt/homebrew/opt/libpq/bin/psql \
---     -h localhost -p 9090 -U postgres -d control_plane_test \
+-- Usage (test database on :9099 — the committed port contract, shared with
+-- apps/server/config/test.yaml, apps/server/docker-compose.yaml and
+-- .github/workflows/integration.yaml):
+--   export SERVERPOD_DATABASE_PASSWORD=<the test database password>
+--   PGPASSWORD="$SERVERPOD_DATABASE_PASSWORD" \
+--     /opt/homebrew/opt/libpq/bin/psql \
+--     -h localhost -p 9099 -U postgres -d control_plane_test \
 --     -f tool/seed_overview_qa.sql
+--
+-- The password is not in this repository. Take it from the same
+-- SERVERPOD_DATABASE_PASSWORD that `docker compose up` gave the test database;
+-- if it is unset, read `test.database` from apps/server/config/passwords.yaml.
+-- These are throwaway local test credentials, not secrets.
 
 BEGIN;
 

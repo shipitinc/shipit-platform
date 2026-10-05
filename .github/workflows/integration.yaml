@@ -10,18 +10,37 @@ jobs:
   full-stack:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # These values must match `apps/server/config/test.yaml`, which the
-    # Serverpod test harness reads at startup: localhost:9090,
-    # control_plane_test, user postgres. The password is the same test-only
-    # value already committed in `apps/server/docker-compose.yaml`.
+    # TEST DATABASE CONTRACT. These values must match
+    # `apps/server/config/test.yaml` and `apps/server/docker-compose.yaml`,
+    # which the Serverpod test harness reads at startup: localhost:9099,
+    # database control_plane_test, user postgres.
+    #
+    # PORT. 9099, not the 9090 this file used to publish. 9090 is claimed on
+    # developer machines by `partnerhub-test-db`, a different project, and
+    # Serverpod connects to whatever answers on the port named in test.yaml —
+    # so a 9090 contract would apply this project's nine migrations to that
+    # database. Provenance: the throwaway `shipit-test-port-override.yaml`
+    # that first put the local container on 9099 is superseded by the
+    # committed compose file; do not re-derive 9099 from it.
+    #
+    # PASSWORD. Not in this repository. It is the single Actions secret
+    # SERVERPOD_TEST_DATABASE_PASSWORD, referenced exactly twice below and
+    # therefore structurally unable to drift: once as the service's
+    # POSTGRES_PASSWORD, once as the job's SERVERPOD_DATABASE_PASSWORD, which
+    # Serverpod reads in preference to `test.database` in
+    # `config/passwords.yaml` (serverpod_shared password_manager.dart:34-54).
+    # Create it once with:
+    #   gh secret set SERVERPOD_TEST_DATABASE_PASSWORD
+    env:
+      SERVERPOD_DATABASE_PASSWORD: ${{ secrets.SERVERPOD_TEST_DATABASE_PASSWORD }}
     services:
       postgres:
         image: postgres:16
         env:
           POSTGRES_DB: control_plane_test
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: control_plane_test_pw
-        ports: [9090:5432]
+          POSTGRES_PASSWORD: ${{ secrets.SERVERPOD_TEST_DATABASE_PASSWORD }}
+        ports: [9099:5432]
         options: >-
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
@@ -36,12 +55,19 @@ jobs:
         run: dart pub global activate melos ^8.0.0
       - name: Bootstrap
         run: melos bootstrap
-      # `apps/server/config/passwords.yaml` is gitignored (it holds the shared
-      # serviceSecret, the session pepper and the dev/test database passwords),
-      # so a clean checkout has no credentials and Serverpod throws
-      # PasswordMissingException before the first test runs. The file is
-      # carried as a single base64 Actions secret and materialised here —
-      # nothing secret is ever committed or echoed.
+      # `apps/server/config/passwords.yaml` is gitignored, so a clean checkout
+      # has no credentials at all. Serverpod throws PasswordMissingException
+      # before the first test runs unless the shared serviceSecret is present.
+      # The file is carried as a single base64 Actions secret and materialised
+      # here — nothing secret is ever committed or echoed.
+      #
+      # It supplies `shared.serviceSecret` (Insights auth) and
+      # `development.database`. It does NOT supply the test database password:
+      # that comes from the SERVERPOD_DATABASE_PASSWORD job env above, which
+      # Serverpod prefers over `test.database`
+      # (serverpod_shared password_manager.dart:34-54). Keeping the two apart
+      # is what stops a rotated test password from silently disagreeing with
+      # the secret blob the Postgres service was started with.
       - name: Materialise Serverpod passwords
         env:
           PASSWORDS_YAML_B64: ${{ secrets.SERVERPOD_PASSWORDS_YAML }}
@@ -54,6 +80,20 @@ jobs:
           # Fail closed if the decode produced nothing rather than letting
           # Serverpod fail later with a less useful message.
           test -s apps/server/config/passwords.yaml
+      # The credential is only half the contract: Serverpod and the database
+      # must also be pointed at the same endpoint. The defaults in
+      # config/test.yaml already are the committed values (localhost:9099,
+      # control_plane_test, postgres) and the postgres service above matches
+      # them, so nothing needs setting — this step only fails closed on a
+      # missing password, which the service container would otherwise report
+      # as an opaque "database is uninitialized" error.
+      - name: Verify the test database credential contract
+        run: |
+          if [ -z "$SERVERPOD_DATABASE_PASSWORD" ]; then
+            echo "::error::SERVERPOD_TEST_DATABASE_PASSWORD secret is not set. It is the single value both the postgres service and Serverpod must use, so neither can be changed alone. Create it with: gh secret set SERVERPOD_TEST_DATABASE_PASSWORD"
+            exit 1
+          fi
+          echo "test database credential contract satisfied (password value not echoed)"
       # No `docker compose up` here: `withServerpod` starts Serverpod in-process
       # and every suite talks to the postgres service above. Building the dev
       # stack (server + client + worker images) would not be exercised by a
