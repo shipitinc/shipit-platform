@@ -688,7 +688,7 @@ class _LineChartPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (points.isEmpty) return;
 
-    final padding = 40.0;
+    const padding = 40.0;
     final chartWidth = size.width - 2 * padding;
     final chartHeight = size.height - 2 * padding;
 
@@ -712,7 +712,7 @@ class _LineChartPainter extends CustomPainter {
       ..color = ruleColor
       ..strokeWidth = 1;
     canvas.drawLine(
-      Offset(padding, padding),
+      const Offset(padding, padding),
       Offset(padding, size.height - padding),
       axisPaint,
     );
@@ -788,7 +788,7 @@ class _BarChartPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (data.isEmpty) return;
 
-    final padding = 40.0;
+    const padding = 40.0;
     final chartWidth = size.width - 2 * padding;
     final chartHeight = size.height - 2 * padding;
     final barWidth = chartWidth / data.length * 0.6;
@@ -799,7 +799,7 @@ class _BarChartPainter extends CustomPainter {
       ..color = ruleColor
       ..strokeWidth = 1;
     canvas.drawLine(
-      Offset(padding, padding),
+      const Offset(padding, padding),
       Offset(padding, size.height - padding),
       axisPaint,
     );

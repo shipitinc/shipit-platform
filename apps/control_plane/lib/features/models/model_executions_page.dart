@@ -607,7 +607,7 @@ class _ExecutionTableRow extends StatelessWidget {
                 SizedBox(
                   width: 80,
                   child: Text(
-                    '${_formatTokens(row.totalTokens)}',
+                    _formatTokens(row.totalTokens),
                     textAlign: TextAlign.right,
                     style: ShipItType.duration.copyWith(
                       color: palette.inkTertiary,

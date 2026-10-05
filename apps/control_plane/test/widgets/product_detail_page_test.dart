@@ -342,7 +342,7 @@ void main() {
   });
 
   group('the approval gate shows what is being approved', () {
-    Future<void> _pumpGate(
+    Future<void> pumpGate(
       WidgetTester tester, {
       required List<BaselineFactClaim> facts,
     }) => _pump(
@@ -362,7 +362,7 @@ void main() {
     testWidgets('the actual claims are on screen, not just a count', (
       tester,
     ) async {
-      await _pumpGate(
+      await pumpGate(
         tester,
         facts: [
           _fact(claim: 'Dart workspace at the repo root'),
@@ -386,7 +386,7 @@ void main() {
     testWidgets('an empty candidate is refused in the gate, not approvable', (
       tester,
     ) async {
-      await _pumpGate(tester, facts: const []);
+      await pumpGate(tester, facts: const []);
       expect(find.textContaining('asserts nothing'), findsOneWidget);
       expect(
         find.textContaining('Request a correction instead'),
@@ -397,7 +397,7 @@ void main() {
     testWidgets('the claim count and maturity mix are stated up front', (
       tester,
     ) async {
-      await _pumpGate(
+      await pumpGate(
         tester,
         facts: [
           _fact(),
@@ -413,7 +413,7 @@ void main() {
     testWidgets('facts are grouped under their section headings', (
       tester,
     ) async {
-      await _pumpGate(
+      await pumpGate(
         tester,
         facts: [
           _fact(claim: 'repo fact'),
@@ -433,7 +433,7 @@ void main() {
     testWidgets('a long baseline previews instead of dumping 237 claims', (
       tester,
     ) async {
-      await _pumpGate(
+      await pumpGate(
         tester,
         facts: [
           for (var i = 0; i < 40; i++)
@@ -462,7 +462,7 @@ void main() {
     testWidgets('the collapsed preview spans sections, not just the first', (
       tester,
     ) async {
-      await _pumpGate(
+      await pumpGate(
         tester,
         facts: [
           _fact(claim: 'repo fact'),
@@ -476,7 +476,7 @@ void main() {
     testWidgets('an assumed claim is marked as not established', (
       tester,
     ) async {
-      await _pumpGate(
+      await pumpGate(
         tester,
         facts: [
           _fact(

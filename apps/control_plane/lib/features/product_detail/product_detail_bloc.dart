@@ -46,9 +46,8 @@ class BaselineApprovalResolved extends ProductDetailEvent {
 }
 
 class ProductDetailBloc extends Bloc<ProductDetailEvent, ProductDetailState> {
-  ProductDetailBloc({required ControlPlaneRepository repository})
-    : _repository = repository,
-      super(const ProductDetailState()) {
+  ProductDetailBloc({required this._repository})
+    : super(const ProductDetailState()) {
     on<ProductDetailLoaded>(_onLoaded);
     on<GovernanceActionRequested>(_onGovernanceActionRequested);
     on<BaselineApprovalResolved>(_onBaselineApprovalResolved);

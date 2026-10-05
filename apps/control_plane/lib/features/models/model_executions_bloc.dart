@@ -32,9 +32,8 @@ class ModelExecutionsLoaded extends ModelExecutionsEvent {
 
 class ModelExecutionsBloc
     extends Bloc<ModelExecutionsEvent, ModelExecutionsState> {
-  ModelExecutionsBloc({required ControlPlaneRepository repository})
-    : _repository = repository,
-      super(const ModelExecutionsState()) {
+  ModelExecutionsBloc({required this._repository})
+    : super(const ModelExecutionsState()) {
     on<ModelExecutionsLoaded>(_onLoaded);
   }
 

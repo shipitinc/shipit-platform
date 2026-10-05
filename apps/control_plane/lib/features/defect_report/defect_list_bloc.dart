@@ -15,11 +15,10 @@ class DefectListBloc extends Bloc<DefectListEvent, DefectListState> {
   /// so the error panel can draw the `last successful reading …` stamp the
   /// board shows, without a two-step repository dance.
   DefectListBloc({
-    required ControlPlaneRepository repository,
+    required this._repository,
     DefectListState initial = const DefectListState(),
     DateTime Function()? clock,
-  }) : _repository = repository,
-       _clock = clock ?? DateTime.now,
+  }) : _clock = clock ?? DateTime.now,
        super(initial) {
     on<DefectListLoaded>(_onLoaded);
     on<DefectListFilterChanged>(_onFilterChanged);

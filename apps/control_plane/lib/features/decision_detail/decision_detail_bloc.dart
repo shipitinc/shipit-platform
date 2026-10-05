@@ -7,13 +7,10 @@ import 'decision_detail_event.dart';
 class DecisionDetailBloc
     extends Bloc<DecisionDetailEvent, DecisionDetailState> {
   DecisionDetailBloc({
-    required String decisionId,
-    required String runId,
-    required ControlPlaneRepository repository,
-  }) : _decisionId = decisionId,
-       _runId = runId,
-       _repository = repository,
-       super(const DecisionDetailState()) {
+    required this._decisionId,
+    required this._runId,
+    required this._repository,
+  }) : super(const DecisionDetailState()) {
     on<DecisionDetailLoaded>(_onLoaded);
     on<DecisionChoiceSelected>(_onChoiceSelected);
     on<DecisionRationaleChanged>(_onRationaleChanged);

@@ -11,7 +11,7 @@ import 'package:platform_contracts/platform_contracts.dart';
 /// stable response objects the feature layers consume. The wire contract is
 /// typed end-to-end, so the generated client needs no manual repair.
 class ControlPlaneRepository {
-  ControlPlaneRepository({required Client client}) : _client = client;
+  ControlPlaneRepository({required this._client});
 
   final Client _client;
 
@@ -949,7 +949,20 @@ class ControlPlaneRepository {
     String?
     maturity, // BaselineMaturity.wire (e.g. 'implemented', 'policy', 'not_implemented')
   }) async {
-    final result = await _client.productRegistryEndpoints.addHumanBaselineClaim(
+    // The generated endpoint returns a ProductDetailView; the caller refetches
+    // the detail surface, so the payload is deliberately not bound here. Only
+    // the server-side write matters, so the call is awaited without capturing
+    // its result.
+    //
+    // NOTE (lint cleanup, behaviour unchanged): the discarded ProductDetailView
+    // carries `pendingBaselineDecisionId`, the id of the fresh approval gate
+    // the engine opens after it cancels the superseded one. This method instead
+    // synthesises a DecisionView with a made-up
+    // `baseline-claim:<microsecondsSinceEpoch>` id that exists nowhere
+    // server-side, so the caller cannot act on the real decision. Surfacing
+    // `pendingBaselineDecisionId` would change the returned payload and is a
+    // product decision, not a lint fix -- reported, not done here.
+    await _client.productRegistryEndpoints.addHumanBaselineClaim(
       productId: productId,
       baselineId: baselineId,
       section: section,
@@ -959,8 +972,6 @@ class ControlPlaneRepository {
       maturity: maturity,
     );
     revision.value++;
-    // The generated endpoint returns ProductDetailView; the caller will refetch
-    // the detail surface. We just bump the shared revision.
     return _decisionResponse(
       DecisionView(
         decisionId: 'baseline-claim:${DateTime.now().microsecondsSinceEpoch}',

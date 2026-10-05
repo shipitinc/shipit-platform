@@ -3,9 +3,7 @@ import '../../data/control_plane_repository.dart';
 import 'runs_event.dart';
 
 class RunsBloc extends Bloc<RunsEvent, RunsState> {
-  RunsBloc({required ControlPlaneRepository repository})
-    : _repository = repository,
-      super(const RunsState()) {
+  RunsBloc({required this._repository}) : super(const RunsState()) {
     on<RunsLoaded>(_onLoaded);
     on<RunsFilterChanged>(_onFilterChanged);
   }

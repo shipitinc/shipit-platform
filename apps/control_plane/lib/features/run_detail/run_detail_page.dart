@@ -606,8 +606,7 @@ class _EscalationHistory extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        _formatRole(esc.role) +
-                            ' · \$${esc.costUsd.toStringAsFixed(4)} · ${esc.totalTokens} tokens',
+                        '${_formatRole(esc.role)} · \$${esc.costUsd.toStringAsFixed(4)} · ${esc.totalTokens} tokens',
                         style: ShipItType.monoMeta.copyWith(
                           color: palette.inkTertiary,
                           fontSize: 10,

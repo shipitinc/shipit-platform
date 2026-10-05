@@ -9,11 +9,8 @@ import 'defect_detail_state.dart';
 /// Fetches full defect detail including evidence, clarifications, triage result,
 /// remediation work item, and event timeline.
 class DefectDetailBloc extends Bloc<DefectDetailEvent, DefectDetailState> {
-  DefectDetailBloc({
-    required ControlPlaneRepository repository,
-    required this.defectId,
-  }) : _repository = repository,
-       super(DefectDetailState(defectId: defectId)) {
+  DefectDetailBloc({required this._repository, required this.defectId})
+    : super(DefectDetailState(defectId: defectId)) {
     on<DefectDetailLoaded>(_onLoaded);
     on<DefectDetailRefreshed>(_onRefreshed);
     on<DefectDetailEvidenceAdded>(_onEvidenceAdded);

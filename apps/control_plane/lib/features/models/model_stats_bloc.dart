@@ -15,9 +15,7 @@ class ModelStatsLoaded extends ModelStatsEvent {
 }
 
 class ModelStatsBloc extends Bloc<ModelStatsEvent, ModelStatsState> {
-  ModelStatsBloc({required ControlPlaneRepository repository})
-    : _repository = repository,
-      super(const ModelStatsState()) {
+  ModelStatsBloc({required this._repository}) : super(const ModelStatsState()) {
     on<ModelStatsLoaded>(_onLoaded);
   }
 

@@ -11,9 +11,7 @@ import 'needs_you_event.dart';
 /// decided" ledger. Both come from the same durable decision records, split on
 /// whether an outcome has been written.
 class NeedsYouBloc extends Bloc<NeedsYouEvent, NeedsYouState> {
-  NeedsYouBloc({required ControlPlaneRepository repository})
-    : _repository = repository,
-      super(const NeedsYouState()) {
+  NeedsYouBloc({required this._repository}) : super(const NeedsYouState()) {
     on<NeedsYouLoaded>(_onLoaded);
     on<NeedsYouActionStarted>(_onActionStarted);
     on<NeedsYouActionCancelled>(_onActionCancelled);

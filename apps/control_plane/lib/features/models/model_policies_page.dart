@@ -161,7 +161,7 @@ class _ModelPoliciesViewState extends State<_ModelPoliciesView> {
 
   void _addStep() {
     setState(() {
-      _stepEditors.add(ModelStepEditor());
+      _stepEditors.add(const ModelStepEditor());
     });
   }
 
@@ -728,7 +728,7 @@ class _StepEditorRow extends StatelessWidget {
                 Text(
                   index == 0
                       ? 'Currently active model'
-                      : 'Escalation step ${index}',
+                      : 'Escalation step $index',
                   style: ShipItType.monoMeta.copyWith(
                     color: index == 0 ? palette.positive : palette.inkTertiary,
                   ),
@@ -778,7 +778,7 @@ class _EscalationPreview extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      i == 0 ? 'Primary' : 'Escalation ${i}',
+                      i == 0 ? 'Primary' : 'Escalation $i',
                       style: ShipItType.ref.copyWith(
                         color: i == 0 ? palette.positive : palette.inkSecondary,
                         fontWeight: i == 0 ? FontWeight.w600 : FontWeight.w400,

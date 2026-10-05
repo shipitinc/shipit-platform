@@ -4,12 +4,8 @@ import '../../shared/transition_copy.dart';
 import 'run_detail_event.dart';
 
 class RunDetailBloc extends Bloc<RunDetailEvent, RunDetailState> {
-  RunDetailBloc({
-    required String runId,
-    required ControlPlaneRepository repository,
-  }) : _runId = runId,
-       _repository = repository,
-       super(const RunDetailState()) {
+  RunDetailBloc({required this._runId, required this._repository})
+    : super(const RunDetailState()) {
     on<RunDetailLoaded>(_onLoaded);
   }
 

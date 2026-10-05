@@ -13,10 +13,9 @@ import 'feature_request_list_state.dart';
 class FeatureRequestListBloc
     extends Bloc<FeatureRequestListEvent, FeatureRequestListState> {
   FeatureRequestListBloc({
-    required ControlPlaneRepository repository,
+    required this._repository,
     DateTime Function()? clock,
-  }) : _repository = repository,
-       _clock = clock ?? DateTime.now,
+  }) : _clock = clock ?? DateTime.now,
        super(const FeatureRequestListState()) {
     on<FeatureRequestListRequested>(_onRequested);
   }
