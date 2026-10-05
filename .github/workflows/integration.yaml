@@ -103,6 +103,33 @@ jobs:
       # them at startup (default `applyMigrations: true`, which passes
       # `--apply-migrations`).
       #
+      # Migrations are NOT enough, though. Serverpod applies only the LATEST
+      # `definition.sql` to a database with no recorded migration version
+      # (serverpod-3.4.13 migration_manager.dart `_loadMigrationSQL`: the
+      # `fromVersion == null` branch returns the single definitionSql entry;
+      # only the `else` branch walks `migration.sql`). Everything the
+      # model-driven generator cannot express therefore exists on the chain
+      # path only. Until this step existed, every fresh database this workflow
+      # created — including this one — permitted mutating an APPROVED
+      # `design_revision`, silently.
+      #
+      # The step passes `--apply-migrations` to Serverpod itself, so it is the
+      # migration step for this run: on a fresh database it creates the schema
+      # from the latest `definition.sql`, then applies
+      # `apps/server/tool/schema_bootstrap.sql`, then asserts in the live
+      # database that all three hand-maintained objects exist AND that the
+      # database rejects tampering with an approved revision, a second approved
+      # revision for one work item, and a self-review. A bootstrap that did not
+      # take effect exits non-zero, which fails the build.
+      #
+      # It must run BEFORE the suites: they share `control_plane_test` and
+      # `dart test` would find the schema already at the latest version, making
+      # the harness's own migration call a no-op.
+      - name: Apply schema bootstrap
+        run: |
+          cd apps/server
+          dart run tool/schema_bootstrap.dart
+      #
       # Every suite namespaces its fixture ids and cleans up with targeted
       # DELETEs scoped to its own rows, so the files share one database
       # without a serial gate — run them concurrently (`dart test` default).
@@ -110,6 +137,21 @@ jobs:
         run: |
           cd apps/server
           dart test test/integration/
-      - name: Teardown
+      # TEST RESOURCE TEARDOWN — unconditional and best-effort. The standing rule
+      # is that every container, volume and compose project created for testing
+      # goes away when the run finishes, whether it passed, failed or was
+      # cancelled. `if: always()` is the whole point: without it a red test run
+      # skips teardown, and on a self-hosted runner the leftovers outlive the
+      # job that created them.
+      #
+      # This job gets its database from the `postgres` service container above,
+      # which the Actions runner removes itself, so there is no compose project
+      # of its own to tear down. The previous `cd docker && docker compose down
+      # -v` resolved whatever project the `docker` directory happened to name —
+      # including a developer's QA stack on a self-hosted runner — so it is
+      # replaced by a scoped, no-op-when-absent removal of this repository's own
+      # test project. `-v` removes volumes too, which `stop` never would.
+      - name: Teardown test resources
         if: always()
-        run: cd docker && docker compose down -v
+        run: |
+          docker compose -p shipit_test -f docker/compose.test.yaml down -v --remove-orphans || true

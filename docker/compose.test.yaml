@@ -15,6 +15,37 @@ services:
     ports:
       - "5433:5432"
 
+  # Disposable database for the apps/server integration suite.
+  #
+  # Behind the `integration` profile so it is never started by `test-env-up`,
+  # which runs the full E2E stack above. `make test-integration` brings this up
+  # under its own compose project with a `down -v` trap, so nothing survives the
+  # run.
+  #
+  # PORT is overridable because the committed default must not be a collision
+  # waiting to happen: this suite needs a published port, and a developer who
+  # already has something on 9199 sets SHIPIT_TEST_DB_PORT rather than getting a
+  # confusing "address already in use" from the suite.
+  #
+  # tmpfs, not a volume: the data has no life beyond the run, so there is
+  # nothing for `down -v` to leak and nothing for a crashed run to leave behind.
+  postgres_integration:
+    profiles: [integration]
+    image: postgres:16
+    environment:
+      POSTGRES_DB: control_plane_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "${SERVERPOD_DATABASE_PASSWORD:?export SERVERPOD_DATABASE_PASSWORD; it must equal test.database in apps/server/config/passwords.yaml, which is the value Serverpod connects with}"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d control_plane_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "${SHIPIT_TEST_DB_PORT:-9199}:5432"
+
   triage-seed:
     image: alpine/git:latest
     entrypoint: ["/bin/sh", "-c"]

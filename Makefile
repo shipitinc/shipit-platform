@@ -2,7 +2,28 @@
 # Usage: make <target>
 # Run 'make help' to see all targets
 
-.PHONY: help qa-up qa-down qa-logs qa-restart qa-build qa-build-client test-env-up test-env-down test-env-test test-env-logs test-env-ps e2e-up e2e-down e2e-test clean
+# TEST RESOURCE HYGIENE. Every target below that CREATES test infrastructure
+# must REMOVE it before it returns, on success, failure and interrupt alike.
+# There is no target here that leaves a container, volume or compose project
+# running on purpose; `test-env-up`/`e2e-up` are paired with their `-down`
+# counterparts and are not used by CI or by `test-integration`.
+#
+# The one-shot test targets (`test-integration`, `test-env-test`, `e2e-test`)
+# clean up inside the target itself, via a `trap`, so a failure or a Ctrl-C
+# cannot leak them. Do not add a `docker compose up` to a recipe without adding
+# the matching teardown — see AGENTS.md § Product-specific policy.
+#
+# Those traps run AFTER the recipe has `cd`-ed somewhere, so they must not
+# resolve the compose file against the current directory: a relative path there
+# fails, and a `|| true` teardown then leaks the container it was written to
+# remove. Hence the absolute paths below, derived from this Makefile's own
+# location.
+
+REPO_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+COMPOSE_TEST := $(REPO_ROOT)/docker/compose.test.yaml
+COMPOSE_E2E := $(REPO_ROOT)/docker/compose.e2e.yaml
+
+.PHONY: help qa-up qa-down qa-logs qa-restart qa-build qa-build-client test-env-up test-env-down test-env-test test-env-logs test-env-ps test-integration e2e-up e2e-down e2e-test clean
 
 # Default target
 help:
@@ -19,14 +40,19 @@ help:
 	@echo "Test Environment (Automated Testing - Isolated from QA):"
 	@echo "  make test-env-up          Start test stack (ephemeral DB, different ports)"
 	@echo "  make test-env-down        Stop and remove test stack"
-	@echo "  make test-env-test        Run E2E tests against test environment"
+	@echo "  make test-env-test        Run E2E tests, then remove everything it created"
 	@echo "  make test-env-logs        View test stack logs"
 	@echo "  make test-env-ps          Show test stack status"
+	@echo ""
+	@echo "Integration Tests (apps/server, disposable database):"
+	@echo "  make test-integration     Run the server integration suite against a"
+	@echo "                            throwaway Postgres, then destroy it. Requires"
+	@echo "                            SERVERPOD_DATABASE_PASSWORD and a passwords.yaml."
 	@echo ""
 	@echo "E2E Environment (Legacy):"
 	@echo "  make e2e-up          Start E2E stack"
 	@echo "  make e2e-down        Stop and remove E2E stack"
-	@echo "  make e2e-test        Run E2E tests (full cycle)"
+	@echo "  make e2e-test        Run E2E tests, then remove everything it created"
 	@echo ""
 	@echo "Client Development (Hot Reload):"
 	@echo "  make client-dev      Start backend only, run Flutter dev server"
@@ -97,9 +123,80 @@ test-env-logs:
 test-env-ps:
 	docker compose -f docker/compose.test.yaml ps
 
+# `docker compose up` leaves the containers and the named volumes it created
+# running: `--abort-on-container-exit` stops the other services, and neither
+# flag removes anything. That leak happened on every run, pass or fail. The
+# project is therefore given a name of its own (so the teardown cannot resolve
+# to someone else's stack) and destroyed with `down -v` from a trap, which fires
+# on success, failure and interrupt.
 test-env-test:
 	@echo "Running E2E tests against test environment..."
-	docker compose -f docker/compose.test.yaml up --build --abort-on-container-exit --exit-code-from test-runner
+	@bash -c 'set -euo pipefail; \
+	  cleanup() { \
+	    status=$$?; trap - EXIT INT TERM; \
+	    echo ""; \
+	    echo "test-env-test: removing project shipit_test (containers + volumes)"; \
+	    if out=$$(docker compose -p shipit_test -f "$(COMPOSE_TEST)" down -v --remove-orphans 2>&1); then \
+	      echo "$$out"; \
+	    else \
+	      echo "test-env-test: CLEANUP FAILED - the shipit_test project may still exist:"; echo "$$out"; \
+	    fi; \
+	    exit $$status; \
+	  }; \
+	  trap cleanup EXIT INT TERM; \
+	  docker compose -p shipit_test -f "$(COMPOSE_TEST)" up --build --abort-on-container-exit --exit-code-from test-runner'
+
+# Runs the apps/server integration suite against a database that exists only for
+# this run.
+#
+# Why this target exists rather than `cd apps/server && dart test`: the suite
+# connects to whatever answers on the port in `apps/server/config/test.yaml`, so
+# the committed way to run it locally is a long-lived Postgres on 9099 that
+# outlives the run, carries state between runs, and collides with any other
+# project's test database on the machine. This target creates its own Postgres
+# under its own compose project, points Serverpod at it by environment variable
+# (config/test.yaml documents those overrides), runs the suite, and destroys the
+# container and its data in a `trap` that fires on success, failure and Ctrl-C.
+#
+# The schema step is `dart run tool/schema_bootstrap.dart`, not bare migrations:
+# Serverpod applies only the latest `definition.sql` to a database with no
+# recorded migration version, so without this the database under test is missing
+# the hand-maintained design-revision triggers. See AGENTS.md § Product-specific
+# policy and apps/server/tool/schema_bootstrap.sql.
+test-integration:
+	@bash -c 'set -euo pipefail; \
+	  project="shipit_integration_$$$$"; \
+	  compose="docker compose -p $$project -f $(COMPOSE_TEST) --profile integration"; \
+	  cleanup() { \
+	    status=$$?; trap - EXIT INT TERM; \
+	    echo ""; \
+	    echo "test-integration: removing $$project (container + data)"; \
+	    if out=$$($$compose down -v --remove-orphans 2>&1); then \
+	      echo "$$out"; \
+	    else \
+	      echo "test-integration: CLEANUP FAILED - the $$project project may still exist. Remove it with:"; \
+	      echo "  docker compose -p $$project -f $(COMPOSE_TEST) --profile integration down -v --remove-orphans"; \
+	      echo "$$out"; \
+	    fi; \
+	    exit $$status; \
+	  }; \
+	  trap cleanup EXIT INT TERM; \
+	  if [ -z "$${SERVERPOD_DATABASE_PASSWORD:-}" ]; then \
+	    echo "SERVERPOD_DATABASE_PASSWORD is not set. It must equal test.database"; \
+	    echo "in apps/server/config/passwords.yaml (see apps/server/config/test.yaml)."; \
+	    exit 2; \
+	  fi; \
+	  echo "test-integration: creating disposable Postgres (project $$project)"; \
+	  $$compose up -d --wait postgres_integration; \
+	  cd "$(REPO_ROOT)/apps/server"; \
+	  export SERVERPOD_DATABASE_HOST=127.0.0.1; \
+	  export SERVERPOD_DATABASE_PORT="$${SHIPIT_TEST_DB_PORT:-9199}"; \
+	  export SERVERPOD_DATABASE_NAME=control_plane_test; \
+	  export SERVERPOD_DATABASE_USER=postgres; \
+	  echo "test-integration: applying migrations and the schema bootstrap"; \
+	  dart run tool/schema_bootstrap.dart; \
+	  echo "test-integration: running the integration suite"; \
+	  dart test test/integration/'
 
 # E2E Environment (Legacy)
 e2e-up:
@@ -112,9 +209,24 @@ e2e-down:
 	@echo "Stopping E2E environment..."
 	docker compose -f docker/compose.e2e.yaml down -v
 
+# Same leak and same fix as test-env-test; `docker compose up` does not remove
+# what it created, so the project is destroyed with `down -v` from a trap.
 e2e-test:
 	@echo "Running E2E tests..."
-	docker compose -f docker/compose.e2e.yaml up --build --abort-on-container-exit --exit-code-from test-runner
+	@bash -c 'set -euo pipefail; \
+	  cleanup() { \
+	    status=$$?; trap - EXIT INT TERM; \
+	    echo ""; \
+	    echo "e2e-test: removing project shipit_e2e (containers + volumes)"; \
+	    if out=$$(docker compose -p shipit_e2e -f "$(COMPOSE_E2E)" down -v --remove-orphans 2>&1); then \
+	      echo "$$out"; \
+	    else \
+	      echo "e2e-test: CLEANUP FAILED - the shipit_e2e project may still exist:"; echo "$$out"; \
+	    fi; \
+	    exit $$status; \
+	  }; \
+	  trap cleanup EXIT INT TERM; \
+	  docker compose -p shipit_e2e -f "$(COMPOSE_E2E)" up --build --abort-on-container-exit --exit-code-from test-runner'
 
 e2e-logs:
 	docker compose -f docker/compose.e2e.yaml logs -f

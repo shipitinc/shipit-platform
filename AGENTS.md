@@ -62,6 +62,26 @@ at runtime and is not generated content.
 - Orchestration conventions (see `aef-orchestrator` skill § 3 — override the defaults for every
   convention your project does not want defaulted): TBD
 
+### Test resource hygiene
+
+Human-mandated rule: **every test database, container, volume and compose project created for
+testing is removed when the run finishes — on success, on failure and on interrupt alike.** It is
+enforced by tooling, not by discipline.
+
+- Any script, `Makefile` target or workflow step that creates test infrastructure must remove it
+  before returning. In shell, that means a `trap ... EXIT INT TERM`; in Docker Compose, `down -v`
+  (never `stop`) under a named project so the removal cannot hit someone else's stack.
+- Cleanup must be unconditional and best-effort: teardown that can fail a build masks the failure
+  it was cleaning up after, so `|| true` the teardown and let the real verdict stand.
+- GitHub Actions cleanup steps carry `if: always()`, and `docker compose down -v --remove-orphans`
+  is scoped with `-p <project>` so it cannot resolve to a developer's or a self-hosted runner's
+  unrelated stack.
+- A long-lived developer database is not a test resource, but a test run must never target one that
+  someone else owns. Anything a run creates is its own; point it at a throwaway instance.
+- The current sites: `make test-integration` (disposable Postgres, self-cleaning),
+  `make test-env-test` and `make e2e-test` (both trap a `down -v`), and the `Teardown test resources`
+  step in `.github/workflows/integration.yaml` (`if: always()`).
+
 ## Framework provenance
 - Framework revision: 693cfbc29e75 — the **authoritative, immutable** provenance identifier.
 - Framework version: TBD — human-readable metadata only (revision controls provenance if they differ).
