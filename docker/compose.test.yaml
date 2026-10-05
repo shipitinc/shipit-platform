@@ -29,13 +29,30 @@ services:
   #
   # tmpfs, not a volume: the data has no life beyond the run, so there is
   # nothing for `down -v` to leak and nothing for a crashed run to leave behind.
+  #
+  # THE PASSWORD IS NOT INTERPOLATED AS REQUIRED, AND THAT IS DELIBERATE. Do not
+  # "harden" it to `${SERVERPOD_DATABASE_PASSWORD:?...}`: Compose interpolates
+  # the WHOLE file before it applies profile filtering, so a mandatory variable
+  # on this one service makes every command that reads this file fail without
+  # the credential — `test-env-up`, `test-env-down`, `test-env-logs`,
+  # `test-env-ps`, `make ps`, `make clean` — even though none of them start this
+  # service. That regression shipped here once already.
+  #
+  # Fails closed anyway, twice: `make test-integration` checks the variable
+  # BEFORE it runs `compose up`, so the run stops with an actionable message
+  # instead of starting a database Serverpod cannot authenticate against; and if
+  # it were somehow reached empty, the postgres image refuses to initialise a
+  # data directory with no superuser password, so `up --wait` fails.
+  #
+  # The value must equal test.database in apps/server/config/passwords.yaml,
+  # which is what Serverpod connects with.
   postgres_integration:
     profiles: [integration]
     image: postgres:16
     environment:
       POSTGRES_DB: control_plane_test
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "${SERVERPOD_DATABASE_PASSWORD:?export SERVERPOD_DATABASE_PASSWORD; it must equal test.database in apps/server/config/passwords.yaml, which is the value Serverpod connects with}"
+      POSTGRES_PASSWORD: "${SERVERPOD_DATABASE_PASSWORD:-}"
     tmpfs:
       - /var/lib/postgresql/data
     healthcheck:

@@ -29,6 +29,11 @@
 # Exit codes: 0 all checks passed, 1 at least one failed, 2 the guard itself
 # could not run (a file it depends on is missing) — never a silent pass.
 #
+# "Never a silent pass" is the load-bearing claim, so it is asserted the only way
+# it can be: every check matches the DDL that creates an object, with SQL
+# comments stripped first. A `--`-commented section header that names an object is
+# not that object, and a bare substring search cannot tell the two apart.
+#
 # Run: apps/server/tool/verify_schema_bootstrap.sh   (from anywhere)
 # Wired into .github/workflows/ci.yaml, job `schema-guard`.
 
@@ -58,12 +63,44 @@ ok() {
   echo "OK:   $*"
 }
 
-# Objects every fresh and chain-migrated database must have.
+# Objects every fresh and chain-migrated database must have, as `kind:name`.
+# The kind is not decoration: it is what lets checks 1 and 3 anchor on the DDL
+# that creates the object instead of on its name.
 required_objects=(
-  "trigger_design_revision_immutability"
-  "trigger_design_review_independence"
-  "design_revision_approved_unique_per_work_item"
+  "trigger:trigger_design_revision_immutability"
+  "trigger:trigger_design_review_independence"
+  "index:design_revision_approved_unique_per_work_item"
 )
+
+# The DDL statement that must create <kind> "<name>". `[^;]*` stops the match
+# from running past the end of the statement, so a name cannot be borrowed from a
+# later one.
+ddl_pattern() {
+  case "$1" in
+    index)   printf 'CREATE[[:space:]]+UNIQUE[[:space:]]+INDEX[^;]*"%s"' "$2" ;;
+    trigger) printf 'CREATE[[:space:]]+TRIGGER[[:space:]]+"%s"' "$2" ;;
+    *)       printf 'CREATE[^;]*"%s"' "$2" ;;
+  esac
+}
+
+# SQL comments are removed before anything is matched against a .sql file.
+#
+# This is load-bearing, not tidiness. Each object below is announced by a
+# `--`-commented section header in both files, so a substring search for the bare
+# name is satisfied by that comment alone: deleting the entire CREATE UNIQUE
+# INDEX statement, or the entire independence trigger together with its function,
+# left the header comments in place and this guard still exited 0. A guard that
+# reads as coverage while the database is unenforced is the one failure mode it
+# exists to prevent, so comments are stripped and the DDL is matched instead.
+# `DROP TRIGGER IF EXISTS "name"` deliberately does not satisfy the trigger
+# pattern, so deleting the CREATE while leaving the DROP is caught too.
+#
+# Matching goes through a herestring, not a pipe: `grep -q` closes the pipe as
+# soon as it matches, which under `set -o pipefail` would surface the writer's
+# SIGPIPE as the pipeline's status and report a false failure.
+sql_without_comments() {
+  sed 's/--.*$//' "$1"
+}
 
 # ---------------------------------------------------------------------------
 # 0. Fail closed if the guard cannot run.
@@ -81,13 +118,18 @@ fi
 echo "guard: verifying ${asset#${repo_root}/}"
 
 # ---------------------------------------------------------------------------
-# 1. The asset declares every required object.
+# 1. The asset DECLARES each required object — by the statement that creates it,
+#    matched against the file with SQL comments stripped. A name mentioned in a
+#    comment does not count; see sql_without_comments above.
 # ---------------------------------------------------------------------------
-for object in "${required_objects[@]}"; do
-  if grep -qF -- "${object}" "${asset}"; then
-    ok "bootstrap asset declares ${object}"
+asset_ddl="$(sql_without_comments "${asset}")"
+for entry in "${required_objects[@]}"; do
+  kind="${entry%%:*}"
+  object="${entry#*:}"
+  if grep -qE "$(ddl_pattern "${kind}" "${object}")" <<<"${asset_ddl}"; then
+    ok "bootstrap asset creates ${kind} ${object}"
   else
-    fail "bootstrap asset does not declare ${object}"
+    fail "bootstrap asset does not create ${kind} ${object}; a mention of the name is not the DDL"
   fi
 done
 
@@ -97,7 +139,9 @@ done
 #    sides must not drift apart: a rename on one side only would leave the
 #    other checking for an object that no longer exists.
 # ---------------------------------------------------------------------------
-for object in "${required_objects[@]}"; do
+for entry in "${required_objects[@]}"; do
+  kind="${entry%%:*}"
+  object="${entry#*:}"
   if grep -qF -- "'${object}'" "${applier}"; then
     ok "applier verifies ${object}"
   else
@@ -107,15 +151,19 @@ done
 
 # ---------------------------------------------------------------------------
 # 3. PARITY: the bootstrap and the chain-migrated path enforce the same things.
-#    Same object names, and the same set of guarded columns in the immutability
-#    function — a column present in one and absent in the other is a
+#    Same object names — anchored on the same kind of DDL as check 1, for the
+#    same reason — and the same set of guarded columns in the immutability
+#    function: a column present in one and absent in the other is a
 #    fresh-vs-chain divergence in either direction.
 # ---------------------------------------------------------------------------
-for object in "${required_objects[@]}"; do
-  if grep -qF -- "${object}" "${reference_migration}"; then
-    ok "chain path declares ${object}"
+reference_ddl="$(sql_without_comments "${reference_migration}")"
+for entry in "${required_objects[@]}"; do
+  kind="${entry%%:*}"
+  object="${entry#*:}"
+  if grep -qE "$(ddl_pattern "${kind}" "${object}")" <<<"${reference_ddl}"; then
+    ok "chain path creates ${kind} ${object}"
   else
-    fail "chain path (migrations/20260920232118956/migration.sql) no longer declares ${object}, but the bootstrap does: fresh and chain databases now differ"
+    fail "chain path (migrations/20260920232118956/migration.sql) no longer creates ${kind} ${object}, but the bootstrap does: fresh and chain databases now differ"
   fi
 done
 

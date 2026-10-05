@@ -129,22 +129,40 @@ test-env-ps:
 # project is therefore given a name of its own (so the teardown cannot resolve
 # to someone else's stack) and destroyed with `down -v` from a trap, which fires
 # on success, failure and interrupt.
+#
+# The trap distinguishes "the teardown failed and something leaked" from "the
+# teardown failed because there was nothing to tear down". `down` also fails when
+# the compose file itself cannot be parsed, which is the case for every command
+# in this file when the config is broken — so a run that never created a project
+# used to announce CLEANUP FAILED for a project that had never existed, and that
+# is the same false signal in the opposite direction. Resource existence is
+# therefore probed with plain `docker ps/volume ls/network ls` by project label,
+# which does not need the compose file and so cannot fail for the reason being
+# diagnosed.
 test-env-test:
 	@echo "Running E2E tests against test environment..."
 	@bash -c 'set -euo pipefail; \
+	  project=shipit_test; \
 	  cleanup() { \
 	    status=$$?; trap - EXIT INT TERM; \
+	    leaked=$$(docker ps -aq --filter label=com.docker.compose.project=$$project 2>/dev/null; \
+	               docker volume ls -q --filter label=com.docker.compose.project=$$project 2>/dev/null; \
+	               docker network ls -q --filter label=com.docker.compose.project=$$project 2>/dev/null); \
 	    echo ""; \
-	    echo "test-env-test: removing project shipit_test (containers + volumes)"; \
-	    if out=$$(docker compose -p shipit_test -f "$(COMPOSE_TEST)" down -v --remove-orphans 2>&1); then \
+	    echo "test-env-test: removing project $$project (containers + volumes)"; \
+	    if out=$$(docker compose -p $$project -f "$(COMPOSE_TEST)" down -v --remove-orphans 2>&1); then \
 	      echo "$$out"; \
+	    elif [ -n "$$leaked" ]; then \
+	      echo "test-env-test: CLEANUP FAILED - the $$project project still exists:"; echo "$$out"; \
+	      echo "  docker compose -p $$project -f $(COMPOSE_TEST) down -v --remove-orphans"; \
 	    else \
-	      echo "test-env-test: CLEANUP FAILED - the shipit_test project may still exist:"; echo "$$out"; \
+	      echo "$$out"; \
+	      echo "test-env-test: nothing to remove - no $$project containers, volumes or network existed."; \
 	    fi; \
 	    exit $$status; \
 	  }; \
 	  trap cleanup EXIT INT TERM; \
-	  docker compose -p shipit_test -f "$(COMPOSE_TEST)" up --build --abort-on-container-exit --exit-code-from test-runner'
+	  docker compose -p $$project -f "$(COMPOSE_TEST)" up --build --abort-on-container-exit --exit-code-from test-runner'
 
 # Runs the apps/server integration suite against a database that exists only for
 # this run.
@@ -169,14 +187,20 @@ test-integration:
 	  compose="docker compose -p $$project -f $(COMPOSE_TEST) --profile integration"; \
 	  cleanup() { \
 	    status=$$?; trap - EXIT INT TERM; \
+	    leaked=$$(docker ps -aq --filter label=com.docker.compose.project=$$project 2>/dev/null; \
+	               docker volume ls -q --filter label=com.docker.compose.project=$$project 2>/dev/null; \
+	               docker network ls -q --filter label=com.docker.compose.project=$$project 2>/dev/null); \
 	    echo ""; \
 	    echo "test-integration: removing $$project (container + data)"; \
 	    if out=$$($$compose down -v --remove-orphans 2>&1); then \
 	      echo "$$out"; \
-	    else \
-	      echo "test-integration: CLEANUP FAILED - the $$project project may still exist. Remove it with:"; \
+	    elif [ -n "$$leaked" ]; then \
+	      echo "test-integration: CLEANUP FAILED - the $$project project still exists. Remove it with:"; \
 	      echo "  docker compose -p $$project -f $(COMPOSE_TEST) --profile integration down -v --remove-orphans"; \
 	      echo "$$out"; \
+	    else \
+	      echo "$$out"; \
+	      echo "test-integration: nothing to remove - the $$project project never existed."; \
 	    fi; \
 	    exit $$status; \
 	  }; \
@@ -210,23 +234,33 @@ e2e-down:
 	docker compose -f docker/compose.e2e.yaml down -v
 
 # Same leak and same fix as test-env-test; `docker compose up` does not remove
-# what it created, so the project is destroyed with `down -v` from a trap.
+# what it created, so the project is destroyed with `down -v` from a trap. The
+# trap also separates a real leak from a compose file that could not be parsed —
+# see the note above `test-env-test`.
 e2e-test:
 	@echo "Running E2E tests..."
 	@bash -c 'set -euo pipefail; \
+	  project=shipit_e2e; \
 	  cleanup() { \
 	    status=$$?; trap - EXIT INT TERM; \
+	    leaked=$$(docker ps -aq --filter label=com.docker.compose.project=$$project 2>/dev/null; \
+	               docker volume ls -q --filter label=com.docker.compose.project=$$project 2>/dev/null; \
+	               docker network ls -q --filter label=com.docker.compose.project=$$project 2>/dev/null); \
 	    echo ""; \
-	    echo "e2e-test: removing project shipit_e2e (containers + volumes)"; \
-	    if out=$$(docker compose -p shipit_e2e -f "$(COMPOSE_E2E)" down -v --remove-orphans 2>&1); then \
+	    echo "e2e-test: removing project $$project (containers + volumes)"; \
+	    if out=$$(docker compose -p $$project -f "$(COMPOSE_E2E)" down -v --remove-orphans 2>&1); then \
 	      echo "$$out"; \
+	    elif [ -n "$$leaked" ]; then \
+	      echo "e2e-test: CLEANUP FAILED - the $$project project still exists:"; echo "$$out"; \
+	      echo "  docker compose -p $$project -f $(COMPOSE_E2E) down -v --remove-orphans"; \
 	    else \
-	      echo "e2e-test: CLEANUP FAILED - the shipit_e2e project may still exist:"; echo "$$out"; \
+	      echo "$$out"; \
+	      echo "e2e-test: nothing to remove - no $$project containers, volumes or network existed."; \
 	    fi; \
 	    exit $$status; \
 	  }; \
 	  trap cleanup EXIT INT TERM; \
-	  docker compose -p shipit_e2e -f "$(COMPOSE_E2E)" up --build --abort-on-container-exit --exit-code-from test-runner'
+	  docker compose -p $$project -f "$(COMPOSE_E2E)" up --build --abort-on-container-exit --exit-code-from test-runner'
 
 e2e-logs:
 	docker compose -f docker/compose.e2e.yaml logs -f

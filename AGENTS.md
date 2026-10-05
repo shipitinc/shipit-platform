@@ -78,14 +78,20 @@ enforced by tooling, not by discipline.
   shipped here once already.
 - A cleanup `trap` runs after the recipe has `cd`-ed, so it must resolve paths absolutely (from the
   Makefile's own location), never relative to the current directory.
-- GitHub Actions cleanup steps carry `if: always()`, and `docker compose down -v --remove-orphans`
-  is scoped with `-p <project>` so it cannot resolve to a developer's or a self-hosted runner's
-  unrelated stack.
+- A workflow that creates no compose project has no teardown step to write. The `Integration` job's
+  database is its `postgres` service container, which the Actions runner removes itself; the previous
+  `Teardown test resources` step there silenced its exit code with `|| true` while `-p shipit_test`
+  named a stack a developer also uses, so it was removed rather than repaired.
 - A long-lived developer database is not a test resource, but a test run must never target one that
   someone else owns. Anything a run creates is its own; point it at a throwaway instance.
-- The current sites: `make test-integration` (disposable Postgres, self-cleaning),
-  `make test-env-test` and `make e2e-test` (both trap a `down -v`), and the `Teardown test resources`
-  step in `.github/workflows/integration.yaml` (`if: always()`).
+- The current sites: `make test-integration` (disposable Postgres, self-cleaning), and
+  `make test-env-test` and `make e2e-test` (both trap a `down -v`). Each trap reports CLEANUP FAILED
+  only when a labelled container, volume or network for its project actually exists, so a compose file
+  that cannot be parsed never produces a false leak report.
+- A mandatory Compose variable (`${VAR:?...}`) in a shared compose file breaks every command that
+  reads that file, not just the one service that needs it: Compose interpolates the whole file before
+  filtering profiles, and it interpolates even for read-only commands like `ps`. Keep such a value
+  optional at the file level and fail closed at the call site that needs it.
 
 ## Framework provenance
 - Framework revision: 693cfbc29e75 — the **authoritative, immutable** provenance identifier.

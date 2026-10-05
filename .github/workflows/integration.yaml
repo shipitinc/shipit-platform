@@ -137,21 +137,22 @@ jobs:
         run: |
           cd apps/server
           dart test test/integration/
-      # TEST RESOURCE TEARDOWN — unconditional and best-effort. The standing rule
-      # is that every container, volume and compose project created for testing
-      # goes away when the run finishes, whether it passed, failed or was
-      # cancelled. `if: always()` is the whole point: without it a red test run
-      # skips teardown, and on a self-hosted runner the leftovers outlive the
-      # job that created them.
-      #
-      # This job gets its database from the `postgres` service container above,
-      # which the Actions runner removes itself, so there is no compose project
-      # of its own to tear down. The previous `cd docker && docker compose down
-      # -v` resolved whatever project the `docker` directory happened to name —
-      # including a developer's QA stack on a self-hosted runner — so it is
-      # replaced by a scoped, no-op-when-absent removal of this repository's own
-      # test project. `-v` removes volumes too, which `stop` never would.
-      - name: Teardown test resources
-        if: always()
-        run: |
-          docker compose -p shipit_test -f docker/compose.test.yaml down -v --remove-orphans || true
+# NO TEARDOWN STEP, DELIBERATELY. This job creates no compose project, so there
+# is nothing here for a teardown to remove: its database is the `postgres`
+# service container declared above, and the Actions runner removes that itself
+# when the job ends. `withServerpod` runs in-process and adds no container, and
+# there is no `docker compose up` in this workflow at all.
+#
+# A previous version had a `Teardown test resources` step running
+# `docker compose -p shipit_test -f docker/compose.test.yaml down -v --remove-orphans || true`.
+# It was wrong twice over. `|| true` discarded the exit code while leaving the
+# output visible, so a teardown that genuinely failed read as a green step — the
+# exact "silent pass" AGENTS.md § Product-specific policy forbids, in a file
+# that rule had been written into. And `-p shipit_test` is a FIXED project name a
+# developer also uses, so on a self-hosted runner `down -v` could destroy a real
+# running stack that this job never created.
+#
+# The rule that survives: teardown belongs to whoever creates the resource, and
+# it must not be silenced. `make test-integration`, `make test-env-test` and
+# `make e2e-test` are the sites that actually create something, and each traps a
+# real `down -v` that fails loudly.
