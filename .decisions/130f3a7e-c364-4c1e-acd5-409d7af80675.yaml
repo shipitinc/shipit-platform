@@ -1,0 +1,157 @@
+# human-decision.yaml
+decision_id: 130f3a7e-c364-4c1e-acd5-409d7af80675
+type: INFRASTRUCTURE
+status: PENDING
+question: >-
+  How should a reviewable, committed baseline be established for the ~390 product
+  files that currently exist only as uncommitted working-tree changes, given that
+  no commit on any branch or in origin contains them?
+context:
+  summary: >-
+    A previous AEF session dispatched ten lanes for an "Add Product page" work item.
+    None of them committed anything: all eleven local branches and origin/main sit at
+    693cfbc / ea9b03d, and no commit anywhere in the repository contains
+    ControlPlaneRepository.createProduct or apps/control_plane/lib/shared/form_primitives.dart.
+    The entire product implementation therefore lives only as uncommitted state in the
+    canonical checkout. The orchestrator's ISOLATION_CONVENTION creates every lane
+    worktree from a BASE_SHA, so any worktree created from 693cfbc is a different,
+    non-functional codebase that lacks the product. This violates aef-orchestrator §4
+    precondition 6 ("every dependency listed in the prompt is already merged") and blocks
+    every production-writing lane, including three of the four items in the current
+    feature request. The prior implementer independently reported
+    RESULT: IMPLEMENTATION_BLOCKED on this exact cause, but that report was never
+    persisted and the ledger was nonetheless advanced to review and integrate lanes.
+  blocking_work_item:
+    item_type: FEATURE
+    item_id: c46b6807-a15c-4c3c-911b-cd34f6b21195
+    item_ref: >-
+      Feature c46b6807 — favicon, duplicate "Show technical details" row, disabled
+      Register-product button / required-field convention, isolated test environment
+  evidence:
+    documents:
+      - type: OTHER
+        id: 693cfbc
+        url: docs/engineering/dispatch/tasks/implement-add-product/prompt.md
+      - type: OTHER
+        id: 693cfbc
+        url: /private/tmp/shipit-implement-add-product/IMPLEMENTATION_REPORT.md
+      - type: OTHER
+        id: 693cfbc
+        url: docs/engineering/dispatch/LANES.md
+      - type: ADR
+        id: 693cfbc
+        url: AGENTS.md
+    quantitative_data:
+      - metric: Commits containing ControlPlaneRepository.createProduct
+        value: "0 (searched all refs via git rev-list --all + git grep)"
+        source: git
+      - metric: Commits containing lib/shared/form_primitives.dart
+        value: "0"
+        source: git
+      - metric: Local branches and their HEADs
+        value: "11 branches, all at 693cfbc; origin/main at ea9b03d"
+        source: git branch -a -v
+      - metric: Uncommitted product changes in canonical checkout
+        value: "197 modified tracked files, 459 total porcelain entries"
+        source: git status --porcelain
+      - metric: Untracked Dart source files
+        value: "~90 across apps/server/lib, packages/*/lib, apps/control_plane/lib"
+        source: git status --porcelain
+      - metric: Divergent uncommitted copies of add_product_page.dart
+        value: "5 (canonical checkout at 1117 lines + 4 lane worktrees), all differing, none committed"
+        source: filesystem diff across worktrees
+      - metric: "flutter analyze in apps/control_plane (the only tree containing the product)"
+        value: "FAIL - 3 errors, exit code 1 (undefined_annotation: JS x2, anonymous x1 in lib/data/client_provider.dart)"
+        source: flutter analyze --no-pub
+      - metric: Persisted lane state
+        value: "0 report.md, 0 state.json, no LANES.md; WORK_STATE.md is still the unfilled template"
+        source: docs/engineering/dispatch/
+    qualitative_tradeoffs:
+      - dimension: Provenance integrity
+        option_a: Commit the working tree as a baseline
+        option_b: Continue dispatching lanes from 693cfbc
+        assessment: >-
+          Committing creates the first citable BASE_SHA and is the only way any lane
+          can be reviewed at exact-revision provenance. Continuing from 693cfbc has
+          already produced five divergent unverifiable copies of the same file.
+      - dimension: Review burden
+        option_a: Commit the working tree as a baseline
+        option_b: Continue dispatching lanes from 693cfbc
+        assessment: >-
+          A bulk baseline commit is large and will not have passed independent review,
+          so it must be recorded as an accepted, explicitly-unreviewed starting point
+          rather than silently treated as reviewed.
+      - dimension: Gate viability
+        option_a: Commit the working tree as-is
+        option_b: Fix the client_provider.dart JS-interop errors before baselining
+        assessment: >-
+          Committing as-is leaves "analyze passes with zero errors" failing for every
+          lane until a separate fix lands. Fixing first yields a green baseline but
+          delays baselining behind a production-source change.
+recommendation:
+  recommended_option: OPTION_B
+  rationale: >-
+    Commit the current working tree to a dedicated baseline branch so a citable
+    BASE_SHA exists and lanes can be reviewed at exact-revision provenance, but
+    commit it explicitly as an accepted-unreviewed starting point, and let the
+    client_provider.dart JS-interop fix land as the first reviewed lane on top of
+    that baseline. This preserves the human's uncommitted work (nothing is stashed
+    or discarded), unblocks isolation, and keeps the only production-source fix
+    inside the review process rather than inside the Manager's escape hatch.
+  confidence: HIGH
+options:
+  - option_id: OPTION_A
+    label: Commit tree as-is baseline
+    description: >-
+      Create a baseline branch from main and commit all current working-tree changes
+      as one commit, recorded as explicitly unreviewed. Lanes then branch from that
+      commit. The client_provider.dart analyze errors stay in the baseline and are
+      fixed by the first reviewed lane.
+    implications: >-
+      Fastest route to a citable BASE_SHA and unblocks every lane immediately.
+      Establishes an unreviewed ~390-file commit as the project's starting point.
+      Every lane gate is red until the JS-interop fix is reviewed and merged.
+    estimated_effort: "minutes to commit; one reviewed lane for the analyze fix"
+    risk_level: MEDIUM
+  - option_id: OPTION_B
+    label: Commit tree, fix interop first
+    description: >-
+      Create the baseline branch and commit the working tree as in OPTION_A, but
+      treat the client_provider.dart JS-interop correction as the first dispatched,
+      independently reviewed lane on top of the baseline, so all later lanes start
+      from a green analyze.
+    implications: >-
+      Same baselining benefit, plus a green analyze gate for the lanes that follow.
+      Costs one extra review cycle before feature work can start cleanly.
+    estimated_effort: "minutes to commit; one reviewed lane before feature lanes"
+    risk_level: LOW
+  - option_id: OPTION_C
+    label: Fix analyze in place first
+    description: >-
+      Correct the three client_provider.dart JS-interop errors directly in the
+      canonical checkout, verify flutter analyze is green, and only then create the
+      baseline commit.
+    implications: >-
+      Produces a green baseline in one step, but performs a production-source edit
+      outside the review process and delays baselining behind that edit.
+    estimated_effort: "short, but unreviewed production edit"
+    risk_level: MEDIUM
+  - option_id: OPTION_D
+    label: Discard and rebuild from HEAD
+    description: >-
+      Treat 693cfbc as the real baseline, discard the uncommitted working tree, and
+      re-implement the product from committed history.
+    implications: >-
+      Restores a clean provenance model immediately but destroys roughly 390 files of
+      uncommitted work with no committed copy anywhere.
+    estimated_effort: "unbounded; work is unrecoverable"
+    risk_level: CRITICAL
+resolution:
+  selected_option: ""
+  decided_by: ""
+  decided_at: ""
+  rationale: ""
+  follow_up_actions: []
+created_by: orchestrator-main
+created_at: 2026-10-05T00:11:28Z
+updated_at: 2026-10-05T00:11:28Z
