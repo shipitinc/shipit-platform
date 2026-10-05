@@ -16,24 +16,184 @@ import 'dart:async' as _i2;
 import 'package:control_plane_client/src/protocol/overview.dart' as _i3;
 import 'package:control_plane_client/src/protocol/work_item_view.dart' as _i4;
 import 'package:control_plane_client/src/protocol/decision_view.dart' as _i5;
-import 'package:control_plane_client/src/protocol/product_view.dart' as _i6;
-import 'package:control_plane_client/src/protocol/product_summary_view.dart'
+import 'package:control_plane_client/src/protocol/human_direction_view.dart'
+    as _i6;
+import 'package:control_plane_client/src/protocol/human_direction_attachment_view.dart'
     as _i7;
-import 'package:control_plane_client/src/protocol/product_detail_view.dart'
+import 'package:control_plane_client/src/protocol/feature_request_summary_view.dart'
     as _i8;
-import 'package:control_plane_client/src/protocol/product_context_view.dart'
-    as _i9;
-import 'package:control_plane_client/src/protocol/standing_policy_view.dart'
+import 'package:control_plane_client/src/protocol/product_view.dart' as _i9;
+import 'package:control_plane_client/src/protocol/product_summary_view.dart'
     as _i10;
-import 'package:control_plane_client/src/protocol/clarification_view.dart'
+import 'package:control_plane_client/src/protocol/product_detail_view.dart'
     as _i11;
-import 'package:control_plane_client/src/protocol/job_summary_view.dart'
+import 'package:control_plane_client/src/protocol/product_context_view.dart'
     as _i12;
-import 'package:control_plane_client/src/protocol/work_item_detail_view.dart'
-    as _i13;
-import 'package:control_plane_client/src/protocol/resolve_decision_view.dart'
+import 'package:platform_contracts/src/types/baseline_fact.dart' as _i13;
+import 'package:control_plane_client/src/protocol/standing_policy_view.dart'
     as _i14;
-import 'protocol.dart' as _i15;
+import 'package:control_plane_client/src/protocol/clarification_view.dart'
+    as _i15;
+import 'package:control_plane_client/src/protocol/job_summary_view.dart'
+    as _i16;
+import 'package:control_plane_client/src/protocol/work_item_detail_view.dart'
+    as _i17;
+import 'package:control_plane_client/src/protocol/resolve_decision_view.dart'
+    as _i18;
+import 'protocol.dart' as _i19;
+
+/// Endpoints for durable Human Bug Reporting (S-2).
+///
+/// Every defect-scoped read takes an explicit `defectId` or `productId`.
+/// Endpoints never set state directly — they observe or raise gates that
+/// the platform's durable engines resolve.
+/// {@category Endpoint}
+class EndpointDefectEndpoints extends _i1.EndpointRef {
+  EndpointDefectEndpoints(_i1.EndpointCaller caller) : super(caller);
+
+  @override
+  String get name => 'defectEndpoints';
+
+  /// Reports a new defect.
+  ///
+  /// Creates the Defect, initial evidence (text + diagnostic bundle),
+  /// and the initial 'created' event. Enqueues a triage job.
+  _i2.Future<Map<String, dynamic>> create({
+    required String title,
+    required String description,
+    String? expectedBehavior,
+    String? reproductionSteps,
+    required String severity,
+    String? intakeCategory,
+    required String productId,
+    String? affectedWorkItemId,
+    String? affectedRunId,
+    String? clientContextJson,
+    required String reporter,
+  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+    'defectEndpoints',
+    'create',
+    {
+      'title': title,
+      'description': description,
+      'expectedBehavior': expectedBehavior,
+      'reproductionSteps': reproductionSteps,
+      'severity': severity,
+      'intakeCategory': intakeCategory,
+      'productId': productId,
+      'affectedWorkItemId': affectedWorkItemId,
+      'affectedRunId': affectedRunId,
+      'clientContextJson': clientContextJson,
+      'reporter': reporter,
+    },
+  );
+
+  /// Lists defects with optional filters.
+  _i2.Future<Map<String, dynamic>> list({
+    String? productId,
+    String? status,
+    String? classification,
+    int? limit,
+    int? offset,
+  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+    'defectEndpoints',
+    'list',
+    {
+      'productId': productId,
+      'status': status,
+      'classification': classification,
+      'limit': limit,
+      'offset': offset,
+    },
+  );
+
+  /// Reads full defect detail including evidence, clarifications, events,
+  /// triage result, and remediation work item.
+  _i2.Future<Map<String, dynamic>> inspect({required String defectId}) =>
+      caller.callServerEndpoint<Map<String, dynamic>>(
+        'defectEndpoints',
+        'inspect',
+        {'defectId': defectId},
+      );
+
+  /// Adds evidence to an existing defect.
+  _i2.Future<Map<String, dynamic>> addEvidence({
+    required String defectId,
+    required String kind,
+    String? description,
+    String? artifactId,
+    String? contentHash,
+    String? sourceRef,
+  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+    'defectEndpoints',
+    'addEvidence',
+    {
+      'defectId': defectId,
+      'kind': kind,
+      'description': description,
+      'artifactId': artifactId,
+      'contentHash': contentHash,
+      'sourceRef': sourceRef,
+    },
+  );
+
+  /// AI requests clarification (internal use — typically called by triage agent).
+  _i2.Future<Map<String, dynamic>> requestClarification({
+    required String defectId,
+    required String question,
+    required String reason,
+    required String triageJobId,
+  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+    'defectEndpoints',
+    'requestClarification',
+    {
+      'defectId': defectId,
+      'question': question,
+      'reason': reason,
+      'triageJobId': triageJobId,
+    },
+  );
+
+  /// Human answers a clarification.
+  _i2.Future<Map<String, dynamic>> answerClarification({
+    required String clarificationId,
+    required String answer,
+    required String answeredBy,
+  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+    'defectEndpoints',
+    'answerClarification',
+    {
+      'clarificationId': clarificationId,
+      'answer': answer,
+      'answeredBy': answeredBy,
+    },
+  );
+
+  /// Human verifies a fix for a defect.
+  _i2.Future<Map<String, dynamic>> verifyFix({
+    required String defectId,
+    required String choice,
+    String? rationale,
+    required String decider,
+    required String signature,
+    required String publicKey,
+    required String algorithm,
+    required DateTime signedAt,
+  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+    'defectEndpoints',
+    'verifyFix',
+    {
+      'defectId': defectId,
+      'choice': choice,
+      'rationale': rationale,
+      'decider': decider,
+      'signature': signature,
+      'publicKey': publicKey,
+      'algorithm': algorithm,
+      'signedAt': signedAt,
+    },
+  );
+}
 
 /// Read endpoints for execution_coordinator durable state (agent executions,
 /// events, results, verifications).
@@ -61,6 +221,23 @@ class EndpointExecutionEndpoints extends _i1.EndpointRef {
       );
 }
 
+/// Simple health check endpoint for load balancers and monitoring.
+/// {@category Endpoint}
+class EndpointHealthEndpoints extends _i1.EndpointRef {
+  EndpointHealthEndpoints(_i1.EndpointCaller caller) : super(caller);
+
+  @override
+  String get name => 'healthEndpoints';
+
+  /// Returns a simple health check response.
+  _i2.Future<Map<String, dynamic>> health() =>
+      caller.callServerEndpoint<Map<String, dynamic>>(
+        'healthEndpoints',
+        'health',
+        {},
+      );
+}
+
 /// Endpoints for the Home dashboard overview.
 /// {@category Endpoint}
 class EndpointHomeEndpoints extends _i1.EndpointRef {
@@ -85,14 +262,20 @@ class EndpointHomeEndpoints extends _i1.EndpointRef {
       );
 
   /// Lists work items with optional filters.
+  ///
+  /// [productId] narrows the list to one product's work, which is how the
+  /// report-a-bug form keeps "affected work item" short enough to pick from
+  /// once a product has been chosen.
   _i2.Future<List<_i4.WorkItemView>> listWorkItems({
     String? state,
+    String? productId,
     int? limit,
   }) => caller.callServerEndpoint<List<_i4.WorkItemView>>(
     'homeEndpoints',
     'listWorkItems',
     {
       'state': state,
+      'productId': productId,
       'limit': limit,
     },
   );
@@ -126,6 +309,214 @@ class EndpointHomeEndpoints extends _i1.EndpointRef {
       );
 }
 
+/// Endpoints for durable HumanDirection inbox.
+///
+/// Directions are created by operators and consumed by workers in the next
+/// bounded job — never injected mid-execution. The lifecycle is:
+/// created → acked → working → completed | rejected | superseded.
+/// {@category Endpoint}
+class EndpointHumanDirectionEndpoints extends _i1.EndpointRef {
+  EndpointHumanDirectionEndpoints(_i1.EndpointCaller caller) : super(caller);
+
+  @override
+  String get name => 'humanDirectionEndpoints';
+
+  /// Creates a new direction.
+  _i2.Future<_i6.HumanDirectionView> createDirection({
+    required String directionType,
+    required String targetType,
+    String? targetId,
+    required String title,
+    required String description,
+    String? contextJson,
+    List<_i7.HumanDirectionAttachmentView>? attachments,
+    String? createdBy,
+    String? assignedTo,
+  }) => caller.callServerEndpoint<_i6.HumanDirectionView>(
+    'humanDirectionEndpoints',
+    'createDirection',
+    {
+      'directionType': directionType,
+      'targetType': targetType,
+      'targetId': targetId,
+      'title': title,
+      'description': description,
+      'contextJson': contextJson,
+      'attachments': attachments,
+      'createdBy': createdBy,
+      'assignedTo': assignedTo,
+    },
+  );
+
+  /// Lists directions for a specific target.
+  _i2.Future<List<_i6.HumanDirectionView>> listDirectionsForTarget({
+    required String targetType,
+    required String targetId,
+    String? status,
+    int? limit,
+    int? offset,
+  }) => caller.callServerEndpoint<List<_i6.HumanDirectionView>>(
+    'humanDirectionEndpoints',
+    'listDirectionsForTarget',
+    {
+      'targetType': targetType,
+      'targetId': targetId,
+      'status': status,
+      'limit': limit,
+      'offset': offset,
+    },
+  );
+
+  /// Lists directions filtered by status.
+  _i2.Future<List<_i6.HumanDirectionView>> listDirectionsByStatus({
+    required String status,
+    String? directionType,
+    String? targetType,
+    int? limit,
+    int? offset,
+  }) => caller.callServerEndpoint<List<_i6.HumanDirectionView>>(
+    'humanDirectionEndpoints',
+    'listDirectionsByStatus',
+    {
+      'status': status,
+      'directionType': directionType,
+      'targetType': targetType,
+      'limit': limit,
+      'offset': offset,
+    },
+  );
+
+  /// Reads a single direction by ID.
+  _i2.Future<_i6.HumanDirectionView> readDirection({
+    required String directionId,
+  }) => caller.callServerEndpoint<_i6.HumanDirectionView>(
+    'humanDirectionEndpoints',
+    'readDirection',
+    {'directionId': directionId},
+  );
+
+  /// Acknowledges a direction (created → acked).
+  _i2.Future<_i6.HumanDirectionView> acknowledgeDirection({
+    required String directionId,
+    required String acknowledgedBy,
+  }) => caller.callServerEndpoint<_i6.HumanDirectionView>(
+    'humanDirectionEndpoints',
+    'acknowledgeDirection',
+    {
+      'directionId': directionId,
+      'acknowledgedBy': acknowledgedBy,
+    },
+  );
+
+  /// Starts working on a direction (acked → working).
+  _i2.Future<_i6.HumanDirectionView> startWorkingDirection({
+    required String directionId,
+    required String startedBy,
+  }) => caller.callServerEndpoint<_i6.HumanDirectionView>(
+    'humanDirectionEndpoints',
+    'startWorkingDirection',
+    {
+      'directionId': directionId,
+      'startedBy': startedBy,
+    },
+  );
+
+  /// Completes a direction (working → completed).
+  _i2.Future<_i6.HumanDirectionView> completeDirection({
+    required String directionId,
+    required String completedBy,
+    required String completionSummary,
+  }) => caller.callServerEndpoint<_i6.HumanDirectionView>(
+    'humanDirectionEndpoints',
+    'completeDirection',
+    {
+      'directionId': directionId,
+      'completedBy': completedBy,
+      'completionSummary': completionSummary,
+    },
+  );
+
+  /// Rejects a direction (working → rejected).
+  _i2.Future<_i6.HumanDirectionView> rejectDirection({
+    required String directionId,
+    required String rejectedBy,
+    required String rejectionReason,
+  }) => caller.callServerEndpoint<_i6.HumanDirectionView>(
+    'humanDirectionEndpoints',
+    'rejectDirection',
+    {
+      'directionId': directionId,
+      'rejectedBy': rejectedBy,
+      'rejectionReason': rejectionReason,
+    },
+  );
+
+  /// Supersedes a direction (any active → superseded).
+  _i2.Future<_i6.HumanDirectionView> supersedeDirection({
+    required String directionId,
+    required String supersededByDirectionId,
+    required String supersededBy,
+  }) => caller.callServerEndpoint<_i6.HumanDirectionView>(
+    'humanDirectionEndpoints',
+    'supersedeDirection',
+    {
+      'directionId': directionId,
+      'supersededByDirectionId': supersededByDirectionId,
+      'supersededBy': supersededBy,
+    },
+  );
+}
+
+/// Endpoints for unified human work intake (S-2 Feature Requests, etc.).
+/// {@category Endpoint}
+class EndpointIntakeEndpoints extends _i1.EndpointRef {
+  EndpointIntakeEndpoints(_i1.EndpointCaller caller) : super(caller);
+
+  @override
+  String get name => 'intakeEndpoints';
+
+  /// Creates a new Feature Request.
+  ///
+  /// Instantiates a WorkItem with category: feature, and a corresponding
+  /// HumanDirection to surface it in the inbox.
+  _i2.Future<Map<String, dynamic>> createFeatureRequest({
+    required String title,
+    required String description,
+    required String productId,
+    required String reporter,
+  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+    'intakeEndpoints',
+    'createFeatureRequest',
+    {
+      'title': title,
+      'description': description,
+      'productId': productId,
+      'reporter': reporter,
+    },
+  );
+
+  /// Lists feature requests for the Reports screen's `Feature requests` tab.
+  ///
+  /// Read-only and product-scoped like every other list on this surface: a
+  /// caller that names no [productId] gets the whole register, and one that
+  /// names an unregistered product gets nothing rather than a fabricated row.
+  /// The envelope mirrors `defectEndpoints.list` so the client can read both
+  /// tabs with the same shape.
+  _i2.Future<List<_i8.FeatureRequestSummaryView>> listFeatureRequests({
+    String? productId,
+    String? state,
+    int? limit,
+  }) => caller.callServerEndpoint<List<_i8.FeatureRequestSummaryView>>(
+    'intakeEndpoints',
+    'listFeatureRequests',
+    {
+      'productId': productId,
+      'state': state,
+      'limit': limit,
+    },
+  );
+}
+
 /// Endpoints for the durable Product registry and onboarding (S-1).
 ///
 /// Every product-scoped read takes an explicit `productId`: there is no
@@ -143,8 +534,8 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
   String get name => 'productRegistryEndpoints';
 
   /// Lists every registered Product (global registry read).
-  _i2.Future<List<_i6.ProductView>> listProducts() =>
-      caller.callServerEndpoint<List<_i6.ProductView>>(
+  _i2.Future<List<_i9.ProductView>> listProducts() =>
+      caller.callServerEndpoint<List<_i9.ProductView>>(
         'productRegistryEndpoints',
         'listProducts',
         {},
@@ -152,17 +543,17 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
 
   /// One row per product for the Products list, with the baseline,
   /// clarification and credential-reachability counts already resolved.
-  _i2.Future<List<_i7.ProductSummaryView>> listProductSummaries() =>
-      caller.callServerEndpoint<List<_i7.ProductSummaryView>>(
+  _i2.Future<List<_i10.ProductSummaryView>> listProductSummaries() =>
+      caller.callServerEndpoint<List<_i10.ProductSummaryView>>(
         'productRegistryEndpoints',
         'listProductSummaries',
         {},
       );
 
   /// Everything the Product Detail screen reads, in one call.
-  _i2.Future<_i8.ProductDetailView> productDetail({
+  _i2.Future<_i11.ProductDetailView> productDetail({
     required String productId,
-  }) => caller.callServerEndpoint<_i8.ProductDetailView>(
+  }) => caller.callServerEndpoint<_i11.ProductDetailView>(
     'productRegistryEndpoints',
     'productDetail',
     {'productId': productId},
@@ -170,12 +561,27 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
 
   /// Loads the bounded `ProductContext(productId)`: exactly that Product and
   /// everything scoped to it. A scope mismatch is a fault, not a filter.
-  _i2.Future<_i9.ProductContextView> productContext({
+  _i2.Future<_i12.ProductContextView> productContext({
     required String productId,
-  }) => caller.callServerEndpoint<_i9.ProductContextView>(
+  }) => caller.callServerEndpoint<_i12.ProductContextView>(
     'productRegistryEndpoints',
     'productContext',
     {'productId': productId},
+  );
+
+  /// Creates a durable baseline-approval decision bound to the exact current
+  /// revision + contentHash. Returns the decision for the client to present to
+  /// the human approver.
+  _i2.Future<_i5.DecisionView> proposeBaseline({
+    required String productId,
+    required List<_i13.BaselineFact> facts,
+  }) => caller.callServerEndpoint<_i5.DecisionView>(
+    'productRegistryEndpoints',
+    'proposeBaseline',
+    {
+      'productId': productId,
+      'facts': facts,
+    },
   );
 
   /// Creates a durable baseline-approval decision bound to the exact current
@@ -261,7 +667,7 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
 
   /// Resolves a policy gate. On approve a [StandingPolicy] is created citing
   /// this decision; any policy already live over the same scope is superseded.
-  _i2.Future<_i10.StandingPolicyView?> resolvePolicyAuthorisation({
+  _i2.Future<_i14.StandingPolicyView?> resolvePolicyAuthorisation({
     required String decisionId,
     required String choice,
     required String decider,
@@ -270,7 +676,7 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
     required String publicKey,
     required String algorithm,
     required DateTime signedAt,
-  }) => caller.callServerEndpoint<_i10.StandingPolicyView?>(
+  }) => caller.callServerEndpoint<_i14.StandingPolicyView?>(
     'productRegistryEndpoints',
     'resolvePolicyAuthorisation',
     {
@@ -286,11 +692,11 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
   );
 
   /// Withdraws a standing policy. Revocation is itself recorded.
-  _i2.Future<_i10.StandingPolicyView> revokeStandingPolicy({
+  _i2.Future<_i14.StandingPolicyView> revokeStandingPolicy({
     required String productId,
     required String policyId,
     required String revokedBy,
-  }) => caller.callServerEndpoint<_i10.StandingPolicyView>(
+  }) => caller.callServerEndpoint<_i14.StandingPolicyView>(
     'productRegistryEndpoints',
     'revokeStandingPolicy',
     {
@@ -341,17 +747,177 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
   );
 
   /// Answers a durable clarification, resuming the same onboarding lineage.
-  _i2.Future<_i11.ClarificationView> answerClarification({
+  _i2.Future<_i15.ClarificationView> answerClarification({
     required String clarificationId,
     required String answer,
     required String answeredBy,
-  }) => caller.callServerEndpoint<_i11.ClarificationView>(
+  }) => caller.callServerEndpoint<_i15.ClarificationView>(
     'productRegistryEndpoints',
     'answerClarification',
     {
       'clarificationId': clarificationId,
       'answer': answer,
       'answeredBy': answeredBy,
+    },
+  );
+
+  /// Creates a new product with its manifest.
+  _i2.Future<_i11.ProductDetailView> createProduct({
+    required String productId,
+    required String name,
+    String? description,
+    required String manifestJson,
+    String? manifestVersion,
+  }) => caller.callServerEndpoint<_i11.ProductDetailView>(
+    'productRegistryEndpoints',
+    'createProduct',
+    {
+      'productId': productId,
+      'name': name,
+      'description': description,
+      'manifestJson': manifestJson,
+      'manifestVersion': manifestVersion,
+    },
+  );
+
+  /// Adds a repository reference to a product.
+  _i2.Future<Map<String, dynamic>> addRepositoryReference({
+    required String productId,
+    required String repositoryId,
+    required String uri,
+    required String kind,
+    required String provider,
+  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+    'productRegistryEndpoints',
+    'addRepositoryReference',
+    {
+      'productId': productId,
+      'repositoryId': repositoryId,
+      'uri': uri,
+      'kind': kind,
+      'provider': provider,
+    },
+  );
+
+  /// Records platform-verified evidence against a proposed baseline.
+  _i2.Future<_i11.ProductDetailView> verifyBaseline({
+    required String productId,
+    required String baselineId,
+    required String verifiedBy,
+    required String kind,
+  }) => caller.callServerEndpoint<_i11.ProductDetailView>(
+    'productRegistryEndpoints',
+    'verifyBaseline',
+    {
+      'productId': productId,
+      'baselineId': baselineId,
+      'verifiedBy': verifiedBy,
+      'kind': kind,
+    },
+  );
+
+  /// Adds an operator-authored claim to a **proposed** baseline. Amending a
+  /// baseline cancels any unresolved approval decision (new hash binding), so
+  /// the client must request approval again against the new revision.
+  _i2.Future<_i11.ProductDetailView> addHumanBaselineClaim({
+    required String productId,
+    required String baselineId,
+    required String section,
+    required String claim,
+    required String author,
+    List<String>? evidenceRefs,
+    String? maturity,
+  }) => caller.callServerEndpoint<_i11.ProductDetailView>(
+    'productRegistryEndpoints',
+    'addHumanBaselineClaim',
+    {
+      'productId': productId,
+      'baselineId': baselineId,
+      'section': section,
+      'claim': claim,
+      'author': author,
+      'evidenceRefs': evidenceRefs,
+      'maturity': maturity,
+    },
+  );
+}
+
+/// Provider health and model policy management endpoints.
+/// {@category Endpoint}
+class EndpointProviderHealthEndpoints extends _i1.EndpointRef {
+  EndpointProviderHealthEndpoints(_i1.EndpointCaller caller) : super(caller);
+
+  @override
+  String get name => 'providerHealthEndpoints';
+
+  /// Returns the health status of all known providers.
+  _i2.Future<Map<String, dynamic>> getProviderHealth() =>
+      caller.callServerEndpoint<Map<String, dynamic>>(
+        'providerHealthEndpoints',
+        'getProviderHealth',
+        {},
+      );
+
+  /// Lists all model policies.
+  _i2.Future<Map<String, dynamic>> listModelPolicies() =>
+      caller.callServerEndpoint<Map<String, dynamic>>(
+        'providerHealthEndpoints',
+        'listModelPolicies',
+        {},
+      );
+
+  /// Updates a model policy chain (requires admin).
+  _i2.Future<Map<String, dynamic>> updateModelPolicy({
+    required String role,
+    required String chainJson,
+    required int version,
+    required String updatedByDecisionId,
+  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+    'providerHealthEndpoints',
+    'updateModelPolicy',
+    {
+      'role': role,
+      'chainJson': chainJson,
+      'version': version,
+      'updatedByDecisionId': updatedByDecisionId,
+    },
+  );
+
+  /// Returns paginated model execution records with filters.
+  _i2.Future<Map<String, dynamic>> listModelExecutions({
+    String? workItemId,
+    String? provider,
+    String? modelId,
+    DateTime? from,
+    DateTime? to,
+    required int limit,
+    required int offset,
+  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+    'providerHealthEndpoints',
+    'listModelExecutions',
+    {
+      'workItemId': workItemId,
+      'provider': provider,
+      'modelId': modelId,
+      'from': from,
+      'to': to,
+      'limit': limit,
+      'offset': offset,
+    },
+  );
+
+  /// Returns aggregated model execution statistics.
+  _i2.Future<Map<String, dynamic>> getModelStats({
+    DateTime? from,
+    DateTime? to,
+    String? groupBy,
+  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+    'providerHealthEndpoints',
+    'getModelStats',
+    {
+      'from': from,
+      'to': to,
+      'groupBy': groupBy,
     },
   );
 }
@@ -429,9 +995,9 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
   /// Read-only: the operator surface reports what the scheduler has committed
   /// and never enqueues, claims or cancels. Feeds the Run detail line that
   /// explains what is held up behind a pending decision.
-  _i2.Future<List<_i12.JobSummaryView>> jobsForWorkItem({
+  _i2.Future<List<_i16.JobSummaryView>> jobsForWorkItem({
     required String workItemId,
-  }) => caller.callServerEndpoint<List<_i12.JobSummaryView>>(
+  }) => caller.callServerEndpoint<List<_i16.JobSummaryView>>(
     'workflowEndpoints',
     'jobsForWorkItem',
     {'workItemId': workItemId},
@@ -439,8 +1005,8 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
 
   /// Returns the current work item and its transition history. Never mutates
   /// state; `WorkItem.state` on the wire is always reported, never written.
-  _i2.Future<_i13.WorkItemDetailView> inspect({required String workItemId}) =>
-      caller.callServerEndpoint<_i13.WorkItemDetailView>(
+  _i2.Future<_i17.WorkItemDetailView> inspect({required String workItemId}) =>
+      caller.callServerEndpoint<_i17.WorkItemDetailView>(
         'workflowEndpoints',
         'inspect',
         {'workItemId': workItemId},
@@ -461,7 +1027,7 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
   /// its resolution, and the resulting work item move are persisted
   /// transactionally; a repeated call is an idempotent replay, so retries
   /// after a network failure never double-apply the transition.
-  _i2.Future<_i14.ResolveDecisionView> resolveDecision({
+  _i2.Future<_i18.ResolveDecisionView> resolveDecision({
     required String decisionId,
     required String choice,
     required String decider,
@@ -470,7 +1036,7 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
     required String publicKey,
     required String signature,
     required DateTime signedAt,
-  }) => caller.callServerEndpoint<_i14.ResolveDecisionView>(
+  }) => caller.callServerEndpoint<_i18.ResolveDecisionView>(
     'workflowEndpoints',
     'resolveDecision',
     {
@@ -506,7 +1072,7 @@ class Client extends _i1.ServerpodClientShared {
     bool? disconnectStreamsOnLostInternetConnection,
   }) : super(
          host,
-         _i15.Protocol(),
+         _i19.Protocol(),
          securityContext: securityContext,
          streamingConnectionTimeout: streamingConnectionTimeout,
          connectionTimeout: connectionTimeout,
@@ -515,19 +1081,34 @@ class Client extends _i1.ServerpodClientShared {
          disconnectStreamsOnLostInternetConnection:
              disconnectStreamsOnLostInternetConnection,
        ) {
+    defectEndpoints = EndpointDefectEndpoints(this);
     executionEndpoints = EndpointExecutionEndpoints(this);
+    healthEndpoints = EndpointHealthEndpoints(this);
     homeEndpoints = EndpointHomeEndpoints(this);
+    humanDirectionEndpoints = EndpointHumanDirectionEndpoints(this);
+    intakeEndpoints = EndpointIntakeEndpoints(this);
     productRegistryEndpoints = EndpointProductRegistryEndpoints(this);
+    providerHealthEndpoints = EndpointProviderHealthEndpoints(this);
     schedulerEndpoints = EndpointSchedulerEndpoints(this);
     workerEndpoints = EndpointWorkerEndpoints(this);
     workflowEndpoints = EndpointWorkflowEndpoints(this);
   }
 
+  late final EndpointDefectEndpoints defectEndpoints;
+
   late final EndpointExecutionEndpoints executionEndpoints;
+
+  late final EndpointHealthEndpoints healthEndpoints;
 
   late final EndpointHomeEndpoints homeEndpoints;
 
+  late final EndpointHumanDirectionEndpoints humanDirectionEndpoints;
+
+  late final EndpointIntakeEndpoints intakeEndpoints;
+
   late final EndpointProductRegistryEndpoints productRegistryEndpoints;
+
+  late final EndpointProviderHealthEndpoints providerHealthEndpoints;
 
   late final EndpointSchedulerEndpoints schedulerEndpoints;
 
@@ -537,9 +1118,14 @@ class Client extends _i1.ServerpodClientShared {
 
   @override
   Map<String, _i1.EndpointRef> get endpointRefLookup => {
+    'defectEndpoints': defectEndpoints,
     'executionEndpoints': executionEndpoints,
+    'healthEndpoints': healthEndpoints,
     'homeEndpoints': homeEndpoints,
+    'humanDirectionEndpoints': humanDirectionEndpoints,
+    'intakeEndpoints': intakeEndpoints,
     'productRegistryEndpoints': productRegistryEndpoints,
+    'providerHealthEndpoints': providerHealthEndpoints,
     'schedulerEndpoints': schedulerEndpoints,
     'workerEndpoints': workerEndpoints,
     'workflowEndpoints': workflowEndpoints,

@@ -232,7 +232,7 @@ class InlineLink extends StatelessWidget {
               Text(label, style: style),
               if (caret != null) ...[
                 const SizedBox(width: 4),
-                _Caret(direction: caret!, color: palette.accent),
+                DesignCaret(direction: caret!, color: palette.accent),
               ],
             ],
           ),
@@ -245,9 +245,13 @@ class InlineLink extends StatelessWidget {
 /// Which way a disclosure caret points.
 enum CaretDirection { right, down }
 
-/// A 5×6 solid triangle matching the design's disclosure marker.
-class _Caret extends StatelessWidget {
-  const _Caret({required this.direction, required this.color});
+/// A solid triangle matching the design's disclosure marker, in any tone.
+///
+/// The design types `▸`/`▾`, but those characters are absent from IBM Plex and
+/// fall back inconsistently across platforms, so every disclosure marker in the
+/// app is this shape instead.
+class DesignCaret extends StatelessWidget {
+  const DesignCaret({super.key, required this.direction, required this.color});
 
   final CaretDirection direction;
   final Color color;
@@ -430,13 +434,17 @@ class DetailHeader extends StatelessWidget {
     required this.parentLabel,
     required this.parentRef,
     required this.onParentTap,
+    this.middleLabel,
+    this.onMiddleTap,
     required this.title,
-    required this.statusLabel,
-    required this.statusColor,
-    required this.facts,
+    this.statusLabel,
+    this.statusColor,
+    this.facts = const [],
     this.titleKey,
     this.showBreadcrumb = true,
     this.compact = false,
+    this.titleStyle,
+    this.headerGap = 11,
   });
 
   /// e.g. "All work" / "Needs you".
@@ -445,13 +453,17 @@ class DetailHeader extends StatelessWidget {
   /// e.g. "ref WI-9c11".
   final String parentRef;
   final VoidCallback onParentTap;
+  final String? middleLabel;
+  final VoidCallback? onMiddleTap;
   final String title;
 
-  /// Uppercase, e.g. "WAITING FOR YOU".
-  final String statusLabel;
-  final Color statusColor;
+  /// Uppercase, e.g. "WAITING FOR YOU". Null omits the meta strip but keeps
+  /// its 14px of height, so the header rule lands where the board puts it —
+  /// `BP · Create Defect` has no status row and still draws its rule at y110.
+  final String? statusLabel;
+  final Color? statusColor;
 
-  /// Mono facts, e.g. "started today at 09:41", "running 3h 12m". A null
+  /// Mono facts, e.g. "started today at 09:12", "running 3h 12m". A null
   /// colour uses the tertiary ink.
   final List<(String, Color?)> facts;
 
@@ -466,9 +478,20 @@ class DetailHeader extends StatelessWidget {
   /// separator chain that cannot fit a 390px column.
   final bool compact;
 
+  /// Overrides the headline style. The desktop boards all draw `H1` at the
+  /// shared size, but `BPM · Defect Detail` sets its mobile H1 at 20/600, so
+  /// the screen that board belongs to passes its own style here.
+  final TextStyle? titleStyle;
+
+  /// Space between the headline and the meta strip. `BP · Create Defect`
+  /// stacks its `L Title` tighter than the detail boards do.
+  final double headerGap;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
+    final label = statusLabel;
+    final tone = statusColor ?? palette.accent;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -476,6 +499,19 @@ class DetailHeader extends StatelessWidget {
           Row(
             children: [
               InlineLink(label: parentLabel, onTap: onParentTap, micro: true),
+              if (middleLabel != null) ...[
+                Text(
+                  '  /  ',
+                  style: ShipItType.monoMeta.copyWith(
+                    color: palette.inkTertiary,
+                  ),
+                ),
+                InlineLink(
+                  label: middleLabel!,
+                  onTap: onMiddleTap ?? () {},
+                  micro: true,
+                ),
+              ],
               Text(
                 '  /  $parentRef',
                 style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
@@ -487,17 +523,21 @@ class DetailHeader extends StatelessWidget {
         Text(
           title,
           key: titleKey,
-          style: ShipItType.pageTitle.copyWith(color: palette.inkPrimary),
+          style: (titleStyle ?? ShipItType.pageTitle).copyWith(
+            color: palette.inkPrimary,
+          ),
         ),
-        const SizedBox(height: 11),
-        if (compact)
+        SizedBox(height: headerGap),
+        if (label == null)
+          const SizedBox(height: 14)
+        else if (compact)
           SizedBox(
             height: 14,
             child: Row(
               children: [
-                AccentTick(color: statusColor, height: 11),
+                AccentTick(color: tone, height: 11),
                 const SizedBox(width: 8),
-                MicroLabel(statusLabel, color: statusColor),
+                MicroLabel(label, color: tone),
                 const Spacer(),
                 if (facts.isNotEmpty)
                   Flexible(
@@ -527,9 +567,9 @@ class DetailHeader extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    AccentTick(color: statusColor, height: 11),
+                    AccentTick(color: tone, height: 11),
                     const SizedBox(width: 8),
-                    MicroLabel(statusLabel, color: statusColor),
+                    MicroLabel(label, color: tone),
                   ],
                 ),
               ),
@@ -582,7 +622,8 @@ class DefinitionList extends StatelessWidget {
           MicroLabel(entry.label),
           const SizedBox(height: 4),
           DefaultTextStyle(
-            style: ShipItType.monoMeta.copyWith(color: palette.inkPrimary),
+            style: (entry.prose ? ShipItType.bodySmall : ShipItType.monoMeta)
+                .copyWith(color: palette.inkPrimary),
             child: Row(
               children: [
                 Expanded(
@@ -614,7 +655,12 @@ class DefinitionList extends StatelessWidget {
 
 /// One row of a [DefinitionList].
 class DefinitionEntry {
-  const DefinitionEntry({required this.label, required this.value, this.ref});
+  const DefinitionEntry({
+    required this.label,
+    required this.value,
+    this.ref,
+    this.prose = false,
+  });
 
   /// Uppercase mono key, e.g. "WHAT'S HELD UP".
   final String label;
@@ -622,6 +668,11 @@ class DefinitionEntry {
 
   /// Optional trailing reference, e.g. "ref JOB-31".
   final String? ref;
+
+  /// Renders the value as Sans prose rather than mono. The boards set most
+  /// values in mono but the row that explains a wait in plain language
+  /// (`WHY IT'S WAITING` on desktop, both rows on mobile) is Sans.
+  final bool prose;
 }
 
 /// A bordered panel for the right-hand column (Penpot `R Panel`).
@@ -645,6 +696,164 @@ class SidePanel extends StatelessWidget {
 
 /// Mono filter tabs with a 2px accent underline on the active item
 /// (Penpot `Chip n` / `Chip U n`).
+/// `Product: All ▾` — the board's filter disclosure link, wired.
+///
+/// Drawn as the board draws it, with a menu behind it. The menu opens under the
+/// link so the control reads as a filter on what is below rather than as a
+/// field in its own right. Shared by both registers so a product can never be
+/// filtered one way in one register and another way in the other.
+class ProductFilterLink extends StatelessWidget {
+  const ProductFilterLink({
+    super.key,
+    required this.label,
+    required this.products,
+    required this.onChanged,
+  });
+
+  /// What the control currently reads, e.g. `Product: All` or `Product: Cart`.
+  final String label;
+
+  /// Every product, `id` / `name`, so the menu keeps offering them all while
+  /// one is selected.
+  final List<(String, String)> products;
+
+  /// Empty string means "all products".
+  final ValueChanged<String> onChanged;
+
+  /// `Product: All` / `Product: <name>` for the given filter and product list.
+  ///
+  /// A product that has since been removed shows its id rather than silently
+  /// reading as "all".
+  static String labelFor(String? productId, List<(String, String)> products) {
+    if (productId == null) return 'Product: All';
+    for (final (id, name) in products) {
+      if (id == productId) return 'Product: $name';
+    }
+    return 'Product: $productId';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return PopupMenuButton<String>(
+      tooltip: 'Filter by product',
+      // The link supplies its own padding; the button must not add any.
+      padding: EdgeInsets.zero,
+      elevation: 0,
+      color: palette.card,
+      position: PopupMenuPosition.under,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(ShipItMetrics.radius),
+        side: BorderSide(color: palette.cardBorder),
+      ),
+      onSelected: onChanged,
+      itemBuilder: (context) => [
+        const PopupMenuItem<String>(value: '', child: Text('All products')),
+        for (final (id, name) in products)
+          PopupMenuItem<String>(
+            value: id,
+            child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
+      ],
+      child: InlineLink(label: label, caret: CaretDirection.down),
+    );
+  }
+}
+
+/// A tab in the Reports `Tab Group` treatment.
+///
+/// The board draws each tab as a block with a 2px accent rule spanning the
+/// whole block at its trailing edge, and the inactive tab greyed with no rule
+/// at all. Reproducing it as a block rather than underlining the text is what
+/// makes the tabs read as peers rather than as a subordinate filter — `Defects`
+/// and `Feature requests` are the same kind of thing, and `Bug` and `Feature`
+/// are the same kind of choice.
+///
+/// 32px tall: 14px of type, breathing room, 2px of rule.
+class TabUnderline extends StatelessWidget {
+  const TabUnderline({
+    super.key,
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Semantics(
+      button: true,
+      selected: active,
+      label: label,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: onTap,
+          behavior: HitTestBehavior.opaque,
+          child: SizedBox(
+            height: 32,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  style: ShipItType.ref.copyWith(
+                    letterSpacing: 1.1,
+                    fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+                    color: active ? palette.inkPrimary : palette.inkTertiary,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  height: ShipItMetrics.tickWidth,
+                  color: active ? palette.accentTick : const Color(0x00000000),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A row of [TabUnderline]s in the Reports treatment, 24px apart.
+///
+/// Shared by the two register headers and the two intake forms so a tab cannot
+/// look one way in a list and another way on the form it opens.
+class TabUnderlineRow extends StatelessWidget {
+  const TabUnderlineRow({
+    super.key,
+    required this.labels,
+    required this.activeIndex,
+    required this.onSelected,
+  });
+
+  final List<String> labels;
+  final int activeIndex;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        for (var i = 0; i < labels.length; i++) ...[
+          if (i > 0) const SizedBox(width: 24),
+          TabUnderline(
+            label: labels[i],
+            active: i == activeIndex,
+            onTap: () => onSelected(i),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class FilterTabs extends StatelessWidget {
   const FilterTabs({
     super.key,

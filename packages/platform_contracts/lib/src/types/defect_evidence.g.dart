@@ -17,6 +17,7 @@ DefectEvidence _$DefectEvidenceFromJson(Map<String, dynamic> json) =>
       sourceRef: json['sourceRef'] as String?,
       capturedAt: DateTime.parse(json['capturedAt'] as String),
       createdAt: DateTime.parse(json['createdAt'] as String),
+      version: (json['version'] as num?)?.toInt() ?? 1,
     );
 
 Map<String, dynamic> _$DefectEvidenceToJson(DefectEvidence instance) =>
@@ -30,4 +31,5 @@ Map<String, dynamic> _$DefectEvidenceToJson(DefectEvidence instance) =>
       'sourceRef': ?instance.sourceRef,
       'capturedAt': instance.capturedAt.toIso8601String(),
       'createdAt': instance.createdAt.toIso8601String(),
+      'version': instance.version,
     };

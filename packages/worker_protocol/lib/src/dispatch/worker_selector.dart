@@ -69,11 +69,15 @@ class WorkerSelector {
       return WorkerSelection.noCompatibleWorker();
     }
     final acquirable = compatible
-        .where((worker) =>
-            worker.isAcquirable &&
-            worker.isAvailable &&
-            (worker.currentExecutionId == null ||
-                !requirements.excludedExecutionIds.contains(worker.currentExecutionId!)))
+        .where(
+          (worker) =>
+              worker.isAcquirable &&
+              worker.isAvailable &&
+              (worker.currentExecutionId == null ||
+                  !requirements.excludedExecutionIds.contains(
+                    worker.currentExecutionId!,
+                  )),
+        )
         .toList();
     if (acquirable.isEmpty) {
       return WorkerSelection.busy(compatibleWorkers: compatible);

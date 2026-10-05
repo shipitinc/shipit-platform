@@ -1,0 +1,31 @@
+# Docker ignore file
+# Exclude everything by default
+*
+
+# Include apps directory structure
+!apps/
+!apps/control_plane/
+!apps/control_plane/build/
+!apps/control_plane/build/web
+!apps/control_plane/build/web/**
+
+# Include docker directory
+!docker/
+!docker/**
+
+# Include necessary files for server build
+!apps/server/
+!apps/server/**
+
+# Include packages for local development
+!packages/
+!packages/**
+
+# Exclude git and IDE files
+.git
+.gitignore
+.idea
+.vscode
+.DS_Store
+*.swp
+*.swo

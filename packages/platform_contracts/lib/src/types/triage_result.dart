@@ -31,6 +31,8 @@ class DefectClarificationRequest extends Equatable {
 @immutable
 class TriageResult extends Equatable {
   const TriageResult({
+    required this.resultId,
+    required this.defectId,
     required this.recommendedStatus,
     required this.recommendedClassification,
     required this.confidence,
@@ -43,6 +45,11 @@ class TriageResult extends Equatable {
     this.possibleDuplicateDefectId,
     this.recommendedWorkItemCategory,
     required this.summary,
+    this.jobId,
+    this.executionId,
+    required this.createdAt,
+    this.completedAt,
+    required this.version,
   });
 
   @JsonKey(fromJson: _defectStatusFromJson, toJson: _defectStatusToJson)
@@ -62,6 +69,13 @@ class TriageResult extends Equatable {
   final String? possibleDuplicateDefectId;
   final String? recommendedWorkItemCategory;
   final String summary;
+  final String? jobId;
+  final String? executionId;
+  final DateTime createdAt;
+  final DateTime? completedAt;
+  final int version;
+  final String resultId;
+  final String defectId;
 
   factory TriageResult.fromJson(Map<String, dynamic> json) =>
       _$TriageResultFromJson(json);
@@ -70,22 +84,30 @@ class TriageResult extends Equatable {
 
   @override
   List<Object?> get props => [
-        recommendedStatus,
-        recommendedClassification,
-        confidence,
-        suspectedCategory,
-        suspectedComponents,
-        reproductionSupported,
-        evidenceUsed,
-        clarificationRequired,
-        recommendedNextAction,
-        possibleDuplicateDefectId,
-        recommendedWorkItemCategory,
-        summary,
-      ];
+    resultId,
+    defectId,
+    recommendedStatus,
+    recommendedClassification,
+    confidence,
+    suspectedCategory,
+    suspectedComponents,
+    reproductionSupported,
+    evidenceUsed,
+    clarificationRequired,
+    recommendedNextAction,
+    possibleDuplicateDefectId,
+    recommendedWorkItemCategory,
+    summary,
+    jobId,
+    executionId,
+    createdAt,
+    completedAt,
+    version,
+  ];
 }
 
-DefectStatus _defectStatusFromJson(String value) => DefectStatus.fromWire(value);
+DefectStatus _defectStatusFromJson(String value) =>
+    DefectStatus.fromWire(value);
 
 String _defectStatusToJson(DefectStatus value) => value.wire;
 

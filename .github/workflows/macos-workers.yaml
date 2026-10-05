@@ -1,0 +1,28 @@
+name: macOS Workers
+on: [push, pull_request]
+jobs:
+  build-worker-macos:
+    runs-on: [self-hosted, macos, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build macOS worker package
+        run: |
+          cd tooling/workers
+          ./build_macos_worker.sh
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-macos
+          path: dist/worker-macos-*.pkg
+
+  test-ios:
+    runs-on: [self-hosted, macos, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: '3.12.0'
+      - name: Run iOS tests
+        run: |
+          cd packages/control_plane_client
+          flutter test integration_test/ios_test.dart

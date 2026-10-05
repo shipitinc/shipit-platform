@@ -39,9 +39,13 @@ void main() {
     });
 
     test('the schema pins the same closed set', () {
-      final schema = jsonDecode(
-        File('../../schemas/standing_policy.schema.json').readAsStringSync(),
-      ) as Map<String, dynamic>;
+      final schema =
+          jsonDecode(
+                File(
+                  '../../schemas/standing_policy.schema.json',
+                ).readAsStringSync(),
+              )
+              as Map<String, dynamic>;
       final actions =
           (schema['properties'] as Map)['actions'] as Map<String, dynamic>;
       expect((actions['items'] as Map)['enum'], ['push', 'merge']);
@@ -155,9 +159,13 @@ void main() {
     });
 
     test('every emitted key is declared in the schema', () {
-      final schema = jsonDecode(
-        File('../../schemas/standing_policy.schema.json').readAsStringSync(),
-      ) as Map<String, dynamic>;
+      final schema =
+          jsonDecode(
+                File(
+                  '../../schemas/standing_policy.schema.json',
+                ).readAsStringSync(),
+              )
+              as Map<String, dynamic>;
       final declared = (schema['properties'] as Map).keys.toSet();
       final emitted = _policy()
           .revoke(

@@ -23,17 +23,29 @@ class DefectDecisionRouting {
         DefectStatus.triaging,
 
       // Fix verification
-      (HumanDecisionType.defectFixVerification, HumanDecisionChoice.fixed,
-       DefectStatus.fixReadyForVerification) =>
+      (
+        HumanDecisionType.defectFixVerification,
+        HumanDecisionChoice.fixed,
+        DefectStatus.fixReadyForVerification,
+      ) =>
         DefectStatus.resolved,
-      (HumanDecisionType.defectFixVerification, HumanDecisionChoice.stillBroken,
-       DefectStatus.fixReadyForVerification) =>
+      (
+        HumanDecisionType.defectFixVerification,
+        HumanDecisionChoice.stillBroken,
+        DefectStatus.fixReadyForVerification,
+      ) =>
         DefectStatus.reported,
-      (HumanDecisionType.defectFixVerification, HumanDecisionChoice.partiallyFixed,
-       DefectStatus.fixReadyForVerification) =>
+      (
+        HumanDecisionType.defectFixVerification,
+        HumanDecisionChoice.partiallyFixed,
+        DefectStatus.fixReadyForVerification,
+      ) =>
         DefectStatus.confirmed,
-      (HumanDecisionType.defectFixVerification, HumanDecisionChoice.approve,
-       DefectStatus.resolved) =>
+      (
+        HumanDecisionType.defectFixVerification,
+        HumanDecisionChoice.approve,
+        DefectStatus.resolved,
+      ) =>
         DefectStatus.closed,
       _ => null,
     };

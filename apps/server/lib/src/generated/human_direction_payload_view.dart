@@ -12,8 +12,8 @@
 // ignore_for_file: no_leading_underscores_for_library_prefixes
 
 import 'package:serverpod/serverpod.dart' as _i1;
-import 'package:control_plane_server/src/generated/protocol.dart' as _i2;
-import 'human_direction_attachment_view.dart' as _i3;
+import 'human_direction_attachment_view.dart' as _i2;
+import 'package:control_plane_server/src/generated/protocol.dart' as _i3;
 
 abstract class HumanDirectionPayloadView
     implements _i1.SerializableModel, _i1.ProtocolSerialization {
@@ -28,35 +28,41 @@ abstract class HumanDirectionPayloadView
     required String title,
     required String description,
     String? contextJson,
-    List<_i3.HumanDirectionAttachmentView>? attachments,
+    List<_i2.HumanDirectionAttachmentView>? attachments,
   }) = _HumanDirectionPayloadViewImpl;
 
-  factory HumanDirectionPayloadView.fromJson(Map<String, dynamic> jsonSerialization) {
+  factory HumanDirectionPayloadView.fromJson(
+    Map<String, dynamic> jsonSerialization,
+  ) {
     return HumanDirectionPayloadView(
       title: jsonSerialization['title'] as String,
       description: jsonSerialization['description'] as String,
       contextJson: jsonSerialization['contextJson'] as String?,
       attachments: jsonSerialization['attachments'] == null
           ? null
-          : _i2.Protocol().deserialize<List<_i3.HumanDirectionAttachmentView>>(
+          : _i3.Protocol().deserialize<List<_i2.HumanDirectionAttachmentView>>(
               jsonSerialization['attachments'],
             ),
     );
   }
 
   String title;
-  String description;
-  String? contextJson;
-  List<_i3.HumanDirectionAttachmentView>? attachments;
 
+  String description;
+
+  String? contextJson;
+
+  List<_i2.HumanDirectionAttachmentView>? attachments;
+
+  /// Returns a shallow copy of this [HumanDirectionPayloadView]
+  /// with some or all fields replaced by the given arguments.
   @_i1.useResult
   HumanDirectionPayloadView copyWith({
     String? title,
     String? description,
     String? contextJson,
-    List<_i3.HumanDirectionAttachmentView>? attachments,
+    List<_i2.HumanDirectionAttachmentView>? attachments,
   });
-
   @override
   Map<String, dynamic> toJson() {
     return {
@@ -78,7 +84,8 @@ abstract class HumanDirectionPayloadView
       if (contextJson != null) 'contextJson': contextJson,
       if (attachments != null)
         'attachments': attachments?.toJson(
-            valueToJson: (v) => v.toJsonForProtocol()),
+          valueToJson: (v) => v.toJsonForProtocol(),
+        ),
     };
   }
 
@@ -95,27 +102,29 @@ class _HumanDirectionPayloadViewImpl extends HumanDirectionPayloadView {
     required String title,
     required String description,
     String? contextJson,
-    List<_i3.HumanDirectionAttachmentView>? attachments,
+    List<_i2.HumanDirectionAttachmentView>? attachments,
   }) : super._(
-          title: title,
-          description: description,
-          contextJson: contextJson,
-          attachments: attachments,
-        );
+         title: title,
+         description: description,
+         contextJson: contextJson,
+         attachments: attachments,
+       );
 
+  /// Returns a shallow copy of this [HumanDirectionPayloadView]
+  /// with some or all fields replaced by the given arguments.
   @_i1.useResult
   @override
   HumanDirectionPayloadView copyWith({
     String? title,
     String? description,
-    String? contextJson,
+    Object? contextJson = _Undefined,
     Object? attachments = _Undefined,
   }) {
     return HumanDirectionPayloadView(
       title: title ?? this.title,
       description: description ?? this.description,
-      contextJson: contextJson ?? this.contextJson,
-      attachments: attachments is List<_i3.HumanDirectionAttachmentView>?
+      contextJson: contextJson is String? ? contextJson : this.contextJson,
+      attachments: attachments is List<_i2.HumanDirectionAttachmentView>?
           ? attachments
           : this.attachments?.map((e0) => e0.copyWith()).toList(),
     );

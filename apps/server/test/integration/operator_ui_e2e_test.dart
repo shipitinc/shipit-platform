@@ -21,25 +21,35 @@ void main() {
     return PersistenceDatabase(session.db);
   }
 
-  Future<void> truncateDomainTables() async {
+  /// Removes only this suite's rows, in an order that satisfies foreign keys.
+  ///
+  /// Targeted DELETEs, never a TRUNCATE: `test/integration` shares one database
+  /// with files that run concurrently, and truncating `work_item` out from
+  /// under them breaks their assertions — this file's own endpoint reads are
+  /// assertions of other files' rows too. Every marker is namespaced `ui-*` to
+  /// this file. Runs in `setUp` as well as `tearDown`, because a previous run
+  /// that aborted mid-test leaves rows behind and re-inserting them would then
+  /// violate a unique constraint.
+  Future<void> purgeSuiteRows() async {
     final db = await newDb();
-    await db.queryNoTransaction('''
-      TRUNCATE TABLE
-        "work_item", "human_decision", "work_item_transition",
-        "job", "job_claim", "scheduler_event",
-        "worker_execution", "worker_result", "worker_event", "worker_registration",
-        "agent_execution_request", "agent_execution", "agent_event",
-        "agent_result", "platform_verification"
-      RESTART IDENTITY CASCADE
-    ''');
+    const workItem = 'ui-%';
+    const statements = <String>[
+      'DELETE FROM "human_decision"       WHERE "workItemId" LIKE \'$workItem\'',
+      'DELETE FROM "work_item_transition" WHERE "workItemId" LIKE \'$workItem\'',
+      'DELETE FROM "work_item"            WHERE "workItemId" LIKE \'$workItem\'',
+    ];
+    for (final statement in statements) {
+      await db.query(statement);
+    }
   }
 
   withServerpod(
     'control-plane operator UI E2E: real PostgreSQL data flows to Flutter endpoints',
     (sessionBuilder, endpoints) {
-      setUp(truncateDomainTables);
+      setUp(purgeSuiteRows);
 
       tearDown(() async {
+        await purgeSuiteRows();
         for (final session in List.of(openSessions)) {
           await session.close();
         }
@@ -50,23 +60,23 @@ void main() {
         final db = await newDb();
         final now = DateTime.now().toUtc();
         final ts = now.toIso8601String();
-        // wi-h1: agent_executing, no blocking → "running"
+        // ui-h1: agent_executing, no blocking → "running"
         await db.queryNoTransaction('''
           INSERT INTO work_item ("workItemId", "productId", "category", "title",
             "state", "createdAt", "updatedAt", "completedAt", "blockingHumanDecisionId", "version")
-          VALUES ('wi-h1', 'p', 'feature', 'Running', 'agent_executing', '$ts', '$ts', NULL, NULL, 1)
+          VALUES ('ui-h1', 'p', 'feature', 'Running', 'agent_executing', '$ts', '$ts', NULL, NULL, 1)
         ''');
-        // wi-h2: waiting_for_human_decision + blocking → "waitingOnYou"
+        // ui-h2: waiting_for_human_decision + blocking → "waitingOnYou"
         await db.queryNoTransaction('''
           INSERT INTO work_item ("workItemId", "productId", "category", "title",
             "state", "createdAt", "updatedAt", "completedAt", "blockingHumanDecisionId", "version")
-          VALUES ('wi-h2', 'p', 'feature', 'Blocked', 'waiting_for_human_decision', '$ts', '$ts', NULL, 'dec-ny', 1)
+          VALUES ('ui-h2', 'p', 'feature', 'Blocked', 'waiting_for_human_decision', '$ts', '$ts', NULL, 'dec-ui-ny', 1)
         ''');
-        // wi-h3: completed + completedAt recent → "recentlyFinished"
+        // ui-h3: completed + completedAt recent → "recentlyFinished"
         await db.queryNoTransaction('''
           INSERT INTO work_item ("workItemId", "productId", "category", "title",
             "state", "createdAt", "updatedAt", "completedAt", "blockingHumanDecisionId", "version")
-          VALUES ('wi-h3', 'p', 'feature', 'Done', 'completed', '$ts', '$ts', '$ts', NULL, 1)
+          VALUES ('ui-h3', 'p', 'feature', 'Done', 'completed', '$ts', '$ts', '$ts', NULL, 1)
         ''');
         final overview = await endpoints.homeEndpoints.overview(sessionBuilder);
         expect(overview.running, greaterThanOrEqualTo(1));
@@ -84,16 +94,16 @@ void main() {
           INSERT INTO work_item ("workItemId", "productId", "category", "title",
             "state", "createdAt", "updatedAt", "version")
           VALUES
-            ('wi-l1', 'p', 'feature', 'First', 'agent_executing', '$ts', '$ts', 1),
-            ('wi-l2', 'p', 'feature', 'Second', 'planning', '$ts', '$ts', 1)
+            ('ui-l1', 'p', 'feature', 'First', 'agent_executing', '$ts', '$ts', 1),
+            ('ui-l2', 'p', 'feature', 'Second', 'planning', '$ts', '$ts', 1)
         ''');
           final result = await endpoints.homeEndpoints.listWorkItems(
             sessionBuilder,
             limit: 10,
           );
           final ids = result.map((item) => item.workItemId).toList();
-          expect(ids, contains('wi-l1'));
-          expect(ids, contains('wi-l2'));
+          expect(ids, contains('ui-l1'));
+          expect(ids, contains('ui-l2'));
         },
       );
 
@@ -105,8 +115,8 @@ void main() {
           INSERT INTO work_item ("workItemId", "productId", "category", "title",
             "state", "createdAt", "updatedAt", "version")
           VALUES
-            ('wi-f1', 'p', 'feature', 'A', 'agent_executing', '$ts', '$ts', 1),
-            ('wi-f2', 'p', 'feature', 'B', 'planning', '$ts', '$ts', 1)
+            ('ui-f1', 'p', 'feature', 'A', 'agent_executing', '$ts', '$ts', 1),
+            ('ui-f2', 'p', 'feature', 'B', 'planning', '$ts', '$ts', 1)
         ''');
         final result = await endpoints.homeEndpoints.listWorkItems(
           sessionBuilder,
@@ -127,20 +137,20 @@ void main() {
           await db.queryNoTransaction('''
           INSERT INTO work_item ("workItemId", "productId", "category", "title",
             "state", "blockingHumanDecisionId", "createdAt", "updatedAt", "version")
-          VALUES ('wi-ny', 'p', 'feature', 'Waiting', 'waiting_for_human_decision', 'dec-ny', '$ts', '$ts', 1)
+          VALUES ('ui-ny', 'p', 'feature', 'Waiting', 'waiting_for_human_decision', 'dec-ui-ny', '$ts', '$ts', 1)
         ''');
           await db.queryNoTransaction('''
           INSERT INTO human_decision ("decisionId", "workItemId", "decisionType",
             "status", "question", "blocking", "requestedAt", "updatedAt")
-          VALUES ('dec-ny', 'wi-ny', 'design_approval', 'pending', 'Approve?', true, '$ts', '$ts')
+          VALUES ('dec-ui-ny', 'ui-ny', 'design_approval', 'pending', 'Approve?', true, '$ts', '$ts')
         ''');
           final result = await endpoints.homeEndpoints.pendingDecisions(
             sessionBuilder,
           );
           expect(result, isNotEmpty);
           final first = result.first;
-          expect(first.decisionId, 'dec-ny');
-          expect(first.workItemId, 'wi-ny');
+          expect(first.decisionId, 'dec-ui-ny');
+          expect(first.workItemId, 'ui-ny');
           expect(first.workItemTitle, 'Waiting');
           expect(first.question, 'Approve?');
           expect(first.blocking, true);
@@ -154,21 +164,21 @@ void main() {
         await db.queryNoTransaction('''
           INSERT INTO work_item ("workItemId", "productId", "category", "title",
             "state", "createdAt", "updatedAt", "version")
-          VALUES ('wi-rv', 'p', 'feature', 'Run Visibility', 'agent_executing', '$ts', '$ts', 1)
+          VALUES ('ui-rv', 'p', 'feature', 'Run Visibility', 'agent_executing', '$ts', '$ts', 1)
         ''');
         await db.queryNoTransaction('''
           INSERT INTO work_item_transition ("transitionId", "workItemId", "fromState",
             "toState", "trigger", "actorType", "outcome", "occurredAt")
           VALUES
-            ('t1', 'wi-rv', 'draft', 'planning', 'system_event', 'orchestrator', 'accepted', '$ts'),
-            ('t2', 'wi-rv', 'planning', 'planned', 'system_event', 'orchestrator', 'accepted', '$ts'),
-            ('t3', 'wi-rv', 'planned', 'agent_executing', 'system_event', 'orchestrator', 'accepted', '$ts')
+            ('ui-t1', 'ui-rv', 'draft', 'planning', 'system_event', 'orchestrator', 'accepted', '$ts'),
+            ('ui-t2', 'ui-rv', 'planning', 'planned', 'system_event', 'orchestrator', 'accepted', '$ts'),
+            ('ui-t3', 'ui-rv', 'planned', 'agent_executing', 'system_event', 'orchestrator', 'accepted', '$ts')
         ''');
         final result = await endpoints.workflowEndpoints.inspect(
           sessionBuilder,
-          workItemId: 'wi-rv',
+          workItemId: 'ui-rv',
         );
-        expect(result.workItem.workItemId, 'wi-rv');
+        expect(result.workItem.workItemId, 'ui-rv');
         expect(result.workItem.title, 'Run Visibility');
         expect(result.workItem.state, 'agent_executing');
         expect(result.transitionHistory, hasLength(3));
@@ -185,19 +195,19 @@ void main() {
         await db.queryNoTransaction('''
           INSERT INTO work_item ("workItemId", "productId", "category", "title",
             "state", "createdAt", "updatedAt", "version")
-          VALUES ('wi-dc', 'p', 'feature', 'Decision Item', 'waiting_for_human_decision', '$ts', '$ts', 1)
+          VALUES ('ui-dc', 'p', 'feature', 'Decision Item', 'waiting_for_human_decision', '$ts', '$ts', 1)
         ''');
         await db.queryNoTransaction('''
           INSERT INTO human_decision ("decisionId", "workItemId", "decisionType",
             "status", "question", "blocking", "requestedAt", "updatedAt")
-          VALUES ('dec-dc', 'wi-dc', 'design_approval', 'pending', 'Approve migration?', true, '$ts', '$ts')
+          VALUES ('dec-ui-dc', 'ui-dc', 'design_approval', 'pending', 'Approve migration?', true, '$ts', '$ts')
         ''');
         final result = await endpoints.workflowEndpoints.listDecisions(
           sessionBuilder,
-          workItemId: 'wi-dc',
+          workItemId: 'ui-dc',
         );
         expect(result, hasLength(1));
-        expect(result.first.decisionId, 'dec-dc');
+        expect(result.first.decisionId, 'dec-ui-dc');
         expect(result.first.question, 'Approve migration?');
       });
 
@@ -208,24 +218,24 @@ void main() {
         await db.queryNoTransaction('''
           INSERT INTO work_item ("workItemId", "productId", "category", "title",
             "state", "blockingHumanDecisionId", "createdAt", "updatedAt", "version")
-          VALUES ('wi-same', 'p', 'feature', 'Resume Test', 'waiting_for_human_decision', 'dec-same', '$ts', '$ts', 1)
+          VALUES ('ui-same', 'p', 'feature', 'Resume Test', 'waiting_for_human_decision', 'dec-ui-same', '$ts', '$ts', 1)
         ''');
         await db.queryNoTransaction('''
           INSERT INTO human_decision ("decisionId", "workItemId", "decisionType",
             "status", "question", "blocking", "requestedAt", "updatedAt")
-          VALUES ('dec-same', 'wi-same', 'design_approval', 'pending', 'Approve?', true, '$ts', '$ts')
+          VALUES ('dec-ui-same', 'ui-same', 'design_approval', 'pending', 'Approve?', true, '$ts', '$ts')
         ''');
 
         final before = await endpoints.workflowEndpoints.inspect(
           sessionBuilder,
-          workItemId: 'wi-same',
+          workItemId: 'ui-same',
         );
         final originalId = before.workItem.workItemId;
-        expect(originalId, 'wi-same');
+        expect(originalId, 'ui-same');
 
         final resolution = await endpoints.workflowEndpoints.resolveDecision(
           sessionBuilder,
-          decisionId: 'dec-same',
+          decisionId: 'dec-ui-same',
           choice: 'approve',
           decider: 'operator',
           rationale: 'Looks good',
@@ -241,7 +251,7 @@ void main() {
           originalId,
           reason: 'SAME WorkItem ID must be preserved',
         );
-        expect(resolvedWorkItem.workItemId, 'wi-same');
+        expect(resolvedWorkItem.workItemId, 'ui-same');
         final decision = resolution.decision;
         expect(decision, isNotNull);
         expect(decision!.status, 'resolved');

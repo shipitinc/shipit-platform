@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:scheduler/scheduler.dart';
 import 'package:test/test.dart';
+import 'package:workflow_engine/workflow_engine.dart';
 
 import 'support/controlled_dispatcher.dart';
 import 'support/file_host.dart';
@@ -22,6 +23,8 @@ void main() {
   /// the same worker pool.
   ({Scheduler a, Scheduler b, FileRestartHarness shared}) twins() {
     final shared = FileRestartHarness(dir, clock: () => t0);
+    final modelPolicyStore = InMemoryModelPolicyStore();
+    final modelSelection = ModelSelectionService(modelPolicyStore);
     final a = Scheduler(
       schedulerId: 'sched-a',
       workflowStore: shared.workflowStore,
@@ -36,6 +39,7 @@ void main() {
         runtimeTypeId: 'fake-runtime',
       ),
       clock: () => t0,
+      modelSelection: modelSelection,
     );
     final b = Scheduler(
       schedulerId: 'sched-b',
@@ -51,6 +55,7 @@ void main() {
         runtimeTypeId: 'fake-runtime',
       ),
       clock: () => t0,
+      modelSelection: modelSelection,
     );
     return (a: a, b: b, shared: shared);
   }

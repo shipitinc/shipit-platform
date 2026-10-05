@@ -14,6 +14,7 @@ enum DesignFindingCategory {
 
   static DesignFindingCategory fromWire(String value) => values.firstWhere(
     (category) => category.wire == value,
-    orElse: () => throw FormatException('Unknown design finding category: $value'),
+    orElse: () =>
+        throw FormatException('Unknown design finding category: $value'),
   );
 }

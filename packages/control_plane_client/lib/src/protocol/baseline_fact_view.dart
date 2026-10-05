@@ -23,6 +23,7 @@ abstract class BaselineFactView implements _i1.SerializableModel {
     required this.section,
     required this.claim,
     required this.provenance,
+    required this.maturity,
     required this.evidenceRefs,
     this.assumptionNote,
     required this.redacted,
@@ -33,6 +34,7 @@ abstract class BaselineFactView implements _i1.SerializableModel {
     required String section,
     required String claim,
     required String provenance,
+    required String maturity,
     required List<String> evidenceRefs,
     String? assumptionNote,
     required bool redacted,
@@ -44,6 +46,7 @@ abstract class BaselineFactView implements _i1.SerializableModel {
       section: jsonSerialization['section'] as String,
       claim: jsonSerialization['claim'] as String,
       provenance: jsonSerialization['provenance'] as String,
+      maturity: jsonSerialization['maturity'] as String,
       evidenceRefs: _i2.Protocol().deserialize<List<String>>(
         jsonSerialization['evidenceRefs'],
       ),
@@ -61,6 +64,13 @@ abstract class BaselineFactView implements _i1.SerializableModel {
   /// observed | human_provided | derived | assumed | unknown
   String provenance;
 
+  /// asserted | implemented | policy | not_implemented | unknown
+  ///
+  /// Part of Hash Contract V3, so it is bound to the content hash the human
+  /// approves. A reviewer must be able to tell an implemented fact from an
+  /// assumed one.
+  String maturity;
+
   List<String> evidenceRefs;
 
   String? assumptionNote;
@@ -76,6 +86,7 @@ abstract class BaselineFactView implements _i1.SerializableModel {
     String? section,
     String? claim,
     String? provenance,
+    String? maturity,
     List<String>? evidenceRefs,
     String? assumptionNote,
     bool? redacted,
@@ -88,6 +99,7 @@ abstract class BaselineFactView implements _i1.SerializableModel {
       'section': section,
       'claim': claim,
       'provenance': provenance,
+      'maturity': maturity,
       'evidenceRefs': evidenceRefs.toJson(),
       if (assumptionNote != null) 'assumptionNote': assumptionNote,
       'redacted': redacted,
@@ -108,6 +120,7 @@ class _BaselineFactViewImpl extends BaselineFactView {
     required String section,
     required String claim,
     required String provenance,
+    required String maturity,
     required List<String> evidenceRefs,
     String? assumptionNote,
     required bool redacted,
@@ -116,6 +129,7 @@ class _BaselineFactViewImpl extends BaselineFactView {
          section: section,
          claim: claim,
          provenance: provenance,
+         maturity: maturity,
          evidenceRefs: evidenceRefs,
          assumptionNote: assumptionNote,
          redacted: redacted,
@@ -130,6 +144,7 @@ class _BaselineFactViewImpl extends BaselineFactView {
     String? section,
     String? claim,
     String? provenance,
+    String? maturity,
     List<String>? evidenceRefs,
     Object? assumptionNote = _Undefined,
     bool? redacted,
@@ -139,6 +154,7 @@ class _BaselineFactViewImpl extends BaselineFactView {
       section: section ?? this.section,
       claim: claim ?? this.claim,
       provenance: provenance ?? this.provenance,
+      maturity: maturity ?? this.maturity,
       evidenceRefs: evidenceRefs ?? this.evidenceRefs.map((e0) => e0).toList(),
       assumptionNote: assumptionNote is String?
           ? assumptionNote

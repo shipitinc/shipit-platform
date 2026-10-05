@@ -12,6 +12,7 @@ export 'package:platform_contracts/platform_contracts.dart'
         QAPassCriteria,
         QAWaiver,
         WorkItemCategory,
+        QAEvidenceRow,
         AgentResult;
 
 export 'src/gates/gate_evaluator.dart';
@@ -21,4 +22,6 @@ export 'src/gates/predefined/test_coverage_gate.dart';
 export 'src/gates/predefined/security_scan_gate.dart';
 export 'src/gates/predefined/performance_gate.dart';
 export 'src/evidence/evidence_collector.dart';
+export 'src/lane_g_qa_contract_store.dart';
+export 'src/lane_g_triage_qa_contract.dart';
 export 'src/qa_orchestration.dart';

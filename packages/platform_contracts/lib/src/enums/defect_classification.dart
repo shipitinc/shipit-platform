@@ -10,6 +10,7 @@ enum DefectClassification {
 
   static DefectClassification fromWire(String value) => values.firstWhere(
     (classification) => classification.wire == value,
-    orElse: () => throw FormatException('Unknown defect classification: $value'),
+    orElse: () =>
+        throw FormatException('Unknown defect classification: $value'),
   );
 }

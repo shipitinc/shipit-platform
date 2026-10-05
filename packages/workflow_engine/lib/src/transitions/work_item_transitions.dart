@@ -75,8 +75,15 @@ class WorkItemTransitions {
           choice: HumanDecisionChoice.rework,
         ),
         (type: HumanDecisionType.qaRework, choice: HumanDecisionChoice.rework),
+        (
+          type: HumanDecisionType.designApproval,
+          choice: HumanDecisionChoice.reject,
+        ),
       }),
       GuardConditions.decisionActorIsHuman(),
+      GuardConditions.escalationIndexWithinLimitForDecisionTypes(
+        escalationDecisionTypes: {HumanDecisionType.designApproval},
+      ),
     ],
     (WorkItemState.designApproved, WorkItemState.agentExecuting): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
@@ -147,6 +154,10 @@ class WorkItemTransitions {
           type: HumanDecisionType.engineeringReview,
           choice: HumanDecisionChoice.rework,
         ),
+        (
+          type: HumanDecisionType.engineeringReview,
+          choice: HumanDecisionChoice.reject,
+        ),
         (type: HumanDecisionType.qaRework, choice: HumanDecisionChoice.reject),
         (type: HumanDecisionType.qaWaiver, choice: HumanDecisionChoice.reject),
         (
@@ -160,6 +171,12 @@ class WorkItemTransitions {
         ),
       }),
       GuardConditions.decisionActorIsHuman(),
+      GuardConditions.escalationIndexWithinLimitForDecisionTypes(
+        escalationDecisionTypes: {
+          HumanDecisionType.engineeringReview,
+          HumanDecisionType.humanQaApproval,
+        },
+      ),
     ],
     // Escalation outcome: send the work back to be re-planned. Resuming is
     // handled by the guard on (waitingForHumanDecision -> agentExecuting),

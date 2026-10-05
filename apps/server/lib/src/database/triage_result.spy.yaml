@@ -1,0 +1,34 @@
+class: TriageResultRow
+table: triage_result
+serverOnly: true
+indexes:
+  result_id_unique:
+    fields: resultId
+    unique: true
+  triage_result_defect_idx:
+    fields: defectId
+  triage_result_job_idx:
+    fields: jobId
+  triage_result_classification_idx:
+    fields: recommendedClassification
+fields:
+  id: int?
+  resultId: String
+  defectId: String
+  recommendedStatus: String
+  recommendedClassification: String?
+  confidence: double
+  suspectedCategory: String
+  suspectedComponents: List<String>
+  reproductionSupported: bool
+  evidenceUsed: List<String>
+  clarificationRequired: String?
+  recommendedNextAction: String
+  possibleDuplicateDefectId: String?
+  recommendedWorkItemCategory: String?
+  summary: String
+  jobId: String
+  executionId: String?
+  createdAt: DateTime
+  completedAt: DateTime?
+  version: int

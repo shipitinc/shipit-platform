@@ -12,8 +12,8 @@
 // ignore_for_file: no_leading_underscores_for_library_prefixes
 
 import 'package:serverpod/serverpod.dart' as _i1;
-import 'package:control_plane_server/src/generated/protocol.dart' as _i2;
-import 'human_direction_attachment_view.dart' as _i3;
+import 'human_direction_payload_view.dart' as _i2;
+import 'package:control_plane_server/src/generated/protocol.dart' as _i3;
 
 abstract class HumanDirectionView
     implements _i1.SerializableModel, _i1.ProtocolSerialization {
@@ -49,7 +49,7 @@ abstract class HumanDirectionView
     required String targetType,
     String? targetId,
     required String status,
-    required HumanDirectionPayloadView payload,
+    required _i2.HumanDirectionPayloadView payload,
     String? createdBy,
     String? assignedTo,
     DateTime? ackedAt,
@@ -76,11 +76,9 @@ abstract class HumanDirectionView
       targetType: jsonSerialization['targetType'] as String,
       targetId: jsonSerialization['targetId'] as String?,
       status: jsonSerialization['status'] as String,
-      payload: jsonSerialization['payload'] == null
-          ? null
-          : _i2.Protocol().deserialize<HumanDirectionPayloadView>(
-              jsonSerialization['payload'],
-            ),
+      payload: _i3.Protocol().deserialize<_i2.HumanDirectionPayloadView>(
+        jsonSerialization['payload'],
+      ),
       createdBy: jsonSerialization['createdBy'] as String?,
       assignedTo: jsonSerialization['assignedTo'] as String?,
       ackedAt: jsonSerialization['ackedAt'] == null
@@ -93,7 +91,9 @@ abstract class HumanDirectionView
       startedBy: jsonSerialization['startedBy'] as String?,
       completedAt: jsonSerialization['completedAt'] == null
           ? null
-          : _i1.DateTimeJsonExtension.fromJson(jsonSerialization['completedAt']),
+          : _i1.DateTimeJsonExtension.fromJson(
+              jsonSerialization['completedAt'],
+            ),
       completedBy: jsonSerialization['completedBy'] as String?,
       completionSummary: jsonSerialization['completionSummary'] as String?,
       rejectedAt: jsonSerialization['rejectedAt'] == null
@@ -103,38 +103,69 @@ abstract class HumanDirectionView
       rejectionReason: jsonSerialization['rejectionReason'] as String?,
       supersededAt: jsonSerialization['supersededAt'] == null
           ? null
-          : _i1.DateTimeJsonExtension.fromJson(jsonSerialization['supersededAt']),
-      supersededByDirectionId: jsonSerialization['supersededByDirectionId'] as String?,
-      createdAt: _i1.DateTimeJsonExtension.fromJson(jsonSerialization['createdAt']),
-      updatedAt: _i1.DateTimeJsonExtension.fromJson(jsonSerialization['updatedAt']),
+          : _i1.DateTimeJsonExtension.fromJson(
+              jsonSerialization['supersededAt'],
+            ),
+      supersededByDirectionId:
+          jsonSerialization['supersededByDirectionId'] as String?,
+      createdAt: _i1.DateTimeJsonExtension.fromJson(
+        jsonSerialization['createdAt'],
+      ),
+      updatedAt: _i1.DateTimeJsonExtension.fromJson(
+        jsonSerialization['updatedAt'],
+      ),
       metadataJson: jsonSerialization['metadataJson'] as String?,
     );
   }
 
   String directionId;
+
   String directionType;
+
   String targetType;
+
   String? targetId;
+
   String status;
-  HumanDirectionPayloadView? payload;
+
+  _i2.HumanDirectionPayloadView payload;
+
   String? createdBy;
+
   String? assignedTo;
+
   DateTime? ackedAt;
+
   String? ackedBy;
+
   DateTime? startedAt;
+
   String? startedBy;
+
   DateTime? completedAt;
+
   String? completedBy;
+
   String? completionSummary;
+
   DateTime? rejectedAt;
+
   String? rejectedBy;
+
   String? rejectionReason;
+
   DateTime? supersededAt;
+
   String? supersededByDirectionId;
+
   DateTime createdAt;
+
   DateTime updatedAt;
+
   String? metadataJson;
 
+  /// Returns a shallow copy of this [HumanDirectionView]
+  /// with some or all fields replaced by the given arguments.
   @_i1.useResult
   HumanDirectionView copyWith({
     String? directionId,
@@ -142,7 +173,7 @@ abstract class HumanDirectionView
     String? targetType,
     String? targetId,
     String? status,
-    HumanDirectionPayloadView? payload,
+    _i2.HumanDirectionPayloadView? payload,
     String? createdBy,
     String? assignedTo,
     DateTime? ackedAt,
@@ -161,7 +192,6 @@ abstract class HumanDirectionView
     DateTime? updatedAt,
     String? metadataJson,
   });
-
   @override
   Map<String, dynamic> toJson() {
     return {
@@ -171,7 +201,7 @@ abstract class HumanDirectionView
       'targetType': targetType,
       if (targetId != null) 'targetId': targetId,
       'status': status,
-      if (payload != null) 'payload': payload?.toJson(),
+      'payload': payload.toJson(),
       if (createdBy != null) 'createdBy': createdBy,
       if (assignedTo != null) 'assignedTo': assignedTo,
       if (ackedAt != null) 'ackedAt': ackedAt?.toJson(),
@@ -202,7 +232,7 @@ abstract class HumanDirectionView
       'targetType': targetType,
       if (targetId != null) 'targetId': targetId,
       'status': status,
-      if (payload != null) 'payload': payload?.toJsonForProtocol(),
+      'payload': payload.toJsonForProtocol(),
       if (createdBy != null) 'createdBy': createdBy,
       if (assignedTo != null) 'assignedTo': assignedTo,
       if (ackedAt != null) 'ackedAt': ackedAt?.toJson(),
@@ -239,7 +269,7 @@ class _HumanDirectionViewImpl extends HumanDirectionView {
     required String targetType,
     String? targetId,
     required String status,
-    HumanDirectionPayloadView? payload,
+    required _i2.HumanDirectionPayloadView payload,
     String? createdBy,
     String? assignedTo,
     DateTime? ackedAt,
@@ -258,31 +288,33 @@ class _HumanDirectionViewImpl extends HumanDirectionView {
     required DateTime updatedAt,
     String? metadataJson,
   }) : super._(
-          directionId: directionId,
-          directionType: directionType,
-          targetType: targetType,
-          targetId: targetId,
-          status: status,
-          payload: payload,
-          createdBy: createdBy,
-          assignedTo: assignedTo,
-          ackedAt: ackedAt,
-          ackedBy: ackedBy,
-          startedAt: startedAt,
-          startedBy: startedBy,
-          completedAt: completedAt,
-          completedBy: completedBy,
-          completionSummary: completionSummary,
-          rejectedAt: rejectedAt,
-          rejectedBy: rejectedBy,
-          rejectionReason: rejectionReason,
-          supersededAt: supersededAt,
-          supersededByDirectionId: supersededByDirectionId,
-          createdAt: createdAt,
-          updatedAt: updatedAt,
-          metadataJson: metadataJson,
-        );
+         directionId: directionId,
+         directionType: directionType,
+         targetType: targetType,
+         targetId: targetId,
+         status: status,
+         payload: payload,
+         createdBy: createdBy,
+         assignedTo: assignedTo,
+         ackedAt: ackedAt,
+         ackedBy: ackedBy,
+         startedAt: startedAt,
+         startedBy: startedBy,
+         completedAt: completedAt,
+         completedBy: completedBy,
+         completionSummary: completionSummary,
+         rejectedAt: rejectedAt,
+         rejectedBy: rejectedBy,
+         rejectionReason: rejectionReason,
+         supersededAt: supersededAt,
+         supersededByDirectionId: supersededByDirectionId,
+         createdAt: createdAt,
+         updatedAt: updatedAt,
+         metadataJson: metadataJson,
+       );
 
+  /// Returns a shallow copy of this [HumanDirectionView]
+  /// with some or all fields replaced by the given arguments.
   @_i1.useResult
   @override
   HumanDirectionView copyWith({
@@ -291,24 +323,24 @@ class _HumanDirectionViewImpl extends HumanDirectionView {
     String? targetType,
     Object? targetId = _Undefined,
     String? status,
-    Object? payload = _Undefined,
-    String? createdBy,
-    String? assignedTo,
+    _i2.HumanDirectionPayloadView? payload,
+    Object? createdBy = _Undefined,
+    Object? assignedTo = _Undefined,
     Object? ackedAt = _Undefined,
-    String? ackedBy,
+    Object? ackedBy = _Undefined,
     Object? startedAt = _Undefined,
-    String? startedBy,
+    Object? startedBy = _Undefined,
     Object? completedAt = _Undefined,
-    String? completedBy,
-    String? completionSummary,
+    Object? completedBy = _Undefined,
+    Object? completionSummary = _Undefined,
     Object? rejectedAt = _Undefined,
-    String? rejectedBy,
-    String? rejectionReason,
+    Object? rejectedBy = _Undefined,
+    Object? rejectionReason = _Undefined,
     Object? supersededAt = _Undefined,
-    String? supersededByDirectionId,
+    Object? supersededByDirectionId = _Undefined,
     DateTime? createdAt,
     DateTime? updatedAt,
-    String? metadataJson,
+    Object? metadataJson = _Undefined,
   }) {
     return HumanDirectionView(
       directionId: directionId ?? this.directionId,
@@ -316,24 +348,32 @@ class _HumanDirectionViewImpl extends HumanDirectionView {
       targetType: targetType ?? this.targetType,
       targetId: targetId is String? ? targetId : this.targetId,
       status: status ?? this.status,
-      payload: payload is HumanDirectionPayloadView? ? payload : this.payload?.copyWith(),
-      createdBy: createdBy ?? this.createdBy,
-      assignedTo: assignedTo ?? this.assignedTo,
+      payload: payload ?? this.payload.copyWith(),
+      createdBy: createdBy is String? ? createdBy : this.createdBy,
+      assignedTo: assignedTo is String? ? assignedTo : this.assignedTo,
       ackedAt: ackedAt is DateTime? ? ackedAt : this.ackedAt,
-      ackedBy: ackedBy ?? this.ackedBy,
+      ackedBy: ackedBy is String? ? ackedBy : this.ackedBy,
       startedAt: startedAt is DateTime? ? startedAt : this.startedAt,
-      startedBy: startedBy ?? this.startedBy,
+      startedBy: startedBy is String? ? startedBy : this.startedBy,
       completedAt: completedAt is DateTime? ? completedAt : this.completedAt,
-      completedBy: completedBy ?? this.completedBy,
-      completionSummary: completionSummary ?? this.completionSummary,
+      completedBy: completedBy is String? ? completedBy : this.completedBy,
+      completionSummary: completionSummary is String?
+          ? completionSummary
+          : this.completionSummary,
       rejectedAt: rejectedAt is DateTime? ? rejectedAt : this.rejectedAt,
-      rejectedBy: rejectedBy ?? this.rejectedBy,
-      rejectionReason: rejectionReason ?? this.rejectionReason,
-      supersededAt: supersededAt is DateTime? ? supersededAt : this.supersededAt,
-      supersededByDirectionId: supersededByDirectionId ?? this.supersededByDirectionId,
+      rejectedBy: rejectedBy is String? ? rejectedBy : this.rejectedBy,
+      rejectionReason: rejectionReason is String?
+          ? rejectionReason
+          : this.rejectionReason,
+      supersededAt: supersededAt is DateTime?
+          ? supersededAt
+          : this.supersededAt,
+      supersededByDirectionId: supersededByDirectionId is String?
+          ? supersededByDirectionId
+          : this.supersededByDirectionId,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
-      metadataJson: metadataJson ?? this.metadataJson,
+      metadataJson: metadataJson is String? ? metadataJson : this.metadataJson,
     );
   }
 }

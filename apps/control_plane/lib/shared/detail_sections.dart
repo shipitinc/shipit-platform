@@ -3,8 +3,24 @@ import 'package:flutter/material.dart';
 import '../core/design_tokens.dart';
 import '../core/plain_language.dart';
 import '../core/theme.dart';
-import '../features/run_detail/run_detail_bloc.dart';
 import 'design_primitives.dart';
+
+/// One row of the "What's happened so far" table.
+///
+/// Deliberately neutral: a run event and a defect event are both just a
+/// timestamp, an operator-facing sentence, and whether the row handed control
+/// to the human.
+class TimelineEntry {
+  const TimelineEntry({
+    required this.timestamp,
+    required this.message,
+    this.needsOperator = false,
+  });
+
+  final DateTime timestamp;
+  final String message;
+  final bool needsOperator;
+}
 
 /// The "What's happened so far" table (Penpot `Act When` / `Act What`).
 ///
@@ -12,9 +28,22 @@ import 'design_primitives.dart';
 /// became the next actor are tinted with the attention tone, matching the
 /// board's amber entries.
 class TimelineTable extends StatelessWidget {
-  const TimelineTable({super.key, required this.events});
+  const TimelineTable({
+    super.key,
+    required this.events,
+    this.emptyMessage,
+    this.compact = false,
+  });
 
-  final List<RunEvent> events;
+  final List<TimelineEntry> events;
+
+  /// Shown when the record carries no events yet.
+  final String? emptyMessage;
+
+  /// `BPM · Defect Detail` draws the timeline as bare rows: no head rule, no
+  /// `WHEN`/`WHAT HAPPENED` column headers and no separators between rows,
+  /// on a 26px pitch instead of the desktop 24+1.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -23,9 +52,18 @@ class TimelineTable extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 12),
         child: Text(
-          'Nothing has been recorded for this run yet.',
+          emptyMessage ?? 'Nothing has been recorded for this run yet.',
           style: ShipItType.bodySmall.copyWith(color: palette.inkTertiary),
         ),
+      );
+    }
+
+    if (compact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final event in events) _TimelineRow(event: event, compact: true),
+        ],
       );
     }
 
@@ -49,9 +87,12 @@ class TimelineTable extends StatelessWidget {
 }
 
 class _TimelineRow extends StatelessWidget {
-  const _TimelineRow({required this.event});
+  const _TimelineRow({required this.event, this.compact = false});
 
-  final RunEvent event;
+  final TimelineEntry event;
+
+  /// Mobile rows are 26px tall with no trailing rule (Penpot `Ev When` pitch).
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -60,7 +101,7 @@ class _TimelineRow extends StatelessWidget {
     return Column(
       children: [
         SizedBox(
-          height: 24,
+          height: compact ? 26 : 24,
           child: Row(
             children: [
               SizedBox(
@@ -96,7 +137,7 @@ class _TimelineRow extends StatelessWidget {
             ],
           ),
         ),
-        const ContentRule(),
+        if (!compact) const ContentRule(),
       ],
     );
   }
@@ -115,6 +156,7 @@ class EvidencePanel extends StatelessWidget {
     this.artifactSubtitle,
     this.links = const [],
     this.facts = const [],
+    this.compact = false,
   });
 
   /// Uppercase mono panel label, e.g. "WHAT YOU'RE APPROVING".
@@ -126,24 +168,31 @@ class EvidencePanel extends StatelessWidget {
   final List<(String, String)> links;
 
   /// Key/value pairs along the bottom, e.g. "Automated tests" / "Passed".
+  /// Unused in [compact] mode — `BPM · Defect Detail` draws no `Ev K/V` row.
   final List<(String, String)> facts;
+
+  /// `BPM · Defect Detail` mobile panel: 96×64 thumbnail, 14/12 padding and
+  /// no facts row (`Art Bg` is 358×116).
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     return DesignPanel(
       edgeColor: palette.accentTick,
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+      padding: compact
+          ? const EdgeInsets.fromLTRB(14, 12, 14, 12)
+          : const EdgeInsets.fromLTRB(18, 16, 18, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           MicroLabel(title),
-          const SizedBox(height: 14),
+          SizedBox(height: compact ? 9 : 14),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const _ThumbnailSkeleton(),
-              const SizedBox(width: 16),
+              _ThumbnailSkeleton(compact: compact),
+              SizedBox(width: compact ? 12 : 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -156,7 +205,7 @@ class EvidencePanel extends StatelessWidget {
                       ),
                     ),
                     if (artifactSubtitle != null) ...[
-                      const SizedBox(height: 6),
+                      SizedBox(height: compact ? 4 : 6),
                       Text(
                         artifactSubtitle!,
                         style: ShipItType.bodySmall.copyWith(
@@ -164,7 +213,7 @@ class EvidencePanel extends StatelessWidget {
                         ),
                       ),
                     ],
-                    const SizedBox(height: 8),
+                    SizedBox(height: compact ? 6 : 8),
                     for (final link in links)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 4),
@@ -175,7 +224,7 @@ class EvidencePanel extends StatelessWidget {
               ),
             ],
           ),
-          if (facts.isNotEmpty) ...[
+          if (facts.isNotEmpty && !compact) ...[
             const SizedBox(height: 16),
             Row(
               children: [
@@ -206,29 +255,55 @@ class EvidencePanel extends StatelessWidget {
 
 /// The board's placeholder preview: a framed box with grey bars.
 class _ThumbnailSkeleton extends StatelessWidget {
-  const _ThumbnailSkeleton();
+  const _ThumbnailSkeleton({this.compact = false});
+
+  /// Mobile renders the board's 96×64 `Thumb`, desktop its 140×88 frame.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
+    final width = compact ? 96.0 : 140.0;
+    final height = compact ? 64.0 : 88.0;
     return Container(
-      width: 140,
-      height: 88,
+      width: width,
+      height: height,
       decoration: BoxDecoration(
         color: palette.canvas,
         border: Border.all(color: palette.rule),
       ),
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+      padding: EdgeInsets.fromLTRB(
+        compact ? 10 : 12,
+        compact ? 10 : 12,
+        compact ? 10 : 12,
+        compact ? 10 : 12,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(width: 44, height: 5, color: palette.ruleStrong),
-          const SizedBox(height: 7),
-          Container(width: 104, height: 3, color: palette.rule),
-          const SizedBox(height: 5),
-          Container(width: 84, height: 3, color: palette.rule),
-          const SizedBox(height: 9),
-          Container(width: 108, height: 20, color: palette.rule),
+          Container(
+            width: compact ? 36 : 44,
+            height: compact ? 4 : 5,
+            color: palette.ruleStrong,
+          ),
+          SizedBox(height: compact ? 4 : 7),
+          Container(
+            width: width - 36,
+            height: compact ? 2 : 3,
+            color: palette.rule,
+          ),
+          SizedBox(height: compact ? 4 : 5),
+          Container(
+            width: width - 56,
+            height: compact ? 2 : 3,
+            color: palette.rule,
+          ),
+          SizedBox(height: compact ? 6 : 9),
+          Container(
+            width: width - 32,
+            height: compact ? 14 : 20,
+            color: palette.rule,
+          ),
         ],
       ),
     );

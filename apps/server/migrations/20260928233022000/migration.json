@@ -1,0 +1,27 @@
+{
+  "__className__": "serverpod.DatabaseMigration",
+  "actions": [],
+  "warnings": [
+    {
+      "__className__": "serverpod.DatabaseMigrationWarning",
+      "type": "uniqueIndexCreated",
+      "message": "Unique index \"job_active_dedupe_unique\" is added to table \"job\" as a raw statement in migration.sql. It restores the partial unique index on \"dedupeKey\" for active states (queued, claimed, running, retryWaiting) that 20260920232118956 created and 20260922004754773 dropped when the generator rebuilt definition.sql from the models. If there are existing rows with duplicate active dedupe keys, this migration will fail and will apply nothing; it deletes no rows.",
+      "table": "job",
+      "columns": [
+        "dedupeKey"
+      ],
+      "destrucive": false
+    },
+    {
+      "__className__": "serverpod.DatabaseMigrationWarning",
+      "type": "uniqueIndexCreated",
+      "message": "Unique index \"design_review_result_execution_unique\" is added to table \"design_review_result\" as a raw statement in migration.sql. It backs the ON CONFLICT (\"reviewExecutionId\") upserts, which previously failed with SQLSTATE 42P10 because only a non-unique index existed. If there are existing rows with duplicate reviewExecutionId values, this migration will fail and will apply nothing; it deletes no rows.",
+      "table": "design_review_result",
+      "columns": [
+        "reviewExecutionId"
+      ],
+      "destrucive": false
+    }
+  ],
+  "migrationApiVersion": 1
+}

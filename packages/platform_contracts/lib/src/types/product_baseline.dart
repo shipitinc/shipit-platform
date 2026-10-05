@@ -123,13 +123,19 @@ class ProductBaseline extends Equatable {
     String? verifiedBy,
     EvidenceKind? verificationKind,
     List<BaselineFact>? facts,
+    String? contentHash,
   }) => ProductBaseline(
     baselineId: baselineId,
     productId: productId,
     revision: revision,
     status: status ?? this.status,
     facts: facts ?? this.facts,
-    contentHash: contentHash,
+    // Derived from [facts]. It cannot be recomputed here — the hash contract
+    // lives in `product_registry`, which depends on this package — so a caller
+    // that changes [facts] MUST pass the matching hash. Leaving this pinned to
+    // `this.contentHash` is what previously let an amended baseline keep a
+    // hash that no longer described its own content.
+    contentHash: contentHash ?? this.contentHash,
     contentHashVersion: contentHashVersion ?? this.contentHashVersion,
     supersedesBaselineId: supersedesBaselineId,
     proposedAt: proposedAt,

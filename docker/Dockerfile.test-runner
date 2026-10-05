@@ -1,0 +1,33 @@
+# Test runner image for E2E integration tests
+FROM node:20-alpine AS base
+
+WORKDIR /app
+
+# Install dependencies for Playwright
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont \
+    bash \
+    curl
+
+# Install Playwright
+RUN npm init -y && npm install playwright@1.44.0
+
+# Install Dart/Flutter for any Dart-based test utilities
+RUN apk add --no-cache git unzip wget \
+    && wget -qO- https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.44.0-stable.tar.xz | tar xJ -C /opt \
+    && ln -s /opt/flutter/bin/flutter /usr/local/bin/flutter \
+    && flutter config --no-analytics
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PATH="/opt/flutter/bin:${PATH}"
+
+# Copy test runner script
+COPY docker/run-e2e-tests.sh /app/run-e2e-tests.sh
+RUN chmod +x /app/run-e2e-tests.sh
+
+CMD ["/app/run-e2e-tests.sh"]

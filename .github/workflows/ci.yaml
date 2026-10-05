@@ -1,0 +1,94 @@
+name: CI
+on: [pull_request, push]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: '3.12.0'
+      - name: Install melos
+        run: dart pub global activate melos ^8.0.0
+      - name: Bootstrap
+        run: melos bootstrap
+      - name: Analyze
+        run: melos run analyze
+      - name: Format check
+        run: melos run format
+
+  # Fails the build when a regeneration has erased hand-maintained content from
+  # the latest cumulative definition.sql. Two indexes (`job_active_dedupe_unique`
+  # and `design_review_result_execution_unique`) are now declared in their
+  # Serverpod models and regenerate on their own; the block this job really
+  # protects is the `qa_contract` table, whose `managedMigration: false` DDL the
+  # generator knows about but never renders. Without it a fresh database would
+  # be built without the table. A non-zero exit fails the job, so this blocks a
+  # merge.
+  schema-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: '3.12.0'
+      - name: Install melos
+        run: dart pub global activate melos ^8.0.0
+      - name: Bootstrap
+        run: melos bootstrap
+      - name: Verify schema deviations
+        run: melos run verify:schema-deviations
+
+  # Pure-Dart package tests. `--no-select` skips melos's interactive
+  # package-choice prompt, which would otherwise block a non-interactive run.
+  # apps/server is covered by integration.yaml (it needs Postgres)
+  # and apps/control_plane needs the Flutter SDK, so neither belongs here.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: '3.12.0'
+      - name: Install melos
+        run: dart pub global activate melos ^8.0.0
+      - name: Bootstrap
+        run: melos bootstrap
+      - name: Test packages
+        run: melos run test --no-select
+
+  server-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build server image
+        run: |
+          cd docker
+          docker build -f Dockerfile.server -t shipit/server:pr-${{ github.event.number }} ../apps/server
+
+  client-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build client image
+        run: |
+          cd docker
+          docker build -f Dockerfile.client -t shipit/client:pr-${{ github.event.number }} ../apps/control_plane
+
+  worker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build worker-linux image
+        run: |
+          cd docker
+          docker build -f Dockerfile.worker-linux -t shipit/worker-linux:pr-${{ github.event.number }} ../tooling/workers
+
+  opentofu-fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+      - name: Check formatting
+        run: tofu fmt -check -recursive ./infrastructure

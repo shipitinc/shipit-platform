@@ -1,0 +1,26 @@
+### One row of the Reports screen's `Feature requests` tab.
+###
+### A feature request is a WorkItem of category `feature`, so this view is the
+### work item's own durable facts plus the two things the tab needs that the
+### work item does not record — the registry name of the product it was filed
+### against, and who filed it. Both are resolved server-side from the records
+### written in the same transaction as the request.
+class: FeatureRequestSummaryView
+fields:
+  workItemId: String
+  title: String
+  ### The reporter's own words — what they want and why.
+  description: String?
+  ### `WorkflowState` wire value. A request stays `draft` until a human decides.
+  state: String
+  productId: String
+  ### Registry name for `productId`. Absent when no registry row resolves — the
+  ### client owns the fallback copy, so an unresolved product is never given an
+  ### invented label here.
+  productName: String?
+  ### Recovered from the intake direction raised with the request. Absent when
+  ### that direction cannot be read.
+  reporter: String?
+  createdAt: DateTime
+  updatedAt: DateTime
+  completedAt: DateTime?

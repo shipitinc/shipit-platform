@@ -1,3 +1,21 @@
 .dart_tool/
 .DS_Store
 build/
+
+# FVM Version Cache
+.fvm/
+
+# Local environment with credentials
+.env
+
+# Golden-test failure byproducts: the diff/mask/master images `matchesGoldenFile`
+# writes on every failing run. They are derived from test/goldens and are
+# regenerated on demand, so committing them only adds churn — 80 of them were
+# committed by accident. The reference images under test/goldens stay tracked.
+**/test/failures/
+
+# Browser-automation scratch output from local UI verification runs.
+.playwright-mcp/
+
+# IDE-local workspace state (per developer, not per project).
+.idea/

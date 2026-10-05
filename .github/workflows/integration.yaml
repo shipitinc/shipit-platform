@@ -1,0 +1,75 @@
+name: Integration
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule: [cron: '0 2 * * *']
+
+jobs:
+  full-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # These values must match `apps/server/config/test.yaml`, which the
+    # Serverpod test harness reads at startup: localhost:9090,
+    # control_plane_test, user postgres. The password is the same test-only
+    # value already committed in `apps/server/docker-compose.yaml`.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: control_plane_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: control_plane_test_pw
+        ports: [9090:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: '3.12.0'
+      - name: Install melos
+        run: dart pub global activate melos ^8.0.0
+      - name: Bootstrap
+        run: melos bootstrap
+      # `apps/server/config/passwords.yaml` is gitignored (it holds the shared
+      # serviceSecret, the session pepper and the dev/test database passwords),
+      # so a clean checkout has no credentials and Serverpod throws
+      # PasswordMissingException before the first test runs. The file is
+      # carried as a single base64 Actions secret and materialised here —
+      # nothing secret is ever committed or echoed.
+      - name: Materialise Serverpod passwords
+        env:
+          PASSWORDS_YAML_B64: ${{ secrets.SERVERPOD_PASSWORDS_YAML }}
+        run: |
+          if [ -z "$PASSWORDS_YAML_B64" ]; then
+            echo "::error::SERVERPOD_PASSWORDS_YAML secret is not set. Create it with: gh secret set SERVERPOD_PASSWORDS_YAML --body \"$(base64 -i apps/server/config/passwords.yaml)\""
+            exit 1
+          fi
+          printf '%s' "$PASSWORDS_YAML_B64" | base64 --decode > apps/server/config/passwords.yaml
+          # Fail closed if the decode produced nothing rather than letting
+          # Serverpod fail later with a less useful message.
+          test -s apps/server/config/passwords.yaml
+      # No `docker compose up` here: `withServerpod` starts Serverpod in-process
+      # and every suite talks to the postgres service above. Building the dev
+      # stack (server + client + worker images) would not be exercised by a
+      # single assertion and would burn most of the 60 minute budget.
+      #
+      # Migrations need no separate step — the Serverpod test harness applies
+      # them at startup (default `applyMigrations: true`, which passes
+      # `--apply-migrations`).
+      #
+      # Every suite namespaces its fixture ids and cleans up with targeted
+      # DELETEs scoped to its own rows, so the files share one database
+      # without a serial gate — run them concurrently (`dart test` default).
+      - name: Run server integration tests
+        run: |
+          cd apps/server
+          dart test test/integration/
+      - name: Teardown
+        if: always()
+        run: cd docker && docker compose down -v

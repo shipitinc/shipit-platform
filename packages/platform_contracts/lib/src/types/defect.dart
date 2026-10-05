@@ -22,6 +22,8 @@ class Defect extends Equatable {
     required this.status,
     this.classification,
     required this.reporter,
+    this.productId,
+    this.productName,
     this.affectedWorkItemId,
     this.affectedRunId,
     this.remediationWorkItemId,
@@ -50,6 +52,14 @@ class Defect extends Equatable {
   )
   final DefectClassification? classification;
   final String reporter;
+
+  /// The product the defect is reported against.
+  ///
+  /// Chosen at report time so a defect can be filed before any work item is
+  /// attached; it also narrows the work items the reporter may pick. Null only
+  /// for defects that predate the field or that were filed without one.
+  final String? productId;
+  final String? productName;
   final String? affectedWorkItemId;
   final String? affectedRunId;
   final String? remediationWorkItemId;
@@ -77,6 +87,8 @@ class Defect extends Equatable {
     DefectStatus? status,
     Object? classification = _unset,
     String? reporter,
+    Object? productId = _unset,
+    Object? productName = _unset,
     Object? affectedWorkItemId = _unset,
     Object? affectedRunId = _unset,
     Object? remediationWorkItemId = _unset,
@@ -106,6 +118,12 @@ class Defect extends Equatable {
           ? this.classification
           : classification as DefectClassification?,
       reporter: reporter ?? this.reporter,
+      productId: identical(productId, _unset)
+          ? this.productId
+          : productId as String?,
+      productName: identical(productName, _unset)
+          ? this.productName
+          : productName as String?,
       affectedWorkItemId: identical(affectedWorkItemId, _unset)
           ? this.affectedWorkItemId
           : affectedWorkItemId as String?,
@@ -141,31 +159,34 @@ class Defect extends Equatable {
 
   @override
   List<Object?> get props => [
-        defectId,
-        title,
-        description,
-        expectedBehavior,
-        reproductionSteps,
-        severity,
-        status,
-        classification,
-        reporter,
-        affectedWorkItemId,
-        affectedRunId,
-        remediationWorkItemId,
-        duplicateOfDefectId,
-        currentTriageJobId,
-        clientContextJson,
-        metadataJson,
-        createdAt,
-        updatedAt,
-        resolvedAt,
-        closedAt,
-        version,
-      ];
+    defectId,
+    title,
+    description,
+    expectedBehavior,
+    reproductionSteps,
+    severity,
+    status,
+    classification,
+    reporter,
+    productId,
+    productName,
+    affectedWorkItemId,
+    affectedRunId,
+    remediationWorkItemId,
+    duplicateOfDefectId,
+    currentTriageJobId,
+    clientContextJson,
+    metadataJson,
+    createdAt,
+    updatedAt,
+    resolvedAt,
+    closedAt,
+    version,
+  ];
 }
 
-DefectStatus _defectStatusFromJson(String value) => DefectStatus.fromWire(value);
+DefectStatus _defectStatusFromJson(String value) =>
+    DefectStatus.fromWire(value);
 
 String _defectStatusToJson(DefectStatus value) => value.wire;
 

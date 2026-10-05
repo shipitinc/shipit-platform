@@ -28,27 +28,100 @@ Future<void> _closeSessions() async {
   _openSessions.clear();
 }
 
-Future<void> _truncateDomainTables() async {
+/// The work-item id space this file owns. Fixture ids are namespaced `conc-*`
+/// so no other file's row can match the purge below, and so the fixed
+/// `wi-0001` used by `store_contract_tests` stays exclusive to that suite.
+const Set<String> _ownedWorkItems = {
+  'conc-wi-0001',
+  'conc-dedupe',
+  'conc-claim',
+  'conc-resolve',
+};
+
+/// Removes only this suite's rows, in an order that satisfies foreign keys.
+///
+/// Targeted DELETEs, never a TRUNCATE: `test/integration` shares one database
+/// with files that run concurrently, and truncating `work_item`/`job` out from
+/// under them breaks their assertions. Every marker is namespaced `conc-*` to
+/// this file. Runs in `setUp` as well as `tearDown`, because a previous run
+/// that aborted mid-test leaves rows behind and re-creating the fixture would
+/// then violate a unique constraint.
+Future<void> _purgeSuiteRows() async {
   final db = await _newDb();
-  await db.queryNoTransaction('''
-    TRUNCATE TABLE
-      "work_item",
-      "human_decision",
-      "work_item_transition",
-      "job",
-      "job_claim",
-      "scheduler_event",
-      "worker_execution",
-      "worker_result",
-      "worker_event",
-      "worker_registration",
-      "agent_execution_request",
-      "agent_execution",
-      "agent_event",
-      "agent_result",
-      "platform_verification"
-    RESTART IDENTITY CASCADE
-  ''');
+  const workItem = 'conc-%';
+  // One statement per call: the driver sends a parameterised command as a
+  // prepared statement, which accepts exactly one command at a time.
+  const statements = <String>[
+    'DELETE FROM "job_claim" WHERE "jobId" IN '
+        '(SELECT "jobId" FROM "job" WHERE "workItemId" LIKE \'$workItem\')',
+    'DELETE FROM "scheduler_event"      WHERE "workItemId" LIKE \'$workItem\'',
+    'DELETE FROM "job"                  WHERE "workItemId" LIKE \'$workItem\'',
+    'DELETE FROM "human_decision"       WHERE "workItemId" LIKE \'$workItem\'',
+    'DELETE FROM "work_item_transition" WHERE "workItemId" LIKE \'$workItem\'',
+    'DELETE FROM "work_item"            WHERE "workItemId" LIKE \'$workItem\'',
+  ];
+  for (final statement in statements) {
+    await db.query(statement);
+  }
+}
+
+/// Narrows a [JobStore]'s work-item listing to ids this file owns.
+///
+/// TEST ISOLATION, not production: one of these tests asserts an exact job
+/// count on `listJobs()`, a global read, and `test/integration` shares one
+/// database with files that run concurrently. Only the listing is narrowed —
+/// writes, claims, events and CAS all still go to the real
+/// [PostgresJobStore].
+class _ScopedJobStore implements JobStore {
+  _ScopedJobStore(this._delegate, this._owned);
+
+  final JobStore _delegate;
+  final Set<String> _owned;
+
+  @override
+  Future<void> saveJob(Job job, {int? expectedVersion}) =>
+      _delegate.saveJob(job, expectedVersion: expectedVersion);
+
+  @override
+  Future<Job?> readJob(String jobId) => _delegate.readJob(jobId);
+
+  @override
+  Future<List<Job>> listJobs() async => (await _delegate.listJobs())
+      .where((job) => _owned.contains(job.workItemId))
+      .toList();
+
+  @override
+  Future<List<Job>> listJobsForWorkItem(String workItemId) =>
+      _delegate.listJobsForWorkItem(workItemId);
+
+  @override
+  Future<Job?> findLatestByDedupeKey(String dedupeKey) =>
+      _delegate.findLatestByDedupeKey(dedupeKey);
+
+  @override
+  Future<void> saveClaim(JobClaim claim) => _delegate.saveClaim(claim);
+
+  @override
+  Future<JobClaim?> readClaimForJob(String jobId) =>
+      _delegate.readClaimForJob(jobId);
+
+  @override
+  Future<List<JobClaim>> listClaims() => _delegate.listClaims();
+
+  @override
+  Future<void> deleteClaim(String jobId) => _delegate.deleteClaim(jobId);
+
+  @override
+  Future<void> appendEvent(SchedulerEventRecord event) =>
+      _delegate.appendEvent(event);
+
+  @override
+  Future<List<SchedulerEventRecord>> readEvents(String jobId) =>
+      _delegate.readEvents(jobId);
+
+  @override
+  Future<T> inTransaction<T>(Future<T> Function(JobStore store) body) =>
+      _delegate.inTransaction<T>((_) => body(this));
 }
 
 /// Runs [futures] concurrently and collapses every outcome into a value so one
@@ -63,8 +136,11 @@ void main() {
   withServerpod(
     'Postgres persistence races settle to exactly one winner',
     (sessionBuilder, endpoints) {
-      setUp(_truncateDomainTables);
-      tearDown(_closeSessions);
+      setUp(_purgeSuiteRows);
+      tearDown(() async {
+        await _purgeSuiteRows();
+        await _closeSessions();
+      });
 
       test(
         'stale work item CAS is rejected under a concurrent write race',
@@ -75,7 +151,7 @@ void main() {
           final storeB = PostgresWorkflowStore(await _newDb());
           final seeder = PostgresWorkflowStore(await _newDb());
 
-          final item = buildWorkItem();
+          final item = buildWorkItem(workItemId: 'conc-wi-0001');
           await seeder.saveWorkItem(item);
 
           final snapshot = (await seeder.readWorkItem(item.workItemId))
@@ -108,9 +184,13 @@ void main() {
         'concurrent dedupe enqueues create exactly one job and one event',
         () async {
           final stores = [
-            for (var i = 0; i < 6; i++) PostgresJobStore(await _newDb()),
+            for (var i = 0; i < 6; i++)
+              _ScopedJobStore(
+                PostgresJobStore(await _newDb()),
+                _ownedWorkItems,
+              ),
           ];
-          const workItemId = 'wi-dedupe';
+          const workItemId = 'conc-dedupe';
 
           final outcomes = await _settle([
             for (var i = 0; i < stores.length; i++)
@@ -118,7 +198,7 @@ void main() {
                   .enqueueIfAbsent(
                     workItemId: workItemId,
                     definition: defaultImplementFeatureDefinition,
-                    dedupeKey: 'dedupe-race',
+                    dedupeKey: 'conc-dedupe-race',
                     instruction: 'race',
                     now: DateTime.utc(2026, 3, 1, 9),
                   )
@@ -143,18 +223,22 @@ void main() {
       );
 
       test('concurrent claims on one job produce exactly one owner', () async {
-        final seeder = PostgresJobStore(await _newDb());
+        final seeder = _ScopedJobStore(
+          PostgresJobStore(await _newDb()),
+          _ownedWorkItems,
+        );
         final job = (await JobQueue(store: seeder).enqueueIfAbsent(
-          workItemId: 'wi-claim',
+          workItemId: 'conc-claim',
           definition: defaultImplementFeatureDefinition,
-          dedupeKey: 'claim-race',
+          dedupeKey: 'conc-claim-race',
           instruction: 'race',
           now: DateTime.utc(2026, 3, 1, 9),
         )).job;
         final at = DateTime.utc(2026, 3, 1, 9, 1);
 
         final stores = [
-          for (var i = 0; i < 6; i++) PostgresJobStore(await _newDb()),
+          for (var i = 0; i < 6; i++)
+            _ScopedJobStore(PostgresJobStore(await _newDb()), _ownedWorkItems),
         ];
         final claims = await _settle([
           for (var i = 0; i < stores.length; i++)
@@ -184,7 +268,7 @@ void main() {
         () async {
           final seeder = PostgresWorkflowStore(await _newDb());
           final seeded = buildWorkItem(
-            workItemId: 'wi-resolve',
+            workItemId: 'conc-resolve',
             state: WorkItemState.designInReview,
           );
           await seeder.saveWorkItem(seeded);
@@ -193,7 +277,7 @@ void main() {
               .requestHumanDecision(
                 workItemId: seeded.workItemId,
                 decisionType: HumanDecisionType.designApproval,
-                decisionId: 'dec-resolve',
+                decisionId: 'conc-dec-resolve',
                 blocking: true,
                 question: 'Approve the design?',
               );

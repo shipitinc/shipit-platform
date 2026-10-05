@@ -1,0 +1,31 @@
+class: ModelExecutionRecordRow
+table: model_execution_record
+serverOnly: true
+fields:
+  workItemId: String
+  jobId: String
+  agentExecutionId: String
+  role: String
+  modelId: String
+  provider: String
+  inputTokens: int
+  outputTokens: int
+  totalTokens: int
+  cachedReadTokens: int
+  costUsd: double
+  currency: String
+  startedAt: DateTime
+  finishedAt: DateTime
+  success: bool
+  error: String?
+  escalationIndex: int
+  taskType: String
+indexes:
+  model_execution_record_work_item:
+    fields: workItemId
+  model_execution_record_job:
+    fields: jobId
+  model_execution_record_model_provider:
+    fields: modelId
+  model_execution_record_started_at:
+    fields: startedAt

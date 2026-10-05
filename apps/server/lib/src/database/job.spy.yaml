@@ -9,6 +9,15 @@ indexes:
     fields: workItemId
   job_dedupe_key_idx:
     fields: dedupeKey
+  # Active-job dedupe. Serverpod cannot express a partial (WHERE-clause)
+  # index, so the predicate lives in the data instead: `activeDedupeKey` is
+  # non-null exactly while the job is active and Postgres treats NULLs as
+  # distinct, which reproduces `WHERE state IN (...)` with a plain unique
+  # index. Because it is a plain index it is rebuilt from this model on every
+  # `serverpod create-migration` instead of being erased by it.
+  job_active_dedupe_unique:
+    fields: activeDedupeKey
+    unique: true
 fields:
   jobId: String
   workItemId: String
@@ -18,6 +27,10 @@ fields:
   priority: String
   state: String
   dedupeKey: String
+  # Derived: non-null iff the job is not terminal, holding `dedupeKey`.
+  # Written by PostgresJobStore on every save and never read back; callers
+  # must not set it.
+  activeDedupeKey: String?
   createdAt: DateTime
   availableAt: DateTime?
   instruction: String

@@ -5,6 +5,7 @@ import 'package:execution_coordinator/execution_coordinator.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:scheduler/scheduler.dart';
 import 'package:test/test.dart';
+import 'package:workflow_engine/workflow_engine.dart';
 import 'package:workflow_store/workflow_store.dart';
 import 'package:worker_runtime/worker_runtime.dart';
 
@@ -72,6 +73,8 @@ class DesignJobHost {
     );
     dispatcher = WorkerDispatcher(registry: WorkerRegistry()..register(worker));
     this.jobStore = jobStore;
+    final modelPolicyStore = InMemoryModelPolicyStore();
+    final modelSelection = ModelSelectionService(modelPolicyStore);
     scheduler = Scheduler(
       schedulerId: 'sched-design-1',
       workflowStore: workflowStore,
@@ -88,6 +91,7 @@ class DesignJobHost {
             runtimeTypeId: 'fake-runtime',
           ),
       claimLease: claimLease,
+      modelSelection: modelSelection,
       dedupeKeyBuilder: dedupeKeyBuilder,
       instructionBuilder: instructionBuilder,
       requestBuilder: requestBuilder,
@@ -178,8 +182,10 @@ void main() {
       expect(jobs, hasLength(1));
       expect(jobs.single.jobType, JobType.designRevision);
       expect(jobs.single.requiredRole, AgentRole.designAgent);
-      expect(jobs.single.requiredCapabilities,
-          {WorkerCapability.penpotWrite, WorkerCapability.visualDesign});
+      expect(jobs.single.requiredCapabilities, {
+        WorkerCapability.penpotWrite,
+        WorkerCapability.visualDesign,
+      });
     });
 
     test('does not enqueue when work item is not in entry state', () async {
@@ -243,7 +249,10 @@ void main() {
         platform: 'linux-x64',
       );
       host.dispatcher = WorkerDispatcher(
-          registry: WorkerRegistry()..register(host.worker));
+        registry: WorkerRegistry()..register(host.worker),
+      );
+      final modelPolicyStore = InMemoryModelPolicyStore();
+      final modelSelection = ModelSelectionService(modelPolicyStore);
       host.scheduler = Scheduler(
         schedulerId: 'sched-design-2',
         workflowStore: host.workflowStore,
@@ -257,6 +266,7 @@ void main() {
           timeoutSeconds: 60,
           runtimeTypeId: 'fake-runtime',
         ),
+        modelSelection: modelSelection,
         dedupeKeyBuilder: designRevisionDedupeKey,
         instructionBuilder: designRevisionInstruction,
         requestBuilder: designRevisionRequest,
@@ -327,12 +337,14 @@ void main() {
         },
       );
       final item = await host.workflowEngine.loadWorkItem('wi-review-1');
-      await host.workflowStore.saveWorkItem(item.copyWith(
-        metadata: {
-          'designRevisionId': 'dr-1',
-          'designerExecutionId': 'wx-designer-1',
-        },
-      ));
+      await host.workflowStore.saveWorkItem(
+        item.copyWith(
+          metadata: {
+            'designRevisionId': 'dr-1',
+            'designerExecutionId': 'wx-designer-1',
+          },
+        ),
+      );
 
       final pending = host.scheduler.tick();
       await host.session.awaitingGate;
@@ -344,101 +356,115 @@ void main() {
       expect(jobs, hasLength(1));
       expect(jobs.single.jobType, JobType.designReview);
       expect(jobs.single.requiredRole, AgentRole.designReviewer);
-      expect(jobs.single.requiredCapabilities,
-          {WorkerCapability.penpotRead, WorkerCapability.designReview});
+      expect(jobs.single.requiredCapabilities, {
+        WorkerCapability.penpotRead,
+        WorkerCapability.designReview,
+      });
       expect(jobs.single.priority, JobPriority.high);
       expect(jobs.single.maxAttempts, 2);
     });
 
-    test('worker with penpotWrite cannot claim review job (wrong capability)', () async {
-      await host.workflowEngine.createWorkItem(
-        workItemId: 'wi-review-2',
-        productId: 'prod-1',
-        category: WorkItemCategory.feature,
-        title: 'Review dashboard design',
-        description: 'Review the dashboard design for usability',
-        qaContractId: 'qa-2',
-        featureRef: 'feature/dashboard',
-      );
-      await host.workflowEngine.transition(
-        workItemId: 'wi-review-2',
-        to: WorkItemState.planning,
-        trigger: TransitionTrigger.systemEvent,
-      );
-      await host.workflowEngine.transition(
-        workItemId: 'wi-review-2',
-        to: WorkItemState.planned,
-        trigger: TransitionTrigger.systemEvent,
-        context: const {'featureRef': 'feature/dashboard'},
-      );
-      await host.workflowEngine.transition(
-        workItemId: 'wi-review-2',
-        to: WorkItemState.designRequired,
-        trigger: TransitionTrigger.systemEvent,
-        context: {'designContractId': 'dc-wi-review-2'},
-      );
-      await host.workflowEngine.transition(
-        workItemId: 'wi-review-2',
-        to: WorkItemState.designInReview,
-        trigger: TransitionTrigger.systemEvent,
-        context: {
-          'designContractId': 'dc-wi-review-2',
-          'designContractStatus': DesignContractStatus.underReview,
-          'designRevisionId': 'dr-2',
-          'designerExecutionId': 'wx-designer-2',
-        },
-      );
-      final item = await host.workflowEngine.loadWorkItem('wi-review-2');
-      await host.workflowStore.saveWorkItem(item.copyWith(
-        metadata: {
-          'designRevisionId': 'dr-2',
-          'designerExecutionId': 'wx-designer-2',
-        },
-      ));
+    test(
+      'worker with penpotWrite cannot claim review job (wrong capability)',
+      () async {
+        await host.workflowEngine.createWorkItem(
+          workItemId: 'wi-review-2',
+          productId: 'prod-1',
+          category: WorkItemCategory.feature,
+          title: 'Review dashboard design',
+          description: 'Review the dashboard design for usability',
+          qaContractId: 'qa-2',
+          featureRef: 'feature/dashboard',
+        );
+        await host.workflowEngine.transition(
+          workItemId: 'wi-review-2',
+          to: WorkItemState.planning,
+          trigger: TransitionTrigger.systemEvent,
+        );
+        await host.workflowEngine.transition(
+          workItemId: 'wi-review-2',
+          to: WorkItemState.planned,
+          trigger: TransitionTrigger.systemEvent,
+          context: const {'featureRef': 'feature/dashboard'},
+        );
+        await host.workflowEngine.transition(
+          workItemId: 'wi-review-2',
+          to: WorkItemState.designRequired,
+          trigger: TransitionTrigger.systemEvent,
+          context: {'designContractId': 'dc-wi-review-2'},
+        );
+        await host.workflowEngine.transition(
+          workItemId: 'wi-review-2',
+          to: WorkItemState.designInReview,
+          trigger: TransitionTrigger.systemEvent,
+          context: {
+            'designContractId': 'dc-wi-review-2',
+            'designContractStatus': DesignContractStatus.underReview,
+            'designRevisionId': 'dr-2',
+            'designerExecutionId': 'wx-designer-2',
+          },
+        );
+        final item = await host.workflowEngine.loadWorkItem('wi-review-2');
+        await host.workflowStore.saveWorkItem(
+          item.copyWith(
+            metadata: {
+              'designRevisionId': 'dr-2',
+              'designerExecutionId': 'wx-designer-2',
+            },
+          ),
+        );
 
-      host.worker = LocalWorker(
-        workerId: 'w-writer-1',
-        poolId: 'design-pool',
-        capabilities: {WorkerCapability.linux, WorkerCapability.penpotWrite},
-        workspaceManager: host.workspaceManager,
-        executionDriver: host.driver,
-        workerStore: host.workerStore,
-        platform: 'linux-x64',
-      );
-      host.dispatcher = WorkerDispatcher(
-          registry: WorkerRegistry()..register(host.worker));
-      host.scheduler = Scheduler(
-        schedulerId: 'sched-review-2',
-        workflowStore: host.workflowStore,
-        jobStore: host.jobStore,
-        workerStore: host.workerStore,
-        dispatch: WorkerDispatcherAdapter(host.dispatcher),
-        definition: designReviewDefinition,
-        workload: SchedulerWorkload(
-          repositoryPath: repo.root.path,
-          startingRevision: repo.startingRevision,
-          timeoutSeconds: 60,
-          runtimeTypeId: 'fake-runtime',
-        ),
-        dedupeKeyBuilder: designReviewDedupeKey,
-        instructionBuilder: designReviewInstruction,
-        requestBuilder: designReviewRequest,
-      );
+        host.worker = LocalWorker(
+          workerId: 'w-writer-1',
+          poolId: 'design-pool',
+          capabilities: {WorkerCapability.linux, WorkerCapability.penpotWrite},
+          workspaceManager: host.workspaceManager,
+          executionDriver: host.driver,
+          workerStore: host.workerStore,
+          platform: 'linux-x64',
+        );
+        host.dispatcher = WorkerDispatcher(
+          registry: WorkerRegistry()..register(host.worker),
+        );
+        final modelPolicyStore = InMemoryModelPolicyStore();
+        final modelSelection = ModelSelectionService(modelPolicyStore);
+        host.scheduler = Scheduler(
+          schedulerId: 'sched-review-2',
+          workflowStore: host.workflowStore,
+          jobStore: host.jobStore,
+          workerStore: host.workerStore,
+          dispatch: WorkerDispatcherAdapter(host.dispatcher),
+          definition: designReviewDefinition,
+          workload: SchedulerWorkload(
+            repositoryPath: repo.root.path,
+            startingRevision: repo.startingRevision,
+            timeoutSeconds: 60,
+            runtimeTypeId: 'fake-runtime',
+          ),
+          modelSelection: modelSelection,
+          dedupeKeyBuilder: designReviewDedupeKey,
+          instructionBuilder: designReviewInstruction,
+          requestBuilder: designReviewRequest,
+        );
 
-      await host.scheduler.tick();
-      host.session.release();
-      final tick = await host.scheduler.tick();
+        await host.scheduler.tick();
+        host.session.release();
+        final tick = await host.scheduler.tick();
 
-      expect(tick.deferred, hasLength(1));
-      expect(tick.dispatched, isEmpty);
-    });
+        expect(tick.deferred, hasLength(1));
+        expect(tick.dispatched, isEmpty);
+      },
+    );
 
-    test('independence at dispatch: designer execution excluded from review', () async {
-      // TODO: Full independence at dispatch requires worker to track
-      // which execution it ran. Currently the exclusion checks
-      // worker.currentExecutionId, which is only set during execution.
-      // This test is skipped until that tracking is implemented.
-    });
+    test(
+      'independence at dispatch: designer execution excluded from review',
+      () async {
+        // TODO: Full independence at dispatch requires worker to track
+        // which execution it ran. Currently the exclusion checks
+        // worker.currentExecutionId, which is only set during execution.
+        // This test is skipped until that tracking is implemented.
+      },
+    );
   });
 
   group('Blocked on human approval', () {
@@ -475,7 +501,9 @@ void main() {
       final item = await host.workflowEngine.loadWorkItem('wi-blocked-2');
       expect(item.state, WorkItemState.designApproved);
 
-      final afterApproval = await host.workflowEngine.loadWorkItem('wi-blocked-2');
+      final afterApproval = await host.workflowEngine.loadWorkItem(
+        'wi-blocked-2',
+      );
       expect(afterApproval.workItemId, 'wi-blocked-2');
       expect(afterApproval.state, WorkItemState.designApproved);
     });
@@ -498,67 +526,72 @@ void main() {
       );
     });
 
-    test('(workItemId, designRevisionId, jobType) prevents duplicate reviews', () async {
-      await host.workflowEngine.createWorkItem(
-        workItemId: 'wi-dedupe-1',
-        productId: 'prod-1',
-        category: WorkItemCategory.feature,
-        title: 'Dedupe test',
-        description: 'Test deduplication of design review jobs',
-        qaContractId: 'qa-1',
-        featureRef: 'feature/dedupe',
-      );
-      await host.workflowEngine.transition(
-        workItemId: 'wi-dedupe-1',
-        to: WorkItemState.planning,
-        trigger: TransitionTrigger.systemEvent,
-      );
-      await host.workflowEngine.transition(
-        workItemId: 'wi-dedupe-1',
-        to: WorkItemState.planned,
-        trigger: TransitionTrigger.systemEvent,
-        context: const {'featureRef': 'feature/dedupe'},
-      );
-      await host.workflowEngine.transition(
-        workItemId: 'wi-dedupe-1',
-        to: WorkItemState.designRequired,
-        trigger: TransitionTrigger.systemEvent,
-        context: {'designContractId': 'dc-wi-dedupe-1'},
-      );
-      await host.workflowEngine.transition(
-        workItemId: 'wi-dedupe-1',
-        to: WorkItemState.designInReview,
-        trigger: TransitionTrigger.systemEvent,
-        context: {
-          'designContractId': 'dc-wi-dedupe-1',
-          'designContractStatus': DesignContractStatus.underReview,
-          'designRevisionId': 'dr-dedupe-1',
-          'designerExecutionId': 'wx-designer-dedupe',
-        },
-      );
-      final item = await host.workflowEngine.loadWorkItem('wi-dedupe-1');
-      await host.workflowStore.saveWorkItem(item.copyWith(
-        metadata: {
-          'designRevisionId': 'dr-dedupe-1',
-          'designerExecutionId': 'wx-designer-dedupe',
-        },
-      ));
+    test(
+      '(workItemId, designRevisionId, jobType) prevents duplicate reviews',
+      () async {
+        await host.workflowEngine.createWorkItem(
+          workItemId: 'wi-dedupe-1',
+          productId: 'prod-1',
+          category: WorkItemCategory.feature,
+          title: 'Dedupe test',
+          description: 'Test deduplication of design review jobs',
+          qaContractId: 'qa-1',
+          featureRef: 'feature/dedupe',
+        );
+        await host.workflowEngine.transition(
+          workItemId: 'wi-dedupe-1',
+          to: WorkItemState.planning,
+          trigger: TransitionTrigger.systemEvent,
+        );
+        await host.workflowEngine.transition(
+          workItemId: 'wi-dedupe-1',
+          to: WorkItemState.planned,
+          trigger: TransitionTrigger.systemEvent,
+          context: const {'featureRef': 'feature/dedupe'},
+        );
+        await host.workflowEngine.transition(
+          workItemId: 'wi-dedupe-1',
+          to: WorkItemState.designRequired,
+          trigger: TransitionTrigger.systemEvent,
+          context: {'designContractId': 'dc-wi-dedupe-1'},
+        );
+        await host.workflowEngine.transition(
+          workItemId: 'wi-dedupe-1',
+          to: WorkItemState.designInReview,
+          trigger: TransitionTrigger.systemEvent,
+          context: {
+            'designContractId': 'dc-wi-dedupe-1',
+            'designContractStatus': DesignContractStatus.underReview,
+            'designRevisionId': 'dr-dedupe-1',
+            'designerExecutionId': 'wx-designer-dedupe',
+          },
+        );
+        final item = await host.workflowEngine.loadWorkItem('wi-dedupe-1');
+        await host.workflowStore.saveWorkItem(
+          item.copyWith(
+            metadata: {
+              'designRevisionId': 'dr-dedupe-1',
+              'designerExecutionId': 'wx-designer-dedupe',
+            },
+          ),
+        );
 
-      final pending = host.scheduler.tick();
-      await host.session.awaitingGate;
-      host.session.release();
-      await pending;
-      var jobs = await jobStore.listJobsForWorkItem('wi-dedupe-1');
-      expect(jobs, hasLength(1));
-      final firstJobId = jobs.single.jobId;
+        final pending = host.scheduler.tick();
+        await host.session.awaitingGate;
+        host.session.release();
+        await pending;
+        var jobs = await jobStore.listJobsForWorkItem('wi-dedupe-1');
+        expect(jobs, hasLength(1));
+        final firstJobId = jobs.single.jobId;
 
-      await host.scheduler.tick();
-      jobs = await jobStore.listJobsForWorkItem('wi-dedupe-1');
-      expect(jobs, hasLength(1));
-      expect(jobs.single.jobId, firstJobId);
+        await host.scheduler.tick();
+        jobs = await jobStore.listJobsForWorkItem('wi-dedupe-1');
+        expect(jobs, hasLength(1));
+        expect(jobs.single.jobId, firstJobId);
 
-      expect(jobs.single.dedupeKey, contains('dr-dedupe-1'));
-    });
+        expect(jobs.single.dedupeKey, contains('dr-dedupe-1'));
+      },
+    );
   });
 
   group('maxAttempts exhaustion', () {
@@ -578,86 +611,92 @@ void main() {
       );
     });
 
-test('design revision maxAttempts=3 exhaustion triggers human decision', () async {
-      // Test maxAttempts logic directly by manipulating job state
-      await host.workflowEngine.createWorkItem(
-        workItemId: 'wi-maxattempt-1',
-        productId: 'prod-1',
-        category: WorkItemCategory.feature,
-        title: 'Max attempts design',
-        description: 'Test max attempts exhaustion for design jobs',
-        qaContractId: 'qa-1',
-        featureRef: 'feature/maxattempt',
-      );
-      await host.workflowEngine.transition(
-        workItemId: 'wi-maxattempt-1',
-        to: WorkItemState.planning,
-        trigger: TransitionTrigger.systemEvent,
-      );
-      await host.workflowEngine.transition(
-        workItemId: 'wi-maxattempt-1',
-        to: WorkItemState.planned,
-        trigger: TransitionTrigger.systemEvent,
-        context: const {'featureRef': 'feature/maxattempt'},
-      );
-      await host.workflowEngine.transition(
-        workItemId: 'wi-maxattempt-1',
-        to: WorkItemState.designRequired,
-        trigger: TransitionTrigger.systemEvent,
-        context: {'designContractId': 'dc-wi-maxattempt-1'},
-      );
+    test(
+      'design revision maxAttempts=3 exhaustion triggers human decision',
+      () async {
+        // Test maxAttempts logic directly by manipulating job state
+        await host.workflowEngine.createWorkItem(
+          workItemId: 'wi-maxattempt-1',
+          productId: 'prod-1',
+          category: WorkItemCategory.feature,
+          title: 'Max attempts design',
+          description: 'Test max attempts exhaustion for design jobs',
+          qaContractId: 'qa-1',
+          featureRef: 'feature/maxattempt',
+        );
+        await host.workflowEngine.transition(
+          workItemId: 'wi-maxattempt-1',
+          to: WorkItemState.planning,
+          trigger: TransitionTrigger.systemEvent,
+        );
+        await host.workflowEngine.transition(
+          workItemId: 'wi-maxattempt-1',
+          to: WorkItemState.planned,
+          trigger: TransitionTrigger.systemEvent,
+          context: const {'featureRef': 'feature/maxattempt'},
+        );
+        await host.workflowEngine.transition(
+          workItemId: 'wi-maxattempt-1',
+          to: WorkItemState.designRequired,
+          trigger: TransitionTrigger.systemEvent,
+          context: {'designContractId': 'dc-wi-maxattempt-1'},
+        );
 
-      // Enqueue the job directly via queue
-      final item = await host.workflowEngine.loadWorkItem('wi-maxattempt-1');
-      final enqueueResult = await host.scheduler.queue.enqueueIfAbsent(
-        workItemId: 'wi-maxattempt-1',
-        definition: designRevisionDefinition,
-        dedupeKey: designRevisionDedupeKey(item, designRevisionDefinition),
-        instruction: designRevisionInstruction(item, designRevisionDefinition),
-      );
-      var job = enqueueResult.job;
-      expect(job.attempt, 1);
-      expect(job.maxAttempts, 3);
+        // Enqueue the job directly via queue
+        final item = await host.workflowEngine.loadWorkItem('wi-maxattempt-1');
+        final enqueueResult = await host.scheduler.queue.enqueueIfAbsent(
+          workItemId: 'wi-maxattempt-1',
+          definition: designRevisionDefinition,
+          dedupeKey: designRevisionDedupeKey(item, designRevisionDefinition),
+          instruction: designRevisionInstruction(
+            item,
+            designRevisionDefinition,
+          ),
+        );
+        var job = enqueueResult.job;
+        expect(job.attempt, 1);
+        expect(job.maxAttempts, 3);
 
-      // Verify RetryPolicy correctly allows retries up to maxAttempts
-      final retryPolicy = RetryPolicy();
-      expect(retryPolicy.canRetry(job.copyWith(attempt: 1)), isTrue);
-      expect(retryPolicy.canRetry(job.copyWith(attempt: 2)), isTrue);
-      expect(retryPolicy.canRetry(job.copyWith(attempt: 3)), isFalse);
+        // Verify RetryPolicy correctly allows retries up to maxAttempts
+        final retryPolicy = RetryPolicy();
+        expect(retryPolicy.canRetry(job.copyWith(attempt: 1)), isTrue);
+        expect(retryPolicy.canRetry(job.copyWith(attempt: 2)), isTrue);
+        expect(retryPolicy.canRetry(job.copyWith(attempt: 3)), isFalse);
 
-      // Simulate retries using scheduleRetry (which increments attempt)
-      var failure = JobFailure(
-        code: JobFailureCode.executionInterrupted,
-        kind: JobFailureKind.transient,
-        reason: 'Test transient failure 1',
-      );
-      job = await host.scheduler.queue.scheduleRetry(
-        job: job,
-        failure: failure,
-        retryDelay: Duration.zero,
-      );
-      expect(job.attempt, 2);
-      expect(RetryPolicy().canRetry(job), isTrue);
+        // Simulate retries using scheduleRetry (which increments attempt)
+        var failure = JobFailure(
+          code: JobFailureCode.executionInterrupted,
+          kind: JobFailureKind.transient,
+          reason: 'Test transient failure 1',
+        );
+        job = await host.scheduler.queue.scheduleRetry(
+          job: job,
+          failure: failure,
+          retryDelay: Duration.zero,
+        );
+        expect(job.attempt, 2);
+        expect(RetryPolicy().canRetry(job), isTrue);
 
-      failure = JobFailure(
-        code: JobFailureCode.executionInterrupted,
-        kind: JobFailureKind.transient,
-        reason: 'Test transient failure 2',
-      );
-      job = await host.scheduler.queue.scheduleRetry(
-        job: job,
-        failure: failure,
-        retryDelay: Duration.zero,
-      );
-      expect(job.attempt, 3);
-      expect(RetryPolicy().canRetry(job), isFalse);
+        failure = JobFailure(
+          code: JobFailureCode.executionInterrupted,
+          kind: JobFailureKind.transient,
+          reason: 'Test transient failure 2',
+        );
+        job = await host.scheduler.queue.scheduleRetry(
+          job: job,
+          failure: failure,
+          retryDelay: Duration.zero,
+        );
+        expect(job.attempt, 3);
+        expect(RetryPolicy().canRetry(job), isFalse);
 
-      // When attempt >= maxAttempts, the scheduler should fail the job instead of retrying
-      // This is tested by the scheduler's _adopt method using retryPolicy.canRetry
-      // Here we verify the policy behavior directly
-      expect(RetryPolicy().canRetry(job.copyWith(attempt: 3)), isFalse);
-      expect(RetryPolicy().canRetry(job.copyWith(attempt: 4)), isFalse);
-    });
+        // When attempt >= maxAttempts, the scheduler should fail the job instead of retrying
+        // This is tested by the scheduler's _adopt method using retryPolicy.canRetry
+        // Here we verify the policy behavior directly
+        expect(RetryPolicy().canRetry(job.copyWith(attempt: 3)), isFalse);
+        expect(RetryPolicy().canRetry(job.copyWith(attempt: 4)), isFalse);
+      },
+    );
   });
 
   group('Lease reconciliation', () {
@@ -677,7 +716,7 @@ test('design revision maxAttempts=3 exhaustion triggers human decision', () asyn
       );
     });
 
-test('orphaned design job reclaimed without duplicate revision', () async {
+    test('orphaned design job reclaimed without duplicate revision', () async {
       // Test lease reconciliation logic directly by manipulating job state
       await host.workflowEngine.createWorkItem(
         workItemId: 'wi-recon-1',

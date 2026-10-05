@@ -1,0 +1,15 @@
+class: ModelPolicyRow
+table: model_policy
+serverOnly: true
+fields:
+  role: String
+  chainJson: String
+  version: int
+  updatedAt: DateTime
+  updatedByDecisionId: String
+indexes:
+  model_policy_role_unique:
+    fields: role
+    unique: true
+  model_policy_version:
+    fields: version

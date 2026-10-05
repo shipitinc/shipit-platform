@@ -5,6 +5,7 @@ export 'src/store/product_registry_store.dart';
 export 'src/store/in_memory_product_registry_store.dart';
 export 'src/store/human_decision_store.dart';
 export 'src/store/in_memory_human_decision_store.dart';
+export 'src/store/defect_store.dart';
 export 'src/engine/product_registry_engine.dart';
 export 'src/engine/baseline_content_hash.dart';
 export 'src/engine/baseline_content_hash_v2.dart';

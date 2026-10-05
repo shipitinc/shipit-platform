@@ -1,0 +1,12 @@
+# Copy to compose.override.yaml and customize
+services:
+  server:
+    environment:
+      - LOG_LEVEL=debug
+    # Mount local Dart SDK for faster rebuilds
+    # volumes:
+    #   - ~/.pub-cache:/root/.pub-cache
+
+  client:
+    environment:
+      - FLUTTER_WEB_RENDERER=html

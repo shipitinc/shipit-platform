@@ -26,17 +26,35 @@ Future<PersistenceDatabase> _newDb() async {
   return PersistenceDatabase(session.db);
 }
 
-Future<void> _truncateProductTables() async {
+/// Removes only this suite's rows, in an order that satisfies foreign keys.
+///
+/// Targeted DELETEs, never a TRUNCATE: `test/integration` shares one database
+/// with files that run concurrently, and truncating `product` out from under
+/// them breaks their assertions. Every statement is scoped to the
+/// `shipit-platform` Product this suite registers, so no other file's row can
+/// match. Runs in `setUp` as well as `tearDown`, because a previous run that
+/// aborted mid-test leaves rows behind and re-registering the Product would
+/// then violate a unique constraint (`proposed.revision == 1` also depends on
+/// no baseline surviving from an earlier run).
+Future<void> _purgeSuiteRows() async {
   final db = await _newDb();
-  await db.queryNoTransaction('''
-    TRUNCATE TABLE
-      "product",
-      "repository_reference",
-      "product_baseline",
-      "clarification_request",
-      "onboarding_record"
-    RESTART IDENTITY CASCADE
-  ''');
+  const product = 'shipit-platform';
+  const statements = <String>[
+    'DELETE FROM "baseline_fact" WHERE "baselineId" IN '
+        '(SELECT "baselineId" FROM "product_baseline" '
+        'WHERE "productId" = \'$product\')',
+    'DELETE FROM "standing_policy"          WHERE "productId" = \'$product\'',
+    'DELETE FROM "clarification_request"    WHERE "productId" = \'$product\'',
+    'DELETE FROM "onboarding_record"        WHERE "productId" = \'$product\'',
+    'DELETE FROM "product_registry_audit"   WHERE "productId" = \'$product\'',
+    'DELETE FROM "product_credential"       WHERE "productId" = \'$product\'',
+    'DELETE FROM "product_baseline"         WHERE "productId" = \'$product\'',
+    'DELETE FROM "repository_reference"     WHERE "productId" = \'$product\'',
+    'DELETE FROM "product"                  WHERE "productId" = \'$product\'',
+  ];
+  for (final statement in statements) {
+    await db.query(statement);
+  }
 }
 
 Future<Directory> _repoRoot() async {
@@ -59,7 +77,8 @@ void main() {
   withServerpod(
     'S-1 DOGFOOD — Product: ShipIt (Postgres, read-only)',
     (sessionBuilder, endpoints) {
-      setUp(_truncateProductTables);
+      setUp(_purgeSuiteRows);
+      tearDown(_purgeSuiteRows);
 
       test(
         'register ShipIt, discover pinned HEAD read-only, propose baseline, survive restart',
@@ -128,32 +147,32 @@ void main() {
           ).inspect();
           expect(observations, isNotEmpty);
           expect(
-            observations.any((o) => o.claim.contains('Dart workspace')),
+            observations.any((o) => o.claim.contains('Dart pub workspace')),
             isTrue,
             reason: 'root pubspec declares a Dart workspace',
           );
 
           BaselineMaturity _maturityFromProvenance(Provenance p) => switch (p) {
-      Provenance.observed => BaselineMaturity.implemented,
-      Provenance.derived => BaselineMaturity.implemented,
-      Provenance.humanProvided => BaselineMaturity.implemented,
-      Provenance.assumed => BaselineMaturity.unknown,
-      Provenance.unknown => BaselineMaturity.unknown,
-    };
+            Provenance.observed => BaselineMaturity.implemented,
+            Provenance.derived => BaselineMaturity.implemented,
+            Provenance.humanProvided => BaselineMaturity.implemented,
+            Provenance.assumed => BaselineMaturity.unknown,
+            Provenance.unknown => BaselineMaturity.unknown,
+          };
 
-  final facts = <BaselineFact>[
-    for (var i = 0; i < observations.length; i++)
-      BaselineFact(
-        factId: 'dogfood-$i',
-        section: observations[i].section,
-        claim: observations[i].claim,
-        provenance: observations[i].provenance,
-        maturity: _maturityFromProvenance(observations[i].provenance),
-        evidenceRefs: observations[i].evidencePaths,
-        assumptionNote: observations[i].assumptionNote,
-        redacted: observations[i].redacted,
-      ),
-  ];
+          final facts = <BaselineFact>[
+            for (var i = 0; i < observations.length; i++)
+              BaselineFact(
+                factId: 'dogfood-$i',
+                section: observations[i].section,
+                claim: observations[i].claim,
+                provenance: observations[i].provenance,
+                maturity: _maturityFromProvenance(observations[i].provenance),
+                evidenceRefs: observations[i].evidencePaths,
+                assumptionNote: observations[i].assumptionNote,
+                redacted: observations[i].redacted,
+              ),
+          ];
 
           // 4. Propose (NOT accept) the baseline. The human gate stays open.
           final proposed = await engine.proposeBaseline(

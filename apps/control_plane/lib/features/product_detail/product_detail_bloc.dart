@@ -26,12 +26,32 @@ class GovernanceActionRequested extends ProductDetailEvent {
   final String productId;
 }
 
+/// The operator resolved the pending baseline-approval gate.
+///
+/// [choice] is the wire value of a `HumanDecisionChoice` ('approve',
+/// 'request_correction', 'reject'). [rationale] is the operator's own words:
+/// the click is the human act, and the decision must record why (AGENTS.md
+/// §11). The decider identity follows the in-app convention used by the
+/// workflow decision resolver.
+class BaselineApprovalResolved extends ProductDetailEvent {
+  const BaselineApprovalResolved({
+    required this.productId,
+    required this.choice,
+    required this.rationale,
+  });
+
+  final String productId;
+  final String choice;
+  final String rationale;
+}
+
 class ProductDetailBloc extends Bloc<ProductDetailEvent, ProductDetailState> {
   ProductDetailBloc({required ControlPlaneRepository repository})
     : _repository = repository,
       super(const ProductDetailState()) {
     on<ProductDetailLoaded>(_onLoaded);
     on<GovernanceActionRequested>(_onGovernanceActionRequested);
+    on<BaselineApprovalResolved>(_onBaselineApprovalResolved);
   }
 
   final ControlPlaneRepository _repository;
@@ -77,13 +97,19 @@ class ProductDetailBloc extends Bloc<ProductDetailEvent, ProductDetailState> {
   Future<DecisionResponse> _gate(GovernanceAction a, String productId) {
     final repository = _repository;
     return switch (a) {
-      // These two are the baseline governance cycle. Every other action —
-      // pause, resume, offboard, revocation — is a lifecycle decision.
-      GovernanceAction.proposeBaseline ||
-      GovernanceAction.reviewBaseline => repository.requestPolicyAuthorisation(
+      // Propose baseline: create new baseline revision, then request approval.
+      // Returns the approval decision for the operator to present to the human.
+      GovernanceAction.proposeBaseline => repository.proposeBaseline(
         productId: productId,
-        actions: const ['propose', 'review'],
+        facts: const [], // TODO: collect baseline facts from UI
       ),
+      // Review baseline: request approval for the existing pending baseline.
+      GovernanceAction.reviewBaseline => repository.requestBaselineApproval(
+        productId: productId,
+        baselineId: _pendingBaselineId(productId),
+      ),
+      // These are the lifecycle governance gates. Every other action —
+      // pause, resume, offboard, revocation — is a lifecycle decision.
       GovernanceAction.pause => repository.requestLifecycleDecision(
         productId: productId,
         action: 'pause',
@@ -96,9 +122,64 @@ class ProductDetailBloc extends Bloc<ProductDetailEvent, ProductDetailState> {
         productId: productId,
         action: 'offboard',
       ),
-      GovernanceAction.revokePolicy =>
-        throw UnimplementedError('revocation needs productId + policyId'),
+      GovernanceAction.revokePolicy => throw UnimplementedError(
+        'revocation needs productId + policyId',
+      ),
     };
+  }
+
+  Future<void> _onBaselineApprovalResolved(
+    BaselineApprovalResolved event,
+    Emitter<ProductDetailState> emit,
+  ) async {
+    final decisionId = state.detail?.pendingBaselineDecisionId;
+    if (decisionId == null) {
+      emit(
+        state.copyWith(
+          errorMessage:
+              'No baseline-approval gate is open for ${event.productId}.',
+        ),
+      );
+      return;
+    }
+    emit(state.copyWith(isResolvingBaseline: true, clearError: true));
+    try {
+      await _repository.resolveBaselineApproval(
+        decisionId: decisionId,
+        choice: event.choice,
+        decider: 'operator',
+        rationale: event.rationale,
+      );
+      // Re-read durable state: acceptance moves the product to `governed` and
+      // clears the pending baseline, so the screen reflects the registry
+      // rather than assuming the transition succeeded.
+      final detail = await _repository.getProductDetail(event.productId);
+      emit(
+        ProductDetailState(isLoading: false, detail: detail),
+      );
+    } catch (e) {
+      emit(
+        state.copyWith(
+          isResolvingBaseline: false,
+          errorMessage: e.toString(),
+        ),
+      );
+    }
+  }
+
+  /// Returns the pending baseline ID for the product, if any.
+  /// Used by reviewBaseline to request approval for the correct baseline.
+  String _pendingBaselineId(String productId) {
+    // Read from durable state. Baseline ids are minted by the registry as
+    // `bl-<productId>-<revision>`, so a synthesised id would either miss or,
+    // worse, address some other revision's baseline.
+    final id = state.detail?.pendingBaselineId;
+    if (id == null || id.isEmpty) {
+      throw StateError(
+        'No pending baseline for $productId; nothing to review.',
+      );
+    }
+    return id;
   }
 
   Future<void> _onLoaded(
@@ -121,6 +202,7 @@ class ProductDetailState {
     this.detail,
     this.errorMessage,
     this.isRaisingGate = false,
+    this.isResolvingBaseline = false,
     this.pendingDecision,
   });
 
@@ -133,6 +215,9 @@ class ProductDetailState {
   /// this id.
   final bool isRaisingGate;
 
+  /// True while an approval resolution is in flight.
+  final bool isResolvingBaseline;
+
   /// The decision the operator must resolve after raising a gate.
   final DecisionResponse? pendingDecision;
 
@@ -140,11 +225,25 @@ class ProductDetailState {
       ? ProductStatus.unknown
       : ProductLanguage.statusFor(detail!.state);
 
+  /// Whether the operator can resolve a baseline-approval gate right now.
+  ///
+  /// All three conditions are durable: the candidate exists, a worker attested
+  /// to it (AGENTS.md §12), and an unresolved decision is bound to it. The
+  /// action is hidden rather than offered-and-refused when any is missing.
+  bool get canApproveBaseline {
+    final d = detail;
+    if (d == null) return false;
+    return d.pendingBaselineId != null &&
+        d.pendingBaselineVerified &&
+        d.pendingBaselineDecisionId != null;
+  }
+
   ProductDetailState copyWith({
     bool? isLoading,
     ProductDetailResponse? detail,
     String? errorMessage,
     bool? isRaisingGate,
+    bool? isResolvingBaseline,
     DecisionResponse? pendingDecision,
     bool clearError = false,
   }) => ProductDetailState(
@@ -152,14 +251,13 @@ class ProductDetailState {
     detail: detail ?? this.detail,
     errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
     isRaisingGate: isRaisingGate ?? this.isRaisingGate,
+    isResolvingBaseline: isResolvingBaseline ?? this.isResolvingBaseline,
     pendingDecision: pendingDecision ?? this.pendingDecision,
   );
 }
 
-  DecisionResponse _decisionFor(
-    String productId,
-    DecisionResponse decision,
-  ) => decision;
+DecisionResponse _decisionFor(String productId, DecisionResponse decision) =>
+    decision;
 
 /// Governance actions the screen offers.
 ///

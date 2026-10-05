@@ -560,7 +560,9 @@ void main() {
         reviewExecutionIdsJson: '["rev-exec-1", "rev-exec-2"]',
         status: DesignRevisionStatus.inReview,
         riskTier: DesignRiskTier.medium,
-        reviewScopeJson: {'screens': ['login', 'register']},
+        reviewScopeJson: {
+          'screens': ['login', 'register'],
+        },
         carriedForwardFromRevisionId: null,
         supersededByRevisionId: null,
         createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
@@ -590,7 +592,9 @@ void main() {
         reviewExecutionIdsJson: '["rev-exec-1"]',
         status: DesignRevisionStatus.approved,
         riskTier: DesignRiskTier.high,
-        reviewScopeJson: {'screens': ['payment']},
+        reviewScopeJson: {
+          'screens': ['payment'],
+        },
         carriedForwardFromRevisionId: null,
         supersededByRevisionId: null,
         createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
@@ -602,35 +606,43 @@ void main() {
       _expectValid(_loadSchema('design_revision'), revision.toJson());
     });
 
-    test('DesignReviewResult.toJson() conforms to design_review_result.schema.json', () {
-      final reviewResult = DesignReviewResult(
-        reviewExecutionId: '123e4567-e89b-12d3-a456-426614174020',
-        revisionId: 'DES-R001',
-        verdict: DesignReviewVerdict.approvedWithMinorFindings,
-        findings: [
-          DesignFinding(
-            findingId: '123e4567-e89b-12d3-a456-426614174030',
-            revisionId: 'DES-R001',
-            reviewExecutionId: '123e4567-e89b-12d3-a456-426614174020',
-            category: DesignFindingCategory.accessibility,
-            severity: DesignFindingSeverity.minor,
-            dimension: 'login-form',
-            evidence: 'Color contrast ratio 3.5:1 on submit button',
-            requiredCorrection: 'Increase contrast to 4.5:1 minimum',
-            affectedSurface: 'LoginScreen.submitButton',
-            createdAt: DateTime.parse('2024-01-02T10:00:00Z'),
-            resolvedByRevisionId: null,
-            version: 1,
-          ),
-        ],
-        assessedDimensions: ['accessibility', 'interaction_completeness'],
-        reviewScopeJson: {'screens': ['login']},
-        createdAt: DateTime.parse('2024-01-02T11:00:00Z'),
-        version: 1,
-      );
+    test(
+      'DesignReviewResult.toJson() conforms to design_review_result.schema.json',
+      () {
+        final reviewResult = DesignReviewResult(
+          reviewExecutionId: '123e4567-e89b-12d3-a456-426614174020',
+          revisionId: 'DES-R001',
+          verdict: DesignReviewVerdict.approvedWithMinorFindings,
+          findings: [
+            DesignFinding(
+              findingId: '123e4567-e89b-12d3-a456-426614174030',
+              revisionId: 'DES-R001',
+              reviewExecutionId: '123e4567-e89b-12d3-a456-426614174020',
+              category: DesignFindingCategory.accessibility,
+              severity: DesignFindingSeverity.minor,
+              dimension: 'login-form',
+              evidence: 'Color contrast ratio 3.5:1 on submit button',
+              requiredCorrection: 'Increase contrast to 4.5:1 minimum',
+              affectedSurface: 'LoginScreen.submitButton',
+              createdAt: DateTime.parse('2024-01-02T10:00:00Z'),
+              resolvedByRevisionId: null,
+              version: 1,
+            ),
+          ],
+          assessedDimensions: ['accessibility', 'interaction_completeness'],
+          reviewScopeJson: {
+            'screens': ['login'],
+          },
+          createdAt: DateTime.parse('2024-01-02T11:00:00Z'),
+          version: 1,
+        );
 
-      _expectValid(_loadSchema('design_review_result'), reviewResult.toJson());
-    });
+        _expectValid(
+          _loadSchema('design_review_result'),
+          reviewResult.toJson(),
+        );
+      },
+    );
 
     test('DesignFinding.toJson() conforms to design_finding.schema.json', () {
       final finding = DesignFinding(

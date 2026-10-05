@@ -164,8 +164,10 @@ class ProductTransitions {
 
   /// Guards that must hold for `(from, to)`. Empty means the transition is
   /// machine-driven and unconditional.
-  static List<ProductGuard> requiredGuards(ProductState from, ProductState to) =>
-      _legalTransitions[(from.canonical, to)] ?? const [];
+  static List<ProductGuard> requiredGuards(
+    ProductState from,
+    ProductState to,
+  ) => _legalTransitions[(from.canonical, to)] ?? const [];
 
   /// Whether this edge may only be caused by a human decision.
   static bool requiresHumanDecision(ProductState from, ProductState to) =>

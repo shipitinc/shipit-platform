@@ -42,18 +42,19 @@ class DesignReviewResult extends Equatable {
 
   @override
   List<Object?> get props => [
-        reviewExecutionId,
-        revisionId,
-        verdict,
-        findings,
-        assessedDimensions,
-        reviewScopeJson,
-        createdAt,
-        version,
-      ];
+    reviewExecutionId,
+    revisionId,
+    verdict,
+    findings,
+    assessedDimensions,
+    reviewScopeJson,
+    createdAt,
+    version,
+  ];
 
   // Database serialization helpers
-  String get findingsJson => _encodeJson(findings.map((f) => f.toJson()).toList());
+  String get findingsJson =>
+      _encodeJson(findings.map((f) => f.toJson()).toList());
   String get assessedDimensionsJson => _encodeJson(assessedDimensions);
 
   static String _encodeJson(Object? value) {

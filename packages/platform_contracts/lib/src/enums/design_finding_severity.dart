@@ -10,9 +10,11 @@ enum DesignFindingSeverity {
 
   static DesignFindingSeverity fromWire(String value) => values.firstWhere(
     (severity) => severity.wire == value,
-    orElse: () => throw FormatException('Unknown design finding severity: $value'),
+    orElse: () =>
+        throw FormatException('Unknown design finding severity: $value'),
   );
 
-  bool get blocksApproval => this == DesignFindingSeverity.blocker ||
+  bool get blocksApproval =>
+      this == DesignFindingSeverity.blocker ||
       this == DesignFindingSeverity.major;
 }

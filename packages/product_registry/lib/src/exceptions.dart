@@ -130,6 +130,31 @@ class BaselineApprovalRequiredException implements Exception {
   String toString() => 'Baseline approval required: $message';
 }
 
+/// A baseline was proposed with no facts.
+///
+/// An empty fact list still produces a valid content hash, so an empty baseline
+/// is verifiable and would otherwise pass the human gate while asserting
+/// nothing. Proposals fail closed instead.
+class EmptyBaselineException implements Exception {
+  EmptyBaselineException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'Empty baseline refused: $message';
+}
+
+/// A baseline was amended in a way that is not permitted: an empty claim, a
+/// missing author, or an attempt to amend something already accepted.
+class BaselineAmendmentException implements Exception {
+  BaselineAmendmentException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'Baseline amendment refused: $message';
+}
+
 /// The approval decision no longer corresponds to the exact candidate being
 /// accepted (TOCTOU / superseded revision). Acceptance fails closed.
 class StaleBaselineApprovalException implements Exception {
@@ -194,7 +219,8 @@ class CredentialNotUsableException implements Exception {
   final String reason;
 
   @override
-  String toString() => 'Repository credential $credentialId is not usable: '
+  String toString() =>
+      'Repository credential $credentialId is not usable: '
       '$reason';
 }
 
@@ -214,8 +240,9 @@ class HostKeyNotConfirmedException implements Exception {
     HostKeyStatus.changed =>
       'Host key for $host has CHANGED since it was confirmed; refusing to '
           'connect',
-    _ => 'Host key for $host is not recognised; confirm its fingerprint '
-        'before connecting',
+    _ =>
+      'Host key for $host is not recognised; confirm its fingerprint '
+          'before connecting',
   };
 }
 

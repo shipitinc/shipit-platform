@@ -9,16 +9,25 @@ export 'src/policy/retry_policy.dart';
 export 'src/policy/runnable_work.dart';
 export 'src/queue/job_queue.dart';
 export 'src/scheduler.dart';
+export 'src/triage_defect.dart';
 export 'src/store/file_json_job_store.dart';
 export 'src/store/in_memory_job_store.dart';
 export 'src/store/job_store.dart';
+export 'src/health/provider_health_monitor.dart'
+    show
+        HumanDecisionStore,
+        ProviderHealthMonitor,
+        ProviderHealth,
+        AllProvidersDownTicket;
 
-export 'src/scheduler.dart' show
-  designRevisionDefinition,
-  designReviewDefinition,
-  designRevisionDedupeKey,
-  designReviewDedupeKey,
-  designRevisionInstruction,
-  designReviewInstruction,
-  designRevisionRequest,
-  designReviewRequest;
+export 'src/scheduler.dart'
+    show
+        designRevisionDefinition,
+        designReviewDefinition,
+        designRevisionDedupeKey,
+        designReviewDedupeKey,
+        designRevisionInstruction,
+        designReviewInstruction,
+        designRevisionRequest,
+        designReviewRequest,
+        modelRuntimeConfig;

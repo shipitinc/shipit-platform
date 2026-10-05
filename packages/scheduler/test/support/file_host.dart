@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:scheduler/scheduler.dart';
+import 'package:workflow_engine/workflow_engine.dart';
 import 'package:workflow_store/workflow_store.dart';
 import 'package:worker_runtime/worker_runtime.dart';
 
@@ -23,6 +24,8 @@ class FileRestartHarness {
     jobStore = FileJsonJobStore(File('${dir.path}/jobs.json'));
     workerStore = FileJsonWorkerStore(File('${dir.path}/workers.json'));
     this.dispatch = dispatch ?? ControlledDispatcher();
+    final modelPolicyStore = InMemoryModelPolicyStore();
+    final modelSelection = ModelSelectionService(modelPolicyStore);
     scheduler = Scheduler(
       schedulerId: 'sched-1',
       workflowStore: workflowStore,
@@ -38,6 +41,7 @@ class FileRestartHarness {
       ),
       clock: clock,
       claimLease: claimLease,
+      modelSelection: modelSelection,
     );
   }
 

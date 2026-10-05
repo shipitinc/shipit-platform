@@ -316,12 +316,18 @@ class JobQueue {
   }
 
   /// Terminal transition. [terminal] must be succeeded/failed/cancelled.
+  ///
+  /// [executionReference] records a reference the job does not yet hold; when
+  /// omitted the job's existing reference is preserved. Callers supply it only
+  /// when [JobQueue.markRunning] lost its CAS and the reference had to be
+  /// reconstructed from the adopted outcome.
   Future<Job> complete({
     required Job job,
     required JobState terminal,
     JobFailure? failure,
     String? cancelReason,
     DateTime? now,
+    JobExecutionReference? executionReference,
   }) async {
     assert(
       terminal == JobState.succeeded ||
@@ -339,6 +345,10 @@ class JobQueue {
         failure: failure,
         cancelReason: cancelReason,
         version: current.version + 1,
+        // `?? current.executionReference` is load-bearing, not redundant:
+        // Job.copyWith reads an explicit null as CLEAR, so the existing
+        // reference must be named here or the transition would drop it.
+        executionReference: executionReference ?? current.executionReference,
       );
       try {
         await tx.saveJob(updated, expectedVersion: current.version);
@@ -367,12 +377,13 @@ class JobQueue {
 
   /// Schedules a bounded retry: job moves to retryWaiting until
   /// `now + retryDelay`, attempt is incremented, and the stale claim is
-  /// released.
+  /// released. [executionReference] behaves as in [complete].
   Future<Job> scheduleRetry({
     required Job job,
     required JobFailure failure,
     DateTime? now,
     Duration? retryDelay,
+    JobExecutionReference? executionReference,
   }) async {
     return _store.inTransaction((tx) async {
       final at = now ?? _clock().toUtc();
@@ -384,6 +395,7 @@ class JobQueue {
         availableAt: at.add(retryDelay ?? const Duration(minutes: 1)),
         attempt: current.attempt + 1,
         version: current.version + 1,
+        executionReference: executionReference ?? current.executionReference,
       );
       try {
         await tx.saveJob(updated, expectedVersion: current.version);

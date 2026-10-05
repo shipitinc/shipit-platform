@@ -85,8 +85,8 @@ class DesignReviewerSession extends OpenCodeSession {
     required String workItemId,
     AcpTransportFactory? transportFactory,
   }) : super(
-    executionId: executionId,
-    workItemId: workItemId,
-    transportFactory: transportFactory,
-  );
+         executionId: executionId,
+         workItemId: workItemId,
+         transportFactory: transportFactory,
+       );
 }

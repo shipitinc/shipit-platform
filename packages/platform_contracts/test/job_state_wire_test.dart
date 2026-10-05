@@ -7,22 +7,27 @@ void main() {
       // These strings are in the database and in the
       // `job_active_dedupe_unique` partial index predicate. Changing one is a
       // data migration plus an index rebuild, not a rename.
-      expect({for (final s in JobState.values) s.name: s.wire}, {
-        'queued': 'queued',
-        'claimed': 'claimed',
-        'running': 'running',
-        'retryWaiting': 'retryWaiting',
-        'succeeded': 'succeeded',
-        'failed': 'failed',
-        'cancelled': 'cancelled',
-      });
+      expect(
+        {for (final s in JobState.values) s.name: s.wire},
+        {
+          'queued': 'queued',
+          'claimed': 'claimed',
+          'running': 'running',
+          'retryWaiting': 'retryWaiting',
+          'succeeded': 'succeeded',
+          'failed': 'failed',
+          'cancelled': 'cancelled',
+        },
+      );
     });
 
     test('the four active states named by the dedupe index still exist', () {
       // The partial index is ON job(dedupeKey) WHERE state IN (...these...).
       const indexed = {'queued', 'claimed', 'running', 'retryWaiting'};
-      final active =
-          JobState.values.where((s) => s.isActive).map((s) => s.wire).toSet();
+      final active = JobState.values
+          .where((s) => s.isActive)
+          .map((s) => s.wire)
+          .toSet();
       expect(active, indexed);
     });
 

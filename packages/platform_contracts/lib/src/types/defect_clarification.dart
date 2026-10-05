@@ -2,6 +2,8 @@ import 'package:meta/meta.dart';
 import 'package:json_annotation/json_annotation.dart';
 import 'package:equatable/equatable.dart';
 
+import '../enums/clarification_status.dart';
+
 part 'defect_clarification.g.dart';
 
 @JsonSerializable(explicitToJson: true, includeIfNull: false)
@@ -19,19 +21,25 @@ class DefectClarification extends Equatable {
     required this.requestedAt,
     this.answeredAt,
     required this.createdAt,
+    this.version = 1,
   });
 
   final String clarificationId;
   final String defectId;
   final String question;
   final String reason;
-  final String status; // 'pending' or 'answered'
+  @JsonKey(
+    fromJson: _clarificationStatusFromJson,
+    toJson: _clarificationStatusToJson,
+  )
+  final ClarificationStatus status;
   final String? answer;
   final String? humanDecisionId;
   final String? requestedByTriageJobId;
   final DateTime requestedAt;
   final DateTime? answeredAt;
   final DateTime createdAt;
+  final int version;
 
   factory DefectClarification.fromJson(Map<String, dynamic> json) =>
       _$DefectClarificationFromJson(json);
@@ -40,16 +48,22 @@ class DefectClarification extends Equatable {
 
   @override
   List<Object?> get props => [
-        clarificationId,
-        defectId,
-        question,
-        reason,
-        status,
-        answer,
-        humanDecisionId,
-        requestedByTriageJobId,
-        requestedAt,
-        answeredAt,
-        createdAt,
-      ];
+    clarificationId,
+    defectId,
+    question,
+    reason,
+    status,
+    answer,
+    humanDecisionId,
+    requestedByTriageJobId,
+    requestedAt,
+    answeredAt,
+    createdAt,
+    version,
+  ];
 }
+
+ClarificationStatus _clarificationStatusFromJson(String value) =>
+    ClarificationStatus.fromWire(value);
+
+String _clarificationStatusToJson(ClarificationStatus value) => value.wire;

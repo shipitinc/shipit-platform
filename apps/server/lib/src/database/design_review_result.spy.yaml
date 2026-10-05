@@ -7,8 +7,12 @@ indexes:
     unique: true
   design_review_result_revision_idx:
     fields: revisionId
-  design_review_result_execution_idx:
+  # One review execution may only ever produce one stored verdict. Declared
+  # here so `serverpod create-migration` regenerates it instead of erasing a
+  # hand-written copy of the same constraint.
+  design_review_result_execution_unique:
     fields: reviewExecutionId
+    unique: true
 fields:
   reviewResultId: String
   revisionId: String

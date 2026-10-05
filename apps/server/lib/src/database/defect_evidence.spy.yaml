@@ -1,0 +1,23 @@
+class: DefectEvidenceRow
+table: defect_evidence
+serverOnly: true
+indexes:
+  defect_evidence_id_unique:
+    fields: evidenceId
+    unique: true
+  defect_evidence_defect_idx:
+    fields: defectId
+  defect_evidence_artifact_idx:
+    fields: artifactId
+fields:
+  id: int?
+  evidenceId: String
+  defectId: String
+  kind: String
+  artifactId: String?
+  contentHash: String?
+  description: String?
+  sourceRef: String?
+  capturedAt: DateTime
+  createdAt: DateTime
+  version: int

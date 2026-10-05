@@ -12,7 +12,9 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   final PersistenceDatabase _db;
 
   @override
-  Future<T> inTransaction<T>(Future<T> Function(DesignGovernanceStore store) body) {
+  Future<T> inTransaction<T>(
+    Future<T> Function(DesignGovernanceStore store) body,
+  ) {
     return _db.inTransaction<T>(() => body(this));
   }
 
@@ -31,7 +33,9 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<List<DesignRevision>> readDesignRevisionsForWorkItem(String workItemId) async {
+  Future<List<DesignRevision>> readDesignRevisionsForWorkItem(
+    String workItemId,
+  ) async {
     final result = await _db.query(
       '''SELECT * FROM "design_revision" WHERE "workItemId" = @workItemId ORDER BY "createdAt" ASC''',
       parameters: QueryParameters.named({'workItemId': workItemId}),
@@ -40,7 +44,9 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<DesignRevision?> readApprovedDesignRevisionForWorkItem(String workItemId) async {
+  Future<DesignRevision?> readApprovedDesignRevisionForWorkItem(
+    String workItemId,
+  ) async {
     final result = await _db.query(
       '''SELECT * FROM "design_revision"
          WHERE "workItemId" = @workItemId AND "status" = @status''',
@@ -54,7 +60,9 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<DesignRevision?> readLatestDesignRevisionForWorkItem(String workItemId) async {
+  Future<DesignRevision?> readLatestDesignRevisionForWorkItem(
+    String workItemId,
+  ) async {
     final result = await _db.query(
       '''SELECT * FROM "design_revision"
          WHERE "workItemId" = @workItemId
@@ -66,7 +74,10 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<void> saveDesignRevision(DesignRevision revision, {int? expectedVersion}) async {
+  Future<void> saveDesignRevision(
+    DesignRevision revision, {
+    int? expectedVersion,
+  }) async {
     const bareInsert = '''INSERT INTO "design_revision" (
            "revisionId", "workItemId", "productId", "parentRevisionId",
            "designSystemRevision", "providerType", "penpotFileId", "penpotPageId",
@@ -134,12 +145,16 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
         }
         final current = await _db.query(
           'SELECT "version" FROM "design_revision" WHERE "revisionId" = @revisionId',
-          parameters: QueryParameters.named({'revisionId': revision.revisionId}),
+          parameters: QueryParameters.named({
+            'revisionId': revision.revisionId,
+          }),
         );
         throw DesignGovernanceConcurrentModificationException(
           entityId: revision.revisionId,
           expectedVersion: 0,
-          actualVersion: current.isEmpty ? 0 : (current[0].toColumnMap()['version'] as int),
+          actualVersion: current.isEmpty
+              ? 0
+              : (current[0].toColumnMap()['version'] as int),
         );
       }
       throw DesignGovernanceConcurrentModificationException(
@@ -197,7 +212,10 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<DesignRevision?> findDesignRevisionByIdempotencyKey(String workItemId, String idempotencyKey) async {
+  Future<DesignRevision?> findDesignRevisionByIdempotencyKey(
+    String workItemId,
+    String idempotencyKey,
+  ) async {
     // Idempotency key would be stored in reviewScopeJson or a separate tracking column
     // Placeholder - returns null for now
     return null;
@@ -206,7 +224,9 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   // DesignReviewResultStore
 
   @override
-  Future<DesignReviewResult> readDesignReviewResult(String reviewResultId) async {
+  Future<DesignReviewResult> readDesignReviewResult(
+    String reviewResultId,
+  ) async {
     final result = await _db.query(
       '''SELECT * FROM "design_review_result" WHERE "reviewExecutionId" = @reviewExecutionId''',
       parameters: QueryParameters.named({'reviewExecutionId': reviewResultId}),
@@ -218,7 +238,9 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<List<DesignReviewResult>> readDesignReviewResultsForRevision(String revisionId) async {
+  Future<List<DesignReviewResult>> readDesignReviewResultsForRevision(
+    String revisionId,
+  ) async {
     final result = await _db.query(
       '''SELECT * FROM "design_review_result" WHERE "revisionId" = @revisionId''',
       parameters: QueryParameters.named({'revisionId': revisionId}),
@@ -244,7 +266,10 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<void> saveDesignReviewResult(DesignReviewResult result, {int? expectedVersion}) async {
+  Future<void> saveDesignReviewResult(
+    DesignReviewResult result, {
+    int? expectedVersion,
+  }) async {
     const bareInsert = '''INSERT INTO "design_review_result" (
            "reviewResultId", "revisionId", "reviewExecutionId", "verdict",
            "findingsJson", "assessedDimensionsJson", "reviewScopeJson", "createdAt", "version"
@@ -257,9 +282,12 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
       await _db.inTransaction(() async {
         final existing = await _db.query(
           'SELECT * FROM "design_review_result" WHERE "reviewExecutionId" = @reviewExecutionId',
-          parameters: QueryParameters.named({'reviewExecutionId': result.reviewExecutionId}),
+          parameters: QueryParameters.named({
+            'reviewExecutionId': result.reviewExecutionId,
+          }),
         );
-        if (existing.isNotEmpty && (existing[0].toColumnMap()['version'] as int) != expectedVersion) {
+        if (existing.isNotEmpty &&
+            (existing[0].toColumnMap()['version'] as int) != expectedVersion) {
           throw DesignGovernanceConcurrentModificationException(
             entityId: result.reviewExecutionId,
             expectedVersion: expectedVersion,
@@ -275,7 +303,9 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
                  "reviewScopeJson" = EXCLUDED."reviewScopeJson",
                  "createdAt" = EXCLUDED."createdAt",
                  "version" = EXCLUDED."version"''',
-          parameters: QueryParameters.named(_designReviewResultToParams(result)),
+          parameters: QueryParameters.named(
+            _designReviewResultToParams(result),
+          ),
         );
       });
     } else {
@@ -294,7 +324,10 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<DesignReviewResult?> findDesignReviewResultByIdempotencyKey(String revisionId, String idempotencyKey) async {
+  Future<DesignReviewResult?> findDesignReviewResultByIdempotencyKey(
+    String revisionId,
+    String idempotencyKey,
+  ) async {
     // Placeholder
     return null;
   }
@@ -314,7 +347,9 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<List<DesignFinding>> readDesignFindingsForRevision(String revisionId) async {
+  Future<List<DesignFinding>> readDesignFindingsForRevision(
+    String revisionId,
+  ) async {
     final result = await _db.query(
       '''SELECT * FROM "design_finding" WHERE "revisionId" = @revisionId''',
       parameters: QueryParameters.named({'revisionId': revisionId}),
@@ -323,16 +358,22 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<List<DesignFinding>> readDesignFindingsForReviewExecution(String reviewExecutionId) async {
+  Future<List<DesignFinding>> readDesignFindingsForReviewExecution(
+    String reviewExecutionId,
+  ) async {
     final result = await _db.query(
       '''SELECT * FROM "design_finding" WHERE "reviewExecutionId" = @reviewExecutionId''',
-      parameters: QueryParameters.named({'reviewExecutionId': reviewExecutionId}),
+      parameters: QueryParameters.named({
+        'reviewExecutionId': reviewExecutionId,
+      }),
     );
     return result.map(_designFindingFromRow).toList();
   }
 
   @override
-  Future<List<DesignFinding>> readUnresolvedFindingsForRevision(String revisionId) async {
+  Future<List<DesignFinding>> readUnresolvedFindingsForRevision(
+    String revisionId,
+  ) async {
     final result = await _db.query(
       '''SELECT * FROM "design_finding"
          WHERE "revisionId" = @revisionId AND "resolvedByRevisionId" IS NULL''',
@@ -342,7 +383,9 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<List<DesignFinding>> readFindingsResolvedByRevision(String revisionId) async {
+  Future<List<DesignFinding>> readFindingsResolvedByRevision(
+    String revisionId,
+  ) async {
     final result = await _db.query(
       '''SELECT * FROM "design_finding" WHERE "resolvedByRevisionId" = @revisionId''',
       parameters: QueryParameters.named({'revisionId': revisionId}),
@@ -351,7 +394,10 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<void> saveDesignFinding(DesignFinding finding, {int? expectedVersion}) async {
+  Future<void> saveDesignFinding(
+    DesignFinding finding, {
+    int? expectedVersion,
+  }) async {
     const bareInsert = '''INSERT INTO "design_finding" (
            "findingId", "revisionId", "reviewExecutionId", "category", "severity",
            "dimension", "evidence", "requiredCorrection", "affectedSurface",
@@ -368,7 +414,8 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
           'SELECT * FROM "design_finding" WHERE "findingId" = @findingId',
           parameters: QueryParameters.named({'findingId': finding.findingId}),
         );
-        if (existing.isNotEmpty && (existing[0].toColumnMap()['version'] as int) != expectedVersion) {
+        if (existing.isNotEmpty &&
+            (existing[0].toColumnMap()['version'] as int) != expectedVersion) {
           throw DesignGovernanceConcurrentModificationException(
             entityId: finding.findingId,
             expectedVersion: expectedVersion,
@@ -411,7 +458,10 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<DesignFinding?> findDesignFindingByIdempotencyKey(String revisionId, String idempotencyKey) async {
+  Future<DesignFinding?> findDesignFindingByIdempotencyKey(
+    String revisionId,
+    String idempotencyKey,
+  ) async {
     // Placeholder
     return null;
   }
@@ -431,7 +481,9 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<List<DesignRevisionEvent>> readEventsForRevision(String designRevisionId) async {
+  Future<List<DesignRevisionEvent>> readEventsForRevision(
+    String designRevisionId,
+  ) async {
     final result = await _db.query(
       '''SELECT * FROM "design_revision_event"
          WHERE "designRevisionId" = @designRevisionId
@@ -459,7 +511,9 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   }
 
   @override
-  Future<DesignRevisionEvent?> readLastEventForRevision(String designRevisionId) async {
+  Future<DesignRevisionEvent?> readLastEventForRevision(
+    String designRevisionId,
+  ) async {
     final result = await _db.query(
       '''SELECT * FROM "design_revision_event"
          WHERE "designRevisionId" = @designRevisionId
@@ -492,7 +546,8 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
       status: DesignRevisionStatus.fromWire(m['status'] as String),
       riskTier: DesignRiskTier.fromWire(m['riskTier'] as String),
       reviewScopeJson: decodeJsonMap(m['reviewScopeJson'] as String?),
-      carriedForwardFromRevisionId: m['carriedForwardFromRevisionId'] as String?,
+      carriedForwardFromRevisionId:
+          m['carriedForwardFromRevisionId'] as String?,
       supersededByRevisionId: m['supersededByRevisionId'] as String?,
       createdAt: decodeUtc(m['createdAt'])!,
       updatedAt: decodeUtc(m['updatedAt'])!,
@@ -520,7 +575,9 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
       'reviewExecutionIdsJson': json['reviewExecutionIdsJson'],
       'status': json['status'],
       'riskTier': json['riskTier'],
-      'reviewScopeJson': PersistenceDatabase.encodeJson(json['reviewScopeJson']),
+      'reviewScopeJson': PersistenceDatabase.encodeJson(
+        json['reviewScopeJson'],
+      ),
       'carriedForwardFromRevisionId': json['carriedForwardFromRevisionId'],
       'supersededByRevisionId': json['supersededByRevisionId'],
       'createdAt': PersistenceDatabase.toUtc(revision.createdAt),
@@ -536,14 +593,16 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
       reviewExecutionId: m['reviewExecutionId'] as String,
       revisionId: m['revisionId'] as String,
       verdict: DesignReviewVerdict.fromWire(m['verdict'] as String),
-      findings: decodeJsonArray(m['findingsJson'] as String?)
-          ?.map((e) => DesignFinding.fromJson(e as Map<String, dynamic>))
-          .toList(growable: false) ??
-          const <DesignFinding>[],
-      assessedDimensions: (decodeJsonArray(m['assessedDimensionsJson'] as String?)
-              ?.map((e) => e as String)
+      findings:
+          decodeJsonArray(m['findingsJson'] as String?)
+              ?.map((e) => DesignFinding.fromJson(e as Map<String, dynamic>))
               .toList(growable: false) ??
-              const <String>[]),
+          const <DesignFinding>[],
+      assessedDimensions:
+          (decodeJsonArray(
+            m['assessedDimensionsJson'] as String?,
+          )?.map((e) => e as String).toList(growable: false) ??
+          const <String>[]),
       reviewScopeJson: decodeJsonMap(m['reviewScopeJson'] as String?),
       createdAt: decodeUtc(m['createdAt'])!,
       version: m['version'] as int,
@@ -553,15 +612,20 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
   Map<String, Object?> _designReviewResultToParams(DesignReviewResult result) {
     final json = result.toJson();
     return {
-      'reviewResultId': json['reviewExecutionId'], // Using reviewExecutionId as primary key
+      'reviewResultId':
+          json['reviewExecutionId'], // Using reviewExecutionId as primary key
       'revisionId': json['revisionId'],
       'reviewExecutionId': json['reviewExecutionId'],
       'verdict': json['verdict'],
       'findingsJson': PersistenceDatabase.encodeJson(
         result.findings.map((f) => f.toJson()).toList(),
       ),
-      'assessedDimensionsJson': PersistenceDatabase.encodeJson(result.assessedDimensions),
-      'reviewScopeJson': PersistenceDatabase.encodeJson(json['reviewScopeJson']),
+      'assessedDimensionsJson': PersistenceDatabase.encodeJson(
+        result.assessedDimensions,
+      ),
+      'reviewScopeJson': PersistenceDatabase.encodeJson(
+        json['reviewScopeJson'],
+      ),
       'createdAt': PersistenceDatabase.toUtc(result.createdAt),
       'version': result.version,
     };

@@ -300,7 +300,10 @@ class _AddProductAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) =>
-      InlineLink(label: '+ Add a product', onTap: () {});
+      InlineLink(
+        label: '+ Add a product',
+        onTap: () => context.go('/products/new'),
+      );
 }
 
 /// Per-repository credential inventory (ADR 0018 A1).

@@ -54,19 +54,19 @@ class DesignFinding extends Equatable {
 
   @override
   List<Object?> get props => [
-        findingId,
-        revisionId,
-        reviewExecutionId,
-        category,
-        severity,
-        dimension,
-        evidence,
-        requiredCorrection,
-        affectedSurface,
-        createdAt,
-        resolvedByRevisionId,
-        version,
-      ];
+    findingId,
+    revisionId,
+    reviewExecutionId,
+    category,
+    severity,
+    dimension,
+    evidence,
+    requiredCorrection,
+    affectedSurface,
+    createdAt,
+    resolvedByRevisionId,
+    version,
+  ];
 }
 
 DesignFindingCategory _$designFindingCategoryFromJson(String value) =>

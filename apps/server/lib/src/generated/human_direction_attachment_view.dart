@@ -27,7 +27,9 @@ abstract class HumanDirectionAttachmentView
     String? description,
   }) = _HumanDirectionAttachmentViewImpl;
 
-  factory HumanDirectionAttachmentView.fromJson(Map<String, dynamic> jsonSerialization) {
+  factory HumanDirectionAttachmentView.fromJson(
+    Map<String, dynamic> jsonSerialization,
+  ) {
     return HumanDirectionAttachmentView(
       artifactId: jsonSerialization['artifactId'] as String,
       artifactType: jsonSerialization['artifactType'] as String,
@@ -36,16 +38,19 @@ abstract class HumanDirectionAttachmentView
   }
 
   String artifactId;
+
   String artifactType;
+
   String? description;
 
+  /// Returns a shallow copy of this [HumanDirectionAttachmentView]
+  /// with some or all fields replaced by the given arguments.
   @_i1.useResult
   HumanDirectionAttachmentView copyWith({
     String? artifactId,
     String? artifactType,
     String? description,
   });
-
   @override
   Map<String, dynamic> toJson() {
     return {
@@ -80,22 +85,24 @@ class _HumanDirectionAttachmentViewImpl extends HumanDirectionAttachmentView {
     required String artifactType,
     String? description,
   }) : super._(
-          artifactId: artifactId,
-          artifactType: artifactType,
-          description: description,
-        );
+         artifactId: artifactId,
+         artifactType: artifactType,
+         description: description,
+       );
 
+  /// Returns a shallow copy of this [HumanDirectionAttachmentView]
+  /// with some or all fields replaced by the given arguments.
   @_i1.useResult
   @override
   HumanDirectionAttachmentView copyWith({
     String? artifactId,
     String? artifactType,
-    String? description,
+    Object? description = _Undefined,
   }) {
     return HumanDirectionAttachmentView(
       artifactId: artifactId ?? this.artifactId,
       artifactType: artifactType ?? this.artifactType,
-      description: description ?? this.description,
+      description: description is String? ? description : this.description,
     );
   }
 }

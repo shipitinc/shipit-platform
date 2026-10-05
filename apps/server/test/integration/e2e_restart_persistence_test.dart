@@ -111,11 +111,11 @@ class Harness {
     final h = Harness(clock: clock);
     h._session = await Serverpod.instance.createSession(enableLogging: false);
     h._db = PersistenceDatabase(h._session.db);
-    h.workflowStore = PostgresWorkflowStore(h._db);
+    h.workflowStore = _ScopedWorkflowStore(h._db, _ownedWorkItems);
     h.workflowEngine = DurableWorkflowEngine(store: h.workflowStore);
-    h.jobStore = PostgresJobStore(h._db);
+    h.jobStore = _ScopedJobStore(h._db, _ownedWorkItems);
     h.workerStore = PostgresWorkerStore(h._db);
-    h.executionStore = PostgresExecutionStore(h._db);
+    h.executionStore = _ScopedExecutionStore(h._db, _ownedWorkItems);
     h.dispatch = FakeDispatch();
     h.scheduler = Scheduler(
       schedulerId: 'sched-e2e',
@@ -207,10 +207,16 @@ class Harness {
 }
 
 // ---------------------------------------------------------------------------
-// Shared setup: TRUNCATE before each test, close harness sessions in tearDown.
+// Shared setup: targeted purge before each test, close harness sessions in
+// tearDown.
 // ---------------------------------------------------------------------------
 
 final _openSessions = <Session>[];
+
+/// The work-item id space this file owns. Fixture ids stay `wi-1` / `wi-hd` /
+/// `wi-imp` (an explicit `IN` list in the purge below); no other test file in
+/// `test/integration` uses them.
+const Set<String> _ownedWorkItems = {'wi-1', 'wi-hd', 'wi-imp'};
 
 Future<PersistenceDatabase> _db() async {
   final s = await Serverpod.instance.createSession(enableLogging: false);
@@ -218,27 +224,118 @@ Future<PersistenceDatabase> _db() async {
   return PersistenceDatabase(s.db);
 }
 
-Future<void> truncate() async {
+/// Removes only this suite's rows, in an order that satisfies foreign keys.
+///
+/// Targeted DELETEs, never a TRUNCATE: `test/integration` shares one database
+/// with files that run concurrently, and truncating `work_item`/`job` out from
+/// under them breaks their assertions. Every statement is scoped to
+/// [_ownedWorkItems]. Runs in `setUp` as well as `tearDown`, because a
+/// previous run that aborted mid-test leaves rows behind and re-creating the
+/// fixture would then violate a unique constraint.
+Future<void> purgeSuiteRows() async {
   final db = await _db();
-  await db.queryNoTransaction('''
-    TRUNCATE TABLE
-      "work_item",
-      "human_decision",
-      "work_item_transition",
-      "job",
-      "job_claim",
-      "scheduler_event",
-      "worker_execution",
-      "worker_result",
-      "worker_event",
-      "worker_registration",
-      "agent_execution_request",
-      "agent_execution",
-      "agent_event",
-      "agent_result",
-      "platform_verification"
-    RESTART IDENTITY CASCADE
-  ''');
+  // One statement per call: the driver sends a parameterised command as a
+  // prepared statement, which accepts exactly one command at a time.
+  const statements = <String>[
+    'DELETE FROM "job_claim" WHERE "jobId" IN (SELECT "jobId" FROM "job" '
+        'WHERE "workItemId" IN (\'wi-1\', \'wi-hd\', \'wi-imp\'))',
+    'DELETE FROM "scheduler_event" WHERE "workItemId" IN '
+        '(\'wi-1\', \'wi-hd\', \'wi-imp\')',
+    'DELETE FROM "job" WHERE "workItemId" IN (\'wi-1\', \'wi-hd\', \'wi-imp\')',
+    'DELETE FROM "human_decision" WHERE "workItemId" IN '
+        '(\'wi-1\', \'wi-hd\', \'wi-imp\')',
+    'DELETE FROM "work_item_transition" WHERE "workItemId" IN '
+        '(\'wi-1\', \'wi-hd\', \'wi-imp\')',
+    'DELETE FROM "work_item" WHERE "workItemId" IN '
+        '(\'wi-1\', \'wi-hd\', \'wi-imp\')',
+    'DELETE FROM "worker_result" WHERE "workItemId" IN '
+        '(\'wi-1\', \'wi-hd\', \'wi-imp\')',
+    'DELETE FROM "worker_event" WHERE "workItemId" IN '
+        '(\'wi-1\', \'wi-hd\', \'wi-imp\')',
+    'DELETE FROM "worker_execution" WHERE "workItemId" IN '
+        '(\'wi-1\', \'wi-hd\', \'wi-imp\')',
+    'DELETE FROM "platform_verification" WHERE "workItemId" IN '
+        '(\'wi-1\', \'wi-hd\', \'wi-imp\')',
+    'DELETE FROM "agent_result" WHERE "workItemId" IN '
+        '(\'wi-1\', \'wi-hd\', \'wi-imp\')',
+    'DELETE FROM "agent_event" WHERE "workItemId" IN '
+        '(\'wi-1\', \'wi-hd\', \'wi-imp\')',
+    'DELETE FROM "agent_execution" WHERE "workItemId" IN '
+        '(\'wi-1\', \'wi-hd\', \'wi-imp\')',
+    'DELETE FROM "agent_execution_request" WHERE "workItemId" IN '
+        '(\'wi-1\', \'wi-hd\', \'wi-imp\')',
+  ];
+  for (final statement in statements) {
+    await db.query(statement);
+  }
+}
+
+/// Narrows a [PostgresWorkflowStore]'s global work-item listing to
+/// [_ownedWorkItems].
+///
+/// TEST ISOLATION, not production: `Scheduler.tick()` reads
+/// `readAllWorkItems()` to find runnable work, and `test/integration` shares
+/// one database with files that run concurrently — without this, a tick in
+/// these tests would enqueue and dispatch jobs for other files' work items and
+/// break the exact-count assertions here (and theirs). Only the global listing
+/// is narrowed; every id-scoped read/write still goes to the real store.
+class _ScopedWorkflowStore extends PostgresWorkflowStore {
+  _ScopedWorkflowStore(super.db, this._owned);
+
+  final Set<String> _owned;
+
+  @override
+  Future<List<WorkItem>> readAllWorkItems() async =>
+      (await super.readAllWorkItems())
+          .where((item) => _owned.contains(item.workItemId))
+          .toList();
+}
+
+/// Narrows a [PostgresJobStore]'s global listings to jobs on
+/// [_ownedWorkItems].
+///
+/// TEST ISOLATION, not production: `Scheduler.tick()` reconciles claims from
+/// `listJobs()`/`listClaims()` and these tests assert exact counts
+/// (`listJobs()).single`, `tick.reconciled, hasLength(1)`), while
+/// `test/integration` shares one database with files that run concurrently.
+/// Only the two global listings are narrowed; writes, CAS, per-job reads and
+/// events still go to the real store.
+class _ScopedJobStore extends PostgresJobStore {
+  _ScopedJobStore(super.db, this._owned);
+
+  final Set<String> _owned;
+
+  @override
+  Future<List<Job>> listJobs() async => (await super.listJobs())
+      .where((job) => _owned.contains(job.workItemId))
+      .toList();
+
+  @override
+  Future<List<JobClaim>> listClaims() async {
+    final ownedJobIds = (await listJobs()).map((job) => job.jobId).toSet();
+    return (await super.listClaims())
+        .where((claim) => ownedJobIds.contains(claim.jobId))
+        .toList();
+  }
+}
+
+/// Narrows a [PostgresExecutionStore]'s global execution listing to
+/// [_ownedWorkItems].
+///
+/// TEST ISOLATION, not production: one test asserts
+/// `listExecutions(), hasLength(1)` and `test/integration` shares one database
+/// with files that run concurrently. Only the listing is narrowed; saves and
+/// id-scoped reads still go to the real store.
+class _ScopedExecutionStore extends PostgresExecutionStore {
+  _ScopedExecutionStore(super.db, this._owned);
+
+  final Set<String> _owned;
+
+  @override
+  Future<List<AgentExecution>> listExecutions({String? workItemId}) async =>
+      (await super.listExecutions(
+        workItemId: workItemId,
+      )).where((execution) => _owned.contains(execution.workItemId)).toList();
 }
 
 Harness? _first;
@@ -251,9 +348,10 @@ void main() {
   withServerpod(
     'E2E process-restart proofs against Postgres',
     (sessionBuilder, endpoints) {
-      setUp(truncate);
+      setUp(purgeSuiteRows);
 
       tearDown(() async {
+        await purgeSuiteRows();
         await _first?.close();
         await _second?.close();
         _first = null;

@@ -9,9 +9,13 @@ import 'sidebar.dart';
 /// Chrome around every screen.
 ///
 /// On the desktop breakpoint this is the design's 200px rail plus the content
-/// pane. Below it, the rail collapses to a bottom bar — the design's `BPM ·`
-/// mobile boards are a separate pass, so the existing bottom bar is retained
-/// rather than guessed at.
+/// pane. Below it the rail collapses to a 56px brand bar over an 80px
+/// bottom navigation bar, exactly as the `BPM ·` boards compose it.
+///
+/// Which of the two top bars shows is decided by the route: a *root* screen
+/// (Overview, All work, Needs you, Products, Defects) carries the `Top Bg`
+/// brand + LIVE bar, and a *child* screen carries the `Back` bar alone — the
+/// design never stacks the two, and the back link is the only way home.
 class AppShell extends StatefulWidget {
   const AppShell({super.key, required this.child, this.repository});
 
@@ -31,6 +35,7 @@ class _AppShellState extends State<AppShell> {
   int? _allWorkCount;
   int? _productCount;
   int? _needsYouCount;
+  int? _reportsCount;
 
   /// Location the counts were last read for.
   String? _countsLocation;
@@ -65,21 +70,70 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<void> _loadCounts() async {
+    final repository = _repository ?? ClientProvider.repository;
+
+    // Each count is read on its own so one unreachable register cannot take the
+    // rest of the rail down with it. The two registers under Reports are read
+    // separately for the same reason: a feature register that is not yet
+    // deployed must not blank the count next to "All work".
+    //
+    // The two overview figures share one read — they are two fields of the same
+    // document, not two documents.
+    final overview = _overview(repository);
+    final results = await Future.wait([
+      _overviewCount(overview, (o) => o.running + o.waitingOnYou),
+      _overviewCount(overview, (o) => o.waitingOnYou),
+      _count(() => repository.listProductSummaries().then((p) => p.length)),
+      // The rail's Reports count is the size of the surface the nav item
+      // opens, not one register inside it: both the defect register and the
+      // feature-request register are things filed under Reports, so a count
+      // that named only the bugs would understate what is waiting.
+      _count(() => repository.listDefects().then((d) => d.totalCount)),
+      _count(() => repository.listFeatureRequests().then((f) => f.length)),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _allWorkCount = results[0];
+      _needsYouCount = results[1];
+      _productCount = results[2];
+      // A null on either register leaves the Reports count unread rather than
+      // reporting a total that silently omits one of its halves.
+      _reportsCount = results[3] == null || results[4] == null
+          ? null
+          : results[3]! + results[4]!;
+    });
+  }
+
+  /// The overview, fetched once and shared by both of its counts. A failed read
+  /// resolves to null, which each dependent count reports as unknown rather
+  /// than as zero.
+  static Future<OverviewResponse?> _overview(
+    ControlPlaneRepository repository,
+  ) async {
     try {
-      final repository = _repository ?? ClientProvider.repository;
-      final overview = await repository.getOverview();
-      // The rail's Products count is the registry size. Fetched alongside the
-      // overview so a failure degrades the whole rail consistently rather
-      // than leaving one count stale.
-      final products = await repository.listProductSummaries();
-      if (!mounted) return;
-      setState(() {
-        _allWorkCount = overview.running + overview.waitingOnYou;
-        _needsYouCount = overview.waitingOnYou;
-        _productCount = products.length;
-      });
+      return await repository.getOverview();
     } on Object {
-      // The rail degrades to no counts; the page itself reports the failure.
+      return null;
+    }
+  }
+
+  /// One figure derived from the shared overview read. A null overview yields
+  /// null — the rail omits the number instead of claiming a zero.
+  static Future<int?> _overviewCount(
+    Future<OverviewResponse?> overview,
+    int Function(OverviewResponse) derive,
+  ) async {
+    final o = await overview;
+    return o == null ? null : derive(o);
+  }
+
+  /// A count, or null when that read failed. Null means "not known", which the
+  /// rail renders by omitting the number rather than by showing a zero.
+  static Future<int?> _count(Future<int> Function() read) async {
+    try {
+      return await read();
+    } on Object {
+      return null;
     }
   }
 
@@ -103,6 +157,7 @@ class _AppShellState extends State<AppShell> {
             allWorkCount: _allWorkCount,
             needsYouCount: _needsYouCount,
             productCount: _productCount,
+            reportsCount: _reportsCount,
           ),
           Expanded(child: widget.child),
         ],
@@ -130,11 +185,25 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
-  /// Label and destination for the back link, or null on a list screen.
+  /// Label and destination for the back link, or null on a root screen.
+  ///
+  /// Every child screen links back to the root of its own surface — the board
+  /// for a defect screen reads `‹  Defects`, which is the Defects root, not
+  /// the page the operator came from.
   static (String, String)? _detailParent(String path) {
     if (RegExp(r'^/runs/.+').hasMatch(path)) return ('All work', '/runs');
     if (RegExp(r'^/needs-you/.+').hasMatch(path)) {
       return ('Needs you', '/needs-you');
+    }
+    if (RegExp(r'^/products/.+').hasMatch(path)) {
+      return ('Products', '/products');
+    }
+    if (RegExp(r'^/reports/.+').hasMatch(path) ||
+        RegExp(r'^/defects/.+').hasMatch(path)) {
+      return ('Reports', '/reports');
+    }
+    if (RegExp(r'^/models/.+').hasMatch(path)) {
+      return ('Models', '/models/policies');
     }
     return null;
   }

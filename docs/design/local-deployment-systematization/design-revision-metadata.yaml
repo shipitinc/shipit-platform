@@ -1,0 +1,31 @@
+revision_id: "B044936D-FD3E-4EB0-98F0-E48AB3B6D215"
+brief_id: "9B40FC6F-DAC4-4869-A44D-A212D0A4D069"
+revision_number: 1
+status: "DRAFT"
+risk_level: 1
+risk_rationale: |
+  This revision addresses infrastructure/configuration concerns only (Docker Compose files, nginx configuration, runtime environment variables, CI/CD pipeline modifications). No user-facing UI components, user flows, navigation, or information architecture are changed. The risk is limited to developer experience and CI/CD reliability. Per DESIGN_GOVERNANCE.md, this classifies as Level 1 (Design-System Correction) — requires design-system owner notification but no human gate unless objected.
+changelog:
+  - "Initial design revision for Local Deployment Systematization"
+  - "Defined two distinct environments: Local QA (compose.qa.yaml) and E2E Integration (compose.e2e.yaml)"
+  - "Specified runtime configuration for CONTROL_PLANE_API and nginx proxy_pass via environment variables"
+  - "Documented removal of production deployment from WORKFLOW.md and cloudbuild configs"
+  - "Included three user flows: Local QA full stack, E2E integration, and standalone client hot-reload"
+  - "Defined 11 success criteria, 9 constraints, 11 acceptance criteria"
+  - "Assessed overall risk level as 1 (Design-System Correction)"
+traceability:
+  requirements_covered:
+    - "REQ-LOCAL-DEPLOY-001"
+    - "REQ-LOCAL-DEPLOY-002"
+    - "REQ-LOCAL-DEPLOY-003"
+    - "REQ-LOCAL-DEPLOY-004"
+  requirements_gaps: []
+design_system_compliance: "UNKNOWN"
+ux_accessibility_score: "UNKNOWN"
+implementation_feasibility: "HIGH"
+created_by: "design-agent"
+created_at: "2026-10-04T00:00:00Z"
+reviewed_by: ""
+reviewed_at: ""
+approved_by: ""
+approved_at: ""

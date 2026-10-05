@@ -1,0 +1,24 @@
+class: DefectEventRow
+table: defect_event
+serverOnly: true
+indexes:
+  defect_event_id_unique:
+    fields: eventId
+    unique: true
+  defect_event_defect_idx:
+    fields: defectId
+  defect_event_sequence_unique:
+    fields: defectId, sequence
+    unique: true
+fields:
+  id: int?
+  eventId: String
+  defectId: String
+  sequence: int
+  type: String
+  fromStatus: String?
+  toStatus: String?
+  actorType: String
+  actorId: String?
+  payloadJson: String?
+  occurredAt: DateTime

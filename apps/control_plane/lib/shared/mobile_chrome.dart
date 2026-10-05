@@ -66,7 +66,12 @@ class MobileTopBar extends StatelessWidget {
   }
 }
 
-/// Detail-screen top bar: a single back link (`‹ All work`).
+/// Detail-screen top bar: a single back link to the surface's root.
+///
+/// The board renders this as one text node — `‹  Defects` (U+2039, then two
+/// spaces, then the label) in Sans 12/500 in the accent tone — at x=16, y=20
+/// inside the 56px `Top Bg`. It is the *only* bar on a child screen: the
+/// design never stacks it under the brand bar, and it has no Cancel button.
 class MobileBackBar extends StatelessWidget {
   const MobileBackBar({super.key, required this.label, required this.onTap});
 
@@ -103,12 +108,10 @@ class MobileBackBar extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    '‹  ',
-                    style: ShipItType.link.copyWith(color: palette.accent),
-                  ),
-                  Text(
-                    label,
-                    style: ShipItType.link.copyWith(color: palette.accent),
+                    '‹  $label',
+                    style: ShipItType.backLinkMobile.copyWith(
+                      color: palette.accent,
+                    ),
                   ),
                 ],
               ),
@@ -120,8 +123,15 @@ class MobileBackBar extends StatelessWidget {
   }
 }
 
-/// `Nav Bg` — three destinations with a pill on the active icon and an
+/// `Nav Bg` — five destinations with a pill on the active icon and an
 /// attention badge carrying the outstanding decision count.
+///
+/// The board (`Bottom Nav / … / Defects`) draws Overview, All work, Needs you,
+/// Products and Reports at an even 78px pitch across the 390px bar; each label
+/// box is 78 wide and the glyph is centred on it. A four-item bar cannot reach
+/// the Reports surface, which is what the mobile back link returns to. The
+/// component names are still `… / Defects` — the fifth destination was renamed
+/// to Reports, not re-filed.
 class MobileNavBar extends StatelessWidget {
   const MobileNavBar({super.key, this.needsYouCount});
 
@@ -137,6 +147,8 @@ class MobileNavBar extends StatelessWidget {
         ? 2
         : path.startsWith('/products')
         ? 3
+        : path.startsWith('/reports') || path.startsWith('/defects')
+        ? 4
         : 0;
 
     return Container(
@@ -182,6 +194,14 @@ class MobileNavBar extends StatelessWidget {
               onTap: () => context.go('/products'),
             ),
           ),
+          Expanded(
+            child: _NavItem(
+              label: 'Reports',
+              icon: _NavGlyph.report,
+              active: index == 4,
+              onTap: () => context.go('/reports'),
+            ),
+          ),
         ],
       ),
     );
@@ -190,7 +210,7 @@ class MobileNavBar extends StatelessWidget {
 
 /// The board draws its own glyphs from rectangles rather than using an icon
 /// font, so they are reproduced here as shapes for an exact match.
-enum _NavGlyph { grid, list, alert, box }
+enum _NavGlyph { grid, list, alert, box, report }
 
 /// `Nav Pill` dimensions; also the constant footprint of every destination's
 /// icon area, so the badge never moves.
@@ -365,6 +385,33 @@ class _Glyph extends StatelessWidget {
                 right: 0,
                 child: Container(width: 2, height: 6, color: color),
               ),
+            ],
+          ),
+        );
+      // `Nav Ic4 board / L1 / L2` — the Reports glyph. The board replaced the
+      // earlier bug with a document outline: a 14×16 stroked box at radius 2
+      // plus two 8×2 content rules at (3,4) and (3,9), so the glyph names a
+      // report rather than the one kind of report it used to be.
+      case _NavGlyph.report:
+        return SizedBox(
+          width: 14,
+          height: 16,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: color, width: 2),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              for (final pos in const [Offset(3, 4), Offset(3, 9)])
+                Positioned(
+                  left: pos.dx,
+                  top: pos.dy,
+                  child: Container(width: 8, height: 2, color: color),
+                ),
             ],
           ),
         );

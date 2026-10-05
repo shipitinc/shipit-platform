@@ -103,6 +103,7 @@ Provenance _provenanceFromWire(String value) => Provenance.fromWire(value);
 
 String _provenanceToWire(Provenance value) => value.wire;
 
-BaselineMaturity _maturityFromWire(String value) => BaselineMaturity.fromWire(value);
+BaselineMaturity _maturityFromWire(String value) =>
+    BaselineMaturity.fromWire(value);
 
 String _maturityToWire(BaselineMaturity value) => value.wire;

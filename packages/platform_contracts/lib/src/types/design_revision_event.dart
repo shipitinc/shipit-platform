@@ -30,11 +30,11 @@ class DesignRevisionEvent extends Equatable {
 
   @override
   List<Object?> get props => [
-        eventId,
-        designRevisionId,
-        eventType,
-        payloadJson,
-        sequence,
-        createdAt,
-      ];
+    eventId,
+    designRevisionId,
+    eventType,
+    payloadJson,
+    sequence,
+    createdAt,
+  ];
 }

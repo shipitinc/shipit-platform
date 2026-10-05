@@ -1,0 +1,24 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "skills": [
+    "aef-orchestrator",
+    "aef-correction-loop",
+    "aef-deployment-execution",
+    "aef-design-review",
+    "aef-design-workflow",
+    "aef-human-decision",
+    "aef-implementation-workflow",
+    "aef-independent-review",
+    "aef-qa-contract",
+    "aef-qa-execution",
+    "aef-repository-learning",
+    "aef-run-feature",
+    "delegation",
+    "concurrency"
+  ],
+  "project": {
+    "name": "shipit-platform",
+    "description": "ShipIt Platform - Self-hosted developer automation platform",
+    "language": "dart"
+  }
+}

@@ -5,8 +5,7 @@ import 'design_governance_store.dart';
 
 /// A non-durable in-memory implementation of all design governance store interfaces.
 /// Suitable for unit tests and single-instance usage.
-class InMemoryDesignGovernanceStore
-    implements DesignGovernanceStore {
+class InMemoryDesignGovernanceStore implements DesignGovernanceStore {
   final Map<String, DesignRevision> _revisions = {};
   final Map<String, DesignReviewResult> _reviewResults = {};
   final Map<String, DesignFinding> _findings = {};
@@ -30,15 +29,21 @@ class InMemoryDesignGovernanceStore
   }
 
   @override
-  Future<List<DesignRevision>> readDesignRevisionsForWorkItem(String workItemId) async {
+  Future<List<DesignRevision>> readDesignRevisionsForWorkItem(
+    String workItemId,
+  ) async {
     return _revisions.values.where((r) => r.workItemId == workItemId).toList();
   }
 
   @override
-  Future<DesignRevision?> readApprovedDesignRevisionForWorkItem(String workItemId) async {
+  Future<DesignRevision?> readApprovedDesignRevisionForWorkItem(
+    String workItemId,
+  ) async {
     try {
       return _revisions.values.firstWhere(
-        (r) => r.workItemId == workItemId && r.status == DesignRevisionStatus.approved,
+        (r) =>
+            r.workItemId == workItemId &&
+            r.status == DesignRevisionStatus.approved,
       );
     } on StateError {
       return null;
@@ -46,15 +51,22 @@ class InMemoryDesignGovernanceStore
   }
 
   @override
-  Future<DesignRevision?> readLatestDesignRevisionForWorkItem(String workItemId) async {
-    final revisions = _revisions.values.where((r) => r.workItemId == workItemId).toList();
+  Future<DesignRevision?> readLatestDesignRevisionForWorkItem(
+    String workItemId,
+  ) async {
+    final revisions = _revisions.values
+        .where((r) => r.workItemId == workItemId)
+        .toList();
     if (revisions.isEmpty) return null;
     revisions.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return revisions.first;
   }
 
   @override
-  Future<void> saveDesignRevision(DesignRevision revision, {int? expectedVersion}) async {
+  Future<void> saveDesignRevision(
+    DesignRevision revision, {
+    int? expectedVersion,
+  }) async {
     _checkVersion(revision.revisionId, expectedVersion);
     _revisions[revision.revisionId] = revision;
   }
@@ -75,7 +87,10 @@ class InMemoryDesignGovernanceStore
   }
 
   @override
-  Future<DesignRevision?> findDesignRevisionByIdempotencyKey(String workItemId, String idempotencyKey) async {
+  Future<DesignRevision?> findDesignRevisionByIdempotencyKey(
+    String workItemId,
+    String idempotencyKey,
+  ) async {
     final key = 'rev:$workItemId:$idempotencyKey';
     final entityId = _idempotencyKeys[key];
     if (entityId != null) {
@@ -87,7 +102,9 @@ class InMemoryDesignGovernanceStore
   // DesignReviewResultStore
 
   @override
-  Future<DesignReviewResult> readDesignReviewResult(String reviewResultId) async {
+  Future<DesignReviewResult> readDesignReviewResult(
+    String reviewResultId,
+  ) async {
     final result = _reviewResults[reviewResultId];
     if (result == null) {
       throw DesignReviewResultNotFoundException(reviewResultId);
@@ -96,8 +113,12 @@ class InMemoryDesignGovernanceStore
   }
 
   @override
-  Future<List<DesignReviewResult>> readDesignReviewResultsForRevision(String revisionId) async {
-    return _reviewResults.values.where((r) => r.revisionId == revisionId).toList();
+  Future<List<DesignReviewResult>> readDesignReviewResultsForRevision(
+    String revisionId,
+  ) async {
+    return _reviewResults.values
+        .where((r) => r.revisionId == revisionId)
+        .toList();
   }
 
   @override
@@ -107,7 +128,9 @@ class InMemoryDesignGovernanceStore
   ) async {
     try {
       return _reviewResults.values.firstWhere(
-        (r) => r.revisionId == revisionId && r.reviewExecutionId == reviewExecutionId,
+        (r) =>
+            r.revisionId == revisionId &&
+            r.reviewExecutionId == reviewExecutionId,
       );
     } on StateError {
       return null;
@@ -115,13 +138,19 @@ class InMemoryDesignGovernanceStore
   }
 
   @override
-  Future<void> saveDesignReviewResult(DesignReviewResult result, {int? expectedVersion}) async {
+  Future<void> saveDesignReviewResult(
+    DesignReviewResult result, {
+    int? expectedVersion,
+  }) async {
     _checkVersion(result.reviewExecutionId, expectedVersion);
     _reviewResults[result.reviewExecutionId] = result;
   }
 
   @override
-  Future<DesignReviewResult?> findDesignReviewResultByIdempotencyKey(String revisionId, String idempotencyKey) async {
+  Future<DesignReviewResult?> findDesignReviewResultByIdempotencyKey(
+    String revisionId,
+    String idempotencyKey,
+  ) async {
     final key = 'rr:$revisionId:$idempotencyKey';
     final entityId = _idempotencyKeys[key];
     if (entityId != null) {
@@ -142,35 +171,55 @@ class InMemoryDesignGovernanceStore
   }
 
   @override
-  Future<List<DesignFinding>> readDesignFindingsForRevision(String revisionId) async {
+  Future<List<DesignFinding>> readDesignFindingsForRevision(
+    String revisionId,
+  ) async {
     return _findings.values.where((f) => f.revisionId == revisionId).toList();
   }
 
   @override
-  Future<List<DesignFinding>> readDesignFindingsForReviewExecution(String reviewExecutionId) async {
-    return _findings.values.where((f) => f.reviewExecutionId == reviewExecutionId).toList();
-  }
-
-  @override
-  Future<List<DesignFinding>> readUnresolvedFindingsForRevision(String revisionId) async {
+  Future<List<DesignFinding>> readDesignFindingsForReviewExecution(
+    String reviewExecutionId,
+  ) async {
     return _findings.values
-        .where((f) => f.revisionId == revisionId && f.resolvedByRevisionId == null)
+        .where((f) => f.reviewExecutionId == reviewExecutionId)
         .toList();
   }
 
   @override
-  Future<List<DesignFinding>> readFindingsResolvedByRevision(String revisionId) async {
-    return _findings.values.where((f) => f.resolvedByRevisionId == revisionId).toList();
+  Future<List<DesignFinding>> readUnresolvedFindingsForRevision(
+    String revisionId,
+  ) async {
+    return _findings.values
+        .where(
+          (f) => f.revisionId == revisionId && f.resolvedByRevisionId == null,
+        )
+        .toList();
   }
 
   @override
-  Future<void> saveDesignFinding(DesignFinding finding, {int? expectedVersion}) async {
+  Future<List<DesignFinding>> readFindingsResolvedByRevision(
+    String revisionId,
+  ) async {
+    return _findings.values
+        .where((f) => f.resolvedByRevisionId == revisionId)
+        .toList();
+  }
+
+  @override
+  Future<void> saveDesignFinding(
+    DesignFinding finding, {
+    int? expectedVersion,
+  }) async {
     _checkVersion(finding.findingId, expectedVersion);
     _findings[finding.findingId] = finding;
   }
 
   @override
-  Future<DesignFinding?> findDesignFindingByIdempotencyKey(String revisionId, String idempotencyKey) async {
+  Future<DesignFinding?> findDesignFindingByIdempotencyKey(
+    String revisionId,
+    String idempotencyKey,
+  ) async {
     final key = 'fd:$revisionId:$idempotencyKey';
     final entityId = _idempotencyKeys[key];
     if (entityId != null) {
@@ -187,7 +236,9 @@ class InMemoryDesignGovernanceStore
   }
 
   @override
-  Future<List<DesignRevisionEvent>> readEventsForRevision(String designRevisionId) async {
+  Future<List<DesignRevisionEvent>> readEventsForRevision(
+    String designRevisionId,
+  ) async {
     final events = _events.values
         .where((e) => e.designRevisionId == designRevisionId)
         .toList();
@@ -201,15 +252,22 @@ class InMemoryDesignGovernanceStore
     int sequence,
   ) async {
     final events = _events.values
-        .where((e) => e.designRevisionId == designRevisionId && e.sequence > sequence)
+        .where(
+          (e) =>
+              e.designRevisionId == designRevisionId && e.sequence > sequence,
+        )
         .toList();
     events.sort((a, b) => a.sequence.compareTo(b.sequence));
     return events;
   }
 
   @override
-  Future<DesignRevisionEvent?> readLastEventForRevision(String designRevisionId) async {
-    final events = _events.values.where((e) => e.designRevisionId == designRevisionId).toList();
+  Future<DesignRevisionEvent?> readLastEventForRevision(
+    String designRevisionId,
+  ) async {
+    final events = _events.values
+        .where((e) => e.designRevisionId == designRevisionId)
+        .toList();
     if (events.isEmpty) return null;
     events.sort((a, b) => b.sequence.compareTo(a.sequence));
     return events.first;
@@ -217,7 +275,7 @@ class InMemoryDesignGovernanceStore
 
   void _checkVersion(String entityId, int? expectedVersion) {
     if (expectedVersion == null) return;
-    
+
     // Check version from stored entity
     int? currentVersion;
     if (_revisions.containsKey(entityId)) {
@@ -227,7 +285,7 @@ class InMemoryDesignGovernanceStore
     } else if (_findings.containsKey(entityId)) {
       currentVersion = _findings[entityId]!.version;
     }
-    
+
     final actualVersion = currentVersion ?? 0;
     if (actualVersion != expectedVersion) {
       throw DesignGovernanceConcurrentModificationException(

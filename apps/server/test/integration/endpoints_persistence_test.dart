@@ -28,27 +28,27 @@ void main() {
     return PersistenceDatabase(session.db);
   }
 
-  Future<void> truncateDomainTables() async {
+  /// Removes only this suite's rows, in an order that satisfies foreign keys.
+  ///
+  /// Targeted DELETEs, never a TRUNCATE: `test/integration` shares one database
+  /// with files that run concurrently, and truncating `work_item` out from
+  /// under them breaks their assertions. Every marker is namespaced `ep-*` to
+  /// this file. Runs in `setUp` as well as `tearDown`, because a previous run
+  /// that aborted mid-test leaves rows behind and re-creating the work item
+  /// would then violate a unique constraint — and because three of these tests
+  /// deliberately leave a blocking decision pending, which must not outlive the
+  /// file.
+  Future<void> purgeSuiteRows() async {
     final db = await newDb();
-    await db.queryNoTransaction('''
-      TRUNCATE TABLE
-        "work_item",
-        "human_decision",
-        "work_item_transition",
-        "job",
-        "job_claim",
-        "scheduler_event",
-        "worker_execution",
-        "worker_result",
-        "worker_event",
-        "worker_registration",
-        "agent_execution_request",
-        "agent_execution",
-        "agent_event",
-        "agent_result",
-        "platform_verification"
-      RESTART IDENTITY CASCADE
-    ''');
+    const workItem = 'ep-%';
+    const statements = <String>[
+      'DELETE FROM "human_decision"       WHERE "workItemId" LIKE \'$workItem\'',
+      'DELETE FROM "work_item_transition" WHERE "workItemId" LIKE \'$workItem\'',
+      'DELETE FROM "work_item"            WHERE "workItemId" LIKE \'$workItem\'',
+    ];
+    for (final statement in statements) {
+      await db.query(statement);
+    }
   }
 
   Future<DurableWorkflowEngine> newEngine([String? workItemId]) async {
@@ -110,8 +110,9 @@ void main() {
   withServerpod(
     'control-plane endpoints observe durable state and never set it',
     (sessionBuilder, endpoints) {
-      setUp(truncateDomainTables);
+      setUp(purgeSuiteRows);
       tearDown(() async {
+        await purgeSuiteRows();
         for (final session in List.of(openSessions)) {
           await session.close();
         }
@@ -121,15 +122,15 @@ void main() {
       test(
         'workflow.inspect returns a work item seeded through the engine',
         () async {
-          final engine = await newEngine('wi-inspect-1');
-          await pushToHumanGate(engine, workItemId: 'wi-inspect-1');
+          final engine = await newEngine('ep-inspect-1');
+          await pushToHumanGate(engine, workItemId: 'ep-inspect-1');
 
           final response = await endpoints.workflowEndpoints.inspect(
             sessionBuilder,
-            workItemId: 'wi-inspect-1',
+            workItemId: 'ep-inspect-1',
           );
 
-          expect(response.workItem.workItemId, 'wi-inspect-1');
+          expect(response.workItem.workItemId, 'ep-inspect-1');
           expect(
             response.workItem.state,
             WorkItemState.waitingForHumanDecision.wire,
@@ -151,30 +152,30 @@ void main() {
       test(
         'workflow.listDecisions surfaces a decision persisted durably',
         () async {
-          final engine = await newEngine('wi-decisions-1');
+          final engine = await newEngine('ep-decisions-1');
           final decisionId = await pushToHumanGate(
             engine,
-            workItemId: 'wi-decisions-1',
+            workItemId: 'ep-decisions-1',
           );
 
           final response = await endpoints.workflowEndpoints.listDecisions(
             sessionBuilder,
-            workItemId: 'wi-decisions-1',
+            workItemId: 'ep-decisions-1',
           );
 
           expect(response, hasLength(1));
           expect(response.first.decisionId, decisionId);
           expect(response.first.status, HumanDecisionStatus.pending.wire);
-          expect(response.first.workItemId, 'wi-decisions-1');
+          expect(response.first.workItemId, 'ep-decisions-1');
         },
       );
 
       test('workflow.resolveDecision unlocks the gate via the engine and '
           'replays idempotently', () async {
-        final engine = await newEngine('wi-resolve-1');
+        final engine = await newEngine('ep-resolve-1');
         final decisionId = await pushToHumanGate(
           engine,
-          workItemId: 'wi-resolve-1',
+          workItemId: 'ep-resolve-1',
         );
 
         final response = await endpoints.workflowEndpoints.resolveDecision(
@@ -224,17 +225,17 @@ void main() {
       test(
         'endpoints report durable Postgres state without mutating it',
         () async {
-          final engine = await newEngine('wi-observe-1');
-          await pushToHumanGate(engine, workItemId: 'wi-observe-1');
+          final engine = await newEngine('ep-observe-1');
+          await pushToHumanGate(engine, workItemId: 'ep-observe-1');
 
           final inspect1 = await endpoints.workflowEndpoints.inspect(
             sessionBuilder,
-            workItemId: 'wi-observe-1',
+            workItemId: 'ep-observe-1',
           );
           final stateViaEndpoint = inspect1.workItem.state;
 
           final store = PostgresWorkflowStore(await newDb());
-          final rawFromStore = await store.readWorkItem('wi-observe-1');
+          final rawFromStore = await store.readWorkItem('ep-observe-1');
           expect(
             stateViaEndpoint,
             rawFromStore.state.wire,
@@ -243,7 +244,7 @@ void main() {
 
           final inspect2 = await endpoints.workflowEndpoints.inspect(
             sessionBuilder,
-            workItemId: 'wi-observe-1',
+            workItemId: 'ep-observe-1',
           );
           expect(
             inspect2.workItem.state,
@@ -254,9 +255,9 @@ void main() {
       );
 
       test('endpoints round-trip timestamps in ISO-8601 UTC', () async {
-        final engine = await newEngine('wi-ts-1');
+        final engine = await newEngine('ep-ts-1');
         await engine.transition(
-          workItemId: 'wi-ts-1',
+          workItemId: 'ep-ts-1',
           to: WorkItemState.planning,
           trigger: TransitionTrigger.systemEvent,
           actor: _orch,
@@ -264,7 +265,7 @@ void main() {
 
         final response = await endpoints.workflowEndpoints.inspect(
           sessionBuilder,
-          workItemId: 'wi-ts-1',
+          workItemId: 'ep-ts-1',
         );
         expect(response.workItem.createdAt, isA<DateTime>());
         expect(

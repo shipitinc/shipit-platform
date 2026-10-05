@@ -13,10 +13,12 @@ enum DesignRevisionStatus {
 
   static DesignRevisionStatus fromWire(String value) => values.firstWhere(
     (status) => status.wire == value,
-    orElse: () => throw FormatException('Unknown design revision status: $value'),
+    orElse: () =>
+        throw FormatException('Unknown design revision status: $value'),
   );
 
-  bool get isTerminal => this == DesignRevisionStatus.approved ||
+  bool get isTerminal =>
+      this == DesignRevisionStatus.approved ||
       this == DesignRevisionStatus.superseded;
 
   bool get canTransitionToApproved => switch (this) {

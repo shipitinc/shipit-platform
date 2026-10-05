@@ -5,6 +5,7 @@ import 'package:workflow_store/workflow_store.dart';
 import 'package:worker_runtime/worker_runtime.dart';
 
 import 'dispatch/worker_dispatch.dart';
+import 'health/provider_health_monitor.dart';
 import 'policy/retry_policy.dart';
 import 'policy/runnable_work.dart';
 import 'queue/job_queue.dart';
@@ -32,17 +33,52 @@ class SchedulerWorkload {
 }
 
 /// Function to build a dedupe key for a work item.
-typedef DedupeKeyBuilder = String Function(WorkItem item, JobDefinition definition);
+typedef DedupeKeyBuilder =
+    String Function(WorkItem item, JobDefinition definition);
 
 /// Function to build an instruction for a work item.
-typedef InstructionBuilder = String Function(WorkItem item, JobDefinition definition);
+typedef InstructionBuilder =
+    String Function(WorkItem item, JobDefinition definition);
 
 /// Function to build a worker execution request for a job.
-typedef RequestBuilder = WorkerExecutionRequest Function(
+typedef RequestBuilder =
+    Future<WorkerExecutionRequest> Function(
+      Job job,
+      SchedulerWorkload workload,
+      WorkItem item,
+
+      /// Null when the Scheduler was constructed without a model selector, in
+      /// which case a builder must leave the request's model unpinned.
+      ModelSelectionService? modelSelection,
+    );
+
+/// Resolves the per-role model policy into a request's runtime config.
+///
+/// Model pinning is opt-in. Without a [ModelSelectionService] the returned map
+/// is empty, the request carries no model override, and the adapter applies
+/// its own default — so constructing a Scheduler without a selector behaves
+/// exactly as it did before per-role model selection existed.
+///
+/// The escalation index is read from `WorkItem.metadata`, which is the single
+/// durable home for it.
+Future<Map<String, String>> modelRuntimeConfig(
   Job job,
-  SchedulerWorkload workload,
   WorkItem item,
-);
+  ModelSelectionService? modelSelection,
+) async {
+  if (modelSelection == null) return const {};
+  final escalationIndex = item.metadata?['escalationIndex'] as int? ?? 0;
+  final selection = await modelSelection.select(
+    role: job.requiredRole,
+    escalationIndex: escalationIndex,
+  );
+  return {
+    'model': selection.modelId,
+    'provider': selection.provider,
+    'escalationIndex': selection.escalationIndex.toString(),
+    'isFallback': selection.isFallback.toString(),
+  };
+}
 
 /// What one [Scheduler.tick] did, for tests and for the audit tail.
 @immutable
@@ -81,9 +117,11 @@ class Scheduler {
     DateTime Function()? clock,
     this.claimLease = const Duration(minutes: 10),
     WorkflowEngine? policy,
+    ModelSelectionService? modelSelection,
     DedupeKeyBuilder? dedupeKeyBuilder,
     InstructionBuilder? instructionBuilder,
     RequestBuilder? requestBuilder,
+    ProviderHealthMonitor? providerHealthMonitor,
   }) : schedulerId = schedulerId,
        _workflowStore = workflowStore,
        _jobStore = jobStore,
@@ -98,7 +136,9 @@ class Scheduler {
        _queue = JobQueue(store: jobStore, clock: clock),
        _dedupeKeyBuilder = dedupeKeyBuilder ?? _defaultDedupeKey,
        _instructionBuilder = instructionBuilder ?? _defaultInstruction,
-       _requestBuilder = requestBuilder ?? _defaultRequest;
+       _modelSelection = modelSelection,
+       _requestBuilder = requestBuilder ?? _defaultRequest,
+       _providerHealthMonitor = providerHealthMonitor;
 
   final String schedulerId;
   final Duration claimLease;
@@ -115,7 +155,9 @@ class Scheduler {
   final RetryPolicy _retryPolicy = const RetryPolicy();
   final DedupeKeyBuilder _dedupeKeyBuilder;
   final InstructionBuilder _instructionBuilder;
+  final ModelSelectionService? _modelSelection;
   final RequestBuilder _requestBuilder;
+  final ProviderHealthMonitor? _providerHealthMonitor;
 
   JobQueue get queue => _queue;
 
@@ -126,11 +168,13 @@ class Scheduler {
   static String _defaultInstruction(WorkItem item, JobDefinition definition) =>
       'Implement "${item.title}" (${item.workItemId}) inside the worktree.';
 
-  static WorkerExecutionRequest _defaultRequest(
+  static Future<WorkerExecutionRequest> _defaultRequest(
     Job job,
     SchedulerWorkload workload,
     WorkItem item,
-  ) {
+    ModelSelectionService? modelSelection,
+  ) async {
+    final runtimeConfig = await modelRuntimeConfig(job, item, modelSelection);
     return WorkerExecutionRequest(
       workerExecutionId: 'wx-${job.jobId}',
       workItemId: job.workItemId,
@@ -142,6 +186,7 @@ class Scheduler {
       timeoutSeconds: workload.timeoutSeconds,
       runtimeTypeId: workload.runtimeTypeId,
       cleanupPolicy: workload.cleanupPolicy,
+      runtimeConfig: runtimeConfig,
     );
   }
 
@@ -262,6 +307,14 @@ class Scheduler {
           statusOf[job.workItemId] != RunnableWorkStatus.runnable) {
         continue;
       }
+      // Check if all providers for this job's role are down.
+      if (_providerHealthMonitor != null &&
+          _providerHealthMonitor.hasAllProvidersDown(
+            _definition.requiredRole,
+          )) {
+        // Skip dispatch - log and defer
+        continue;
+      }
       // Re-validate legality against today's item state at claim time so a
       // human decision that landed between enqueue and dispatch cannot slip
       // through.
@@ -286,7 +339,12 @@ class Scheduler {
     }
 
     final item = await _workflowStore.readWorkItem(current.workItemId);
-    final request = _requestBuilder(current, _workload, item);
+    final request = await _requestBuilder(
+      current,
+      _workload,
+      item,
+      _modelSelection,
+    );
     final selection = _dispatch.select(request);
     if (!selection.isDispatched) {
       await _queue.recordDeferred(job: current, outcome: selection.outcome);
@@ -327,6 +385,9 @@ class Scheduler {
     }
   }
 
+  /// Adopts a worker execution's terminal outcome onto its job: merges the
+  /// reported agent execution id into the job's execution reference, then lets
+  /// the retry policy pick the resulting state.
   Future<Job> _adopt(
     Job prior,
     WorkerExecutionResult result,
@@ -335,11 +396,15 @@ class Scheduler {
     final current = (await _jobStore.readJob(prior.jobId)) ?? prior;
     if (current.isTerminal) return current;
     final failure = _retryPolicy.classify(result.status, result.failureDetail);
+    // Null when the outcome adds nothing to the chain, in which case the queue
+    // preserves whatever the job already holds.
+    final adopted = _executionReference(current, result, now);
     if (failure == null) {
       return _queue.complete(
         job: current,
         terminal: JobState.succeeded,
         now: now,
+        executionReference: adopted,
       );
     }
     switch (failure.kind) {
@@ -349,6 +414,7 @@ class Scheduler {
           terminal: JobState.cancelled,
           failure: failure,
           now: now,
+          executionReference: adopted,
         );
       case JobFailureKind.transient:
         if (_retryPolicy.canRetry(current)) {
@@ -357,6 +423,7 @@ class Scheduler {
             failure: failure,
             now: now,
             retryDelay: _retryPolicy.retryDelay,
+            executionReference: adopted,
           );
         }
         return _queue.complete(
@@ -364,6 +431,7 @@ class Scheduler {
           terminal: JobState.failed,
           failure: failure,
           now: now,
+          executionReference: adopted,
         );
       case JobFailureKind.permanent:
       case JobFailureKind.none:
@@ -372,8 +440,43 @@ class Scheduler {
           terminal: JobState.failed,
           failure: failure,
           now: now,
+          executionReference: adopted,
         );
     }
+  }
+
+  /// The job's execution reference with [WorkerExecutionResult.agentExecutionId]
+  /// merged in, which is the only half of the chain a terminal outcome adds.
+  ///
+  /// INVARIANT: a job's `executionReference` is either null, or names a real
+  /// worker execution. It is never written with an empty `workerExecutionId`.
+  ///
+  /// [JobQueue.markRunning] normally stamps the worker half before the worker
+  /// runs, and the existing reference is then extended in place. It can lose
+  /// that CAS to a concurrent writer, leaving a job whose reference is absent
+  /// while its execution is already running. The correct value in that case is
+  /// the worker execution that produced the outcome being adopted - the
+  /// execution the dispatch request named - never a placeholder. When even that
+  /// id is empty the reference is omitted entirely rather than persisted as a
+  /// dangling link, because a reader follows this chain and an empty id names
+  /// nothing.
+  JobExecutionReference? _executionReference(
+    Job job,
+    WorkerExecutionResult result,
+    DateTime now,
+  ) {
+    final current = job.executionReference;
+    final agentExecutionId = result.agentExecutionId;
+    if (agentExecutionId == null) return current;
+    if (current != null) {
+      return current.copyWith(agentExecutionId: agentExecutionId);
+    }
+    if (result.workerExecutionId.isEmpty) return null;
+    return JobExecutionReference(
+      workerExecutionId: result.workerExecutionId,
+      createdAt: now,
+      agentExecutionId: agentExecutionId,
+    );
   }
 
   /// Reconciles a claim that expired without a terminal job. Guarantees
@@ -503,7 +606,10 @@ const JobDefinition defaultImplementFeatureDefinition = JobDefinition(
 const JobDefinition designRevisionDefinition = JobDefinition(
   jobType: JobType.designRevision,
   requiredRole: AgentRole.designAgent,
-  requiredCapabilities: {WorkerCapability.penpotWrite, WorkerCapability.visualDesign},
+  requiredCapabilities: {
+    WorkerCapability.penpotWrite,
+    WorkerCapability.visualDesign,
+  },
   entryStates: {WorkItemState.designRequired, WorkItemState.designRejected},
   priority: JobPriority.normal,
   maxAttempts: 3,
@@ -515,7 +621,10 @@ const JobDefinition designRevisionDefinition = JobDefinition(
 const JobDefinition designReviewDefinition = JobDefinition(
   jobType: JobType.designReview,
   requiredRole: AgentRole.designReviewer,
-  requiredCapabilities: {WorkerCapability.penpotRead, WorkerCapability.designReview},
+  requiredCapabilities: {
+    WorkerCapability.penpotRead,
+    WorkerCapability.designReview,
+  },
   entryStates: {WorkItemState.designInReview},
   priority: JobPriority.high,
   maxAttempts: 2,
@@ -545,11 +654,13 @@ String designReviewInstruction(WorkItem item, JobDefinition definition) =>
     'Provide independent assessment without consulting the designer.';
 
 /// Builds a worker execution request for design revision jobs.
-WorkerExecutionRequest designRevisionRequest(
+Future<WorkerExecutionRequest> designRevisionRequest(
   Job job,
   SchedulerWorkload workload,
   WorkItem item,
-) {
+  ModelSelectionService? modelSelection,
+) async {
+  final runtimeConfig = await modelRuntimeConfig(job, item, modelSelection);
   return WorkerExecutionRequest(
     workerExecutionId: 'wx-${job.jobId}',
     workItemId: job.workItemId,
@@ -561,6 +672,7 @@ WorkerExecutionRequest designRevisionRequest(
     timeoutSeconds: workload.timeoutSeconds,
     runtimeTypeId: workload.runtimeTypeId,
     cleanupPolicy: workload.cleanupPolicy,
+    runtimeConfig: runtimeConfig,
   );
 }
 
@@ -568,12 +680,14 @@ WorkerExecutionRequest designRevisionRequest(
 /// Includes excludedExecutionIds to enforce independence at dispatch.
 /// Reads designerExecutionId from WorkItem.metadata['designerExecutionId']
 /// (set by workflow on transition to designInReview).
-WorkerExecutionRequest designReviewRequest(
+Future<WorkerExecutionRequest> designReviewRequest(
   Job job,
   SchedulerWorkload workload,
   WorkItem item,
-) {
+  ModelSelectionService? modelSelection,
+) async {
   final designerExecutionId = item.metadata?['designerExecutionId'] as String?;
+  final runtimeConfig = await modelRuntimeConfig(job, item, modelSelection);
   return WorkerExecutionRequest(
     workerExecutionId: 'wx-${job.jobId}',
     workItemId: job.workItemId,
@@ -585,9 +699,13 @@ WorkerExecutionRequest designReviewRequest(
     timeoutSeconds: workload.timeoutSeconds,
     runtimeTypeId: workload.runtimeTypeId,
     cleanupPolicy: workload.cleanupPolicy,
-    excludedExecutionIds: designerExecutionId != null ? [designerExecutionId] : const [],
+    excludedExecutionIds: designerExecutionId != null
+        ? [designerExecutionId]
+        : const [],
+    runtimeConfig: runtimeConfig,
   );
 }
+
 class _DispatchOutcome {
   const _DispatchOutcome({this.dispatched = false, this.terminalJob});
 

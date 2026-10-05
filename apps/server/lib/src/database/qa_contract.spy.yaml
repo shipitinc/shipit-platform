@@ -1,0 +1,22 @@
+# QA contract table definition.
+# Converted from hand-written jsonb table to a managed Serverpod table
+# to satisfy schema validation in development mode.
+class: QAContractRow
+table: qa_contract
+serverOnly: true
+indexes:
+  qa_contract_id_unique:
+    fields: contractId
+    unique: true
+  qa_contract_work_item_category_idx:
+    fields: workItemCategory
+fields:
+  contractId: String
+  workItemCategory: String
+  gatesJson: String
+  version: String
+  passCriteriaJson: String?
+  createdAt: DateTime
+  updatedAt: DateTime
+  evidenceRowsJson: String?
+  metadataJson: String?

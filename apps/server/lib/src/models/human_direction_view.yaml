@@ -1,0 +1,25 @@
+class: HumanDirectionView
+fields:
+  directionId: String
+  directionType: String
+  targetType: String
+  targetId: String?
+  status: String
+  payload: HumanDirectionPayloadView
+  createdBy: String?
+  assignedTo: String?
+  ackedAt: DateTime?
+  ackedBy: String?
+  startedAt: DateTime?
+  startedBy: String?
+  completedAt: DateTime?
+  completedBy: String?
+  completionSummary: String?
+  rejectedAt: DateTime?
+  rejectedBy: String?
+  rejectionReason: String?
+  supersededAt: DateTime?
+  supersededByDirectionId: String?
+  createdAt: DateTime
+  updatedAt: DateTime
+  metadataJson: String?

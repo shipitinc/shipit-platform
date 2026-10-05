@@ -29,15 +29,9 @@ class DefectEvent extends Equatable {
   final int sequence;
   @JsonKey(fromJson: _defectEventTypeFromJson, toJson: _defectEventTypeToJson)
   final DefectEventType type;
-  @JsonKey(
-    fromJson: _defectStatusFromJson,
-    toJson: _defectStatusToJson,
-  )
+  @JsonKey(fromJson: _defectStatusFromJson, toJson: _defectStatusToJson)
   final DefectStatus? fromStatus;
-  @JsonKey(
-    fromJson: _defectStatusFromJson,
-    toJson: _defectStatusToJson,
-  )
+  @JsonKey(fromJson: _defectStatusFromJson, toJson: _defectStatusToJson)
   final DefectStatus? toStatus;
   @JsonKey(fromJson: _actorTypeFromJson, toJson: _actorTypeToJson)
   final ActorType actorType;
@@ -52,17 +46,17 @@ class DefectEvent extends Equatable {
 
   @override
   List<Object?> get props => [
-        eventId,
-        defectId,
-        sequence,
-        type,
-        fromStatus,
-        toStatus,
-        actorType,
-        actorId,
-        payloadJson,
-        occurredAt,
-      ];
+    eventId,
+    defectId,
+    sequence,
+    type,
+    fromStatus,
+    toStatus,
+    actorType,
+    actorId,
+    payloadJson,
+    occurredAt,
+  ];
 }
 
 DefectEventType _defectEventTypeFromJson(String value) =>

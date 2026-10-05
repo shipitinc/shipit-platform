@@ -33,15 +33,14 @@ void main() {
     HumanDecision request, {
     HumanDecisionChoice choice = HumanDecisionChoice.approve,
     Set<ProductGuard> additionalGuards = const {},
-  }) =>
-      engine.resolveLifecycleDecision(
-        decisionId: request.decisionId,
-        choice: choice,
-        decider: 'operator',
-        rationale: 'because',
-        signature: testSignature(),
-        additionalGuards: additionalGuards,
-      );
+  }) => engine.resolveLifecycleDecision(
+    decisionId: request.decisionId,
+    choice: choice,
+    decider: 'operator',
+    rationale: 'because',
+    signature: testSignature(),
+    additionalGuards: additionalGuards,
+  );
 
   group('pause', () {
     test('a pause is a durable blocking decision, not a flag flip', () async {
@@ -58,16 +57,20 @@ void main() {
 
     test('approving it stops dispatch; resuming restores it', () async {
       await govern('p1');
-      await resolve(await engine.requestLifecycleDecision(
-        productId: 'p1',
-        action: ProductLifecycleAction.pause,
-      ));
+      await resolve(
+        await engine.requestLifecycleDecision(
+          productId: 'p1',
+          action: ProductLifecycleAction.pause,
+        ),
+      );
       expect((await engine.readProduct('p1')).state.allowsDispatch, isFalse);
 
-      await resolve(await engine.requestLifecycleDecision(
-        productId: 'p1',
-        action: ProductLifecycleAction.resume,
-      ));
+      await resolve(
+        await engine.requestLifecycleDecision(
+          productId: 'p1',
+          action: ProductLifecycleAction.resume,
+        ),
+      );
       expect((await engine.readProduct('p1')).state.allowsDispatch, isTrue);
     });
 
@@ -222,25 +225,27 @@ void main() {
       );
     });
 
-    test('resolving twice is an idempotent replay, not a second action',
-        () async {
-      await govern('p1');
-      final req = await engine.requestLifecycleDecision(
-        productId: 'p1',
-        action: ProductLifecycleAction.pause,
-      );
-      final first = await resolve(req);
-      final replay = await engine.resolveLifecycleDecision(
-        decisionId: req.decisionId,
-        choice: HumanDecisionChoice.reject,
-        decider: 'someone-else',
-        rationale: 'trying to flip it',
-        signature: testSignature(),
-      );
-      expect(replay.choice, first.choice);
-      expect(replay.decider, 'operator');
-      expect((await engine.readProduct('p1')).state, ProductState.paused);
-    });
+    test(
+      'resolving twice is an idempotent replay, not a second action',
+      () async {
+        await govern('p1');
+        final req = await engine.requestLifecycleDecision(
+          productId: 'p1',
+          action: ProductLifecycleAction.pause,
+        );
+        final first = await resolve(req);
+        final replay = await engine.resolveLifecycleDecision(
+          decisionId: req.decisionId,
+          choice: HumanDecisionChoice.reject,
+          decider: 'someone-else',
+          rationale: 'trying to flip it',
+          signature: testSignature(),
+        );
+        expect(replay.choice, first.choice);
+        expect(replay.decider, 'operator');
+        expect((await engine.readProduct('p1')).state, ProductState.paused);
+      },
+    );
   });
 
   group('binding', () {

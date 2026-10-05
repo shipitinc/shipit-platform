@@ -1,3 +1,21 @@
+/// Onboards a product from a real repository snapshot and leaves the baseline
+/// approval to a human.
+///
+/// Run it against the control-plane database:
+///
+///   SERVERPOD_DATABASE_HOST=postgres \
+///   SHIPIT_REPOSITORY_PATH=/repo \
+///   dart run bin/onboard_shipit_dev.dart
+///
+/// Every connection detail comes from the environment so the same script runs
+/// on a developer machine and inside the compose network, where the database is
+/// reachable as `postgres:5432` but not as `localhost:5432`.
+///
+/// This script NEVER resolves a HumanDecision. Baseline approval is a human
+/// gate (AGENTS.md §19); fabricating a decider would forge the authority that
+/// makes a governed product meaningful. It stops at a pending decision.
+library;
+
 import 'dart:io';
 
 import 'package:control_plane_server/src/generated/endpoints.dart';
@@ -9,31 +27,44 @@ import 'package:control_plane_server/src/persistence/postgres_workflow_store.dar
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:product_registry/product_registry.dart';
 import 'package:serverpod/serverpod.dart';
-import 'package:workflow_store/workflow_store.dart';
 
-import 'package:product_registry/src/discovery/read_only_repository_reader.dart';
-import 'package:product_registry/src/discovery/maturity_classifier.dart';
-import 'package:product_registry/src/engine/baseline_content_hash_v2.dart';
-
-Future<PersistenceDatabase> _newTestDb() async {
-  final session = await Serverpod.instance.createSession(enableLogging: false);
-  return PersistenceDatabase(session.db);
+String _env(String key, String fallback) {
+  final value = Platform.environment[key];
+  return (value == null || value.isEmpty) ? fallback : value;
 }
 
-void main() async {
-  // Initialize Serverpod for DEV database (persistent, not test)
+void main(List<String> argv) async {
+  final productId = argv.isNotEmpty
+      ? argv.first
+      : _env('SHIPIT_PRODUCT_ID', 'shipit-platform');
+  final repoPath = _env(
+    'SHIPIT_REPOSITORY_PATH',
+    Directory.current.parent.parent.path,
+  );
+  final snapshotRoot = Directory(repoPath);
+  if (!snapshotRoot.existsSync()) {
+    stderr.writeln('Repository path does not exist: $repoPath');
+    exit(2);
+  }
+
+  final database = DatabaseConfig(
+    host: _env('SERVERPOD_DATABASE_HOST', 'localhost'),
+    port: int.parse(_env('SERVERPOD_DATABASE_PORT', '5432')),
+    name: _env('SERVERPOD_DATABASE_NAME', 'shipit'),
+    user: _env('SERVERPOD_DATABASE_USER', 'shipit'),
+    password: _env('SERVERPOD_DATABASE_PASSWORD', 'shipit'),
+  );
+
+  print('Onboarding product "$productId"');
+  print('  repository : $repoPath');
+  print('  database   : ${database.host}:${database.port}/${database.name}');
+
   final pod = Serverpod(
-    ['--mode', 'development'],
+    ['--mode', 'development', '--apply-migrations'],
     Protocol(),
     Endpoints(),
     configOverride: (config) => config.copyWith(
-      database: DatabaseConfig(
-        host: 'localhost',
-        port: 8090,
-        name: 'control_plane',
-        user: 'postgres',
-        password: 'fd6239170e2e5511e8ac0fa79a03695f28781037d4c8b644',
-      ),
+      database: database,
       redis: null,
       webServer: null,
       insightsServer: null,
@@ -41,62 +72,66 @@ void main() async {
   );
   await pod.start();
 
-  final db = await _newTestDb();
+  final session = await Serverpod.instance.createSession(enableLogging: false);
+  final db = PersistenceDatabase(session.db);
+  final store = PostgresProductRegistryStore(db);
   final workflowStore = PostgresWorkflowStore(db);
   final decisions = PostgresHumanDecisionStore(workflowStore);
   final engine = ProductRegistryEngine(
-    store: PostgresProductRegistryStore(db),
+    store: store,
     humanDecisionStore: decisions,
   );
 
-  final productId = 'shipit-platform';
-  final maturityClassifier = MaturityClassifier();
-
-  // Create or load product
+  // 1. Product identity.
   Product product;
   try {
     product = await engine.readProduct(productId);
-    print('PRODUCT IDENTITY (existing):');
+    print('\nPRODUCT (existing): ${product.name} [${product.state.wire}]');
   } on ProductNotFoundException {
-    print('Product not found, creating...');
     product = await engine.createProduct(
       productId: productId,
-      name: 'ShipIt',
-      description: 'The platform itself (S-1 dogfood).',
+      name: productId,
+      description: 'Onboarded from $repoPath',
     );
-    print('PRODUCT IDENTITY (created):');
+    print('\nPRODUCT (created): ${product.name}');
   }
-  print('  display name: ${product.name}');
-  print('  productId: ${product.productId}');
-  print('  ProductState: ${product.state.wire}');
-  print('  dispatch allowed: ${product.state.allowsDispatch}');
 
-  // Add repository reference
-  print('\nAdding repository reference...');
+  // 2. Repository reference. Recorded as `local` because onboarding inspects a
+  //    path on this machine; a real remote would carry its provider here.
+  final repositoryId = 'repo-$productId';
   await engine.addRepositoryReference(
-    repositoryId: 'repo-shipit-platform',
+    repositoryId: repositoryId,
     productId: productId,
-    uri: '/Users/alkebut/air/shipit-platform',
+    uri: repoPath,
     kind: RepositoryKind.monorepo,
     provider: RepositoryProvider.local,
   );
-  print('Repository reference added.');
+  print('REPOSITORY: $repositoryId -> $repoPath');
 
-  // Run read-only discovery with proper maturity classification
-  print('\nRunning read-only discovery with MaturityClassifier...');
+  // 3. Read-only discovery. This never writes to the snapshot.
+  print('\nDiscovering facts (read-only)...');
   final observations = await ReadOnlyRepositoryReader(
-    snapshotRoot: Directory('/Users/alkebut/air/shipit-platform'),
+    snapshotRoot: snapshotRoot,
   ).inspect();
-  print('Discovered ${observations.length} observations.');
+  if (observations.isEmpty) {
+    stderr.writeln(
+      'Discovery produced no observations; refusing to propose an '
+      'empty baseline. A baseline with no facts would attest to nothing.',
+    );
+    await pod.shutdown(exitProcess: false);
+    exit(3);
+  }
+  print('  ${observations.length} observations');
 
+  final classifier = MaturityClassifier();
   final facts = <BaselineFact>[
     for (var i = 0; i < observations.length; i++)
       BaselineFact(
-        factId: 'dogfood-$i',
+        factId: 'discovery-$i',
         section: observations[i].section,
         claim: observations[i].claim,
         provenance: observations[i].provenance,
-        maturity: maturityClassifier.classify(
+        maturity: classifier.classify(
           claim: observations[i].claim,
           evidencePaths: observations[i].evidencePaths,
           provenance: observations[i].provenance,
@@ -109,291 +144,226 @@ void main() async {
       ),
   ];
 
-  // Propose baseline
-  print('\nProposing baseline...');
-  final proposed = await engine.proposeBaseline(
-    productId: productId,
-    facts: facts,
-  );
-  print('Proposed baseline:');
-  print('  baselineId: ${proposed.baselineId}');
-  print('  revision: ${proposed.revision}');
-  print('  contentHash: ${proposed.contentHash}');
-  print('  contentHashVersion: ${proposed.contentHashVersion}');
-  print('  status: ${proposed.status.wire}');
-  print('  fact count: ${proposed.facts.length}');
+  // 4. Propose. Never propose an empty baseline.
+  //
+  //    Re-running onboarding must not spam revisions, so if the newest baseline
+  //    already asserts exactly this content, reuse it instead of superseding it
+  //    with an identical copy.
+  //
+  //    If there is a proposed baseline that has human-authored claims (provenance
+  //    humanProvided), we must preserve those by merging fresh discovery with the
+  //    existing baseline's facts, rather than starting from scratch.
+  final candidateHash = baselineContentHashV3(facts);
+  final context = await engine.loadProductContext(productId);
+  final existingByHash = context.allBaselines
+      .where((b) => b.contentHash == candidateHash)
+      .toList();
 
-  // Count maturity
-  final provCounts = <String, int>{};
-  final matCounts = <String, int>{};
+  // Check if there's an existing proposed baseline
+  final existingProposed = context.allBaselines
+      .where((b) => b.status == ProductBaselineStatus.proposed)
+      .toList();
+  existingProposed.sort((a, b) => b.revision.compareTo(a.revision));
+
+  // Prefer the proposed baseline that has human-authored claims (most recently amended)
+  final proposedWithHumanClaims = existingProposed
+      .where((b) => b.facts.any((f) => f.provenance == Provenance.humanProvided))
+      .toList();
+  proposedWithHumanClaims.sort((a, b) =>
+      (b.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+          .compareTo(a.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0)));
+
+  ProductBaseline proposed;
+  if (existingProposed.isNotEmpty) {
+    final referenceProposed = proposedWithHumanClaims.isNotEmpty
+        ? proposedWithHumanClaims.first
+        : existingProposed.first;
+    final currentProposed = referenceProposed;
+
+    // Separate human-authored claims from scraped ones
+    final humanFacts = currentProposed.facts
+        .where((f) => f.provenance == Provenance.humanProvided)
+        .toList();
+    final scrapedFacts = currentProposed.facts
+        .where((f) => f.provenance != Provenance.humanProvided)
+        .toList();
+
+    // Check if fresh discovery matches the scraped portion
+    final scrapedHash = baselineContentHashV3(scrapedFacts);
+    final freshScrapedHash = baselineContentHashV3(facts);
+
+    if (humanFacts.isNotEmpty && scrapedHash == freshScrapedHash) {
+      // Discovery matches; preserve human claims by merging
+      proposed = currentProposed.copyWith(
+        facts: [...scrapedFacts, ...humanFacts],
+        contentHash: baselineContentHashV3([...scrapedFacts, ...humanFacts]),
+        updatedAt: DateTime.now().toUtc(),
+        version: currentProposed.version + 1,
+        verifiedAt: null,
+        verifiedBy: null,
+        verificationKind: null,
+      );
+      await store.saveBaseline(proposed, expectedVersion: currentProposed.version);
+      print(
+        '\nPreserved ${humanFacts.length} human claim(s) in baseline '
+        '${proposed.baselineId} (rev ${proposed.revision}).',
+      );
+    } else if (candidateHash == currentProposed.contentHash) {
+      // Exact match (no human claims or content unchanged)
+      proposed = currentProposed;
+      print(
+        '\nReusing baseline ${proposed.baselineId} '
+        '(rev ${proposed.revision}) — content unchanged.',
+      );
+    } else {
+      // Fresh proposal with current discovery
+      proposed = await engine.proposeBaseline(
+        productId: productId,
+        facts: facts,
+      );
+    }
+  } else if (existingByHash.isNotEmpty) {
+    // Legacy: exact hash match from older logic
+    existingByHash.sort((a, b) => b.revision.compareTo(a.revision));
+    proposed = existingByHash.first;
+    print(
+      '\nReusing baseline ${proposed.baselineId} '
+      '(rev ${proposed.revision}) — content unchanged.',
+    );
+  } else {
+    proposed = await engine.proposeBaseline(
+      productId: productId,
+      facts: facts,
+    );
+  }
+
+  final bySection = <String, int>{};
+  final byMaturity = <String, int>{};
   for (final f in proposed.facts) {
-    provCounts[f.provenance.wire] = (provCounts[f.provenance.wire] ?? 0) + 1;
-    matCounts[f.maturity.wire] = (matCounts[f.maturity.wire] ?? 0) + 1;
+    bySection[f.section.wire] = (bySection[f.section.wire] ?? 0) + 1;
+    byMaturity[f.maturity.wire] = (byMaturity[f.maturity.wire] ?? 0) + 1;
   }
-  print('\nProposed baseline maturity counts:');
-  matCounts.forEach((k, v) => print('  ${k}: $v'));
 
-  // Resolve any existing pending decisions as rework
-  print('\nResolving any existing pending decisions...');
-  final existingDecisions = await decisions.readHumanDecisionsForScope('product-baseline:$productId');
-  for (final d in existingDecisions) {
-    if (d.status == HumanDecisionStatus.pending) {
-      print('Resolving pending decision ${d.decisionId} as REWORK...');
-      final testSig = DecisionSignature(
-        algorithm: 'ed25519',
-        publicKey: 'pk-human-review',
-        signature: 'sig-human-review-rework',
-        signedAt: DateTime.utc(2026, 9, 17),
+  print('\nPROPOSED BASELINE');
+  print('  baselineId        : ${proposed.baselineId}');
+  print('  revision          : ${proposed.revision}');
+  print('  fact count        : ${proposed.facts.length}');
+  print('  contentHash       : ${proposed.contentHash}');
+  print('  contentHashVersion: ${proposed.contentHashVersion}');
+  print('  supersedes        : ${proposed.supersedesBaselineId ?? '(none)'}');
+  print('\n  facts by section:');
+  bySection.forEach((k, v) => print('    $k: $v'));
+  print('\n  facts by maturity:');
+  byMaturity.forEach((k, v) => print('    $k: $v'));
+
+  // Recompute with the contract the engine actually wrote, so the check cannot
+  // silently drift onto a different version than the one persisted.
+  final recomputed = proposed.contentHashVersion == 3
+      ? baselineContentHashV3(proposed.facts)
+      : baselineContentHashV2(proposed.facts);
+  print('\nHASH VERIFICATION');
+  print('  contract  : V${proposed.contentHashVersion}');
+  print('  persisted : ${proposed.contentHash}');
+  print('  recomputed: $recomputed');
+  print('  MATCH     : ${recomputed == proposed.contentHash}');
+  if (recomputed != proposed.contentHash) {
+    stderr.writeln('Content hash does not match the persisted facts.');
+    await pod.shutdown(exitProcess: false);
+    exit(4);
+  }
+
+  // 5. Independent verification. The engine refuses to open an approval gate on
+  //    an unverified baseline, and a bare `verifiedBy` string would be a rubber
+  //    stamp that attests to nothing.
+  //
+  //    So this re-derives the facts from the same pinned snapshot and refuses to
+  //    record verification unless the fresh derivation reproduces the persisted
+  //    content hash byte for byte. It proves the stored facts still correspond
+  //    to the repository; it does not claim the claims are correct, which is
+  //    what the human gate below is for.
+  var verified = proposed;
+  if (proposed.verifiedAt == null) {
+    print('\nVerifying baseline against a fresh read of the snapshot...');
+    final recheck = await ReadOnlyRepositoryReader(
+      snapshotRoot: snapshotRoot,
+    ).inspect();
+    final refacts = <BaselineFact>[
+      for (var i = 0; i < recheck.length; i++)
+        BaselineFact(
+          factId: 'discovery-$i',
+          section: recheck[i].section,
+          claim: recheck[i].claim,
+          provenance: recheck[i].provenance,
+          maturity: classifier.classify(
+            claim: recheck[i].claim,
+            evidencePaths: recheck[i].evidencePaths,
+            provenance: recheck[i].provenance,
+            assumptionNote: recheck[i].assumptionNote,
+            redacted: recheck[i].redacted,
+          ),
+          evidenceRefs: recheck[i].evidencePaths,
+          assumptionNote: recheck[i].assumptionNote,
+          redacted: recheck[i].redacted,
+        ),
+    ];
+    final recheckHash = baselineContentHashV3(refacts);
+    final reproduced = recheckHash == proposed.contentHash;
+    print('  re-derived facts : ${refacts.length}');
+    print('  re-derived hash  : $recheckHash');
+    print('  REPRODUCED      : $reproduced');
+    if (!reproduced) {
+      stderr.writeln(
+        'Refusing to verify: a fresh read of $repoPath does not reproduce the '
+        'persisted content hash. The stored baseline does not match the '
+        'repository, so it must not go to human review.',
       );
-      await engine.resolveBaselineApproval(
-        decisionId: d.decisionId,
-        choice: HumanDecisionChoice.rework,
-        decider: 'human-review',
-        rationale: 'Hash contract upgraded to V2 (binds maturity). Discovery maturity classification was systematically incorrect (defaulted to IMPLEMENTED). New baseline with Hash V2 and corrected maturity required.',
-        signature: testSig,
+      await pod.shutdown(exitProcess: false);
+      exit(5);
+    }
+    verified = await engine.verifyBaseline(
+      productId: productId,
+      baselineId: proposed.baselineId,
+      verifiedBy: 'worker:baseline-verifier/onboard_shipit_dev',
+    );
+    print('  verifiedAt      : ${verified.verifiedAt?.toIso8601String()}');
+    print('  verifiedBy      : ${verified.verifiedBy}');
+  } else {
+    print(
+      '\nAlready verified by ${proposed.verifiedBy} at '
+      '${proposed.verifiedAt?.toIso8601String()}; re-checking scraped portion still holds.',
+    );
+    // Only re-check the scraped (non-human) portion against the repo.
+    // Human claims are operator-entered and cannot be verified from the repo.
+    final scrapedFacts = proposed.facts
+        .where((f) => f.provenance != Provenance.humanProvided)
+        .toList();
+    final recheckHash = baselineContentHashV3(scrapedFacts);
+    final currentScrapedHash = baselineContentHashV3(facts);
+    if (recheckHash != currentScrapedHash) {
+      stderr.writeln(
+        'Refusing to open an approval gate: the repository no longer '
+        'reproduces the verified scraped content hash.',
       );
-      print('  Resolved: ${d.decisionId} as REWORK');
+      await pod.shutdown(exitProcess: false);
+      exit(5);
     }
+    verified = proposed;
   }
 
-  // Create corrected baseline using MaturityClassifier for corrections too
-  print('\nCreating corrected baseline with Hash Contract V2...');
-  
-  // Build complete corrected baseline using MaturityClassifier for all facts
-  final correctedFacts = <BaselineFact>[
-    // Carry forward all v1 facts with re-classified maturity
-    ...proposed.facts.map((f) => BaselineFact(
-      factId: f.factId,
-      section: f.section,
-      claim: f.claim,
-      provenance: f.provenance,
-      maturity: maturityClassifier.classify(
-        claim: f.claim,
-        evidencePaths: f.evidenceRefs,
-        provenance: f.provenance,
-        assumptionNote: f.assumptionNote,
-        redacted: f.redacted,
-      ),
-      evidenceRefs: f.evidenceRefs,
-      assumptionNote: f.assumptionNote,
-      redacted: f.redacted,
-    )).toList(),
-    // Add correction facts with proper maturity
-    BaselineFact(
-      factId: 'correction-1',
-      section: BaselineSectionKey.governance,
-      claim: 'ControlPlane writes: ProductRegistryEndpoints include governed mutations (requestBaselineApproval, resolveBaselineApproval, baselineApproval, answerClarification). Not limited to resolveHumanDecision.',
-      provenance: Provenance.humanProvided,
-      maturity: BaselineMaturity.implemented,
-      evidenceRefs: const ['lib/src/endpoints/product_registry_endpoints.dart'],
-      redacted: false,
-    ),
-    BaselineFact(
-      factId: 'correction-2',
-      section: BaselineSectionKey.governance,
-      claim: 'Real-time session log streaming to Flutter UI: NOT_IMPLEMENTED. Original operator-UI scope excluded realtime behavior.',
-      provenance: Provenance.humanProvided,
-      maturity: BaselineMaturity.notImplemented,
-      evidenceRefs: const ['lib/features/', 'lib/data/control_plane_repository.dart'],
-      redacted: false,
-    ),
-    BaselineFact(
-      factId: 'correction-3',
-      section: BaselineSectionKey.governance,
-      claim: 'HumanDecision authority implemented for: workflow human decisions, ProductBaseline acceptance. Deployment/release/rollback/security/infra gates exist as contracts/policies, not implemented authority paths.',
-      provenance: Provenance.humanProvided,
-      maturity: BaselineMaturity.policy,
-      evidenceRefs: const ['packages/deployment_protocol/', 'packages/qa_orchestration/', 'packages/workflow_engine/'],
-      redacted: false,
-    ),
-    BaselineFact(
-      factId: 'correction-4',
-      section: BaselineSectionKey.deployment,
-      claim: 'Artifact storage: ArtifactReference/PlatformVerification use content hashes. AgentResult/worker artifacts reference files. Production GCS/Local ArtifactStore NOT_IMPLEMENTED. Do not generalize.',
-      provenance: Provenance.humanProvided,
-      maturity: BaselineMaturity.notImplemented,
-      evidenceRefs: const ['packages/deployment_protocol/', 'packages/agent_runtime/'],
-      redacted: false,
-    ),
-    BaselineFact(
-      factId: 'correction-5',
-      section: BaselineSectionKey.ciCd,
-      claim: 'Byte-identical Serverpod regeneration executed as QA evidence (local). GitHub Actions CI pipeline NOT_IMPLEMENTED in repo. Distinguish QA evidence from CI enforcement.',
-      provenance: Provenance.humanProvided,
-      maturity: BaselineMaturity.notImplemented,
-      evidenceRefs: const ['melos.yaml', '.github/ (absent)'],
-      redacted: false,
-    ),
-    BaselineFact(
-      factId: 'correction-6',
-      section: BaselineSectionKey.qa,
-      claim: 'QA governance: QAContract, independent verification, artifact validation exist as contracts/policies (packages/qa_orchestration). Full AEF implementation NOT_VERIFIED. Distinguish implemented from planned.',
-      provenance: Provenance.humanProvided,
-      maturity: BaselineMaturity.policy,
-      evidenceRefs: const ['packages/qa_orchestration/'],
-      redacted: false,
-    ),
-    BaselineFact(
-      factId: 'correction-7',
-      section: BaselineSectionKey.architecture,
-      claim: 'ProductState (draft/active/archived/deprecated) is distinct from WorkItemState workflow gates. Do not conflate Product lifecycle with WorkItem workflow lifecycle.',
-      provenance: Provenance.humanProvided,
-      maturity: BaselineMaturity.implemented,
-      evidenceRefs: const ['packages/platform_contracts/lib/src/enums/product_state.dart', 'packages/workflow_engine/lib/src/states/workflow_state.dart'],
-      redacted: false,
-    ),
-    BaselineFact(
-      factId: 'correction-8',
-      section: BaselineSectionKey.deployment,
-      claim: 'DeploymentProtocol models artifact promotion/rollback as domain types. Production deployment targets, OpenTofu IaC, GCS ArtifactStore NOT_IMPLEMENTED. ShipIt not production-deployable.',
-      provenance: Provenance.humanProvided,
-      maturity: BaselineMaturity.notImplemented,
-      evidenceRefs: const ['packages/deployment_protocol/', 'docs/adr/0009-opentofu-iac.md'],
-      redacted: false,
-    ),
-    BaselineFact(
-      factId: 'correction-9',
-      section: BaselineSectionKey.governance,
-      claim: 'Independent baseline review of v1 was insufficient — human review identified material overstatements. Review must explicitly check: OBSERVED vs DERIVED vs HUMAN_PROVIDED AND IMPLEMENTED vs PLANNED vs POLICY. Provenance alone is insufficient.',
-      provenance: Provenance.humanProvided,
-      maturity: BaselineMaturity.policy,
-      evidenceRefs: const ['this correction rationale'],
-      redacted: false,
-    ),
-    BaselineFact(
-      factId: 'correction-10',
-      section: BaselineSectionKey.governance,
-      claim: 'BaselineFact model now includes typed maturity field (implemented, policy, planned, deferred, notImplemented, unknown) independent of provenance. ARCHITECTURE_DECISION_REQUIRED resolved.',
-      provenance: Provenance.humanProvided,
-      maturity: BaselineMaturity.implemented,
-      evidenceRefs: const ['packages/platform_contracts/lib/src/enums/baseline_maturity.dart', 'packages/platform_contracts/lib/src/types/baseline_fact.dart'],
-      redacted: false,
-    ),
-    BaselineFact(
-      factId: 'correction-11',
-      section: BaselineSectionKey.governance,
-      claim: 'Baseline revisions must be complete standalone snapshots. V3 carries forward all valid v1 facts + corrections. v2 delta rejected. ContentHash binds complete fact set.',
-      provenance: Provenance.humanProvided,
-      maturity: BaselineMaturity.policy,
-      evidenceRefs: const ['AD-1 baseline revision semantics'],
-      redacted: false,
-    ),
-  ];
-
-  final corrected = await engine.proposeBaseline(
+  // 6. Ask a human. This script stops here on purpose.
+  final decision = await engine.requestBaselineApproval(
     productId: productId,
-    facts: correctedFacts,
+    baselineId: verified.baselineId,
   );
 
-  print('\nCORRECTED BASELINE CREATED (Hash V2):');
-  print('  baselineId: ${corrected.baselineId}');
-  print('  revision: ${corrected.revision}');
-  print('  contentHash: ${corrected.contentHash}');
-  print('  contentHashVersion: ${corrected.contentHashVersion}');
-  print('  status: ${corrected.status.wire}');
-  print('  supersedesBaselineId: ${corrected.supersedesBaselineId}');
-  print('  fact count: ${corrected.facts.length}');
+  print('\nAWAITING HUMAN APPROVAL');
+  print('  decisionId: ${decision.decisionId}');
+  print('  question  : ${decision.question}');
+  print('  status    : ${decision.status.wire}');
+  print('\nOpen the dashboard and review the ${proposed.facts.length} facts:');
+  print('  http://localhost:8081/#/products/$productId');
 
-  // Count maturity
-  final matCountsCorrected = <String, int>{};
-  for (final f in corrected.facts) {
-    matCountsCorrected[f.maturity.wire] = (matCountsCorrected[f.maturity.wire] ?? 0) + 1;
-  }
-  print('\nCorrected baseline maturity counts:');
-  matCountsCorrected.forEach((k, v) => print('  ${k}: $v'));
-
-  // Create governing HumanDecision for corrected baseline
-  print('\nCreating governing HumanDecision for corrected baseline (Hash V2)...');
-  final correctedDecision = await engine.requestBaselineApproval(
-    productId: productId,
-    baselineId: corrected.baselineId,
-  );
-
-  print('\nCORRECTED DECISION CREATED:');
-  print('  decisionId: ${correctedDecision.decisionId}');
-  print('  workItemId: ${correctedDecision.workItemId}');
-  print('  decisionType: ${correctedDecision.decisionType.wire}');
-  print('  status: ${correctedDecision.status.wire}');
-  print('  question: ${correctedDecision.question}');
-  print('  metadata: ${correctedDecision.metadata}');
-
-  // Verify decision stored
-  final stored = await decisions.readHumanDecision(correctedDecision.decisionId);
-  print('\nVerified stored corrected decision: ${stored?.decisionId}');
-
-  // Verify Hash V2 binding in metadata
-  final metadata = correctedDecision.metadata ?? {};
-  print('\nDecision metadata binding:');
-  print('  routing: ${metadata['routing']}');
-  print('  productId: ${metadata['productId']}');
-  print('  baselineId: ${metadata['baselineId']}');
-  print('  baselineRevision: ${metadata['baselineRevision']}');
-  print('  contentHash: ${metadata['contentHash']}');
-
-  // Verify Hash V2 recomputation
-  final recomputedHash = baselineContentHashV2(corrected.facts);
-  print('\n=== HASH V2 RECOMPUTATION ===');
-  print('  persisted contentHash: ${corrected.contentHash}');
-  print('  recomputed Hash V2:   $recomputedHash');
-  print('  contentHashVersion:   ${corrected.contentHashVersion}');
-  print('  MATCH: ${corrected.contentHash == recomputedHash && corrected.contentHashVersion == 2}');
-
-  // Fresh process readback proof
-  print('\n=== FRESH PROCESS READBACK ===');
-  final freshDb = await _newTestDb();
-  final freshWorkflowStore = PostgresWorkflowStore(freshDb);
-  final freshDecisions = PostgresHumanDecisionStore(freshWorkflowStore);
-  final freshEngine = ProductRegistryEngine(
-    store: PostgresProductRegistryStore(freshDb),
-    humanDecisionStore: freshDecisions,
-  );
-  
-  final ctx = await freshEngine.loadProductContext(productId);
-  print('ProductContext loaded from fresh process:');
-  print('  active baseline: ${ctx.activeBaseline?.baselineId} (rev ${ctx.activeBaseline?.revision})');
-  print('  active baseline status: ${ctx.activeBaseline?.status.wire}');
-  print('  active baseline contentHashVersion: ${ctx.activeBaseline?.contentHashVersion}');
-  print('  all baselines count: ${ctx.allBaselines.length}');
-  
-  if (ctx.activeBaseline != null) {
-    print('  reloaded baselineId: ${ctx.activeBaseline!.baselineId}');
-    print('  reloaded revision: ${ctx.activeBaseline!.revision}');
-    print('  reloaded contentHash: ${ctx.activeBaseline!.contentHash}');
-    print('  reloaded contentHashVersion: ${ctx.activeBaseline!.contentHashVersion}');
-    print('  reloaded fact count: ${ctx.activeBaseline!.facts.length}');
-    
-    // Verify provenance/maturity preserved
-    final reloadProv = <String, int>{};
-    final reloadMat = <String, int>{};
-    for (final f in ctx.activeBaseline!.facts) {
-      reloadProv[f.provenance.wire] = (reloadProv[f.provenance.wire] ?? 0) + 1;
-      reloadMat[f.maturity.wire] = (reloadMat[f.maturity.wire] ?? 0) + 1;
-    }
-    print('\nReloaded provenance counts:');
-    reloadProv.forEach((k, v) => print('  $k: $v'));
-    print('\nReloaded maturity counts:');
-    reloadMat.forEach((k, v) => print('  $k: $v'));
-  }
-
-  // Hash V2 recomputation proof
-  if (ctx.activeBaseline != null) {
-    final recomputedHash = baselineContentHashV2(ctx.activeBaseline!.facts);
-    print('\n=== HASH V2 RECOMPUTATION (FRESH PROCESS) ===');
-    print('  persisted contentHash: ${ctx.activeBaseline!.contentHash}');
-    print('  recomputed Hash V2:   $recomputedHash');
-    print('  MATCH: ${recomputedHash == ctx.activeBaseline!.contentHash}');
-    print('  contentHashVersion: ${ctx.activeBaseline!.contentHashVersion}');
-  }
-
-  // Final gate summary
-  print('\n=== CORRECTED BASELINE GATE SUMMARY ===');
-  print('productId: $productId');
-  print('baselineId: ${corrected.baselineId}');
-  print('revision: ${corrected.revision}');
-  print('contentHash: ${corrected.contentHash}');
-  print('contentHashVersion: ${corrected.contentHashVersion}');
-  print('decisionId: ${correctedDecision.decisionId}');
-  print('status: ${corrected.status.wire}');
-  print('CURRENT GATE: PRODUCT_BASELINE_APPROVAL_REQUIRED');
-  print('HASH CONTRACT: V2 (binds maturity + all semantic fields)');
+  // `shutdown(exitProcess: false)` leaves Serverpod's timers running, so the
+  // VM never reaches main() again on its own.
+  await pod.shutdown(exitProcess: true);
 }

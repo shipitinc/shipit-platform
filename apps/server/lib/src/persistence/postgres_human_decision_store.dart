@@ -1,6 +1,7 @@
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:product_registry/product_registry.dart';
 import 'package:workflow_store/workflow_store.dart';
+import 'package:scheduler/scheduler.dart' as scheduler;
 
 /// Adapts the authoritative [WorkflowStore] to the narrow
 /// [HumanDecisionStore] port required by [ProductRegistryEngine].
@@ -8,7 +9,7 @@ import 'package:workflow_store/workflow_store.dart';
 /// This reuses the single durable `human_decision` table (owned by
 /// `workflow_store` / `apps/server`) rather than inventing a second
 /// authorization store.
-class PostgresHumanDecisionStore implements HumanDecisionStore {
+class PostgresHumanDecisionStore implements HumanDecisionStore, scheduler.HumanDecisionStore {
   PostgresHumanDecisionStore(this._workflowStore);
 
   final WorkflowStore _workflowStore;

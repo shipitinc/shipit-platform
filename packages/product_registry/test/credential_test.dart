@@ -158,44 +158,48 @@ void main() {
   });
 
   group('host key change fails closed', () {
-    test('a different fingerprint is refused and recorded as changed',
-        () async {
-      await fullyVerified();
-      expect(
-        () => engine.confirmHostKey(
-          productId: 'shipit',
-          credentialId: 'cred-1',
-          hostKeyFingerprint: 'SHA256:somethingElseEntirely',
-          confirmedBy: 'operator',
-        ),
-        throwsA(isA<HostKeyNotConfirmedException>()),
-      );
-      final c = await engine.readActiveCredential('shipit', 'repo-1');
-      expect(c!.hostKeyStatus, HostKeyStatus.changed);
-      expect(c.canReachRepository, isFalse);
-    });
-
-    test('a changed host blocks use even though the key was verified',
-        () async {
-      await fullyVerified();
-      try {
-        await engine.confirmHostKey(
-          productId: 'shipit',
-          credentialId: 'cred-1',
-          hostKeyFingerprint: 'SHA256:different',
-          confirmedBy: 'operator',
+    test(
+      'a different fingerprint is refused and recorded as changed',
+      () async {
+        await fullyVerified();
+        expect(
+          () => engine.confirmHostKey(
+            productId: 'shipit',
+            credentialId: 'cred-1',
+            hostKeyFingerprint: 'SHA256:somethingElseEntirely',
+            confirmedBy: 'operator',
+          ),
+          throwsA(isA<HostKeyNotConfirmedException>()),
         );
-      } on HostKeyNotConfirmedException {
-        // expected
-      }
-      expect(
-        () => engine.requireUsableCredential(
-          productId: 'shipit',
-          repositoryId: 'repo-1',
-        ),
-        throwsA(isA<HostKeyNotConfirmedException>()),
-      );
-    });
+        final c = await engine.readActiveCredential('shipit', 'repo-1');
+        expect(c!.hostKeyStatus, HostKeyStatus.changed);
+        expect(c.canReachRepository, isFalse);
+      },
+    );
+
+    test(
+      'a changed host blocks use even though the key was verified',
+      () async {
+        await fullyVerified();
+        try {
+          await engine.confirmHostKey(
+            productId: 'shipit',
+            credentialId: 'cred-1',
+            hostKeyFingerprint: 'SHA256:different',
+            confirmedBy: 'operator',
+          );
+        } on HostKeyNotConfirmedException {
+          // expected
+        }
+        expect(
+          () => engine.requireUsableCredential(
+            productId: 'shipit',
+            repositoryId: 'repo-1',
+          ),
+          throwsA(isA<HostKeyNotConfirmedException>()),
+        );
+      },
+    );
   });
 
   group('one active credential per repository', () {
@@ -286,23 +290,25 @@ void main() {
       );
     });
 
-    test('scope is the repository, so a second repo needs its own key',
-        () async {
-      await fullyVerified();
-      await engine.addRepositoryReference(
-        repositoryId: 'repo-2',
-        productId: 'shipit',
-        uri: 'git@github.com:acme/shipit-docs.git',
-        provider: RepositoryProvider.github,
-      );
-      expect(await engine.readActiveCredential('shipit', 'repo-2'), isNull);
-      expect(
-        () => engine.requireUsableCredential(
-          productId: 'shipit',
+    test(
+      'scope is the repository, so a second repo needs its own key',
+      () async {
+        await fullyVerified();
+        await engine.addRepositoryReference(
           repositoryId: 'repo-2',
-        ),
-        throwsA(isA<CredentialNotFoundException>()),
-      );
-    });
+          productId: 'shipit',
+          uri: 'git@github.com:acme/shipit-docs.git',
+          provider: RepositoryProvider.github,
+        );
+        expect(await engine.readActiveCredential('shipit', 'repo-2'), isNull);
+        expect(
+          () => engine.requireUsableCredential(
+            productId: 'shipit',
+            repositoryId: 'repo-2',
+          ),
+          throwsA(isA<CredentialNotFoundException>()),
+        );
+      },
+    );
   });
 }

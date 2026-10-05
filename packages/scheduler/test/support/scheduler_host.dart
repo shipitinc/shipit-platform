@@ -4,6 +4,7 @@ import 'package:agent_runtime/agent_runtime.dart';
 import 'package:execution_coordinator/execution_coordinator.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:scheduler/scheduler.dart';
+import 'package:workflow_engine/workflow_engine.dart';
 import 'package:workflow_store/workflow_store.dart';
 import 'package:worker_runtime/worker_runtime.dart';
 
@@ -61,6 +62,8 @@ class SchedulerHost {
     );
     dispatcher = WorkerDispatcher(registry: WorkerRegistry()..register(worker));
     this.jobStore = jobStore;
+    final modelPolicyStore = InMemoryModelPolicyStore();
+    final modelSelection = ModelSelectionService(modelPolicyStore);
     scheduler = Scheduler(
       schedulerId: 'sched-1',
       workflowStore: workflowStore,
@@ -77,6 +80,7 @@ class SchedulerHost {
             runtimeTypeId: 'fake-runtime',
           ),
       claimLease: claimLease,
+      modelSelection: modelSelection,
     );
   }
 

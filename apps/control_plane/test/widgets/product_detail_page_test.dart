@@ -36,6 +36,8 @@ ProductDetailResponse _detail({
   int? activeRevision = 7,
   String? pendingBaselineId,
   bool pendingVerified = false,
+  List<BaselineFactClaim> pendingFacts = const [],
+  String? pendingDecisionId,
   List<CredentialResponse>? credentials,
   List<PolicyResponse> policies = const [],
   List<ClarificationSummary> clarifications = const [],
@@ -67,8 +69,28 @@ ProductDetailResponse _detail({
   pendingBaselineId: pendingBaselineId,
   pendingBaselineRevision: pendingBaselineId == null ? null : 8,
   pendingBaselineVerified: pendingVerified,
+  pendingBaselineFacts: pendingFacts,
   openClarifications: clarifications,
   policies: policies,
+  pendingBaselineDecisionId: pendingDecisionId,
+);
+
+BaselineFactClaim _fact({
+  String factId = 'f-1',
+  String section = 'repository',
+  String claim = 'single pubspec at root',
+  String provenance = 'observed',
+  String maturity = 'implemented',
+  List<String> evidence = const ['pubspec.yaml'],
+  String? assumptionNote,
+}) => BaselineFactClaim(
+  factId: factId,
+  section: section,
+  claim: claim,
+  provenance: provenance,
+  maturity: maturity,
+  evidenceRefs: evidence,
+  assumptionNote: assumptionNote,
 );
 
 PolicyResponse _policy({bool revoked = false}) => PolicyResponse(
@@ -316,6 +338,156 @@ void main() {
       // No count may be presented as a file count — the registry never
       // measures files. The disclaimer text mentions the word deliberately.
       expect(find.textContaining(RegExp(r'\d+\s+files')), findsNothing);
+    });
+  });
+
+  group('the approval gate shows what is being approved', () {
+    Future<void> _pumpGate(
+      WidgetTester tester, {
+      required List<BaselineFactClaim> facts,
+    }) => _pump(
+      tester,
+      _detail(
+        state: 'baseline_review',
+        allowsDispatch: false,
+        activeBaselineId: null,
+        activeRevision: null,
+        pendingBaselineId: 'bl-shipit-8',
+        pendingVerified: true,
+        pendingFacts: facts,
+        pendingDecisionId: 'blappr-bl-shipit-8',
+      ),
+    );
+
+    testWidgets('the actual claims are on screen, not just a count', (
+      tester,
+    ) async {
+      await _pumpGate(
+        tester,
+        facts: [
+          _fact(claim: 'Dart workspace at the repo root'),
+          _fact(
+            factId: 'f-2',
+            section: 'deployment',
+            claim: 'deploys via docker compose',
+            maturity: 'policy',
+            evidence: ['docker/compose.yaml'],
+          ),
+        ],
+      );
+      expect(find.text('Dart workspace at the repo root'), findsOneWidget);
+      expect(find.text('deploys via docker compose'), findsOneWidget);
+      // Provenance and maturity are what make a claim judgeable, so both ride
+      // along with it.
+      expect(find.textContaining('observed · implemented'), findsOneWidget);
+      expect(find.textContaining('policy'), findsWidgets);
+    });
+
+    testWidgets('an empty candidate is refused in the gate, not approvable', (
+      tester,
+    ) async {
+      await _pumpGate(tester, facts: const []);
+      expect(find.textContaining('asserts nothing'), findsOneWidget);
+      expect(
+        find.textContaining('Request a correction instead'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the claim count and maturity mix are stated up front', (
+      tester,
+    ) async {
+      await _pumpGate(
+        tester,
+        facts: [
+          _fact(),
+          _fact(factId: 'f-2', maturity: 'unknown', provenance: 'assumed'),
+          _fact(factId: 'f-3', section: 'qa', maturity: 'not_implemented'),
+        ],
+      );
+      expect(find.textContaining('3 claims across 2 sections'), findsOneWidget);
+      expect(find.textContaining('unknown 1'), findsOneWidget);
+      expect(find.textContaining('not implemented 1'), findsOneWidget);
+    });
+
+    testWidgets('facts are grouped under their section headings', (
+      tester,
+    ) async {
+      await _pumpGate(
+        tester,
+        facts: [
+          _fact(claim: 'repo fact'),
+          _fact(factId: 'f-2', section: 'qa', claim: 'qa fact'),
+        ],
+      );
+      // Every section is counted up front, so nothing is hidden unannounced.
+      expect(find.textContaining('Repository 1'), findsOneWidget);
+      expect(find.textContaining('QA 1'), findsOneWidget);
+
+      await tester.tap(find.text('Read all 2 claims'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('REPOSITORY · 1'), findsOneWidget);
+      expect(find.textContaining('QA · 1'), findsOneWidget);
+    });
+
+    testWidgets('a long baseline previews instead of dumping 237 claims', (
+      tester,
+    ) async {
+      await _pumpGate(
+        tester,
+        facts: [
+          for (var i = 0; i < 40; i++)
+            _fact(
+              factId: 'f-$i',
+              section: i.isEven ? 'repository' : 'governance',
+              claim: 'claim number $i',
+            ),
+        ],
+      );
+      expect(find.text('Read all 40 claims'), findsOneWidget);
+      expect(find.text('claim number 0'), findsOneWidget);
+      expect(find.text('claim number 11'), findsOneWidget);
+      expect(find.text('Showing first 12 of 40 claims.'), findsOneWidget);
+      // The section index still names every section while collapsed.
+      expect(find.textContaining('Repository 20'), findsOneWidget);
+      expect(find.textContaining('Governance 20'), findsOneWidget);
+
+      await tester.tap(find.text('Read all 40 claims'));
+      await tester.pumpAndSettle();
+      expect(find.text('Collapse claims'), findsOneWidget);
+      expect(find.text('claim number 39'), findsOneWidget);
+      expect(find.text('Showing first 12 of 40 claims.'), findsNothing);
+    });
+
+    testWidgets('the collapsed preview spans sections, not just the first', (
+      tester,
+    ) async {
+      await _pumpGate(
+        tester,
+        facts: [
+          _fact(claim: 'repo fact'),
+          _fact(factId: 'f-2', section: 'qa', claim: 'qa fact'),
+        ],
+      );
+      expect(find.text('repo fact'), findsOneWidget);
+      expect(find.text('qa fact'), findsOneWidget);
+    });
+
+    testWidgets('an assumed claim is marked as not established', (
+      tester,
+    ) async {
+      await _pumpGate(
+        tester,
+        facts: [
+          _fact(
+            provenance: 'assumed',
+            maturity: 'unknown',
+            claim: 'deploy target is unknown',
+            assumptionNote: 'no deployment manifest found',
+          ),
+        ],
+      );
+      expect(find.textContaining('Assumes: no deployment'), findsOneWidget);
     });
   });
 

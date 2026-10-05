@@ -8,9 +8,15 @@ import 'util/db_row_util.dart';
 /// PostgreSQL implementation of [JobStore].
 ///
 /// Job, claim and event rows are stored in relational tables. The active-state
-/// deduplication constraint (`job_active_dedupe_unique`) is enforced by a
-/// partial unique index on `job.dedupeKey`; a concurrent double-enqueue
-/// surfaces as [DuplicateActiveJobException].
+/// deduplication constraint (`job_active_dedupe_unique`) is a unique index on
+/// the derived `job.activeDedupeKey` column, which is non-null exactly while
+/// the job is not terminal; a concurrent double-enqueue surfaces as
+/// [DuplicateActiveJobException].
+///
+/// The derivation is deliberately inlined into [saveJob] rather than left to
+/// callers: it is the only production write path to `job`, so keeping it here
+/// makes it impossible to write a row whose stored dedupe key disagrees with
+/// its state.
 class PostgresJobStore implements JobStore {
   PostgresJobStore(this._db);
 
@@ -24,34 +30,46 @@ class PostgresJobStore implements JobStore {
   @override
   Future<void> saveJob(Job job, {int? expectedVersion}) async {
     if (expectedVersion != null) {
-      final affected = await _db.execute(
-        '''UPDATE "job" SET
-             "workItemId" = @workItemId,
-             "jobType" = @jobType,
-             "requiredRole" = @requiredRole,
-             "requiredCapabilitiesJson" = @requiredCapabilitiesJson,
-             "priority" = @priority,
-             "state" = @state,
-             "dedupeKey" = @dedupeKey,
-             "createdAt" = @createdAt,
-             "availableAt" = @availableAt,
-             "instruction" = @instruction,
-             "attempt" = @attempt,
-             "maxAttempts" = @maxAttempts,
-             "startedAt" = @startedAt,
-             "completedAt" = @completedAt,
-             "executionReferenceJson" = @executionReferenceJson,
-             "workerId" = @workerId,
-             "failureJson" = @failureJson,
-             "cancelReason" = @cancelReason,
-             "version" = @version
-           WHERE "jobId" = @jobId AND "version" = @expected''',
-        parameters: QueryParameters.named({
-          ..._jobToParams(job),
-          'version': job.version,
-          'expected': expectedVersion,
-        }),
-      );
+      int affected;
+      try {
+        affected = await _db.execute(
+          '''UPDATE "job" SET
+               "workItemId" = @workItemId,
+               "jobType" = @jobType,
+               "requiredRole" = @requiredRole,
+               "requiredCapabilitiesJson" = @requiredCapabilitiesJson,
+               "priority" = @priority,
+               "state" = @state,
+               "dedupeKey" = @dedupeKey,
+               "activeDedupeKey" = @activeDedupeKey,
+               "createdAt" = @createdAt,
+               "availableAt" = @availableAt,
+               "instruction" = @instruction,
+               "attempt" = @attempt,
+               "maxAttempts" = @maxAttempts,
+               "startedAt" = @startedAt,
+               "completedAt" = @completedAt,
+               "executionReferenceJson" = @executionReferenceJson,
+               "workerId" = @workerId,
+               "failureJson" = @failureJson,
+               "cancelReason" = @cancelReason,
+               "version" = @version
+             WHERE "jobId" = @jobId AND "version" = @expected''',
+          parameters: QueryParameters.named({
+            ..._jobToParams(job),
+            'version': job.version,
+            'expected': expectedVersion,
+          }),
+        );
+      } on Exception catch (e) {
+        if (_isDedupeViolation(e)) {
+          throw DuplicateActiveJobException(
+            jobId: job.jobId,
+            dedupeKey: job.dedupeKey,
+          );
+        }
+        rethrow;
+      }
       if (affected == 0) {
         final current = await readJob(job.jobId);
         throw ConcurrentJobModificationException(
@@ -68,15 +86,15 @@ class PostgresJobStore implements JobStore {
         '''INSERT INTO "job" (
                "jobId", "workItemId", "jobType", "requiredRole",
                "requiredCapabilitiesJson", "priority", "state", "dedupeKey",
-               "createdAt", "availableAt", "instruction", "attempt",
-               "maxAttempts", "startedAt", "completedAt",
+               "activeDedupeKey", "createdAt", "availableAt", "instruction",
+               "attempt", "maxAttempts", "startedAt", "completedAt",
                "executionReferenceJson", "workerId", "failureJson",
                "cancelReason", "version"
              ) VALUES (
                @jobId, @workItemId, @jobType, @requiredRole,
                @requiredCapabilitiesJson, @priority, @state, @dedupeKey,
-               @createdAt, @availableAt, @instruction, @attempt,
-               @maxAttempts, @startedAt, @completedAt,
+               @activeDedupeKey, @createdAt, @availableAt, @instruction,
+               @attempt, @maxAttempts, @startedAt, @completedAt,
                @executionReferenceJson, @workerId, @failureJson,
                @cancelReason, @version
              )
@@ -88,6 +106,7 @@ class PostgresJobStore implements JobStore {
                "priority" = EXCLUDED."priority",
                "state" = EXCLUDED."state",
                "dedupeKey" = EXCLUDED."dedupeKey",
+               "activeDedupeKey" = EXCLUDED."activeDedupeKey",
                "createdAt" = EXCLUDED."createdAt",
                "availableAt" = EXCLUDED."availableAt",
                "instruction" = EXCLUDED."instruction",
@@ -294,6 +313,7 @@ class PostgresJobStore implements JobStore {
       'priority': json['priority'],
       'state': json['state'],
       'dedupeKey': json['dedupeKey'],
+      'activeDedupeKey': job.isTerminal ? null : json['dedupeKey'],
       'createdAt': decodeUtc(json['createdAt']),
       'availableAt': decodeUtc(json['availableAt']),
       'instruction': json['instruction'],

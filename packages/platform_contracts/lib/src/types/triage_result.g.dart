@@ -21,6 +21,8 @@ Map<String, dynamic> _$DefectClarificationRequestToJson(
 };
 
 TriageResult _$TriageResultFromJson(Map<String, dynamic> json) => TriageResult(
+  resultId: json['resultId'] as String,
+  defectId: json['defectId'] as String,
   recommendedStatus: _defectStatusFromJson(json['recommendedStatus'] as String),
   recommendedClassification: _defectClassificationFromJson(
     json['recommendedClassification'] as String,
@@ -43,6 +45,13 @@ TriageResult _$TriageResultFromJson(Map<String, dynamic> json) => TriageResult(
   possibleDuplicateDefectId: json['possibleDuplicateDefectId'] as String?,
   recommendedWorkItemCategory: json['recommendedWorkItemCategory'] as String?,
   summary: json['summary'] as String,
+  jobId: json['jobId'] as String?,
+  executionId: json['executionId'] as String?,
+  createdAt: DateTime.parse(json['createdAt'] as String),
+  completedAt: json['completedAt'] == null
+      ? null
+      : DateTime.parse(json['completedAt'] as String),
+  version: (json['version'] as num).toInt(),
 );
 
 Map<String, dynamic> _$TriageResultToJson(TriageResult instance) =>
@@ -63,4 +72,11 @@ Map<String, dynamic> _$TriageResultToJson(TriageResult instance) =>
       'possibleDuplicateDefectId': ?instance.possibleDuplicateDefectId,
       'recommendedWorkItemCategory': ?instance.recommendedWorkItemCategory,
       'summary': instance.summary,
+      'jobId': ?instance.jobId,
+      'executionId': ?instance.executionId,
+      'createdAt': instance.createdAt.toIso8601String(),
+      'completedAt': ?instance.completedAt?.toIso8601String(),
+      'version': instance.version,
+      'resultId': instance.resultId,
+      'defectId': instance.defectId,
     };

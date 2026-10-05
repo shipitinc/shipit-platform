@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:meta/meta.dart';
+
 import 'acp_transport.dart';
 
 /// AcpTransport backed by a spawned `opencode acp` child process speaking
@@ -103,8 +105,11 @@ class OpenCodeProcessTransport implements AcpTransport {
 
     final id = message['id'];
     if (id is int || id is String) {
-      final key = id.hashCode;
-      final completer = _pending.remove(key);
+      // The correlation key is the request id exactly as `request` stored it
+      // in `_pending`. JSON-RPC also permits a string id; the request API is
+      // int-keyed, so a numeric string is coerced rather than dropped.
+      final key = id is int ? id : int.tryParse(id);
+      final completer = key == null ? null : _pending.remove(key);
       if (completer == null) {
         // Server->client request we do not model in this slice.
         return;
@@ -182,6 +187,12 @@ class OpenCodeProcessTransport implements AcpTransport {
   }
 
   int get nextRequestId => ++_nextId;
+
+  /// Number of requests written to the wire that have not yet been answered.
+  /// Every resolved request must remove its own entry; a non-zero value after
+  /// a response is a correlation bug.
+  @visibleForTesting
+  int get pendingRequestCount => _pending.length;
 
   @override
   Future<void> close() async {

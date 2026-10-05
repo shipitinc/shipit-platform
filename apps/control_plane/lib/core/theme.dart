@@ -67,9 +67,11 @@ class ShipItTheme {
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: palette.accent,
+          // Board authority: every approved filled action carries a dark navy
+          // label in Dark (`#06121f`) and a white label in Light (`#ffffff`).
           foregroundColor: brightness == Brightness.light
               ? const Color(0xFFFFFFFF)
-              : const Color(0xFF10110F),
+              : const Color(0xFF06121F),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(ShipItMetrics.radius),
           ),

@@ -73,27 +73,29 @@ void main() {
     expect(first.status, isNot(ProductBaselineStatus.accepted));
   });
 
-  test('a rejected baseline returns to registered and can start over',
-      () async {
-    final v1 = await proposeVerified('v1');
-    final req = await engine.requestBaselineApproval(
-      productId: 'p1',
-      baselineId: v1.baselineId,
-    );
-    await engine.resolveBaselineApproval(
-      decisionId: req.decisionId,
-      choice: HumanDecisionChoice.reject,
-      decider: 'operator',
-      rationale: 'wrong file set',
-      signature: testSignature(),
-    );
-    expect((await engine.readProduct('p1')).state, ProductState.registered);
+  test(
+    'a rejected baseline returns to registered and can start over',
+    () async {
+      final v1 = await proposeVerified('v1');
+      final req = await engine.requestBaselineApproval(
+        productId: 'p1',
+        baselineId: v1.baselineId,
+      );
+      await engine.resolveBaselineApproval(
+        decisionId: req.decisionId,
+        choice: HumanDecisionChoice.reject,
+        decider: 'operator',
+        rationale: 'wrong file set',
+        signature: testSignature(),
+      );
+      expect((await engine.readProduct('p1')).state, ProductState.registered);
 
-    // Starting over is a clean registered -> baselinePending hop.
-    await proposeVerified('v2');
-    expect(
-      (await engine.readProduct('p1')).state,
-      ProductState.baselinePending,
-    );
-  });
+      // Starting over is a clean registered -> baselinePending hop.
+      await proposeVerified('v2');
+      expect(
+        (await engine.readProduct('p1')).state,
+        ProductState.baselinePending,
+      );
+    },
+  );
 }

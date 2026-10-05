@@ -44,28 +44,69 @@ melos:
         command: dart format lib test
         concurrency: 4
 
+    # Package unit/contract tests only — the pure-Dart suites that can run in
+    # parallel under `dart test`.
+    #
+    # `packageFilters` must be a SIBLING of `exec`, not nested inside it;
+    # melos only reads it at script level, so nesting it silently no-ops. The
+    # original `include:` key does not exist in melos 8 at all (the keys are
+    # `scope`/`ignore`/`dirExists`, and `scope`/`ignore` match PACKAGE NAMES,
+    # not paths), so the filter never applied and every workspace package ran
+    # — including:
+    #
+    #   * apps/server (`control_plane_server`): its suites are integration
+    #     tests that need a live PostgreSQL, so they are gated separately by
+    #     .github/workflows/integration.yaml.
+    #   * apps/control_plane (`control_plane`): a Flutter suite that needs
+    #     `flutter test`; `dart test` cannot run it.
+    #   * packages/control_plane_client: has no `test/` directory, and
+    #     `dart test` exits 65 there. `dirExists: test` covers this and any
+    #     future test-less package.
+    #
+    # Run with `--no-select` in CI to skip melos's package-choice prompt.
     test:
+      packageFilters:
+        dirExists: test
+        ignore:
+          - control_plane
+          - control_plane_server
       exec:
         command: dart test
         concurrency: 4
-        packageFilters:
-          include: 'packages/*'
 
     "test:coverage":
+      packageFilters:
+        dirExists: test
+        ignore:
+          - control_plane
+          - control_plane_server
       exec:
         command: dart test --coverage=coverage
         concurrency: 2
-        packageFilters:
-          include: 'packages/*'
+
+    # The control plane's widget/golden suite. It is excluded from `test`
+    # because `dart test` cannot run it (see the note there), which left it
+    # unreachable from melos entirely — a 150+ test suite that only ran if
+    # someone remembered to `cd apps/control_plane && flutter test`.
+    #
+    # Uses the FVM-pinned SDK (`.fvmrc`), not whatever `flutter` resolves to on
+    # PATH, so a contributor's global default cannot change the golden pixels.
+    # Requires the Flutter SDK: `fvm install && fvm flutter pub get`.
+    #
+    # Must `cd` first: the golden fonts and `goldens/` paths are resolved
+    # relative to the app root, so invoking it from the repo root fails every
+    # suite in `(setUpAll)` rather than in the tests themselves.
+    "test:flutter":
+      run: cd apps/control_plane && fvm flutter test
 
     # Runs the control plane integration suite against a live PostgreSQL
     # database. Requires `apps/server` Postgres to be running:
     #   cd apps/server && docker compose up -d
-    # The integration test groups all target the same database, so they must
-    # run serially (`-j 1`) — a parallel runner lets one group's TRUNCATE
-    # cleanup invalidate another group's in-flight write.
+    # Every suite namespaces its fixture ids and purges only its own rows with
+    # FK-ordered targeted DELETEs, so the files share one database safely and
+    # run concurrently (the `dart test` default) — no serial gate needed.
     "test:control-plane":
-      run: cd apps/server && dart test -j 1
+      run: cd apps/server && dart test
 
     build:
       exec:
@@ -81,22 +122,51 @@ melos:
     # last migration. Review the emitted SQL before applying — Serverpod will
     # happily emit a destructive diff if a field was removed.
     #
-    # AFTERWARDS you MUST re-append the `job_active_dedupe_unique` partial
-    # index to the new migration's definition.sql. The generator rebuilds that
-    # file from the models, which cannot express a partial index, so the target
-    # schema silently loses the job dedupe constraint and a repair migration
-    # would DROP it. `melos run verify:schema-deviations` checks this.
+    # The generator rebuilds definition.sql entirely from the models, so any
+    # hand-appended content in it is erased on every run. Known cases:
+    #
+    #   * `CREATE TABLE "qa_contract"` and its index. The table is
+    #     `managedMigration: false` (its applied DDL has no `id` column, so a
+    #     Serverpod table model cannot reproduce it): the generator knows the
+    #     table — it IS in definition.json — but never renders its DDL.
+    #   * Historically the two indexes checked below; both are now expressed in
+    #     their models (`job.activeDedupeKey` derived column + unique index,
+    #     and `design_review_result_execution_unique`) and regenerate cleanly.
+    #     They stay in the guard as a tripwire, not as a repair instruction.
+    #
+    # migration.sql also carries DROP IF EXISTS + backfill lines the generator
+    # cannot emit: its diff source never knew about the older hand-written
+    # copies, so it emits a bare CREATE that would collide with an index that
+    # already exists in any live database. `melos run verify:schema-deviations`
+    # fails closed if regeneration erases any of the above from definition.sql.
     "serverpod:migration":
       run: cd apps/server && serverpod create-migration
 
-    # Guards hand-maintained schema deviations that Serverpod's generator
-    # cannot express and therefore drops on every regeneration.
+    # Fails closed when a regeneration erased hand-maintained schema content
+    # from the latest cumulative definition.sql. Lists every failure before
+    # exiting non-zero; exits 1 outright if that file cannot be read.
     "verify:schema-deviations":
       run: |
-        latest=$(ls -1 apps/server/migrations | grep -E '^[0-9]+$' | sort | tail -1)
-        if ! grep -q 'job_active_dedupe_unique' "apps/server/migrations/$latest/definition.sql"; then
-          echo "FAIL: job_active_dedupe_unique missing from migrations/$latest/definition.sql"
-          echo "      Re-append it (see the block in an earlier migration)."
+        latest=$(ls -1 apps/server/migrations 2>/dev/null | grep -E '^[0-9]+$' | sort | tail -1)
+        definition="apps/server/migrations/$latest/definition.sql"
+        if [ -z "$latest" ] || [ ! -r "$definition" ]; then
+          echo "FAIL: $definition is missing or unreadable; failing closed."
           exit 1
         fi
-        echo "OK: job_active_dedupe_unique present in migrations/$latest/definition.sql"
+        status=0
+        for pattern in \
+          'CREATE UNIQUE INDEX "job_active_dedupe_unique"' \
+          'CREATE UNIQUE INDEX "design_review_result_execution_unique"' \
+          'CREATE TABLE "qa_contract"'
+        do
+          if grep -qF -- "$pattern" "$definition"; then
+            echo "OK: $pattern"
+          else
+            echo "FAIL: $pattern missing from migrations/$latest/definition.sql"
+            status=1
+          fi
+        done
+        if [ $status -ne 0 ]; then
+          echo "      Restore it from an earlier migration's definition.sql."
+        fi
+        exit $status

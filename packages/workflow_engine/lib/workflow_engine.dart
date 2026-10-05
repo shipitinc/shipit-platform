@@ -10,3 +10,4 @@ export 'src/transitions/human_decision_routing.dart';
 export 'src/validation/transition_validator.dart';
 export 'src/validation/guard_conditions.dart';
 export 'src/workflow_engine.dart';
+export 'src/model_selection/model_selection.dart';

@@ -1,4 +1,23 @@
-import 'package:platform_contracts/platform_contracts.dart';
+import 'dart:convert';
+
+import 'package:platform_contracts/platform_contracts.dart'
+    show
+        BaselineFact,
+        BaselineMaturity,
+        HumanDecisionChoice,
+        HumanDecision,
+        DecisionSignature,
+        PolicyAction,
+        ProductManifest,
+        ProductContracts,
+        DesignContractSpec,
+        QAContractSpec,
+        DeploymentContractSpec,
+        QAGateSpec,
+        ApprovalGateSpec,
+        EvidenceKind,
+        RepositoryKind,
+        RepositoryProvider;
 import 'package:product_registry/product_registry.dart'
     show ProductLifecycleAction;
 import 'package:workflow_engine/workflow_engine.dart' show ProductGuard;
@@ -15,6 +34,8 @@ import '../generated/product_summary_view.dart';
 import '../generated/product_view.dart';
 import '../services/control_plane_service.dart';
 import '../services/ui_view_mappers.dart';
+import 'package:platform_contracts/platform_contracts.dart'
+    show BaselineSectionKey;
 
 /// Endpoints for the durable Product registry and onboarding (S-1).
 ///
@@ -84,6 +105,33 @@ class ProductRegistryEndpoints extends Endpoint {
   /// Creates a durable baseline-approval decision bound to the exact current
   /// revision + contentHash. Returns the decision for the client to present to
   /// the human approver.
+  Future<DecisionView> proposeBaseline(
+    Session session, {
+    required String productId,
+    required List<BaselineFact> facts,
+  }) async {
+    final service = ControlPlaneService(session);
+    try {
+      final decision = await service.proposeBaseline(
+        productId: productId,
+        facts: facts,
+      );
+      return _baselineApprovalDecisionView(decision);
+    } catch (error, stackTrace) {
+      service.logger.error(
+        'product_registry.baseline_propose.failed',
+        {
+          'productId': productId,
+          'error': error.toString(),
+        },
+      );
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  /// Creates a durable baseline-approval decision bound to the exact current
+  /// revision + contentHash. Returns the decision for the client to present to
+  /// the human approver.
   Future<DecisionView> requestBaselineApproval(
     Session session, {
     required String productId,
@@ -110,7 +158,6 @@ class ProductRegistryEndpoints extends Endpoint {
       Error.throwWithStackTrace(error, stackTrace);
     }
   }
-
 
   /// Raises the durable gate for a product lifecycle action.
   ///
@@ -389,6 +436,163 @@ class ProductRegistryEndpoints extends Endpoint {
     } catch (error, stackTrace) {
       service.logger.error('product_registry.answer_clarification.failed', {
         'clarificationId': clarificationId,
+        'error': error.toString(),
+      });
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  /// Creates a new product with its manifest.
+  Future<ProductDetailView> createProduct(
+    Session session, {
+    required String productId,
+    required String name,
+    String? description,
+    String? manifestJson,
+    String? manifestVersion,
+  }) async {
+    final service = ControlPlaneService(session);
+    try {
+      ProductManifest manifest;
+      if (manifestJson == null || manifestJson.trim().isEmpty || manifestJson.trim() == '{}') {
+        // Create a minimal default manifest for product registration
+        final now = DateTime.now().toUtc();
+        manifest = ProductManifest(
+          productId: productId,
+          name: name,
+          version: '1.0.0',
+          description: description,
+          capabilities: const [],
+          environments: const [],
+          contracts: ProductContracts(
+            workItemCategories: const [],
+            designContract: DesignContractSpec(
+              requiredArtifacts: const [],
+              reviewers: const [],
+              approvalThreshold: 1,
+            ),
+            qaContract: QAContractSpec(gates: const []),
+            deploymentContract: DeploymentContractSpec(
+              promotionPath: const [],
+              approvalGates: const [],
+            ),
+          ),
+          createdAt: now,
+          updatedAt: now,
+        );
+      } else {
+        manifest = ProductManifest.fromJson(jsonDecode(manifestJson) as Map<String, dynamic>);
+      }
+      final product = await service.registerProductWithManifest(
+        productId: productId,
+        name: name,
+        description: description,
+        manifest: manifest,
+        manifestVersion: manifestVersion,
+      );
+      final detail = await service.loadProductDetail(product.productId);
+      return UiViewMappers.productDetailView(detail);
+    } catch (error, stackTrace) {
+      service.logger.error('product_registry.create.failed', {
+        'productId': productId,
+        'error': error.toString(),
+      });
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  /// Adds a repository reference to a product.
+  Future<Map<String, dynamic>> addRepositoryReference(
+    Session session, {
+    required String productId,
+    required String repositoryId,
+    required String uri,
+    required String kind,
+    required String provider,
+  }) async {
+    final service = ControlPlaneService(session);
+    try {
+      final ref = await service.addRepositoryReference(
+        productId: productId,
+        repositoryId: repositoryId,
+        uri: uri,
+        kind: RepositoryKind.fromWire(kind),
+        provider: RepositoryProvider.fromWire(provider),
+      );
+      return {'success': true, 'repositoryId': ref.repositoryId};
+    } catch (error, stackTrace) {
+      service.logger.error('product_registry.add_repo_ref.failed', {
+        'productId': productId,
+        'repositoryId': repositoryId,
+        'error': error.toString(),
+      });
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  /// Records platform-verified evidence against a proposed baseline.
+  Future<ProductDetailView> verifyBaseline(
+    Session session, {
+    required String productId,
+    required String baselineId,
+    required String verifiedBy,
+    String kind = 'platform_verified_evidence',
+  }) async {
+    final service = ControlPlaneService(session);
+    try {
+      await service.verifyBaseline(
+        productId: productId,
+        baselineId: baselineId,
+        verifiedBy: verifiedBy,
+        kind: EvidenceKind.fromWire(kind),
+      );
+      final detail = await service.loadProductDetail(productId);
+      return UiViewMappers.productDetailView(detail);
+    } catch (error, stackTrace) {
+      service.logger.error('product_registry.verify_baseline.failed', {
+        'productId': productId,
+        'baselineId': baselineId,
+        'error': error.toString(),
+      });
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  /// Adds an operator-authored claim to a **proposed** baseline. Amending a
+  /// baseline cancels any unresolved approval decision (new hash binding), so
+  /// the client must request approval again against the new revision.
+  Future<ProductDetailView> addHumanBaselineClaim(
+    Session session, {
+    required String productId,
+    required String baselineId,
+    required String section, // BaselineSectionKey.wire
+    required String claim,
+    required String author,
+    List<String>? evidenceRefs,
+    String? maturity, // BaselineMaturity.wire (e.g. 'implemented', 'policy', 'not_implemented')
+  }) async {
+    final service = ControlPlaneService(session);
+    try {
+      final updated = await service.addHumanBaselineClaim(
+        productId: productId,
+        baselineId: baselineId,
+        section: BaselineSectionKey.fromWire(section),
+        claim: claim,
+        author: author,
+        evidenceRefs: evidenceRefs ?? <String>[],
+        maturity: maturity != null ? BaselineMaturity.fromWire(maturity) : null,
+      );
+      service.logger.info('endpoint.product_registry.baseline_human_claim', {
+        'productId': productId,
+        'baselineId': baselineId,
+        'revision': updated.revision,
+      });
+      final detail = await service.loadProductDetail(productId);
+      return UiViewMappers.productDetailView(detail);
+    } catch (error, stackTrace) {
+      service.logger.error('product_registry.add_human_claim.failed', {
+        'productId': productId,
+        'baselineId': baselineId,
         'error': error.toString(),
       });
       Error.throwWithStackTrace(error, stackTrace);

@@ -6,6 +6,7 @@ import '../../core/design_tokens.dart';
 import '../../core/plain_language.dart';
 import '../../core/theme.dart';
 import '../../data/client_provider.dart';
+import '../../data/control_plane_repository.dart';
 import '../../shared/design_primitives.dart';
 import '../../shared/state_views.dart';
 import '../../shared/detail_sections.dart';
@@ -239,13 +240,26 @@ class _LeftColumn extends StatelessWidget {
             ],
           ),
         ],
+        if (state.modelExecutions.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          _ModelExecutionsSection(executions: state.modelExecutions),
+        ],
         const SizedBox(height: 20),
         Text(
           "What's happened so far",
           style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary),
         ),
         const SizedBox(height: 6),
-        TimelineTable(events: state.events),
+        TimelineTable(
+          events: [
+            for (final event in state.events)
+              TimelineEntry(
+                timestamp: event.timestamp,
+                message: event.message,
+                needsOperator: event.needsOperator,
+              ),
+          ],
+        ),
       ],
     );
   }
@@ -290,6 +304,314 @@ class _LeftColumn extends StatelessWidget {
           ref: PlainLanguage.refLabel(state.heldUpJobs.first),
         ),
     ];
+  }
+}
+
+class _ModelExecutionsSection extends StatelessWidget {
+  const _ModelExecutionsSection({required this.executions});
+
+  final List<ModelExecutionRecordResponse> executions;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final production = _getProductionExecution();
+    final reviews = _getReviewExecutions();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Model Executions',
+          style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Models used for production and review steps in this run.',
+          style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary),
+        ),
+        const SizedBox(height: 16),
+        if (production != null) ...[
+          _ModelExecutionCard(
+            title: 'Production Model',
+            execution: production,
+            isPrimary: true,
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (reviews.isNotEmpty) ...[
+          Text(
+            'Review Models',
+            style: ShipItType.sectionTitleSmall.copyWith(color: palette.inkPrimary),
+          ),
+          const SizedBox(height: 8),
+          for (final review in reviews) ...[
+            _ModelExecutionCard(
+              title: _formatRole(review.role),
+              execution: review,
+              isPrimary: false,
+            ),
+            const SizedBox(height: 8),
+          ],
+        ],
+        if (production == null && reviews.isEmpty) ...[
+          _ModelExecutionCard(
+            title: 'No Model Executions',
+            execution: executions.first,
+            isPrimary: false,
+            showAll: true,
+          ),
+        ],
+        const SizedBox(height: 8),
+        if (executions.any((e) => e.escalationIndex > 0))
+          _EscalationHistory(executions: executions),
+      ],
+    );
+  }
+
+  ModelExecutionRecordResponse? _getProductionExecution() {
+    // First execution with escalationIndex 0 for implementer role, or first execution overall
+    try {
+      return executions
+          .where((e) => e.escalationIndex == 0 && e.role == 'IMPLEMENTER')
+          .first;
+    } catch (_) {
+      return executions.isNotEmpty ? executions.first : null;
+    }
+  }
+
+  List<ModelExecutionRecordResponse> _getReviewExecutions() {
+    return executions
+        .where((e) =>
+            e.role != 'IMPLEMENTER' ||
+            e.escalationIndex > 0)
+        .toList()
+      ..sort((a, b) => a.escalationIndex.compareTo(b.escalationIndex));
+  }
+
+  String _formatRole(String role) {
+    return role
+        .split('_')
+        .map((w) => w[0].toUpperCase() + w.substring(1).toLowerCase())
+        .join(' ');
+  }
+}
+
+class _ModelExecutionCard extends StatelessWidget {
+  const _ModelExecutionCard({
+    required this.title,
+    required this.execution,
+    required this.isPrimary,
+    this.showAll = false,
+  });
+
+  final String title;
+  final ModelExecutionRecordResponse execution;
+  final bool isPrimary;
+  final bool showAll;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return DesignPanel(
+      edgeColor: isPrimary ? palette.positive : null,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (isPrimary) ...[
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: palette.positive,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Text(
+                title,
+                style: ShipItType.ref.copyWith(
+                  color: palette.inkPrimary,
+                  fontWeight: isPrimary ? FontWeight.w600 : FontWeight.w400,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: execution.success
+                      ? palette.positive.withValues(alpha: 0.1)
+                      : palette.negative.withValues(alpha: 0.1),
+                  border: Border.all(
+                    color: execution.success
+                        ? palette.positive.withValues(alpha: 0.5)
+                        : palette.negative.withValues(alpha: 0.5),
+                  ),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  execution.success ? 'SUCCESS' : 'FAILED',
+                  style: ShipItType.microLabel.copyWith(
+                    color: execution.success ? palette.positive : palette.negative,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      execution.modelId,
+                      style: ShipItType.rowTitle.copyWith(color: palette.inkPrimary),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      execution.provider,
+                      style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 16),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '\$${execution.costUsd.toStringAsFixed(4)}',
+                    style: ShipItType.duration.copyWith(color: palette.inkPrimary),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${execution.totalTokens} tokens',
+                    style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          if (execution.escalationIndex > 0) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: palette.attention,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Escalation step ${execution.escalationIndex}',
+                  style: ShipItType.monoMeta.copyWith(color: palette.attention),
+                ),
+              ],
+            ),
+          ],
+          if (execution.error != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Error: ${execution.error}',
+              style: ShipItType.bodySmall.copyWith(color: palette.negative),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _EscalationHistory extends StatelessWidget {
+  const _EscalationHistory({required this.executions});
+
+  final List<ModelExecutionRecordResponse> executions;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final escalations = executions.where((e) => e.escalationIndex > 0).toList()
+      ..sort((a, b) => a.escalationIndex.compareTo(b.escalationIndex));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const ContentRule(),
+        const SizedBox(height: 8),
+        Text(
+          'Escalation History',
+          style: ShipItType.sectionTitleSmall.copyWith(color: palette.inkPrimary),
+        ),
+        const SizedBox(height: 8),
+        for (final esc in escalations)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: esc.success ? palette.positive.withValues(alpha: 0.1) : palette.negative.withValues(alpha: 0.1),
+                    border: Border.all(
+                      color: esc.success ? palette.positive : palette.negative,
+                    ),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Center(
+                    child: Text(
+                      esc.escalationIndex.toString(),
+                      style: ShipItType.ref.copyWith(
+                        color: esc.success ? palette.positive : palette.negative,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${esc.modelId} (${esc.provider})',
+                        style: ShipItType.monoMeta.copyWith(color: palette.inkSecondary),
+                      ),
+                      Text(
+                        _formatRole(esc.role) + ' · \$${esc.costUsd.toStringAsFixed(4)} · ${esc.totalTokens} tokens',
+                        style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  esc.success ? 'OK' : 'FAILED',
+                  style: ShipItType.status.copyWith(
+                    color: esc.success ? palette.positive : palette.negative,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  String _formatRole(String role) {
+    return role
+        .split('_')
+        .map((w) => w[0].toUpperCase() + w.substring(1).toLowerCase())
+        .join(' ');
   }
 }
 

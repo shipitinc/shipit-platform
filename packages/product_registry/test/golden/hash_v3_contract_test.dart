@@ -30,39 +30,38 @@ const String goldenStandardSha256 =
     'bfa8293b536aa73a2877903ddc579aee8b4fc5fb15e34f3d277f5b4b2853cb78';
 
 List<BaselineFact> goldenFacts() => const [
-      BaselineFact(
-        factId: 'g-2',
-        section: BaselineSectionKey.techStack,
-        claim: 'Second fact',
-        provenance: Provenance.derived,
-        maturity: BaselineMaturity.planned,
-        evidenceRefs: ['b.txt', 'a.txt'],
-      ),
-      BaselineFact(
-        factId: 'g-1',
-        section: BaselineSectionKey.repository,
-        claim: 'First fact',
-        provenance: Provenance.observed,
-        maturity: BaselineMaturity.implemented,
-        evidenceRefs: ['repo/README.md'],
-        assumptionNote: 'note',
-        redacted: true,
-      ),
-      BaselineFact(
-        factId: 'g-3',
-        section: BaselineSectionKey.environments,
-        claim: 'Third fact',
-        provenance: Provenance.observed,
-        maturity: BaselineMaturity.notImplemented,
-        evidenceRefs: ['.env.example'],
-      ),
-    ];
+  BaselineFact(
+    factId: 'g-2',
+    section: BaselineSectionKey.techStack,
+    claim: 'Second fact',
+    provenance: Provenance.derived,
+    maturity: BaselineMaturity.planned,
+    evidenceRefs: ['b.txt', 'a.txt'],
+  ),
+  BaselineFact(
+    factId: 'g-1',
+    section: BaselineSectionKey.repository,
+    claim: 'First fact',
+    provenance: Provenance.observed,
+    maturity: BaselineMaturity.implemented,
+    evidenceRefs: ['repo/README.md'],
+    assumptionNote: 'note',
+    redacted: true,
+  ),
+  BaselineFact(
+    factId: 'g-3',
+    section: BaselineSectionKey.environments,
+    claim: 'Third fact',
+    provenance: Provenance.observed,
+    maturity: BaselineMaturity.notImplemented,
+    evidenceRefs: ['.env.example'],
+  ),
+];
 
 /// Sorted by factId so positional mutation tests target g-1, g-2, g-3 in order.
 List<BaselineFact> sortedFacts() {
-  final facts = List<BaselineFact>.of(goldenFacts())..sort(
-    (a, b) => a.factId.compareTo(b.factId),
-  );
+  final facts = List<BaselineFact>.of(goldenFacts())
+    ..sort((a, b) => a.factId.compareTo(b.factId));
   return facts;
 }
 
@@ -72,10 +71,7 @@ String independentStandardSha256(String payload) =>
 void main() {
   group('Hash V3 golden vector', () {
     test('HASH_V3_GOLDEN_VECTOR: canonical payload is exact and pinned', () {
-      expect(
-        canonicalBaselineFactsJson(goldenFacts()),
-        goldenPayload,
-      );
+      expect(canonicalBaselineFactsJson(goldenFacts()), goldenPayload);
       expect(utf8.encode(goldenPayload).length, 472);
     });
 

@@ -124,9 +124,14 @@ class HomeEndpoints extends Endpoint {
   }
 
   /// Lists work items with optional filters.
+  ///
+  /// [productId] narrows the list to one product's work, which is how the
+  /// report-a-bug form keeps "affected work item" short enough to pick from
+  /// once a product has been chosen.
   Future<List<WorkItemView>> listWorkItems(
     Session session, {
     String? state,
+    String? productId,
     int? limit,
   }) async {
     final service = ControlPlaneService(session);
@@ -134,6 +139,9 @@ class HomeEndpoints extends Endpoint {
 
     if (state != null) {
       items = items.where((item) => item.state.wire == state).toList();
+    }
+    if (productId != null) {
+      items = items.where((item) => item.productId == productId).toList();
     }
 
     items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));

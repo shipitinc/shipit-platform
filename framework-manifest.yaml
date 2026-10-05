@@ -1,0 +1,121 @@
+# Placeholder manifest for instantiated framework artifacts.
+# PURPOSE: record deterministic PROVENANCE of which framework revision produced a
+#          product repo's copies, plus per-artifact baseline hashes.
+#
+# Architecture: see docs/engineering/adr/0001-framework-distribution-and-versioning.md
+#   - Versioned copy-based installation with deterministic provenance and
+#     reviewable, isolated 3-way-merge upgrades.
+#
+# FILENAME MODEL (do not confuse the two names):
+#   - SOURCE TEMPLATE (in THIS framework repository): this file, named
+#     `manifest.template.yaml`.
+#   - INSTANTIATED COPY (in a PRODUCT repository): this template is copied and
+#     renamed to `framework-manifest.yaml`.
+#   The `.template.yaml` suffix marks the framework-side source; the product-side
+#   instance drops the `.template` marker and is always `framework-manifest.yaml`.
+#
+# AUTHORITY & SCOPE RULES (authoritative per ADR 0001):
+#   - `framework.revision` is the AUTHORITATIVE, IMMUTABLE provenance identifier.
+#     `framework.version` is human-readable metadata only. If the two ever
+#     disagree, `framework.revision` controls provenance.
+#   - This manifest records FRAMEWORK PROVENANCE ONLY. It MUST NOT store template
+#     answers (instantiation inputs). If template answers become necessary, keep
+#     them in a SEPARATE, machine-managed answers artifact.
+#   - Local-modification state is NOT persisted as an authoritative boolean.
+#     It is DERIVED by comparing an artifact's current hash against its recorded
+#     install/source baseline hash below.
+#   - The concrete framework DRIVER/TOOL (e.g., Copier vs. a custom/thin driver),
+#     the exact hash algorithm, and any release/distribution mechanism are NOT
+#     yet decided (deferred implementation decisions; see ADR 0001).
+
+framework:
+  # Source framework repository (do not depend on at runtime; copies are versioned).
+  source: "https://github.com/shipitinc/agentic-engineering-framework.git"
+  # AUTHORITATIVE immutable provenance identifier (e.g. git commit of the framework
+  # at instantiation time). Controls provenance if it disagrees with `version`.
+  revision: "693cfbc29e75a7d06b7753ff840ebb2cae0b3d68"
+  # Human-readable metadata only (NOT authoritative for provenance).
+  version: "0.1.0"
+
+product:
+  name: "shipit-platform"
+  instantiated_at: "2026-10-04T16:35:00Z"
+
+# List of files instantiated into the product repo, each with its baseline hash.
+# The baseline hash is the source/install hash at instantiation time; comparing an
+# artifact's CURRENT hash against this baseline DERIVES whether it was locally
+# modified (no separate `locally_modified` flag is stored).
+# Example (algorithm TBD; illustrative only):
+#   - path: "AGENTS.md"
+#     source_hash: "TBD"   # hash of the framework-side source at instantiation
+#     install_hash: "TBD"  # hash of the file as written into the product repo
+artifacts:
+  - path: "AGENTS.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: "docs/engineering/WORKFLOW.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: "docs/engineering/DESIGN_GOVERNANCE.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: "docs/engineering/QA_GOVERNANCE.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: "docs/engineering/DEPLOYMENT_GOVERNANCE.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: "docs/engineering/HUMAN_DECISIONS.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: "docs/engineering/STRUCTURED_RESULTS.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: "docs/engineering/LEARNING_POLICY.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: "docs/engineering/adr/0001-framework-distribution-and-versioning.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: "docs/engineering/adr/0002-dart-mason-git-framework-driver.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: "docs/engineering/adr/0003-product-generic-orchestrator-skill.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: ".agents/skills/aef-orchestrator/SKILL.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: ".agents/skills/aef-design-workflow/SKILL.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: ".agents/skills/aef-design-review/SKILL.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: ".agents/skills/aef-qa-contract/SKILL.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: ".agents/skills/aef-qa-execution/SKILL.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: ".agents/skills/aef-implementation-workflow/SKILL.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: ".agents/skills/aef-independent-review/SKILL.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: ".agents/skills/aef-correction-loop/SKILL.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: ".agents/skills/aef-deployment-execution/SKILL.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: ".agents/skills/aef-human-decision/SKILL.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: ".agents/skills/aef-repository-learning/SKILL.md"
+    source_hash: "TBD"
+    install_hash: "TBD"
+  - path: ".agents/skills/aef-run-feature/SKILL.md"
+    source_hash: "TBD"
+    install_hash: "TBD"

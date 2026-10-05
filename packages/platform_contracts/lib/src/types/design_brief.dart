@@ -46,20 +46,20 @@ class DesignBrief extends Equatable {
 
   @override
   List<Object?> get props => [
-        briefId,
-        workItemId,
-        productId,
-        title,
-        context,
-        requirements,
-        constraints,
-        acceptanceCriteria,
-        referenceArtifacts,
-        designSystemTokens,
-        createdAt,
-        updatedAt,
-        version,
-      ];
+    briefId,
+    workItemId,
+    productId,
+    title,
+    context,
+    requirements,
+    constraints,
+    acceptanceCriteria,
+    referenceArtifacts,
+    designSystemTokens,
+    createdAt,
+    updatedAt,
+    version,
+  ];
 }
 
 @JsonSerializable(explicitToJson: true)
@@ -89,11 +89,11 @@ class DesignRequirement extends Equatable {
 
   @override
   List<Object?> get props => [
-        requirementId,
-        description,
-        priority,
-        traceabilityRef,
-      ];
+    requirementId,
+    description,
+    priority,
+    traceabilityRef,
+  ];
 }
 
 enum DesignRequirementPriority {
@@ -108,7 +108,8 @@ enum DesignRequirementPriority {
 
   static DesignRequirementPriority fromWire(String value) => values.firstWhere(
     (priority) => priority.wire == value,
-    orElse: () => throw FormatException('Unknown design requirement priority: $value'),
+    orElse: () =>
+        throw FormatException('Unknown design requirement priority: $value'),
   );
 }
 
@@ -141,11 +142,7 @@ class DesignConstraint extends Equatable {
   Map<String, dynamic> toJson() => _$DesignConstraintToJson(this);
 
   @override
-  List<Object?> get props => [
-        constraintId,
-        description,
-        type,
-      ];
+  List<Object?> get props => [constraintId, description, type];
 }
 
 enum DesignConstraintType {
@@ -162,7 +159,8 @@ enum DesignConstraintType {
 
   static DesignConstraintType fromWire(String value) => values.firstWhere(
     (type) => type.wire == value,
-    orElse: () => throw FormatException('Unknown design constraint type: $value'),
+    orElse: () =>
+        throw FormatException('Unknown design constraint type: $value'),
   );
 }
 
@@ -191,9 +189,5 @@ class ReferenceArtifact extends Equatable {
   Map<String, dynamic> toJson() => _$ReferenceArtifactToJson(this);
 
   @override
-  List<Object?> get props => [
-        artifactType,
-        location,
-        description,
-      ];
+  List<Object?> get props => [artifactType, location, description];
 }

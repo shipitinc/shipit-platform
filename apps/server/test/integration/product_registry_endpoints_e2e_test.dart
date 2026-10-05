@@ -18,18 +18,44 @@ Future<PersistenceDatabase> _newDb() async {
   return PersistenceDatabase(session.db);
 }
 
-Future<void> _truncateProductTables() async {
+/// Removes only this suite's rows, in an order that satisfies foreign keys.
+///
+/// Targeted DELETEs, never a TRUNCATE: `test/integration` shares one database
+/// with files that run concurrently, and truncating `product` out from under
+/// them breaks their assertions. Every statement is scoped to this file's two
+/// fixture Products (`endpoint-*-fixture`) and their synthetic decision
+/// scopes, so no other file's row can match. Runs in `setUp` as well as
+/// `tearDown`, because a previous run that aborted mid-test leaves rows behind
+/// and re-registering a Product would then violate a unique constraint — and
+/// because two of these tests deliberately leave a blocking approval decision
+/// pending, which must not outlive the file.
+Future<void> _purgeSuiteRows() async {
   final db = await _newDb();
-  await db.queryNoTransaction('''
-    TRUNCATE TABLE
-      "product",
-      "repository_reference",
-      "product_baseline",
-      "clarification_request",
-      "onboarding_record",
-      "human_decision"
-    RESTART IDENTITY CASCADE
-  ''');
+  const statements = <String>[
+    'DELETE FROM "baseline_fact" WHERE "baselineId" IN '
+        '(SELECT "baselineId" FROM "product_baseline" WHERE "productId" IN '
+        '(\'endpoint-a-fixture\', \'endpoint-b-fixture\'))',
+    'DELETE FROM "human_decision" WHERE "workItemId" LIKE \'%endpoint-%-fixture\'',
+    'DELETE FROM "standing_policy" WHERE "productId" IN '
+        '(\'endpoint-a-fixture\', \'endpoint-b-fixture\')',
+    'DELETE FROM "clarification_request" WHERE "productId" IN '
+        '(\'endpoint-a-fixture\', \'endpoint-b-fixture\')',
+    'DELETE FROM "onboarding_record" WHERE "productId" IN '
+        '(\'endpoint-a-fixture\', \'endpoint-b-fixture\')',
+    'DELETE FROM "product_registry_audit" WHERE "productId" IN '
+        '(\'endpoint-a-fixture\', \'endpoint-b-fixture\')',
+    'DELETE FROM "product_credential" WHERE "productId" IN '
+        '(\'endpoint-a-fixture\', \'endpoint-b-fixture\')',
+    'DELETE FROM "product_baseline" WHERE "productId" IN '
+        '(\'endpoint-a-fixture\', \'endpoint-b-fixture\')',
+    'DELETE FROM "repository_reference" WHERE "productId" IN '
+        '(\'endpoint-a-fixture\', \'endpoint-b-fixture\')',
+    'DELETE FROM "product" WHERE "productId" IN '
+        '(\'endpoint-a-fixture\', \'endpoint-b-fixture\')',
+  ];
+  for (final statement in statements) {
+    await db.query(statement);
+  }
 }
 
 const a = 'endpoint-a-fixture';
@@ -67,7 +93,8 @@ void main() {
   withServerpod(
     'S-1 registry typed Serverpod endpoints (Postgres)',
     (sessionBuilder, endpoints) {
-      setUp(_truncateProductTables);
+      setUp(_purgeSuiteRows);
+      tearDown(_purgeSuiteRows);
 
       test(
         'listProducts and productContext round-trip typed models',
@@ -75,7 +102,7 @@ void main() {
           final e = await _engine();
           await e.createProduct(productId: a, name: 'Endpoint A');
           await e.addRepositoryReference(
-            repositoryId: 'repo-a',
+            repositoryId: 'repo-endpoint-a',
             productId: a,
             uri: 'file:///srv/a',
           );
@@ -104,7 +131,7 @@ void main() {
             productId: a,
           );
           expect(ctx.product.productId, a);
-          expect(ctx.repositories.single.repositoryId, 'repo-a');
+          expect(ctx.repositories.single.repositoryId, 'repo-endpoint-a');
           expect(ctx.activeBaseline, isNull);
           expect(ctx.allBaselines.single.status, 'proposed');
           expect(ctx.allBaselines.single.contentHash, proposed.contentHash);

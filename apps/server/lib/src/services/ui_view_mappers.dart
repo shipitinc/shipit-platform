@@ -6,6 +6,9 @@ import '../generated/clarification_view.dart';
 import '../generated/decision_context_view.dart';
 import '../generated/decision_option_view.dart';
 import '../generated/decision_view.dart';
+import '../generated/human_direction_attachment_view.dart';
+import '../generated/human_direction_payload_view.dart';
+import '../generated/human_direction_view.dart';
 import '../generated/job_summary_view.dart';
 import '../generated/product_baseline_view.dart';
 import '../generated/product_context_view.dart';
@@ -207,12 +210,8 @@ class UiViewMappers {
     return ProductDetailView(
       product: productView(context.product),
       allowsDispatch: context.product.state.allowsDispatch,
-      repositories: context.repositories
-          .map(repositoryReferenceView)
-          .toList(),
-      credentials: detail.credentials
-          .map(repositoryCredentialView)
-          .toList(),
+      repositories: context.repositories.map(repositoryReferenceView).toList(),
+      credentials: detail.credentials.map(repositoryCredentialView).toList(),
       activeBaseline: context.activeBaseline == null
           ? null
           : productBaselineView(context.activeBaseline!),
@@ -221,6 +220,7 @@ class UiViewMappers {
           : productBaselineView(detail.pendingBaseline!),
       pendingBaselineVerified:
           detail.pendingBaseline?.isIndependentlyVerified ?? false,
+      pendingBaselineDecisionId: detail.pendingBaselineDecisionId,
       allBaselines: context.allBaselines.map(productBaselineView).toList(),
       openClarifications: context.openClarifications
           .map(clarificationView)
@@ -249,6 +249,7 @@ class UiViewMappers {
       section: fact.section.wire,
       claim: fact.claim,
       provenance: fact.provenance.wire,
+      maturity: fact.maturity.wire,
       evidenceRefs: fact.evidenceRefs,
       assumptionNote: fact.assumptionNote,
       redacted: fact.redacted,
@@ -305,6 +306,51 @@ class UiViewMappers {
           .map(clarificationView)
           .toList(),
       snapshotId: context.snapshotId,
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // HumanDirection (Inbox)
+  // ---------------------------------------------------------------------
+
+  static HumanDirectionView humanDirectionView(HumanDirection direction) {
+    return HumanDirectionView(
+      directionId: direction.directionId,
+      directionType: direction.directionType.wire,
+      targetType: direction.target.targetType.wire,
+      targetId: direction.target.targetId,
+      status: direction.status.wire,
+      payload: HumanDirectionPayloadView(
+        title: direction.payload.title,
+        description: direction.payload.description,
+        contextJson: direction.payload.contextJson,
+        attachments: direction.payload.attachments
+            ?.map(
+              (a) => HumanDirectionAttachmentView(
+                artifactId: a.artifactId,
+                artifactType: a.artifactType,
+                description: a.description,
+              ),
+            )
+            .toList(),
+      ),
+      createdBy: direction.createdBy,
+      assignedTo: direction.assignedTo,
+      ackedAt: direction.ackedAt,
+      ackedBy: direction.ackedBy,
+      startedAt: direction.startedAt,
+      startedBy: direction.startedBy,
+      completedAt: direction.completedAt,
+      completedBy: direction.completedBy,
+      completionSummary: direction.completionSummary,
+      rejectedAt: direction.rejectedAt,
+      rejectedBy: direction.rejectedBy,
+      rejectionReason: direction.rejectionReason,
+      supersededAt: direction.supersededAt,
+      supersededByDirectionId: direction.supersededByDirectionId,
+      createdAt: direction.createdAt,
+      updatedAt: direction.updatedAt,
+      metadataJson: direction.metadata?.toString(),
     );
   }
 }

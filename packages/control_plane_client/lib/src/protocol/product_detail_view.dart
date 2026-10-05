@@ -33,6 +33,7 @@ abstract class ProductDetailView implements _i1.SerializableModel {
     this.activeBaseline,
     this.pendingBaseline,
     required this.pendingBaselineVerified,
+    this.pendingBaselineDecisionId,
     required this.allBaselines,
     required this.openClarifications,
     required this.policies,
@@ -46,6 +47,7 @@ abstract class ProductDetailView implements _i1.SerializableModel {
     _i5.ProductBaselineView? activeBaseline,
     _i5.ProductBaselineView? pendingBaseline,
     required bool pendingBaselineVerified,
+    String? pendingBaselineDecisionId,
     required List<_i5.ProductBaselineView> allBaselines,
     required List<_i6.ClarificationView> openClarifications,
     required List<_i7.StandingPolicyView> policies,
@@ -80,6 +82,8 @@ abstract class ProductDetailView implements _i1.SerializableModel {
       pendingBaselineVerified: _i1.BoolJsonExtension.fromJson(
         jsonSerialization['pendingBaselineVerified'],
       ),
+      pendingBaselineDecisionId:
+          jsonSerialization['pendingBaselineDecisionId'] as String?,
       allBaselines: _i8.Protocol().deserialize<List<_i5.ProductBaselineView>>(
         jsonSerialization['allBaselines'],
       ),
@@ -111,6 +115,12 @@ abstract class ProductDetailView implements _i1.SerializableModel {
   /// Whether that candidate carries a worker attestation (AGENTS.md §12).
   bool pendingBaselineVerified;
 
+  /// Decision id of the unresolved baseline-approval gate, when one exists.
+  /// Baseline decisions are scoped to `product-baseline:<productId>` rather
+  /// than a WorkItem row, so the screen cannot discover this id by listing a
+  /// work item's decisions. Absent when no human gate is outstanding.
+  String? pendingBaselineDecisionId;
+
   List<_i5.ProductBaselineView> allBaselines;
 
   List<_i6.ClarificationView> openClarifications;
@@ -129,6 +139,7 @@ abstract class ProductDetailView implements _i1.SerializableModel {
     _i5.ProductBaselineView? activeBaseline,
     _i5.ProductBaselineView? pendingBaseline,
     bool? pendingBaselineVerified,
+    String? pendingBaselineDecisionId,
     List<_i5.ProductBaselineView>? allBaselines,
     List<_i6.ClarificationView>? openClarifications,
     List<_i7.StandingPolicyView>? policies,
@@ -144,6 +155,8 @@ abstract class ProductDetailView implements _i1.SerializableModel {
       if (activeBaseline != null) 'activeBaseline': activeBaseline?.toJson(),
       if (pendingBaseline != null) 'pendingBaseline': pendingBaseline?.toJson(),
       'pendingBaselineVerified': pendingBaselineVerified,
+      if (pendingBaselineDecisionId != null)
+        'pendingBaselineDecisionId': pendingBaselineDecisionId,
       'allBaselines': allBaselines.toJson(valueToJson: (v) => v.toJson()),
       'openClarifications': openClarifications.toJson(
         valueToJson: (v) => v.toJson(),
@@ -169,6 +182,7 @@ class _ProductDetailViewImpl extends ProductDetailView {
     _i5.ProductBaselineView? activeBaseline,
     _i5.ProductBaselineView? pendingBaseline,
     required bool pendingBaselineVerified,
+    String? pendingBaselineDecisionId,
     required List<_i5.ProductBaselineView> allBaselines,
     required List<_i6.ClarificationView> openClarifications,
     required List<_i7.StandingPolicyView> policies,
@@ -180,6 +194,7 @@ class _ProductDetailViewImpl extends ProductDetailView {
          activeBaseline: activeBaseline,
          pendingBaseline: pendingBaseline,
          pendingBaselineVerified: pendingBaselineVerified,
+         pendingBaselineDecisionId: pendingBaselineDecisionId,
          allBaselines: allBaselines,
          openClarifications: openClarifications,
          policies: policies,
@@ -197,6 +212,7 @@ class _ProductDetailViewImpl extends ProductDetailView {
     Object? activeBaseline = _Undefined,
     Object? pendingBaseline = _Undefined,
     bool? pendingBaselineVerified,
+    Object? pendingBaselineDecisionId = _Undefined,
     List<_i5.ProductBaselineView>? allBaselines,
     List<_i6.ClarificationView>? openClarifications,
     List<_i7.StandingPolicyView>? policies,
@@ -216,6 +232,9 @@ class _ProductDetailViewImpl extends ProductDetailView {
           : this.pendingBaseline?.copyWith(),
       pendingBaselineVerified:
           pendingBaselineVerified ?? this.pendingBaselineVerified,
+      pendingBaselineDecisionId: pendingBaselineDecisionId is String?
+          ? pendingBaselineDecisionId
+          : this.pendingBaselineDecisionId,
       allBaselines:
           allBaselines ?? this.allBaselines.map((e0) => e0.copyWith()).toList(),
       openClarifications:

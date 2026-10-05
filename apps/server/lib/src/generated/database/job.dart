@@ -24,6 +24,7 @@ abstract class JobRow implements _i1.TableRow<int?>, _i1.ProtocolSerialization {
     required this.priority,
     required this.state,
     required this.dedupeKey,
+    this.activeDedupeKey,
     required this.createdAt,
     this.availableAt,
     required this.instruction,
@@ -48,6 +49,7 @@ abstract class JobRow implements _i1.TableRow<int?>, _i1.ProtocolSerialization {
     required String priority,
     required String state,
     required String dedupeKey,
+    String? activeDedupeKey,
     required DateTime createdAt,
     DateTime? availableAt,
     required String instruction,
@@ -74,6 +76,7 @@ abstract class JobRow implements _i1.TableRow<int?>, _i1.ProtocolSerialization {
       priority: jsonSerialization['priority'] as String,
       state: jsonSerialization['state'] as String,
       dedupeKey: jsonSerialization['dedupeKey'] as String,
+      activeDedupeKey: jsonSerialization['activeDedupeKey'] as String?,
       createdAt: _i1.DateTimeJsonExtension.fromJson(
         jsonSerialization['createdAt'],
       ),
@@ -125,6 +128,8 @@ abstract class JobRow implements _i1.TableRow<int?>, _i1.ProtocolSerialization {
 
   String dedupeKey;
 
+  String? activeDedupeKey;
+
   DateTime createdAt;
 
   DateTime? availableAt;
@@ -165,6 +170,7 @@ abstract class JobRow implements _i1.TableRow<int?>, _i1.ProtocolSerialization {
     String? priority,
     String? state,
     String? dedupeKey,
+    String? activeDedupeKey,
     DateTime? createdAt,
     DateTime? availableAt,
     String? instruction,
@@ -191,6 +197,7 @@ abstract class JobRow implements _i1.TableRow<int?>, _i1.ProtocolSerialization {
       'priority': priority,
       'state': state,
       'dedupeKey': dedupeKey,
+      if (activeDedupeKey != null) 'activeDedupeKey': activeDedupeKey,
       'createdAt': createdAt.toJson(),
       if (availableAt != null) 'availableAt': availableAt?.toJson(),
       'instruction': instruction,
@@ -255,6 +262,7 @@ class _JobRowImpl extends JobRow {
     required String priority,
     required String state,
     required String dedupeKey,
+    String? activeDedupeKey,
     required DateTime createdAt,
     DateTime? availableAt,
     required String instruction,
@@ -277,6 +285,7 @@ class _JobRowImpl extends JobRow {
          priority: priority,
          state: state,
          dedupeKey: dedupeKey,
+         activeDedupeKey: activeDedupeKey,
          createdAt: createdAt,
          availableAt: availableAt,
          instruction: instruction,
@@ -305,6 +314,7 @@ class _JobRowImpl extends JobRow {
     String? priority,
     String? state,
     String? dedupeKey,
+    Object? activeDedupeKey = _Undefined,
     DateTime? createdAt,
     Object? availableAt = _Undefined,
     String? instruction,
@@ -329,6 +339,9 @@ class _JobRowImpl extends JobRow {
       priority: priority ?? this.priority,
       state: state ?? this.state,
       dedupeKey: dedupeKey ?? this.dedupeKey,
+      activeDedupeKey: activeDedupeKey is String?
+          ? activeDedupeKey
+          : this.activeDedupeKey,
       createdAt: createdAt ?? this.createdAt,
       availableAt: availableAt is DateTime? ? availableAt : this.availableAt,
       instruction: instruction ?? this.instruction,
@@ -390,6 +403,12 @@ class JobRowUpdateTable extends _i1.UpdateTable<JobRowTable> {
     table.dedupeKey,
     value,
   );
+
+  _i1.ColumnValue<String, String> activeDedupeKey(String? value) =>
+      _i1.ColumnValue(
+        table.activeDedupeKey,
+        value,
+      );
 
   _i1.ColumnValue<DateTime, DateTime> createdAt(DateTime value) =>
       _i1.ColumnValue(
@@ -493,6 +512,10 @@ class JobRowTable extends _i1.Table<int?> {
       'dedupeKey',
       this,
     );
+    activeDedupeKey = _i1.ColumnString(
+      'activeDedupeKey',
+      this,
+    );
     createdAt = _i1.ColumnDateTime(
       'createdAt',
       this,
@@ -561,6 +584,8 @@ class JobRowTable extends _i1.Table<int?> {
 
   late final _i1.ColumnString dedupeKey;
 
+  late final _i1.ColumnString activeDedupeKey;
+
   late final _i1.ColumnDateTime createdAt;
 
   late final _i1.ColumnDateTime availableAt;
@@ -596,6 +621,7 @@ class JobRowTable extends _i1.Table<int?> {
     priority,
     state,
     dedupeKey,
+    activeDedupeKey,
     createdAt,
     availableAt,
     instruction,

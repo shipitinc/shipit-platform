@@ -71,10 +71,7 @@ abstract interface class ProductRegistryStore {
   Future<int> nextBaselineRevision(String productId);
 
   // ---- Baseline facts (normalized, queryable) ----
-  Future<void> saveBaselineFacts(
-    String baselineId,
-    List<BaselineFact> facts,
-  );
+  Future<void> saveBaselineFacts(String baselineId, List<BaselineFact> facts);
 
   Future<List<BaselineFact>> readBaselineFacts(String baselineId);
 

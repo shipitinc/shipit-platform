@@ -9,17 +9,20 @@ import '../core/theme_controller.dart';
 ///
 /// Geometry is transcribed from the Penpot board `BP · Home` (light/dark):
 /// 200px rail with a 1px divider on its trailing edge; 20px gutter; brand
-/// lockup at y=22; rule at y=78; four nav rows at y=96/126/156/186 (30px pitch)
-/// with right-aligned counts; rule at y=224; the "YOU" block from y=238.
+/// lockup at y=22; rule at y=78; five nav rows at y=96/126/156/186/216 (30px
+/// pitch) with right-aligned counts; rule at y=254; the "YOU" block from y=268.
 ///
 /// The design deliberately uses text-only navigation — no icons — with a 2×12
-/// accent mark marking the active row.
+/// accent mark marking the active row. The fifth row, `Nav · Defects`, is what
+/// the `BP · Defect …` boards draw; a rail without it cannot reach the Defect
+/// surface or link back to it from a detail screen.
 class Sidebar extends StatelessWidget {
   const Sidebar({
     super.key,
     this.needsYouCount,
     this.allWorkCount,
     this.productCount,
+    this.reportsCount,
   });
 
   /// Count shown against "Needs you". Rendered in the attention tone because
@@ -31,6 +34,9 @@ class Sidebar extends StatelessWidget {
 
   /// Count shown against "Products".
   final int? productCount;
+
+  /// Count shown against "Defects" (`Nav Count · Defects`).
+  final int? reportsCount;
 
   @override
   Widget build(BuildContext context) {
@@ -81,6 +87,37 @@ class Sidebar extends StatelessWidget {
             active: currentPath.startsWith('/products'),
             onTap: () => context.go('/products'),
           ),
+          const SizedBox(height: 11),
+          _NavRow(
+            label: 'Reports',
+            count: reportsCount,
+            active:
+                currentPath.startsWith('/reports') ||
+                currentPath.startsWith('/defects'), // keep alias
+            onTap: () => context.go('/reports'),
+          ),
+          const SizedBox(height: 11),
+          _NavSection(
+            label: 'Models',
+            active: currentPath.startsWith('/models'),
+            children: [
+              _SubNavRow(
+                label: 'Policies',
+                active: currentPath == '/models/policies',
+                onTap: () => context.go('/models/policies'),
+              ),
+              _SubNavRow(
+                label: 'Executions',
+                active: currentPath == '/models/executions',
+                onTap: () => context.go('/models/executions'),
+              ),
+              _SubNavRow(
+                label: 'Stats',
+                active: currentPath == '/models/stats',
+                onTap: () => context.go('/models/stats'),
+              ),
+            ],
+          ),
           const SizedBox(height: 19),
           const _RailRule(),
           const SizedBox(height: 13),
@@ -97,7 +134,9 @@ class Sidebar extends StatelessWidget {
       path == '/' ||
       (!path.startsWith('/runs') &&
           !path.startsWith('/needs-you') &&
-          !path.startsWith('/products'));
+          !path.startsWith('/products') &&
+          !path.startsWith('/defects') &&
+          !path.startsWith('/models'));
 }
 
 /// `Brand Logomark` (26×26 at x=20) + `Wordmark` / `Wordmark Sub`.
@@ -235,6 +274,91 @@ class _NavRow extends StatelessWidget {
                     ),
                   ),
                 ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A navigation section with collapsible sub-items (e.g., Models).
+class _NavSection extends StatelessWidget {
+  const _NavSection({
+    required this.label,
+    required this.active,
+    required this.children,
+  });
+
+  final String label;
+  final bool active;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _NavRow(
+          label: label,
+          active: active,
+          onTap: () {}, // Section header doesn't navigate
+        ),
+        const SizedBox(height: 4),
+        for (final child in children) child,
+      ],
+    );
+  }
+}
+
+/// A sub-navigation row indented under a section.
+class _SubNavRow extends StatelessWidget {
+  const _SubNavRow({
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Semantics(
+      button: true,
+      selected: active,
+      child: InkWell(
+        onTap: onTap,
+        hoverColor: palette.rule.withValues(alpha: 0.4),
+        child: SizedBox(
+          height: 19,
+          child: Row(
+            children: [
+              // Indented gutter for sub-items
+              SizedBox(
+                width: ShipItMetrics.railGutter + 12,
+                child: Center(
+                  child: Container(
+                    width: ShipItMetrics.tickWidth,
+                    height: 12,
+                    color: active
+                        ? palette.accentTick
+                        : const Color(0x00000000),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  label,
+                  style: active
+                      ? ShipItType.navActive.copyWith(color: palette.inkPrimary)
+                      : ShipItType.rowTitle.copyWith(
+                          color: palette.inkSecondary,
+                        ),
+                ),
+              ),
             ],
           ),
         ),

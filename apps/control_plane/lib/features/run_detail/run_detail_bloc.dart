@@ -32,6 +32,14 @@ class RunDetailBloc extends Bloc<RunDetailEvent, RunDetailState> {
           .map((j) => j.jobId)
           .toList();
 
+      // Fetch model executions for this work item
+      final modelExecutionsPage = await _repository.listModelExecutions(
+        workItemId: _runId,
+        limit: 100,
+        offset: 0,
+      );
+      final modelExecutions = modelExecutionsPage.items;
+
       String? recommendation;
       String? haltedState;
       if (detail.workItem.blockingHumanDecisionId != null) {
@@ -69,6 +77,7 @@ class RunDetailBloc extends Bloc<RunDetailEvent, RunDetailState> {
                 ),
               )
               .toList(),
+          modelExecutions: modelExecutions,
         ),
       );
     } catch (e) {
@@ -93,6 +102,7 @@ class RunDetailState {
     this.recommendation,
     this.haltedState,
     this.artifacts = const [],
+    this.modelExecutions = const [],
     this.errorMessage,
   });
 
@@ -119,6 +129,10 @@ class RunDetailState {
 
   /// Artifacts attached to the run, for the evidence panel.
   final List<ArtifactRefResponse> artifacts;
+
+  /// Model execution records for this work item.
+  final List<ModelExecutionRecordResponse> modelExecutions;
+
   final String? errorMessage;
 
   RunDetailState copyWith({
@@ -136,6 +150,7 @@ class RunDetailState {
     String? recommendation,
     String? haltedState,
     List<ArtifactRefResponse>? artifacts,
+    List<ModelExecutionRecordResponse>? modelExecutions,
     String? errorMessage,
   }) {
     return RunDetailState(
@@ -154,6 +169,7 @@ class RunDetailState {
       recommendation: recommendation ?? this.recommendation,
       haltedState: haltedState ?? this.haltedState,
       artifacts: artifacts ?? this.artifacts,
+      modelExecutions: modelExecutions ?? this.modelExecutions,
       errorMessage: errorMessage,
     );
   }

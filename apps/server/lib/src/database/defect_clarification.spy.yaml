@@ -1,0 +1,29 @@
+class: DefectClarificationRow
+table: defect_clarification
+serverOnly: true
+indexes:
+  defect_clarification_id_unique:
+    fields: clarificationId
+    unique: true
+  defect_clarification_defect_idx:
+    fields: defectId
+  defect_clarification_status_idx:
+    fields: status
+  defect_clarification_human_decision_idx:
+    fields: humanDecisionId
+  defect_clarification_triage_job_idx:
+    fields: requestedByTriageJobId
+fields:
+  id: int?
+  clarificationId: String
+  defectId: String
+  question: String
+  reason: String
+  status: String
+  answer: String?
+  humanDecisionId: String?
+  requestedByTriageJobId: String?
+  requestedAt: DateTime
+  answeredAt: DateTime?
+  createdAt: DateTime
+  version: int

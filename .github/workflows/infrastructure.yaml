@@ -1,0 +1,39 @@
+name: Infrastructure
+on:
+  workflow_call:
+    inputs:
+      env:
+        required: true
+        type: string
+    secrets:
+      GITHUB_TOKEN:
+        required: true
+      # Consumed by the credential step below. A workflow_call must declare
+      # every secret it reads, or expression validation fails; the sole caller
+      # (release.yaml) passes `secrets: inherit`.
+      GCP_SA_KEY:
+        required: true
+jobs:
+  opentofu:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+      - name: Configure credentials
+        run: |
+          echo "${{ secrets.GCP_SA_KEY }}" | base64 -d > /tmp/gcp-sa.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-sa.json" >> "$GITHUB_ENV"
+      - name: Initialize
+        run: |
+          cd infrastructure
+          tofu init
+      - name: Plan
+        run: |
+          cd infrastructure
+          tofu plan -var="environment=${{ inputs.env }}"
+      - name: Apply
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        run: |
+          cd infrastructure
+          tofu apply -auto-approve -var="environment=${{ inputs.env }}"

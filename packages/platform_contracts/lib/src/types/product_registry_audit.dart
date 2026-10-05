@@ -49,16 +49,16 @@ class ProductRegistryAudit extends Equatable {
 
   @override
   List<Object?> get props => [
-        auditId,
-        productId,
-        entityType,
-        entityId,
-        action,
-        beforeJson,
-        afterJson,
-        actor,
-        timestamp,
-      ];
+    auditId,
+    productId,
+    entityType,
+    entityId,
+    action,
+    beforeJson,
+    afterJson,
+    actor,
+    timestamp,
+  ];
 }
 
 AuditEntityType _entityTypeFromWire(String value) =>

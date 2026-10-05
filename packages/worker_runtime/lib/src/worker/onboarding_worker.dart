@@ -3,15 +3,26 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:platform_contracts/platform_contracts.dart'
-    show WorkerCleanupStatus, WorkerEventRecord, WorkerEventType, WorkerExecution, WorkerExecutionResult, WorkerExecutionStatus, WorkerFailureCode, WorkerExecutionRequest, WorkspaceDescriptor, ChangedFile, AgentRole, WorkerCleanupPolicy;
+    show
+        WorkerCleanupStatus,
+        WorkerEventRecord,
+        WorkerEventType,
+        WorkerExecution,
+        WorkerExecutionResult,
+        WorkerExecutionStatus,
+        WorkerFailureCode,
+        WorkerExecutionRequest,
+        WorkspaceDescriptor,
+        ChangedFile,
+        AgentRole,
+        WorkerCleanupPolicy;
 import 'package:worker_protocol/worker_protocol.dart';
 
 import '../env/environment_policy.dart';
 import '../store/worker_store.dart' show WorkerStore;
 import '../workspace/git_workspace_inspector.dart';
 import '../workspace/workspace_manager.dart';
-import 'local_worker.dart'
-    show WorkerBusyException;
+import 'local_worker.dart' show WorkerBusyException;
 import 'worker.dart';
 
 /// Thrown when onboarding preparation fails (git clone, build, test).
@@ -176,7 +187,8 @@ class OnboardingWorker implements Worker {
       await _event(execution, WorkerEventType.workspaceReady);
       execution = await _transition(
         execution,
-        WorkerExecutionStatus.agentExecuting, // reuse status for "running commands"
+        WorkerExecutionStatus
+            .agentExecuting, // reuse status for "running commands"
       );
 
       // 2. Run baseline build
@@ -323,28 +335,34 @@ class OnboardingWorker implements Worker {
       payload: {'phase': phase, 'command': command.join(' ')},
     );
 
-    final result = await Process.run(
-      command.first,
-      command.skip(1).toList(),
-      workingDirectory: workingDirectory,
-      environment: environmentPolicy.resolve(
-        WorkerExecutionRequest(
-          workerExecutionId: execution.workerExecutionId,
-          workItemId: execution.workItemId,
-          repositoryPath: execution.repositoryPath,
-          startingRevision: execution.requestedStartingRevision,
-          requiredCapabilities: execution.requiredCapabilities,
-          role: AgentRole.implementer,
-          instruction: '',
-          timeoutSeconds: timeout.inSeconds,
-          runtimeTypeId: 'onboarding',
-          cleanupPolicy: WorkerCleanupPolicy.removeAlways,
-        ),
-        hostEnv: Platform.environment,
-      ),
-    ).timeout(timeout, onTimeout: () {
-      throw OnboardingPrepareException('$phase command timed out after $timeout');
-    });
+    final result =
+        await Process.run(
+          command.first,
+          command.skip(1).toList(),
+          workingDirectory: workingDirectory,
+          environment: environmentPolicy.resolve(
+            WorkerExecutionRequest(
+              workerExecutionId: execution.workerExecutionId,
+              workItemId: execution.workItemId,
+              repositoryPath: execution.repositoryPath,
+              startingRevision: execution.requestedStartingRevision,
+              requiredCapabilities: execution.requiredCapabilities,
+              role: AgentRole.implementer,
+              instruction: '',
+              timeoutSeconds: timeout.inSeconds,
+              runtimeTypeId: 'onboarding',
+              cleanupPolicy: WorkerCleanupPolicy.removeAlways,
+            ),
+            hostEnv: Platform.environment,
+          ),
+        ).timeout(
+          timeout,
+          onTimeout: () {
+            throw OnboardingPrepareException(
+              '$phase command timed out after $timeout',
+            );
+          },
+        );
 
     if (result.exitCode != 0) {
       throw OnboardingPrepareException(
@@ -439,8 +457,8 @@ class OnboardingWorker implements Worker {
         cleanupStatus == WorkerCleanupStatus.cleanupFailed
             ? WorkerEventType.cleanupFailed
             : finalStatus == WorkerExecutionStatus.executedPass
-                ? WorkerEventType.workspaceCleaned
-                : WorkerEventType.workerReleased,
+            ? WorkerEventType.workspaceCleaned
+            : WorkerEventType.workerReleased,
         payload: {'status': finalStatus.name},
         via: tx,
       );

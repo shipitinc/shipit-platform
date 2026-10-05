@@ -1,0 +1,7 @@
+// Runtime configuration for SHIP IT Control Plane
+// This file is generated at container startup by envsubst from config.js.template
+// Do not edit directly - set CONTROL_PLANE_API environment variable instead
+
+window.SHIPIT_CONFIG = {
+  CONTROL_PLANE_API: "${CONTROL_PLANE_API}"
+};

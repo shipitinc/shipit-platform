@@ -72,8 +72,10 @@ void main() {
         ),
         throwsA(isA<BaselineNotVerifiedException>()),
       );
-      expect((await engine.readProduct('p1')).state,
-          ProductState.baselinePending);
+      expect(
+        (await engine.readProduct('p1')).state,
+        ProductState.baselinePending,
+      );
     });
 
     test("an agent's own claim is not independent verification", () async {
@@ -93,27 +95,29 @@ void main() {
       );
     });
 
-    test('worker verification unlocks the gate and records who attested',
-        () async {
-      final b = await proposeFor('p1');
-      final v = await engine.verifyBaseline(
-        productId: 'p1',
-        baselineId: b.baselineId,
-        verifiedBy: 'worker-7',
-      );
-      expect(v.isIndependentlyVerified, isTrue);
-      expect(v.verifiedBy, 'worker-7');
-      expect(v.verificationKind, EvidenceKind.platformVerifiedEvidence);
+    test(
+      'worker verification unlocks the gate and records who attested',
+      () async {
+        final b = await proposeFor('p1');
+        final v = await engine.verifyBaseline(
+          productId: 'p1',
+          baselineId: b.baselineId,
+          verifiedBy: 'worker-7',
+        );
+        expect(v.isIndependentlyVerified, isTrue);
+        expect(v.verifiedBy, 'worker-7');
+        expect(v.verificationKind, EvidenceKind.platformVerifiedEvidence);
 
-      await engine.requestBaselineApproval(
-        productId: 'p1',
-        baselineId: b.baselineId,
-      );
-      expect(
-        (await engine.readProduct('p1')).state,
-        ProductState.baselineReview,
-      );
-    });
+        await engine.requestBaselineApproval(
+          productId: 'p1',
+          baselineId: b.baselineId,
+        );
+        expect(
+          (await engine.readProduct('p1')).state,
+          ProductState.baselineReview,
+        );
+      },
+    );
   });
 
   group('approval grants governance', () {
@@ -125,8 +129,7 @@ void main() {
       expect(p.state.allowsDispatch, isTrue);
     });
 
-    test('rejecting returns the product to registered, not governed',
-        () async {
+    test('rejecting returns the product to registered, not governed', () async {
       final b = await proposeFor('p1');
       await engine.verifyBaseline(
         productId: 'p1',
@@ -203,8 +206,7 @@ void main() {
       );
     });
 
-    test('re-baselining a governed product does not drop governance',
-        () async {
+    test('re-baselining a governed product does not drop governance', () async {
       await govern('p1');
       await engine.proposeBaseline(productId: 'p1', facts: [_fact()]);
       expect((await engine.readProduct('p1')).state, ProductState.governed);
@@ -241,6 +243,112 @@ void main() {
         updatedAt: DateTime.utc(2026),
       );
       expect(p.toJson()['state'], 'baseline_pending');
+    });
+  });
+
+  group('a baseline that asserts nothing is refused', () {
+    test('proposing zero facts fails closed', () async {
+      await engine.createProduct(productId: 'p1', name: 'P1');
+      expect(
+        () => engine.proposeBaseline(productId: 'p1', facts: const []),
+        throwsA(isA<EmptyBaselineException>()),
+      );
+    });
+
+    test('an empty baseline is refused because its hash would verify', () {
+      // The reason this needs an explicit guard: an empty fact list produces a
+      // perfectly valid content hash, so an empty baseline is independently
+      // verifiable and would otherwise pass the human gate while asserting
+      // nothing.
+      expect(baselineContentHashV3(const []), isNotEmpty);
+    });
+
+    test('the refusal happens before a revision is written', () async {
+      await engine.createProduct(productId: 'p1', name: 'P1');
+      await expectLater(
+        engine.proposeBaseline(productId: 'p1', facts: const []),
+        throwsA(isA<EmptyBaselineException>()),
+      );
+      final p = await engine.readProduct('p1');
+      expect(p.state, ProductState.registered);
+      expect(await engine.readBaselines('p1'), isEmpty);
+    });
+  });
+
+  group('an overtaken candidate cannot be approved', () {
+    test(
+      'an older revision stays refused once a newer one is proposed',
+      () async {
+        await engine.createProduct(productId: 'p1', name: 'P1');
+        final first = await engine.proposeBaseline(
+          productId: 'p1',
+          facts: [_fact()],
+        );
+
+        // A newer revision is proposed while the first is still `proposed`.
+        final second = await engine.proposeBaseline(
+          productId: 'p1',
+          facts: [
+            _fact(),
+            BaselineFact(
+              factId: 'f-2',
+              section: BaselineSectionKey.techStack,
+              claim: 'Dart workspace',
+              provenance: Provenance.observed,
+              maturity: BaselineMaturity.implemented,
+            ),
+          ],
+        );
+        expect(second.revision, greaterThan(first.revision));
+
+        // The older candidate still carries a valid, binding approval decision,
+        // yet approving it must fail closed rather than supersede the newer one.
+        await engine.verifyBaseline(
+          productId: 'p1',
+          baselineId: first.baselineId,
+          verifiedBy: 'worker-test-verifier',
+        );
+        final request = await engine.requestBaselineApproval(
+          productId: 'p1',
+          baselineId: first.baselineId,
+        );
+
+        await expectLater(
+          engine.resolveBaselineApproval(
+            decisionId: request.decisionId,
+            choice: HumanDecisionChoice.approve,
+            decider: 'human-gate',
+            rationale: 'Looks fine',
+            signature: testSignature(),
+          ),
+          throwsA(isA<StaleBaselineApprovalException>()),
+        );
+
+        // The overtaken candidate must remain un-accepted.
+        final stillProposed = await engine.readBaselineRevision(
+          'p1',
+          first.revision,
+        );
+        expect(stillProposed.status, ProductBaselineStatus.proposed);
+        expect(stillProposed.acceptedDecisionId, isNull);
+      },
+    );
+
+    test('the newest revision is still approvable', () async {
+      await engine.createProduct(productId: 'p1', name: 'P1');
+      await engine.proposeBaseline(productId: 'p1', facts: [_fact()]);
+      final newest = await engine.proposeBaseline(
+        productId: 'p1',
+        facts: [_fact(), _fact()],
+      );
+
+      final accepted = await approveBaseline(
+        engine,
+        productId: 'p1',
+        baseline: newest,
+      );
+      expect(accepted.status, ProductBaselineStatus.accepted);
+      expect(accepted.acceptedDecisionId, isNotNull);
     });
   });
 }

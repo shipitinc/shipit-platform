@@ -232,14 +232,16 @@ class DesignGovernanceE2EHost {
   }
 
   Future<AgentExecution?> designerExecution(String workItemId) async {
-    final executions = await executionStore.listExecutions(workItemId: workItemId);
-    return executions
-        .where((e) => e.role == AgentRole.designAgent)
-        .firstOrNull;
+    final executions = await executionStore.listExecutions(
+      workItemId: workItemId,
+    );
+    return executions.where((e) => e.role == AgentRole.designAgent).firstOrNull;
   }
 
   Future<AgentExecution?> reviewerExecution(String workItemId) async {
-    final executions = await executionStore.listExecutions(workItemId: workItemId);
+    final executions = await executionStore.listExecutions(
+      workItemId: workItemId,
+    );
     return executions
         .where((e) => e.role == AgentRole.designReviewer)
         .firstOrNull;
@@ -258,19 +260,18 @@ class DesignGovernanceE2EHost {
   Future<WorkItem> resolveDesignApprovalGate(
     String decisionId, {
     String decider = 'hum@shipit.platform',
-  }) =>
-      workflowEngine.resolveHumanDecision(
-        decisionId: decisionId,
-        choice: HumanDecisionChoice.approve,
-        decider: decider,
-        rationale: 'design governance automation approved the revision',
-        signature: DecisionSignature(
-          algorithm: 'ed25519',
-          publicKey: 'test-public-key',
-          signature: 'sig-approve-$decisionId',
-          signedAt: DateTime.now().toUtc(),
-        ),
-      );
+  }) => workflowEngine.resolveHumanDecision(
+    decisionId: decisionId,
+    choice: HumanDecisionChoice.approve,
+    decider: decider,
+    rationale: 'design governance automation approved the revision',
+    signature: DecisionSignature(
+      algorithm: 'ed25519',
+      publicKey: 'test-public-key',
+      signature: 'sig-approve-$decisionId',
+      signedAt: DateTime.now().toUtc(),
+    ),
+  );
 }
 
 void main() {
@@ -288,11 +289,11 @@ void main() {
   });
 
   Future<DesignGovernanceE2EHost> newHost() => Future.value(
-        DesignGovernanceE2EHost(
-          repo: repo,
-          workspaceRoot: '${temp.path}/workspaces',
-        ),
-      );
+    DesignGovernanceE2EHost(
+      repo: repo,
+      workspaceRoot: '${temp.path}/workspaces',
+    ),
+  );
 
   group('Design Governance E2E', () {
     test('full lifecycle: designRequired -> design job -> designInReview -> '
@@ -310,10 +311,12 @@ void main() {
       expect(designer, isNotNull);
       expect(designer!.status, AgentSessionStatus.completed);
 
-      final revisionJobs =
-          await host.jobStore.listJobsForWorkItem('wi-lifecycle');
-      final revisionJob =
-          revisionJobs.singleWhere((j) => j.jobType == JobType.designRevision);
+      final revisionJobs = await host.jobStore.listJobsForWorkItem(
+        'wi-lifecycle',
+      );
+      final revisionJob = revisionJobs.singleWhere(
+        (j) => j.jobType == JobType.designRevision,
+      );
       expect(revisionJob.state, JobState.succeeded);
 
       await host.enterDesignInReview(
@@ -329,10 +332,12 @@ void main() {
       expect(reviewer!.status, AgentSessionStatus.completed);
       expect(reviewer.executionId, isNot(designer.executionId));
 
-      final reviewJobs =
-          await host.jobStore.listJobsForWorkItem('wi-lifecycle');
-      final reviewJob =
-          reviewJobs.singleWhere((j) => j.jobType == JobType.designReview);
+      final reviewJobs = await host.jobStore.listJobsForWorkItem(
+        'wi-lifecycle',
+      );
+      final reviewJob = reviewJobs.singleWhere(
+        (j) => j.jobType == JobType.designReview,
+      );
       expect(reviewJob.state, JobState.succeeded);
 
       // Review done: re-enter designInReview with the same revision so the
@@ -381,50 +386,56 @@ void main() {
 
       // The review job ran on the reviewer worker (penpotRead + designReview),
       // not on the design worker that produced the revision.
-      final reviewJobs =
-          await host.jobStore.listJobsForWorkItem('wi-independence');
-      final reviewJob =
-          reviewJobs.singleWhere((j) => j.jobType == JobType.designReview);
+      final reviewJobs = await host.jobStore.listJobsForWorkItem(
+        'wi-independence',
+      );
+      final reviewJob = reviewJobs.singleWhere(
+        (j) => j.jobType == JobType.designReview,
+      );
       expect(reviewJob.workerId, 'w-design-reviewer-1');
     });
 
-    test('HIGH tier blocks at the human gate and consumes zero capacity',
-        () async {
-      final host = await newHost();
-      await host.createDesignWorkItem(
-        workItemId: 'wi-high',
-        productId: 'prod-1',
-        title: 'High risk design',
-      );
+    test(
+      'HIGH tier blocks at the human gate and consumes zero capacity',
+      () async {
+        final host = await newHost();
+        await host.createDesignWorkItem(
+          workItemId: 'wi-high',
+          productId: 'prod-1',
+          title: 'High risk design',
+        );
 
-      await host.runDesignRevision('wi-high');
-      await host.enterDesignInReview(
-        'wi-high',
-        designRevisionId: 'DES-R3',
-        designerExecutionId: (await host.designerExecution('wi-high'))!
-            .executionId,
-      );
-      await host.runDesignReview('wi-high');
-      await host.enterDesignInReview(
-        'wi-high',
-        designRevisionId: 'DES-R3',
-        designerExecutionId: (await host.designerExecution('wi-high'))!
-            .executionId,
-      );
+        await host.runDesignRevision('wi-high');
+        await host.enterDesignInReview(
+          'wi-high',
+          designRevisionId: 'DES-R3',
+          designerExecutionId: (await host.designerExecution(
+            'wi-high',
+          ))!.executionId,
+        );
+        await host.runDesignReview('wi-high');
+        await host.enterDesignInReview(
+          'wi-high',
+          designRevisionId: 'DES-R3',
+          designerExecutionId: (await host.designerExecution(
+            'wi-high',
+          ))!.executionId,
+        );
 
-      await host.requestDesignApprovalGate('wi-high');
-      final blocked = await host.workflowEngine.loadWorkItem('wi-high');
-      expect(blocked.state, WorkItemState.waitingForHumanDecision);
+        await host.requestDesignApprovalGate('wi-high');
+        final blocked = await host.workflowEngine.loadWorkItem('wi-high');
+        expect(blocked.state, WorkItemState.waitingForHumanDecision);
 
-      final tick = await host.noopDesignReviewTick();
-      expect(tick.enqueued, isEmpty);
-      expect(tick.dispatched, isEmpty);
+        final tick = await host.noopDesignReviewTick();
+        expect(tick.enqueued, isEmpty);
+        expect(tick.dispatched, isEmpty);
 
-      final jobs = await host.jobStore.listJobsForWorkItem('wi-high');
-      expect(jobs.where((j) => j.state == JobState.running), isEmpty);
-      expect(host.designWorker.isAcquirable, isTrue);
-      expect(host.reviewWorker.isAcquirable, isTrue);
-    });
+        final jobs = await host.jobStore.listJobsForWorkItem('wi-high');
+        expect(jobs.where((j) => j.state == JobState.running), isEmpty);
+        expect(host.designWorker.isAcquirable, isTrue);
+        expect(host.reviewWorker.isAcquirable, isTrue);
+      },
+    );
 
     test('LOW tier auto-routes to designApproved via platform automation '
         '(no human decider needed)', () async {
@@ -439,15 +450,17 @@ void main() {
       await host.enterDesignInReview(
         'wi-low',
         designRevisionId: 'DES-R4',
-        designerExecutionId: (await host.designerExecution('wi-low'))!
-            .executionId,
+        designerExecutionId: (await host.designerExecution(
+          'wi-low',
+        ))!.executionId,
       );
       await host.runDesignReview('wi-low');
       await host.enterDesignInReview(
         'wi-low',
         designRevisionId: 'DES-R4',
-        designerExecutionId: (await host.designerExecution('wi-low'))!
-            .executionId,
+        designerExecutionId: (await host.designerExecution(
+          'wi-low',
+        ))!.executionId,
       );
 
       final gate = await host.requestDesignApprovalGate('wi-low');
@@ -459,8 +472,9 @@ void main() {
       final approved = await host.workflowEngine.loadWorkItem('wi-low');
       expect(approved.state, WorkItemState.designApproved);
 
-      final decisions =
-          await host.workflowStore.readHumanDecisionsForWorkItem('wi-low');
+      final decisions = await host.workflowStore.readHumanDecisionsForWorkItem(
+        'wi-low',
+      );
       final designDecision = decisions.singleWhere(
         (d) => d.decisionType == HumanDecisionType.designApproval,
       );
@@ -481,21 +495,24 @@ void main() {
       await host.enterDesignInReview(
         'wi-restart',
         designRevisionId: 'DES-R5',
-        designerExecutionId: (await host.designerExecution('wi-restart'))!
-            .executionId,
+        designerExecutionId: (await host.designerExecution(
+          'wi-restart',
+        ))!.executionId,
       );
       await host.runDesignReview('wi-restart');
       await host.enterDesignInReview(
         'wi-restart',
         designRevisionId: 'DES-R5',
-        designerExecutionId: (await host.designerExecution('wi-restart'))!
-            .executionId,
+        designerExecutionId: (await host.designerExecution(
+          'wi-restart',
+        ))!.executionId,
       );
 
       final before = await host.workflowEngine.loadWorkItem('wi-restart');
       expect(before.state, WorkItemState.designInReview);
-      final executionsBefore =
-          await host.executionStore.listExecutions(workItemId: 'wi-restart');
+      final executionsBefore = await host.executionStore.listExecutions(
+        workItemId: 'wi-restart',
+      );
       expect(executionsBefore.length, 2);
 
       // Simulate restart: a fresh scheduler and engine wired to the SAME
@@ -531,12 +548,14 @@ void main() {
       expect(tick.enqueued, isEmpty);
 
       final reviewJobs = await host.jobStore.listJobsForWorkItem('wi-restart');
-      final reviewJob =
-          reviewJobs.singleWhere((j) => j.jobType == JobType.designReview);
+      final reviewJob = reviewJobs.singleWhere(
+        (j) => j.jobType == JobType.designReview,
+      );
       expect(reviewJob.state, JobState.succeeded);
 
-      final executions =
-          await host.executionStore.listExecutions(workItemId: 'wi-restart');
+      final executions = await host.executionStore.listExecutions(
+        workItemId: 'wi-restart',
+      );
       expect(executions.length, 2);
     });
   });

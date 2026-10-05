@@ -4,6 +4,8 @@ import 'package:equatable/equatable.dart';
 
 part 'job_execution_reference.g.dart';
 
+const Object _unset = Object();
+
 /// Reference from a scheduled [Job] to the underlying, durably-recorded worker
 /// execution. The chain is WorkItem -> Job -> WorkerExecution -> AgentExecution
 /// -> AgentResult -> PlatformVerification -> artifacts. References never
@@ -27,6 +29,29 @@ class JobExecutionReference extends Equatable {
       _$JobExecutionReferenceFromJson(json);
 
   Map<String, dynamic> toJson() => _$JobExecutionReferenceToJson(this);
+
+  /// The chain is filled in progressively: the scheduler stamps
+  /// [workerExecutionId] when it dispatches (before the worker runs), then
+  /// stamps [agentExecutionId] when it adopts the terminal outcome. Nullable
+  /// links use the same explicit-`null` sentinel as [Job.copyWith], so a link
+  /// that becomes unknown can be cleared rather than silently retained.
+  JobExecutionReference copyWith({
+    String? workerExecutionId,
+    DateTime? createdAt,
+    Object? agentExecutionId = _unset,
+    Object? resultId = _unset,
+  }) {
+    return JobExecutionReference(
+      workerExecutionId: workerExecutionId ?? this.workerExecutionId,
+      createdAt: createdAt ?? this.createdAt,
+      agentExecutionId: identical(agentExecutionId, _unset)
+          ? this.agentExecutionId
+          : agentExecutionId as String?,
+      resultId: identical(resultId, _unset)
+          ? this.resultId
+          : resultId as String?,
+    );
+  }
 
   @override
   List<Object?> get props => [

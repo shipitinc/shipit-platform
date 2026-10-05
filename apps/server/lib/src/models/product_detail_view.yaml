@@ -15,6 +15,11 @@ fields:
   pendingBaseline: ProductBaselineView?
   ### Whether that candidate carries a worker attestation (AGENTS.md §12).
   pendingBaselineVerified: bool
+  ### Decision id of the unresolved baseline-approval gate, when one exists.
+  ### Baseline decisions are scoped to `product-baseline:<productId>` rather
+  ### than a WorkItem row, so the screen cannot discover this id by listing a
+  ### work item's decisions. Absent when no human gate is outstanding.
+  pendingBaselineDecisionId: String?
   allBaselines: List<ProductBaselineView>
   openClarifications: List<ClarificationView>
   ### Active first; revoked ones are retained and still readable.

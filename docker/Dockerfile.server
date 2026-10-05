@@ -1,0 +1,53 @@
+FROM dart:3.12 AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy packages and server app only (exclude Flutter app).
+# COPY sources are relative to the build context, which compose sets to the
+# repository root (`context: ..`). `COPY ../packages/` reads from the PARENT
+# of that context and BuildKit rejects it, so these are context-relative.
+COPY packages/ ./packages/
+COPY apps/server/ ./apps/server/
+COPY pubspec.yaml pubspec.lock ./
+
+# Temporarily remove control_plane from workspace for server build
+RUN sed -i '/apps\/control_plane/d' pubspec.yaml && dart pub get
+
+WORKDIR /app/apps/server
+RUN dart run build_runner build --delete-conflicting-outputs
+
+FROM dart:3.12
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-client curl ca-certificates \
+    && curl -fsSL https://opencode.ai/install | bash \
+    && rm -rf /var/lib/apt/lists/*
+
+# Absolute destination. The original `COPY --from=builder /app ..` resolved `..`
+# against WORKDIR (/app), so it copied the whole tree to `/` instead — the image
+# shipped `/apps/server/bin` and `/packages`, and the CMD then failed with
+# "No such file or directory" for `bin/main.dart`.
+COPY --from=builder /app /app
+COPY --from=builder /root/.pub-cache /root/.pub-cache
+
+WORKDIR /app/apps/server
+RUN dart pub get
+
+# The API port. `config/development.yaml` says 8095, but compose publishes 8080
+# and the client talks to 8080. Serverpod reads SERVERPOD_API_SERVER_PORT from
+# the environment, so the port is fixed here without forking the config file.
+ENV SERVERPOD_API_SERVER_PORT=8080
+ENV PATH=/root/.opencode/bin:$PATH
+
+EXPOSE 8080
+
+# `--apply-migrations` brings the schema up to the generated models. The triage
+# repository is supplied as a volume (see compose.yaml): the server refuses to
+# boot without SHIPIT_TRIAGE_REPOSITORY_PATH pointing at a real git repository.
+CMD ["dart", "bin/main.dart", "--apply-migrations"]

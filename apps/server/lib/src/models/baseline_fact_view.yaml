@@ -8,6 +8,12 @@ fields:
   claim: String
   ### observed | human_provided | derived | assumed | unknown
   provenance: String
+  ### asserted | implemented | policy | not_implemented | unknown
+  ###
+  ### Part of Hash Contract V3, so it is bound to the content hash the human
+  ### approves. A reviewer must be able to tell an implemented fact from an
+  ### assumed one.
+  maturity: String
   evidenceRefs: List<String>
   assumptionNote: String?
   ### True when the claim references a redacted secret placeholder.

@@ -32,10 +32,9 @@ class InMemoryProductRegistryStore implements ProductRegistryStore {
   List<Map<String, dynamic>> snapshotBaselines() =>
       _baselines.values.map((b) => b.toJson()).toList();
 
-  List<Map<String, dynamic>> snapshotBaselineFacts() =>
-      _baselineFacts.entries
-          .expand((e) => e.value.map((f) => {'baselineId': e.key, ...f.toJson()}))
-          .toList();
+  List<Map<String, dynamic>> snapshotBaselineFacts() => _baselineFacts.entries
+      .expand((e) => e.value.map((f) => {'baselineId': e.key, ...f.toJson()}))
+      .toList();
 
   List<Map<String, dynamic>> snapshotPolicies() =>
       _policies.values.map((p) => p.toJson()).toList();
@@ -154,7 +153,6 @@ class InMemoryProductRegistryStore implements ProductRegistryStore {
       .where((r) => r.productId == productId)
       .toList()
       .cast<RepositoryReference>();
-
 
   // ---- Product credentials (ADR 0018) ----
 

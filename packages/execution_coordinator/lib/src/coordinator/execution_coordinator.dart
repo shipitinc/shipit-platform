@@ -6,6 +6,7 @@ import 'package:platform_contracts/platform_contracts.dart';
 import 'package:workflow_store/workflow_store.dart';
 
 import '../store/execution_store.dart';
+import '../store/model_execution_record_store.dart';
 import '../verifier/workspace_verifier.dart';
 
 /// Thrown when [ExecutionCoordinator.execute] is called for an execution that
@@ -59,7 +60,8 @@ class VerificationPlan {
 ///     agent can never assert its own role), runs the platform's independent
 ///     verifier in the workspace, persists the evidence as
 ///     [PlatformVerification], and pushes the work item out of execution.
-///  5. Exposes [reconcileOrphans] for executions stranded by a process exit.
+///  5. Inserts a [ModelExecutionRecord] capturing model usage and cost.
+///  6. Exposes [reconcileOrphans] for executions stranded by a process exit.
 ///
 /// The coordinator is provider-agnostic: runtime selection is the request's
 /// `runtimeTypeId`, never a hardcoded agent.
@@ -70,6 +72,7 @@ class ExecutionCoordinator {
     required this.runtime,
     this.verifier = const WorkspaceVerifier(),
     this.verificationPlan,
+    this.modelExecutionRecordStore,
   });
 
   final ExecutionStore store;
@@ -77,6 +80,7 @@ class ExecutionCoordinator {
   final AgentRuntime runtime;
   final WorkspaceVerifier verifier;
   final VerificationPlan? verificationPlan;
+  final ModelExecutionRecordStore? modelExecutionRecordStore;
 
   static const WorkflowActor _orchestrator = WorkflowActor(
     actorId: 'orchestrator',
@@ -413,6 +417,8 @@ class ExecutionCoordinator {
       },
     );
 
+    await _insertModelExecutionRecord(request, stamped, true, null);
+
     return _Completion(
       status: AgentSessionStatus.completed,
       result: stamped,
@@ -434,28 +440,7 @@ class ExecutionCoordinator {
     AgentResult stamped,
     AgentEvent terminalEvent,
   ) async {
-    final (status, eventType, reason) = switch (terminalEvent) {
-      SessionCancelled(:final reason) => (
-        AgentSessionStatus.cancelled,
-        AgentEventType.executionCancelled,
-        reason,
-      ),
-      SessionInterrupted(:final reason) => (
-        AgentSessionStatus.interrupted,
-        AgentEventType.executionFailed,
-        reason,
-      ),
-      SessionFailed(:final error) => (
-        AgentSessionStatus.failed,
-        AgentEventType.executionFailed,
-        error,
-      ),
-      _ => (
-        AgentSessionStatus.failed,
-        AgentEventType.executionFailed,
-        'unknown',
-      ),
-    };
+    final (status, eventType, reason) = _failureDetails(terminalEvent);
 
     await workflowEngine.transition(
       workItemId: request.workItemId,
@@ -464,6 +449,9 @@ class ExecutionCoordinator {
       actor: _orchestrator,
       context: {'agentResult': stamped, 'reason': reason},
     );
+
+    await _insertModelExecutionRecord(request, stamped, false, reason);
+
     return _Completion(
       status: status,
       result: stamped,
@@ -570,6 +558,31 @@ class ExecutionCoordinator {
     };
   }
 
+  (AgentSessionStatus, AgentEventType, String) _failureDetails(AgentEvent terminalEvent) {
+    return switch (terminalEvent) {
+      SessionCancelled(:final reason) => (
+        AgentSessionStatus.cancelled,
+        AgentEventType.executionCancelled,
+        reason,
+      ),
+      SessionInterrupted(:final reason) => (
+        AgentSessionStatus.interrupted,
+        AgentEventType.executionFailed,
+        reason,
+      ),
+      SessionFailed(:final error) => (
+        AgentSessionStatus.failed,
+        AgentEventType.executionFailed,
+        error,
+      ),
+      _ => (
+        AgentSessionStatus.failed,
+        AgentEventType.executionFailed,
+        'unknown terminal event',
+      ),
+    };
+  }
+
   Future<AgentExecution> _failWithoutSession(
     AgentExecutionRequest request,
     String reason,
@@ -599,6 +612,8 @@ class ExecutionCoordinator {
       // The work item may already be out of execution; the execution record
       // above is the durable source of truth.
     }
+
+    await _insertModelExecutionRecord(request, stamped, false, reason);
 
     final recorded = await store.readExecution(request.executionId);
     final status = AgentSessionStatus.failed;
@@ -664,6 +679,72 @@ class ExecutionCoordinator {
       structuredResult: const {},
       completedAt: DateTime.now(),
     );
+  }
+
+  Future<void> _insertModelExecutionRecord(
+    AgentExecutionRequest request,
+    AgentResult result,
+    bool success,
+    String? error,
+  ) async {
+    final modelExecutionRecordStore = this.modelExecutionRecordStore;
+    if (modelExecutionRecordStore == null) return;
+
+    final metadata = result.metadata ?? {};
+    final usage = metadata['usage'] as Map<String, dynamic>?;
+    final used = (usage?['used'] as num?)?.toInt() ?? 0;
+    final size = (usage?['size'] as num?)?.toInt() ?? 0;
+    final cost = (usage?['cost'] as num?)?.toDouble() ?? 0.0;
+
+    final modelId = (metadata['model'] as String?) ?? 'unknown';
+    final provider = (metadata['provider'] as String?) ?? request.runtimeTypeId;
+    final escalationIndex = (metadata['escalationIndex'] as int?) ?? 0;
+
+    final taskType = _taskTypeFromRole(request.role);
+    final startedAt = result.metadata?['startedAt'] != null
+        ? DateTime.parse(result.metadata!['startedAt'] as String)
+        : DateTime.now().subtract(const Duration(minutes: 5));
+    final finishedAt = DateTime.now();
+
+    final record = ModelExecutionRecord(
+      workItemId: request.workItemId,
+      jobId: request.workItemId,
+      agentExecutionId: request.executionId,
+      role: request.role,
+      modelId: modelId,
+      provider: provider,
+      inputTokens: used,
+      outputTokens: size - used,
+      totalTokens: size,
+      cachedReadTokens: 0,
+      costUsd: cost,
+      currency: 'USD',
+      startedAt: startedAt,
+      finishedAt: finishedAt,
+      success: success,
+      error: error,
+      escalationIndex: escalationIndex,
+      taskType: taskType,
+    );
+
+    await modelExecutionRecordStore.insert(record);
+  }
+
+  String _taskTypeFromRole(AgentRole role) {
+    return switch (role) {
+      AgentRole.triageDefect => 'production',
+      AgentRole.implementer => 'production',
+      AgentRole.correctionImplementer => 'production',
+      AgentRole.integrator => 'production',
+      AgentRole.designAgent => 'designReview',
+      AgentRole.designReviewer => 'designReview',
+      AgentRole.focusedReviewer => 'designReview',
+      AgentRole.engineeringReviewer => 'engineeringReview',
+      AgentRole.qaArchitect => 'architectureReview',
+      AgentRole.qaExecutor => 'qaReview',
+      AgentRole.releaseEngineer => 'production',
+      AgentRole.deploymentAuthority => 'production',
+    };
   }
 
   Future<void> _appendEvent({

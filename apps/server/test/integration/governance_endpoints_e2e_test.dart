@@ -9,29 +9,54 @@ import 'package:test/test.dart';
 
 import 'test_tools/serverpod_test_tools.dart';
 
-const governanceA = 'governance-a';
+const governanceA = 'governance-ep-a';
 
 Future<PersistenceDatabase> _db() async {
   final session = await Serverpod.instance.createSession(enableLogging: false);
   return PersistenceDatabase(session.db);
 }
 
-Future<void> _truncateDurableTables() async {
+/// Removes only this suite's rows, in an order that satisfies foreign keys.
+///
+/// Targeted DELETEs, never a TRUNCATE: `test/integration` shares one database
+/// with files that run concurrently, and truncating `product` out from under
+/// them breaks their assertions. Every statement is scoped to this file's two
+/// fixture Products (`governance-ep-*`), so no other file's row can match —
+/// `governance_wire_e2e_test.dart` names its fixtures `governance-a` /
+/// `governance-b` and the two files would otherwise collide on the unique
+/// Product id. Runs in `setUp` as well as `tearDown`, because a previous run
+/// that aborted mid-test leaves rows behind and re-registering a Product would
+/// then violate a unique constraint.
+Future<void> _purgeSuiteRows() async {
   final db = await _db();
-  await db.queryNoTransaction('''
-    TRUNCATE TABLE
-      "human_decision",
-      "work_item",
-      "standing_policy",
-      "product",
-      "product_baseline",
-      "repository_reference",
-      "baseline_fact",
-      "clarification_request",
-      "product_credential",
-      "product_registry_audit"
-    RESTART IDENTITY CASCADE
-  ''');
+  // `HumanDecision.workItemId` carries the engine's synthetic scope
+  // (`product-baseline:<productId>` and friends); those rows live in
+  // `human_decision`, and the engine never writes a `work_item` row for them.
+  // The `work_item` sweep below is a namespaced no-op kept for defence in
+  // depth.
+  const statements = <String>[
+    'DELETE FROM "baseline_fact" WHERE "baselineId" IN '
+        '(SELECT "baselineId" FROM "product_baseline" '
+        'WHERE "productId" LIKE \'governance-ep-%\')',
+    'DELETE FROM "human_decision" WHERE "workItemId" LIKE '
+        '\'%governance-ep-%\'',
+    'DELETE FROM "work_item" WHERE "workItemId" LIKE \'%governance-ep-%\'',
+    'DELETE FROM "standing_policy" WHERE "productId" LIKE \'governance-ep-%\'',
+    'DELETE FROM "clarification_request" WHERE "productId" LIKE '
+        '\'governance-ep-%\'',
+    'DELETE FROM "onboarding_record" WHERE "productId" LIKE \'governance-ep-%\'',
+    'DELETE FROM "product_registry_audit" WHERE "productId" LIKE '
+        '\'governance-ep-%\'',
+    'DELETE FROM "product_credential" WHERE "productId" LIKE '
+        '\'governance-ep-%\'',
+    'DELETE FROM "product_baseline" WHERE "productId" LIKE \'governance-ep-%\'',
+    'DELETE FROM "repository_reference" WHERE "productId" LIKE '
+        '\'governance-ep-%\'',
+    'DELETE FROM "product" WHERE "productId" LIKE \'governance-ep-%\'',
+  ];
+  for (final statement in statements) {
+    await db.query(statement);
+  }
 }
 
 List<BaselineFact> _facts(String seed) => [
@@ -97,20 +122,20 @@ void main() {
   withServerpod(
     'Governance durable wire round-trip (Postgres)',
     (sessionBuilder, endpoints) {
-      setUp(_truncateDurableTables);
+      setUp(_purgeSuiteRows);
+      tearDown(_purgeSuiteRows);
 
       test(
         'lifecycle decision raised and resolved durably with a real decisionId',
         () async {
           await _governedEngine(productId: governanceA, name: 'A');
-          final request =
-              await endpoints.productRegistryEndpoints
-                  .requestLifecycleDecision(
-                    sessionBuilder,
-                    productId: governanceA,
-                    action: 'pause',
-                    drainInFlight: true,
-                  );
+          final request = await endpoints.productRegistryEndpoints
+              .requestLifecycleDecision(
+                sessionBuilder,
+                productId: governanceA,
+                action: 'pause',
+                drainInFlight: true,
+              );
           expect(request.decisionId, isNotEmpty);
           expect(request.status, 'pending');
           expect(request.decisionType, 'product_decision');
@@ -134,43 +159,45 @@ void main() {
         },
       );
 
-      test('policy authorisation round-trips durably and revokes by decision',
-          () async {
-        await _governedEngine(productId: 'governance-b', name: 'B');
-        final request = await endpoints.productRegistryEndpoints
-            .requestPolicyAuthorisation(
-              sessionBuilder,
-              productId: 'governance-b',
-              actions: ['push'],
-            );
-        expect(request.decisionId, isNotEmpty);
-        expect(request.status, 'pending');
+      test(
+        'policy authorisation round-trips durably and revokes by decision',
+        () async {
+          await _governedEngine(productId: 'governance-ep-b', name: 'B');
+          final request = await endpoints.productRegistryEndpoints
+              .requestPolicyAuthorisation(
+                sessionBuilder,
+                productId: 'governance-ep-b',
+                actions: ['push'],
+              );
+          expect(request.decisionId, isNotEmpty);
+          expect(request.status, 'pending');
 
-        final resolved = await endpoints.productRegistryEndpoints
-            .resolvePolicyAuthorisation(
-              sessionBuilder,
-              decisionId: request.decisionId,
-              choice: 'approve',
-              decider: 'human-gate',
-              rationale: 'standing push policy accepted',
-              signature: _testSignature().signature,
-              publicKey: _testSignature().publicKey,
-              algorithm: _testSignature().algorithm,
-              signedAt: _testSignature().signedAt,
-            );
-        expect(resolved, isNotNull);
-        expect(resolved!.authorisingDecisionId, request.decisionId);
+          final resolved = await endpoints.productRegistryEndpoints
+              .resolvePolicyAuthorisation(
+                sessionBuilder,
+                decisionId: request.decisionId,
+                choice: 'approve',
+                decider: 'human-gate',
+                rationale: 'standing push policy accepted',
+                signature: _testSignature().signature,
+                publicKey: _testSignature().publicKey,
+                algorithm: _testSignature().algorithm,
+                signedAt: _testSignature().signedAt,
+              );
+          expect(resolved, isNotNull);
+          expect(resolved!.authorisingDecisionId, request.decisionId);
 
-        final revoked = await endpoints.productRegistryEndpoints
-            .revokeStandingPolicy(
-              sessionBuilder,
-              productId: 'governance-b',
-              policyId: resolved.policyId,
-              revokedBy: 'human-gate',
-            );
-        expect(revoked.isRevoked, isTrue);
-        expect(revoked.policyId, resolved.policyId);
-      });
+          final revoked = await endpoints.productRegistryEndpoints
+              .revokeStandingPolicy(
+                sessionBuilder,
+                productId: 'governance-ep-b',
+                policyId: resolved.policyId,
+                revokedBy: 'human-gate',
+              );
+          expect(revoked.isRevoked, isTrue);
+          expect(revoked.policyId, resolved.policyId);
+        },
+      );
     },
     rollbackDatabase: RollbackDatabase.disabled,
   );

@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:control_plane_server/src/generated/endpoints.dart';
 import 'package:control_plane_server/src/generated/protocol.dart';
 import 'package:control_plane_server/src/persistence/persistence_database.dart';
@@ -9,7 +7,6 @@ import 'package:control_plane_server/src/persistence/postgres_workflow_store.dar
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:product_registry/product_registry.dart';
 import 'package:serverpod/serverpod.dart';
-import 'package:workflow_store/workflow_store.dart';
 
 Future<PersistenceDatabase> _newTestDb() async {
   final session = await Serverpod.instance.createSession(enableLogging: false);
@@ -67,8 +64,10 @@ void main() async {
 
   // Get the proposed baseline
   final baselines = await engine.readBaselines(productId);
-  final proposed = baselines.firstWhere((b) => b.status == ProductBaselineStatus.proposed);
-  
+  final proposed = baselines.firstWhere(
+    (b) => b.status == ProductBaselineStatus.proposed,
+  );
+
   print('\nBASELINE IDENTITY:');
   print('  baselineId: ${proposed.baselineId}');
   print('  revision: ${proposed.revision}');
@@ -81,7 +80,7 @@ void main() async {
     productId: productId,
     baselineId: proposed.baselineId,
   );
-  
+
   print('  decisionId: ${decision.decisionId}');
   print('  workItemId: ${decision.workItemId}');
   print('  decisionType: ${decision.decisionType.wire}');

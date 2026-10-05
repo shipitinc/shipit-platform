@@ -1,0 +1,41 @@
+class: DefectRow
+table: defect
+serverOnly: true
+indexes:
+  defect_id_unique:
+    fields: defectId
+    unique: true
+  defect_status_idx:
+    fields: status
+  defect_classification_idx:
+    fields: classification
+  defect_reporter_idx:
+    fields: reporter
+  defect_affected_work_item_idx:
+    fields: affectedWorkItemId
+  defect_triage_job_idx:
+    fields: currentTriageJobId
+fields:
+  id: int?
+  defectId: String
+  title: String
+  description: String
+  expectedBehavior: String?
+  reproductionSteps: String?
+  severity: String
+  status: String
+  classification: String?
+  reporter: String
+  productId: String?
+  affectedWorkItemId: String?
+  affectedRunId: String?
+  remediationWorkItemId: String?
+  duplicateOfDefectId: String?
+  currentTriageJobId: String?
+  clientContextJson: String?
+  metadataJson: String?
+  createdAt: DateTime
+  updatedAt: DateTime
+  resolvedAt: DateTime?
+  closedAt: DateTime?
+  version: int

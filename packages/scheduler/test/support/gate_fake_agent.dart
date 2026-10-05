@@ -354,7 +354,6 @@ class HangingFakeAgentSession implements AgentSession {
   Future<void> close() async {}
 }
 
-
 /// Adapter for the hanging fake agent session.
 class HangingFakeAgentAdapter implements AgentAdapter {
   HangingFakeAgentAdapter(this._session);

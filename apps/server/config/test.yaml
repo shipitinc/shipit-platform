@@ -26,10 +26,10 @@ webServer:
 # This is the database setup for your test server.
 database:
   host: localhost
-  port: 9090
+  port: 9099
   name: control_plane_test
   user: postgres
-  #maxConnectionCount: 10 # Defaults to 10, a negative or null value removes the limit
+  password: control_plane_test_pw
 
 # No Redis: the control plane does not use Redis.
 redis:

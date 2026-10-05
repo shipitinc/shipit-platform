@@ -88,14 +88,8 @@ void main() {
           evidenceRefs: ['README.md'],
         ),
       ];
-      expect(
-        baselineContentHashV3(facts),
-        isNot(baselineContentHashV2(facts)),
-      );
-      expect(
-        baselineContentHashV3(facts),
-        isNot(baselineContentHash(facts)),
-      );
+      expect(baselineContentHashV3(facts), isNot(baselineContentHashV2(facts)));
+      expect(baselineContentHashV3(facts), isNot(baselineContentHash(facts)));
     });
   });
 }

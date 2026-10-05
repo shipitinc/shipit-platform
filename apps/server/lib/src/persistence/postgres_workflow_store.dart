@@ -259,6 +259,8 @@ class PostgresWorkflowStore implements WorkflowStore {
 
   WorkItem _workItemFromRow(DatabaseResultRow row) {
     final m = row.toColumnMap();
+    final metadata =
+        decodeJsonMap(m['metadataJson'] as String?) ?? <String, dynamic>{};
     return WorkItem.fromJson({
       'workItemId': m['workItemId'],
       'productId': m['productId'],
@@ -274,7 +276,7 @@ class PostgresWorkflowStore implements WorkflowStore {
       'blockingHumanDecisionId': m['blockingHumanDecisionId'],
       'blockingReason': m['blockingReason'],
       'artifactRefs': decodeJsonArray(m['artifactRefsJson'] as String?),
-      'metadata': decodeJsonMap(m['metadataJson'] as String?),
+      'metadata': metadata,
       'createdAt': decodeUtc(m['createdAt'])?.toIso8601String(),
       'updatedAt': decodeUtc(m['updatedAt'])?.toIso8601String(),
       'completedAt': decodeUtc(m['completedAt'])?.toIso8601String(),

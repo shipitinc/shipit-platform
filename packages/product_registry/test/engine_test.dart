@@ -207,10 +207,7 @@ void main() {
         facts: [fact()],
       );
       expect(b.contentHashVersion, 3);
-      expect(
-        b.contentHash,
-        baselineContentHashV3(b.facts),
-      );
+      expect(b.contentHash, baselineContentHashV3(b.facts));
     });
 
     test(
@@ -301,30 +298,33 @@ void main() {
       },
     );
 
-    test('BASELINE_APPROVAL_REQUEST_IDEMPOTENCY: no duplicate pending gate', () async {
-      await engine.createProduct(productId: 'shipit', name: 'ShipIt');
-      final b = await engine.proposeBaseline(
-        productId: 'shipit',
-        facts: [fact()],
-      );
-      await engine.verifyBaseline(
-        productId: 'shipit',
-        baselineId: b.baselineId,
-        verifiedBy: 'worker-test-verifier',
-      );
-      final first = await engine.requestBaselineApproval(
-        productId: 'shipit',
-        baselineId: b.baselineId,
-      );
-      final second = await engine.requestBaselineApproval(
-        productId: 'shipit',
-        baselineId: b.baselineId,
-      );
-      expect(first.decisionId, second.decisionId);
-      final pending = await decisions.readHumanDecisionsForScope(
-        BaselineApprovalBinding.scopeFor('shipit'),
-      );
-      expect(pending.where((d) => !d.status.isResolved).length, 1);
-    });
+    test(
+      'BASELINE_APPROVAL_REQUEST_IDEMPOTENCY: no duplicate pending gate',
+      () async {
+        await engine.createProduct(productId: 'shipit', name: 'ShipIt');
+        final b = await engine.proposeBaseline(
+          productId: 'shipit',
+          facts: [fact()],
+        );
+        await engine.verifyBaseline(
+          productId: 'shipit',
+          baselineId: b.baselineId,
+          verifiedBy: 'worker-test-verifier',
+        );
+        final first = await engine.requestBaselineApproval(
+          productId: 'shipit',
+          baselineId: b.baselineId,
+        );
+        final second = await engine.requestBaselineApproval(
+          productId: 'shipit',
+          baselineId: b.baselineId,
+        );
+        expect(first.decisionId, second.decisionId);
+        final pending = await decisions.readHumanDecisionsForScope(
+          BaselineApprovalBinding.scopeFor('shipit'),
+        );
+        expect(pending.where((d) => !d.status.isResolved).length, 1);
+      },
+    );
   });
 }

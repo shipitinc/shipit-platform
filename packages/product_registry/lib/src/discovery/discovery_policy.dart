@@ -27,15 +27,51 @@ class DiscoveryPolicy {
 /// Redacts secret-shaped content before it can be ingested. The value itself
 /// is never retained (checkpoint 006 §discovery safety).
 class Redactor {
+  /// `[^=\n;]*` rather than `[^=]*`: the character class must not cross a
+  /// newline. Allowing it to did — a heading containing the word "credentials"
+  /// matched everything down to the next `=` on a later line and replaced the
+  /// whole span, corrupting documents that merely mention the word.
   static final RegExp _assignmentPattern = RegExp(
     r'((?:p[a-z_]*|api_?|access_?|client_?|refresh_?)?a?token|password|'
     r'passwd|secret|client_?secret|api_key|apikey|private_?key|access_?key|'
-    r'authorization|credentials)[^=]*=[^,\n;]*',
+    r'authorization|credentials)[^=\n;]*=[^,\n;]*',
     caseSensitive: false,
   );
   static final RegExp _privateKeyPattern = RegExp(
     r'-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END .*PRIVATE KEY-----',
   );
+
+  /// Extensions that indicate a stored value rather than prose or source.
+  static const _dataExtensions = {
+    '.json',
+    '.yaml',
+    '.yml',
+    '.ini',
+    '.conf',
+    '.cfg',
+    '.toml',
+    '.txt',
+    '.env',
+    '.properties',
+  };
+
+  /// True when [lowerPath] names a file that plausibly HOLDS credentials.
+  ///
+  /// Matching `credentials` anywhere in the path was too loose: it classified
+  /// `docs/adr/0018-git-credentials.md` and `credential_status.dart` as
+  /// credential stores, so a document *about* credentials was never read and
+  /// never contributed a claim. This now matches on the file's own name and
+  /// requires a data extension, so stores (`credentials.json`, `.credentials`)
+  /// are still refused while documentation and source are read normally.
+  static bool _isCredentialStore(String lowerPath) {
+    final base = lowerPath.split('/').last;
+    if (!base.contains('credential')) return false;
+    if (!base.contains('.')) return true; // a bare `credentials` file
+    for (final ext in _dataExtensions) {
+      if (base.endsWith(ext)) return true;
+    }
+    return false;
+  }
 
   static bool looksSecretShaped(String lowerPath) {
     return lowerPath.contains('.env') ||
@@ -45,7 +81,7 @@ class Redactor {
         lowerPath.endsWith('.pfx') ||
         lowerPath.contains('id_rsa') ||
         lowerPath.contains('id_ed25519') ||
-        lowerPath.contains('credentials') ||
+        _isCredentialStore(lowerPath) ||
         lowerPath.endsWith('secret.yaml') ||
         lowerPath.endsWith('.gpg') ||
         lowerPath.endsWith('.keystore');

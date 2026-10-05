@@ -18,18 +18,62 @@ Future<PersistenceDatabase> _newDb() async {
   return PersistenceDatabase(session.db);
 }
 
-Future<void> _truncateProductTables() async {
+/// Removes only this suite's rows, in an order that satisfies foreign keys.
+///
+/// Targeted DELETEs, never a TRUNCATE: `test/integration` shares one database
+/// with files that run concurrently, and truncating `product` out from under
+/// them breaks their assertions. Every statement is scoped to this file's two
+/// fixture Products (`multi-*-fixture`) and their synthetic decision scopes,
+/// so no other file's row can match. Runs in `setUp` as well as `tearDown`,
+/// because a previous run that aborted mid-test leaves rows behind and
+/// re-registering a Product would then violate a unique constraint.
+Future<void> _purgeSuiteRows() async {
   final db = await _newDb();
-  await db.queryNoTransaction('''
-    TRUNCATE TABLE
-      "product",
-      "repository_reference",
-      "product_baseline",
-      "clarification_request",
-      "onboarding_record",
-      "human_decision"
-    RESTART IDENTITY CASCADE
-  ''');
+  const statements = <String>[
+    'DELETE FROM "baseline_fact" WHERE "baselineId" IN '
+        '(SELECT "baselineId" FROM "product_baseline" WHERE "productId" IN '
+        '(\'multi-a-fixture\', \'multi-b-fixture\'))',
+    'DELETE FROM "human_decision" WHERE "workItemId" LIKE \'%multi-%-fixture\'',
+    'DELETE FROM "standing_policy" WHERE "productId" IN '
+        '(\'multi-a-fixture\', \'multi-b-fixture\')',
+    'DELETE FROM "clarification_request" WHERE "productId" IN '
+        '(\'multi-a-fixture\', \'multi-b-fixture\')',
+    'DELETE FROM "onboarding_record" WHERE "productId" IN '
+        '(\'multi-a-fixture\', \'multi-b-fixture\')',
+    'DELETE FROM "product_registry_audit" WHERE "productId" IN '
+        '(\'multi-a-fixture\', \'multi-b-fixture\')',
+    'DELETE FROM "product_credential" WHERE "productId" IN '
+        '(\'multi-a-fixture\', \'multi-b-fixture\')',
+    'DELETE FROM "product_baseline" WHERE "productId" IN '
+        '(\'multi-a-fixture\', \'multi-b-fixture\')',
+    'DELETE FROM "repository_reference" WHERE "productId" IN '
+        '(\'multi-a-fixture\', \'multi-b-fixture\')',
+    'DELETE FROM "product" WHERE "productId" IN '
+        '(\'multi-a-fixture\', \'multi-b-fixture\')',
+  ];
+  for (final statement in statements) {
+    await db.query(statement);
+  }
+}
+
+/// Narrows a [ProductRegistryStore]'s product listing to the fixture Products
+/// this suite owns.
+///
+/// TEST ISOLATION, not production: `readAllProducts` is a global read and
+/// `test/integration` shares one database with files that run concurrently, so
+/// an unscoped read here would count other files' Products and break the
+/// exact-count assertion. Only the listing is narrowed — every other call
+/// still goes to the real [PostgresProductRegistryStore].
+class _ScopedProductRegistryStore extends PostgresProductRegistryStore {
+  _ScopedProductRegistryStore(super.db, this._owned);
+
+  final Set<String> _owned;
+
+  @override
+  Future<List<Product>> readAllProducts() async =>
+      (await super.readAllProducts())
+          .where((product) => _owned.contains(product.productId))
+          .toList();
 }
 
 const productA = 'multi-a-fixture';
@@ -58,7 +102,7 @@ Future<ProductRegistryEngine> _engine() async {
   final workflowStore = PostgresWorkflowStore(db);
   final decisions = PostgresHumanDecisionStore(workflowStore);
   return ProductRegistryEngine(
-    store: PostgresProductRegistryStore(db),
+    store: _ScopedProductRegistryStore(db, const {productA, productB}),
     humanDecisionStore: decisions,
   );
 }
@@ -93,7 +137,8 @@ void main() {
   withServerpod(
     'S-1 multi-product registry isolation (Postgres)',
     (sessionBuilder, endpoints) {
-      setUp(_truncateProductTables);
+      setUp(_purgeSuiteRows);
+      tearDown(_purgeSuiteRows);
 
       late ProductRegistryEngine engine;
 

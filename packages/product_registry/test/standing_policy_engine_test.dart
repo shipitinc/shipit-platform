@@ -48,24 +48,23 @@ void main() {
   }
 
   group('creating a policy is itself gated', () {
-    test('the request is a blocking decision, and creates nothing yet',
-        () async {
-      await govern('p1');
-      final req = await engine.requestPolicyAuthorisation(
-        productId: 'p1',
-        actions: const [PolicyAction.push],
-      );
-      expect(req.status, HumanDecisionStatus.pending);
-      expect(req.blocking, isTrue);
-      expect(await engine.readPolicies('p1'), isEmpty);
-    });
+    test(
+      'the request is a blocking decision, and creates nothing yet',
+      () async {
+        await govern('p1');
+        final req = await engine.requestPolicyAuthorisation(
+          productId: 'p1',
+          actions: const [PolicyAction.push],
+        );
+        expect(req.status, HumanDecisionStatus.pending);
+        expect(req.blocking, isTrue);
+        expect(await engine.readPolicies('p1'), isEmpty);
+      },
+    );
 
     test('declining records the decision but authorises nothing', () async {
       await govern('p1');
-      final policy = await authorise(
-        'p1',
-        choice: HumanDecisionChoice.reject,
-      );
+      final policy = await authorise('p1', choice: HumanDecisionChoice.reject);
       expect(policy, isNull);
       expect(await engine.readPolicies('p1'), isEmpty);
       expect(
@@ -77,15 +76,17 @@ void main() {
       );
     });
 
-    test('approving creates a policy citing the decision that made it',
-        () async {
-      await govern('p1');
-      final policy = (await authorise('p1'))!;
-      expect(policy.authorisedBy, 'operator');
-      expect(policy.rationale, contains('31 of 31'));
-      expect(policy.authorisingDecisionId, isNotEmpty);
-      expect(policy.actions, [PolicyAction.push, PolicyAction.merge]);
-    });
+    test(
+      'approving creates a policy citing the decision that made it',
+      () async {
+        await govern('p1');
+        final policy = (await authorise('p1'))!;
+        expect(policy.authorisedBy, 'operator');
+        expect(policy.rationale, contains('31 of 31'));
+        expect(policy.authorisingDecisionId, isNotEmpty);
+        expect(policy.actions, [PolicyAction.push, PolicyAction.merge]);
+      },
+    );
 
     test('a policy must record why it was authorised', () async {
       await govern('p1');
@@ -174,8 +175,7 @@ void main() {
         decisionId: (await engine.requestLifecycleDecision(
           productId: 'p1',
           action: ProductLifecycleAction.pause,
-        ))
-            .decisionId,
+        )).decisionId,
         choice: HumanDecisionChoice.approve,
         decider: 'operator',
         rationale: 'stopping for now',
@@ -247,7 +247,10 @@ void main() {
   group('no two live policies over one scope', () {
     test('authorising again supersedes the previous policy', () async {
       await govern('p1');
-      final first = (await authorise('p1', actions: const [PolicyAction.push]))!;
+      final first = (await authorise(
+        'p1',
+        actions: const [PolicyAction.push],
+      ))!;
       final second = (await authorise(
         'p1',
         actions: const [PolicyAction.push, PolicyAction.merge],
@@ -263,30 +266,34 @@ void main() {
       expect(live.single.policyId, second.policyId);
     });
 
-    test('replaying a resolved authorisation returns the same policy',
-        () async {
-      await govern('p1');
-      final req = await engine.requestPolicyAuthorisation(
-        productId: 'p1',
-        actions: const [PolicyAction.push],
-      );
-      final a = await engine.resolvePolicyAuthorisation(
-        decisionId: req.decisionId,
-        choice: HumanDecisionChoice.approve,
-        decider: 'operator',
-        rationale: 'first',
-        signature: testSignature(),
-      );
-      final b = await engine.resolvePolicyAuthorisation(
-        decisionId: req.decisionId,
-        choice: HumanDecisionChoice.reject,
-        decider: 'someone-else',
-        rationale: 'trying to flip it',
-        signature: testSignature(),
-      );
-      expect(b!.policyId, a!.policyId);
-      expect((await engine.readPolicies('p1')).where((p) => !p.isRevoked),
-          hasLength(1));
-    });
+    test(
+      'replaying a resolved authorisation returns the same policy',
+      () async {
+        await govern('p1');
+        final req = await engine.requestPolicyAuthorisation(
+          productId: 'p1',
+          actions: const [PolicyAction.push],
+        );
+        final a = await engine.resolvePolicyAuthorisation(
+          decisionId: req.decisionId,
+          choice: HumanDecisionChoice.approve,
+          decider: 'operator',
+          rationale: 'first',
+          signature: testSignature(),
+        );
+        final b = await engine.resolvePolicyAuthorisation(
+          decisionId: req.decisionId,
+          choice: HumanDecisionChoice.reject,
+          decider: 'someone-else',
+          rationale: 'trying to flip it',
+          signature: testSignature(),
+        );
+        expect(b!.policyId, a!.policyId);
+        expect(
+          (await engine.readPolicies('p1')).where((p) => !p.isRevoked),
+          hasLength(1),
+        );
+      },
+    );
   });
 }

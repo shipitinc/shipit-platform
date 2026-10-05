@@ -1,0 +1,212 @@
+{
+  "contractId": "QA-CONTRACT-LOCAL-DEPLOY-001",
+  "version": "1.0.0",
+  "designContractRef": "9B40FC6F-DAC4-4869-A44D-A212D0A4D069",
+  "status": "FROZEN",
+  "frozenAt": "2026-10-04T00:00:00Z",
+  "frozenBy": "qa-architect",
+  "acceptanceCriteria": [
+    {
+      "id": "AC-01",
+      "description": "docker compose -f docker/compose.qa.yaml up --build starts full stack successfully",
+      "traceability": ["SC-01", "SC-02", "SC-03", "SC-04"],
+      "testMethod": "automated",
+      "evidenceType": "compose-up-log",
+      "required": true
+    },
+    {
+      "id": "AC-02",
+      "description": "Client at http://localhost:8081 loads and communicates with server via /api/ proxy",
+      "traceability": ["SC-01", "SC-02"],
+      "testMethod": "automated",
+      "evidenceType": "http-response",
+      "required": true
+    },
+    {
+      "id": "AC-03",
+      "description": "CONTROL_PLANE_API configurable via environment variable at container start",
+      "traceability": ["SC-01"],
+      "testMethod": "automated",
+      "evidenceType": "env-var-validation",
+      "required": true
+    },
+    {
+      "id": "AC-04",
+      "description": "Nginx proxy_pass target configurable via API_UPSTREAM environment variable",
+      "traceability": ["SC-02"],
+      "testMethod": "automated",
+      "evidenceType": "nginx-config-validation",
+      "required": true
+    },
+    {
+      "id": "AC-05",
+      "description": "docker compose -f docker/compose.e2e.yaml up --build --abort-on-container-exit runs test suite",
+      "traceability": ["SC-03", "SC-05"],
+      "testMethod": "automated",
+      "evidenceType": "compose-test-log",
+      "required": true
+    },
+    {
+      "id": "AC-06",
+      "description": "Production deployment steps removed from WORKFLOW.md (steps 32-38)",
+      "traceability": ["SC-06"],
+      "testMethod": "automated",
+      "evidenceType": "workflow-diff",
+      "required": true
+    },
+    {
+      "id": "AC-07",
+      "description": "cloudbuild.release.yaml archived to cloudbuild.release.yaml.archive or removed",
+      "traceability": ["SC-06"],
+      "testMethod": "automated",
+      "evidenceType": "file-existence",
+      "required": true
+    },
+    {
+      "id": "AC-08",
+      "description": "cloudbuild.yaml modified to only build/push images (no deploy steps)",
+      "traceability": ["SC-06"],
+      "testMethod": "automated",
+      "evidenceType": "cloudbuild-diff",
+      "required": true
+    },
+    {
+      "id": "AC-09",
+      "description": "Documentation created for both environments",
+      "traceability": ["SC-07"],
+      "testMethod": "automated",
+      "evidenceType": "doc-existence",
+      "required": true
+    },
+    {
+      "id": "AC-10",
+      "description": "Client container runs standalone with docker run -e CONTROL_PLANE_API=... -e API_UPSTREAM=...",
+      "traceability": ["SC-08", "SC-09"],
+      "testMethod": "automated",
+      "evidenceType": "standalone-run-log",
+      "required": true
+    },
+    {
+      "id": "AC-11",
+      "description": "Worker-linux profile still functional in both compose files",
+      "traceability": ["C-05"],
+      "testMethod": "automated",
+      "evidenceType": "profile-validation",
+      "required": true
+    }
+  ],
+  "testStrategy": {
+    "unit": [],
+    "integration": [
+      {
+        "name": "QA Compose Stack Validation",
+        "description": "Validate compose.qa.yaml starts all services and they become healthy",
+        "command": "docker compose -f docker/compose.qa.yaml up --build --wait",
+        "timeout": 120,
+        "successCriteria": "All services report healthy; no errors in logs"
+      },
+      {
+        "name": "E2E Compose Stack Validation",
+        "description": "Validate compose.e2e.yaml starts stack and runs integration tests",
+        "command": "docker compose -f docker/compose.e2e.yaml up --build --abort-on-container-exit --exit-code-from test-runner",
+        "timeout": 300,
+        "successCriteria": "Test runner exits with code 0; test results produced"
+      },
+      {
+        "name": "Runtime Config Validation",
+        "description": "Verify CONTROL_PLANE_API and API_UPSTREAM are configurable at runtime",
+        "command": "docker run --rm -e CONTROL_PLANE_API=http://test:8080/api/ -e API_UPSTREAM=test:8080 <client-image> /bin/sh -c 'cat /usr/share/nginx/html/config.js | grep CONTROL_PLANE_API'",
+        "timeout": 30,
+        "successCriteria": "Config values reflect environment variables"
+      },
+      {
+        "name": "Standalone Client Validation",
+        "description": "Verify client container works standalone with external API",
+        "command": "docker run -d --name client-standalone -p 8081:8081 -e CONTROL_PLANE_API=http://host.docker.internal:8080/api/ -e API_UPSTREAM=host.docker.internal:8080 <client-image> && sleep 5 && curl -f http://localhost:8081/ && curl -f http://localhost:8081/api/health",
+        "timeout": 60,
+        "successCriteria": "Both endpoints return 200 OK"
+      },
+      {
+        "name": "Nginx Config Validation",
+        "description": "Verify nginx proxy_pass uses API_UPSTREAM env var",
+        "command": "docker run --rm -e API_UPSTREAM=custom:8080 <client-image> /bin/sh -c 'cat /etc/nginx/conf.d/default.conf | grep proxy_pass'",
+        "timeout": 30,
+        "successCriteria": "proxy_pass contains 'custom:8080'"
+      },
+      {
+        "name": "Worker Profile Validation",
+        "description": "Verify worker-linux profile works in both compose files",
+        "command": "docker compose -f docker/compose.qa.yaml --profile workers config && docker compose -f docker/compose.e2e.yaml --profile workers config",
+        "timeout": 30,
+        "successCriteria": "Both configs include worker-linux service"
+      }
+    ],
+    "e2e": [
+      {
+        "name": "Full Local QA Flow",
+        "description": "End-to-end manual QA flow: start stack, access UI, verify API calls work",
+        "manual": true,
+        "steps": [
+          "docker compose -f docker/compose.qa.yaml up -d",
+          "Wait for all services healthy",
+          "Open http://localhost:8081 in browser",
+          "Navigate to Products page",
+          "Verify API calls succeed via DevTools Network tab",
+          "docker compose -f docker/compose.qa.yaml down -v"
+        ]
+      },
+      {
+        "name": "Full E2E Integration Flow",
+        "description": "End-to-end automated test flow",
+        "command": "docker compose -f docker/compose.e2e.yaml up --build --abort-on-container-exit --exit-code-from test-runner",
+        "timeout": 300,
+        "successCriteria": "Test runner exits 0; test artifacts produced"
+      }
+    ],
+    "visual": [],
+    "human": [
+      {
+        "name": "Local QA Developer Experience",
+        "description": "Developer can start QA stack, iterate on client code, and tear down cleanly",
+        "criteria": [
+          "Stack starts in < 60s cold / < 10s warm",
+          "Client rebuild + restart < 30s",
+          "No manual config editing required",
+          "Clear error messages on port conflicts"
+        ]
+      }
+    ]
+  },
+  "evidenceStandards": {
+    "requiredEvidence": [
+      "Compose up logs (stdout/stderr) for QA and E2E stacks",
+      "HTTP response captures for client health and API proxy endpoints",
+      "Environment variable validation outputs",
+      "Nginx configuration dumps showing runtime substitution",
+      "File existence proofs for documentation and archived cloudbuild",
+      "WORKFLOW.md diff showing production steps removed",
+      "Cloudbuild.yaml diff showing deploy steps removed",
+      "Worker profile config validation output"
+    ],
+    "evidenceRetention": "CI artifacts retained for 30 days; local evidence in .evidence/ directory",
+    "revisionPinning": "All evidence tied to git SHA at time of test execution"
+  },
+  "regressionRequirements": [
+    "Any change to compose files must re-run AC-01 and AC-05",
+    "Any change to Dockerfile.client must re-run AC-03, AC-04, AC-10",
+    "Any change to nginx.conf must re-run AC-04",
+    "Any change to WORKFLOW.md must re-verify AC-06",
+    "Any change to cloudbuild files must re-verify AC-07, AC-08",
+    "New compose profiles must verify AC-11",
+    "Flutter version upgrades must re-verify all ACs"
+  ],
+  "validationCommands": [
+    "docker compose -f docker/compose.qa.yaml config",
+    "docker compose -f docker/compose.e2e.yaml config",
+    "docker compose -f docker/compose.qa.yaml up --build --wait --timeout 120",
+    "docker compose -f docker/compose.e2e.yaml up --build --abort-on-container-exit --timeout 300",
+    "curl -f http://localhost:8081/ && curl -f http://localhost:8081/api/health",
+    "diff WORKFLOW.md.baseline WORKFLOW.md | grep -E '(staging|production|deploy)'",
+    "test -f docs/deployment/local-qa.md && test -f docs/deployment/e2e-integration.md"
+  ]
+}

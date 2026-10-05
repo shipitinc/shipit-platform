@@ -1,0 +1,17 @@
+class: QaReviewResultRow
+table: qa_review_result
+serverOnly: true
+fields:
+  reviewExecutionId: String
+  revisionId: String
+  verdict: String
+  findingsJson: String
+  assessedDimensionsJson: String
+  reviewScopeJson: String?
+  createdAt: DateTime
+  version: int
+indexes:
+  qa_review_result_revision:
+    fields: revisionId
+  qa_review_result_verdict:
+    fields: verdict

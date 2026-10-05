@@ -52,6 +52,25 @@ class GuardConditions {
 
   static GuardCondition<WorkItemState> decisionActorIsHuman() =>
       _DecisionActorIsHumanGuard();
+
+  /// Validates that the escalation index is within the allowed maximum.
+  ///
+  /// The max escalation is derived from the ModelPolicy chain length for the
+  /// relevant agent role. If no policy exists or the chain is empty, escalation
+  /// is unlimited (falls back to the fallback model).
+  static GuardCondition<WorkItemState> escalationIndexWithinLimit({
+    required int maxEscalation,
+  }) => _EscalationIndexWithinLimitGuard(maxEscalation);
+
+  /// Validates that the escalation index is within the allowed maximum, but
+  /// only for specific decision types that trigger escalation.
+  ///
+  /// This guard reads the decision type from context and only applies the
+  /// limit check when the decision type is in [escalationDecisionTypes].
+  static GuardCondition<WorkItemState>
+  escalationIndexWithinLimitForDecisionTypes({
+    required Set<HumanDecisionType> escalationDecisionTypes,
+  }) => _ConditionalEscalationIndexGuard(escalationDecisionTypes);
 }
 
 WorkflowActor? _actorOf(Map<String, dynamic>? context) =>
@@ -436,5 +455,64 @@ class _DecisionActorIsHumanGuard extends GuardCondition<WorkItemState> {
             name,
             'A resolved decision must be signed by a human decider',
           );
+  }
+}
+
+class _EscalationIndexWithinLimitGuard extends GuardCondition<WorkItemState> {
+  _EscalationIndexWithinLimitGuard(this.maxEscalation);
+
+  final int maxEscalation;
+
+  @override
+  String get name => 'escalation_index_within_limit';
+
+  @override
+  GuardResult evaluate(
+    WorkflowState<WorkItemState> from,
+    WorkflowState<WorkItemState> to,
+    Map<String, dynamic>? context,
+  ) {
+    final currentIndex = context?['escalationIndex'] as int? ?? 0;
+    final nextIndex = currentIndex + 1;
+    if (maxEscalation >= 0 && nextIndex > maxEscalation) {
+      return GuardResult.fail(
+        name,
+        'Escalation index $nextIndex exceeds maximum allowed $maxEscalation',
+      );
+    }
+    return GuardResult.pass(name);
+  }
+}
+
+class _ConditionalEscalationIndexGuard extends GuardCondition<WorkItemState> {
+  _ConditionalEscalationIndexGuard(this.escalationDecisionTypes);
+
+  final Set<HumanDecisionType> escalationDecisionTypes;
+
+  @override
+  String get name => 'escalation_index_within_limit';
+
+  @override
+  GuardResult evaluate(
+    WorkflowState<WorkItemState> from,
+    WorkflowState<WorkItemState> to,
+    Map<String, dynamic>? context,
+  ) {
+    final decision = _decisionOf(context);
+    if (decision == null ||
+        decision.choice == null ||
+        !escalationDecisionTypes.contains(decision.decisionType)) {
+      return GuardResult.pass(name);
+    }
+    final currentIndex = context?['escalationIndex'] as int? ?? 0;
+    final maxEscalation = context?['maxEscalation'] as int? ?? -1;
+    final nextIndex = currentIndex + 1;
+    if (maxEscalation >= 0 && nextIndex > maxEscalation) {
+      return GuardResult.fail(
+        name,
+        'Escalation index $nextIndex exceeds maximum allowed $maxEscalation',
+      );
+    }
+    return GuardResult.pass(name);
   }
 }

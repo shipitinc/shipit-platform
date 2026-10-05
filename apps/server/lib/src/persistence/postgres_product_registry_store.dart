@@ -168,7 +168,6 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
     return result.map(_repositoryFromRow).toList();
   }
 
-
   // ---------------------------------------------------------------------
   // ProductCredential (ADR 0018 A1 — one per repository, no key material)
   // Table: product_credential
@@ -179,19 +178,22 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
     RepositoryCredential credential, {
     int? expectedVersion,
   }) async {
-    const cols = '"credentialId", "productId", "repositoryId", '
+    const cols =
+        '"credentialId", "productId", "repositoryId", '
         '"referenceName", "publicKey", "fingerprint", "algorithm", "status", '
         '"createdAt", "lastVerifiedAt", "lastVerifiedBy", "lastFailureReason", '
         '"hostKeyStatus", "host", "hostKeyFingerprint", "hostConfirmedAt", '
         '"hostConfirmedBy", "revokedAt", "revokedReason", '
         '"supersedesCredentialId", "version"';
-    const vals = '@credentialId, @productId, @repositoryId, @referenceName, '
+    const vals =
+        '@credentialId, @productId, @repositoryId, @referenceName, '
         '@publicKey, @fingerprint, @algorithm, @status, @createdAt, '
         '@lastVerifiedAt, @lastVerifiedBy, @lastFailureReason, '
         '@hostKeyStatus, @host, @hostKeyFingerprint, @hostConfirmedAt, '
         '@hostConfirmedBy, @revokedAt, @revokedReason, '
         '@supersedesCredentialId, @version';
-    const assignments = '"productId" = @productId, '
+    const assignments =
+        '"productId" = @productId, '
         '"repositoryId" = @repositoryId, "referenceName" = @referenceName, '
         '"publicKey" = @publicKey, "fingerprint" = @fingerprint, '
         '"algorithm" = @algorithm, "status" = @status, '
@@ -331,7 +333,6 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
     });
   }
 
-
   // ---------------------------------------------------------------------
   // StandingPolicy (ADR 0019)
   // ---------------------------------------------------------------------
@@ -341,15 +342,18 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
     StandingPolicy policy, {
     int? expectedVersion,
   }) async {
-    const cols = '"policyId", "productId", "actionsJson", '
+    const cols =
+        '"policyId", "productId", "actionsJson", '
         '"authorisingDecisionId", "authorisedBy", "rationale", '
         '"authorisedAt", "revokedAt", "revokedBy", "revocationDecisionId", '
         '"revocationReason", "version"';
-    const vals = '@policyId, @productId, @actionsJson, '
+    const vals =
+        '@policyId, @productId, @actionsJson, '
         '@authorisingDecisionId, @authorisedBy, @rationale, @authorisedAt, '
         '@revokedAt, @revokedBy, @revocationDecisionId, @revocationReason, '
         '@version';
-    const assignments = '"productId" = @productId, '
+    const assignments =
+        '"productId" = @productId, '
         '"actionsJson" = @actionsJson, '
         '"authorisingDecisionId" = @authorisingDecisionId, '
         '"authorisedBy" = @authorisedBy, "rationale" = @rationale, '
@@ -627,7 +631,9 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
           'claim': json['claim'],
           'provenance': json['provenance'],
           'maturity': json['maturity'],
-          'evidenceRefsJson': PersistenceDatabase.encodeJson(json['evidenceRefs']),
+          'evidenceRefsJson': PersistenceDatabase.encodeJson(
+            json['evidenceRefs'],
+          ),
           'assumptionNote': json['assumptionNote'],
           'redacted': json['redacted'] ?? false,
           'version': 1,
@@ -654,7 +660,8 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
       'claim': m['claim'],
       'provenance': m['provenance'],
       'maturity': m['maturity'],
-      'evidenceRefs': decodeJsonArray(m['evidenceRefsJson'] as String?) ?? const [],
+      'evidenceRefs':
+          decodeJsonArray(m['evidenceRefsJson'] as String?) ?? const [],
       'assumptionNote': m['assumptionNote'],
       'redacted': m['redacted'] ?? false,
     });

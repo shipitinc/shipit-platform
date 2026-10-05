@@ -60,10 +60,7 @@ class DesignRevision extends Equatable {
     toJson: _$designRevisionStatusToJson,
   )
   final DesignRevisionStatus status;
-  @JsonKey(
-    fromJson: _$designRiskTierFromJson,
-    toJson: _$designRiskTierToJson,
-  )
+  @JsonKey(fromJson: _$designRiskTierFromJson, toJson: _$designRiskTierToJson)
   final DesignRiskTier riskTier;
   @JsonKey(includeIfNull: false)
   final Map<String, dynamic>? reviewScopeJson;
@@ -84,30 +81,30 @@ class DesignRevision extends Equatable {
 
   @override
   List<Object?> get props => [
-        revisionId,
-        workItemId,
-        productId,
-        parentRevisionId,
-        designSystemRevision,
-        provider,
-        penpotFileId,
-        penpotPageId,
-        boardIdsJson,
-        responsiveTargetsJson,
-        statesRepresentedJson,
-        artifactRefsJson,
-        designerExecutionId,
-        reviewExecutionIdsJson,
-        status,
-        riskTier,
-        reviewScopeJson,
-        carriedForwardFromRevisionId,
-        supersededByRevisionId,
-        createdAt,
-        updatedAt,
-        approvedAt,
-        version,
-      ];
+    revisionId,
+    workItemId,
+    productId,
+    parentRevisionId,
+    designSystemRevision,
+    provider,
+    penpotFileId,
+    penpotPageId,
+    boardIdsJson,
+    responsiveTargetsJson,
+    statesRepresentedJson,
+    artifactRefsJson,
+    designerExecutionId,
+    reviewExecutionIdsJson,
+    status,
+    riskTier,
+    reviewScopeJson,
+    carriedForwardFromRevisionId,
+    supersededByRevisionId,
+    createdAt,
+    updatedAt,
+    approvedAt,
+    version,
+  ];
 }
 
 DesignProviderType _$designProviderTypeFromJson(String value) =>

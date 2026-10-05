@@ -66,6 +66,9 @@ HumanDecision _resolvedDecision({
 
 void main() {
   _escalationRouting();
+  _escalationTransitions();
+  _escalationRoutingMethods();
+
   group('WorkItemTransitions', () {
     late WorkflowEngine engine;
 
@@ -771,9 +774,6 @@ void main() {
   });
 }
 
-/// Escalations are failure gates: a run that stopped with an error and was
-/// handed to a human. Before these routes existed, answering one recorded the
-/// decision but left the work item parked at its gate forever.
 void _escalationRouting() {
   group('Escalation outcomes', () {
     test('resume routes an escalation back into execution', () {
@@ -820,6 +820,367 @@ void _escalationRouting() {
         );
         expect(target, isNotNull, reason: 'no route for $choice');
       }
+    });
+  });
+}
+
+void _escalationTransitions() {
+  group('Escalation transitions (review gate rejection/rework)', () {
+    late WorkflowEngine engine;
+
+    setUp(() {
+      engine = const WorkflowEngine();
+    });
+
+    HumanDecision _resolvedDecision({
+      required HumanDecisionType type,
+      required HumanDecisionChoice choice,
+      String workItemId = _workItemId,
+      String? decider = 'alice@example.com',
+    }) {
+      final resolvedAt = DateTime.parse('2024-01-02T12:00:00Z');
+      return HumanDecision(
+        decisionId: 'dec-resolved-1',
+        workItemId: workItemId,
+        decisionType: type,
+        status: HumanDecisionStatus.resolved,
+        question: 'Question?',
+        decider: decider,
+        choice: choice,
+        rationale: 'because',
+        timestamp: resolvedAt,
+        signature: DecisionSignature(
+          algorithm: 'Ed25519',
+          publicKey: 'key',
+          signature: 'sig',
+          signedAt: resolvedAt,
+        ),
+        context: DecisionContext(
+          workflowState: 'waiting_for_human_decision',
+          availableOptions: const [],
+        ),
+        requestedAt: DateTime.parse('2024-01-01T10:00:00Z'),
+        updatedAt: resolvedAt,
+      );
+    }
+
+    Transition<WorkItemState> eval(
+      WorkItemState from,
+      WorkItemState to, {
+      TransitionTrigger trigger = TransitionTrigger.humanDecision,
+      WorkflowActor actor = _orch,
+      Map<String, dynamic> context = const {},
+    }) {
+      return engine.evaluateWorkItemTransition(
+        from: from,
+        to: to,
+        trigger: trigger,
+        actor: actor,
+        context: context,
+      );
+    }
+
+    test(
+      'engineeringReview reject -> agentExecuting is legal with escalation index',
+      () {
+        final decision = _resolvedDecision(
+          type: HumanDecisionType.engineeringReview,
+          choice: HumanDecisionChoice.reject,
+        );
+        final transition = eval(
+          WorkItemState.waitingForHumanDecision,
+          WorkItemState.agentExecuting,
+          context: {
+            'humanDecision': decision,
+            'workItemId': _workItemId,
+            'escalationIndex': 0,
+            'maxEscalation': 3,
+          },
+        );
+        expect(transition.isValid, isTrue);
+      },
+    );
+
+    test(
+      'engineeringReview rework -> agentExecuting is legal with escalation index',
+      () {
+        final decision = _resolvedDecision(
+          type: HumanDecisionType.engineeringReview,
+          choice: HumanDecisionChoice.rework,
+        );
+        final transition = eval(
+          WorkItemState.waitingForHumanDecision,
+          WorkItemState.agentExecuting,
+          context: {
+            'humanDecision': decision,
+            'workItemId': _workItemId,
+            'escalationIndex': 0,
+            'maxEscalation': 3,
+          },
+        );
+        expect(transition.isValid, isTrue);
+      },
+    );
+
+    test(
+      'designApproval reject -> designInReview is legal with escalation index',
+      () {
+        final decision = _resolvedDecision(
+          type: HumanDecisionType.designApproval,
+          choice: HumanDecisionChoice.reject,
+        );
+        final transition = eval(
+          WorkItemState.waitingForHumanDecision,
+          WorkItemState.designInReview,
+          context: {
+            'humanDecision': decision,
+            'workItemId': _workItemId,
+            'escalationIndex': 0,
+            'maxEscalation': 3,
+          },
+        );
+        expect(transition.isValid, isTrue);
+      },
+    );
+
+    test(
+      'designApproval rework -> designInReview is legal with escalation index',
+      () {
+        final decision = _resolvedDecision(
+          type: HumanDecisionType.designApproval,
+          choice: HumanDecisionChoice.rework,
+        );
+        final transition = eval(
+          WorkItemState.waitingForHumanDecision,
+          WorkItemState.designInReview,
+          context: {
+            'humanDecision': decision,
+            'workItemId': _workItemId,
+            'escalationIndex': 0,
+            'maxEscalation': 3,
+          },
+        );
+        expect(transition.isValid, isTrue);
+      },
+    );
+
+    test(
+      'humanQaApproval reject -> agentExecuting is legal with escalation index',
+      () {
+        final decision = _resolvedDecision(
+          type: HumanDecisionType.humanQaApproval,
+          choice: HumanDecisionChoice.reject,
+        );
+        final transition = eval(
+          WorkItemState.waitingForHumanDecision,
+          WorkItemState.agentExecuting,
+          context: {
+            'humanDecision': decision,
+            'workItemId': _workItemId,
+            'escalationIndex': 0,
+            'maxEscalation': 3,
+          },
+        );
+        expect(transition.isValid, isTrue);
+      },
+    );
+
+    test('escalation index limit exceeded rejects transition', () {
+      final decision = _resolvedDecision(
+        type: HumanDecisionType.engineeringReview,
+        choice: HumanDecisionChoice.reject,
+      );
+      final transition = eval(
+        WorkItemState.waitingForHumanDecision,
+        WorkItemState.agentExecuting,
+        context: {
+          'humanDecision': decision,
+          'workItemId': _workItemId,
+          'escalationIndex': 3,
+          'maxEscalation': 3,
+        },
+      );
+      expect(transition.isValid, isFalse);
+      expect(
+        transition.failedGuards,
+        contains('escalation_index_within_limit'),
+      );
+    });
+
+    test(
+      'engineeringReview approve does not require escalation index check',
+      () {
+        final decision = _resolvedDecision(
+          type: HumanDecisionType.engineeringReview,
+          choice: HumanDecisionChoice.approve,
+        );
+        final transition = eval(
+          WorkItemState.waitingForHumanDecision,
+          WorkItemState.reviewApproved,
+          context: {
+            'humanDecision': decision,
+            'workItemId': _workItemId,
+            'escalationIndex': 0,
+            'maxEscalation': 0,
+          },
+        );
+        expect(transition.isValid, isTrue);
+      },
+    );
+
+    test('designApproval approve does not require escalation index check', () {
+      final decision = _resolvedDecision(
+        type: HumanDecisionType.designApproval,
+        choice: HumanDecisionChoice.approve,
+      );
+      final transition = eval(
+        WorkItemState.waitingForHumanDecision,
+        WorkItemState.designApproved,
+        context: {
+          'humanDecision': decision,
+          'workItemId': _workItemId,
+          'escalationIndex': 0,
+          'maxEscalation': 0,
+        },
+      );
+      expect(transition.isValid, isTrue);
+    });
+  });
+}
+
+void _escalationRoutingMethods() {
+  group('HumanDecisionRouting escalationTargetFor', () {
+    test('returns correct target for engineeringReview reject/rework', () {
+      expect(
+        HumanDecisionRouting.escalationTargetFor(
+          HumanDecisionType.engineeringReview,
+          HumanDecisionChoice.reject,
+        ),
+        WorkItemState.agentExecuting,
+      );
+      expect(
+        HumanDecisionRouting.escalationTargetFor(
+          HumanDecisionType.engineeringReview,
+          HumanDecisionChoice.rework,
+        ),
+        WorkItemState.agentExecuting,
+      );
+    });
+
+    test('returns correct target for designApproval reject/rework', () {
+      expect(
+        HumanDecisionRouting.escalationTargetFor(
+          HumanDecisionType.designApproval,
+          HumanDecisionChoice.reject,
+        ),
+        WorkItemState.designInReview,
+      );
+      expect(
+        HumanDecisionRouting.escalationTargetFor(
+          HumanDecisionType.designApproval,
+          HumanDecisionChoice.rework,
+        ),
+        WorkItemState.designInReview,
+      );
+    });
+
+    test('returns correct target for humanQaApproval reject/rework', () {
+      expect(
+        HumanDecisionRouting.escalationTargetFor(
+          HumanDecisionType.humanQaApproval,
+          HumanDecisionChoice.reject,
+        ),
+        WorkItemState.agentExecuting,
+      );
+      expect(
+        HumanDecisionRouting.escalationTargetFor(
+          HumanDecisionType.humanQaApproval,
+          HumanDecisionChoice.rework,
+        ),
+        WorkItemState.agentExecuting,
+      );
+    });
+
+    test('returns null for non-escalation choices', () {
+      expect(
+        HumanDecisionRouting.escalationTargetFor(
+          HumanDecisionType.engineeringReview,
+          HumanDecisionChoice.approve,
+        ),
+        isNull,
+      );
+      expect(
+        HumanDecisionRouting.escalationTargetFor(
+          HumanDecisionType.designApproval,
+          HumanDecisionChoice.approve,
+        ),
+        isNull,
+      );
+    });
+
+    test('returns null for non-review decision types', () {
+      expect(
+        HumanDecisionRouting.escalationTargetFor(
+          HumanDecisionType.qaWaiver,
+          HumanDecisionChoice.reject,
+        ),
+        isNull,
+      );
+      expect(
+        HumanDecisionRouting.escalationTargetFor(
+          HumanDecisionType.deploymentApproval,
+          HumanDecisionChoice.reject,
+        ),
+        isNull,
+      );
+    });
+  });
+
+  group('HumanDecisionRouting routesToEscalation', () {
+    test('returns true for escalation targets', () {
+      expect(
+        HumanDecisionRouting.routesToEscalation(
+          HumanDecisionType.engineeringReview,
+          HumanDecisionChoice.reject,
+          WorkItemState.agentExecuting,
+        ),
+        isTrue,
+      );
+      expect(
+        HumanDecisionRouting.routesToEscalation(
+          HumanDecisionType.designApproval,
+          HumanDecisionChoice.rework,
+          WorkItemState.designInReview,
+        ),
+        isTrue,
+      );
+      expect(
+        HumanDecisionRouting.routesToEscalation(
+          HumanDecisionType.humanQaApproval,
+          HumanDecisionChoice.reject,
+          WorkItemState.agentExecuting,
+        ),
+        isTrue,
+      );
+    });
+
+    test('returns false for non-escalation targets', () {
+      expect(
+        HumanDecisionRouting.routesToEscalation(
+          HumanDecisionType.engineeringReview,
+          HumanDecisionChoice.approve,
+          WorkItemState.reviewApproved,
+        ),
+        isFalse,
+      );
+      expect(
+        HumanDecisionRouting.routesToEscalation(
+          HumanDecisionType.designApproval,
+          HumanDecisionChoice.approve,
+          WorkItemState.designApproved,
+        ),
+        isFalse,
+      );
     });
   });
 }

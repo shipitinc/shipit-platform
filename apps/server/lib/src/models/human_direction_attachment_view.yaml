@@ -1,0 +1,5 @@
+class: HumanDirectionAttachmentView
+fields:
+  artifactId: String
+  artifactType: String
+  description: String?

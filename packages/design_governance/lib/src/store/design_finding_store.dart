@@ -11,10 +11,14 @@ abstract interface class DesignFindingStore extends DesignGovernanceStoreBase {
   Future<List<DesignFinding>> readDesignFindingsForRevision(String revisionId);
 
   /// Reads all design findings for a specific review execution.
-  Future<List<DesignFinding>> readDesignFindingsForReviewExecution(String reviewExecutionId);
+  Future<List<DesignFinding>> readDesignFindingsForReviewExecution(
+    String reviewExecutionId,
+  );
 
   /// Reads all unresolved design findings for a revision.
-  Future<List<DesignFinding>> readUnresolvedFindingsForRevision(String revisionId);
+  Future<List<DesignFinding>> readUnresolvedFindingsForRevision(
+    String revisionId,
+  );
 
   /// Reads design findings resolved by a specific revision.
   Future<List<DesignFinding>> readFindingsResolvedByRevision(String revisionId);
@@ -25,5 +29,8 @@ abstract interface class DesignFindingStore extends DesignGovernanceStoreBase {
   Future<void> saveDesignFinding(DesignFinding finding, {int? expectedVersion});
 
   /// Finds a design finding by idempotency key for idempotent creation.
-  Future<DesignFinding?> findDesignFindingByIdempotencyKey(String revisionId, String idempotencyKey);
+  Future<DesignFinding?> findDesignFindingByIdempotencyKey(
+    String revisionId,
+    String idempotencyKey,
+  );
 }

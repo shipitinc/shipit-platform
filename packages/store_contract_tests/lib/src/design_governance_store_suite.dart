@@ -29,13 +29,19 @@ void runDesignGovernanceStoreSuite({
       final store = await createStore();
       final revision = buildDesignRevision();
       await store.saveDesignRevision(revision);
-      await store.saveDesignRevision(revision, expectedVersion: revision.version);
+      await store.saveDesignRevision(
+        revision,
+        expectedVersion: revision.version,
+      );
 
       final updated = buildDesignRevision(
         status: DesignRevisionStatus.inReview,
         version: revision.version + 1,
       );
-      await store.saveDesignRevision(updated, expectedVersion: revision.version);
+      await store.saveDesignRevision(
+        updated,
+        expectedVersion: revision.version,
+      );
 
       final loaded = await store.readDesignRevision(kRevisionId);
       expect(loaded.status, DesignRevisionStatus.inReview);
@@ -70,44 +76,53 @@ void runDesignGovernanceStoreSuite({
       final store = await createStore();
       final rev1 = buildDesignRevision(status: DesignRevisionStatus.approved);
       await store.saveDesignRevision(rev1);
-      
-      final approved = await store.readApprovedDesignRevisionForWorkItem(kWorkItemId);
+
+      final approved = await store.readApprovedDesignRevisionForWorkItem(
+        kWorkItemId,
+      );
       expect(approved, isNotNull);
       expect(approved!.revisionId, kRevisionId);
-      
+
       // Second approved revision for same work item should fail at DB level
       // In-memory store doesn't enforce this, but Postgres does
     });
 
     test('design revision lineage traversal', () async {
       final store = await createStore();
-      final root = buildDesignRevision(revisionId: 'DES-R001', parentRevisionId: null);
+      final root = buildDesignRevision(
+        revisionId: 'DES-R001',
+        parentRevisionId: null,
+      );
       await store.saveDesignRevision(root);
-      
+
       final child = buildDesignRevision(
         revisionId: 'DES-R002',
         parentRevisionId: 'DES-R001',
       );
       await store.saveDesignRevision(child);
-      
+
       final grandchild = buildDesignRevision(
         revisionId: 'DES-R003',
         parentRevisionId: 'DES-R002',
       );
       await store.saveDesignRevision(grandchild);
-      
+
       final lineage = await store.getLineage('DES-R003');
-      expect(lineage.map((r) => r.revisionId), ['DES-R001', 'DES-R002', 'DES-R003']);
+      expect(lineage.map((r) => r.revisionId), [
+        'DES-R001',
+        'DES-R002',
+        'DES-R003',
+      ]);
     });
 
     test('design review results round-trip with CAS', () async {
       final store = await createStore();
       final result = buildDesignReviewResult();
-      
+
       await store.saveDesignReviewResult(result, expectedVersion: 0);
       final loaded = await store.readDesignReviewResult(kReviewExecutionId);
       expect(loaded, result);
-      
+
       expect(
         () => store.readDesignReviewResult('missing'),
         throwsA(isA<DesignReviewResultNotFoundException>()),
@@ -124,18 +139,20 @@ void runDesignGovernanceStoreSuite({
           verdict: DesignReviewVerdict.changesRequired,
         ),
       );
-      final forRevision = await store.readDesignReviewResultsForRevision(kRevisionId);
+      final forRevision = await store.readDesignReviewResultsForRevision(
+        kRevisionId,
+      );
       expect(forRevision.length, 2);
     });
 
     test('design findings round-trip with CAS', () async {
       final store = await createStore();
       final finding = buildDesignFinding();
-      
+
       await store.saveDesignFinding(finding, expectedVersion: 0);
       final loaded = await store.readDesignFinding(kFindingId);
       expect(loaded, finding);
-      
+
       expect(
         () => store.readDesignFinding('missing'),
         throwsA(isA<DesignFindingNotFoundException>()),
@@ -152,28 +169,42 @@ void runDesignGovernanceStoreSuite({
           category: DesignFindingCategory.accessibility,
         ),
       );
-      
-      final forRevision = await store.readDesignFindingsForRevision(kRevisionId);
+
+      final forRevision = await store.readDesignFindingsForRevision(
+        kRevisionId,
+      );
       expect(forRevision.length, 2);
-      
-      final forExecution = await store.readDesignFindingsForReviewExecution(kReviewExecutionId);
+
+      final forExecution = await store.readDesignFindingsForReviewExecution(
+        kReviewExecutionId,
+      );
       expect(forExecution.length, 1);
       expect(forExecution.first.findingId, kFindingId);
     });
 
     test('unresolved and resolved findings queries', () async {
       final store = await createStore();
-      final unresolved = buildDesignFinding(findingId: 'FD-001', resolvedByRevisionId: null);
-      final resolved = buildDesignFinding(findingId: 'FD-002', resolvedByRevisionId: 'DES-R002');
-      
+      final unresolved = buildDesignFinding(
+        findingId: 'FD-001',
+        resolvedByRevisionId: null,
+      );
+      final resolved = buildDesignFinding(
+        findingId: 'FD-002',
+        resolvedByRevisionId: 'DES-R002',
+      );
+
       await store.saveDesignFinding(unresolved);
       await store.saveDesignFinding(resolved);
-      
-      final unresolvedList = await store.readUnresolvedFindingsForRevision(kRevisionId);
+
+      final unresolvedList = await store.readUnresolvedFindingsForRevision(
+        kRevisionId,
+      );
       expect(unresolvedList.length, 1);
       expect(unresolvedList.first.findingId, 'FD-001');
-      
-      final resolvedList = await store.readFindingsResolvedByRevision('DES-R002');
+
+      final resolvedList = await store.readFindingsResolvedByRevision(
+        'DES-R002',
+      );
       expect(resolvedList.length, 1);
       expect(resolvedList.first.findingId, 'FD-002');
     });
@@ -181,8 +212,10 @@ void runDesignGovernanceStoreSuite({
     test('design revision events are append-only and ordered', () async {
       final store = await createStore();
       await store.appendEvent(buildDesignRevisionEvent(sequence: 1));
-      await store.appendEvent(buildDesignRevisionEvent(eventId: 'evt-2', sequence: 2));
-      
+      await store.appendEvent(
+        buildDesignRevisionEvent(eventId: 'evt-2', sequence: 2),
+      );
+
       final events = await store.readEventsForRevision(kRevisionId);
       expect(events.length, 2);
       expect(events.map((e) => e.sequence), [1, 2]);
@@ -191,13 +224,17 @@ void runDesignGovernanceStoreSuite({
     test('events after sequence and last event queries', () async {
       final store = await createStore();
       await store.appendEvent(buildDesignRevisionEvent(sequence: 1));
-      await store.appendEvent(buildDesignRevisionEvent(eventId: 'evt-2', sequence: 2));
-      await store.appendEvent(buildDesignRevisionEvent(eventId: 'evt-3', sequence: 3));
-      
+      await store.appendEvent(
+        buildDesignRevisionEvent(eventId: 'evt-2', sequence: 2),
+      );
+      await store.appendEvent(
+        buildDesignRevisionEvent(eventId: 'evt-3', sequence: 3),
+      );
+
       final afterSeq1 = await store.readEventsAfterSequence(kRevisionId, 1);
       expect(afterSeq1.length, 2);
       expect(afterSeq1.map((e) => e.sequence), [2, 3]);
-      
+
       final lastEvent = await store.readLastEventForRevision(kRevisionId);
       expect(lastEvent?.sequence, 3);
     });
@@ -208,7 +245,10 @@ void runDesignGovernanceStoreSuite({
         await tx.saveDesignRevision(buildDesignRevision());
         await tx.appendEvent(buildDesignRevisionEvent());
       });
-      expect(await store.readDesignRevision(kRevisionId), buildDesignRevision());
+      expect(
+        await store.readDesignRevision(kRevisionId),
+        buildDesignRevision(),
+      );
       expect((await store.readEventsForRevision(kRevisionId)).length, 1);
     });
   });

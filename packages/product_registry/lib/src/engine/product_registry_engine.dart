@@ -84,11 +84,15 @@ class ProductRegistryEngine {
 
     final rejection = ProductTransitions.explainRejection(from, to);
     if (rejection != null) {
-      throw ProductLifecycleException('cannot transition $productId: $rejection');
+      throw ProductLifecycleException(
+        'cannot transition $productId: $rejection',
+      );
     }
 
     final required = ProductTransitions.requiredGuards(from, to);
-    final missing = required.where((g) => !satisfiedGuards.contains(g)).toList();
+    final missing = required
+        .where((g) => !satisfiedGuards.contains(g))
+        .toList();
     if (missing.isNotEmpty) {
       throw ProductLifecycleException(
         'cannot transition $productId from ${from.wire} to ${to.wire}: '
@@ -181,7 +185,6 @@ class ProductRegistryEngine {
   // ---------------------------------------------------------------------
   // Baseline lifecycle
   // ---------------------------------------------------------------------
-
 
   // ---------------------------------------------------------------------
   // Product lifecycle (ProductTransitions is the single source of policy)
@@ -290,6 +293,19 @@ class ProductRegistryEngine {
     DateTime? now,
   }) async {
     await _store.readProduct(productId);
+
+    // A baseline with no facts is not a weak baseline, it is a meaningless
+    // one. `baselineContentHashV3([])` is a perfectly valid hash, so an empty
+    // baseline is independently verifiable and would sail through the human
+    // gate while asserting nothing at all — leaving a "governed" Product with
+    // no understanding to govern against. Refuse it at the boundary.
+    if (facts.isEmpty) {
+      throw EmptyBaselineException(
+        'refusing to propose a baseline for $productId with zero facts; an '
+        'empty baseline asserts nothing while remaining verifiable',
+      );
+    }
+
     final revision = await _store.nextBaselineRevision(productId);
     final accepted = await _store.readBaselineByRevision(
       productId,
@@ -430,6 +446,25 @@ class ProductRegistryEngine {
       );
     }
 
+    // A candidate that a newer revision has overtaken is stale, even while it
+    // still carries `proposed`. Without this, approving an old revision would
+    // succeed and supersede the newer one — which is how an empty early
+    // baseline can be approved after a populated one replaced it. Only a
+    // human reviewing the newest revision may govern the Product.
+    final overtaken = (await _store.readBaselinesForProduct(
+      productId,
+    )).where((b) => b.revision > baseline.revision).toList();
+    if (overtaken.isNotEmpty) {
+      final newest = overtaken.reduce(
+        (a, b) => a.revision >= b.revision ? a : b,
+      );
+      throw StaleBaselineApprovalException(
+        'baseline $baselineId (revision ${baseline.revision}) has been '
+        'overtaken by ${newest.baselineId} (revision ${newest.revision}); '
+        'approval decision $approvalDecisionId is stale',
+      );
+    }
+
     final t = now ?? decision.timestamp!;
     final accepted = baseline.copyWith(
       status: ProductBaselineStatus.accepted,
@@ -466,6 +501,113 @@ class ProductRegistryEngine {
       await _store.saveOnboarding(done);
     }
     return accepted;
+  }
+
+  /// Appends an operator-authored claim to a still-`proposed` baseline.
+  ///
+  /// No scanner can derive domain understanding — what a product is *for* only
+  /// the operator knows. This is where those claims enter the durable record,
+  /// and they are stored as [Provenance.humanProvided] so a reviewer can always
+  /// tell an authored claim from a scraped one.
+  ///
+  /// The operator may specify [maturity] explicitly (e.g. implemented, policy,
+  /// notImplemented). If omitted, the claim is recorded as `unknown` pending
+  /// human review.
+  ///
+  /// Amending a baseline changes its content hash, which is exactly what an
+  /// outstanding approval decision is bound to. So any unresolved decision for
+  /// this baseline is **cancelled** — not resolved, because nobody approved or
+  /// rejected anything — and a fresh gate is opened against the new hash. A
+  /// decision that silently kept its old binding would let an operator approve
+  /// content they never saw.
+  Future<ProductBaseline> addHumanBaselineClaim({
+    required String productId,
+    required String baselineId,
+    required BaselineSectionKey section,
+    required String claim,
+    required String author,
+    List<String> evidenceRefs = const [],
+    BaselineMaturity? maturity,
+    DateTime? now,
+  }) async {
+    final trimmed = claim.trim();
+    if (trimmed.isEmpty) {
+      throw BaselineAmendmentException(
+        'a baseline claim cannot be empty; an empty claim asserts nothing',
+      );
+    }
+    if (author.trim().isEmpty) {
+      throw BaselineAmendmentException(
+        'a human-authored claim must record who authored it',
+      );
+    }
+
+    final baseline = await _store.readBaseline(baselineId);
+    _ensureOwned(productId, baseline.productId, 'baseline $baselineId');
+    if (baseline.status != ProductBaselineStatus.proposed) {
+      throw BaselineAmendmentException(
+        'baseline $baselineId is ${baseline.status.wire}; only a proposed '
+        'baseline can be amended before approval',
+      );
+    }
+
+    final t = now ?? DateTime.now().toUtc();
+    final fact = BaselineFact(
+      factId: 'human-${baseline.baselineId}-${baseline.facts.length + 1}',
+      section: section,
+      claim: trimmed,
+      // Authored, not observed: a reviewer must be able to tell the two apart.
+      provenance: Provenance.humanProvided,
+      // Operator may specify explicit maturity; otherwise unknown pending review.
+      maturity: maturity ?? BaselineMaturity.unknown,
+      evidenceRefs:
+          evidenceRefs.isEmpty ? ['authored by $author'] : evidenceRefs,
+      assumptionNote: 'Authored by $author on '
+          '${t.toIso8601String().split('T').first}. Not machine-verified.',
+    );
+    final facts = <BaselineFact>[...baseline.facts, fact];
+    final updated = baseline.copyWith(
+      facts: facts,
+      // Must move with the facts: an approval is bound to this exact hash.
+      contentHash: baselineContentHashV3(facts),
+      // The candidate is no longer the artefact the attestation described, so
+      // the attestation is dropped and has to be re-established.
+      verifiedAt: null,
+      verifiedBy: null,
+      verificationKind: null,
+      updatedAt: t,
+      version: baseline.version + 1,
+    );
+    await _store.saveBaseline(updated, expectedVersion: baseline.version);
+
+    // Cancel, never resolve: nobody approved or rejected anything. Leaving the
+    // gate open would let an operator approve content they never saw, and
+    // resolving it would fabricate a human choice that never happened.
+    final scope = BaselineApprovalBinding.scopeFor(productId);
+    for (final decision in await _decisions.readHumanDecisionsForScope(scope)) {
+      final binding = BaselineApprovalBinding.tryFromMetadata(decision.metadata);
+      if (binding == null ||
+          binding.baselineId != baselineId ||
+          decision.status.isResolved) {
+        continue;
+      }
+      await _decisions.saveHumanDecision(
+        decision.copyWith(
+          status: HumanDecisionStatus.cancelled,
+          updatedAt: t,
+          metadata: <String, dynamic>{
+            ...?decision.metadata,
+            'cancelled_reason':
+                'Baseline amended, so this decision\'s content-hash binding '
+                    'no longer describes the candidate. No human choice was '
+                    'recorded.',
+            'cancelled_at': t.toIso8601String(),
+          },
+        ),
+      );
+    }
+
+    return updated;
   }
 
   Future<ProductBaseline> readBaselineRevision(
@@ -748,8 +890,6 @@ class ProductRegistryEngine {
         _ => choice.wire,
       };
 
-
-
   // ---------------------------------------------------------------------
   // Repository credentials (ADR 0018 A1 — scope is one repository)
   // ---------------------------------------------------------------------
@@ -804,7 +944,8 @@ class ProductRegistryEngine {
 
     final t = now ?? DateTime.now().toUtc();
     final credential = RepositoryCredential(
-      credentialId: credentialId ?? 'cred-$repositoryId-${t.microsecondsSinceEpoch}',
+      credentialId:
+          credentialId ?? 'cred-$repositoryId-${t.microsecondsSinceEpoch}',
       productId: productId,
       repositoryId: repositoryId,
       referenceName: referenceName,
@@ -849,10 +990,7 @@ class ProductRegistryEngine {
         hostKeyFingerprint: hostKeyFingerprint,
         version: c.version + 1,
       );
-      await _store.saveProductCredential(
-        changed,
-        expectedVersion: c.version,
-      );
+      await _store.saveProductCredential(changed, expectedVersion: c.version);
       throw HostKeyNotConfirmedException(
         c.host ?? 'unknown host',
         HostKeyStatus.changed,
@@ -1059,9 +1197,7 @@ class ProductRegistryEngine {
 
     final existing = await _decisions.readHumanDecisionsForScope(scope);
     for (final decision in existing) {
-      final prior = LifecycleDecisionBinding.tryFromMetadata(
-        decision.metadata,
-      );
+      final prior = LifecycleDecisionBinding.tryFromMetadata(decision.metadata);
       if (prior != null &&
           prior.action == action &&
           prior.matches(productId: productId, fromState: from) &&
@@ -1113,9 +1249,7 @@ class ProductRegistryEngine {
     if (decision == null) {
       throw BaselineApprovalNotFoundException(decisionId);
     }
-    final binding = LifecycleDecisionBinding.tryFromMetadata(
-      decision.metadata,
-    );
+    final binding = LifecycleDecisionBinding.tryFromMetadata(decision.metadata);
     if (binding == null) {
       throw ProductLifecycleException(
         'decision $decisionId is not a product lifecycle decision',
@@ -1211,14 +1345,16 @@ class ProductRegistryEngine {
     bool drainInFlight,
   ) {
     final proceed = switch (action) {
-      ProductLifecycleAction.pause => drainInFlight
-          ? 'Stop dispatching new work; work already running finishes.'
-          : 'Stop dispatching new work and release running leases now.',
+      ProductLifecycleAction.pause =>
+        drainInFlight
+            ? 'Stop dispatching new work; work already running finishes.'
+            : 'Stop dispatching new work and release running leases now.',
       ProductLifecycleAction.resume =>
         'Start dispatching work for this product again.',
-      ProductLifecycleAction.offboard => drainInFlight
-          ? 'Archive once running work finishes. Nothing is deleted.'
-          : 'Archive now and cancel running work. Nothing is deleted.',
+      ProductLifecycleAction.offboard =>
+        drainInFlight
+            ? 'Archive once running work finishes. Nothing is deleted.'
+            : 'Archive now and cancel running work. Nothing is deleted.',
       ProductLifecycleAction.reinstate =>
         'Send a fresh baseline for approval. Governance is not restored '
             'directly.',
@@ -1242,7 +1378,6 @@ class ProductRegistryEngine {
       ),
     ];
   }
-
 
   // ---------------------------------------------------------------------
   // Standing policy authorisations (ADR 0019)

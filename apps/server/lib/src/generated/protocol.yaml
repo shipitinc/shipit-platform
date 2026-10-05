@@ -1,16 +1,40 @@
+defectEndpoints:
+  - create:
+  - list:
+  - inspect:
+  - addEvidence:
+  - requestClarification:
+  - answerClarification:
+  - verifyFix:
 executionEndpoints:
   - list:
   - inspect:
+healthEndpoints:
+  - health:
 homeEndpoints:
   - overview:
   - listWorkItems:
   - recentDecisions:
   - pendingDecisions:
+humanDirectionEndpoints:
+  - createDirection:
+  - listDirectionsForTarget:
+  - listDirectionsByStatus:
+  - readDirection:
+  - acknowledgeDirection:
+  - startWorkingDirection:
+  - completeDirection:
+  - rejectDirection:
+  - supersedeDirection:
+intakeEndpoints:
+  - createFeatureRequest:
+  - listFeatureRequests:
 productRegistryEndpoints:
   - listProducts:
   - listProductSummaries:
   - productDetail:
   - productContext:
+  - proposeBaseline:
   - requestBaselineApproval:
   - requestLifecycleDecision:
   - resolveLifecycleDecision:
@@ -20,6 +44,16 @@ productRegistryEndpoints:
   - resolveBaselineApproval:
   - baselineApproval:
   - answerClarification:
+  - createProduct:
+  - addRepositoryReference:
+  - verifyBaseline:
+  - addHumanBaselineClaim:
+providerHealthEndpoints:
+  - getProviderHealth:
+  - listModelPolicies:
+  - updateModelPolicy:
+  - listModelExecutions:
+  - getModelStats:
 schedulerEndpoints:
   - listJobs:
   - inspect:

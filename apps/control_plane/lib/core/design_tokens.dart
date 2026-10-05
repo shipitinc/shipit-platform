@@ -24,6 +24,7 @@ class ShipItPalette extends ThemeExtension<ShipItPalette> {
     required this.inkPrimary,
     required this.inkSecondary,
     required this.inkTertiary,
+    required this.inkQuiet,
     required this.accent,
     required this.accentTick,
     required this.attention,
@@ -62,6 +63,12 @@ class ShipItPalette extends ThemeExtension<ShipItPalette> {
   /// Micro labels, descriptions, timestamps.
   final Color inkTertiary;
 
+  /// Em-dash placeholders and the quietest row text.
+  ///
+  /// Penpot: `Row Sev` for Cosmetic, `Row State` for Duplicate /
+  /// Not reproducible, and every `—` cell in `BP · Defect List`.
+  final Color inkQuiet;
+
   /// Links, active navigation, "working on it". Text-safe tone.
   final Color accent;
 
@@ -92,6 +99,7 @@ class ShipItPalette extends ThemeExtension<ShipItPalette> {
     inkPrimary: Color(0xFF1F2120),
     inkSecondary: Color(0xFF5A5C5B),
     inkTertiary: Color(0xFF6E706E),
+    inkQuiet: Color(0xFF6A6C6A),
     accent: Color(0xFF1668D6),
     accentTick: Color(0xFF1668D6),
     attention: Color(0xFFA35F00),
@@ -112,6 +120,7 @@ class ShipItPalette extends ThemeExtension<ShipItPalette> {
     inkPrimary: Color(0xFFF5F4F0),
     inkSecondary: Color(0xFFA8A6A0),
     inkTertiary: Color(0xFF8A8983),
+    inkQuiet: Color(0xFF85847E),
     accent: Color(0xFF4496FC),
     accentTick: Color(0xFF4496FC),
     attention: Color(0xFFF7A42C),
@@ -132,6 +141,7 @@ class ShipItPalette extends ThemeExtension<ShipItPalette> {
     Color? inkPrimary,
     Color? inkSecondary,
     Color? inkTertiary,
+    Color? inkQuiet,
     Color? accent,
     Color? accentTick,
     Color? attention,
@@ -150,6 +160,7 @@ class ShipItPalette extends ThemeExtension<ShipItPalette> {
       inkPrimary: inkPrimary ?? this.inkPrimary,
       inkSecondary: inkSecondary ?? this.inkSecondary,
       inkTertiary: inkTertiary ?? this.inkTertiary,
+      inkQuiet: inkQuiet ?? this.inkQuiet,
       accent: accent ?? this.accent,
       accentTick: accentTick ?? this.accentTick,
       attention: attention ?? this.attention,
@@ -173,6 +184,7 @@ class ShipItPalette extends ThemeExtension<ShipItPalette> {
       inkPrimary: Color.lerp(inkPrimary, other.inkPrimary, t)!,
       inkSecondary: Color.lerp(inkSecondary, other.inkSecondary, t)!,
       inkTertiary: Color.lerp(inkTertiary, other.inkTertiary, t)!,
+      inkQuiet: Color.lerp(inkQuiet, other.inkQuiet, t)!,
       accent: Color.lerp(accent, other.accent, t)!,
       accentTick: Color.lerp(accentTick, other.accentTick, t)!,
       attention: Color.lerp(attention, other.attention, t)!,
@@ -418,6 +430,15 @@ class ShipItType {
     height: _lh,
   );
 
+  /// Mobile `Back` bar — Sans 12 / 500. Read off `BPM · Create Defect`'s
+  /// `Back` node (`‹  Defects`), which is larger than the desktop links.
+  static const TextStyle backLinkMobile = TextStyle(
+    fontFamily: ShipItFonts.sans,
+    fontSize: 12,
+    fontWeight: FontWeight.w500,
+    height: _lh,
+  );
+
   /// `Disclose` — Sans 10 / 500.
   static const TextStyle linkMicro = TextStyle(
     fontFamily: ShipItFonts.sans,
@@ -496,6 +517,51 @@ class ShipItType {
     fontFamily: ShipItFonts.mono,
     fontSize: 10,
     fontWeight: FontWeight.w400,
+    height: _lh,
+  );
+
+  /// `Report Bug Btn` on `BP · Create Defect` / `BP · Defect List` —
+  /// Sans 16 / 500 / ls -0.5.
+  static const TextStyle reportBug = TextStyle(
+    fontFamily: ShipItFonts.sans,
+    fontSize: 16,
+    fontWeight: FontWeight.w500,
+    letterSpacing: -0.5,
+    height: _lh,
+  );
+
+  /// `Empty Title` / `Err Title` on the desktop boards, and mobile's
+  /// `Report Bug Btn` — Sans 16 / 500, no tracking.
+  static const TextStyle bodyCallout = TextStyle(
+    fontFamily: ShipItFonts.sans,
+    fontSize: 16,
+    fontWeight: FontWeight.w500,
+    height: _lh,
+  );
+
+  /// `Row Go n` — Sans 14 / 400.
+  static const TextStyle chevron = TextStyle(
+    fontFamily: ShipItFonts.sans,
+    fontSize: 14,
+    fontWeight: FontWeight.w400,
+    height: _lh,
+  );
+
+  /// `L Title` / `R Title` on the detail boards — Sans 14 / 600.
+  static const TextStyle detailTitle = TextStyle(
+    fontFamily: ShipItFonts.sans,
+    fontSize: 14,
+    fontWeight: FontWeight.w600,
+    height: _lh,
+  );
+
+  /// `H1` on the mobile boards — Sans 20 / 600, no tracking. The desktop H1
+  /// carries -0.5 tracking and a larger size; `BPM · Defect Detail` draws the
+  /// headline at 20 so a two-line title still clears the status strip.
+  static const TextStyle pageTitleMobile = TextStyle(
+    fontFamily: ShipItFonts.sans,
+    fontSize: 20,
+    fontWeight: FontWeight.w600,
     height: _lh,
   );
 }

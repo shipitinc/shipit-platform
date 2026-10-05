@@ -12,7 +12,7 @@ DefectClarification _$DefectClarificationFromJson(Map<String, dynamic> json) =>
       defectId: json['defectId'] as String,
       question: json['question'] as String,
       reason: json['reason'] as String,
-      status: json['status'] as String,
+      status: _clarificationStatusFromJson(json['status'] as String),
       answer: json['answer'] as String?,
       humanDecisionId: json['humanDecisionId'] as String?,
       requestedByTriageJobId: json['requestedByTriageJobId'] as String?,
@@ -21,6 +21,7 @@ DefectClarification _$DefectClarificationFromJson(Map<String, dynamic> json) =>
           ? null
           : DateTime.parse(json['answeredAt'] as String),
       createdAt: DateTime.parse(json['createdAt'] as String),
+      version: (json['version'] as num?)?.toInt() ?? 1,
     );
 
 Map<String, dynamic> _$DefectClarificationToJson(
@@ -30,11 +31,12 @@ Map<String, dynamic> _$DefectClarificationToJson(
   'defectId': instance.defectId,
   'question': instance.question,
   'reason': instance.reason,
-  'status': instance.status,
+  'status': _clarificationStatusToJson(instance.status),
   'answer': ?instance.answer,
   'humanDecisionId': ?instance.humanDecisionId,
   'requestedByTriageJobId': ?instance.requestedByTriageJobId,
   'requestedAt': instance.requestedAt.toIso8601String(),
   'answeredAt': ?instance.answeredAt?.toIso8601String(),
   'createdAt': instance.createdAt.toIso8601String(),
+  'version': instance.version,
 };

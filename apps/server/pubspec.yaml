@@ -19,6 +19,8 @@ dependencies:
     path: ../../packages/platform_contracts
   product_registry:
     path: ../../packages/product_registry
+  qa_orchestration:
+    path: ../../packages/qa_orchestration
   scheduler:
     path: ../../packages/scheduler
   serverpod: 3.4.13
@@ -45,3 +47,5 @@ serverpod:
   scripts:
     # Starts the server and applies migrations
     start: dart bin/main.dart --apply-migrations
+    # Runs the ShipIt platform onboarding (S-1)
+    onboard: dart onboard_shipit_serverpod.dart

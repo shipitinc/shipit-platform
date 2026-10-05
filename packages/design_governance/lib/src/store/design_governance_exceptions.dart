@@ -66,17 +66,17 @@ class DesignGovernanceIndependenceViolationException implements Exception {
 }
 
 class DesignGovernanceImmutabilityViolationException implements Exception {
-  DesignGovernanceImmutabilityViolationException({
-    required this.revisionId,
-  });
+  DesignGovernanceImmutabilityViolationException({required this.revisionId});
 
   final String revisionId;
 
   @override
-  String toString() => 'Immutability violation: approved design revision $revisionId cannot be modified';
+  String toString() =>
+      'Immutability violation: approved design revision $revisionId cannot be modified';
 }
 
-class DesignGovernanceSupersessionIntegrityViolationException implements Exception {
+class DesignGovernanceSupersessionIntegrityViolationException
+    implements Exception {
   DesignGovernanceSupersessionIntegrityViolationException({
     required this.workItemId,
     required this.message,

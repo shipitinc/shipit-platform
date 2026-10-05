@@ -11,23 +11,38 @@ Future<PersistenceDatabase> _newDb() async {
   return PersistenceDatabase(session.db);
 }
 
-Future<void> _truncateDesignGovernanceTables() async {
+Future<void> _purgeSuiteRows() async {
   final db = await _newDb();
-  await db.queryNoTransaction('''
-    TRUNCATE TABLE
-      "design_revision_event",
-      "design_finding",
-      "design_review_result",
-      "design_revision"
-    RESTART IDENTITY CASCADE
-  ''');
+  // Removes only this suite's rows, in an order that satisfies foreign keys.
+  //
+  // Targeted DELETEs, never a TRUNCATE: `test/integration` shares one database
+  // with files that run concurrently, and truncating these tables out from
+  // under them breaks their assertions. Every marker is a fixture id from
+  // `store_contract_tests`' design-governance suite, and this file is the only
+  // one that writes design-governance rows to PostgreSQL. Runs in `setUp` as
+  // well as `tearDown`, because a previous run that aborted mid-test leaves
+  // rows behind and re-creating the fixture would then violate a unique
+  // constraint.
+  const revision = 'DES-R00%';
+  const statements = <String>[
+    'DELETE FROM "design_finding"        WHERE "findingId" LIKE \'FD-00%\'',
+    'DELETE FROM "design_review_result"  WHERE "reviewExecutionId" LIKE '
+        '\'rev-exec-%\'',
+    'DELETE FROM "design_revision_event" WHERE "designRevisionId" LIKE '
+        '\'$revision\'',
+    'DELETE FROM "design_revision"       WHERE "revisionId" LIKE \'$revision\'',
+  ];
+  for (final statement in statements) {
+    await db.query(statement);
+  }
 }
 
 void main() {
   withServerpod(
     'Postgres design governance stores satisfy the store contracts',
     (sessionBuilder, endpoints) {
-      setUp(_truncateDesignGovernanceTables);
+      setUp(_purgeSuiteRows);
+      tearDown(_purgeSuiteRows);
 
       runDesignGovernanceStoreSuite(
         groupName: 'DesignGovernanceStore (Postgres)',

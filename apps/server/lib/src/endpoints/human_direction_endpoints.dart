@@ -1,0 +1,252 @@
+import 'package:platform_contracts/platform_contracts.dart';
+import 'package:serverpod/serverpod.dart';
+
+import '../generated/human_direction_view.dart';
+import '../generated/human_direction_attachment_view.dart';
+import '../services/control_plane_service.dart';
+import '../services/ui_view_mappers.dart';
+
+/// Endpoints for durable HumanDirection inbox.
+///
+/// Directions are created by operators and consumed by workers in the next
+/// bounded job — never injected mid-execution. The lifecycle is:
+/// created → acked → working → completed | rejected | superseded.
+class HumanDirectionEndpoints extends Endpoint {
+  /// Creates a new direction.
+  Future<HumanDirectionView> createDirection(
+    Session session, {
+    required String directionType,
+    required String targetType,
+    String? targetId,
+    required String title,
+    required String description,
+    String? contextJson,
+    List<HumanDirectionAttachmentView>? attachments,
+    String? createdBy,
+    String? assignedTo,
+  }) async {
+    final service = ControlPlaneService(session);
+    try {
+      final direction = await service.createDirection(
+        directionType: directionType,
+        targetType: targetType,
+        targetId: targetId,
+        title: title,
+        description: description,
+        contextJson: contextJson,
+        attachments: attachments
+            ?.map(
+              (HumanDirectionAttachmentView a) => HumanDirectionAttachment(
+                artifactId: a.artifactId,
+                artifactType: a.artifactType,
+                description: a.description,
+              ),
+            )
+            .toList(),
+        createdBy: createdBy,
+        assignedTo: assignedTo,
+      );
+      return UiViewMappers.humanDirectionView(direction);
+    } catch (error, stackTrace) {
+      service.logger.error('human_direction.create.failed', {
+        'error': error.toString(),
+      });
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  /// Lists directions for a specific target.
+  Future<List<HumanDirectionView>> listDirectionsForTarget(
+    Session session, {
+    required String targetType,
+    required String targetId,
+    String? status,
+    int? limit,
+    int? offset,
+  }) async {
+    final service = ControlPlaneService(session);
+    try {
+      final directions = await service.listDirectionsForTarget(
+        targetType: targetType,
+        targetId: targetId,
+        status: status,
+        limit: limit,
+        offset: offset,
+      );
+      return directions.map(UiViewMappers.humanDirectionView).toList();
+    } catch (error, stackTrace) {
+      service.logger.error('human_direction.list_for_target.failed', {
+        'targetType': targetType,
+        'targetId': targetId,
+        'error': error.toString(),
+      });
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  /// Lists directions filtered by status.
+  Future<List<HumanDirectionView>> listDirectionsByStatus(
+    Session session, {
+    required String status,
+    String? directionType,
+    String? targetType,
+    int? limit,
+    int? offset,
+  }) async {
+    final service = ControlPlaneService(session);
+    try {
+      final directions = await service.listDirectionsByStatus(
+        status: status,
+        directionType: directionType,
+        targetType: targetType,
+        limit: limit,
+        offset: offset,
+      );
+      return directions.map(UiViewMappers.humanDirectionView).toList();
+    } catch (error, stackTrace) {
+      service.logger.error('human_direction.list_by_status.failed', {
+        'status': status,
+        'error': error.toString(),
+      });
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  /// Reads a single direction by ID.
+  Future<HumanDirectionView> readDirection(
+    Session session, {
+    required String directionId,
+  }) async {
+    final service = ControlPlaneService(session);
+    try {
+      final direction = await service.readDirection(directionId: directionId);
+      if (direction == null) {
+        throw Exception('Direction not found: $directionId');
+      }
+      return UiViewMappers.humanDirectionView(direction);
+    } catch (error, stackTrace) {
+      service.logger.error('human_direction.read.failed', {
+        'directionId': directionId,
+        'error': error.toString(),
+      });
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  /// Acknowledges a direction (created → acked).
+  Future<HumanDirectionView> acknowledgeDirection(
+    Session session, {
+    required String directionId,
+    required String acknowledgedBy,
+  }) async {
+    final service = ControlPlaneService(session);
+    try {
+      final direction = await service.acknowledgeDirection(
+        directionId: directionId,
+        acknowledgedBy: acknowledgedBy,
+      );
+      return UiViewMappers.humanDirectionView(direction);
+    } catch (error, stackTrace) {
+      service.logger.error('human_direction.acknowledge.failed', {
+        'directionId': directionId,
+        'error': error.toString(),
+      });
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  /// Starts working on a direction (acked → working).
+  Future<HumanDirectionView> startWorkingDirection(
+    Session session, {
+    required String directionId,
+    required String startedBy,
+  }) async {
+    final service = ControlPlaneService(session);
+    try {
+      final direction = await service.startWorkingDirection(
+        directionId: directionId,
+        startedBy: startedBy,
+      );
+      return UiViewMappers.humanDirectionView(direction);
+    } catch (error, stackTrace) {
+      service.logger.error('human_direction.start_working.failed', {
+        'directionId': directionId,
+        'error': error.toString(),
+      });
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  /// Completes a direction (working → completed).
+  Future<HumanDirectionView> completeDirection(
+    Session session, {
+    required String directionId,
+    required String completedBy,
+    required String completionSummary,
+  }) async {
+    final service = ControlPlaneService(session);
+    try {
+      final direction = await service.completeDirection(
+        directionId: directionId,
+        completedBy: completedBy,
+        completionSummary: completionSummary,
+      );
+      return UiViewMappers.humanDirectionView(direction);
+    } catch (error, stackTrace) {
+      service.logger.error('human_direction.complete.failed', {
+        'directionId': directionId,
+        'error': error.toString(),
+      });
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  /// Rejects a direction (working → rejected).
+  Future<HumanDirectionView> rejectDirection(
+    Session session, {
+    required String directionId,
+    required String rejectedBy,
+    required String rejectionReason,
+  }) async {
+    final service = ControlPlaneService(session);
+    try {
+      final direction = await service.rejectDirection(
+        directionId: directionId,
+        rejectedBy: rejectedBy,
+        rejectionReason: rejectionReason,
+      );
+      return UiViewMappers.humanDirectionView(direction);
+    } catch (error, stackTrace) {
+      service.logger.error('human_direction.reject.failed', {
+        'directionId': directionId,
+        'error': error.toString(),
+      });
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  /// Supersedes a direction (any active → superseded).
+  Future<HumanDirectionView> supersedeDirection(
+    Session session, {
+    required String directionId,
+    required String supersededByDirectionId,
+    required String supersededBy,
+  }) async {
+    final service = ControlPlaneService(session);
+    try {
+      final direction = await service.supersedeDirection(
+        directionId: directionId,
+        supersededByDirectionId: supersededByDirectionId,
+        supersededBy: supersededBy,
+      );
+      return UiViewMappers.humanDirectionView(direction);
+    } catch (error, stackTrace) {
+      service.logger.error('human_direction.supersede.failed', {
+        'directionId': directionId,
+        'supersededByDirectionId': supersededByDirectionId,
+        'error': error.toString(),
+      });
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+}

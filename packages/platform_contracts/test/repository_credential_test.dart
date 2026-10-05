@@ -42,20 +42,25 @@ void main() {
     });
 
     test('the schema forbids any unlisted property', () {
-      final schema = jsonDecode(
-        File('../../schemas/repository_credential.schema.json').readAsStringSync(),
-      ) as Map<String, dynamic>;
+      final schema =
+          jsonDecode(
+                File(
+                  '../../schemas/repository_credential.schema.json',
+                ).readAsStringSync(),
+              )
+              as Map<String, dynamic>;
       expect(schema['additionalProperties'], isFalse);
-      expect(
-        (schema['properties'] as Map).keys,
-        isNot(contains('privateKey')),
-      );
+      expect((schema['properties'] as Map).keys, isNot(contains('privateKey')));
     });
 
     test('every serialised key is declared in the schema', () {
-      final schema = jsonDecode(
-        File('../../schemas/repository_credential.schema.json').readAsStringSync(),
-      ) as Map<String, dynamic>;
+      final schema =
+          jsonDecode(
+                File(
+                  '../../schemas/repository_credential.schema.json',
+                ).readAsStringSync(),
+              )
+              as Map<String, dynamic>;
       final declared = (schema['properties'] as Map).keys.toSet();
       final emitted = _cred(
         lastVerifiedAt: DateTime.utc(2026, 1, 2),
@@ -158,15 +163,20 @@ void main() {
     });
 
     test('unknown wire values are rejected, not silently defaulted', () {
-      expect(() => CredentialStatus.fromWire('probably_fine'),
-          throwsFormatException);
+      expect(
+        () => CredentialStatus.fromWire('probably_fine'),
+        throwsFormatException,
+      );
       expect(() => HostKeyStatus.fromWire('trusted'), throwsFormatException);
     });
 
     test('scope is one repository', () {
       expect(_cred().repositoryId, 'repo-1');
-      expect(_cred().productId, 'shipit',
-          reason: 'retained for ownership checks, not for scope');
+      expect(
+        _cred().productId,
+        'shipit',
+        reason: 'retained for ownership checks, not for scope',
+      );
     });
   });
 }

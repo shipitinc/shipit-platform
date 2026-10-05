@@ -1,0 +1,96 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: shipit
+      POSTGRES_USER: shipit
+      POSTGRES_PASSWORD: shipit
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shipit"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  triage-seed:
+    image: alpine/git:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -d /repo/.git ]; then
+          echo "triage repo already initialised; leaving it alone"
+        else
+          git init -q -b main /repo
+          cd /repo
+          git config user.email "triage@shipit.local"
+          git config user.name "ShipIt Triage"
+          printf '# Triage scratch repository\n\nSeeded by docker/compose.e2e.yaml so the\ncontrol plane has a repository it may fork worktrees from.\n' > README.md
+          git add -A
+          git commit -qm "seed: initial commit"
+          echo "triage repo initialised at $(git rev-parse HEAD)"
+        fi
+    volumes:
+      - triage_repo_e2e:/repo
+    restart: "no"
+
+  server:
+    env_file:
+      - ../.env
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.server
+    environment:
+      SERVERPOD_DATABASE_HOST: postgres
+      SERVERPOD_DATABASE_PORT: "5432"
+      SERVERPOD_DATABASE_NAME: shipit
+      SERVERPOD_DATABASE_USER: shipit
+      SERVERPOD_DATABASE_PASSWORD: shipit
+      SERVERPOD_API_SERVER_PORT: "8080"
+      SHIPIT_TRIAGE_REPOSITORY_PATH: /triage-repo
+      SHIPIT_TRIAGE_WORKSPACE_ROOT: /triage-workspaces
+    depends_on:
+      postgres:
+        condition: service_healthy
+      triage-seed:
+        condition: service_completed_successfully
+    volumes:
+      - triage_repo_e2e:/triage-repo
+      - triage_workspaces_e2e:/triage-workspaces
+
+  client:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.client
+    environment:
+      CONTROL_PLANE_API: "http://client:8081/api/"
+      API_UPSTREAM: "server:8080"
+    depends_on:
+      - server
+
+  test-runner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.test-runner
+    environment:
+      TEST_TARGET_URL: "http://client:8081"
+      CONTROL_PLANE_API: "http://client:8081/api/"
+    depends_on:
+      - client
+      - server
+    command: ["sh", "-c", "cd /app && ./run-e2e-tests.sh"]
+
+  worker-linux:
+    profiles: [workers]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker-linux
+    environment:
+      WORKER_POOL: linux
+      SERVERPOD_API_URL: http://server:8080
+    depends_on:
+      - server
+
+volumes:
+  triage_repo_e2e:
+  triage_workspaces_e2e:

@@ -1,0 +1,90 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: shipit_test
+      POSTGRES_USER: shipit
+      POSTGRES_PASSWORD: shipit
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shipit"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5433:5432"
+
+  triage-seed:
+    image: alpine/git:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -d /repo/.git ]; then
+          echo "triage repo already initialised; leaving it alone"
+        else
+          git init -q -b main /repo
+          cd /repo
+          git config user.email "triage@shipit.local"
+          git config user.name "ShipIt Triage"
+          printf '# Test Triage Repository\n\nSeeded by docker/compose.test.yaml for testing.\n' > README.md
+          git add -A
+          git commit -qm "seed: initial commit"
+          echo "triage repo initialised at $(git rev-parse HEAD)"
+        fi
+    volumes:
+      - test_triage_repo:/repo
+    restart: "no"
+
+  server:
+    env_file:
+      - ../.env
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.server
+    environment:
+      SERVERPOD_DATABASE_HOST: postgres
+      SERVERPOD_DATABASE_PORT: "5432"
+      SERVERPOD_DATABASE_NAME: shipit_test
+      SERVERPOD_DATABASE_USER: shipit
+      SERVERPOD_DATABASE_PASSWORD: shipit
+      SERVERPOD_API_SERVER_PORT: "8080"
+      SHIPIT_TRIAGE_REPOSITORY_PATH: /triage-repo
+      SHIPIT_TRIAGE_WORKSPACE_ROOT: /triage-workspaces
+    ports:
+      - "8082:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      triage-seed:
+        condition: service_completed_successfully
+    volumes:
+      - test_triage_repo:/triage-repo
+      - test_triage_workspaces:/triage-workspaces
+
+  client:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.client
+    environment:
+      CONTROL_PLANE_API: "http://localhost:8083/api/"
+      API_UPSTREAM: "server:8080"
+    ports:
+      - "8083:8081"
+    depends_on:
+      - server
+
+  worker-linux:
+    profiles: [workers]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker-linux
+    environment:
+      WORKER_POOL: linux
+      SERVERPOD_API_URL: http://server:8080
+    depends_on:
+      - server
+
+volumes:
+  test_triage_repo:
+  test_triage_workspaces:

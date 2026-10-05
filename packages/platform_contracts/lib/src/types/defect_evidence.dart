@@ -19,11 +19,15 @@ class DefectEvidence extends Equatable {
     this.sourceRef,
     required this.capturedAt,
     required this.createdAt,
+    this.version = 1,
   });
 
   final String evidenceId;
   final String defectId;
-  @JsonKey(fromJson: _evidenceIntakeKindFromJson, toJson: _evidenceIntakeKindToJson)
+  @JsonKey(
+    fromJson: _evidenceIntakeKindFromJson,
+    toJson: _evidenceIntakeKindToJson,
+  )
   final EvidenceIntakeKind kind;
   final String? artifactId;
   final String? contentHash;
@@ -31,6 +35,7 @@ class DefectEvidence extends Equatable {
   final String? sourceRef;
   final DateTime capturedAt;
   final DateTime createdAt;
+  final int version;
 
   factory DefectEvidence.fromJson(Map<String, dynamic> json) =>
       _$DefectEvidenceFromJson(json);
@@ -39,16 +44,17 @@ class DefectEvidence extends Equatable {
 
   @override
   List<Object?> get props => [
-        evidenceId,
-        defectId,
-        kind,
-        artifactId,
-        contentHash,
-        description,
-        sourceRef,
-        capturedAt,
-        createdAt,
-      ];
+    evidenceId,
+    defectId,
+    kind,
+    artifactId,
+    contentHash,
+    description,
+    sourceRef,
+    capturedAt,
+    createdAt,
+    version,
+  ];
 }
 
 EvidenceIntakeKind _evidenceIntakeKindFromJson(String value) =>

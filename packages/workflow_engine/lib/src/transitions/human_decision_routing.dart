@@ -58,6 +58,30 @@ class HumanDecisionRouting {
     };
   }
 
+  /// Returns the target state for a review gate rejection/rework that
+  /// includes an escalation index increment.
+  ///
+  /// This is used for transitions that should increment the escalation index
+  /// and return to the production state:
+  /// - engineeringReview reject/rework -> agentExecuting
+  /// - designApproval reject/rework -> designInReview
+  /// - humanQaApproval reject/rework -> agentExecuting
+  static WorkItemState? escalationTargetFor(
+    HumanDecisionType decisionType,
+    HumanDecisionChoice choice,
+  ) {
+    if (choice != HumanDecisionChoice.reject &&
+        choice != HumanDecisionChoice.rework) {
+      return null;
+    }
+    return switch (decisionType) {
+      HumanDecisionType.engineeringReview => WorkItemState.agentExecuting,
+      HumanDecisionType.designApproval => WorkItemState.designInReview,
+      HumanDecisionType.humanQaApproval => WorkItemState.agentExecuting,
+      _ => null,
+    };
+  }
+
   /// True when [target] is the state this (type, choice) routing unlocks.
   static bool routesTo(
     HumanDecisionType decisionType,
@@ -65,5 +89,14 @@ class HumanDecisionRouting {
     WorkItemState target,
   ) {
     return targetFor(decisionType, choice) == target;
+  }
+
+  /// True when [target] is the escalation target state for the (type, choice).
+  static bool routesToEscalation(
+    HumanDecisionType decisionType,
+    HumanDecisionChoice choice,
+    WorkItemState target,
+  ) {
+    return escalationTargetFor(decisionType, choice) == target;
   }
 }

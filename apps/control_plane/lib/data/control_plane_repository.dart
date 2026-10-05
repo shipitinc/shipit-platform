@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:control_plane_client/control_plane_client.dart';
 import 'package:flutter/foundation.dart';
+import 'package:platform_contracts/platform_contracts.dart';
 
 /// Handwritten repository for the operator UI.
 ///
@@ -126,6 +129,10 @@ class ControlPlaneRepository {
       pendingBaselineId: d.pendingBaseline?.baselineId,
       pendingBaselineRevision: d.pendingBaseline?.revision,
       pendingBaselineVerified: d.pendingBaselineVerified,
+      pendingBaselineFacts: (d.pendingBaseline?.facts ?? const [])
+          .map(BaselineFactClaim.fromProtocol)
+          .toList(),
+      pendingBaselineDecisionId: d.pendingBaselineDecisionId,
       openClarifications: d.openClarifications
           .map(
             (c) => ClarificationSummary(
@@ -141,10 +148,12 @@ class ControlPlaneRepository {
 
   Future<List<WorkItemResponse>> listWorkItems({
     String? state,
+    String? productId,
     int? limit,
   }) async {
     final result = await _client.homeEndpoints.listWorkItems(
       state: state,
+      productId: productId,
       limit: limit,
     );
     return result.map(_workItemResponse).toList();
@@ -241,11 +250,10 @@ class ControlPlaneRepository {
     required String productId,
     required List<String> actions,
   }) async {
-    final m = await _client.productRegistryEndpoints
-        .requestPolicyAuthorisation(
-          productId: productId,
-          actions: actions,
-        );
+    final m = await _client.productRegistryEndpoints.requestPolicyAuthorisation(
+      productId: productId,
+      actions: actions,
+    );
     revision.value++;
     return _decisionResponse(m);
   }
@@ -260,17 +268,16 @@ class ControlPlaneRepository {
     required String rationale,
   }) async {
     final now = DateTime.now();
-    final m = await _client.productRegistryEndpoints
-        .resolvePolicyAuthorisation(
-          decisionId: decisionId,
-          choice: choice,
-          decider: decider,
-          rationale: rationale,
-          algorithm: 'ed25519',
-          publicKey: 'operator-pub-key',
-          signature: 'operator-sig-${now.millisecondsSinceEpoch}',
-          signedAt: now,
-        );
+    final m = await _client.productRegistryEndpoints.resolvePolicyAuthorisation(
+      decisionId: decisionId,
+      choice: choice,
+      decider: decider,
+      rationale: rationale,
+      algorithm: 'ed25519',
+      publicKey: 'operator-pub-key',
+      signature: 'operator-sig-${now.millisecondsSinceEpoch}',
+      signedAt: now,
+    );
     revision.value++;
     return _policyResponse(m!);
   }
@@ -447,6 +454,689 @@ class ControlPlaneRepository {
     );
   }
 
+  Future<CreateDefectResponse> createDefect({
+    required String title,
+    required String description,
+    String? expectedBehavior,
+    String? reproductionSteps,
+    required String severity,
+    String? intakeCategory,
+    required String productId,
+    String? affectedWorkItemId,
+    String? affectedRunId,
+    String? clientContextJson,
+    required String reporter,
+  }) async {
+    final result = await _client.defectEndpoints.create(
+      title: title,
+      description: description,
+      expectedBehavior: expectedBehavior,
+      reproductionSteps: reproductionSteps,
+      severity: severity,
+      intakeCategory: intakeCategory,
+      productId: productId,
+      affectedWorkItemId: affectedWorkItemId,
+      affectedRunId: affectedRunId,
+      clientContextJson: clientContextJson,
+      reporter: reporter,
+    );
+    return CreateDefectResponse.fromJson(result);
+  }
+
+  Future<ListDefectsResponse> listDefects({
+    String? productId,
+    String? status,
+    String? classification,
+    int? limit,
+    int? offset,
+  }) async {
+    final result = await _client.defectEndpoints.list(
+      productId: productId,
+      status: status,
+      classification: classification,
+      limit: limit,
+      offset: offset,
+    );
+    return ListDefectsResponse.fromJson(result);
+  }
+
+  Future<InspectDefectResponse> inspectDefect(String defectId) async {
+    final result = await _client.defectEndpoints.inspect(defectId: defectId);
+    return InspectDefectResponse.fromJson(result);
+  }
+
+  // ------------------------------------------------- Reports · feature tab
+
+  /// Files a feature request. The server creates a draft feature work item and
+  /// its intake direction in one transaction, so a success here means the
+  /// request is durably visible in both the register and the inbox.
+  Future<CreateFeatureRequestResponse> createFeatureRequest({
+    required String title,
+    required String description,
+    required String productId,
+    required String reporter,
+  }) async {
+    final result = await _client.intakeEndpoints.createFeatureRequest(
+      title: title,
+      description: description,
+      productId: productId,
+      reporter: reporter,
+    );
+    revision.value++;
+    return CreateFeatureRequestResponse(
+      workItemId: result['workItemId'] as String,
+      title: result['title'] as String,
+      state: result['state'] as String,
+      createdAt: DateTime.parse(result['createdAt'] as String),
+    );
+  }
+
+  /// Feature requests, newest first — the Reports screen's second tab.
+  Future<List<FeatureRequestSummaryResponse>> listFeatureRequests({
+    String? productId,
+    int? limit,
+  }) async {
+    final rows = await _client.intakeEndpoints.listFeatureRequests(
+      productId: productId,
+      limit: limit,
+    );
+    return rows
+        .map(
+          (r) => FeatureRequestSummaryResponse(
+            workItemId: r.workItemId,
+            title: r.title,
+            description: r.description,
+            state: r.state,
+            productId: r.productId,
+            productName: r.productName,
+            reporter: r.reporter,
+            createdAt: r.createdAt,
+            updatedAt: r.updatedAt,
+            completedAt: r.completedAt,
+          ),
+        )
+        .toList();
+  }
+
+  Future<DefectEvidenceResponse> addDefectEvidence({
+    required String defectId,
+    required String kind,
+    String? description,
+    String? artifactId,
+    String? contentHash,
+    String? sourceRef,
+  }) async {
+    final result = await _client.defectEndpoints.addEvidence(
+      defectId: defectId,
+      kind: kind,
+      description: description,
+      artifactId: artifactId,
+      contentHash: contentHash,
+      sourceRef: sourceRef,
+    );
+    return DefectEvidenceResponse.fromJson(result);
+  }
+
+  Future<void> answerClarification({
+    required String clarificationId,
+    required String answer,
+    required String answeredBy,
+  }) async {
+    await _client.defectEndpoints.answerClarification(
+      clarificationId: clarificationId,
+      answer: answer,
+      answeredBy: answeredBy,
+    );
+    revision.value++;
+  }
+
+  Future<VerifyFixResponse> verifyFix({
+    required String defectId,
+    required String choice,
+    String? rationale,
+    required String decider,
+    required String signature,
+    required String publicKey,
+    required String algorithm,
+    required DateTime signedAt,
+  }) async {
+    final result = await _client.defectEndpoints.verifyFix(
+      defectId: defectId,
+      choice: choice,
+      rationale: rationale,
+      decider: decider,
+      signature: signature,
+      publicKey: publicKey,
+      algorithm: algorithm,
+      signedAt: signedAt,
+    );
+    revision.value++;
+    return VerifyFixResponse.fromJson(result);
+  }
+
+  // Human Direction Inbox methods
+  Future<List<HumanDirectionSummaryResponse>> listDirectionsByStatus({
+    required String status,
+    String? directionType,
+    String? targetType,
+    int? limit,
+    int? offset,
+  }) async {
+    final result = await _client.humanDirectionEndpoints.listDirectionsByStatus(
+      status: status,
+      directionType: directionType,
+      targetType: targetType,
+      limit: limit,
+      offset: offset,
+    );
+    return result
+        .map(
+          (d) => HumanDirectionSummaryResponse.fromJson({
+            'directionId': d.directionId,
+            'directionType': d.directionType,
+            'targetType': d.targetType,
+            'targetId': d.targetId,
+            'title': d.payload.title,
+            'description': d.payload.description,
+            'contextJson': d.payload.contextJson,
+            'attachments':
+                d.payload.attachments
+                    ?.map(
+                      (a) => {
+                        'artifactId': a.artifactId,
+                        'artifactType': a.artifactType,
+                        'description': a.description,
+                      },
+                    )
+                    .toList() ??
+                [],
+            'createdBy': d.createdBy,
+            'assignedTo': d.assignedTo,
+            'status': d.status,
+            'createdAt': d.createdAt.toIso8601String(),
+            'acknowledgedAt': d.ackedAt?.toIso8601String(),
+            'startedAt': d.startedAt?.toIso8601String(),
+            'completedAt': d.completedAt?.toIso8601String(),
+            'rejectedAt': d.rejectedAt?.toIso8601String(),
+            'supersededAt': d.supersededAt?.toIso8601String(),
+          }),
+        )
+        .toList();
+  }
+
+  Future<HumanDirectionSummaryResponse> createDirection({
+    required String directionType,
+    required String targetType,
+    String? targetId,
+    required String title,
+    required String description,
+    String? contextJson,
+    List<Map<String, dynamic>>? attachments,
+    String? createdBy,
+    String? assignedTo,
+  }) async {
+    final result = await _client.humanDirectionEndpoints.createDirection(
+      directionType: directionType,
+      targetType: targetType,
+      targetId: targetId,
+      title: title,
+      description: description,
+      contextJson: contextJson,
+      attachments: attachments
+          ?.map(
+            (a) => HumanDirectionAttachmentView(
+              artifactId: a['artifactId'] as String,
+              artifactType: a['artifactType'] as String,
+              description: a['description'] as String?,
+            ),
+          )
+          .toList(),
+      createdBy: createdBy,
+      assignedTo: assignedTo,
+    );
+    return HumanDirectionSummaryResponse.fromJson({
+      'directionId': result.directionId,
+      'directionType': result.directionType,
+      'targetType': result.targetType,
+      'targetId': result.targetId,
+      'title': result.payload.title,
+      'description': result.payload.description,
+      'contextJson': result.payload.contextJson,
+      'attachments':
+          result.payload.attachments
+              ?.map(
+                (a) => {
+                  'artifactId': a.artifactId,
+                  'artifactType': a.artifactType,
+                  'description': a.description,
+                },
+              )
+              .toList() ??
+          [],
+      'createdBy': result.createdBy,
+      'assignedTo': result.assignedTo,
+      'status': result.status,
+      'createdAt': result.createdAt.toIso8601String(),
+      'acknowledgedAt': result.ackedAt?.toIso8601String(),
+      'startedAt': result.startedAt?.toIso8601String(),
+      'completedAt': result.completedAt?.toIso8601String(),
+      'rejectedAt': result.rejectedAt?.toIso8601String(),
+      'supersededAt': result.supersededAt?.toIso8601String(),
+    });
+  }
+
+  Future<HumanDirectionSummaryResponse> acknowledgeDirection({
+    required String directionId,
+    required String acknowledgedBy,
+  }) async {
+    final result = await _client.humanDirectionEndpoints.acknowledgeDirection(
+      directionId: directionId,
+      acknowledgedBy: acknowledgedBy,
+    );
+    return HumanDirectionSummaryResponse.fromJson({
+      'directionId': result.directionId,
+      'directionType': result.directionType,
+      'targetType': result.targetType,
+      'targetId': result.targetId,
+      'title': result.payload.title,
+      'description': result.payload.description,
+      'contextJson': result.payload.contextJson,
+      'attachments':
+          result.payload.attachments
+              ?.map(
+                (a) => {
+                  'artifactId': a.artifactId,
+                  'artifactType': a.artifactType,
+                  'description': a.description,
+                },
+              )
+              .toList() ??
+          [],
+      'createdBy': result.createdBy,
+      'assignedTo': result.assignedTo,
+      'status': result.status,
+      'createdAt': result.createdAt.toIso8601String(),
+      'acknowledgedAt': result.ackedAt?.toIso8601String(),
+      'startedAt': result.startedAt?.toIso8601String(),
+      'completedAt': result.completedAt?.toIso8601String(),
+      'rejectedAt': result.rejectedAt?.toIso8601String(),
+      'supersededAt': result.supersededAt?.toIso8601String(),
+    });
+  }
+
+  Future<HumanDirectionSummaryResponse> startWorkingDirection({
+    required String directionId,
+    required String startedBy,
+  }) async {
+    final result = await _client.humanDirectionEndpoints.startWorkingDirection(
+      directionId: directionId,
+      startedBy: startedBy,
+    );
+    return HumanDirectionSummaryResponse.fromJson({
+      'directionId': result.directionId,
+      'directionType': result.directionType,
+      'targetType': result.targetType,
+      'targetId': result.targetId,
+      'title': result.payload.title,
+      'description': result.payload.description,
+      'contextJson': result.payload.contextJson,
+      'attachments':
+          result.payload.attachments
+              ?.map(
+                (a) => {
+                  'artifactId': a.artifactId,
+                  'artifactType': a.artifactType,
+                  'description': a.description,
+                },
+              )
+              .toList() ??
+          [],
+      'createdBy': result.createdBy,
+      'assignedTo': result.assignedTo,
+      'status': result.status,
+      'createdAt': result.createdAt.toIso8601String(),
+      'acknowledgedAt': result.ackedAt?.toIso8601String(),
+      'startedAt': result.startedAt?.toIso8601String(),
+      'completedAt': result.completedAt?.toIso8601String(),
+      'rejectedAt': result.rejectedAt?.toIso8601String(),
+      'supersededAt': result.supersededAt?.toIso8601String(),
+    });
+  }
+
+  Future<HumanDirectionSummaryResponse> completeDirection({
+    required String directionId,
+    required String completedBy,
+    required String completionSummary,
+  }) async {
+    final result = await _client.humanDirectionEndpoints.completeDirection(
+      directionId: directionId,
+      completedBy: completedBy,
+      completionSummary: completionSummary,
+    );
+    return HumanDirectionSummaryResponse.fromJson({
+      'directionId': result.directionId,
+      'directionType': result.directionType,
+      'targetType': result.targetType,
+      'targetId': result.targetId,
+      'title': result.payload.title,
+      'description': result.payload.description,
+      'contextJson': result.payload.contextJson,
+      'attachments':
+          result.payload.attachments
+              ?.map(
+                (a) => {
+                  'artifactId': a.artifactId,
+                  'artifactType': a.artifactType,
+                  'description': a.description,
+                },
+              )
+              .toList() ??
+          [],
+      'createdBy': result.createdBy,
+      'assignedTo': result.assignedTo,
+      'status': result.status,
+      'createdAt': result.createdAt.toIso8601String(),
+      'acknowledgedAt': result.ackedAt?.toIso8601String(),
+      'startedAt': result.startedAt?.toIso8601String(),
+      'completedAt': result.completedAt?.toIso8601String(),
+      'rejectedAt': result.rejectedAt?.toIso8601String(),
+      'supersededAt': result.supersededAt?.toIso8601String(),
+    });
+  }
+
+  Future<HumanDirectionSummaryResponse> rejectDirection({
+    required String directionId,
+    required String rejectedBy,
+    required String rejectionReason,
+  }) async {
+    final result = await _client.humanDirectionEndpoints.rejectDirection(
+      directionId: directionId,
+      rejectedBy: rejectedBy,
+      rejectionReason: rejectionReason,
+    );
+    return HumanDirectionSummaryResponse.fromJson({
+      'directionId': result.directionId,
+      'directionType': result.directionType,
+      'targetType': result.targetType,
+      'targetId': result.targetId,
+      'title': result.payload.title,
+      'description': result.payload.description,
+      'contextJson': result.payload.contextJson,
+      'attachments':
+          result.payload.attachments
+              ?.map(
+                (a) => {
+                  'artifactId': a.artifactId,
+                  'artifactType': a.artifactType,
+                  'description': a.description,
+                },
+              )
+              .toList() ??
+          [],
+      'createdBy': result.createdBy,
+      'assignedTo': result.assignedTo,
+      'status': result.status,
+      'createdAt': result.createdAt.toIso8601String(),
+      'acknowledgedAt': result.ackedAt?.toIso8601String(),
+      'startedAt': result.startedAt?.toIso8601String(),
+      'completedAt': result.completedAt?.toIso8601String(),
+      'rejectedAt': result.rejectedAt?.toIso8601String(),
+      'supersededAt': result.supersededAt?.toIso8601String(),
+    });
+  }
+
+  Future<HumanDirectionSummaryResponse> supersedeDirection({
+    required String directionId,
+    required String supersededByDirectionId,
+    required String supersededBy,
+  }) async {
+    final result = await _client.humanDirectionEndpoints.supersedeDirection(
+      directionId: directionId,
+      supersededByDirectionId: supersededByDirectionId,
+      supersededBy: supersededBy,
+    );
+    return HumanDirectionSummaryResponse.fromJson({
+      'directionId': result.directionId,
+      'directionType': result.directionType,
+      'targetType': result.targetType,
+      'targetId': result.targetId,
+      'title': result.payload.title,
+      'description': result.payload.description,
+      'contextJson': result.payload.contextJson,
+      'attachments':
+          result.payload.attachments
+              ?.map(
+                (a) => {
+                  'artifactId': a.artifactId,
+                  'artifactType': a.artifactType,
+                  'description': a.description,
+                },
+              )
+              .toList() ??
+          [],
+      'createdBy': result.createdBy,
+      'assignedTo': result.assignedTo,
+      'status': result.status,
+      'createdAt': result.createdAt.toIso8601String(),
+      'acknowledgedAt': result.ackedAt?.toIso8601String(),
+      'startedAt': result.startedAt?.toIso8601String(),
+      'completedAt': result.completedAt?.toIso8601String(),
+      'rejectedAt': result.rejectedAt?.toIso8601String(),
+      'supersededAt': result.supersededAt?.toIso8601String(),
+    });
+  }
+
+  // Product Registry methods
+  Future<DecisionResponse> proposeBaseline({
+    required String productId,
+    required List<Map<String, dynamic>> facts,
+  }) async {
+    final result = await _client.productRegistryEndpoints.proposeBaseline(
+      productId: productId,
+      facts: facts.map((f) => BaselineFact.fromJson(f)).toList(),
+    );
+    revision.value++;
+    return _decisionResponse(result);
+  }
+
+  Future<DecisionResponse> addHumanBaselineClaim({
+    required String productId,
+    required String baselineId,
+    required String section, // BaselineSectionKey.wire
+    required String claim,
+    required String author,
+    List<String> evidenceRefs = const [],
+    String? maturity, // BaselineMaturity.wire (e.g. 'implemented', 'policy', 'not_implemented')
+  }) async {
+    final result = await _client.productRegistryEndpoints.addHumanBaselineClaim(
+      productId: productId,
+      baselineId: baselineId,
+      section: section,
+      claim: claim,
+      author: author,
+      evidenceRefs: evidenceRefs,
+      maturity: maturity,
+    );
+    revision.value++;
+    // The generated endpoint returns ProductDetailView; the caller will refetch
+    // the detail surface. We just bump the shared revision.
+    return _decisionResponse(DecisionView(
+      decisionId: 'baseline-claim:${DateTime.now().microsecondsSinceEpoch}',
+      workItemId: 'product-baseline:$productId',
+      workItemTitle: 'Baseline claim',
+      decisionType: 'product_decision',
+      status: 'pending',
+      question: 'Operator claim added — request approval for new revision',
+      context: null,
+      options: [],
+      recommendation: null,
+      blocking: false,
+      requestedAt: DateTime.now(),
+      decider: null,
+      choice: null,
+      rationale: null,
+    ));
+  }
+
+  Future<DecisionResponse> requestBaselineApproval({
+    required String productId,
+    required String baselineId,
+    String? decisionId,
+  }) async {
+    final result = await _client.productRegistryEndpoints
+        .requestBaselineApproval(
+          productId: productId,
+          baselineId: baselineId,
+          decisionId: decisionId,
+        );
+    revision.value++;
+    return _decisionResponse(result);
+  }
+
+  /// Records the operator's resolution of a baseline-approval gate.
+  ///
+  /// The click is the human act: [decider] and [rationale] come from the
+  /// operator, and the signature block is the same attestation the workflow
+  /// decision resolver stamps for an in-app resolution. It is recorded for
+  /// attribution, not cryptographically verified — see `DecisionSignature`.
+  Future<DecisionResponse> resolveBaselineApproval({
+    required String decisionId,
+    required String choice,
+    required String decider,
+    required String rationale,
+  }) async {
+    final now = DateTime.now();
+    final result = await _client.productRegistryEndpoints
+        .resolveBaselineApproval(
+          decisionId: decisionId,
+          choice: choice,
+          decider: decider,
+          rationale: rationale,
+          algorithm: 'ed25519',
+          publicKey: 'operator-pub-key',
+          signature: 'operator-sig-${now.millisecondsSinceEpoch}',
+          signedAt: now,
+        );
+    revision.value++;
+    return _decisionResponse(result);
+  }
+
+  /// Records platform-verified evidence against a proposed baseline.
+  ///
+  /// `ProductRegistryEngine.verifyBaseline` refuses a baseline that has not
+  /// been independently verified, so this must run before approval is
+  /// requested.
+  Future<void> verifyBaseline({
+    required String productId,
+    required String baselineId,
+    required String verifiedBy,
+  }) async {
+    await _client.productRegistryEndpoints.verifyBaseline(
+      productId: productId,
+      baselineId: baselineId,
+      verifiedBy: verifiedBy,
+      kind: 'platform_verified_evidence',
+    );
+    revision.value++;
+  }
+
+  /// Creates a new product with its manifest.
+  Future<ProductDetailResponse> createProduct({
+    required String productId,
+    required String name,
+    String? description,
+    required String manifestJson,
+    String? manifestVersion,
+  }) async {
+    final d = await _client.productRegistryEndpoints.createProduct(
+      productId: productId,
+      name: name,
+      description: description,
+      manifestJson: manifestJson,
+      manifestVersion: manifestVersion,
+    );
+    revision.value++;
+    return ProductDetailResponse(
+      productId: d.product.productId,
+      name: d.product.name,
+      description: d.product.description,
+      state: d.product.state,
+      allowsDispatch: d.allowsDispatch,
+      updatedAt: d.product.updatedAt,
+      repositories: d.repositories
+          .map(
+            (r) => ProductRepositoryResponse(
+              repositoryId: r.repositoryId,
+              uri: r.uri,
+              kind: r.kind,
+              provider: r.provider,
+            ),
+          )
+          .toList(),
+      credentials: d.credentials
+          .map(
+            (c) => CredentialResponse(
+              credentialId: c.credentialId,
+              repositoryId: c.repositoryId,
+              referenceName: c.referenceName,
+              fingerprint: c.fingerprint,
+              algorithm: c.algorithm,
+              status: c.status,
+              hostKeyStatus: c.hostKeyStatus,
+              host: c.host,
+              canReachRepository: c.canReachRepository,
+              lastVerifiedAt: c.lastVerifiedAt,
+              lastVerifiedBy: c.lastVerifiedBy,
+              lastFailureReason: c.lastFailureReason,
+              hostConfirmedAt: c.hostConfirmedAt,
+              hostConfirmedBy: c.hostConfirmedBy,
+            ),
+          )
+          .toList(),
+      activeBaselineId: d.activeBaseline?.baselineId,
+      activeBaselineRevision: d.activeBaseline?.revision,
+      activeBaselineHash: d.activeBaseline?.contentHash,
+      activeBaselineAcceptedAt: d.activeBaseline?.acceptedAt,
+      activeBaselineAcceptedBy: d.activeBaseline?.acceptedBy,
+      activeBaselineFactCount: d.activeBaseline?.facts.length ?? 0,
+      pendingBaselineId: d.pendingBaseline?.baselineId,
+      pendingBaselineRevision: d.pendingBaseline?.revision,
+      pendingBaselineVerified: d.pendingBaselineVerified,
+      pendingBaselineFacts: (d.pendingBaseline?.facts ?? const [])
+          .map(BaselineFactClaim.fromProtocol)
+          .toList(),
+      pendingBaselineDecisionId: d.pendingBaselineDecisionId,
+      openClarifications: d.openClarifications
+          .map(
+            (c) => ClarificationSummary(
+              clarificationId: c.clarificationId,
+              question: c.question,
+              section: c.section,
+            ),
+          )
+          .toList(),
+      policies: d.policies.map(_policyResponse).toList(),
+    );
+  }
+
+  /// Adds a repository reference to a product.
+  Future<void> addRepositoryReference({
+    required String productId,
+    required String repositoryId,
+    required String uri,
+    required String kind,
+    required String provider,
+  }) async {
+    await _client.productRegistryEndpoints.addRepositoryReference(
+      productId: productId,
+      repositoryId: repositoryId,
+      uri: uri,
+      kind: kind,
+      provider: provider,
+    );
+    revision.value++;
+  }
+
   ArtifactRefResponse _artifactRefResponse(ArtifactReferenceView a) {
     return ArtifactRefResponse(
       artifactId: a.artifactId,
@@ -457,6 +1147,76 @@ class ControlPlaneRepository {
       description: a.description,
       createdAt: a.createdAt,
     );
+  }
+
+  // Model Policy methods
+  Future<List<ModelPolicyResponse>> listModelPolicies() async {
+    final result = await _client.providerHealthEndpoints.listModelPolicies();
+    final policiesJson = result['policies'] as List<dynamic>? ?? [];
+    return policiesJson
+        .map((p) => ModelPolicyResponse.fromJson(p as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<ProviderHealthResponse> getProviderHealth() async {
+    final result = await _client.providerHealthEndpoints.getProviderHealth();
+    return ProviderHealthResponse.fromJson(result);
+  }
+
+  Future<ModelPolicyResponse> updateModelPolicy({
+    required String role,
+    required List<ModelStepRequest> chain,
+    required int version,
+    required String updatedByDecisionId,
+  }) async {
+    final result = await _client.providerHealthEndpoints.updateModelPolicy(
+      role: role,
+      chainJson: jsonEncode(
+        chain.map((s) => s.toJson()).toList(),
+      ),
+      version: version,
+      updatedByDecisionId: updatedByDecisionId,
+    );
+    revision.value++;
+    return ModelPolicyResponse.fromJson(result);
+  }
+
+  // Model Executions methods
+  Future<ModelExecutionsPageResponse> listModelExecutions({
+    String? workItemId,
+    String? provider,
+    String? modelId,
+    String? taskType,
+    bool? success,
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final result = await _client.providerHealthEndpoints.listModelExecutions(
+      workItemId: workItemId,
+      provider: provider,
+      modelId: modelId,
+      from: from,
+      to: to,
+      limit: limit,
+      offset: offset,
+    );
+    return ModelExecutionsPageResponse.fromJson(result);
+  }
+
+  // Model Stats methods
+  Future<ModelStatsResponse> getModelStats({
+    DateTime? from,
+    DateTime? to,
+    String? groupBy,
+  }) async {
+    final result = await _client.providerHealthEndpoints.getModelStats(
+      from: from,
+      to: to,
+      groupBy: groupBy,
+    );
+    return ModelStatsResponse.fromJson(result);
   }
 }
 
@@ -540,6 +1300,20 @@ class ArtifactRefResponse {
   final String? contentHash;
   final String? description;
   final DateTime? createdAt;
+
+  factory ArtifactRefResponse.fromJson(Map<String, dynamic> json) {
+    return ArtifactRefResponse(
+      artifactId: json['artifactId'] as String,
+      artifactType: json['artifactType'] as String,
+      uri: json['uri'] as String,
+      provider: json['provider'] as String?,
+      contentHash: json['contentHash'] as String?,
+      description: json['description'] as String?,
+      createdAt: json['createdAt'] != null
+          ? DateTime.parse(json['createdAt'] as String)
+          : null,
+    );
+  }
 }
 
 class WorkItemResponse {
@@ -715,6 +1489,52 @@ class DecisionDetailResponse {
   final String? signature;
 }
 
+/// One claim a pending baseline makes about its product.
+///
+/// [maturity] is part of the approved content hash, so a reviewer can tell an
+/// implemented fact from an assumed one rather than reading every claim as
+/// equally established.
+class BaselineFactClaim {
+  const BaselineFactClaim({
+    required this.factId,
+    required this.section,
+    required this.claim,
+    required this.provenance,
+    required this.maturity,
+    required this.evidenceRefs,
+    this.assumptionNote,
+    this.redacted = false,
+  });
+
+  factory BaselineFactClaim.fromProtocol(BaselineFactView v) => BaselineFactClaim(
+    factId: v.factId,
+    section: v.section,
+    claim: v.claim,
+    provenance: v.provenance,
+    maturity: v.maturity,
+    evidenceRefs: v.evidenceRefs,
+    assumptionNote: v.assumptionNote,
+    redacted: v.redacted,
+  );
+
+  final String factId;
+
+  /// One of the fixed baseline sections: repository, tech_stack, architecture,
+  /// design, qa, ci_cd, environments, data, deployment, governance, known_gaps.
+  final String section;
+  final String claim;
+
+  /// observed | human_provided | derived | assumed | unknown
+  final String provenance;
+
+  /// asserted | implemented | policy | not_implemented | unknown
+  final String maturity;
+
+  final List<String> evidenceRefs;
+  final String? assumptionNote;
+  final bool redacted;
+}
+
 /// One row of the Products screen, read straight from durable registry state.
 class ProductSummaryResponse {
   const ProductSummaryResponse({
@@ -788,8 +1608,10 @@ class ProductDetailResponse {
     this.pendingBaselineId,
     this.pendingBaselineRevision,
     required this.pendingBaselineVerified,
+    this.pendingBaselineFacts = const [],
     required this.openClarifications,
     required this.policies,
+    this.pendingBaselineDecisionId,
   });
 
   final String productId;
@@ -809,9 +1631,22 @@ class ProductDetailResponse {
   /// Recorded baseline claims, not files.
   final int activeBaselineFactCount;
 
+  /// The claims the pending candidate actually asserts.
+  ///
+  /// The approval gate must show these. A count alone lets an empty baseline
+  /// look identical to a well-evidenced one, which is how a candidate that
+  /// asserts nothing reaches a human reviewer looking like a real proposal.
+  final List<BaselineFactClaim> pendingBaselineFacts;
   final String? pendingBaselineId;
   final int? pendingBaselineRevision;
   final bool pendingBaselineVerified;
+
+  /// Decision id of the unresolved baseline-approval gate, when one exists.
+  /// Baseline decisions are scoped to `product-baseline:<productId>` rather
+  /// than a WorkItem row, so this cannot be discovered by listing a work item's
+  /// decisions — the screen needs it to submit a resolution.
+  final String? pendingBaselineDecisionId;
+
   final List<ClarificationSummary> openClarifications;
 
   /// Active first, then revoked. Revoked policies are retained, not deleted.
@@ -908,4 +1743,863 @@ class PolicyResponse {
   final bool isRevoked;
   final String? revokedBy;
   final String? revocationReason;
+}
+
+class HumanDirectionSummaryResponse {
+  HumanDirectionSummaryResponse({
+    required this.directionId,
+    required this.directionType,
+    required this.targetType,
+    this.targetId,
+    required this.title,
+    required this.description,
+    this.contextJson,
+    this.attachments = const [],
+    this.createdBy,
+    this.assignedTo,
+    required this.status,
+    required this.createdAt,
+    this.acknowledgedAt,
+    this.startedAt,
+    this.completedAt,
+    this.rejectedAt,
+    this.supersededAt,
+  });
+
+  final String directionId;
+  final String directionType;
+  final String targetType;
+  final String? targetId;
+  final String title;
+  final String description;
+  final String? contextJson;
+  final List<Map<String, dynamic>> attachments;
+  final String? createdBy;
+  final String? assignedTo;
+  final String status;
+  final DateTime createdAt;
+  final DateTime? acknowledgedAt;
+  final DateTime? startedAt;
+  final DateTime? completedAt;
+  final DateTime? rejectedAt;
+  final DateTime? supersededAt;
+
+  factory HumanDirectionSummaryResponse.fromJson(Map<String, dynamic> json) {
+    return HumanDirectionSummaryResponse(
+      directionId: json['directionId'] as String,
+      directionType: json['directionType'] as String,
+      targetType: json['targetType'] as String,
+      targetId: json['targetId'] as String?,
+      title: json['title'] as String,
+      description: json['description'] as String,
+      contextJson: json['contextJson'] as String?,
+      attachments:
+          (json['attachments'] as List<dynamic>?)
+              ?.map((a) => a as Map<String, dynamic>)
+              .toList() ??
+          const [],
+      createdBy: json['createdBy'] as String?,
+      assignedTo: json['assignedTo'] as String?,
+      status: json['status'] as String,
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      acknowledgedAt: json['acknowledgedAt'] != null
+          ? DateTime.parse(json['acknowledgedAt'] as String)
+          : null,
+      startedAt: json['startedAt'] != null
+          ? DateTime.parse(json['startedAt'] as String)
+          : null,
+      completedAt: json['completedAt'] != null
+          ? DateTime.parse(json['completedAt'] as String)
+          : null,
+      rejectedAt: json['rejectedAt'] != null
+          ? DateTime.parse(json['rejectedAt'] as String)
+          : null,
+      supersededAt: json['supersededAt'] != null
+          ? DateTime.parse(json['supersededAt'] as String)
+          : null,
+    );
+  }
+}
+
+class DefectSummaryResponse {
+  DefectSummaryResponse({
+    required this.defectId,
+    required this.title,
+    required this.severity,
+    required this.status,
+    this.classification,
+    required this.reporter,
+    this.productId,
+    this.productName,
+    required this.createdAt,
+    required this.updatedAt,
+    this.affectedWorkItemId,
+    this.affectedRunId,
+    this.remediationWorkItemId,
+  });
+
+  final String defectId;
+  final String title;
+  final String severity;
+  final String status;
+  final String? classification;
+  final String reporter;
+
+  /// The product chosen when the defect was reported, when one was.
+  final String? productId;
+  final String? productName;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final String? affectedWorkItemId;
+  final String? affectedRunId;
+  final String? remediationWorkItemId;
+
+  factory DefectSummaryResponse.fromJson(Map<String, dynamic> json) {
+    return DefectSummaryResponse(
+      defectId: json['defectId'] as String,
+      title: json['title'] as String,
+      severity: json['severity'] as String,
+      status: json['status'] as String,
+      classification: json['classification'] as String?,
+      reporter: json['reporter'] as String,
+      productId: json['productId'] as String?,
+      productName: json['productName'] as String?,
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      updatedAt: DateTime.parse(json['updatedAt'] as String),
+      affectedWorkItemId: json['affectedWorkItemId'] as String?,
+      affectedRunId: json['affectedRunId'] as String?,
+      remediationWorkItemId: json['remediationWorkItemId'] as String?,
+    );
+  }
+}
+
+class DefectEvidenceResponse {
+  DefectEvidenceResponse({
+    required this.evidenceId,
+    required this.defectId,
+    required this.kind,
+    this.artifactId,
+    this.contentHash,
+    this.description,
+    this.sourceRef,
+    required this.capturedAt,
+    required this.createdAt,
+  });
+
+  final String evidenceId;
+  final String defectId;
+  final String kind;
+  final String? artifactId;
+  final String? contentHash;
+  final String? description;
+  final String? sourceRef;
+  final DateTime capturedAt;
+  final DateTime createdAt;
+
+  factory DefectEvidenceResponse.fromJson(Map<String, dynamic> json) {
+    return DefectEvidenceResponse(
+      evidenceId: json['evidenceId'] as String,
+      defectId: json['defectId'] as String,
+      kind: json['kind'] as String,
+      artifactId: json['artifactId'] as String?,
+      contentHash: json['contentHash'] as String?,
+      description: json['description'] as String?,
+      sourceRef: json['sourceRef'] as String?,
+      capturedAt: DateTime.parse(json['capturedAt'] as String),
+      createdAt: DateTime.parse(json['createdAt'] as String),
+    );
+  }
+}
+
+class DefectClarificationResponse {
+  DefectClarificationResponse({
+    required this.clarificationId,
+    required this.defectId,
+    required this.question,
+    required this.reason,
+    required this.status,
+    this.answer,
+    this.humanDecisionId,
+    this.requestedByTriageJobId,
+    required this.requestedAt,
+    this.answeredAt,
+    required this.createdAt,
+  });
+
+  final String clarificationId;
+  final String defectId;
+  final String question;
+  final String reason;
+  final String status;
+  final String? answer;
+  final String? humanDecisionId;
+  final String? requestedByTriageJobId;
+  final DateTime requestedAt;
+  final DateTime? answeredAt;
+  final DateTime createdAt;
+
+  factory DefectClarificationResponse.fromJson(Map<String, dynamic> json) {
+    return DefectClarificationResponse(
+      clarificationId: json['clarificationId'] as String,
+      defectId: json['defectId'] as String,
+      question: json['question'] as String,
+      reason: json['reason'] as String,
+      status: json['status'] as String,
+      answer: json['answer'] as String?,
+      humanDecisionId: json['humanDecisionId'] as String?,
+      requestedByTriageJobId: json['requestedByTriageJobId'] as String?,
+      requestedAt: DateTime.parse(json['requestedAt'] as String),
+      answeredAt: json['answeredAt'] != null
+          ? DateTime.parse(json['answeredAt'] as String)
+          : null,
+      createdAt: DateTime.parse(json['createdAt'] as String),
+    );
+  }
+}
+
+class DefectEventResponse {
+  DefectEventResponse({
+    required this.eventId,
+    required this.defectId,
+    required this.sequence,
+    required this.type,
+    this.fromStatus,
+    this.toStatus,
+    required this.actorType,
+    required this.actorId,
+    this.payloadJson,
+    required this.occurredAt,
+  });
+
+  final String eventId;
+  final String defectId;
+  final int sequence;
+  final String type;
+  final String? fromStatus;
+  final String? toStatus;
+  final String actorType;
+  final String actorId;
+  final String? payloadJson;
+  final DateTime occurredAt;
+
+  factory DefectEventResponse.fromJson(Map<String, dynamic> json) {
+    return DefectEventResponse(
+      eventId: json['eventId'] as String,
+      defectId: json['defectId'] as String,
+      sequence: json['sequence'] as int,
+      type: json['type'] as String,
+      fromStatus: json['fromStatus'] as String?,
+      toStatus: json['toStatus'] as String?,
+      actorType: json['actorType'] as String,
+      actorId: json['actorId'] as String,
+      payloadJson: json['payloadJson'] as String?,
+      occurredAt: DateTime.parse(json['occurredAt'] as String),
+    );
+  }
+}
+
+class TriageResultResponse {
+  TriageResultResponse({
+    required this.triageResultId,
+    required this.defectId,
+    required this.triageJobId,
+    this.classification,
+    this.confidence,
+    this.rationale,
+    this.recommendedAction,
+    this.needsClarification,
+    this.clarificationQuestion,
+    this.clarificationReason,
+    required this.createdAt,
+  });
+
+  final String triageResultId;
+  final String defectId;
+  final String triageJobId;
+  final String? classification;
+  final double? confidence;
+  final String? rationale;
+  final String? recommendedAction;
+  final bool? needsClarification;
+  final String? clarificationQuestion;
+  final String? clarificationReason;
+  final DateTime createdAt;
+
+  factory TriageResultResponse.fromJson(Map<String, dynamic> json) {
+    return TriageResultResponse(
+      triageResultId: json['triageResultId'] as String,
+      defectId: json['defectId'] as String,
+      triageJobId: json['triageJobId'] as String,
+      classification: json['classification'] as String?,
+      confidence: (json['confidence'] as num?)?.toDouble(),
+      rationale: json['rationale'] as String?,
+      recommendedAction: json['recommendedAction'] as String?,
+      needsClarification: json['needsClarification'] as bool?,
+      clarificationQuestion: json['clarificationQuestion'] as String?,
+      clarificationReason: json['clarificationReason'] as String?,
+      createdAt: DateTime.parse(json['createdAt'] as String),
+    );
+  }
+}
+
+class RemediationWorkItemResponse {
+  RemediationWorkItemResponse({
+    required this.workItemId,
+    required this.title,
+    this.description,
+    required this.state,
+    required this.createdAt,
+    required this.updatedAt,
+    this.completedAt,
+    this.blockingHumanDecisionId,
+    this.artifactRefs = const [],
+  });
+
+  final String workItemId;
+  final String title;
+  final String? description;
+  final String state;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final DateTime? completedAt;
+  final String? blockingHumanDecisionId;
+  final List<ArtifactRefResponse> artifactRefs;
+
+  factory RemediationWorkItemResponse.fromJson(Map<String, dynamic> json) {
+    return RemediationWorkItemResponse(
+      workItemId: json['workItemId'] as String,
+      title: json['title'] as String,
+      description: json['description'] as String?,
+      state: json['state'] as String,
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      updatedAt: DateTime.parse(json['updatedAt'] as String),
+      completedAt: json['completedAt'] != null
+          ? DateTime.parse(json['completedAt'] as String)
+          : null,
+      blockingHumanDecisionId: json['blockingHumanDecisionId'] as String?,
+      artifactRefs:
+          (json['artifactRefs'] as List<dynamic>?)
+              ?.map(
+                (a) => ArtifactRefResponse.fromJson(a as Map<String, dynamic>),
+              )
+              .toList() ??
+          const [],
+    );
+  }
+}
+
+class CreateDefectResponse {
+  CreateDefectResponse({required this.defectId});
+
+  final String defectId;
+
+  factory CreateDefectResponse.fromJson(Map<String, dynamic> json) {
+    return CreateDefectResponse(defectId: json['defectId'] as String);
+  }
+}
+
+class ListDefectsResponse {
+  ListDefectsResponse({required this.defects, required this.totalCount});
+
+  final List<DefectSummaryResponse> defects;
+  final int totalCount;
+
+  factory ListDefectsResponse.fromJson(Map<String, dynamic> json) {
+    return ListDefectsResponse(
+      defects:
+          (json['defects'] as List<dynamic>?)
+              ?.map(
+                (d) =>
+                    DefectSummaryResponse.fromJson(d as Map<String, dynamic>),
+              )
+              .toList() ??
+          const [],
+      totalCount: json['totalCount'] as int,
+    );
+  }
+}
+
+class InspectDefectResponse {
+  InspectDefectResponse({
+    required this.defect,
+    required this.evidence,
+    required this.clarifications,
+    required this.events,
+    this.triageResult,
+    this.remediationWorkItem,
+  });
+
+  final DefectSummaryResponse defect;
+  final List<DefectEvidenceResponse> evidence;
+  final List<DefectClarificationResponse> clarifications;
+  final List<DefectEventResponse> events;
+  final TriageResultResponse? triageResult;
+  final RemediationWorkItemResponse? remediationWorkItem;
+
+  factory InspectDefectResponse.fromJson(Map<String, dynamic> json) {
+    return InspectDefectResponse(
+      defect: DefectSummaryResponse.fromJson(
+        json['defect'] as Map<String, dynamic>,
+      ),
+      evidence:
+          (json['evidence'] as List<dynamic>?)
+              ?.map(
+                (e) =>
+                    DefectEvidenceResponse.fromJson(e as Map<String, dynamic>),
+              )
+              .toList() ??
+          const [],
+      clarifications:
+          (json['clarifications'] as List<dynamic>?)
+              ?.map(
+                (c) => DefectClarificationResponse.fromJson(
+                  c as Map<String, dynamic>,
+                ),
+              )
+              .toList() ??
+          const [],
+      events:
+          (json['events'] as List<dynamic>?)
+              ?.map(
+                (e) => DefectEventResponse.fromJson(e as Map<String, dynamic>),
+              )
+              .toList() ??
+          const [],
+      triageResult: json['triageResult'] != null
+          ? TriageResultResponse.fromJson(
+              json['triageResult'] as Map<String, dynamic>,
+            )
+          : null,
+      remediationWorkItem: json['remediationWorkItem'] != null
+          ? RemediationWorkItemResponse.fromJson(
+              json['remediationWorkItem'] as Map<String, dynamic>,
+            )
+          : null,
+    );
+  }
+}
+
+class AddDefectEvidenceResponse {
+  AddDefectEvidenceResponse({required this.evidence});
+
+  final DefectEvidenceResponse evidence;
+
+  factory AddDefectEvidenceResponse.fromJson(Map<String, dynamic> json) {
+    return AddDefectEvidenceResponse(
+      evidence: DefectEvidenceResponse.fromJson(json),
+    );
+  }
+}
+
+class VerifyFixResponse {
+  VerifyFixResponse({
+    required this.success,
+    required this.newStatus,
+    required this.message,
+  });
+
+  final bool success;
+  final String newStatus;
+  final String message;
+
+  factory VerifyFixResponse.fromJson(Map<String, dynamic> json) {
+    return VerifyFixResponse(
+      success: json['success'] as bool,
+      newStatus: json['newStatus'] as String,
+      message: json['message'] as String,
+    );
+  }
+}
+
+/// One row of the Reports screen's `Feature requests` tab.
+///
+/// A feature request is a `WorkItem(category: feature)`, so there is no
+/// separate register behind this: [workItemId] is the durable work item, and
+/// [state] is its `WorkflowState`. [productName] and [reporter] are resolved
+/// server-side from the records written alongside the request.
+class FeatureRequestSummaryResponse {
+  const FeatureRequestSummaryResponse({
+    required this.workItemId,
+    required this.title,
+    this.description,
+    required this.state,
+    required this.productId,
+    this.productName,
+    this.reporter,
+    required this.createdAt,
+    required this.updatedAt,
+    this.completedAt,
+  });
+
+  final String workItemId;
+  final String title;
+
+  /// The reporter's own words: what they want and why.
+  final String? description;
+
+  /// `WorkflowState` wire value. Stays `draft` until a human decides.
+  final String state;
+
+  final String productId;
+
+  /// Absent when no registry row resolves. The screen owns the fallback copy
+  /// for an unresolved product; the server never invents a label.
+  final String? productName;
+
+  final String? reporter;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final DateTime? completedAt;
+}
+
+/// The durable record a successful [ControlPlaneRepository.createFeatureRequest]
+/// wrote. The returned id is the work item, so the screen can link straight to
+/// it rather than to a report-only row that no other surface can resolve.
+class CreateFeatureRequestResponse {
+  const CreateFeatureRequestResponse({
+    required this.workItemId,
+    required this.title,
+    required this.state,
+    required this.createdAt,
+  });
+
+  final String workItemId;
+  final String title;
+  final String state;
+  final DateTime createdAt;
+}
+
+class ModelPolicyResponse {
+  const ModelPolicyResponse({
+    required this.role,
+    required this.chain,
+    required this.version,
+    required this.updatedAt,
+    required this.updatedByDecisionId,
+    this.isActive = false,
+  });
+
+  final String role;
+  final List<ModelStepResponse> chain;
+  final int version;
+  final DateTime updatedAt;
+  final String updatedByDecisionId;
+  final bool isActive;
+
+  factory ModelPolicyResponse.fromJson(Map<String, dynamic> json) {
+    return ModelPolicyResponse(
+      role: json['role'] as String,
+      chain: (json['chain'] as List<dynamic>?)
+              ?.map((s) => ModelStepResponse.fromJson(s as Map<String, dynamic>))
+              .toList() ??
+          const [],
+      version: (json['version'] as num).toInt(),
+      updatedAt: DateTime.parse(json['updatedAt'] as String),
+      updatedByDecisionId: json['updatedByDecisionId'] as String,
+      isActive: json['isActive'] as bool? ?? false,
+    );
+  }
+}
+
+class ModelStepResponse {
+  const ModelStepResponse({
+    required this.modelId,
+    required this.provider,
+  });
+
+  final String modelId;
+  final String provider;
+
+  factory ModelStepResponse.fromJson(Map<String, dynamic> json) {
+    return ModelStepResponse(
+      modelId: json['modelId'] as String,
+      provider: json['provider'] as String,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'modelId': modelId,
+        'provider': provider,
+      };
+}
+
+class ModelStepRequest {
+  const ModelStepRequest({
+    required this.modelId,
+    required this.provider,
+  });
+
+  final String modelId;
+  final String provider;
+
+  Map<String, dynamic> toJson() => {
+        'modelId': modelId,
+        'provider': provider,
+      };
+}
+
+class ProviderHealthResponse {
+  const ProviderHealthResponse({
+    required this.providers,
+    this.knownModels = const [],
+  });
+
+  final List<ProviderStatusResponse> providers;
+  final List<KnownModelResponse> knownModels;
+
+  factory ProviderHealthResponse.fromJson(Map<String, dynamic> json) {
+    return ProviderHealthResponse(
+      providers: (json['providers'] as List<dynamic>?)
+              ?.map((p) => ProviderStatusResponse.fromJson(p as Map<String, dynamic>))
+              .toList() ??
+          const [],
+      knownModels: (json['knownModels'] as List<dynamic>?)
+              ?.map((m) => KnownModelResponse.fromJson(m as Map<String, dynamic>))
+              .toList() ??
+          const [],
+    );
+  }
+}
+
+class ProviderStatusResponse {
+  const ProviderStatusResponse({
+    required this.provider,
+    required this.status,
+    this.lastChecked,
+    this.error,
+  });
+
+  final String provider;
+  final String status;
+  final DateTime? lastChecked;
+  final String? error;
+
+  factory ProviderStatusResponse.fromJson(Map<String, dynamic> json) {
+    return ProviderStatusResponse(
+      provider: json['provider'] as String,
+      status: json['status'] as String,
+      lastChecked: json['lastChecked'] != null
+          ? DateTime.parse(json['lastChecked'] as String)
+          : null,
+      error: json['error'] as String?,
+    );
+  }
+}
+
+class KnownModelResponse {
+  const KnownModelResponse({
+    required this.modelId,
+    required this.provider,
+    this.displayName,
+  });
+
+  final String modelId;
+  final String provider;
+  final String? displayName;
+
+  factory KnownModelResponse.fromJson(Map<String, dynamic> json) {
+    return KnownModelResponse(
+      modelId: json['modelId'] as String,
+      provider: json['provider'] as String,
+      displayName: json['displayName'] as String?,
+    );
+  }
+}
+
+class ModelExecutionsPageResponse {
+  const ModelExecutionsPageResponse({
+    required this.items,
+    required this.totalCount,
+    required this.limit,
+    required this.offset,
+  });
+
+  final List<ModelExecutionRecordResponse> items;
+  final int totalCount;
+  final int limit;
+  final int offset;
+
+  factory ModelExecutionsPageResponse.fromJson(Map<String, dynamic> json) {
+    return ModelExecutionsPageResponse(
+      items: (json['items'] as List<dynamic>?)
+              ?.map((e) => ModelExecutionRecordResponse.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          const [],
+      totalCount: (json['totalCount'] as num?)?.toInt() ?? 0,
+      limit: (json['limit'] as num?)?.toInt() ?? 50,
+      offset: (json['offset'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class ModelExecutionRecordResponse {
+  const ModelExecutionRecordResponse({
+    required this.workItemId,
+    required this.jobId,
+    required this.agentExecutionId,
+    required this.role,
+    required this.modelId,
+    required this.provider,
+    required this.inputTokens,
+    required this.outputTokens,
+    required this.totalTokens,
+    required this.cachedReadTokens,
+    required this.costUsd,
+    required this.currency,
+    required this.startedAt,
+    required this.finishedAt,
+    required this.success,
+    this.error,
+    required this.escalationIndex,
+    required this.taskType,
+  });
+
+  final String workItemId;
+  final String jobId;
+  final String agentExecutionId;
+  final String role;
+  final String modelId;
+  final String provider;
+  final int inputTokens;
+  final int outputTokens;
+  final int totalTokens;
+  final int cachedReadTokens;
+  final double costUsd;
+  final String currency;
+  final DateTime startedAt;
+  final DateTime finishedAt;
+  final bool success;
+  final String? error;
+  final int escalationIndex;
+  final String taskType;
+
+  factory ModelExecutionRecordResponse.fromJson(Map<String, dynamic> json) {
+    return ModelExecutionRecordResponse(
+      workItemId: json['workItemId'] as String,
+      jobId: json['jobId'] as String,
+      agentExecutionId: json['agentExecutionId'] as String,
+      role: json['role'] as String,
+      modelId: json['modelId'] as String,
+      provider: json['provider'] as String,
+      inputTokens: (json['inputTokens'] as num).toInt(),
+      outputTokens: (json['outputTokens'] as num).toInt(),
+      totalTokens: (json['totalTokens'] as num).toInt(),
+      cachedReadTokens: (json['cachedReadTokens'] as num).toInt(),
+      costUsd: (json['costUsd'] as num).toDouble(),
+      currency: json['currency'] as String,
+      startedAt: DateTime.parse(json['startedAt'] as String),
+      finishedAt: DateTime.parse(json['finishedAt'] as String),
+      success: json['success'] as bool,
+      error: json['error'] as String?,
+      escalationIndex: (json['escalationIndex'] as num).toInt(),
+      taskType: json['taskType'] as String,
+    );
+  }
+}
+
+class ModelStatsResponse {
+  const ModelStatsResponse({
+    required this.totalCostUsd,
+    required this.totalTokens,
+    required this.totalExecutions,
+    required this.successRate,
+    required this.costOverTime,
+    required this.tokensByProvider,
+    required this.successRateByModel,
+    required this.escalationFrequency,
+    required this.costByTaskType,
+  });
+
+  final double totalCostUsd;
+  final int totalTokens;
+  final int totalExecutions;
+  final double successRate;
+  final List<TimeSeriesPointResponse> costOverTime;
+  final List<GroupedStatResponse> tokensByProvider;
+  final List<GroupedStatResponse> successRateByModel;
+  final List<EscalationStatResponse> escalationFrequency;
+  final List<GroupedStatResponse> costByTaskType;
+
+  factory ModelStatsResponse.fromJson(Map<String, dynamic> json) {
+    return ModelStatsResponse(
+      totalCostUsd: (json['totalCostUsd'] as num?)?.toDouble() ?? 0.0,
+      totalTokens: (json['totalTokens'] as num?)?.toInt() ?? 0,
+      totalExecutions: (json['totalExecutions'] as num?)?.toInt() ?? 0,
+      successRate: (json['successRate'] as num?)?.toDouble() ?? 0.0,
+      costOverTime: (json['costOverTime'] as List<dynamic>?)
+              ?.map((p) => TimeSeriesPointResponse.fromJson(p as Map<String, dynamic>))
+              .toList() ??
+          const [],
+      tokensByProvider: (json['tokensByProvider'] as List<dynamic>?)
+              ?.map((p) => GroupedStatResponse.fromJson(p as Map<String, dynamic>))
+              .toList() ??
+          const [],
+      successRateByModel: (json['successRateByModel'] as List<dynamic>?)
+              ?.map((p) => GroupedStatResponse.fromJson(p as Map<String, dynamic>))
+              .toList() ??
+          const [],
+      escalationFrequency: (json['escalationFrequency'] as List<dynamic>?)
+              ?.map((p) => EscalationStatResponse.fromJson(p as Map<String, dynamic>))
+              .toList() ??
+          const [],
+      costByTaskType: (json['costByTaskType'] as List<dynamic>?)
+              ?.map((p) => GroupedStatResponse.fromJson(p as Map<String, dynamic>))
+              .toList() ??
+          const [],
+    );
+  }
+}
+
+class TimeSeriesPointResponse {
+  const TimeSeriesPointResponse({
+    required this.timestamp,
+    required this.value,
+  });
+
+  final DateTime timestamp;
+  final double value;
+
+  factory TimeSeriesPointResponse.fromJson(Map<String, dynamic> json) {
+    return TimeSeriesPointResponse(
+      timestamp: DateTime.parse(json['timestamp'] as String),
+      value: (json['value'] as num).toDouble(),
+    );
+  }
+}
+
+class GroupedStatResponse {
+  const GroupedStatResponse({
+    required this.key,
+    required this.value,
+    this.count,
+  });
+
+  final String key;
+  final double value;
+  final int? count;
+
+  factory GroupedStatResponse.fromJson(Map<String, dynamic> json) {
+    return GroupedStatResponse(
+      key: json['key'] as String,
+      value: (json['value'] as num).toDouble(),
+      count: (json['count'] as num?)?.toInt(),
+    );
+  }
+}
+
+class EscalationStatResponse {
+  const EscalationStatResponse({
+    required this.escalationIndex,
+    required this.count,
+  });
+
+  final int escalationIndex;
+  final int count;
+
+  factory EscalationStatResponse.fromJson(Map<String, dynamic> json) {
+    return EscalationStatResponse(
+      escalationIndex: (json['escalationIndex'] as num).toInt(),
+      count: (json['count'] as num).toInt(),
+    );
+  }
 }

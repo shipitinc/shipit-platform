@@ -199,7 +199,16 @@ INSERT INTO "serverpod_migrations" ("module", "version", "timestamp")
 -- Postgres treats NULLs as distinct, so deferred/duplicate-enqueue NULL dedupe
 -- keys are not affected.
 --
-CREATE UNIQUE INDEX "job_active_dedupe_unique"
+-- IF NOT EXISTS: migration 20260914041810984 already creates this index with a
+-- byte-identical definition, and the generator's diff source cannot express a
+-- partial index, so it does not know the earlier one exists and would otherwise
+-- collide on the CREATE below. A fresh database replays both migrations in
+-- order and would abort this whole transaction, which also rolls back the
+-- design_review_result table this migration creates. Migration
+-- 20260929123032034 later replaces this index with an equivalent one over
+-- "activeDedupeKey", so the definition here is already superseded.
+--
+CREATE UNIQUE INDEX IF NOT EXISTS "job_active_dedupe_unique"
     ON "job" USING btree ("dedupeKey")
     WHERE (("state" = 'queued') OR ("state" = 'claimed') OR ("state" = 'running') OR ("state" = 'retryWaiting'));
 

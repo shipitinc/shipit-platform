@@ -31,17 +31,25 @@ void main() {
     return PersistenceDatabase(session.db);
   }
 
-  Future<void> truncateDomainTables() async {
+  /// Removes only this suite's rows, in an order that satisfies foreign keys.
+  ///
+  /// Targeted DELETEs, never a TRUNCATE: `test/integration` shares one database
+  /// with files that run concurrently, and truncating `work_item` out from
+  /// under them breaks their assertions. Every marker is namespaced `rew-*` to
+  /// this file. Runs in `setUp` as well as `tearDown`, because a previous run
+  /// that aborted mid-test leaves rows behind and re-inserting them would then
+  /// violate a unique constraint.
+  Future<void> purgeSuiteRows() async {
     final db = await newDb();
-    await db.queryNoTransaction('''
-      TRUNCATE TABLE
-        "work_item", "human_decision", "work_item_transition",
-        "job", "job_claim", "scheduler_event",
-        "worker_execution", "worker_result", "worker_event", "worker_registration",
-        "agent_execution_request", "agent_execution", "agent_event",
-        "agent_result", "platform_verification"
-      RESTART IDENTITY CASCADE
-    ''');
+    const workItem = 'rew-%';
+    const statements = <String>[
+      'DELETE FROM "human_decision"       WHERE "workItemId" LIKE \'$workItem\'',
+      'DELETE FROM "work_item_transition" WHERE "workItemId" LIKE \'$workItem\'',
+      'DELETE FROM "work_item"            WHERE "workItemId" LIKE \'$workItem\'',
+    ];
+    for (final statement in statements) {
+      await db.query(statement);
+    }
   }
 
   late realclient.Client client;
@@ -67,7 +75,8 @@ void main() {
   group(
     'real generated client -> Serverpod -> PostgreSQL',
     () {
-      setUp(truncateDomainTables);
+      setUp(purgeSuiteRows);
+      tearDown(purgeSuiteRows);
 
       test(
         'homeEndpoints.overview + listWorkItems return real rows over HTTP',

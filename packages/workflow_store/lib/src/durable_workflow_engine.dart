@@ -431,10 +431,26 @@ class DurableWorkflowEngine {
       return item;
     }
 
+    // Check if this is an escalation transition (review gate reject/rework)
+    final isEscalationTransition = _isEscalationTransition(
+      decision.decisionType,
+      effectiveChoice,
+      target,
+    );
+
+    // Prepare context with escalation index and max escalation for validation
+    final currentEscalationIndex =
+        item.metadata?['escalationIndex'] as int? ?? 0;
+    final maxEscalation = _getMaxEscalationForDecisionType(
+      decision.decisionType,
+    );
     final validationContext = {
       'workItemId': decision.workItemId,
       'humanDecision': resolved,
+      'escalationIndex': currentEscalationIndex,
+      'maxEscalation': maxEscalation,
     };
+
     final unlock = _policy.evaluateWorkItemTransition(
       from: WorkItemState.waitingForHumanDecision,
       to: target,
@@ -472,12 +488,20 @@ class DurableWorkflowEngine {
     }
 
     final now = DateTime.now();
+
+    // Increment escalation index for escalation transitions
+    final updatedMetadata = Map<String, dynamic>.from(item.metadata ?? {});
+    if (isEscalationTransition) {
+      updatedMetadata['escalationIndex'] = currentEscalationIndex + 1;
+    }
+
     final updated = item.copyWith(
       state: target,
       blockingHumanDecisionId: null,
       blockingReason: null,
       updatedAt: now,
       version: item.version + 1,
+      metadata: updatedMetadata,
     );
     final finalItem = updated.copyWith(
       completedAt: target == WorkItemState.completed
@@ -497,6 +521,7 @@ class DurableWorkflowEngine {
         rethrow;
       }
 
+      // Append the main transition record
       await tx.appendTransitionRecord(
         _buildRecord(
           item,
@@ -516,8 +541,74 @@ class DurableWorkflowEngine {
               .toList(),
         ),
       );
+
+      // Append EscalationTriggered event for audit trail
+      if (isEscalationTransition) {
+        await tx.appendTransitionRecord(
+          _buildEscalationRecord(
+            item,
+            decision.decisionType,
+            effectiveChoice,
+            target,
+            currentEscalationIndex + 1,
+            decisionId,
+          ),
+        );
+      }
     });
     return finalItem;
+  }
+
+  /// Checks if a decision resolution constitutes an escalation transition.
+  bool _isEscalationTransition(
+    HumanDecisionType decisionType,
+    HumanDecisionChoice choice,
+    WorkItemState target,
+  ) {
+    if (choice != HumanDecisionChoice.reject &&
+        choice != HumanDecisionChoice.rework) {
+      return false;
+    }
+    return HumanDecisionRouting.routesToEscalation(
+      decisionType,
+      choice,
+      target,
+    );
+  }
+
+  /// Gets the maximum escalation index for a decision type based on the
+  /// ModelPolicy chain length.
+  int _getMaxEscalationForDecisionType(HumanDecisionType decisionType) {
+    // This would typically be fetched from a ModelPolicyStore.
+    // For now, return -1 to indicate unlimited (fallback model applies).
+    // In a full implementation, this would look up the policy chain length.
+    return -1;
+  }
+
+  WorkflowTransitionRecord _buildEscalationRecord(
+    WorkItem item,
+    HumanDecisionType decisionType,
+    HumanDecisionChoice choice,
+    WorkItemState target,
+    int newEscalationIndex,
+    String? decisionId,
+  ) {
+    return WorkflowTransitionRecord(
+      transitionId: _newId('tr'),
+      workItemId: item.workItemId,
+      fromState: WorkItemState.waitingForHumanDecision,
+      toState: target,
+      trigger: TransitionTrigger.humanDecision,
+      actorType: ActorType.orchestrator,
+      actorId: 'orchestrator',
+      decisionId: decisionId,
+      outcome: TransitionOutcome.accepted,
+      reason:
+          'Escalation triggered: $decisionType ${choice.wire} -> $target (escalationIndex=$newEscalationIndex)',
+      guardEvaluations: const [],
+      idempotencyKey: 'escalation-$decisionId',
+      occurredAt: DateTime.now(),
+    );
   }
 
   Future<WorkItem> loadWorkItem(String workItemId) =>

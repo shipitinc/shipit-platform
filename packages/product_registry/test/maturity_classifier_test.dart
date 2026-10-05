@@ -6,51 +6,63 @@ void main() {
   const classifier = MaturityClassifier();
 
   group('Maturity authority (keyword is not authority)', () {
-    test('MATURITY_KEYWORD_NOT_AUTHORITY: planned keyword in prose is unknown', () {
-      expect(
-        classifier.classify(
-          claim:
-              'Observability is a future work item; the word planned appears '
-              'in the slice report',
-          evidencePaths: const ['docs/reports/misc.md'],
-          provenance: Provenance.observed,
-        ),
-        BaselineMaturity.unknown,
-      );
-    });
+    test(
+      'MATURITY_KEYWORD_NOT_AUTHORITY: planned keyword in prose is unknown',
+      () {
+        expect(
+          classifier.classify(
+            claim:
+                'Observability is a future work item; the word planned appears '
+                'in the slice report',
+            evidencePaths: const ['docs/reports/misc.md'],
+            provenance: Provenance.observed,
+          ),
+          BaselineMaturity.unknown,
+        );
+      },
+    );
 
-    test('MATURITY_KEYWORD_NOT_AUTHORITY: deferred mention without authority is unknown', () {
-      expect(
-        classifier.classify(
-          claim: 'The de-agg platform may someday be deferred',
-          evidencePaths: const ['README.md'],
-          provenance: Provenance.observed,
-        ),
-        BaselineMaturity.unknown,
-      );
-    });
+    test(
+      'MATURITY_KEYWORD_NOT_AUTHORITY: deferred mention without authority is unknown',
+      () {
+        expect(
+          classifier.classify(
+            claim: 'The de-agg platform may someday be deferred',
+            evidencePaths: const ['README.md'],
+            provenance: Provenance.observed,
+          ),
+          BaselineMaturity.unknown,
+        );
+      },
+    );
 
-    test('MATURITY_KEYWORD_NOT_AUTHORITY: future direction in prose is not planned', () {
-      expect(
-        classifier.classify(
-          claim: 'We will argue about the future stack endlessly',
-          evidencePaths: const ['docs/session-log.md'],
-          provenance: Provenance.observed,
-        ),
-        BaselineMaturity.unknown,
-      );
-    });
+    test(
+      'MATURITY_KEYWORD_NOT_AUTHORITY: future direction in prose is not planned',
+      () {
+        expect(
+          classifier.classify(
+            claim: 'We will argue about the future stack endlessly',
+            evidencePaths: const ['docs/session-log.md'],
+            provenance: Provenance.observed,
+          ),
+          BaselineMaturity.unknown,
+        );
+      },
+    );
 
-    test('MATURITY_KEYWORD_NOT_AUTHORITY: implemented claim without current evidence', () {
-      expect(
-        classifier.classify(
-          claim: 'The system is implemented according to the ADR',
-          evidencePaths: const ['docs/adr/0010-github-actions-cicd.md'],
-          provenance: Provenance.derived,
-        ),
-        BaselineMaturity.unknown,
-      );
-    });
+    test(
+      'MATURITY_KEYWORD_NOT_AUTHORITY: implemented claim without current evidence',
+      () {
+        expect(
+          classifier.classify(
+            claim: 'The system is implemented according to the ADR',
+            evidencePaths: const ['docs/adr/0010-github-actions-cicd.md'],
+            provenance: Provenance.derived,
+          ),
+          BaselineMaturity.unknown,
+        );
+      },
+    );
   });
 
   group('Maturity evidence semantics', () {

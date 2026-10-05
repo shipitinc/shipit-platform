@@ -1,0 +1,6 @@
+class: HumanDirectionPayloadView
+fields:
+  title: String
+  description: String
+  contextJson: String?
+  attachments: List<HumanDirectionAttachmentView>?

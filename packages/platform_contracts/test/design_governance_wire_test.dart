@@ -27,15 +27,30 @@ void main() {
       expect(DesignRevisionStatus.humanApprovalRequired.isTerminal, isFalse);
     });
 
-    test('canTransitionToApproved only for reviewPassed and humanApprovalRequired', () {
-      expect(DesignRevisionStatus.reviewPassed.canTransitionToApproved, isTrue);
-      expect(DesignRevisionStatus.humanApprovalRequired.canTransitionToApproved, isTrue);
-      expect(DesignRevisionStatus.draft.canTransitionToApproved, isFalse);
-      expect(DesignRevisionStatus.inReview.canTransitionToApproved, isFalse);
-      expect(DesignRevisionStatus.changesRequired.canTransitionToApproved, isFalse);
-      expect(DesignRevisionStatus.approved.canTransitionToApproved, isFalse);
-      expect(DesignRevisionStatus.superseded.canTransitionToApproved, isFalse);
-    });
+    test(
+      'canTransitionToApproved only for reviewPassed and humanApprovalRequired',
+      () {
+        expect(
+          DesignRevisionStatus.reviewPassed.canTransitionToApproved,
+          isTrue,
+        );
+        expect(
+          DesignRevisionStatus.humanApprovalRequired.canTransitionToApproved,
+          isTrue,
+        );
+        expect(DesignRevisionStatus.draft.canTransitionToApproved, isFalse);
+        expect(DesignRevisionStatus.inReview.canTransitionToApproved, isFalse);
+        expect(
+          DesignRevisionStatus.changesRequired.canTransitionToApproved,
+          isFalse,
+        );
+        expect(DesignRevisionStatus.approved.canTransitionToApproved, isFalse);
+        expect(
+          DesignRevisionStatus.superseded.canTransitionToApproved,
+          isFalse,
+        );
+      },
+    );
   });
 
   group('DesignRiskTier wire values', () {
@@ -135,7 +150,10 @@ void main() {
   group('DesignRequirementPriority wire values', () {
     test('fromWire and wire getters round-trip', () {
       for (final priority in DesignRequirementPriority.values) {
-        expect(DesignRequirementPriority.fromWire(priority.wire), equals(priority));
+        expect(
+          DesignRequirementPriority.fromWire(priority.wire),
+          equals(priority),
+        );
         expect(priority.wire, isNotEmpty);
       }
     });
@@ -183,7 +201,9 @@ void main() {
         reviewExecutionIdsJson: '["rev-exec-1", "rev-exec-2"]',
         status: DesignRevisionStatus.inReview,
         riskTier: DesignRiskTier.medium,
-        reviewScopeJson: {'screens': ['login', 'register']},
+        reviewScopeJson: {
+          'screens': ['login', 'register'],
+        },
         carriedForwardFromRevisionId: null,
         supersededByRevisionId: null,
         createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
@@ -205,7 +225,10 @@ void main() {
       expect(decoded.statesRepresentedJson, equals('["default", "hover"]'));
       expect(decoded.artifactRefsJson, equals('["art-1", "art-2"]'));
       expect(decoded.designerExecutionId, equals(revision.designerExecutionId));
-      expect(decoded.reviewExecutionIdsJson, equals('["rev-exec-1", "rev-exec-2"]'));
+      expect(
+        decoded.reviewExecutionIdsJson,
+        equals('["rev-exec-1", "rev-exec-2"]'),
+      );
       expect(decoded.status, equals(DesignRevisionStatus.inReview));
       expect(decoded.riskTier, equals(DesignRiskTier.medium));
       expect(decoded.designSystemRevision, equals('dsr-1'));
@@ -213,7 +236,12 @@ void main() {
       expect(decoded.responsiveTargetsJson, equals('["mobile", "desktop"]'));
       expect(decoded.statesRepresentedJson, equals('["default", "hover"]'));
       expect(decoded.artifactRefsJson, equals('["art-1", "art-2"]'));
-      expect(decoded.reviewScopeJson, equals({'screens': ['login', 'register']}));
+      expect(
+        decoded.reviewScopeJson,
+        equals({
+          'screens': ['login', 'register'],
+        }),
+      );
       expect(decoded.createdAt, equals(revision.createdAt));
       expect(decoded.updatedAt, equals(revision.updatedAt));
       expect(decoded.approvedAt, isNull);
@@ -244,7 +272,9 @@ void main() {
         reviewExecutionIdsJson: '["rev-exec-1"]',
         status: DesignRevisionStatus.approved,
         riskTier: DesignRiskTier.high,
-        reviewScopeJson: {'screens': ['payment']},
+        reviewScopeJson: {
+          'screens': ['payment'],
+        },
         carriedForwardFromRevisionId: null,
         supersededByRevisionId: null,
         createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
@@ -257,7 +287,10 @@ void main() {
       final decoded = DesignRevision.fromJson(json);
 
       expect(decoded.status, equals(DesignRevisionStatus.approved));
-      expect(decoded.approvedAt, equals(DateTime.parse('2024-01-03T00:00:00Z')));
+      expect(
+        decoded.approvedAt,
+        equals(DateTime.parse('2024-01-03T00:00:00Z')),
+      );
       expect(json['status'], equals('approved'));
       expect(json['riskTier'], equals('high'));
       expect(decoded.parentRevisionId, equals('DES-R001'));
@@ -281,7 +314,9 @@ void main() {
         reviewExecutionIdsJson: '["rev-exec-1"]',
         status: DesignRevisionStatus.superseded,
         riskTier: DesignRiskTier.low,
-        reviewScopeJson: {'screens': ['old']},
+        reviewScopeJson: {
+          'screens': ['old'],
+        },
         carriedForwardFromRevisionId: null,
         supersededByRevisionId: 'DES-R002',
         createdAt: DateTime.parse('2024-01-01T00:00:00Z'),
@@ -335,8 +370,14 @@ void main() {
             version: 1,
           ),
         ],
-        assessedDimensions: ['accessibility', 'interaction_completeness', 'responsive_coverage'],
-        reviewScopeJson: {'screens': ['login']},
+        assessedDimensions: [
+          'accessibility',
+          'interaction_completeness',
+          'responsive_coverage',
+        ],
+        reviewScopeJson: {
+          'screens': ['login'],
+        },
         createdAt: DateTime.parse('2024-01-02T11:00:00Z'),
         version: 1,
       );
@@ -346,14 +387,38 @@ void main() {
 
       expect(decoded.reviewExecutionId, equals(reviewResult.reviewExecutionId));
       expect(decoded.revisionId, equals(reviewResult.revisionId));
-      expect(decoded.verdict, equals(DesignReviewVerdict.approvedWithMinorFindings));
+      expect(
+        decoded.verdict,
+        equals(DesignReviewVerdict.approvedWithMinorFindings),
+      );
       expect(decoded.findings.length, equals(2));
-      expect(decoded.findings[0].category, equals(DesignFindingCategory.accessibility));
+      expect(
+        decoded.findings[0].category,
+        equals(DesignFindingCategory.accessibility),
+      );
       expect(decoded.findings[0].severity, equals(DesignFindingSeverity.minor));
-      expect(decoded.findings[1].category, equals(DesignFindingCategory.interactionCompleteness));
-      expect(decoded.findings[1].severity, equals(DesignFindingSeverity.advisory));
-      expect(decoded.assessedDimensions, equals(['accessibility', 'interaction_completeness', 'responsive_coverage']));
-      expect(decoded.reviewScopeJson, equals({'screens': ['login']}));
+      expect(
+        decoded.findings[1].category,
+        equals(DesignFindingCategory.interactionCompleteness),
+      );
+      expect(
+        decoded.findings[1].severity,
+        equals(DesignFindingSeverity.advisory),
+      );
+      expect(
+        decoded.assessedDimensions,
+        equals([
+          'accessibility',
+          'interaction_completeness',
+          'responsive_coverage',
+        ]),
+      );
+      expect(
+        decoded.reviewScopeJson,
+        equals({
+          'screens': ['login'],
+        }),
+      );
       expect(decoded.createdAt, equals(reviewResult.createdAt));
       expect(decoded.version, equals(1));
 
@@ -361,7 +426,10 @@ void main() {
       expect(json['verdict'], equals('approved_with_minor_findings'));
       expect(json['findings'][0]['category'], equals('accessibility'));
       expect(json['findings'][0]['severity'], equals('minor'));
-      expect(json['findings'][1]['category'], equals('interaction_completeness'));
+      expect(
+        json['findings'][1]['category'],
+        equals('interaction_completeness'),
+      );
       expect(json['findings'][1]['severity'], equals('advisory'));
     });
 
@@ -395,7 +463,10 @@ void main() {
       final decoded = DesignReviewResult.fromJson(json);
 
       expect(decoded.verdict, equals(DesignReviewVerdict.rejected));
-      expect(decoded.findings.single.severity, equals(DesignFindingSeverity.blocker));
+      expect(
+        decoded.findings.single.severity,
+        equals(DesignFindingSeverity.blocker),
+      );
       expect(decoded.findings.single.severity.blocksApproval, isTrue);
       expect(json['verdict'], equals('rejected'));
       expect(json['findings'][0]['severity'], equals('blocker'));
@@ -428,8 +499,14 @@ void main() {
       expect(decoded.category, equals(DesignFindingCategory.feasibility));
       expect(decoded.severity, equals(DesignFindingSeverity.blocker));
       expect(decoded.dimension, equals('payment-integration'));
-      expect(decoded.evidence, equals('API requires 3D Secure which is not implemented'));
-      expect(decoded.requiredCorrection, equals('Add 3D Secure flow before payment submission'));
+      expect(
+        decoded.evidence,
+        equals('API requires 3D Secure which is not implemented'),
+      );
+      expect(
+        decoded.requiredCorrection,
+        equals('Add 3D Secure flow before payment submission'),
+      );
       expect(decoded.affectedSurface, equals('PaymentScreen'));
       expect(decoded.createdAt, equals(finding.createdAt));
       expect(decoded.resolvedByRevisionId, equals('DES-R002'));
@@ -539,18 +616,42 @@ void main() {
       expect(decoded.workItemId, equals(brief.workItemId));
       expect(decoded.productId, equals(brief.productId));
       expect(decoded.title, equals('Redesign user onboarding flow'));
-      expect(decoded.context, equals('New users drop off at step 3 of onboarding'));
+      expect(
+        decoded.context,
+        equals('New users drop off at step 3 of onboarding'),
+      );
       expect(decoded.requirements.length, equals(3));
-      expect(decoded.requirements[0].priority, equals(DesignRequirementPriority.must));
-      expect(decoded.requirements[1].priority, equals(DesignRequirementPriority.should));
-      expect(decoded.requirements[2].priority, equals(DesignRequirementPriority.could));
+      expect(
+        decoded.requirements[0].priority,
+        equals(DesignRequirementPriority.must),
+      );
+      expect(
+        decoded.requirements[1].priority,
+        equals(DesignRequirementPriority.should),
+      );
+      expect(
+        decoded.requirements[2].priority,
+        equals(DesignRequirementPriority.could),
+      );
       expect(decoded.constraints.length, equals(3));
-      expect(decoded.constraints[0].type, equals(DesignConstraintType.designSystem));
-      expect(decoded.constraints[1].type, equals(DesignConstraintType.accessibility));
-      expect(decoded.constraints[2].type, equals(DesignConstraintType.platform));
+      expect(
+        decoded.constraints[0].type,
+        equals(DesignConstraintType.designSystem),
+      );
+      expect(
+        decoded.constraints[1].type,
+        equals(DesignConstraintType.accessibility),
+      );
+      expect(
+        decoded.constraints[2].type,
+        equals(DesignConstraintType.platform),
+      );
       expect(decoded.acceptanceCriteria.length, equals(2));
       expect(decoded.referenceArtifacts!.length, equals(2));
-      expect(decoded.designSystemTokens, equals(['color-primary', 'spacing-lg', 'border-radius-md']));
+      expect(
+        decoded.designSystemTokens,
+        equals(['color-primary', 'spacing-lg', 'border-radius-md']),
+      );
       expect(decoded.version, equals(1));
 
       // Verify wire values in JSON

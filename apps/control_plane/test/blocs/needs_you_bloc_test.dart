@@ -3,8 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:control_plane/data/control_plane_repository.dart';
 import 'package:control_plane/features/needs_you/needs_you_bloc.dart';
 import 'package:control_plane/features/needs_you/needs_you_event.dart';
+import '../helpers/unimplemented_repository_apis.dart';
 
-class MockControlPlaneRepository implements ControlPlaneRepository {
+class MockControlPlaneRepository
+    with UnimplementedRepositoryApis
+    implements ControlPlaneRepository {
   MockControlPlaneRepository({this.decisionsResponse, this.throwError});
 
   List<DecisionResponse>? decisionsResponse;
@@ -33,6 +36,7 @@ class MockControlPlaneRepository implements ControlPlaneRepository {
   @override
   Future<List<WorkItemResponse>> listWorkItems({
     String? state,
+    String? productId,
     int? limit,
   }) async => [];
 
@@ -74,15 +78,13 @@ class MockControlPlaneRepository implements ControlPlaneRepository {
     required String productId,
     required String action,
     bool drainInFlight = true,
-  }) async =>
-      throw UnimplementedError('fake: requestLifecycleDecision');
+  }) async => throw UnimplementedError('fake: requestLifecycleDecision');
 
   @override
   Future<DecisionResponse> requestPolicyAuthorisation({
     required String productId,
     required List<String> actions,
-  }) async =>
-      throw UnimplementedError('fake: requestPolicyAuthorisation');
+  }) async => throw UnimplementedError('fake: requestPolicyAuthorisation');
 
   @override
   Future<DecisionResponse> resolveLifecycleDecision({
@@ -91,8 +93,7 @@ class MockControlPlaneRepository implements ControlPlaneRepository {
     required String decider,
     required String rationale,
     bool noWorkInFlight = false,
-  }) async =>
-      throw UnimplementedError('fake: resolveLifecycleDecision');
+  }) async => throw UnimplementedError('fake: resolveLifecycleDecision');
 
   @override
   Future<PolicyResponse> resolvePolicyAuthorisation({
@@ -100,17 +101,32 @@ class MockControlPlaneRepository implements ControlPlaneRepository {
     required String choice,
     required String decider,
     required String rationale,
-  }) async =>
-      throw UnimplementedError('fake: resolvePolicyAuthorisation');
+  }) async => throw UnimplementedError('fake: resolvePolicyAuthorisation');
 
   @override
   Future<void> revokeStandingPolicy({
     required String productId,
     required String policyId,
     required String revokedBy,
-  }) async =>
-      throw UnimplementedError('fake: revokeStandingPolicy');
+  }) async => throw UnimplementedError('fake: revokeStandingPolicy');
 
+  @override
+  Future<void> addRepositoryReference({
+    required String productId,
+    required String repositoryId,
+    required String uri,
+    required String kind,
+    required String provider,
+  }) async => throw UnimplementedError('fake: addRepositoryReference');
+
+  @override
+  Future<ProductDetailResponse> createProduct({
+    required String productId,
+    required String name,
+    String? description,
+    required String manifestJson,
+    String? manifestVersion,
+  }) async => throw UnimplementedError('fake: createProduct');
 }
 
 void main() {

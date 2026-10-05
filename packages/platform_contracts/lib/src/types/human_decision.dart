@@ -69,6 +69,35 @@ class HumanDecision extends Equatable {
   final Map<String, dynamic>? metadata;
   final DateTime updatedAt;
 
+  /// Deliberately offers no `decider`/`choice`/`rationale`/`signature`
+  /// overrides. Those four are the human's, and a machine that could rewrite
+  /// them could forge an approval. The engine uses this to *cancel* a stale
+  /// gate without ever touching who decided what.
+  HumanDecision copyWith({
+    HumanDecisionStatus? status,
+    Map<String, dynamic>? metadata,
+    DateTime? updatedAt,
+  }) => HumanDecision(
+    decisionId: decisionId,
+    workItemId: workItemId,
+    decisionType: decisionType,
+    status: status ?? this.status,
+    question: question,
+    context: context,
+    options: options,
+    recommendation: recommendation,
+    blocking: blocking,
+    requestedAt: requestedAt,
+    decider: decider,
+    choice: choice,
+    rationale: rationale,
+    timestamp: timestamp,
+    signature: signature,
+    resolvedOptionId: resolvedOptionId,
+    metadata: metadata ?? this.metadata,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+
   factory HumanDecision.fromJson(Map<String, dynamic> json) =>
       _$HumanDecisionFromJson(json);
 

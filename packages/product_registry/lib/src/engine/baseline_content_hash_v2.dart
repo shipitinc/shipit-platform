@@ -16,7 +16,7 @@ import 'package:platform_contracts/platform_contracts.dart';
 String baselineContentHashV2(List<BaselineFact> facts) {
   final sorted = List<BaselineFact>.of(facts)
     ..sort((a, b) => a.factId.compareTo(b.factId));
-  
+
   final canonical = jsonEncode(
     sorted.map((f) => _factToCanonicalMap(f)).toList(),
   );
@@ -54,17 +54,17 @@ Map<String, dynamic> _factToCanonicalMap(BaselineFact f) {
     'maturity': f.maturity.wire,
     'evidenceRefs': List<String>.from(f.evidenceRefs)..sort(),
   };
-  
+
   // assumptionNote: include only when non-null
   if (f.assumptionNote != null) {
     map['assumptionNote'] = f.assumptionNote!;
   }
-  
+
   // redacted: include only when true (false is default/omitted)
   if (f.redacted) {
     map['redacted'] = true;
   }
-  
+
   return map;
 }
 

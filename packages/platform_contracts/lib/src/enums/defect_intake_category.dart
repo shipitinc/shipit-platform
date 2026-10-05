@@ -13,6 +13,7 @@ enum DefectIntakeCategory {
 
   static DefectIntakeCategory fromWire(String value) => values.firstWhere(
     (category) => category.wire == value,
-    orElse: () => throw FormatException('Unknown defect intake category: $value'),
+    orElse: () =>
+        throw FormatException('Unknown defect intake category: $value'),
   );
 }
