@@ -115,3 +115,18 @@ gate-neutral and `workflow_engine` still exits 0.
 - `AGENTS.md` § Product-specific policy is still fully `TBD` — no declared validation gate,
   path ownership map, or environment/deployment strategy. This is the root cause of the
   analyzer debt having accumulated untracked.
+
+## Credential / port contract — CORRECTION_COMPLETE, awaiting focused review
+
+| task_id | type | state | worktree | branch | base_sha | head_sha | routing_class | result | next action |
+|---|---|---|---|---|---|---|---|---|---|
+| fix-credential-port-contract | correct | CLOSED — awaiting review | /private/tmp/shipit-cred-port (retained) | fix/credential-port-contract | 38768d0 | 60c8136 | PRECISION | `CORRECTION_COMPLETE`, `READY_FOR_FOCUSED_REVIEW: NO` (157/1 tests — lane declined to self-certify a red suite) | focused review + human gate on H1 |
+
+Closed: Blocker B, the 9090/9099 mismatch, and H1-H3 execution (integration suite finally run).
+Opened: **H1 PROVEN as a security gap** — fresh databases, CI included, lack
+`trigger_design_revision_immutability` and `trigger_design_review_independence`; tampering with
+an approved design revision succeeds on a fresh DB and is rejected on a chain-migrated DB.
+Requires a human gate because the fix is in prohibited `migrations/**`.
+
+Also outstanding: a `migration_proof` database left inside the owner's
+`control_plane-postgres_test-1` container by a prior agent session — destructive to remove.
