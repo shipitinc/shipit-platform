@@ -130,3 +130,20 @@ Requires a human gate because the fix is in prohibited `migrations/**`.
 
 Also outstanding: a `migration_proof` database left inside the owner's
 `control_plane-postgres_test-1` container by a prior agent session — destructive to remove.
+
+## Design triggers + test cleanup — CORRECTION_COMPLETE
+
+| task_id | type | state | worktree | branch | base_sha | head_sha | routing_class | result | next action |
+|---|---|---|---|---|---|---|---|---|---|
+| fix-design-triggers | correct | CLOSED — awaiting review | /private/tmp/shipit-triggers (retained) | fix/design-triggers-and-cleanup | 60c8136 | 14608dc | PRECISION | `CORRECTION_COMPLETE`, `READY_FOR_FOCUSED_REVIEW: YES` | focused review |
+
+Closes H1: fresh databases now enforce `trigger_design_revision_immutability`,
+`trigger_design_review_independence` and `design_revision_approved_unique_per_work_item` via
+`apps/server/tool/schema_bootstrap.{sql,dart}`, proven to survive a real
+`serverpod create-migration`. Guard `verify_schema_bootstrap.sh` wired into the `schema-guard` CI
+job, negative-tested 5 ways. Test-resource cleanup enforced across `test-env-test`, `e2e-test`,
+new `test-integration`, `compose.test.yaml` and `integration.yaml`, proven on success, failure
+and interrupt. Rule recorded in `AGENTS.md` § Product-specific policy.
+
+Owner action required: the owner's `control_plane-postgres_test-1` on 9099 lacks the trigger and
+will not self-heal.
