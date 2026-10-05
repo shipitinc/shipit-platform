@@ -15,6 +15,11 @@ import 'package:product_registry/src/discovery/read_only_repository_reader.dart'
 import 'package:product_registry/src/discovery/maturity_classifier.dart';
 import 'package:product_registry/src/engine/baseline_content_hash_v2.dart';
 
+String _env(String key, String fallback) {
+  final value = Platform.environment[key];
+  return (value == null || value.isEmpty) ? fallback : value;
+}
+
 /// ShipIt platform onboarding script (S-1).
 ///
 /// Creates a Serverpod instance to connect to the already-migrated database
@@ -35,7 +40,7 @@ Future<void> main() async {
           port: 5432,
           name: 'shipit',
           user: 'shipit',
-          password: 'shipit',
+          password: _env('SERVERPOD_DATABASE_PASSWORD', 'shipit'),
         ),
         redis: null,
         webServer: null,

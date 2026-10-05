@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:control_plane_server/src/generated/endpoints.dart';
 import 'package:control_plane_server/src/generated/protocol.dart';
 import 'package:control_plane_server/src/persistence/persistence_database.dart';
@@ -7,6 +9,11 @@ import 'package:control_plane_server/src/persistence/postgres_workflow_store.dar
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:product_registry/product_registry.dart';
 import 'package:serverpod/serverpod.dart';
+
+String _env(String key, String fallback) {
+  final value = Platform.environment[key];
+  return (value == null || value.isEmpty) ? fallback : value;
+}
 
 Future<PersistenceDatabase> _newTestDb() async {
   final session = await Serverpod.instance.createSession(enableLogging: false);
@@ -25,7 +32,7 @@ void main() async {
         port: 9090,
         name: 'control_plane_test',
         user: 'postgres',
-        password: 'control_plane_test_pw',
+        password: _env('SERVERPOD_DATABASE_PASSWORD', 'shipit'),
       ),
       redis: null,
       webServer: null,
