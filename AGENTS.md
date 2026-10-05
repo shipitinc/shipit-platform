@@ -71,8 +71,13 @@ enforced by tooling, not by discipline.
 - Any script, `Makefile` target or workflow step that creates test infrastructure must remove it
   before returning. In shell, that means a `trap ... EXIT INT TERM`; in Docker Compose, `down -v`
   (never `stop`) under a named project so the removal cannot hit someone else's stack.
-- Cleanup must be unconditional and best-effort: teardown that can fail a build masks the failure
-  it was cleaning up after, so `|| true` the teardown and let the real verdict stand.
+- Cleanup must be unconditional and must not change the verdict the run already reached — but a
+  teardown that FAILS is the leak this rule exists to prevent, so never discard its output. Print
+  what `down` said on failure and, where possible, the exact command to finish the job. Silencing a
+  teardown with `> /dev/null 2>&1 || true` turns a leaked container into a silent pass; that mistake
+  shipped here once already.
+- A cleanup `trap` runs after the recipe has `cd`-ed, so it must resolve paths absolutely (from the
+  Makefile's own location), never relative to the current directory.
 - GitHub Actions cleanup steps carry `if: always()`, and `docker compose down -v --remove-orphans`
   is scoped with `-p <project>` so it cannot resolve to a developer's or a self-hosted runner's
   unrelated stack.
