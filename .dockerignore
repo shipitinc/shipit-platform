@@ -21,6 +21,13 @@
 !packages/
 !packages/**
 
+# Include the workspace manifests. `docker/Dockerfile.server` COPYs these at line 15
+# and rewrites pubspec.yaml to drop the control_plane member before `dart pub get`.
+# Without these the server image build fails with
+# `failed to calculate checksum ... "/pubspec.yaml": not found`.
+!pubspec.yaml
+!pubspec.lock
+
 # Exclude git and IDE files
 .git
 .gitignore
