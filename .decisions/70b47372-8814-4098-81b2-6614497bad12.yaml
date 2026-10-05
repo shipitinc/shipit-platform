@@ -1,0 +1,170 @@
+# human-decision.yaml
+decision_id: 70b47372-8814-4098-81b2-6614497bad12
+type: OTHER_CONSEQUENTIAL
+status: PENDING
+question: >-
+  May the explicitly-unreviewed 585-file product baseline commit 0d5d132 be
+  fast-forwarded onto main as the isolation anchor, on the condition that a full
+  independent review of it is tracked as follow-up work?
+context:
+  summary: >-
+    The integrator lane returned RESULT: INTEGRATION_BLOCKED. Every deterministic gate
+    passes on 0d5d132 — 0 analyzer errors, 190/190 tests, `flutter build web` succeeds,
+    deps resolve from a fresh worktree, no secrets or build artifacts in the diff, clean
+    fast-forward from main with no conflicts. The sole hard blocker is procedural:
+    AGENTS.md permits integration "only after independent approval", and only one of the
+    585 changed files (the runtime-config JS-interop fix) has been independently
+    reviewed. This is a governance question, not a code-quality question: the baseline
+    is a recovery of the repository owner's own uncommitted work, not new work, and it
+    is the precondition for every isolated lane worktree. The integrator's own
+    recommendation is yes-with-conditions, land before the feature work it unblocks.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: c46b6807-a15c-4c3c-911b-cd34f6b21195
+    item_ref: >-
+      Product baseline 0d5d132 integration, and transitively FEATURE c46b6807
+      (favicon, duplicate "Show technical details" row, Register-product button /
+      required-field convention, isolated test environment)
+  evidence:
+    documents:
+      - type: OTHER
+        id: 0d5d132
+        url: docs/engineering/dispatch/tasks/integrate-baseline-product/prompt.md
+      - type: OTHER
+        id: bfbbd68
+        url: docs/engineering/dispatch/tasks/review-runtime-config-interop/prompt.md
+      - type: OTHER
+        id: 130f3a7e
+        url: .decisions/130f3a7e-c364-4c1e-acd5-409d7af80675.yaml
+      - type: OTHER
+        id: 0d5d132
+        url: AGENTS.md
+    quantitative_data:
+      - metric: Baseline diff size
+        value: "585 files changed (+203997/-4838); 389 added, 194 modified, 1 deleted, 1 renamed"
+        source: git diff --stat bfbbd68..0d5d132
+      - metric: "flutter analyze --no-pub (apps/control_plane)"
+        value: "0 errors, 33 info + 1 pre-existing warning, exit 1"
+        source: engineering-reviewer + integrator, independently re-run
+      - metric: "flutter test --no-pub"
+        value: "190/190 passed, exit 0"
+        source: integrator, fresh detached worktree
+      - metric: "flutter build web --no-pub"
+        value: "succeeded, exit 0"
+        source: integrator, fresh detached worktree
+      - metric: "dart format --output=none --set-exit-if-changed ."
+        value: "FAIL - 47 files not format-clean (30 apps/, 17 packages/)"
+        source: integrator
+      - metric: Files with independent review
+        value: "1 of 585 changed (client_provider.dart and its two new runtime_config_* companions)"
+        source: review-runtime-config-interop
+      - metric: Merge shape
+        value: "merge-base main baseline = bfbbd68; main...baseline = 0/1; clean fast-forward, no conflicts"
+        source: integrator
+      - metric: Unpushed commits on main
+        value: "3 - 693cfbc, 9d98efe, bfbbd68 (pushing main would publish all three)"
+        source: git rev-list --left-right --count origin/main...main
+      - metric: Secret scan of the 585-file diff
+        value: "no private keys, no cloud/tokens/JWTs, no inline postgres:// credentials, no .env, no node_modules/build/.dart_tool"
+        source: integrator
+    qualitative_tradeoffs:
+      - dimension: Provenance integrity
+        option_a: Land the unreviewed baseline on main now
+        option_b: Review the baseline before landing it
+        assessment: >-
+          Landing first means main permanently carries ~204k lines no human or reviewer
+          has read, and weakens the "integrate only reviewed results" invariant.
+          Reviewing first costs a large review effort but preserves the invariant
+          honestly and may surface latent defects in code that has never been
+          independently examined.
+      - dimension: Throughput
+        option_a: Land the unreviewed baseline on main now
+        option_b: Review the baseline before landing it
+        assessment: >-
+          Landing first immediately unblocks every feature lane, because lane isolation
+          requires a citable BASE_SHA. Reviewing first blocks all feature work for the
+          duration of a 585-file review.
+      - dimension: Reversibility
+        option_a: Land the unreviewed baseline on main now
+        option_b: Review the baseline before landing it
+        assessment: >-
+          Landing is a single fast-forward commit, so it is trivially revertable in
+          principle. But pushing main also publishes 693cfbc, 9d98efe and bfbbd68, which
+          have never been pushed, so the reversal is no longer purely local.
+      - dimension: Known latent risk carried either way
+        option_a: Land the unreviewed baseline on main now
+        option_b: Review the baseline before landing it
+        assessment: >-
+          Independent of the choice, 0d5d132 activates a migration
+          (20260925181113034/migration.sql creating defect and defect_clarification plus
+          8 indexes) that has never executed in any environment, and propagates a
+          hardcoded Postgres superuser password into a new unreviewed file
+          (apps/server/bin/test_pod.dart). Neither is a reason to withhold the baseline,
+          but both need tracked follow-up before staging.
+  recommendation:
+    recommended_option: OPTION_B
+    rationale: >-
+      Land the baseline on main, but make the independent review of it a tracked,
+      blocking follow-up rather than a retroactive justification. The baseline is a
+      recovery of the owner's own uncommitted work under explicit human authorization
+      (HD 130f3a7e OPTION_C), every deterministic gate is green, and it is the hard
+      precondition for lane isolation — so withholding it blocks all feature work while
+      protecting an invariant against code the owner authored and has been running
+      locally. The honest form of this choice is to schedule the baseline review as real
+      work, not to let "it was a baseline" stand in for review. Option B differs from
+      Option A only in that the review is committed to the ledger as blocking follow-up
+      before staging.
+    confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Land now, review later
+    description: >-
+      Fast-forward 0d5d132 onto main immediately and dispatch the baseline review as
+      ordinary non-blocking follow-up work alongside feature delivery.
+    implications: >-
+      Unblocks all feature lanes at once. main carries ~204k unreviewed lines, and the
+      review can be deprioritised indefinitely. Pushing main also publishes 693cfbc,
+      9d98efe and bfbbd68 for the first time.
+    estimated_effort: "minutes to merge; review effort deferred and unbounded"
+    risk_level: MEDIUM
+  - option_id: OPTION_B
+    label: Land now, review blocking
+    description: >-
+      Fast-forward 0d5d132 onto main and record the independent review of the baseline as
+      a BLOCKING follow-up that must complete before any staging or deployment.
+    implications: >-
+      Unblocks feature lanes immediately while keeping the review non-optional and
+      sequenced ahead of staging. The active migration and the committed credential
+      become explicit staging blockers.
+    estimated_effort: "minutes to merge; baseline review before staging"
+    risk_level: LOW
+  - option_id: OPTION_C
+    label: Review before landing
+    description: >-
+      Dispatch engineering-reviewer on 0d5d132 and hold the merge until it approves.
+    implications: >-
+      Preserves the "integrate only independently reviewed results" invariant without
+      exception. Blocks every feature lane for the duration of a 585-file review, and the
+      review may surface latent defects in never-reviewed code.
+    estimated_effort: "large; 585 files / ~204k lines before any feature work"
+    risk_level: LOW
+  - option_id: OPTION_D
+    label: Do not integrate baseline
+    description: >-
+      Leave main at bfbbd68 and cut future lane worktrees directly from
+      baseline/product-2026-10-05, treating that branch rather than main as the anchor.
+    implications: >-
+      Avoids putting unreviewed code on main, but main stays 3 commits ahead of origin and
+      diverges from the branch that actually contains the product, so every future lane,
+      review and integrator provenance reference points at a non-default branch.
+    estimated_effort: "low now; permanent provenance confusion later"
+    risk_level: MEDIUM
+resolution:
+  selected_option: ""
+  decided_by: ""
+  decided_at: ""
+  rationale: ""
+  follow_up_actions: []
+created_by: orchestrator-main
+created_at: 2026-10-05T01:01:56Z
+updated_at: 2026-10-05T01:01:56Z

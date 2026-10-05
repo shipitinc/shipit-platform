@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 130f3a7e-c364-4c1e-acd5-409d7af80675
 type: INFRASTRUCTURE
-status: IN_PROGRESS
+status: RESOLVED
 question: >-
   How should a reviewable, committed baseline be established for the ~390 product
   files that currently exist only as uncommitted working-tree changes, given that
@@ -147,11 +147,47 @@ options:
     estimated_effort: "unbounded; work is unrecoverable"
     risk_level: CRITICAL
 resolution:
-  selected_option: ""
-  decided_by: ""
-  decided_at: ""
-  rationale: ""
-  follow_up_actions: []
+  selected_option: OPTION_C
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-05T00:14:55Z
+  rationale: >-
+    Human selected "Fix analyze in place first" over the recommended OPTION_B. The
+    chosen path corrects the three client_provider.dart undefined_annotation errors
+    directly in the canonical checkout, verifies flutter analyze is green, and only
+    then creates the baseline commit. The human knowingly accepted that this first
+    edit is a production-source change made outside the review process in order to
+    unblock baselining; per aef-orchestrator 2 the escape hatch never grants
+    self-approval, so the change is dispatched to an independent engineering review
+    before it counts as integrated.
+  follow_up_actions:
+    - action: >-
+        Replace the discontinued package:js/js.dart annotations in
+        apps/control_plane/lib/data/client_provider.dart so
+        `flutter analyze` exits 0, and confirm web runtime config
+        (window.SHIPIT_CONFIG) still resolves in the Flutter web build.
+      owner: orchestrator-main
+    - action: >-
+        Dispatch an independent engineering review (read-only) of the
+        client_provider.dart change before treating it as integrated.
+      owner: orchestrator-main
+    - action: >-
+        Create the baseline commit of the canonical working tree on a dedicated
+        baseline branch, recorded as an explicitly unreviewed starting point, so a
+        citable BASE_SHA exists for ISOLATION_CONVENTION lane worktrees.
+      owner: orchestrator-main
+    - action: >-
+        Fill root AGENTS.md  Product-specific policy: required validation gates,
+        environments & deployment strategy, and the path ownership map are all still
+        TBD, and prior dispatch prompts cited AGENTS.md sections 2/8/13 that do not
+        exist in this repository.
+      owner: repository owner
+    - action: >-
+        Reconcile the five divergent uncommitted copies of
+        apps/control_plane/lib/features/products/add_product_page.dart and the four
+        prior design/QA artifacts stranded in lane worktrees, choosing one
+        authoritative variant before items 2 and 3 of FEATURE c46b6807 are implemented.
+      owner: orchestrator-main
+      due_date: 2026-10-12
 created_by: orchestrator-main
 created_at: 2026-10-05T00:11:28Z
-updated_at: 2026-10-05T00:14:02Z
+updated_at: 2026-10-05T00:14:55Z

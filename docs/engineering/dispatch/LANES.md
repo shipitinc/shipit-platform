@@ -33,11 +33,44 @@ child reports. Both lanes are void.
 Item ref: favicon · duplicate "Show technical details" row on Add a product ·
 Register-product button disabled / required-field convention · isolated test environment.
 
-| task_id | type | state | worktree | branch | base_sha | head_sha | routing_class | next action |
-|---|---|---|---|---|---|---|---|---|
-| (none dispatched) | — | BLOCKED on decision 130f3a7e | — | — | — | — | — | BLOCKED |
+| task_id | type | state | worktree | branch | base_sha | head_sha | routing_class | result | next action |
+|---|---|---|---|---|---|---|---|---|---|
+| review-runtime-config-interop | review | CLOSED | canonical checkout (read-only) | main | bfbbd68 | bfbbd68 | STANDARD | `APPROVE_WITH_NON_BLOCKING_FOLLOWUP` — 0 blockers, CORRECTION_REQUIRED: NO | follow-ups recorded; change included in baseline |
+| integrate-baseline-product | integrate | CLOSED — BLOCKED | canonical checkout + throwaway worktree | baseline/product-2026-10-05 | bfbbd68 | 0d5d132 | STANDARD | `INTEGRATION_BLOCKED` — B1 missing review, B2 ledger, B3–B7 non-blocking | await review of 0d5d132 + decision 70b47372 |
+| (feature lanes) | — | NOT DISPATCHED | — | — | — | — | — | — | blocked on integration of 0d5d132 |
 
-No lane was dispatched. `aef-orchestrator` §4 precondition 6 ("every dependency listed
-in the prompt is already merged") cannot be satisfied: no commit on any ref contains
-`ControlPlaneRepository.createProduct` or `lib/shared/form_primitives.dart`, so a
-worktree created from any `BASE_SHA` is a codebase without the product.
+## Current session — product baseline
+
+| item | branch | head | note |
+|---|---|---|---|
+| baseline commit | `baseline/product-2026-10-05` | `0d5d132` | 585 files changed (+203997/-4838); explicitly unreviewed except the runtime-config fix |
+| `main` | `main` | `bfbbd68` | 3 commits ahead of `origin/main` (693cfbc, 9d98efe, bfbbd68) — never pushed |
+| `origin/main` | — | `ea9b03d` | |
+
+Verified from a fresh detached worktree at `0d5d132`: `flutter pub get` resolves,
+`flutter analyze` 0 errors, `flutter test` 190/190, `flutter build web` succeeds,
+`createProduct` and `lib/shared/form_primitives.dart` both present (they existed in no
+prior commit). Clean fast-forward: `merge-base main baseline` = `bfbbd68`.
+
+## Stale lane worktrees — all pinned to 693cfbc, 4 behind baseline
+
+Per integrator blocker B9, none may be removed without a decision, because they hold
+uncommitted design/QA artifacts and one of the superseded `add_product_page.dart`
+variants.
+
+| worktree | branch | holds |
+|---|---|---|
+| /private/tmp/shipit-design-add-product | design/add-product | DESIGN_BRIEF / DISCOVERY / REVISION (untracked) |
+| /private/tmp/shipit-design-review-add-product | design-review/add-product | same three design artifacts |
+| /private/tmp/shipit-design-correct-add-product | design-correct/add-product | design artifacts + superseded add_product_page.dart |
+| /private/tmp/shipit-design-re-review-add-product | design-re-review/add-product | design artifacts |
+| /private/tmp/shipit-design-correct-2-add-product | design-correct-2/add-product | design artifacts + superseded add_product_page.dart |
+| /private/tmp/shipit-design-re-review-2-add-product | design-re-review-2/add-product | design artifacts + superseded add_product_page.dart |
+| /private/tmp/shipit-qa-contract-add-product | qa-contract/add-product | `QA_CONTRACT_add_product.json` (never frozen) |
+| /private/tmp/shipit-implement-add-product | implement/add-product | `IMPLEMENTATION_REPORT.md` (`RESULT: IMPLEMENTATION_BLOCKED`) + superseded variant |
+| /private/tmp/shipit-review-add-product | (detached) | superseded add_product_page.dart — VOID lane |
+| /private/tmp/shipit-integrate-add-product | (detached) | superseded add_product_page.dart — VOID lane |
+
+`0d5d132` pins the authoritative `add_product_page.dart` (canonical checkout, 1117 lines),
+so the four worktree variants are superseded for code purposes. The design and QA
+artifacts remain unreconciled (blocker B10).
