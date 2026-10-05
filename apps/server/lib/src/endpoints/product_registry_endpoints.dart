@@ -13,8 +13,6 @@ import 'package:platform_contracts/platform_contracts.dart'
         DesignContractSpec,
         QAContractSpec,
         DeploymentContractSpec,
-        QAGateSpec,
-        ApprovalGateSpec,
         EvidenceKind,
         RepositoryKind,
         RepositoryProvider;

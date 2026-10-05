@@ -104,6 +104,7 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
     return _db.inTransaction<T>(() => body(this));
   }
 
+  @override
   Future<void> insert(ModelExecutionRecord record) async {
     await _db.execute(
       '''INSERT INTO "model_execution_record"
@@ -120,6 +121,7 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
     );
   }
 
+  @override
   Future<void> insertAll(List<ModelExecutionRecord> records) async {
     if (records.isEmpty) return;
     await _db.inTransaction(() async {
@@ -141,6 +143,7 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
     });
   }
 
+  @override
   Future<List<ModelExecutionRecord>> getByWorkItem(String workItemId) async {
     final rows = await _db.query(
       'SELECT * FROM "model_execution_record" WHERE "workItemId" = @workItemId ORDER BY "startedAt" ASC',
@@ -149,6 +152,7 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
     return rows.map(_fromRow).toList();
   }
 
+  @override
   Future<List<ModelExecutionRecord>> getByJob(String jobId) async {
     final rows = await _db.query(
       'SELECT * FROM "model_execution_record" WHERE "jobId" = @jobId ORDER BY "startedAt" ASC',

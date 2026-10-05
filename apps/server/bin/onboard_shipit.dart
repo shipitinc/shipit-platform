@@ -53,20 +53,20 @@ void main() async {
 
   // Load existing product
   final product = await engine.readProduct(productId);
-  print('PRODUCT IDENTITY:');
-  print('  display name: ${product.name}');
-  print('  productId: ${product.productId}');
-  print('  ProductState: ${product.state.name}');
+  stdout.writeln('PRODUCT IDENTITY:');
+  stdout.writeln('  display name: ${product.name}');
+  stdout.writeln('  productId: ${product.productId}');
+  stdout.writeln('  ProductState: ${product.state.name}');
 
   // Load repositories
   final repos = await engine.readRepositories(productId);
-  print('\nREPOSITORIES:');
+  stdout.writeln('\nREPOSITORIES:');
   for (final repo in repos) {
-    print('  repositoryId: ${repo.repositoryId}');
-    print('  provider/kind: ${repo.provider.name}/${repo.kind.name}');
-    print('  role: ${repo.kind.name}');
-    print('  canonical identity: ${repo.uri}');
-    print('  observed revision: (to be determined from git)');
+    stdout.writeln('  repositoryId: ${repo.repositoryId}');
+    stdout.writeln('  provider/kind: ${repo.provider.name}/${repo.kind.name}');
+    stdout.writeln('  role: ${repo.kind.name}');
+    stdout.writeln('  canonical identity: ${repo.uri}');
+    stdout.writeln('  observed revision: (to be determined from git)');
   }
 
   // Get the proposed baseline
@@ -75,36 +75,36 @@ void main() async {
     (b) => b.status == ProductBaselineStatus.proposed,
   );
 
-  print('\nBASELINE IDENTITY:');
-  print('  baselineId: ${proposed.baselineId}');
-  print('  revision: ${proposed.revision}');
-  print('  contentHash: ${proposed.contentHash}');
-  print('  status: ${proposed.status.wire}');
+  stdout.writeln('\nBASELINE IDENTITY:');
+  stdout.writeln('  baselineId: ${proposed.baselineId}');
+  stdout.writeln('  revision: ${proposed.revision}');
+  stdout.writeln('  contentHash: ${proposed.contentHash}');
+  stdout.writeln('  status: ${proposed.status.wire}');
 
   // Create the governing HumanDecision
-  print('\nCreating governing HumanDecision...');
+  stdout.writeln('\nCreating governing HumanDecision...');
   final decision = await engine.requestBaselineApproval(
     productId: productId,
     baselineId: proposed.baselineId,
   );
 
-  print('  decisionId: ${decision.decisionId}');
-  print('  workItemId: ${decision.workItemId}');
-  print('  decisionType: ${decision.decisionType.wire}');
-  print('  status: ${decision.status.wire}');
-  print('  question: ${decision.question}');
-  print('  metadata: ${decision.metadata}');
+  stdout.writeln('  decisionId: ${decision.decisionId}');
+  stdout.writeln('  workItemId: ${decision.workItemId}');
+  stdout.writeln('  decisionType: ${decision.decisionType.wire}');
+  stdout.writeln('  status: ${decision.status.wire}');
+  stdout.writeln('  question: ${decision.question}');
+  stdout.writeln('  metadata: ${decision.metadata}');
 
   // Verify decision stored
   final stored = await decisions.readHumanDecision(decision.decisionId);
-  print('\nVerified stored decision: ${stored?.decisionId}');
+  stdout.writeln('\nVerified stored decision: ${stored?.decisionId}');
 
   // Present baseline package summary
-  print('\n=== GATE SUMMARY ===');
-  print('productId: $productId');
-  print('baselineId: ${proposed.baselineId}');
-  print('revision: ${proposed.revision}');
-  print('contentHash: ${proposed.contentHash}');
-  print('decisionId: ${decision.decisionId}');
-  print('CURRENT GATE: PRODUCT_BASELINE_APPROVAL_REQUIRED');
+  stdout.writeln('\n=== GATE SUMMARY ===');
+  stdout.writeln('productId: $productId');
+  stdout.writeln('baselineId: ${proposed.baselineId}');
+  stdout.writeln('revision: ${proposed.revision}');
+  stdout.writeln('contentHash: ${proposed.contentHash}');
+  stdout.writeln('decisionId: ${decision.decisionId}');
+  stdout.writeln('CURRENT GATE: PRODUCT_BASELINE_APPROVAL_REQUIRED');
 }

@@ -55,9 +55,11 @@ void main(List<String> argv) async {
     password: _env('SERVERPOD_DATABASE_PASSWORD', 'shipit'),
   );
 
-  print('Onboarding product "$productId"');
-  print('  repository : $repoPath');
-  print('  database   : ${database.host}:${database.port}/${database.name}');
+  stdout.writeln('Onboarding product "$productId"');
+  stdout.writeln('  repository : $repoPath');
+  stdout.writeln(
+    '  database   : ${database.host}:${database.port}/${database.name}',
+  );
 
   final pod = Serverpod(
     ['--mode', 'development', '--apply-migrations'],
@@ -86,14 +88,16 @@ void main(List<String> argv) async {
   Product product;
   try {
     product = await engine.readProduct(productId);
-    print('\nPRODUCT (existing): ${product.name} [${product.state.wire}]');
+    stdout.writeln(
+      '\nPRODUCT (existing): ${product.name} [${product.state.wire}]',
+    );
   } on ProductNotFoundException {
     product = await engine.createProduct(
       productId: productId,
       name: productId,
       description: 'Onboarded from $repoPath',
     );
-    print('\nPRODUCT (created): ${product.name}');
+    stdout.writeln('\nPRODUCT (created): ${product.name}');
   }
 
   // 2. Repository reference. Recorded as `local` because onboarding inspects a
@@ -106,10 +110,10 @@ void main(List<String> argv) async {
     kind: RepositoryKind.monorepo,
     provider: RepositoryProvider.local,
   );
-  print('REPOSITORY: $repositoryId -> $repoPath');
+  stdout.writeln('REPOSITORY: $repositoryId -> $repoPath');
 
   // 3. Read-only discovery. This never writes to the snapshot.
-  print('\nDiscovering facts (read-only)...');
+  stdout.writeln('\nDiscovering facts (read-only)...');
   final observations = await ReadOnlyRepositoryReader(
     snapshotRoot: snapshotRoot,
   ).inspect();
@@ -121,7 +125,7 @@ void main(List<String> argv) async {
     await pod.shutdown(exitProcess: false);
     exit(3);
   }
-  print('  ${observations.length} observations');
+  stdout.writeln('  ${observations.length} observations');
 
   final classifier = MaturityClassifier();
   final facts = <BaselineFact>[
@@ -167,11 +171,15 @@ void main(List<String> argv) async {
 
   // Prefer the proposed baseline that has human-authored claims (most recently amended)
   final proposedWithHumanClaims = existingProposed
-      .where((b) => b.facts.any((f) => f.provenance == Provenance.humanProvided))
+      .where(
+        (b) => b.facts.any((f) => f.provenance == Provenance.humanProvided),
+      )
       .toList();
-  proposedWithHumanClaims.sort((a, b) =>
-      (b.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0))
-          .compareTo(a.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0)));
+  proposedWithHumanClaims.sort(
+    (a, b) => (b.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0)).compareTo(
+      a.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0),
+    ),
+  );
 
   ProductBaseline proposed;
   if (existingProposed.isNotEmpty) {
@@ -203,15 +211,18 @@ void main(List<String> argv) async {
         verifiedBy: null,
         verificationKind: null,
       );
-      await store.saveBaseline(proposed, expectedVersion: currentProposed.version);
-      print(
+      await store.saveBaseline(
+        proposed,
+        expectedVersion: currentProposed.version,
+      );
+      stdout.writeln(
         '\nPreserved ${humanFacts.length} human claim(s) in baseline '
         '${proposed.baselineId} (rev ${proposed.revision}).',
       );
     } else if (candidateHash == currentProposed.contentHash) {
       // Exact match (no human claims or content unchanged)
       proposed = currentProposed;
-      print(
+      stdout.writeln(
         '\nReusing baseline ${proposed.baselineId} '
         '(rev ${proposed.revision}) — content unchanged.',
       );
@@ -226,7 +237,7 @@ void main(List<String> argv) async {
     // Legacy: exact hash match from older logic
     existingByHash.sort((a, b) => b.revision.compareTo(a.revision));
     proposed = existingByHash.first;
-    print(
+    stdout.writeln(
       '\nReusing baseline ${proposed.baselineId} '
       '(rev ${proposed.revision}) — content unchanged.',
     );
@@ -244,28 +255,30 @@ void main(List<String> argv) async {
     byMaturity[f.maturity.wire] = (byMaturity[f.maturity.wire] ?? 0) + 1;
   }
 
-  print('\nPROPOSED BASELINE');
-  print('  baselineId        : ${proposed.baselineId}');
-  print('  revision          : ${proposed.revision}');
-  print('  fact count        : ${proposed.facts.length}');
-  print('  contentHash       : ${proposed.contentHash}');
-  print('  contentHashVersion: ${proposed.contentHashVersion}');
-  print('  supersedes        : ${proposed.supersedesBaselineId ?? '(none)'}');
-  print('\n  facts by section:');
-  bySection.forEach((k, v) => print('    $k: $v'));
-  print('\n  facts by maturity:');
-  byMaturity.forEach((k, v) => print('    $k: $v'));
+  stdout.writeln('\nPROPOSED BASELINE');
+  stdout.writeln('  baselineId        : ${proposed.baselineId}');
+  stdout.writeln('  revision          : ${proposed.revision}');
+  stdout.writeln('  fact count        : ${proposed.facts.length}');
+  stdout.writeln('  contentHash       : ${proposed.contentHash}');
+  stdout.writeln('  contentHashVersion: ${proposed.contentHashVersion}');
+  stdout.writeln(
+    '  supersedes        : ${proposed.supersedesBaselineId ?? '(none)'}',
+  );
+  stdout.writeln('\n  facts by section:');
+  bySection.forEach((k, v) => stdout.writeln('    $k: $v'));
+  stdout.writeln('\n  facts by maturity:');
+  byMaturity.forEach((k, v) => stdout.writeln('    $k: $v'));
 
   // Recompute with the contract the engine actually wrote, so the check cannot
   // silently drift onto a different version than the one persisted.
   final recomputed = proposed.contentHashVersion == 3
       ? baselineContentHashV3(proposed.facts)
       : baselineContentHashV2(proposed.facts);
-  print('\nHASH VERIFICATION');
-  print('  contract  : V${proposed.contentHashVersion}');
-  print('  persisted : ${proposed.contentHash}');
-  print('  recomputed: $recomputed');
-  print('  MATCH     : ${recomputed == proposed.contentHash}');
+  stdout.writeln('\nHASH VERIFICATION');
+  stdout.writeln('  contract  : V${proposed.contentHashVersion}');
+  stdout.writeln('  persisted : ${proposed.contentHash}');
+  stdout.writeln('  recomputed: $recomputed');
+  stdout.writeln('  MATCH     : ${recomputed == proposed.contentHash}');
   if (recomputed != proposed.contentHash) {
     stderr.writeln('Content hash does not match the persisted facts.');
     await pod.shutdown(exitProcess: false);
@@ -283,7 +296,9 @@ void main(List<String> argv) async {
   //    what the human gate below is for.
   var verified = proposed;
   if (proposed.verifiedAt == null) {
-    print('\nVerifying baseline against a fresh read of the snapshot...');
+    stdout.writeln(
+      '\nVerifying baseline against a fresh read of the snapshot...',
+    );
     final recheck = await ReadOnlyRepositoryReader(
       snapshotRoot: snapshotRoot,
     ).inspect();
@@ -308,9 +323,9 @@ void main(List<String> argv) async {
     ];
     final recheckHash = baselineContentHashV3(refacts);
     final reproduced = recheckHash == proposed.contentHash;
-    print('  re-derived facts : ${refacts.length}');
-    print('  re-derived hash  : $recheckHash');
-    print('  REPRODUCED      : $reproduced');
+    stdout.writeln('  re-derived facts : ${refacts.length}');
+    stdout.writeln('  re-derived hash  : $recheckHash');
+    stdout.writeln('  REPRODUCED      : $reproduced');
     if (!reproduced) {
       stderr.writeln(
         'Refusing to verify: a fresh read of $repoPath does not reproduce the '
@@ -325,10 +340,12 @@ void main(List<String> argv) async {
       baselineId: proposed.baselineId,
       verifiedBy: 'worker:baseline-verifier/onboard_shipit_dev',
     );
-    print('  verifiedAt      : ${verified.verifiedAt?.toIso8601String()}');
-    print('  verifiedBy      : ${verified.verifiedBy}');
+    stdout.writeln(
+      '  verifiedAt      : ${verified.verifiedAt?.toIso8601String()}',
+    );
+    stdout.writeln('  verifiedBy      : ${verified.verifiedBy}');
   } else {
-    print(
+    stdout.writeln(
       '\nAlready verified by ${proposed.verifiedBy} at '
       '${proposed.verifiedAt?.toIso8601String()}; re-checking scraped portion still holds.',
     );
@@ -356,12 +373,14 @@ void main(List<String> argv) async {
     baselineId: verified.baselineId,
   );
 
-  print('\nAWAITING HUMAN APPROVAL');
-  print('  decisionId: ${decision.decisionId}');
-  print('  question  : ${decision.question}');
-  print('  status    : ${decision.status.wire}');
-  print('\nOpen the dashboard and review the ${proposed.facts.length} facts:');
-  print('  http://localhost:8081/#/products/$productId');
+  stdout.writeln('\nAWAITING HUMAN APPROVAL');
+  stdout.writeln('  decisionId: ${decision.decisionId}');
+  stdout.writeln('  question  : ${decision.question}');
+  stdout.writeln('  status    : ${decision.status.wire}');
+  stdout.writeln(
+    '\nOpen the dashboard and review the ${proposed.facts.length} facts:',
+  );
+  stdout.writeln('  http://localhost:8081/#/products/$productId');
 
   // `shutdown(exitProcess: false)` leaves Serverpod's timers running, so the
   // VM never reaches main() again on its own.

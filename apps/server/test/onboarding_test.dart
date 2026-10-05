@@ -2,20 +2,15 @@ import 'dart:io';
 
 import 'package:control_plane_server/src/generated/endpoints.dart';
 import 'package:control_plane_server/src/generated/protocol.dart';
+import 'package:control_plane_server/src/persistence/persistence_database.dart';
+import 'package:control_plane_server/src/persistence/postgres_human_decision_store.dart';
+import 'package:control_plane_server/src/persistence/postgres_product_registry_store.dart';
+import 'package:control_plane_server/src/persistence/postgres_workflow_store.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:product_registry/product_registry.dart';
 import 'package:serverpod/serverpod.dart';
 import 'package:serverpod_test/serverpod_test.dart';
 import 'package:test/test.dart';
-
-import '../lib/src/persistence/postgres_workflow_store.dart';
-import '../lib/src/persistence/postgres_human_decision_store.dart';
-import '../lib/src/persistence/postgres_product_registry_store.dart';
-import '../lib/src/persistence/persistence_database.dart';
-
-import 'package:product_registry/src/discovery/read_only_repository_reader.dart';
-import 'package:product_registry/src/discovery/maturity_classifier.dart';
-import 'package:product_registry/src/engine/baseline_content_hash_v2.dart';
 
 /// Test group name for the onboarding test
 const String _testGroupName = 'ShipIt Platform Onboarding (S-1)';
@@ -80,23 +75,23 @@ void main() {
       Product product;
       try {
         product = await engine.readProduct(productId);
-        print('PRODUCT IDENTITY (existing):');
+        stdout.writeln('PRODUCT IDENTITY (existing):');
       } on ProductNotFoundException {
-        print('Product not found, creating...');
+        stdout.writeln('Product not found, creating...');
         product = await engine.createProduct(
           productId: productId,
           name: 'ShipIt',
           description: 'The platform itself (S-1 dogfood).',
         );
-        print('PRODUCT IDENTITY (created):');
+        stdout.writeln('PRODUCT IDENTITY (created):');
       }
-      print('  display name: ${product.name}');
-      print('  productId: ${product.productId}');
-      print('  ProductState: ${product.state.wire}');
-      print('  dispatch allowed: ${product.state.allowsDispatch}');
+      stdout.writeln('  display name: ${product.name}');
+      stdout.writeln('  productId: ${product.productId}');
+      stdout.writeln('  ProductState: ${product.state.wire}');
+      stdout.writeln('  dispatch allowed: ${product.state.allowsDispatch}');
 
       // Add repository reference
-      print('\nAdding repository reference...');
+      stdout.writeln('\nAdding repository reference...');
       try {
         await engine.addRepositoryReference(
           repositoryId: 'repo-shipit-platform',
@@ -105,17 +100,19 @@ void main() {
           kind: RepositoryKind.monorepo,
           provider: RepositoryProvider.local,
         );
-        print('Repository reference added.');
+        stdout.writeln('Repository reference added.');
       } catch (e) {
-        print('Repository reference already exists or error: $e');
+        stdout.writeln('Repository reference already exists or error: $e');
       }
 
       // Run read-only discovery
-      print('\nRunning read-only discovery with MaturityClassifier...');
+      stdout.writeln(
+        '\nRunning read-only discovery with MaturityClassifier...',
+      );
       final observations = await ReadOnlyRepositoryReader(
         snapshotRoot: Directory('/Users/alkebut/air/shipit-platform'),
       ).inspect();
-      print('Discovered ${observations.length} observations.');
+      stdout.writeln('Discovered ${observations.length} observations.');
 
       final facts = <BaselineFact>[
         for (var i = 0; i < observations.length; i++)
@@ -138,34 +135,36 @@ void main() {
       ];
 
       // Propose baseline
-      print('\nProposing baseline...');
+      stdout.writeln('\nProposing baseline...');
       final proposed = await engine.proposeBaseline(
         productId: productId,
         facts: facts,
       );
-      print('Proposed baseline:');
-      print('  baselineId: ${proposed.baselineId}');
-      print('  revision: ${proposed.revision}');
-      print('  contentHash: ${proposed.contentHash}');
-      print('  contentHashVersion: ${proposed.contentHashVersion}');
-      print('  status: ${proposed.status.wire}');
-      print('  fact count: ${proposed.facts.length}');
+      stdout.writeln('Proposed baseline:');
+      stdout.writeln('  baselineId: ${proposed.baselineId}');
+      stdout.writeln('  revision: ${proposed.revision}');
+      stdout.writeln('  contentHash: ${proposed.contentHash}');
+      stdout.writeln('  contentHashVersion: ${proposed.contentHashVersion}');
+      stdout.writeln('  status: ${proposed.status.wire}');
+      stdout.writeln('  fact count: ${proposed.facts.length}');
 
       final matCounts = <String, int>{};
       for (final f in proposed.facts) {
         matCounts[f.maturity.wire] = (matCounts[f.maturity.wire] ?? 0) + 1;
       }
-      print('\nProposed baseline maturity counts:');
-      matCounts.forEach((k, v) => print('  ${k}: $v'));
+      stdout.writeln('\nProposed baseline maturity counts:');
+      matCounts.forEach((k, v) => stdout.writeln('  $k: $v'));
 
       // Resolve pending decisions
-      print('\nResolving any existing pending decisions...');
+      stdout.writeln('\nResolving any existing pending decisions...');
       final existingDecisions = await decisions.readHumanDecisionsForScope(
         'product-baseline:$productId',
       );
       for (final d in existingDecisions) {
         if (d.status == HumanDecisionStatus.pending) {
-          print('Resolving pending decision ${d.decisionId} as REWORK...');
+          stdout.writeln(
+            'Resolving pending decision ${d.decisionId} as REWORK...',
+          );
           final testSig = DecisionSignature(
             algorithm: 'ed25519',
             publicKey: 'pk-human-review',
@@ -180,33 +179,31 @@ void main() {
                 'Hash contract upgraded to V2 (binds maturity). Discovery maturity classification was systematically incorrect (defaulted to IMPLEMENTED). New baseline with Hash V2 and corrected maturity required.',
             signature: testSig,
           );
-          print('  Resolved: ${d.decisionId} as REWORK');
+          stdout.writeln('  Resolved: ${d.decisionId} as REWORK');
         }
       }
 
       // Create corrected baseline
-      print('\nCreating corrected baseline with Hash Contract V2...');
+      stdout.writeln('\nCreating corrected baseline with Hash Contract V2...');
       final correctedFacts = <BaselineFact>[
-        ...proposed.facts
-            .map(
-              (f) => BaselineFact(
-                factId: f.factId,
-                section: f.section,
-                claim: f.claim,
-                provenance: f.provenance,
-                maturity: maturityClassifier.classify(
-                  claim: f.claim,
-                  evidencePaths: f.evidenceRefs,
-                  provenance: f.provenance,
-                  assumptionNote: f.assumptionNote,
-                  redacted: f.redacted,
-                ),
-                evidenceRefs: f.evidenceRefs,
-                assumptionNote: f.assumptionNote,
-                redacted: f.redacted,
-              ),
-            )
-            .toList(),
+        ...proposed.facts.map(
+          (f) => BaselineFact(
+            factId: f.factId,
+            section: f.section,
+            claim: f.claim,
+            provenance: f.provenance,
+            maturity: maturityClassifier.classify(
+              claim: f.claim,
+              evidencePaths: f.evidenceRefs,
+              provenance: f.provenance,
+              assumptionNote: f.assumptionNote,
+              redacted: f.redacted,
+            ),
+            evidenceRefs: f.evidenceRefs,
+            assumptionNote: f.assumptionNote,
+            redacted: f.redacted,
+          ),
+        ),
         BaselineFact(
           factId: 'correction-1',
           section: BaselineSectionKey.governance,
@@ -345,25 +342,27 @@ void main() {
         facts: correctedFacts,
       );
 
-      print('\nCORRECTED BASELINE CREATED (Hash V2):');
-      print('  baselineId: ${corrected.baselineId}');
-      print('  revision: ${corrected.revision}');
-      print('  contentHash: ${corrected.contentHash}');
-      print('  contentHashVersion: ${corrected.contentHashVersion}');
-      print('  status: ${corrected.status.wire}');
-      print('  supersedesBaselineId: ${corrected.supersedesBaselineId}');
-      print('  fact count: ${corrected.facts.length}');
+      stdout.writeln('\nCORRECTED BASELINE CREATED (Hash V2):');
+      stdout.writeln('  baselineId: ${corrected.baselineId}');
+      stdout.writeln('  revision: ${corrected.revision}');
+      stdout.writeln('  contentHash: ${corrected.contentHash}');
+      stdout.writeln('  contentHashVersion: ${corrected.contentHashVersion}');
+      stdout.writeln('  status: ${corrected.status.wire}');
+      stdout.writeln(
+        '  supersedesBaselineId: ${corrected.supersedesBaselineId}',
+      );
+      stdout.writeln('  fact count: ${corrected.facts.length}');
 
       final matCountsCorrected = <String, int>{};
       for (final f in corrected.facts) {
         matCountsCorrected[f.maturity.wire] =
             (matCountsCorrected[f.maturity.wire] ?? 0) + 1;
       }
-      print('\nCorrected baseline maturity counts:');
-      matCountsCorrected.forEach((k, v) => print('  ${k}: $v'));
+      stdout.writeln('\nCorrected baseline maturity counts:');
+      matCountsCorrected.forEach((k, v) => stdout.writeln('  $k: $v'));
 
       // Create governing HumanDecision
-      print(
+      stdout.writeln(
         '\nCreating governing HumanDecision for corrected baseline (Hash V2)...',
       );
       // Review only opens for a baseline that was independently verified, so
@@ -378,41 +377,43 @@ void main() {
         baselineId: corrected.baselineId,
       );
 
-      print('\nCORRECTED DECISION CREATED:');
-      print('  decisionId: ${correctedDecision.decisionId}');
-      print('  workItemId: ${correctedDecision.workItemId}');
-      print('  decisionType: ${correctedDecision.decisionType.wire}');
-      print('  status: ${correctedDecision.status.wire}');
-      print('  question: ${correctedDecision.question}');
-      print('  metadata: ${correctedDecision.metadata}');
+      stdout.writeln('\nCORRECTED DECISION CREATED:');
+      stdout.writeln('  decisionId: ${correctedDecision.decisionId}');
+      stdout.writeln('  workItemId: ${correctedDecision.workItemId}');
+      stdout.writeln('  decisionType: ${correctedDecision.decisionType.wire}');
+      stdout.writeln('  status: ${correctedDecision.status.wire}');
+      stdout.writeln('  question: ${correctedDecision.question}');
+      stdout.writeln('  metadata: ${correctedDecision.metadata}');
 
       // Verify decision stored
       final stored = await decisions.readHumanDecision(
         correctedDecision.decisionId,
       );
-      print('\nVerified stored corrected decision: ${stored?.decisionId}');
+      stdout.writeln(
+        '\nVerified stored corrected decision: ${stored?.decisionId}',
+      );
 
       // Verify Hash V2 binding in metadata
       final metadata = correctedDecision.metadata ?? {};
-      print('\nDecision metadata binding:');
-      print('  routing: ${metadata['routing']}');
-      print('  productId: ${metadata['productId']}');
-      print('  baselineId: ${metadata['baselineId']}');
-      print('  baselineRevision: ${metadata['baselineRevision']}');
-      print('  contentHash: ${metadata['contentHash']}');
+      stdout.writeln('\nDecision metadata binding:');
+      stdout.writeln('  routing: ${metadata['routing']}');
+      stdout.writeln('  productId: ${metadata['productId']}');
+      stdout.writeln('  baselineId: ${metadata['baselineId']}');
+      stdout.writeln('  baselineRevision: ${metadata['baselineRevision']}');
+      stdout.writeln('  contentHash: ${metadata['contentHash']}');
 
       // Verify Hash V2 recomputation
       final recomputedHash = baselineContentHashV2(corrected.facts);
-      print('\n=== HASH V2 RECOMPUTATION ===');
-      print('  persisted contentHash: ${corrected.contentHash}');
-      print('  recomputed Hash V2:   $recomputedHash');
-      print('  contentHashVersion:   ${corrected.contentHashVersion}');
-      print(
+      stdout.writeln('\n=== HASH V2 RECOMPUTATION ===');
+      stdout.writeln('  persisted contentHash: ${corrected.contentHash}');
+      stdout.writeln('  recomputed Hash V2:   $recomputedHash');
+      stdout.writeln('  contentHashVersion:   ${corrected.contentHashVersion}');
+      stdout.writeln(
         '  MATCH: ${corrected.contentHash == recomputedHash && corrected.contentHashVersion == 2}',
       );
 
       // Fresh process readback proof
-      print('\n=== FRESH PROCESS READBACK ===');
+      stdout.writeln('\n=== FRESH PROCESS READBACK ===');
       // Create a new session for fresh readback
       final freshSession = testSession.build();
       final freshDb = PersistenceDatabase((freshSession as dynamic).db);
@@ -424,24 +425,32 @@ void main() {
       );
 
       final ctx = await freshEngine.loadProductContext(productId);
-      print('ProductContext loaded from fresh session:');
-      print(
+      stdout.writeln('ProductContext loaded from fresh session:');
+      stdout.writeln(
         '  active baseline: ${ctx.activeBaseline?.baselineId} (rev ${ctx.activeBaseline?.revision})',
       );
-      print('  active baseline status: ${ctx.activeBaseline?.status.wire}');
-      print(
+      stdout.writeln(
+        '  active baseline status: ${ctx.activeBaseline?.status.wire}',
+      );
+      stdout.writeln(
         '  active baseline contentHashVersion: ${ctx.activeBaseline?.contentHashVersion}',
       );
-      print('  all baselines count: ${ctx.allBaselines.length}');
+      stdout.writeln('  all baselines count: ${ctx.allBaselines.length}');
 
       if (ctx.activeBaseline != null) {
-        print('  reloaded baselineId: ${ctx.activeBaseline!.baselineId}');
-        print('  reloaded revision: ${ctx.activeBaseline!.revision}');
-        print('  reloaded contentHash: ${ctx.activeBaseline!.contentHash}');
-        print(
+        stdout.writeln(
+          '  reloaded baselineId: ${ctx.activeBaseline!.baselineId}',
+        );
+        stdout.writeln('  reloaded revision: ${ctx.activeBaseline!.revision}');
+        stdout.writeln(
+          '  reloaded contentHash: ${ctx.activeBaseline!.contentHash}',
+        );
+        stdout.writeln(
           '  reloaded contentHashVersion: ${ctx.activeBaseline!.contentHashVersion}',
         );
-        print('  reloaded fact count: ${ctx.activeBaseline!.facts.length}');
+        stdout.writeln(
+          '  reloaded fact count: ${ctx.activeBaseline!.facts.length}',
+        );
 
         final reloadProv = <String, int>{};
         final reloadMat = <String, int>{};
@@ -450,35 +459,41 @@ void main() {
               (reloadProv[f.provenance.wire] ?? 0) + 1;
           reloadMat[f.maturity.wire] = (reloadMat[f.maturity.wire] ?? 0) + 1;
         }
-        print('\nReloaded provenance counts:');
-        reloadProv.forEach((k, v) => print('  $k: $v'));
-        print('\nReloaded maturity counts:');
-        reloadMat.forEach((k, v) => print('  $k: $v'));
+        stdout.writeln('\nReloaded provenance counts:');
+        reloadProv.forEach((k, v) => stdout.writeln('  $k: $v'));
+        stdout.writeln('\nReloaded maturity counts:');
+        reloadMat.forEach((k, v) => stdout.writeln('  $k: $v'));
       }
 
       if (ctx.activeBaseline != null) {
         final recomputedHash = baselineContentHashV2(ctx.activeBaseline!.facts);
-        print('\n=== HASH V2 RECOMPUTATION (FRESH SESSION) ===');
-        print('  persisted contentHash: ${ctx.activeBaseline!.contentHash}');
-        print('  recomputed Hash V2:   $recomputedHash');
-        print('  MATCH: ${recomputedHash == ctx.activeBaseline!.contentHash}');
-        print(
+        stdout.writeln('\n=== HASH V2 RECOMPUTATION (FRESH SESSION) ===');
+        stdout.writeln(
+          '  persisted contentHash: ${ctx.activeBaseline!.contentHash}',
+        );
+        stdout.writeln('  recomputed Hash V2:   $recomputedHash');
+        stdout.writeln(
+          '  MATCH: ${recomputedHash == ctx.activeBaseline!.contentHash}',
+        );
+        stdout.writeln(
           '  contentHashVersion: ${ctx.activeBaseline!.contentHashVersion}',
         );
       }
 
       // Final gate summary
-      print('\n=== CORRECTED BASELINE GATE SUMMARY ===');
-      print('productId: $productId');
-      print('baselineId: ${corrected.baselineId}');
-      print('revision: ${corrected.revision}');
-      print('contentHash: ${corrected.contentHash}');
-      print('contentHashVersion: ${corrected.contentHashVersion}');
-      print('decisionId: ${correctedDecision.decisionId}');
-      print('status: ${corrected.status.wire}');
-      print('CURRENT GATE: PRODUCT_BASELINE_APPROVAL_REQUIRED');
-      print('HASH CONTRACT: V2 (binds maturity + all semantic fields)');
-      print('\n=== ONBOARDING COMPLETE ===');
+      stdout.writeln('\n=== CORRECTED BASELINE GATE SUMMARY ===');
+      stdout.writeln('productId: $productId');
+      stdout.writeln('baselineId: ${corrected.baselineId}');
+      stdout.writeln('revision: ${corrected.revision}');
+      stdout.writeln('contentHash: ${corrected.contentHash}');
+      stdout.writeln('contentHashVersion: ${corrected.contentHashVersion}');
+      stdout.writeln('decisionId: ${correctedDecision.decisionId}');
+      stdout.writeln('status: ${corrected.status.wire}');
+      stdout.writeln('CURRENT GATE: PRODUCT_BASELINE_APPROVAL_REQUIRED');
+      stdout.writeln(
+        'HASH CONTRACT: V2 (binds maturity + all semantic fields)',
+      );
+      stdout.writeln('\n=== ONBOARDING COMPLETE ===');
     });
   });
 }

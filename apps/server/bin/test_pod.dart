@@ -27,8 +27,8 @@ void main() async {
       insightsServer: null,
     ),
   );
-  print('Starting pod...');
+  stdout.writeln('Starting pod...');
   await pod.start();
-  print('Pod started!');
+  stdout.writeln('Pod started!');
   await pod.shutdown(exitProcess: true);
 }
