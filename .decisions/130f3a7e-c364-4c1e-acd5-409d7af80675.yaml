@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 130f3a7e-c364-4c1e-acd5-409d7af80675
 type: INFRASTRUCTURE
-status: PENDING
+status: IN_PROGRESS
 question: >-
   How should a reviewable, committed baseline be established for the ~390 product
   files that currently exist only as uncommitted working-tree changes, given that
@@ -154,4 +154,4 @@ resolution:
   follow_up_actions: []
 created_by: orchestrator-main
 created_at: 2026-10-05T00:11:28Z
-updated_at: 2026-10-05T00:11:28Z
+updated_at: 2026-10-05T00:14:02Z
