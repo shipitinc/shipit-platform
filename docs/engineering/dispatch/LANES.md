@@ -75,3 +75,11 @@ variants.
 `0d5d132` pins the authoritative `add_product_page.dart` (canonical checkout, 1117 lines),
 so the four worktree variants are superseded for code purposes. The design and QA
 artifacts remain unreconciled (blocker B10).
+## Correction lane — baseline mechanical
+
+| task_id | type | state | worktree | branch | base_sha | head_sha | routing_class | result | next action |
+|---|---|---|---|---|---|---|---|---|---|
+| correct-baseline-mechanical | correct | CLOSED — BLOCKED | /private/tmp/shipit-correct-baseline (retained) | correct/baseline-mechanical | 0d5d132 | 07c48ed | STANDARD | `CORRECTION_BLOCKED` — B1/B2/B3/M2/M3 all cleared; A and B unmeetable in OWNED_PATHS | human must rule on Blocker A (CI analyze gate) and Blocker B (coupled credential pair) |
+
+Commits on top of the unrevised `0d5d132`: `dae3d68` (B1, M2) · `96928ed` (M3) ·
+`d371265` (B3) · `07c48ed` (B2). 49 files, +995/-1689.
