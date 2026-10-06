@@ -49,3 +49,41 @@ Previously resolved and unchanged: `130f3a7e-c364-4c1e-acd5-409d7af80675` (INFRA
 the grep used the wrong identifiers. The audit trail is immutable, so the correction is recorded in
 `WORK_STATE.md` and in the dispatch ledger instead. The decision's *conclusion* is unaffected and in
 fact strengthened.
+
+## RESOLVED 2026-10-06 — Gate D4
+
+All six PENDING decisions resolved by the repository owner through the structured question UI. Tamper-check
+performed on each: `selected_option` matches an `option_id` as presented, with one recorded deviation (below).
+
+| decision_id | outcome | binding consequence |
+|---|---|---|
+| `9417f8bf` | **OPTION_C** — supersede ADR 0018 `:85-88`, use **A3, an external secret manager** | ADR 0018 `:85-88` is SUPERSEDED and must be amended. **A2 permanently excluded.** **G-7 becomes required**: under A3 the `referenceName` reference *is* the sensitive artifact, so `RepositoryCredentialView` must stop exposing it |
+| `7b1bc8b7` | **OPTION_A** — fail closed with named remediation | Remediation copy is a **required deliverable**, not a nicety. Under A3 the substrate is a runtime dependency, so this path is common rather than edge |
+| `79e860e2` | **OPTION_A** — destroy the private half on revoke, keep the row | "Destroy" = delete the manager handle. **ADR 0018 `:113-114` is SUPERSEDED**: revocation now has a ShipIt-side action |
+| `898b07d0` | **OPTION_A** — split identity from registration | **ADR 0018 `:100-102` is UPHELD, not contradicted** — human point 2b becomes satisfiable. Known accepted trade: a visible product may exist with no usable credential |
+| `4d2c6b81` | **OPTION_A** — add the index to the migration chain | Requires a **NEW migration** (no template exists — the prior instance ran the other way). A duplicate-credential audit must run **before** it, because `CREATE UNIQUE INDEX` fails on existing duplicates |
+| `27ea6536` | **OPTION_A + recorded deviation** — see below | Per-platform footer spec from the boards, not from either lane's reading |
+
+### The footer decision — the human corrected both lanes
+
+The human checked the Penpot boards directly and reported, verbatim:
+
+> "I believe you're mistaken. `S · Add Product · Unknown host · Light/Dark` and `S · Add Product · Verified ·
+> Light/Dark` Do not have the disclosure in their footer. Only a divider, and a righ aligned Show technical
+> details text button. I just checked. Our Add product desktop should be the same way. `BPM · Add Product ·
+> Light/Dark` have Show technical details button left align with now divider. Stay true to both designs in
+> Penpot and in code."
+
+**Recorded as a deviation from the presented options rather than forced into an `option_id`.** Both options
+as presented assumed a shared footer structure; the human established that the two platforms genuinely
+differ, and that the boards — not either lane's reading of them — are authoritative. The design lane's
+reading of a `Footer` layer at (236,862) on the desktop boards is treated as a misidentification.
+
+Governing spec: **desktop** = divider + right-aligned `Show technical details` text button, no copy;
+**mobile** = left-aligned `Show technical details`, **no** divider, no copy.
+
+### ADR 0018 is now partly superseded — a follow-up is owed
+
+`:85-88` (custody) and `:113-114` (revocation) are superseded by the human's answers. `:100-102`
+(registration gated on a proven connectivity check) is **upheld** and becomes satisfiable. Owner: the human,
+as ADR owner.

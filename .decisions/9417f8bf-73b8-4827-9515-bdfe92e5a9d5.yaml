@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 9417f8bf-73b8-4827-9515-bdfe92e5a9d5
 type: SECURITY
-status: PENDING
+status: RESOLVED
 question: >-
   Does b869ec24's server-side custody SUPERSEDE ADR 0018 :85-88's local-secret-store clause — and if
   so, what becomes of "never persisted to the durable record" and of the reference reaching the client?
@@ -201,7 +201,39 @@ context:
         decision `570bb640` load-bearing for correctness, not merely for security posture.
       estimated_effort: "moderate, but reachability unknown"
       risk_level: HIGH
-resolution: null
+resolution:
+  selected_option: OPTION_C
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-06T13:05:00Z
+  rationale: >-
+    The human chose to SUPERSEDE ADR 0018 :85-88's local-secret-store clause and adopt **A3, an external
+    secret manager** - SHIP IT never holds key bytes, only a reference, and asks the manager for the
+    material at push time.
+
+    This settles the decision the human explicitly reserved at the start of the session ("I have NOT
+    approved the at-rest protection model ... do not default it"), and it was reached only after the
+    design was re-framed against the ADR, which had already chosen A1+A4 and forbidden A2. Three
+    consequences follow and are binding:
+
+    (1) **ADR 0018 :85-88 is SUPERSEDED** and must be amended by a follow-up, not silently ignored.
+    (2) **A2 is permanently excluded** - the ADR's "never persisted to the durable record" still binds it.
+    (3) **A3 makes the reference the most sensitive artifact SHIP IT holds**, because an ARN or secret path
+        discloses vault topology. That is gap G-7: RepositoryCredentialView currently exposes referenceName
+        to clients. Removing it is now REQUIRED rather than optional, and is a generated-contract change
+        in two packages.
+  follow_up_actions:
+    - action: >-
+        Amend ADR 0018 to record the supersession: replace the local-secret-store clause at :85-88 with the external-secret-manager substrate, and keep A1/A4 as the documented fallback when no manager is reachable in the target topology.
+      owner: human (ADR owner)
+    - action: >-
+        Remove referenceName from RepositoryCredentialView, or replace it with a non-identifying handle. Under A3 the reference IS the sensitive artifact; G-7 was optional while the substrate was undecided and is now required.
+      owner: design-agent
+    - action: >-
+        Design the A3 unavailability path with concrete remediation copy, per the fail-closed answer in 7b1bc8b7. Under A3 the substrate is a runtime dependency that can be down, so this is a common case, not an edge case.
+      owner: design-agent
+    - action: >-
+        Probe A3's reachability in the target topology before implementation is called complete. The design records confidence LOW and states that no option was runtime-verified.
+      owner: implementer
 created_by: orchestrator-main
 created_at: 2026-10-06T09:36:20Z
-updated_at: 2026-10-06T09:36:20Z
+updated_at: 2026-10-06T13:05:00Z

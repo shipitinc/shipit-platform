@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 27ea6536-8a4e-4cf1-b24c-cdd3ce5bdab0
 type: DESIGN
-status: PENDING
+status: RESOLVED
 question: >-
   Does human point 2f ("there's no copy at the bottom and only one footer line") apply to the
   desktop Add Product page as well as the mobile one?
@@ -99,7 +99,63 @@ context:
         current lane owns — so it needs a design-system-owner board edit.
       estimated_effort: "one line plus a board edit"
       risk_level: LOW
-resolution: null
+resolution:
+  selected_option: OPTION_A  # nearest equivalent; see deviation_from_presented_options below
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-06T13:05:00Z
+  deviation_from_presented_options: >-
+    **The human rejected BOTH presented options as framed and supplied a third answer, after checking the
+    Penpot boards directly.** Recorded verbatim below rather than forced into the nearest option_id, because
+    `HUMAN_DECISIONS.md` requires a tamper-check that the selected option is one as originally presented -
+    so a non-standard answer must be visible as one, not silently mapped. OPTION_A is recorded as the
+    nearest equivalent (copy removed), but the alignment specification below is NEW information that
+    neither the design lane nor the Manager had.
+  human_correction_verbatim: >-
+    "I believe you're mistaken. \"S - Add Product - Unknown host - Light/Dark\" and \"S - Add Product -
+    Verified - Light/Dark\" Do not have the disclosure in their footer. Only a divider, and a righ
+    aligned Show technical details text button. I just checked. Our Add product desktop should be the same
+    way. \"BPM - Add Product - Light/Dark\" have Show technical details button left align with now divider.
+    Stay true to both designs in Penpot and in code."
+  supersedes_design_lane_reading: >-
+    The design lane recorded that the desktop state boards carry a footer copy line at (236,862) beside a
+    disclosure at (1036,862), and that the mobile boards carry a copy plus a disclosure. **The human
+    checked and reports the desktop state boards carry NO footer copy - only a divider and a right-aligned
+    Show technical details text button** - and that the mobile boards have the button left-aligned with NO
+    divider. The human is the authority on the boards and has stated they checked. The lane's reading is
+    treated as wrong on this point and the human's specification governs. Both readings agree that there is
+    no footer COPY on mobile; they disagree about desktop copy and about alignment on both platforms.
+  rationale: >-
+    **Remove the footer copy on both platforms, and specify the footer per platform from the Penpot boards
+    rather than from either lane's reading of them.**
+
+    The human checked the boards directly and corrected both the design lane and the Manager. The governing
+    specification is now, per the human verbatim:
+
+    - **Desktop** (`S - Add Product - Unknown host - Light/Dark`, `S - Add Product - Verified - Light/Dark`):
+      a divider, and a **right-aligned** `Show technical details` text button. **No footer copy.**
+    - **Mobile** (`BPM - Add Product - Light/Dark`): a `Show technical details` button **left-aligned, with
+      no divider**. **No footer copy.**
+    - **"Stay true to both designs in Penpot and in code"** - the boards are authoritative; the build must
+      not invent a third footer, and the two platforms are genuinely different rather than one being a
+      mistake.
+
+    This is consistent with human point 2f ("there's no copy at the bottom and only one footer line") and
+    extends it: the copy goes everywhere, and the footer structure is per-platform. The design lane's
+    revision 4 already specified no copy on mobile, so that half stands; its desktop specification needs
+    correcting on both the copy removal and the alignment.
+  follow_up_actions:
+    - action: >-
+        Correct the desktop footer specification to match the desktop state boards exactly: a divider plus a right-aligned Show technical details text button, and NO footer copy. The revision's current desktop treatment deletes _buildFooter but does not specify the right alignment the boards show.
+      owner: design-agent
+    - action: >-
+        Verify the mobile footer against BPM - Add Product - Light/Dark: button left-aligned with NO divider above it. If the current revision assumes a divider on mobile, remove it - the board shows none.
+      owner: design-agent
+    - action: >-
+        Treat the boards as authoritative over both lanes' readings wherever they disagree. The human checked them directly and was right about the desktop boards; the design lane's coordinate-based reading of a 'Footer' layer at (236,862) should be treated as a misidentification.
+      owner: design-agent
+    - action: >-
+        Ensure _buildFooter is deleted on desktop (it is the source of both the copy and the duplicate ContentRule) and that TechnicalDetails renders with no note, matching the board.
+      owner: implementer
 created_by: orchestrator-main
 created_at: 2026-10-06T09:36:20Z
-updated_at: 2026-10-06T09:36:20Z
+updated_at: 2026-10-06T13:05:00Z

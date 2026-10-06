@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 79e860e2-4edf-4510-8d5f-435460255848
 type: SECURITY
-status: PENDING
+status: RESOLVED
 question: >-
   ADR 0018 says revocation "requires no Shipit-side action" because SHIP IT held no key bytes.
   b869ec24 moved custody server-side, so SHIP IT now holds bytes. Does that clause SURVIVE the custody
@@ -123,7 +123,29 @@ context:
         justified — an unjustified constant governing secret lifetime.
       estimated_effort: "larger; scheduler + durable job"
       risk_level: MEDIUM
-resolution: null
+resolution:
+  selected_option: OPTION_A
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-06T13:05:00Z
+  rationale: >-
+    **Destroy the private half on revoke; keep the row.** Conditional on the supersession recorded in
+    9417f8bf, which the human granted - so the condition is met.
+
+    With A3 the private half lives in the secret manager, so "destroy" means the manager handle is deleted
+    at revocation, not that SHIP IT overwrites bytes it does not hold. The credential row survives fully
+    readable with status revoked, revokedAt and revokedReason - which is what the existing retention test
+    at credential_test.dart:246 asserts - so C-1 does not contradict it.
+
+    This **supersedes ADR 0018 :113-114** ("revocation is provider-native ... requires no Shipit-side
+    action"), which was written for a custody model in which SHIP IT held nothing. Because the human's
+    answer to 9417f8bf makes SHIP IT a participant in custody, a ShipIt-side action is now required.
+  follow_up_actions:
+    - action: >-
+        Amend ADR 0018 :113-114 alongside the :85-88 amendment: revocation now has a ShipIt-side action (deleting the manager handle), and provider-side removal alone is no longer sufficient to release key material SHIP IT can reach.
+      owner: human (ADR owner)
+    - action: >-
+        Implement revocation as a two-sided operation - the manager handle is deleted AND the credential row is marked revoked, with the row retained. Test that a revoked credential cannot reach the repository and that its history stays readable.
+      owner: implementer
 created_by: orchestrator-main
 created_at: 2026-10-06T09:36:20Z
-updated_at: 2026-10-06T09:36:20Z
+updated_at: 2026-10-06T13:05:00Z

@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 7b1bc8b7-6cd1-4ddc-a94f-366de2bed38a
 type: SECURITY
-status: PENDING
+status: RESOLVED
 question: >-
   When the server cannot establish the at-rest protection chosen in
   9417f8bf-73b8-4827-9515-bdfe92e5a9d5, does it refuse to mint the deploy key, or mint it and
@@ -99,7 +99,31 @@ context:
         asserted rather than proven.
       estimated_effort: "smallest"
       risk_level: HIGH
-resolution: null
+resolution:
+  selected_option: OPTION_A
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-06T13:05:00Z
+  rationale: >-
+    **Fail closed, with named remediation.** If the substrate is unavailable or its protection cannot be
+    verified, no keypair is generated and no credential row is created, and the user is told the concrete
+    operator action that fixes it.
+
+    The design flagged, and the human accepted, that refusing is also a dead end - the same shape as human
+    point 2d - and the distinguishing factor is that here the remedy is a concrete operator action rather
+    than a missing UI affordance. **The remediation copy is therefore a required deliverable, not a
+    nicety**, and under the chosen A3 substrate this path is materially more likely to be hit than with a
+    filesystem store: the secret manager is a runtime dependency.
+
+    Consistency with the existing posture is preserved - HostKeyStatus.changed already fails closed, and the
+    credential design rests on "access is proven, never assumed". The human declined the alternative that
+    would have been the only place in this design where a security property was asserted rather than proven.
+  follow_up_actions:
+    - action: >-
+        Write the remediation copy as a required part of the design, naming the concrete operator action for an unreachable secret manager. Blocking a user with an unnamed remedy is the failure mode human point 2d rejected.
+      owner: design-agent
+    - action: >-
+        Cover the degraded path with tests: a refused mint must create no keypair and no credential row, and must surface the remediation.
+      owner: implementer
 created_by: orchestrator-main
 created_at: 2026-10-06T09:36:20Z
-updated_at: 2026-10-06T09:36:20Z
+updated_at: 2026-10-06T13:05:00Z

@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 898b07d0-e848-4774-8007-f4dacbd89c78
 type: ARCHITECTURE
-status: PENDING
+status: RESOLVED
 question: >-
   ADR 0018 :100-102 records as settled architecture that "a product cannot be registered until a
   connectivity check has succeeded" — human point 2b. That is unsatisfiable against the current engine,
@@ -153,7 +153,36 @@ context:
         is a scope change requiring explicit human sign-off, not an implementation detail.
       estimated_effort: "smallest"
       risk_level: MEDIUM
-resolution: null
+resolution:
+  selected_option: OPTION_A
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-06T13:05:00Z
+  rationale: >-
+    **Split identity from registration.** The key flow creates the Product row (state registered) plus the
+    RepositoryReference as an explicit first step; "Register product" then commits credential verification.
+
+    This is the only option that satisfies human points 2a and 2b as written, sits inside the existing
+    ProductState.registered semantics, and needs no schema or contract change. It also makes the human's
+    addendum - "if down the road we want to create that product we'll find the key ready to be verified
+    again" - literally true through a concrete read path.
+
+    Because this resolves the cycle in favour of the human's stated requirement, **ADR 0018 :100-102 is
+    upheld rather than contradicted**: "a product cannot be registered until a connectivity check has
+    succeeded" is now actually satisfiable, because the credential can be minted before the registration act
+    completes.
+
+    The known trade, accepted: leaving the page early leaves a visible product with no usable credential.
+    That is the cost of honouring 2b literally, and it is a product judgement the human has now made.
+  follow_up_actions:
+    - action: >-
+        Update the state machine so the Product and RepositoryReference rows are created as an explicit first step of the key flow and Register product commits verification. Carry the 'visible half-registered product' consequence into the UI design: the user must be able to tell a product exists but is not yet usable.
+      owner: design-agent
+    - action: >-
+        Re-ground the mobile boards' Unknown-host state on the split - the product row now exists before trust, so the board's step order and copy must reflect that. This couples the two revisions.
+      owner: design-agent
+    - action: >-
+        Verify the chosen option does not weaken the ownership control ADR 0018 A1 relies on: productId stays non-null, and copyWith still cannot change credentialId, publicKey, fingerprint, algorithm or referenceName.
+      owner: implementer
 created_by: orchestrator-main
 created_at: 2026-10-06T09:36:20Z
-updated_at: 2026-10-06T09:36:20Z
+updated_at: 2026-10-06T13:05:00Z

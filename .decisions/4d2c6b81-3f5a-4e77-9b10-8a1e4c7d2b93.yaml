@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 4d2c6b81-3f5a-4e77-9b10-8a1e4c7d2b93
 type: ARCHITECTURE
-status: PENDING
+status: RESOLVED
 question: >-
   The one-active-credential-per-repository index exists only in
   apps/server/tool/schema_bootstrap.sql, which no deployed environment runs. How is ADR 0018 A1's
@@ -146,7 +146,43 @@ context:
         be recorded as an accepted risk, not left implicit.
       estimated_effort: "zero"
       risk_level: HIGH
-resolution: null
+resolution:
+  selected_option: OPTION_A
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-06T13:05:00Z
+  rationale: >-
+    **Add the index to the migration chain as well,** so ADR 0018 A1's one-active-credential-per-repository
+    invariant reaches deployed databases and not only fresh ones and CI.
+
+    The implementer was right to stop rather than absorb this. schema_bootstrap.dart is wired into exactly
+    two places (Makefile:228 and .github/workflows/integration.yaml:131), no docker/ compose file, other
+    workflow or Makefile target runs it, and the index appears in no migration - so a chain-migrated
+    database and every QA, staging and production database lack the invariant, while the repository's own
+    parity contract (schema_bootstrap.sql:37-44) calls that asymmetry "the defect this file exists to
+    remove".
+
+    **Cost, corrected after the engineering review caught a bad precedent in the first version of this
+    decision:** there is NO template to copy. The one prior instance ran the other way - 305cdc8 put the
+    index in migrations/20260920232118956/migration.sql at baseline, and d374ff2 later added the bootstrap
+    half to bring fresh databases into parity. So this requires authoring a NEW migration. The reviewer's
+    operational warning is binding: CREATE UNIQUE INDEX fails if a deployed database already holds
+    duplicate non-revoked credentials per repository, so a duplicate audit must run before the migration.
+  follow_up_actions:
+    - action: >-
+        Run a duplicate-credential audit against every deployed database before authoring the migration: non-revoked credentials grouped by repositoryId with count > 1. Reconcile any that exist, because CREATE UNIQUE INDEX will fail.
+      owner: implementer
+    - action: >-
+        Author a NEW migration carrying CREATE UNIQUE INDEX IF NOT EXISTS product_credential_active_repository_unique ON product_credential (repositoryId) WHERE status <> 'revoked', byte-consistent with the bootstrap. Do NOT edit a shipped definition.sql: serverpod create-migration rewrites it from the Dart models and silently erases a hand edit.
+      owner: implementer
+    - action: >-
+        Rename the index to the design's proposed product_credential_active_repository_unique in the same pass. The name is currently duplicated in three places and the Postgres violation translation matches on it exactly, so renaming after it ships means renaming twice.
+      owner: implementer
+    - action: >-
+        Verify against real Postgres in a CHAIN-REPLAYED database, not only a fresh one - that is the case the whole gap is about.
+      owner: implementer
+    - action: >-
+        Only AFTER the migration lands, add index:product_credential_active_repository_unique to verify_schema_bootstrap.sh required_objects at :69-73. Doing it earlier turns the guard's check-3 chain-parity assertion red.
+      owner: implementer
 created_by: orchestrator-main
 created_at: 2026-10-06T12:40:00Z
-updated_at: 2026-10-06T12:40:00Z
+updated_at: 2026-10-06T13:05:00Z
