@@ -3,9 +3,15 @@ decision_id: 898b07d0-e848-4774-8007-f4dacbd89c78
 type: ARCHITECTURE
 status: PENDING
 question: >-
-  Human point 2b requires "Register product" to be gated on a deploy key and host trust, but
-  minting a credential requires the Product and RepositoryReference rows that registration itself
-  creates. Which resolves the circular dependency?
+  ADR 0018 :100-102 records as settled architecture that "a product cannot be registered until a
+  connectivity check has succeeded" — human point 2b. That is unsatisfiable against the current engine,
+  because minting a credential requires the Product and RepositoryReference rows that registration
+  itself creates. Which resolves it: split identity from registration, decouple the credential from
+  product ownership, or mint at registration (an explicit divergence from ADR 0018)?
+# REFRAMED 2026-10-06 after DESIGN_REVIEW_APPROVED on Design Revision 2. Severity raised: the conflict
+# is ADR-vs-domain, not preference-vs-requirement. Line numbers corrected (engine:52->:54,
+# product_state.dart:29-32->:24-27). Revision 2 § R.19.2 adds that option 2 also weakens a control ADR
+# 0018 A1 now relies on.
 context:
   summary: >-
     **This decision was not asked for by the human and was not in the dispatch brief. The design

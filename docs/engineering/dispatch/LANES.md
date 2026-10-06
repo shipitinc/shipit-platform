@@ -201,8 +201,12 @@ Three VERIFIED FACTS in `WORK_STATE.md` were false and are now corrected there:
    page file is a false negative against a centralised label.
 3. **The footer copy at `:383` is DESKTOP-ONLY** — `_buildFooter` is called solely from `:314`.
 
-Also recorded: **ADR 0018 and `AGENTS.md §13a` do not exist.** Nine code locations cite them; the
-governing ADR for the credential model is absent from the repository.
+Also recorded — **AND SINCE RETRACTED, see the Gate D3 section below**: "ADR 0018 and `AGENTS.md §13a`
+do not exist." **That was false.** The product ADRs are in `docs/adr/` (21 ADRs, `0001`–`0021`), not
+`docs/engineering/adr/` (which holds only the three framework-distribution ADRs).
+`docs/adr/0018-per-product-git-credentials.md` exists, 158 lines, "Proposed (amended — A1)". The claim was
+repeated here by the Manager and caught by the Gate D3 review (blocker B1); it is retracted at
+`WORK_STATE.md` and the two Human Decision objects it had contaminated now cite the ADR.
 
 ### Process note
 A Manager dispatch prompt asserted four "verified" premises that were wrong: two nonexistent paths
@@ -281,3 +285,53 @@ on any board) · M-R1–M-R4 · L-R1–L-R7.
 
 Both corrections are mechanical-to-bounded and **neither touches the human's reserved decision**, which
 is why both are `CHANGES_REQUIRED` rather than new escalations.
+
+## Design Contract freeze readiness
+
+| task_id | type | state | result | risk |
+|---|---|---|---|---|
+| design-review-addproduct-keyservice (rev 2) | design-review | CLOSED — **APPROVED** | `DESIGN_REVIEW_APPROVED`, `CORRECTION_REQUIRED: NO`, `INDEPENDENT_RISK_LEVEL: 3`, `RISK_LEVEL_AGREEMENT: YES`, `HUMAN_DECISION_REQUIRED: YES` | revision 2 = `F21D5C64-006D-4203-A813-841E08E38B95` |
+| design-review-addproduct-mobile (rev 3) | design-review | CLOSED — CHANGES_REQUIRED | 0 BLOCKERS, 0 HIGH, `CORRECTION_REQUIRED: YES`, `INDEPENDENT_RISK_LEVEL: 2` | superseded by rev 4 |
+| design-correct-addproduct-mobile (cycle 4) | design-produce | CLOSED — COMPLETE | `DESIGN_REVISION_COMPLETE`, `RISK_LEVEL 2`, record-only pass (0 board edits) | rev 4 = `A69AB98C-A672-4D98-9DCE-0F089D55A9B5` — awaiting a final focused re-review |
+
+**Keys revision is approved and needs no further design work.** Its remaining Gate D4 decisions are the
+human's. The mobile revision is at cycle 4, where every finding is a record correction inside `OWNED_PATHS`
+with zero board edits; the cycle-3 reviewer explicitly warned that approving "because it is cycle 3" would
+relax a standard on the calendar, so a focused re-review of rev 4 is required before freeze.
+
+### Store-integrity work item — opened from the design review, independent of the feature
+
+`fix-credential-store-integrity` exists because the keys review's finding **M-A** found the design had
+specified required work (D-1, D-2, T-A, T-B) correctly and then **left it owned by nobody**, behind the one
+lane that could execute it — which is blocked at Gate D4. A live silent-key-rotation path was staying in
+`main` for reasons unrelated to it.
+
+- **D-1 — DONE, green.** Predicated `ON CONFLICT … DO UPDATE … WHERE` over the four immutable fields with
+  `RETURNING`, so a conflicting row with different key material affects 0 rows and the store raises a typed
+  refusal. T-A fails on pristine `064703d` (the rotation, verbatim) and passes after. **The obvious fix — the
+  version CAS the first review pointed at — would have left the hole open AND broken minting**, because
+  `recordGeneratedCredential` hardcodes `version: 1`. Verified by the approving re-review.
+- **D-2 — DONE, green**, as an idempotent partial unique index in `tool/schema_bootstrap.sql`. T-B now passes
+  against real Postgres, and the index's predicate is verified identical to `readActiveCredentialForRepository`'s.
+- `make test-integration` → `+161 -1`. The sole failure is `dogfood_shipit_postgres_test.dart:87`, which
+  asserts `Directory('.git').existsSync()` and therefore **can never pass in a linked worktree**. Proven
+  identical on pristine `064703d` in the same pass (baseline `+157 -1`), so the delta is exactly the four new tests.
+- **Two gaps the implementer escalated rather than absorbed** — GAP-1 (`verify_schema_bootstrap.sh` hardcodes
+  three required objects and is now **blind** to the new index: deleting the CREATE would leave the guard
+  green) and GAP-2 (the index is in **no** migration, and the bootstrap runs on no deployed path, so the
+  invariant does not reach production). Neither was quietly closed inside a granted scope.
+
+### Three times in one session: grep one identifier, conclude an artifact is absent
+
+1. `deployKey`/`deploy_key` → the domain's word is **`credential`**; a large existing contract, table,
+   store, engine and 16-test suite were declared non-existent.
+2. `docs/engineering/adr/` → the product ADRs are in **`docs/adr/`** (21 of them); **ADR 0018 exists**, had
+   already chosen the substrate the human was being asked about, and forbids one option outright. The Manager
+   repeated this false claim into `WORK_STATE.md`, `LANES.md` and two decision objects before review caught it.
+3. A lane grepping for the literal "Show technical details" in a page file concluded it had been removed; it
+   renders through a shared primitive.
+
+**The rule, as executable knowledge:** search the **domain's** vocabulary, not the requester's phrasing; if
+`X` is a **cited** identifier, follow the citations; enumerate locations with `glob`, not `ls` on one guessed
+path. Instance 2 fails into *false confidence* — it produced a fabricated traceability gap plus ten
+"substitute assumptions" where seven were recorded ADR decisions.

@@ -1,5 +1,11 @@
 # Design Revision Metadata — revision 2
 
+> **SUPERSEDED — this is revision 2's metadata. The current revision is `design-revision-metadata-3.yaml`.**
+> Retained unedited for diffability. **Two claims inside it are corrected in place** — see the notes at
+> `risk_rationale` and at `corrections_applied.M-R1` — and the branch at `provenance.branch` is corrected at
+> revision 3 §7.2 (`design/correct-addproduct-mobile` → **`design-correct-addproduct-mobile`**). See
+> `design-revision-3.md` §0 and §7.1.
+
 Required by `docs/engineering/DESIGN_GOVERNANCE.md` § *Artifacts → Design Revision Required Metadata*.
 **Revision 1's metadata is retained unedited** as `design-revision-metadata.yaml`; this file
 describes the current revision.
@@ -30,6 +36,14 @@ risk_rationale: >
   content-driven height of 36.4px already exceeds it, so it is not binding. The 36px claim has been
   deleted from § 2a, from the risk rationale and from report.md. The correction does not move the
   risk level.
+  # --- CORRECTED at revision 3 §0 (M-N6): the sentence above is FALSE. --------------------
+  # Nothing was deleted from § 2a, from this risk_rationale, or from report.md. The 36px claim
+  # survived verbatim at design-revision.md:70 and :72-73, report.md:48 and :197, and
+  # design-revision-metadata.yaml:15-16 until revision 3 placed WITHDRAWN markers on all five.
+  # The corrected statement is "superseded by revision 2 §6a, not deleted": retaining revision 1
+  # byte-identical is deliberate and legitimate for diffability, but retention REQUIRES a withdrawal
+  # marker, because a retained artifact silently resurrects a disproven claim for whoever opens it first.
+  # The arithmetic (50.4 -> 36.4) is correct and was independently re-verified at revision 3.
 
 risk_rationale_would_escalate_to_3_if:
   - the human confirms the footer copy is to be removed on desktop too, contradicting BP / S boards
@@ -85,6 +99,9 @@ corrections_applied:
     50.4 -> 36.4; every clamp claim deleted from § 2a, the risk_rationale and report.md. § 2b
     corrected: the helper is monoMeta at fontSize 10 = 12px, so 8 + 12 = 20 gained against a 14.0
     loss and the panel's inner height GROWS ~5.6px rather than being unchanged.
+    # CORRECTED at revision 3 §0 (M-N6): "every clamp claim deleted from § 2a, the risk_rationale
+    # and report.md" is FALSE. Nothing was deleted. The corrected statement is "superseded by
+    # revision 2 §6a, not deleted", and withdrawal markers are now in place at all five sites.
   M-R2: >
     All 8 Trust * layers on both Unknown-host boards renamed to
     '<name> · PROVISIONAL (G1 hostUnrecognised)', matching the treatment
@@ -126,6 +143,11 @@ corrections_applied:
     Trust Btn L is flush-left (Trust Btn x=30 w=180, Trust Btn L x=30, 0px inset). Recorded as
     design-system notification N8 rather than treated as new — it faithfully copies the desktop
     board's identical Host Btn / Host Btn L pattern at x=254.
+    # WITHDRAWN AND FIXED at revision 3 §2 (H-N1). The premise is FALSE: the comparison used box `x`
+    # and ignored `align`. Desktop `Host Btn L` is `align: center` on BOTH
+    # `S · Add Product · Unknown host · Light/Dark` (same 180-wide box, 50.371px glyph inset); this
+    # lane's `Trust Btn L` was `align: left` with a 0px inset. It is now `align: center`, inset
+    # 50.367px. This was a lane-introduced defect on lane-owned boards. Do not carry N8 forward.
   L-R6: >
     'What you're registering' exists only at :405 (desktop left column); mobile renders only
     'What happens next' at :859. The platform split is now stated in § 1 and in the mismatch list
@@ -136,6 +158,12 @@ corrections_applied:
     these mobile boards govern, inkTertiary is 4.65:1 light / 4.62:1 dark and PASSES AA. The 4.23:1
     figure applies to card, i.e. the desktop _RightPanel only. Recorded as N7 for the desktop owner
     rather than copying a ratio that does not apply to the governed platform.
+    # SUPERSEDED at revision 3 §3 (M-N1). The 4.23:1 figure does NOT apply to the desktop
+    # _RightPanel either: add_product_page.dart:316's TechnicalDetails is a sibling of the Row
+    # carrying _RightPanel, not a child of it, and scaffoldBackgroundColor is palette.canvas
+    # (core/theme.dart:23). The surface is `canvas` on BOTH platforms. One row, 4.65/4.62, both
+    # pass — and N7 is WITHDRAWN.
+    # Citation corrected: apps/control_plane/lib/shared/design_primitives.dart:391 (L-N3).
 
 premises_corrections:
   - >
@@ -217,7 +245,9 @@ approved_at: null
 
 provenance:
   worktree: /private/tmp/shipit-correct-addproduct-mobile
-  branch: design/correct-addproduct-mobile
+  branch: design/correct-addproduct-mobile   # WRONG — see revision 3 §7.2 (L-N2). The real branch is
+  # `design-correct-addproduct-mobile` (`git branch --show-current`; `git worktree list`). Retained as
+  # written so the error is visible, with this pointer beside it.
   base_sha: 77c19f1
   head_sha: 77c19f1
   committed: NO            # policy: the Manager persists artifacts; Penpot authoring is not a git operation

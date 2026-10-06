@@ -3,8 +3,14 @@ decision_id: 79e860e2-4edf-4510-8d5f-435460255848
 type: SECURITY
 status: PENDING
 question: >-
-  On credential revocation, is the stored private half destroyed, retained, or retained for a grace
-  period and then destroyed?
+  ADR 0018 says revocation "requires no Shipit-side action" because SHIP IT held no key bytes.
+  b869ec24 moved custody server-side, so SHIP IT now holds bytes. Does that clause SURVIVE the custody
+  move — and if it does not, is the stored private half destroyed, retained, or grace-perioded then
+  destroyed?
+# RESTATED as Q3' 2026-10-06 after DESIGN_REVIEW_APPROVED on Design Revision 2. The previous question was
+# the bare disposal menu, which asked the human to decide something ADR 0018 :113-114 had already answered.
+# Verified: b869ec24 is SILENT on revocation and rotation (grep for 'revoc|rotat' returns 0), so the real
+# question is narrower and new — whether the ADR clause survives a custody model the ADR did not anticipate.
 context:
   summary: >-
     Part of the at-rest protection model the human explicitly reserved: what happens to the key
@@ -73,11 +79,14 @@ context:
   recommendation:
     recommended_option: OPTION_A
     rationale: >-
-      Destroy the private half on revoke and keep the row. Nothing in the design requires the key
+      **Conditional on the human answering YES to the supersession question.** If ADR 0018 :113-114
+      survives — i.e. revocation remains the provider's act and SHIP IT is not the custodian of record —
+      then C-2 follows automatically and this question closes without a choice. If it does not survive,
+      destroy the private half on revoke and keep the row. Nothing in the design requires the key
       bytes to survive — only the record does — so C-1 makes `revoked` a real security state at no
       cost to the audit trail, and it is compatible with the existing retention test because that
       test asserts the record rather than the bytes.
-    confidence: MEDIUM
+    confidence: LOW
   options:
     - option_id: OPTION_A
       label: "Destroy bytes on revoke (C-1)"
@@ -86,9 +95,10 @@ context:
         The credential row remains fully readable with `status: revoked`, `revokedAt`,
         `revokedReason`.
       implications: >-
-        Revocation becomes real; a leaked key stops working on the SHIP IT side immediately; the
-        audit trail is untouched and the existing retention test still passes. Cost: an old
-        credential cannot be re-verified and a forensic re-check is impossible.
+        Requires answering the supersession question YES: C-1 contradicts ADR 0018 :113-114, which
+        states no Shipit-side action is needed. Revocation becomes real; a leaked key stops working on
+        the SHIP IT side immediately; the audit trail is untouched and the existing retention test still
+        passes. Cost: an old credential cannot be re-verified and a forensic re-check is impossible.
       estimated_effort: "small"
       risk_level: LOW
     - option_id: OPTION_B
@@ -97,9 +107,10 @@ context:
         The private half is kept. Revocation marks the credential unusable in SHIP IT but the key
         material remains on disk.
       implications: >-
-        Forensic re-verification stays possible and the implementation is simplest. Cost: `revoked`
-        becomes a label that corresponds to no security property, and the key remains usable until
-        removed at the host — which is the operator's mental model of "revoked" being wrong.
+        **This is what ADR 0018 :113-114 already specifies**, so it is the consequence of answering the
+        supersession question NO rather than a free choice. Forensic re-verification stays possible and
+        the implementation is simplest. Cost: under server-side custody `revoked` becomes a label that
+        corresponds to no security property, and the key remains usable until removed at the host.
       estimated_effort: "smallest"
       risk_level: HIGH
     - option_id: OPTION_C

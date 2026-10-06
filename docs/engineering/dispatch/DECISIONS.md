@@ -18,19 +18,32 @@ All five are `PENDING`, created by `orchestrator-main` per `aef-orchestrator` §
 
 | decision_id | type | question (one line) | source |
 |---|---|---|---|
-| `9417f8bf-73b8-4827-9515-bdfe92e5a9d5` | SECURITY | Which substrate holds the server-stored private half? | keys lane `OPEN-D4-1` Q1 — **the decision the human explicitly reserved** |
-| `7b1bc8b7-6cd1-4ddc-a94f-366de2bed38a` | SECURITY | When protection cannot be established, refuse to mint or mint with a warning? | keys lane `OPEN-D4-1` Q2 |
-| `79e860e2-4edf-4510-8d5f-435460255848` | SECURITY | On revocation, is the private half destroyed, retained, or grace-perioded? | keys lane `OPEN-D4-1` Q3 |
-| `898b07d0-e848-4774-8007-f4dacbd89c78` | ARCHITECTURE | How is the registration-ordering circular dependency resolved? | keys lane `OPEN-D4-2` — **found by the lane, not requested by the human** |
-| `27ea6536-8a4e-4cf1-b24c-cdd3ce5bdab0` | DESIGN | Does human point 2f's footer-copy removal apply to desktop too? | mobile lane `B3` |
+| `9417f8bf-73b8-4827-9515-bdfe92e5a9d5` | SECURITY | Does b869ec24 supersede ADR 0018 `:85-88`'s local-secret-store clause — and what becomes of "never persisted to the durable record"? | **REISSUED** from "which substrate?" after the keys review found ADR 0018 already names A1+A4 and forbids A2. **The decision the human explicitly reserved.** |
+| `7b1bc8b7-6cd1-4ddc-a94f-366de2bed38a` | SECURITY | When protection cannot be established, refuse to mint or mint with a warning? | keys lane `OPEN-D4-1` Q2 — unaffected by the reissue |
+| `79e860e2-4edf-4510-8d5f-435460255848` | SECURITY | Does ADR 0018 `:113-114` ("no Shipit-side action") survive the custody move — and if not, how is the private half disposed of? | **RESTATED as Q3′**; `b869ec24` is silent on revocation, so the supersession question is the real content |
+| `898b07d0-e848-4774-8007-f4dacbd89c78` | ARCHITECTURE | ADR 0018 `:100-102` makes human point 2b settled architecture, and it is unsatisfiable. Which resolution? | **REFRAMED** as an ADR contradiction, severity raised. Found by the lane, not requested by the human |
+| `27ea6536-8a4e-4cf1-b24c-cdd3ce5bdab0` | DESIGN | Does human point 2f's footer-copy removal apply to desktop too? | mobile lane `B3` — unchanged |
+
+**Also filed: `fix-credential-store-integrity` GAP-2** — the D-2 partial unique index exists only in
+`apps/server/tool/schema_bootstrap.sql`, and `schema_bootstrap.dart` is wired into `Makefile:228` and
+`integration.yaml:131` only, so **no QA/staging/production path runs it**. A chain-migrated database
+therefore does not get the index, and the "one active credential per repository" invariant does not reach a
+deployed database. The repository's own parity contract (`schema_bootstrap.sql:37-44`) calls that asymmetry
+"the defect this file exists to remove", and the identical shape
+(`design_revision_approved_unique_per_workitem`) was solved by putting the index in **both** the bootstrap
+**and** `migrations/20260920232118956/migration.sql`. Closing GAP-2 needs `apps/server/migrations/**`, which
+is prohibited — see the Human Decision filed with it.
 
 Recorded as **design-system-owner notifications** rather than escalated (Level 1 is AUTO with
 notification per `DESIGN_GOVERNANCE.md`): the Penpot board-naming convention conflict, and
 `ShipItPalette.negative` failing WCAG AA on dark (4.02:1 canvas / 3.68:1 card, measured).
 
-Previously resolved and unchanged: `130f3a7e` (INFRASTRUCTURE), `048f3367` (SECURITY),
-`570bb640` (DEPLOYMENT_AUTHORITY), `70b47372` (OTHER_CONSEQUENTIAL), `73097d48` (PRODUCT),
-`b869ec24` (ARCHITECTURE).
+Previously resolved and unchanged: `130f3a7e-c364-4c1e-acd5-409d7af80675` (INFRASTRUCTURE),
+`048f3367-5836-43c8-af05-747dbc9d3afd` (SECURITY), `70b47372-8814-4098-81b2-6614497bad12`
+(OTHER_CONSEQUENTIAL), `73097d48-3e8b-48d7-b3d8-8834168c5113` (PRODUCT),
+`b869ec24-236e-4e9c-8703-70656fa368c4` (ARCHITECTURE), `570bb640-76e1-485d-9a80-309b07585ccd`
+(DEPLOYMENT_AUTHORITY — API authentication deferred with a blocking production precondition; the
+"local only" scope must be ENFORCED, and its loopback-pinning follow-up is verified still un-implemented).
 
 **Not amended:** `b869ec24`'s evidence records "0 existing deploy-key infrastructure", which is false —
 the grep used the wrong identifiers. The audit trail is immutable, so the correction is recorded in

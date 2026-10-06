@@ -1,5 +1,17 @@
 # Report — Design Agent, `design-addproduct-mobile`
 
+> **SUPERSEDED — this is revision 1's report. The current revision is `design-revision-4.md`; the current
+> lane report is `correction-report-4.md`.** This file is retained **unedited** so the correction history
+> stays diffable. Retention without a marker is not neutral — a reader who opens this file first sees only
+> this file — so **three claims inside it are disproven and are marked in place**: the "no `500` weight"
+> claim (**line 120**, marked), and the 36px `minimumSize` derivation (**lines 62 and 224**, marked).
+>
+> **Line numbers corrected at revision 4 (L-R3).** "line ~100" and "lines ~48 and ~197" were correct when
+> revision 3 wrote them and were invalidated by the `WITHDRAWN` markers, which sit *at* those sites. The
+> body's text is untouched. The `BRANCH` field below is **correct for revision 1's own lane** — see the
+> provenance note at **lines 31-37**, which supersedes the older "marker at line ~13" pointer and must not
+> be "corrected".
+
 Returned verbatim by the `design-agent` lane and persisted here per `aef-orchestrator` §14.
 
 ## Mandatory header
@@ -15,6 +27,14 @@ BASE_SHA: 77c19f1
 HEAD_SHA: 77c19f1
 COMMITTED: NO
 ```
+
+> **Provenance note (added at revision 3; extended at revision 4).** The `WORKTREE` and `BRANCH` above are
+> **correct for this lane**: `git worktree list` at HEAD `77c19f1` lists
+> `/private/tmp/shipit-design-addproduct-mobile` on branch `design/addproduct-mobile`, which is where this
+> report was produced. The branch name that *was* wrong is the one recorded in **revision 2's** artifacts
+> (`design/correct-addproduct-mobile`); the actual branch for every revision-2, revision-3 and **revision-4**
+> correction pass is **`design-correct-addproduct-mobile`** in worktree
+> `/private/tmp/shipit-correct-addproduct-mobile`. Do not "correct" this block — it is accurate.
 
 `BASE_SHA == HEAD_SHA` because I am forbidden to commit; my artifacts are untracked in the worktree for the Manager to persist. `HEAD` was re-read after all authoring and is unchanged.
 
@@ -46,6 +66,12 @@ Plus four Penpot boards (not git). Nothing outside `OWNED_PATHS`; `git status --
 - **Four new boards** `SM - Add Product - {Unknown host, Verified} - {Light, Dark}` at 390x844 — closes the human's point 1 ("we're missing mobile designs for these screens") and follow-up action 4 of `73097d48`.
 - **Copy correction (the dispatch's most important item).** All four boards carry `ed25519 · private half stays server-side` in `inkSecondary`, in a layer named `Art S · PENDING D4 (at-rest model)`. Zero occurrences of "this device" or "keychain", audit-verified. That layer is the single string parameterized on the at-rest protection model; everything else is drawn against the settled architecture and complete.
 - **One button/helper structure** for both platforms (mobile's sibling-below wins). Desktop button **collapses ≈50.4px → 36px**, landing on its own declared `minimumSize`; new desktop gap is **8px**, the value mobile already uses at `:912`. Both computed from `ShipItType._lh = 1.2` and the real style at `:685-689` — this is the number H2 left unspecified.
+
+> **WITHDRAWN — revision 2 §6a; marker added at revision 3.** The desktop button collapses
+> **50.4px → 36.4px, not to 36px**: `minimumSize: Size(0, 36)` is a minimum, `Size.constrain` raises only
+> values *below* it, and `14.4 + 22 = 36.4` already exceeds it, so the minimum never binds. The **8px gap is
+> still correct.** Corrected derivation: `design-revision-3.md` §3. **Retained unedited for diffability and
+> superseded, not deleted.**
 - **Footer specified per platform**: mobile = one `Show technical details ▸` row, no copy, `note:` dropped at `:926-928`; desktop = `delete _buildFooter` entirely (`:375-389`, `:314-315`), keeping `TechnicalDetails(note:)`. That deletion also removes the double `ContentRule`.
 - **Required-field convention re-grounded** on the existing in-label `(OPTIONAL)` suffix; all **15** `FormFieldSlot(` invocations enumerated and classified; the `DesignTextField` compile trap resolved by adding **no** parameter (the marker already lives in the label string), and its 3 filter sites explicitly declared out of the convention's domain with a reason.
 - **No new primitive, no new token.** Every board element maps to an existing `ShipItPalette` token or production primitive.
@@ -98,6 +124,13 @@ ARTIFACTS:
 - **MATERIAL** — `canRegister` requires `AccessStatus.verified` (`:233-236`) which **nothing in the repository ever assigns** (`73097d48` quantitative data); the button is unreachable in every state.
 - **TRIVIAL** — board submit 34px vs `MobilePrimaryButton` 36px (pre-existing).
 - **TRIVIAL** — Penpot's IBM Plex Sans has no `500` weight, so link layers render at 400 while `ShipItType.link` uses 500.
+
+> **WITHDRAWN — revision 2 §2; marker added at revision 3. This premise is false in both directions.**
+> `IBM Plex Sans`'s variants are `100, 200, 300, 400, 500, 600, 700`: **`500normal` exists** — the very
+> weight this bullet claimed was missing — **`900` does not exist**, and `100` exists though this bullet
+> omitted it. There was no file-fidelity limitation. `Art L1` and `Art L2` are now **11/500** on all four
+> boards, matching `ShipItType.link` (`apps/control_plane/lib/core/design_tokens.dart:426`).
+> **Retained unedited for diffability and superseded, not deleted. Do not rely on this bullet.**
 - **AMBIGUOUS** — no disabled-primary token exists in `ShipIPalette`; I drew the blocked button with the enabled accent treatment because that is what both existing desktop boards do, so no board in the file represents the disabled appearance.
 - **AMBIGUOUS** — `TechnicalDetails` always paints a `ContentRule` (`:396`); the mobile board has none.
 
@@ -201,6 +234,13 @@ RISK_RATIONALE: >
   addendum 2, recorded in b869ec24); a resolved human decision does not re-open as a new gate, and no
   navigation or IA change is involved. Escalates to 3 only if the human also removes the desktop footer
   copy, contradicting the desktop boards (B3).
+> **WITHDRAWN IN PART — revision 2 §6a; marker added at revision 3.** The parenthetical
+> "desktop button ~50.4px -> 36px" is **false**: the button collapses to **36.4px**, because
+> `minimumSize: Size(0, 36)` is a minimum that never binds. Everything else in this rationale — Level 2,
+> the primary action's structure being redefined on both platforms, the 8px desktop gap, the four-file
+> reach of R4, the `negative`-on-dark AA failure, and the escalation condition — is unchanged and was
+> independently agreed at `INDEPENDENT_RISK_LEVEL: 2` in revision 2's re-review. **Retained unedited for
+> diffability and superseded in this one respect only.**
 
 CHANGELOG:
   - revision 1 — initial. The parked register-button round (revision 18A97195) is folded in by decision

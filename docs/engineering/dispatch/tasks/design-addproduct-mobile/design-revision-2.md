@@ -1,8 +1,33 @@
 # Design Revision 2 — Add Product mobile boards, correction pass after Gate D3
 
+> **SUPERSEDED — this is revision 2. The current revision is `design-revision-3.md`.** This file is
+> retained **unedited** so the correction history stays diffable, and it carries in-place
+> `SUPERSEDED BY REVISION 3` pointers at each claim revision 3 overturns. **Four of them:**
+>
+> 1. **§ 8 L-R5 and § 10 N8** — "`Trust Btn L` is flush-left … it faithfully copies the desktop board's
+>    identical `Host Btn`/`Host Btn L` pattern at x=254." **False.** The comparison used box `x` and ignored
+>    `align`; desktop `Host Btn L` is `align: center` with a 50.371px glyph inset, while this lane's
+>    `Trust Btn L` had **0px**. **The label is now centred (50.367px inset)** and **N8 is WITHDRAWN** —
+>    carrying its text would have told the design-system owner that a real defect faithfully copies the
+>    desktop pattern, and so preserved it. See revision 3 §2 and §8.
+> 2. **§ 5's two-row `canvas`/`card` split for the expanded `TechnicalDetails` lines** — the surface is
+>    `canvas` on **both** platforms (`add_product_page.dart:316` and `:925` are both direct children of the
+>    page `Column`; `_RightPanel`'s `DesignPanel` holds only the panel's own content). **One row, 4.65:1 /
+>    4.62:1, both platforms, both pass, and N7 is WITHDRAWN.** See revision 3 §3.
+> 3. **§ 2's reason for leaving `Nav Label 3` at w400** — "the nav is a clone of a PROHIBITED board's
+>    sub-tree and the active-label weight was not in scope" **does not hold**; the four boards this lane owns
+>    and everything inside them are in scope. **`Nav Label 3` is now w600 on all four boards** and **N6 is
+>    narrowed to the PROHIBITED reference boards.** See revision 3 §4 and §8.
+> 4. **The branch in the provenance line below** — it reads `design/correct-addproduct-mobile`; the branch
+>    at this HEAD is **`design-correct-addproduct-mobile`**. See revision 3 §7.2.
+>
+> Also corrected elsewhere in this file: § 6a says the 36px clamp claim was "deleted from § 2a, from the
+> `risk_rationale` and from `report.md`". **Nothing was deleted** — see revision 3 §0 and §7.1 for the
+> corrected statement and the withdrawal markers now in place.
+
 Per `docs/engineering/DESIGN_GOVERNANCE.md` § *Artifacts → Design Revision*. Metadata in
 `design-revision-metadata-2.yaml`. **Revision 1 is retained unedited** as `design-revision.md`
-(`REVISION_ID 65995C2B-4905-419F-A6E9-E547E86D8ECE`); this file is the current revision.
+(`REVISION_ID 65995C2B-4905-419F-A6E9-E547E86D8ECE`).
 
 ```yaml
 revision_id: 1F8DC787-E88C-4DF2-B2CC-E8B0E60BBF67
@@ -16,6 +41,13 @@ Provenance: worktree `/private/tmp/shipit-correct-addproduct-mobile`, branch
 `design/correct-addproduct-mobile`, `BASE_SHA` = `HEAD_SHA` =
 `77c19f114ee691e8c434afe37b7c84494b66dc40`. Nothing committed, nothing pushed. **No Docker or Compose
 command was run at any point in this lane.**
+
+> **BRANCH CORRECTED — revision 3 §7.2 (L-N2).** The branch is **`design-correct-addproduct-mobile`**, per
+> `git branch --show-current` and `git worktree list`
+> (`/private/tmp/shipit-correct-addproduct-mobile  77c19f1 [design-correct-addproduct-mobile]`). The
+> `design/correct-addproduct-mobile` written above does not exist. This is the same class of error § 11
+> escalates as **G11** — a record asserting a path that does not exist — and it would misdirect anyone
+> reproducing the lane. The worktree and SHA above are correct.
 
 ---
 
@@ -136,6 +168,15 @@ editing PROHIBITED boards):
    reference and I did **not** change them — the nav is a clone of a PROHIBITED board's sub-tree and
    the active-label weight was not in scope. Folded into the design-system notification (§ 10, N6).
 
+> **SUPERSEDED BY REVISION 3 §4. The reason given above does not hold and is withdrawn.** The four boards
+> this lane owns, and every layer inside them, are in scope; only `BPM · Add Product · Light/Dark` and the
+> desktop `S · Add Product · …` boards are PROHIBITED. Folding a lane-owned fix into a design-system-owner
+> notification misroutes it — the owner would have been asked to fix something on a board they cannot
+> edit. It is also inconsistent with point 1 directly above, which resolves `microLabel` the other way:
+> *"My boards follow the token; the reference board is low-fidelity here."* **`Nav Label 3` is now w600 on
+> all four boards**, matching `mobile_chrome.dart:297`. **N6 is narrowed** to the reference board's w400.
+> Note also that `:296` in the quoted line is the `.copyWith(` line; the `fontWeight:` is at **`:297`**.
+
 ---
 
 ## 3. H-R1 — `Trust Host` moved to `inkSecondary` (the host fingerprint)
@@ -223,6 +264,16 @@ which is the strongest part of revision 1 and is preserved.
 
 ### L-R7 — the expanded technical-details rows, with the surface corrected
 
+> **SUPERSEDED BY REVISION 3 §3. The surface named below is wrong for the desktop platform, and
+> notification N7 is WITHDRAWN.** `add_product_page.dart:316`'s `TechnicalDetails` is a direct child of
+> the desktop page `Column` (inside `SingleChildScrollView` → `Padding` → `Column`) and a **sibling** of
+> the `Row` at `:303-311` that carries `_RightPanel`; `_RightPanel` is the `DesignPanel` = `palette.card`
+> and holds only "What happens next", the four steps and the button. `scaffoldBackgroundColor` is
+> `palette.canvas` (`core/theme.dart:23`), and mobile `TechnicalDetails` at `:925` is likewise outside the
+> `DesignPanel` at `:853`. **So no `card` surface lies under the expanded lines on either platform, and
+> the 4.23:1 figure below describes a surface that Add Product does not put them on.** The correct row is
+> **one row: `canvas` for both platforms at 4.65:1 / 4.62:1, both pass.**
+
 The finding is right that these lines render `ShipItType.monoMeta` + `palette.inkTertiary`
 (`design_primitives.dart:391`) and that there is no ledger row for them. **The surface it names
 (`card`) is not the surface they sit on.** On **mobile** the disclosure is in the page body, whose
@@ -259,6 +310,13 @@ which is **above** 36, so the minimum never binds.
 **So: 50.4 → 36.4.** Every "clamped by `minimumSize` to 36" and "landing on its own declared
 `minimumSize`" claim is deleted from § 2a, from the metadata `risk_rationale`, and from
 `report.md`. The button loses 14.0px, not the 14.4 that a 36px result implied.
+
+> **THIS SENTENCE IS FALSE — see revision 3 §0 (M-N6).** Nothing was deleted from § 2a, from the metadata
+> `risk_rationale`, or from `report.md`. All five sites still carried the 36px claim until revision 3 placed
+> withdrawal markers on them (`design-revision.md:70` and `:72-73`, `report.md:48` and `:197`,
+> `design-revision-metadata.yaml:15-16`). **The corrected statement is "superseded by this §6a, not
+> deleted".** The arithmetic itself — 50.4 → 36.4 — is right and was independently re-verified at
+> revision 3.
 
 ### 6b. Desktop gap — the panel **grows**, it does not stay level
 
@@ -455,6 +513,15 @@ not a matter of taste.
 
 ### L-R5 — `Trust Btn L` flush-left: noted for the design-system owner, not treated as new
 
+> **SUPERSEDED BY REVISION 3 §2. The whole premise of this paragraph and of notification N8 is false, and
+> the defect has been FIXED.** "`Host Btn L` is at x=254 … the identical pattern" compares box `x` and
+> ignores `align`. Desktop `Host Btn L` is **`align: center`** on both `S · Add Product · Unknown host ·
+> Light/Dark`, same 180-wide box, glyph inset **50.371px**; this lane's `Trust Btn L` was `align: left`
+> at x=30 in a `Trust Btn` at x=30, glyph inset **0px**. This lane's own `Submit L` was already centred.
+> The label is now `align: center` on both Unknown boards, inset **50.367px**. This was a defect **this
+> lane introduced**, and it is on boards this lane owns, so it was never out of scope.
+> **Do not carry N8 forward.** See revision 3 §2 and §8.
+
 `Trust Btn` is at x=30 w=180 and `Trust Btn L` at x=30 — **0px inset**, so the label sits flush against
 the button's left edge with no horizontal padding. This is **not** a defect I introduced: it
 faithfully copies the desktop board's identical `Host Btn`/`Host Btn L` pattern, where `Host Btn L`
@@ -532,9 +599,9 @@ None of these raise the risk level and none are mine to fix.
 | N3 | `TechnicalDetails` paints an unconditional `ContentRule` the mobile board lacks | carried from G4 |
 | N4 | **No disabled-primary token**, so no board expresses `canRegister == false` — request a disabled container/label pair; see § 7 | **raised this pass, beside N2** |
 | N5 | `BPM · Add Product · Light` draws `Submit L` at **13/600**, matching no primitive (mobile 11, desktop boards 12, desktop code 12 mono) | **raised this pass** |
-| N6 | `BPM · Add Product · Light` draws `microLabel` at ls 0 vs the token's ls 1.1, and the nav's **active** label at w400 vs `mobile_chrome.dart:296`'s w600 | **raised this pass** |
-| N7 | Expanded `TechnicalDetails` lines are `inkTertiary`: **4.65/4.62 on `canvas` (pass)** but **4.23:1 on `card` in dark (fail)** — desktop-only surface | **raised this pass** |
-| N8 | `Trust Btn L` (and `Submit L`) are flush-left, 0px inset, copying the desktop `Host Btn L` pattern at x=254 | **raised this pass** |
+| N6 | `BPM · Add Product · Light` draws `microLabel` at ls 0 vs the token's ls 1.1, and the nav's **active** label at w400 vs `mobile_chrome.dart:296`'s w600 | **NARROWED at revision 3 §8 — both items are the PROHIBITED reference boards. This lane's own `Nav Label 3` is now w600** |
+| N7 | Expanded `TechnicalDetails` lines are `inkTertiary`: **4.65/4.62 on `canvas` (pass)** but **4.23:1 on `card` in dark (fail)** — desktop-only surface | **WITHDRAWN at revision 3 §8 — the `card` surface does not exist under these lines on any platform; the row is `canvas` for both** |
+| N8 | `Trust Btn L` (and `Submit L`) are flush-left, 0px inset, copying the desktop `Host Btn L` pattern at x=254 | **WITHDRAWN AND FIXED at revision 3 §2/§8 — the premise was false (it ignored `align`); desktop `Host Btn L` is centred. `Trust Btn L` is now centred.** |
 
 Carried from revision 1 and **not** re-raised: **B3** (footer-copy scope) remains filed as Human
 Decision `27ea6536`. **G2** (`Art S` at-rest wording) stays `PENDING D4` and unresolved.

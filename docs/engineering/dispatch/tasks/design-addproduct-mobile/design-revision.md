@@ -1,7 +1,20 @@
 # Design Revision — Add Product mobile state boards + layout/copy corrections
 
+> **SUPERSEDED — this is revision 1. The current revision is `design-revision-4.md`.** This file is retained
+> **unedited** so the whole correction history stays diffable. Retention without a marker is not neutral,
+> because a reader who opens this file first sees only this file — so **two claims inside it are disproven
+> and are marked in place**: the 36px `minimumSize` derivation (§2a, **lines 77 and 79**) and follow-up
+> **F8** (§10, **line 429**). Both carry `WITHDRAWN` markers. See `design-revision-4.md` §0.1 and §7.1.
+>
+> **Line numbers corrected at revision 4 (L-R3).** The numbers this header used to give — "lines 70 and
+> 72-73" and "line 414" — were correct when revision 3 wrote them and were then **invalidated by the
+> withdrawal markers themselves**, which sit *at* the cited sites. The body's text is untouched; only these
+> pointers moved. **This is the second half of the retention rule: a cross-reference is a claim about a
+> file, and it goes stale the moment you edit the file it points into.**
+
 Per `docs/engineering/DESIGN_GOVERNANCE.md` § *Artifacts → Design Revision*. Metadata in
-`design-revision-metadata.yaml`. Board evidence in `penpot-board-evidence.md`.
+`design-revision-metadata.yaml`. Board evidence in `penpot-board-evidence.md` — **regenerated** at
+revision 3; its figures here are superseded.
 
 ```yaml
 revision_id: 65995C2B-4905-419F-A6E9-E547E86D8ECE
@@ -72,6 +85,14 @@ This is the mobile structure the board already specifies and the build already i
 **So the desktop button collapses from ≈50px to exactly 36px** — landing on its own declared `minimumSize`
 and matching `MobilePrimaryButton`'s hard-coded 36. `minimumSize`/`padding` need no change; only the
 `child` does.
+
+> **WITHDRAWN — revision 2 §6a; marker added at revision 3.** Every claim in this sub-section about the
+> button landing on 36px is **false**. `minimumSize: Size(0, 36)` is a *minimum*; `Size.constrain` raises
+> only values **below** it, and the content-driven height is `14.4 + 22 = 36.4`, already above 36, so the
+> minimum never binds. **The desktop button collapses 50.4px → 36.4px, not to 36px**, and the panel's inner
+> height **grows ≈5.6px** rather than staying level (the helper is `monoMeta` at `fontSize: 10` = a 12px
+> line box: 8 + 12 gained against a 14.0 loss). The corrected derivation is `design-revision-3.md` §3 and
+> revision 2 §6. **This paragraph is retained unedited for diffability and is superseded, not deleted.**
 
 *Board note:* `BPM · Add Product · Light` draws the submit rect **34px** tall while `MobilePrimaryButton`
 is 36px. I drew 34 to match the sibling board exactly rather than silently introduce a new value; the 2px
@@ -412,3 +433,12 @@ Recorded because each changed what I drew, and each was verified rather than acc
 | F6 | 34px board submit vs 36px `MobilePrimaryButton` | QA golden baseline |
 | F7 | Add Product has **zero** test coverage (26 test files, none imports it) — from 73097d48 follow-up actions | implementation |
 | F8 | Penpot's IBM Plex Sans has no `500` weight (supported: 200/300/400/600/700/900), so links are drawn at 400 while `ShipItType.link` uses 500 — a file-fidelity limitation, not a spec change | design-system owner |
+
+> **WITHDRAWN — revision 2 §2; marker added at revision 3. F8's premise is false in BOTH directions.**
+> The variants of Penpot's `IBM Plex Sans` are `100, 200, 300, 400, 500, 600, 700`: **`500normal` exists**
+> (the one weight F8 claimed was missing), **`900` does not exist at all**, and `100` exists though F8
+> omitted it. There was no file-fidelity limitation; the link layers simply had to be drawn at the right
+> weight, and they now are — **`Art L1`/`Art L2` at 11/500**, matching `ShipItType.link`
+> (`apps/control_plane/lib/core/design_tokens.dart:426`). F8 was **deleted** from the current revision
+> precisely so no future lane would rely on this premise; it survives here only because revision 1 is
+> retained byte-identical. **Do not rely on this row.**

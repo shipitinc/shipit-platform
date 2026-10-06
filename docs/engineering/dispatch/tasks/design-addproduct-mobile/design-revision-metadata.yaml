@@ -28,6 +28,17 @@ risk_rationale: >
   information architecture, or any other feature's workflow.
   It would reach Level 3 only if the human also intends to remove the desktop footer copy line, which
   would contradict the existing desktop boards (raised as blocker B3, not decided).
+  # --- WITHDRAWN IN PART, revision 2 §6a; marker added at revision 3. ---------------------------
+  # The clause "the desktop button collapses from ~50.4px to its declared 36px minimumSize" above is
+  # FALSE. minimumSize is a minimum; Size.constrain raises only values BELOW it, and the content-driven
+  # height 14.4 + 22 = 36.4px already exceeds 36, so the minimum never binds. The button collapses
+  # 50.4px -> 36.4px, and the panel's inner height GROWS ~5.6px rather than staying level (the helper is
+  # monoMeta at fontSize 10 = a 12px line box: 8 + 12 gained against a 14.0 loss).
+  # Everything else in this rationale is UNCHANGED: Level 2, the primary action's structure being
+  # redefined on both platforms, the 8px desktop gap, the four-file reach of R4, the negative-on-dark AA
+  # failure, and the escalation condition. It was independently agreed at INDEPENDENT_RISK_LEVEL: 2.
+  # This file is retained byte-identical for diffability; the claim is SUPERSEDED, not deleted.
+  # See design-revision-3.md §0 and §7.1.
 
 risk_rationale_would_escalate_to_3_if:
   - the human confirms the footer copy is to be removed on desktop too, contradicting BP / S boards

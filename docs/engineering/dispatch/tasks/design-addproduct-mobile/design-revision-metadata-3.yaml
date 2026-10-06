@@ -1,0 +1,291 @@
+# Design Revision Metadata — revision 3
+
+Required by `docs/engineering/DESIGN_GOVERNANCE.md` § *Artifacts → Design Revision Required Metadata*.
+**Revisions 1 and 2 are retained unedited** as `design-revision.md` / `design-revision-metadata.yaml` and
+`design-revision-2.md` / `design-revision-metadata-2.yaml`; each now carries a one-line supersession header
+naming the claims this revision overturns. This file describes the current revision.
+
+```yaml
+revision_id: B5006A15-2DEE-47BE-BF2F-C44196B089E3
+brief_id: 52CB4098-FF87-4B78-81DA-1104269551A1
+revision_number: 3
+supersedes: 1F8DC787-E88C-4DF2-B2CC-E8B0E60BBF67   # revision 2, retained intact
+status: UNDER_REVIEW
+
+risk_level: 2
+risk_rationale: >
+  Unchanged at 2, and unchanged for a reason that this revision makes explicit rather than repetitive:
+  every change here is Level 0/1. Two `align` corrections (Trust Btn L, left -> centre, both Unknown-host
+  boards); four font-weight corrections (the active bottom-nav label, 400 -> 600, all four boards);
+  twelve ADDITIVE annotation layers in two new page-level groups recording what
+  FilledButton(onPressed: null) already paints; and record corrections - a corrected traceability matrix,
+  a collapsed contrast-ledger row, regenerated board evidence, corrected citations, withdrawal markers on
+  disproven claims in retained artifacts, and a corrected branch name.
+  None of it changes an interaction pattern, a navigation or information-architecture surface, or the
+  primary action's structure. Two changes make previously-unmeasured reality measurable rather than
+  inventing anything: the disabled Register appearance is DERIVED from Flutter 3.44.7's
+  _FilledButtonDefaultsM3 plus core/theme.dart:32 (no palette token chosen, no human gate needed), and the
+  expanded TechnicalDetails surface is corrected to `canvas` on BOTH platforms.
+  The one genuinely new judgement is the opposite of a re-design: revision 3 RECORDS that the code paints a
+  disabled Register at #E4E4E4 / #999A9A (Light, 2.22:1) and #3F403F / #848482 (Dark, 2.78:1), and leaves
+  the screen boards' enabled-looking rect in place as the known-wrong expression. The token the design
+  system still lacks stays a design-system-owner item (N4/G9).
+  Below 3 because no Level 3 condition is met. Not escalated to a human gate: B3 remains filed as Human
+  Decision 27ea6536 and is NOT re-opened, and 'Art S' stays PENDING D4.
+
+risk_rationale_would_escalate_to_3_if:
+  - the human confirms the footer copy is to be removed on desktop too, contradicting BP / S boards
+    (already filed as Human Decision 27ea6536 — NOT re-raised by this revision)
+  - the sibling lane's hostUnrecognised design turns the trust step into a navigation/IA change
+  - G12 is escalated from a recorded mismatch to a decision to move the primary action off `DesignPanel`,
+    which would change the feature's committing control's surface on both platforms
+
+changelog:
+  - revision 3 — correction pass 2 after the Gate D3 re-review of revision 2
+    (DESIGN_REVIEW_CHANGES_REQUIRED, CORRECTION_REQUIRED: YES, HUMAN_DECISION_REQUIRED: NO,
+    INDEPENDENT_RISK_LEVEL: 2, RISK_LEVEL_AGREEMENT: YES). Eleven findings applied:
+    H-N1, M-N1 … M-N6, L-N1 … L-N4.
+    Three board corrections (2 align + 4 weights), one additive annotation pair, one new matrix, one
+    collapsed ledger row, one regenerated evidence file, withdrawal markers on ten disproven-claim sites in
+    retained artifacts, and one dispatched correction REJECTED (L-N3's `MobilePrimaryButton:425` — the
+    class really is at :424).
+    Two notifications withdrawn (N7, N8) because their premises were false; one narrowed (N6); one
+    strengthened with measurements (N4); one raised (N9, from the new G12).
+    See design-revision-3.md for the finding-by-finding changelog, the independent verification of every
+    claim, and the Flutter-SDK derivation behind the disabled-state read-back.
+  - revision 2 — correction pass after Gate D3 (16 findings). Retained intact as design-revision-2.md.
+    §5's two-row canvas/card split, §8's L-R5, N7 and N8, and §2's reason for leaving Nav Label 3 at w400
+    are overturned by revision 3 and carry in-place SUPERSEDED pointers.
+  - revision 1 — initial revision. The parked register-button round (revision 18A97195) was folded in by
+    decision 73097d48. Retained intact as design-revision.md; F8's premise and the 36px minimumSize
+    derivation are withdrawn in place.
+
+corrections_applied:
+  H-N1: >
+    Trust Btn L's flush-left label was a defect this lane introduced, and both revision 2's L-R5 and its N8
+    dismissed it on a false premise: they compared box `x` (30 vs 254) while ignoring `align`. Verified:
+    mobile Trust Btn L was `align: left`, growType fixed, box x=30 w=180, rendered width 79.266 -> 0px
+    glyph inset; desktop Host Btn L on BOTH `S · Add Product · Unknown host · Light/Dark` is
+    `align: center`, same 180-wide box, rendered width 79.258 -> 50.371px inset; this lane's own Submit L was
+    already centred. Fixed: `align: center` on both Unknown-host boards, glyph inset now 50.367px. Box
+    position, size, 12/600 weight and fill unchanged. N8 WITHDRAWN - carrying its text would have told the
+    design-system owner that a real defect faithfully copies the desktop pattern, and so preserved it.
+  M-N1: >
+    Revision 2's §5 published two ledger rows for the expanded TechnicalDetails lines - `canvas` for mobile
+    (4.65/4.62, pass) and `card` for desktop (4.99/4.23, fail). The `card` row described a surface that does
+    not exist beneath these lines on ANY platform. Verified: add_product_page.dart:316's TechnicalDetails is
+    a direct child of the desktop page Column (SingleChildScrollView -> Padding -> Column), a SIBLING of the
+    Row at :303-311 carrying _RightPanel; _RightPanel is the DesignPanel (:632) and holds only the panel's
+    own content; scaffoldBackgroundColor is palette.canvas (core/theme.dart:23); mobile TechnicalDetails at
+    :925 is likewise outside the DesignPanel at :853. COLLAPSED to one row: inkTertiary on canvas,
+    4.65:1 light / 4.62:1 dark, both platforms, both PASS. N7 WITHDRAWN. Re-measured from
+    design_tokens.dart:99-101/:120-122 (sanity 21.00 / 1.00); all thirteen ledger figures reproduce.
+  M-N2: >
+    Added a corrected traceability matrix to this revision (design-revision-3.md §6). Revision 2 carried no
+    matrix of its own, so the one that would have been frozen was revision 1's, wrong in three rows:
+    `:325` Art T said "`bodySmall` w600" when bodySmall is 11/w400 (:386) and the board draws 13/600 =
+    sectionTitle (:352); `:335` Bottom Nav said `inkQuiet`/`inkPrimary`, false for dark, which draws
+    #8A8983 = inkTertiary and not inkQuiet #85847E; `:330` Trust K/Body/Body 2/Host named no foreground
+    token at all. The matrix now also names each row's SURFACE and alignment, which is the omission that let
+    an AA-failing layer and a 0px-inset label through review twice.
+  M-N3: >
+    penpot-board-evidence.md REGENERATED from the live file rather than annotated. Was publishing
+    42/42/34/34 (live 44/44/36/36), a bare `Register product` count of 1 with no counting rule (2 on both
+    Unknown boards under revision 2's own substring rule), and text-layer counts 24/24/19/19 (live
+    29/29/24/24). §2/§3/§4/§5 now state the counting rules beside the numbers.
+  M-N4: >
+    Nav Label 3 ("Products") was 10/400 on all four boards where mobile_chrome.dart:296-298 sets
+    `fontWeight: active ? FontWeight.w600 : FontWeight.w400` and navLabelMobile is 10px
+    (design_tokens.dart:500), so the active tab was drawn at the same weight as the four inactive ones.
+    Set to 600 on all four boards; Nav Label 0/1/2/4 remain 400 (correct - inactive branch).
+    Revision 2's stated reason - "the nav is a clone of a PROHIBITED board's sub-tree" - does not hold: the
+    four boards this lane owns and everything inside them are in scope, and it contradicted §2's own
+    resolution of microLabel tracking ("my boards follow the token; the reference board is low-fidelity
+    here"). N6 NARROWED to the PROHIBITED reference boards, which still draw the active label at w400.
+  M-N5: >
+    The boards asserted a fill the code will not paint. Derived, from Flutter 3.44.7 source rather than
+    assumed: core/theme.dart:67-83 sets no disabledBackgroundColor/disabledForegroundColor (grep: no match);
+    FilledButton.styleFrom routes them through ButtonStyleButton.defaultColor(enabled, null), which returns
+    WidgetStateProperty.fromMap({disabled: null, any: enabled}); WidgetStateMapper.resolve
+    (widget_state.dart:1008-1013) returns the FIRST satisfied key's value even when that value is null; so
+    ButtonStyleButton.effectiveValue (button_style_button.dart:381-391) sees themeValue == null and falls
+    through to _FilledButtonDefaultsM3 (filled_button.dart:531-562), which resolves
+    colorScheme.onSurface at 12% for the fill and 38% for the label; theme.dart:32 sets onSurface to
+    palette.inkPrimary. Resolved appearance, composited over DesignPanel's palette.card: #E4E4E4 fill +
+    #999A9A label in Light (2.22:1 on its own fill), #3F403F fill + #848482 label in Dark (2.78:1).
+    Added as TWO page-level groups (6 layers each) below the Unknown-host boards at y=11600, x=7550 and
+    x=7970, 358x121, lowest shape 11721 with 79px clearance to y=11800 and ZERO overlap against all 160
+    boards. Every layer name carries the same `· PROVISIONAL (G1 hostUnrecognised)` marker the trust panel's
+    eight layers carry. No palette token invented, no human gate needed. The four screen boards are
+    deliberately UNCHANGED - their Register rect still reads #1668d6@1 / #4496fc@1, the known-wrong
+    expression, and revision 3 §7's statement that the boards are "the known-wrong expression for the
+    Unknown-host state" stands. N4/G9 kept, now with measurements attached.
+  M-N6: >
+    My own false claim, corrected at the head of the revision rather than buried. Revision 2's
+    metadata `risk_rationale`, `corrections_applied.M-R1` and correction-report.md:67 stated that the 36px
+    claim "has been deleted from § 2a, from the risk_rationale and from report.md". It was deleted from NONE
+    of them - it survives verbatim at design-revision.md:70 and :72-73, report.md:48 and :197, and
+    design-revision-metadata.yaml:15-16. The corrected statement is "superseded by revision 2 §6a, not
+    deleted": retaining revision 1 byte-identical is legitimate and deliberate for diffability, but then
+    withdrawal markers are REQUIRED. Applied at all five sites plus the two metadata/report headers plus
+    correction-report.md:67 itself.
+  L-N1: >
+    F8's false "no 500 weight" claim survived verbatim and un-marked in two retained artifacts
+    (design-revision.md:414, report.md:100). A one-line WITHDRAWN marker now sits on each, naming the
+    current weights (500normal exists; 900 does not; 100 exists and was omitted) and pointing at revision 2
+    §2. B-R1 directed deletion precisely so no future lane would rely on it; retention had resurrected it
+    for whoever opened the file first.
+  L-N2: >
+    The branch is `design-correct-addproduct-mobile` (`git branch --show-current`;
+    `git worktree list` shows /private/tmp/shipit-correct-addproduct-mobile at 77c19f1). It was recorded as
+    `design/correct-addproduct-mobile` at design-revision-2.md:16, design-revision-metadata-2.yaml:220 and
+    correction-report.md:136,183. Corrected in every artifact this revision writes. Revision 1's own
+    provenance block is LEFT ALONE: it records worktree /private/tmp/shipit-design-addproduct-mobile on
+    branch design/addproduct-mobile, and `git worktree list` confirms both exist - falsifying it would be
+    the same class of error in the opposite direction.
+  L-N3: >
+    Two of three corrections applied. `navLabelMobile.copyWith(`'s `fontWeight:` is mobile_chrome.dart:297
+    (`:296` is the .copyWith( line) - applied. `design_primitives.dart:320`/:391 are now written in full as
+    apps/control_plane/lib/shared/design_primitives.dart:320/:391 (`find` confirms exactly one such file) -
+    applied throughout. THIRD REJECTED: the review states `class MobilePrimaryButton` is at `:425` and that
+    `:424` is its doc comment. `grep -n` returns `424:class MobilePrimaryButton extends StatelessWidget {`
+    and `425:  const MobilePrimaryButton({`; the doc comment is `:422-423`. Revision 2 already cited `:424`
+    correctly, so nothing changed - applying the reviewer's off-by-one would have introduced the exact error
+    the citation exists to prevent.
+  L-N4: >
+    Published counts corrected to the live figures with the counting rule stated beside them: top-level
+    layers 44/44/36/36 (`board.children.length`) and text layers 29/29/24/24 (every `type === 'text'` in
+    the subtree, INCLUDING the five Nav Label layers and the Nav Badge numeral). Revision 2's "24/24/19/19"
+    was reproducible only by excluding the Nav Label layers while still counting Nav Badge, which was
+    neither stated nor correct.
+
+premises_corrections:
+  - >
+    M-N5's premise was CONFIRMED and then made concrete: Material 3's disabled defaults DO apply under
+    core/theme.dart, but not because a missing colour "falls back" - because WidgetStateMapper returns the
+    first satisfied key's value even when that value is null, so the theme's own property resolves to null
+    and ButtonStyleButton.effectiveValue falls through to the M3 default. Full chain in design-revision-3.md
+    §5.1, with the Flutter 3.44.7 file and line for each step.
+  - >
+    L-N3's `MobilePrimaryButton:425` claim is WRONG; the class is at `:424` and revision 2 was already
+    right. Two dispatched premises have now been wrong in two consecutive passes (the other: "both desktop
+    boards draw 13/600" - they draw 12/600). A finding is a set of claims and each one gets checked.
+  - >
+    Revision 2's §5 two-row canvas/card split is WRONG for the desktop platform. The reviewer is right that
+    no `card` surface lies under the expanded lines on either platform; my mobile conclusion was right and my
+    attribution of 4.23:1 to the desktop _RightPanel was not.
+  - >
+    Revision 2's §2 reason for leaving Nav Label 3 at w400 ("the nav is a clone of a PROHIBITED board's
+    sub-tree and the active-label weight was not in scope") DOES NOT HOLD and is withdrawn. The four boards
+    this lane owns and everything inside them are in scope.
+
+traceability:
+  requirements_covered: [R1, R2, R3, R4, R5, R6, R7]
+  requirements_gaps: []
+  non_requirement_gaps:      # design-system / ownership items, see design-revision-3.md § 11
+    - "G1 normative hostUnrecognised state machine and 'Check access' semantics — sibling lane"
+    - "G2 at-rest protection wording for layer 'Art S' — open human decision; string marked PENDING D4"
+    - "G3 negative on dark fails AA (4.02:1 canvas / 3.68:1 card); no compliant token exists"
+    - "G4 TechnicalDetails paints an unconditional ContentRule the mobile board does not have"
+    - "G5 the build's 'What you're registering' / 'What happens next' panels have no board"
+    - "G6 RE-SCOPED: _buildInfoPanel AND product_detail_page.dart:614 repeat the false keychain guarantee"
+    - "G7 34px board submit vs 36px MobilePrimaryButton"
+    - "G8 flutter analyze not executed, so implementation_feasibility cannot be HIGH"
+    - "G9 no ShipItPalette disabled-primary token; the painted appearance is derived from Flutter M3 defaults"
+    - "G10 'Confirm the host above to enable Register product.' has no producer in _registerButtonSubtext"
+    - "G11 the mobile design review report for revision 1 was never persisted; LANES.md asserts it exists.
+        Practical impact on revision 3 was NIL - the revision-2 re-review report WAS reachable, at the
+        canonical checkout, and was read in full"
+    - "G12 NEW — the primary action's surface: in code Register sits inside DesignPanel = palette.card on
+        BOTH platforms, while the boards draw it on the bare page background because the What-happens-next
+        panel has no board (G5). A fidelity gap under the feature's one committing control"
+
+design_system_compliance: PARTIAL
+design_system_compliance_reason: >
+  Still PARTIAL, moved in the right direction twice. Improved by revision 2: the emphasis layers match their
+  production type tokens; Trust Host no longer ships an AA-failing foreground; the bottom nav carries the
+  badge MobileNavBar actually renders. Improved by THIS revision: the trust button's label now matches the
+  primitive's centring, and the active nav label now matches mobile_chrome.dart:297 - two further
+  divergences from the production primitives removed. Still PARTIAL because the file holds boards
+  disagreeing with mine ('BPM · Add Product · Light' still draws Submit L at 13/600 and microLabel at ls 0
+  and the active nav label at w400 - N5/N6) and because negative on dark remains 4.02:1/3.68:1 with no
+  compliant alternative (N2). All of those boards are PROHIBITED to this lane, so none may be fixed here;
+  they are recorded as design-system-owner notifications. The new G12/N9 is a fidelity gap of the same
+  family: the boards draw the primary action on the wrong surface, because the panel that wraps it has no
+  board.
+
+ux_accessibility_score: PARTIAL
+ux_accessibility_score_reason: >
+  All thirteen ledger figures re-measured from design_tokens.dart:99-101 / :120-122 with a WCAG 2.1
+  implementation sanity-checked at black-on-white 21.00 / white-on-white 1.00; every revision-1 and
+  revision-2 figure reproduced exactly, and the expanded-TechnicalDetails row is now ONE row naming canvas
+  for BOTH platforms at 4.65:1 / 4.62:1 (both pass). The one AA failure this lane had authority to fix
+  remains fixed: Trust Host 4.23:1 dark on card -> 6.10:1 via inkSecondary. Not PASS, and the reasons are
+  recorded rather than rounded away: (a) Key State still uses negative, 5.72:1 light but 3.68:1 on card in
+  dark, with no compliant token in ShipItPalette (N2, pre-existing on the desktop boards too); (b) the
+  canRegister == false state still has no token - ShipItPalette has no disabled container/label pair, and
+  the appearance the code actually paints has a label at 2.22:1 on its own fill in Light and 2.78:1 in Dark.
+  WCAG 1.4.3 exempts inactive controls, so (b) is not a conformance failure; it is recorded because it is the
+  strongest available evidence for the N4 request and because the alternative carrier - a 10px monoMeta
+  helper at inkSecondary - is not a reliable way to say "this control is unavailable".
+
+implementation_feasibility: MEDIUM
+implementation_feasibility_reason: >
+  Unchanged at MEDIUM, deliberately and for the third pass running. Every primitive, token and call site this
+  design depends on was verified to exist at HEAD 77c19f1 by source inspection in this lane - including,
+  for the first time, the Flutter SDK's own ButtonStyle resolution chain, read from the pinned 3.44.7
+  sources under /Users/alkebut/fvm/versions/3.44.7. But the deterministic gate was NOT executed:
+  flutter analyze was NOT_RUN. It requires `flutter pub get`, which writes outside this lane's
+  OWNED_PATHS, and apps/control_plane/.dart_tool/ does not exist at this HEAD. No feasibility claim is
+  derived from a gate that was not run. Raise to HIGH only after `flutter pub get && flutter analyze`
+  passes on the implementation branch. The disabled-state read-back is likewise NOT EXECUTED: no Flutter
+  widget was rendered, and the values are a documented derivation from framework source (assumption A6).
+
+created_by: design-agent (correction lane, task design-correct-addproduct-mobile, cycle 2)
+created_at: 2026-10-06T00:00:00Z
+
+reviewed_by: null       # Gate D3 re-review cycle 3 — an independent design-reviewer, never the author
+reviewed_at: null
+approved_by: null       # Gate D4 — Level 2 requires human approval
+approved_at: null
+
+provenance:
+  worktree: /private/tmp/shipit-correct-addproduct-mobile
+  branch: design-correct-addproduct-mobile
+  base_sha: 77c19f1
+  head_sha: 77c19f1
+  committed: NO            # policy: the Manager persists artifacts; Penpot authoring is not a git operation
+  penpot_page: d8ac01df-6646-81d2-8008-a366c09aa9d3
+  base_of_correction: "77c19f114ee691e8c434afe37b7c84494b66dc40"
+  review_report_read:
+    revision_2: "docs/engineering/dispatch/tasks/design-review-addproduct-mobile/report-revision-2.md
+                 (read in full from the canonical checkout — G11's practical impact on this pass was nil)"
+    revision_1: NOT_AVAILABLE      # still never persisted; LANES.md:224 asserts it exists (G11)
+  docker_or_compose_commands_run: NONE
+  flutter_analyze: NOT_RUN
+  flutter_widget_rendered: NOT_RUN
+  tracked_files_modified: NONE     # git status --porcelain=v1 shows only the untracked task directory
+  penpot_tab_suspended_mid_pass: >
+    YES — the plugin tab lost heartbeat twice during authoring and had to be woken. Every write was
+    re-read from the live file after each timeout rather than assumed; the final read-back is in
+    penpot-board-evidence.md §7.
+
+artifact_paths:
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/design-revision-3.md
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/design-revision-metadata-3.yaml
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/penpot-board-evidence.md      # REGENERATED
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/correction-report-3.md
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/design-brief.md               # unchanged
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/design-revision-2.md          # rev 2, intact + superseded header
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/design-revision-metadata-2.yaml # rev 2, intact + superseded note
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/correction-report.md           # rev 2, intact + corrected claim
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/design-revision.md             # rev 1, intact + withdrawal markers
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/design-revision-metadata.yaml  # rev 1, intact + withdrawal marker
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/report.md                      # rev 1, intact + withdrawal markers
+  - "penpot:d8ac01df-6646-81d2-8008-a366c09aa9d3 :: SM - Add Product - Unknown host - Light  (6d055762-a70b-804c-8008-bf65ff750422)  44 layers / 29 text"
+  - "penpot:d8ac01df-6646-81d2-8008-bf65e644269b :: SM - Add Product - Unknown host - Dark   44 layers / 29 text"
+  - "penpot:d8ac01df-6646-81d2-8008-bf660e124738 :: SM - Add Product - Verified - Light      36 layers / 24 text"
+  - "penpot:d8ac01df-6646-81d2-8008-bf65f36b1c9a :: SM - Add Product - Verified - Dark       36 layers / 24 text"
+  - "penpot:6d055762-a70b-804c-8008-bf7d2cd65125 :: M-N5 READ-BACK Register product DISABLED Light (page-level group, 6 layers)"
+  - "penpot:6d055762-a70b-804c-8008-bf7d2ce38c50 :: M-N5 READ-BACK Register product DISABLED Dark  (page-level group, 6 layers)"
+```

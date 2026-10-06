@@ -3,7 +3,13 @@ decision_id: 9417f8bf-73b8-4827-9515-bdfe92e5a9d5
 type: SECURITY
 status: PENDING
 question: >-
-  Which substrate holds the server-stored private half of a product's deploy key?
+  Does b869ec24's server-side custody SUPERSEDE ADR 0018 :85-88's local-secret-store clause — and if
+  so, what becomes of "never persisted to the durable record" and of the reference reaching the client?
+# REISSUED 2026-10-06 after DESIGN_REVIEW_APPROVED on Design Revision 2. Reissue required by
+# tasks/design-review-addproduct-keyservice/report-revision-2.md: the previous question asked the human
+# to choose a substrate the governing ADR had ALREADY chosen (A1+A4) and offered A2, which the ADR
+# forbids outright. The previous recommendation also endorsed that forbidden option and repeated a
+# comfort-claim the design withdrew. Both are corrected below.
 context:
   summary: >-
     This is the decision the human explicitly reserved. Verbatim, at the start of this session:
@@ -78,6 +84,12 @@ context:
       - metric: "ADR 0018 status"
         value: "'Proposed (amended — A1)', 158 lines — PRESENT in docs/adr/, not docs/engineering/adr/. It specifies local secret store (macOS Keychain or ~/.config/shipit/platform/ chmod 600) at :85-88"
         source: Independent Design Review B1, verified 2026-10-06
+      - metric: "A2 admissibility under the ADR"
+        value: "FORBIDDEN. ADR 0018 :87-88 says the private half is 'never ... persisted to the durable record'. A2 stores sealed ciphertext in a table, which IS the durable record. Revision 2 marks A2 'FORBIDDEN by ADR 0018' at the option itself."
+        source: Design Revision 2 § R.4 A2, re-verified by the approving re-review
+      - metric: "Live-database exposure, which voids A2's backup claim"
+        value: "docker/compose.yaml:16-17 publishes 5432:5432 unqualified (0.0.0.0); :63 hardcodes SERVERPOD_DATABASE_PASSWORD: shipit; .env.example:16-18 documents POSTGRES_USER/PASSWORD=shipit. A2's 'a backup alone no longer discloses the key' is false comfort — an attacker reads the live table."
+        source: Design Revision 2 § R.4 A2 Against / § R.18, verified by the approving re-review
       - metric: "Reference contract already in force"
         value: "referenceName names the private half, never its value (repository_credential.dart:12-18, :70-72); enforced by 16 credential tests"
         source: source inspection at 77c19f1
@@ -118,11 +130,23 @@ context:
   recommendation:
     recommended_option: OPTION_C
     rationale: >-
-      A3 if a secret manager is genuinely reachable in the target topology, because it is the only
-      option that preserves "referenced by name, never by value" verbatim; otherwise A2 with a KEK
-      whose rotation is explicitly owned, as the strongest option that stays inside the current
-      transactional store. The design lane records confidence MEDIUM and explicitly does **not**
-      recommend A4, whose feasibility it could not test.
+      **Confidence LOW — nothing about any option was runtime-verified.** Design Revision 2 collapsed
+      Q1 to Q1' because ADR 0018 already decides it: the ADR names the local secret store (macOS
+      Keychain or ~/.config/shipit/platform/ chmod 600), which is A1+A4, and forbids persisting to the
+      durable record, which rules out A2. So the real question is narrower than it looked — does
+      b869ec24's server-side move SUPERSEDE that clause?
+
+      If it does: **A3** (external secret manager) is the design's argument, because it is the only
+      option under which SHIP IT never holds key bytes at all, so "referenced by name, never by value"
+      survives verbatim and the reference is the thing custody points at. **This is the design's
+      argument, not a neutral menu position** — Revision 2 § R.4 A3 calls it "the natural consequence of
+      Q1'-negative rather than a competing choice", and § R.8 prefers it under *either* answer. A1/A4
+      remain live if the target topology cannot reach a secret manager. A2 remains forbidden by the ADR.
+
+      If it does not, ADR 0018 stands as written and this question closes with A1/A4 already decided.
+
+      A2 is NOT recommended and is listed only so the human can see why it is excluded.
+    confidence: LOW
   options:
     - option_id: OPTION_A
       label: "Filesystem 0600 (A1)"
@@ -137,19 +161,21 @@ context:
       estimated_effort: "smallest; no migration"
       risk_level: HIGH
     - option_id: OPTION_B
-      label: "Envelope-encrypted table (A2)"
+      label: "Envelope-encrypted table (A2) — FORBIDDEN by ADR 0018"
       description: >-
         Private half sealed with a key-encryption key held outside the database; ciphertext stored
-        in its own table, not on `product_credential`. `referenceName` becomes an opaque row
-        reference.
+        in its own table, not on `product_credential`. `referenceName` becomes an opaque row reference.
       implications: >-
-        Survives container replacement; a database backup alone no longer discloses the key; keeps
-        rotation transactional. Costs a migration and a second persistence path, and makes the KEK
-        the most valuable secret in the system. Turns any SQL injection elsewhere in the server into
-        a key disclosure rather than a data leak. **This is the only option that changes the shape
-        of the data layer.**
-      estimated_effort: "largest of the four; migration + KEK lifecycle"
-      risk_level: MEDIUM
+        **CONTRADICTS THE GOVERNING ADR.** ADR 0018 :87-88 states the private half is "never ...
+        persisted to the durable record"; storing sealed ciphertext in a table IS the durable record, so
+        choosing A2 means approving a violation of ADR 0018 and amending or superseding it. Beyond that:
+        costs a migration and a second persistence path; makes the KEK the most valuable secret in the
+        system; and turns any SQL injection elsewhere in the server into a key disclosure rather than a
+        data leak. Its former comfort-claim — "a backup alone no longer discloses the key" — is FALSE in
+        this repository, because the live database is reachable on 0.0.0.0:5432 with a committed default
+        password, so an attacker reads the sealed rows directly and never needs a backup.
+      estimated_effort: "largest; migration + KEK lifecycle + an ADR amendment"
+      risk_level: HIGH
     - option_id: OPTION_C
       label: "External secret manager (A3)"
       description: >-

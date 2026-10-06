@@ -312,8 +312,8 @@ SELF_EDITS: >-
 ---
 
 ## WORK_ITEM: Add Product rebuild — IN DESIGN (supersedes the parked register-button round)
-STATE: DESIGN_REVIEWING — both revisions produced; independent design review dispatched; five
-  Human Decisions filed PENDING for Gate D4
+STATE: DESIGN_REVIEWING — keys revision **APPROVED** (risk 3, agreement YES); mobile revision at
+  cycle 4 (risk 2), awaiting a final focused re-review; five Human Decisions PENDING for Gate D4
 LANE: design-addproduct-keyservice, design-addproduct-mobile — both CLOSED at DESIGN_REVISION_COMPLETE
 BASE_SHA: `77c19f1`, `main` = `origin/main` = 1:1 (verified 0 ahead / 0 behind)
 OWNED_PATHS: keys lane owns `docs/engineering/dispatch/tasks/design-addproduct-keyservice/**`;
@@ -367,12 +367,44 @@ DECISIONS:
     `createProduct` creates, so human point 2b's gate is unsatisfiable as written.
   - **PENDING: 27ea6536-8a4e-4cf1-b24c-cdd3ce5bdab0 (DESIGN)** — does human point 2f's footer-copy removal
     apply to desktop as well as mobile? The desktop boards carry copy; the mobile ones do not.
+DESIGN_REVIEW:
+  - keys: `RESULT: DESIGN_REVIEW_APPROVED` at revision 2 (`F21D5C64`), `CORRECTION_REQUIRED: NO`,
+    `INDEPENDENT_RISK_LEVEL: 3`, `RISK_LEVEL_AGREEMENT: YES`. Both original blockers closed and the
+    second was closed *better than the review's own remedy*: the version CAS the first review pointed at
+    would have left the hole open AND broken minting. The re-review also re-derived the a11y figures, found
+    § R.3's substrate leakage, and confirmed the human's reserved decision is still visibly open (one LOW
+    vocabulary issue, L-B). Reports: `tasks/design-review-addproduct-keyservice/report.md` then
+    `…/report-revision-2.md`.
+  - mobile: cycle 1 CHANGES_REQUIRED (B-R1 all 400-weight boards, H-R1 `Trust Host` at 4.23:1 dark) ·
+    cycle 2 CHANGES_REQUIRED (0 blockers, H-N1 a 0px-inset label the lane had introduced) · cycle 3
+    CHANGES_REQUIRED (**0 blockers, 0 HIGH**; the ledger annotated away a live AA failure and the mandatory
+    matrix named the wrong token for the primary action's helper) · cycle 4 `DESIGN_REVISION_COMPLETE`
+    (`A69AB98C`, record-only, 0 board edits). The cycle-3 reviewer warned that approving "because it is
+    cycle 3" would relax a standard on the calendar, so **rev 4 still needs a focused re-review.**
 BLOCKERS:
   - type: PENDING_HUMAN_DECISION
     detail: >-
-      Gate D4 cannot be reached until the five PENDING decisions above resolve. The keys lane's own
-      blocker is `OPEN-D4-1`; it explicitly reports `READY_FOR_INDEPENDENT_DESIGN_REVIEW: YES` for Gate D3
-      while both of its OPEN-D4 decisions remain unanswered.
+      Gate D4 cannot be reached until the five PENDING decisions resolve. Three were **reissued** after the
+      approving review: `9417f8bf` (now the ADR-supersession question, with A2 marked FORBIDDEN by ADR
+      0018 at the option itself), `79e860e2` (restated as Q3′), `898b07d0` (reframed as an ADR
+      contradiction, severity raised). None may be presented in its previous form.
+  - type: PENDING_REVIEW
+    detail: >-
+      Mobile revision 4 (`A69AB98C`) has not been independently reviewed. It is a record-only pass, so
+      this is a focused re-review, not a full one.
+  - type: GAP_NOT_CLOSED
+    detail: >-
+      **GAP-2** — the D-2 partial unique index that enforces ADR 0018 A1's one-credential-per-repository
+      exists ONLY in `apps/server/tool/schema_bootstrap.sql`, and `schema_bootstrap.dart` is wired into
+      `Makefile:228` and `integration.yaml:131` only — **no QA, staging or production path runs it.** A
+      chain-migrated database therefore does not get the index and the invariant does not reach a deployed
+      database, which the repository's own parity contract (`schema_bootstrap.sql:37-44`) calls "the defect
+      this file exists to remove". The identical shape (`design_revision_approved_unique_per_work_item`) was
+      solved by putting the index in BOTH the bootstrap and `migrations/20260920232118956/migration.sql`.
+      Closing it needs `apps/server/migrations/**`, which is prohibited — see the decision filed with it.
+      **GAP-1** — `verify_schema_bootstrap.sh:69-73` hardcodes three required objects and is now **blind**
+      to the new index: deleting the CREATE would leave the guard green, the exact failure its own header
+      says it exists to prevent.
 SAFE_PARALLEL: independent design review of both revisions (Gate D3) — dispatched. Read-only
   reconnaissance of the SSH transport seam (`HostKeyStatus` has no runtime enforcer) is safe but is
   deliberately NOT dispatched as a writer.
