@@ -1,0 +1,105 @@
+# human-decision.yaml
+decision_id: 7b1bc8b7-6cd1-4ddc-a94f-366de2bed38a
+type: SECURITY
+status: PENDING
+question: >-
+  When the server cannot establish the at-rest protection chosen in
+  9417f8bf-73b8-4827-9515-bdfe92e5a9d5, does it refuse to mint the deploy key, or mint it and
+  record a warning?
+context:
+  summary: >-
+    This is the fail-open vs fail-closed axis of the at-rest protection model the human explicitly
+    reserved, and it is the part with the most user-visible consequence.
+
+    The concrete scenario: the chosen substrate is unavailable or its protection cannot be verified
+    — a directory cannot be created `0600`, a secret manager is unreachable, a KEK is absent, a
+    host keystore is not exposed to the container. SHIP IT must then either refuse to generate the
+    keypair, or generate it anyway and record that it is degraded.
+
+    **A tension the human should see, because it cuts against the human's own stated preference.**
+    Failing closed is the consistent choice — `HostKeyStatus.changed` already fails closed, and the
+    entire credential design rests on "access is proven, never assumed". But failing closed is also
+    the shape of the dead end that human point 2d objected to: *"it causes us to get stuck and
+    unable to register."* The difference is that here the remediation is a concrete operator action
+    (fix the substrate), not an absent UI affordance — so if B1 is chosen, its remediation text is a
+    design obligation, not a nicety. The design lane flagged exactly this and defaulted neither.
+  blocking_work_item:
+    item_type: DESIGN_REVISION
+    item_id: 46980EE0-E638-409C-A7D3-E1B9399FECE5
+    item_ref: "Add Product rebuild — server-side deploy-key service, Design Revision 1"
+  evidence:
+    documents:
+      - type: DESIGN_REVISION
+        id: 46980EE0-E638-409C-A7D3-E1B9399FECE5
+        url: docs/engineering/dispatch/tasks/design-addproduct-keyservice/design-revision.md
+      - type: OTHER
+        id: 73097d48-3e8b-48d7-b3d8-8834168c5113
+        url: .decisions/73097d48-3e8b-48d7-b3d8-8834168c5113.yaml
+    quantitative_data:
+      - metric: "Credential states that exist purely on a PROVEN result"
+        value: "4/4 — CredentialStatus has generated | verified | failing | revoked and deliberately no 'assumed working' member (credential_status.dart:2-5, :25-33)"
+        source: source inspection at 77c19f1
+      - metric: "Existing fail-closed precedent in the same domain"
+        value: "HostKeyStatus.changed 'fails closed: this is indistinguishable from an interception'"
+        source: credential_status.dart:41-58
+      - metric: "Credential tests asserting the proven-not-assumed property"
+        value: "16 tests in the credential suite; the record is asserted readable on revoke, never deleted"
+        source: design lane reuse table
+    qualitative_tradeoffs:
+      - dimension: "Consistency with the existing design posture"
+        option_a: "Fail closed (B1)"
+        option_b: "Fail open (B2)"
+        assessment: >-
+          B1 is the only choice consistent with a codebase that has already decided access is proven
+          never assumed. B2 would be the single place in the credential design where something is
+          recorded rather than proven — precisely the property the existing tests exist to prevent.
+      - dimension: "Effect on the user"
+        option_a: "Fail closed (B1)"
+        option_b: "Fail open (B2)"
+        assessment: >-
+          B1 blocks registration with no in-flow remedy; B2 never blocks. This is the axis human
+          point 2d pushed on, from the opposite direction.
+      - dimension: "Is the warning a control?"
+        option_a: "Fail closed (B1)"
+        option_b: "Fail open (B2)"
+        assessment: >-
+          With B2 there is no enforcement, only a notice, and a notice is not a control. A key then
+          exists in weaker protection than the UI implies.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Fail closed, and only with a named, actionable remediation — the design lane's condition.
+      Refusing to mint is the only answer that guarantees no key ever exists in weaker protection
+      than the UI claims, and it is the only one consistent with the domain's existing posture.
+      Choosing it obliges the design to write the remediation copy, which is what distinguishes this
+      dead end from the one human point 2d rejected.
+    confidence: MEDIUM
+  options:
+    - option_id: OPTION_A
+      label: "Fail closed, with remediation (B1)"
+      description: >-
+        If the substrate is unavailable or its protection cannot be verified, no keypair is
+        generated and no credential row is created. The user is told the concrete remediation.
+      implications: >-
+        No key ever exists in weaker protection than the UI claims; consistent with
+        `HostKeyStatus.changed` and with "access is proven, never assumed". Cost: a legitimately
+        configured but unusual host cannot register at all, and the user is blocked until the
+        operator fixes the substrate — so the remediation text becomes a required deliverable.
+      estimated_effort: "small; but remediation copy is mandatory"
+      risk_level: MEDIUM
+    - option_id: OPTION_B
+      label: "Fail open, recorded warning (B2)"
+      description: >-
+        The key is generated and stored; a degradation marker is recorded on the credential and the
+        UI shows a warning.
+      implications: >-
+        Registration is never blocked and the operator can proceed. Cost: a key exists in weaker
+        protection than the UI implies; the warning is easy to miss; there is no enforcement, only a
+        notice. It would be the only place in this credential design where a security property is
+        asserted rather than proven.
+      estimated_effort: "smallest"
+      risk_level: HIGH
+resolution: null
+created_by: orchestrator-main
+created_at: 2026-10-06T09:36:20Z
+updated_at: 2026-10-06T09:36:20Z

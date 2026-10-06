@@ -1,0 +1,130 @@
+revision_id: "46980EE0-E638-409C-A7D3-E1B9399FECE5"
+brief_id: "97484D0E-E16C-485E-BAA2-A277889C0FB6"
+revision_number: 1
+status: "DRAFT"
+risk_level: 3
+risk_rationale: |
+  Level 3 (Major Workflow / Navigation / IA Change) per DESIGN_GOVERNANCE.md, for four independent
+  reasons, any one of which would be Level 2 or above:
+
+  1. HANDLING KEY MATERIAL FOR THE FIRST TIME. SHIP IT will hold a private key that authorises WRITE
+     access to a customer repository. No such secret exists anywhere in the repository today.
+     Compromise of it is repository compromise, and it is irreversible without a host-side
+     uninstall.
+  2. OVERTURNS A DOCUMENTED ARCHITECTURAL ASSUMPTION. RepositoryCredential.referenceName is documented
+     as naming "the operator's local secret store" (repository_credential.dart:70-72) and that
+     assumption is repeated in six artifacts. DEC-b869ec24 replaces its subject with a server-side
+     store. This changes an architecture decision rather than a design detail.
+  3. CHANGES THE CORE REGISTRATION WORKFLOW. Human points 2a/2b make key generation and host trust
+     preconditions of product registration, which alters the primary user flow and its mental model,
+     not a screen.
+  4. INTRODUCES A CREDENTIAL-MINTING ENDPOINT ON AN UNAUTHENTICATED, NOT-LOOPBACK-PINNED CONTROL
+     PLANE. apps/server/lib/server.dart:71-72 declares no authentication services, DEC-570bb640
+     accepts that for local/QA only, and its loopback-pinning follow-up is UN-IMPLEMENTED
+     (grep for "127.0.0.1:" across docker/*.yaml and apps/server/docker-compose.yaml returns no
+     match). This is the first endpoint whose side effect is persisting secret material.
+
+  Level 3 requires product/design/architecture human approval at Gate D4. This revision does not
+  pre-empt it: it surfaces two questions as OPEN — HUMAN DECISION REQUIRED AT GATE D4 and selects
+  neither.
+changelog:
+  - "Initial revision (1). No prior revision exists."
+  - "Corrected a VERIFIED FACT carried in WORK_STATE.md and DEC-b869ec24: the claim that no deploy-key
+     infrastructure exists server-side was derived from a grep for 'deployKey'/'deploy_key' against
+     wrong identifiers. The infrastructure is named 'credential' and substantially exists
+     (RepositoryCredential, CredentialStatus, HostKeyStatus, product_credential,
+     RepositoryCredentialView, 4 store methods, 6 engine methods). Re-verified with the dispatch's
+     greps; designed onto that surface instead of inventing a parallel one."
+  - "Established that the genuine gap is narrow: keypair generation, a private-half store, any caller of
+     recordGeneratedCredential, the mint/check endpoints, and real SSH host-key verification."
+  - "OPEN-D4-1: surfaced the at-rest protection model as an OPEN Gate D4 decision with atomic options —
+     4 substrates (A1-A4), 2 degraded-mode options (B1 fail-closed / B2 fail-open-with-warning),
+     3 revocation-disposal options (C1-C3) — plus a recommendation with confidence and evidence. NOT
+     defaulted in any normative section, per the human's explicit instruction."
+  - "OPEN-D4-2: surfaced an additional OPEN Gate D4 decision not named in the dispatch. recordGeneratedCredential
+     requires the Product and RepositoryReference rows to exist, so human point 2b ('Register product'
+     gated on a credential) is circular against the domain's product-ownership requirement. Three
+     options with consequences; the service interface is identical under all three."
+  - "R-2d: specified the hostUnrecognised state machine grounded on the existing HostKeyStatus, and
+     made the absence of any Cancel/Skip/Dismiss affordance a NORMATIVE requirement (N-1) with its
+     rationale and its cost, so an implementer cannot reintroduce one."
+  - "R-2c: gave 'Check access' a normative definition — what it attempts, against which host, with
+     which credential, what success and failure each mean — and a five-way failure taxonomy
+     (hostUntrusted / hostKeyChanged / credentialNotInstalled / networkUnreachable / revoked) mapped
+     onto the EXISTING CredentialStatus.failing + lastFailureReason vocabulary."
+  - "R-B6: killed silent key rotation with four INDEPENDENT structural mechanisms, the strongest being
+     that RepositoryCredential.copyWith cannot change publicKey or credentialId, so even a buggy caller
+     cannot re-point an existing credential's key."
+  - "R-B5: established that the bootstrap deadlock (canGenerateKey has 0 call sites; deployKey is set
+     only from inside the widget that renders when deployKey != null) must be broken by giving key
+     generation its own trigger."
+  - "R-H1: designed the mint/get-or-create endpoint returning ONLY the public half, with a new
+     DeployPublicKeyView response type (RepositoryCredentialView has no publicKey field) and a new
+     checkRepositoryAccess endpoint with a presentation-layer failureKind enum."
+  - "R-5: stated plainly that NOTHING protects the mint endpoint from an off-host caller today, and
+     why it is worse in kind than the existing unauthenticated endpoints; recorded the deployment
+     precondition without proposing cross-cutting authentication."
+  - "Reused the existing credential domain throughout: produced a 35-row reuse table naming the
+     existing artifact for every design element, with genuinely-new items justified. No parallel
+     credential abstraction introduced."
+  - "Recorded the absence of ADR 0018 and 'AGENTS.md 13a' as a traceability gap with all 10
+     substitute assumptions listed, and invented no ADR content."
+  - "Split the client's conflated AccessStatus into two orthogonal axes mirroring the server's
+     CredentialStatus and HostKeyStatus, and made canRegister two-factor to match the server's own
+     canReachRepository."
+traceability:
+  requirements_covered:
+    - "R-2a  (human point 2a - generate the deploy keypair from the repository SSH URL)"
+    - "R-2b  (human point 2b - registration gated on key generation AND host trust)"
+    - "R-2c  (human point 2c - 'Check access' documented and able to succeed)"
+    - "R-2d  (human point 2d - trust step has NO cancel affordance)"
+    - "R-H1  (human addendum 1 - server-side API for private-key creation and storage)"
+    - "R-H2  (human addendum 2 - Products page is the way out; the key persists for later)"
+    - "R-B4  (finding B4 - the deploy key is a mock)"
+    - "R-B5  (finding B5 - 'Check access' is a control that cannot succeed)"
+    - "R-B6  (finding B6 - each press silently rotates the key the user just installed)"
+    - "R-R1  (dispatch R1 - at-rest model surfaced as an open Gate D4 decision, not defaulted)"
+    - "R-4   (dispatch R4 - reuse the existing domain contract, do not reinvent)"
+    - "R-5   (dispatch R5 - endpoint returns only the public half, with its exposure stated)"
+    - "R-6   (dispatch R6 - traceability and risk; gaps reported, not hidden)"
+    - "DEC-73097d48  (PRODUCT, RESOLVED - real key generation over the mock)"
+    - "DEC-b869ec24  (ARCHITECTURE, RESOLVED - generate and store server-side behind an API)"
+    - "DEC-048f3367  (SECURITY, RESOLVED - control-plane API auth, production precondition)"
+    - "DEC-570bb640  (DEPLOYMENT_AUTHORITY, RESOLVED - unauthenticated accepted risk, local-only scope)"
+    - "ADR-0001 / ADR-0002 / ADR-0003  (the ADRs that actually exist and were read)"
+  requirements_gaps:
+    - "OPEN-D4-1 (Q1 substrate, Q2 fail-open-vs-fail-closed, Q3 revocation disposal, Q4 transport
+       exposure) - OPEN, HUMAN DECISION REQUIRED AT GATE D4. Deliberately not answered per the human's
+       instruction; the private-half store cannot be specified until it is resolved."
+    - "OPEN-D4-2 (registration ordering) - OPEN, HUMAN DECISION REQUIRED AT GATE D4. A provable
+       circular dependency between human point 2b and the credential domain's product-ownership
+       requirement. Found while designing; not named in the dispatch."
+    - "G-1  ADR 0018 and 'AGENTS.md 13a' are ABSENT (docs/engineering/adr/ contains only 0001-0003).
+       The governing ADR for the credential model cannot be read. Ten substitute assumptions recorded
+       in design-revision.md R-21. No ADR content invented."
+    - "G-2  No read-only-over-Docker rule exists in AGENTS.md, so no runtime claim could be verified;
+       four claims are marked UNVERIFIED with the command a human should run."
+    - "G-3  Zero test files import add_product_page.dart, so SC-02/SC-04/SC-06 have no existing harness."
+    - "G-4  No SSH host-key verification exists anywhere in the repository; HostKeyStatus has no runtime
+       enforcer today."
+    - "G-5  No read-only endpoint for a product's public key exists; the client must hold a credentialId
+       to re-read it."
+    - "G-6  recordGeneratedCredential's host parameter is optional and defaults to null, so a credential
+       can exist with no host. The design refuses to mint without one; the domain does not enforce it."
+    - "G-7  RepositoryCredentialView exposes referenceName to clients. Under server-side storage that is
+       a path/ARN disclosure. Removing it is a generated-contract change in two packages; tied to
+       OPEN-D4-1."
+    - "G-8  How the host-key fingerprint is obtained (ssh-keyscan vs handshake) is unspecified; part of
+       the new transport seam."
+    - "Human points 2e and 2f, and the four mobile Penpot boards, are OUT OF SCOPE for this lane and
+       belong to design-addproduct-mobile. Their implications are stated in the brief so the sibling
+       lane can align, but they are not designed here and are recorded as not-covered, not as gaps."
+design_system_compliance: "PARTIAL"
+ux_accessibility_score: "PARTIAL"
+implementation_feasibility: "MEDIUM"
+created_by: "design-agent"
+created_at: "2026-10-06T00:00:00Z"
+reviewed_by: ""
+reviewed_at: ""
+approved_by: ""
+approved_at: ""

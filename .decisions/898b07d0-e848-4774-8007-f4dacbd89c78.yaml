@@ -1,0 +1,138 @@
+# human-decision.yaml
+decision_id: 898b07d0-e848-4774-8007-f4dacbd89c78
+type: ARCHITECTURE
+status: PENDING
+question: >-
+  Human point 2b requires "Register product" to be gated on a deploy key and host trust, but
+  minting a credential requires the Product and RepositoryReference rows that registration itself
+  creates. Which resolves the circular dependency?
+context:
+  summary: >-
+    **This decision was not asked for by the human and was not in the dispatch brief. The design
+    lane found it while reading the engine and escalated it rather than choosing.** It is recorded
+    here because it is provable, it blocks the feature, and every resolution changes either the
+    human's stated requirement or the domain's ownership model.
+
+    The cycle, verbatim from the domain:
+
+    ```
+    createProduct(...)                 engine:43-63   -> state: ProductState.registered
+    addRepositoryReference(...)        engine:150-174 -> requires the product to exist
+    recordGeneratedCredential(...)     engine:912-967 -> readRepositoryReference + _ensureOwned
+                                                          => REQUIRES the repository AND product
+    confirmHostKey(...)                engine:974-1013
+    recordCredentialCheck(...)         engine:1020-1054
+    ```
+
+    `recordGeneratedCredential` cannot run before the product and repository exist
+    (`engine:924-925`). So if "Register product" is the act that creates the product, and it is
+    gated on a credential that requires the product, **the gate is unsatisfiable** — the same class
+    of defect as the `canRegister == false` constant the human originally reported, arriving by a
+    different route.
+
+    There is no pre-registration `ProductState` to hide in: `createProduct` hardcodes
+    `ProductState.registered` (`engine:52`), and `registered` is already defined as *"no baseline,
+    no governance, no work … a product is visible here before anything about it has been approved"*
+    (`product_state.dart:29-32`) — which is precisely the semantic option 1 relies on.
+
+    **What is NOT open regardless of the answer:** the endpoint shapes, the `hostUnrecognised` trust
+    state machine, the "Check access" semantics and the structural kill of the silent-key-rotation
+    defect. All three options implement them identically; only the trigger moves.
+  blocking_work_item:
+    item_type: DESIGN_REVISION
+    item_id: 46980EE0-E638-409C-A7D3-E1B9399FECE5
+    item_ref: "Add Product rebuild — server-side deploy-key service, Design Revision 1"
+  evidence:
+    documents:
+      - type: DESIGN_REVISION
+        id: 46980EE0-E638-409C-A7D3-E1B9399FECE5
+        url: docs/engineering/dispatch/tasks/design-addproduct-keyservice/design-revision.md
+      - type: OTHER
+        id: 73097d48-3e8b-48d7-b3d8-8834168c5113
+        url: .decisions/73097d48-3e8b-48d7-b3d8-8834168c5113.yaml
+    quantitative_data:
+      - metric: "Ordering constraint, proven"
+        value: "recordGeneratedCredential requires an existing RepositoryReference and product ownership (engine:924-925); createProduct is what creates them (engine:43-63)"
+        source: source inspection at 77c19f1
+      - metric: "Pre-registration ProductState available"
+        value: "0 — createProduct hardcodes ProductState.registered (engine:52); 6 members exist, none of them pre-registration"
+        source: product_state.dart:29-32
+      - metric: "productId nullability today"
+        value: "non-null and load-bearing — 'scope enforcement so that knowing a credential id does not bypass the ownership graph' (repository_credential.dart:62-65)"
+        source: source inspection at 77c19f1
+      - metric: "Schema change implied by option 2"
+        value: "a nullable productId on product_credential — a generated-contract change in two packages plus a migration"
+        source: design lane § R.20
+    qualitative_tradeoffs:
+      - dimension: "Fidelity to the human's stated points 2a/2b"
+        option_a: "Option 1 (split identity from registration)"
+        option_b: "Option 3 (mint at registration)"
+        assessment: >-
+          Option 1 satisfies both points as written. Option 3 rejects them as written and needs its
+          own explicit human sign-off, so choosing it is a scope change rather than an implementation
+          choice.
+      - dimension: "Fidelity to human addendum 2 ('the key is still there later')"
+        option_a: "Option 1"
+        option_b: "Option 2 (decouple credential from product ownership)"
+        assessment: >-
+          Option 2 preserves addendum 2 most faithfully, because a credential can exist before any
+          product does. Option 1 leaves the page early with a visible product that has no usable
+          credential, which sits awkwardly with the human's "if when down the road we want to create
+          that product".
+      - dimension: "Cost to the domain's ownership invariant"
+        option_a: "Option 1 — no contract or schema change"
+        option_b: "Option 2 — breaks a documented invariant"
+        assessment: >-
+          Option 2 makes `productId` nullable, which is the field whose stated purpose is to stop a
+          known credential id from bypassing the ownership graph. That is a security-relevant
+          contract change with a real blast radius, for a workflow convenience.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Option 1 — split identity from registration. It is the only option that satisfies both human
+      points as written *and* sits inside the existing `ProductState.registered` semantics without a
+      schema or contract change, and it is the only one that makes "the key is still there later"
+      literally true through a concrete read path. The trade — a visible half-registered product
+      against a stricter reading of addendum 2 — is a product judgement, which is why it is escalated
+      rather than decided.
+    confidence: MEDIUM
+  options:
+    - option_id: OPTION_A
+      label: "Split identity from registration (1)"
+      description: >-
+        The key flow creates the `Product` row (state `registered`) plus the `RepositoryReference`
+        as an explicit first step; "Register product" then commits credential verification.
+      implications: >-
+        Satisfies points 2a/2b literally, matches `registered`'s existing meaning, and needs no
+        contract or schema change. Cost: leaving the page early leaves a visible product with no
+        usable credential, which sits awkwardly with the human's "if when down the road we want to
+        create that product".
+      estimated_effort: "moderate; domain + client state change"
+      risk_level: MEDIUM
+    - option_id: OPTION_B
+      label: "Decouple credential from ownership (2)"
+      description: >-
+        Mint against the repository only; `productId` is nullable or pending until the product
+        exists.
+      implications: >-
+        Preserves points 2a/2b and addendum 2 most faithfully — a credential can exist before any
+        product. Cost: breaks `RepositoryCredential.productId`'s non-null invariant and its stated
+        purpose (scope enforcement so a known credential id cannot bypass the ownership graph).
+        A contract and schema change in two packages plus a migration, on a security-relevant field.
+      estimated_effort: "largest; migration + generated contract"
+      risk_level: HIGH
+    - option_id: OPTION_C
+      label: "Mint at registration (3)"
+      description: >-
+        Key generation happens inside the register action; the public key is copyable afterwards.
+      implications: >-
+        Smallest change to the domain; product creation stays one explicit act; "the key persists"
+        still holds. Cost: **rejects human points 2a and 2b as written** — generation would no
+        longer happen on SSH URL input, and registration would no longer be gated on the key — so it
+        is a scope change requiring explicit human sign-off, not an implementation detail.
+      estimated_effort: "smallest"
+      risk_level: MEDIUM
+resolution: null
+created_by: orchestrator-main
+created_at: 2026-10-06T09:36:20Z
+updated_at: 2026-10-06T09:36:20Z

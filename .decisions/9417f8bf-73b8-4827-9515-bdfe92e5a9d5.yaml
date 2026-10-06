@@ -1,0 +1,150 @@
+# human-decision.yaml
+decision_id: 9417f8bf-73b8-4827-9515-bdfe92e5a9d5
+type: SECURITY
+status: PENDING
+question: >-
+  Which substrate holds the server-stored private half of a product's deploy key?
+context:
+  summary: >-
+    This is the decision the human explicitly reserved. Verbatim, at the start of this session:
+    *"I have NOT approved the at-rest protection model for the server-stored private half.
+    Surface it as a decision at Gate D4; do not default it."*
+
+    Decision `b869ec24` (ARCHITECTURE, RESOLVED, OPTION_A) settled that deploy-key pairs are
+    generated and stored **server-side**, behind an API returning only the public half, because
+    SHIP IT pushes from its own backend and never from the browser. That settled *where*; it did
+    not settle *how the private half is protected at rest*. The design lane therefore produced the
+    options and deliberately defaulted none of them.
+
+    **What makes this consequential now.** This is the first time SHIP IT will hold a private key
+    authorising **write** access to a customer repository. No such secret exists today. A leaked
+    key cannot be recalled from SHIP IT's side — it must be uninstalled at the host. The existing
+    domain contract is unusually well built for this: `RepositoryCredential` carries **no** key
+    material, `referenceName` names the private half rather than holding it, and `CredentialStatus`
+    documents "access is proven, never assumed". Whichever substrate is chosen determines whether
+    that property survives.
+
+    One existing assumption is being overturned either way: `referenceName` is documented as naming
+    **the operator's local secret store** (`repository_credential.dart:70-72`, repeated across six
+    artifacts). `b869ec24` moves the store server-side. The field, its type and the schema survive;
+    only the subject of the reference changes.
+  blocking_work_item:
+    item_type: DESIGN_REVISION
+    item_id: 46980EE0-E638-409C-A7D3-E1B9399FECE5
+    item_ref: "Add Product rebuild — server-side deploy-key service, Design Revision 1"
+  evidence:
+    documents:
+      - type: DESIGN_REVISION
+        id: 46980EE0-E638-409C-A7D3-E1B9399FECE5
+        url: docs/engineering/dispatch/tasks/design-addproduct-keyservice/design-revision.md
+      - type: OTHER
+        id: b869ec24-236e-4e9c-8703-70656fa368c4
+        url: .decisions/b869ec24-236e-4e9c-8703-70656fa368c4.yaml
+      - type: OTHER
+        id: D-1
+        url: docs/engineering/dispatch/tasks/design-addproduct-keyservice/discoveries.md
+    quantitative_data:
+      - metric: "Existing private-key custody in the product"
+        value: "none — no secret of any kind is stored server-side today; grep for SecretStore/keychain/libsecret across apps/server/lib and packages/*/lib returns nothing"
+        source: design lane R.4 precondition
+      - metric: "Reference contract already in force"
+        value: "referenceName names the private half, never its value (repository_credential.dart:12-18, :70-72); enforced by 16 credential tests"
+        source: source inspection at 77c19f1
+      - metric: "A1 filesystem-only protection against a same-uid process"
+        value: "none — the git transport runs as the same uid that would read the file"
+        source: design lane § R.4 A1 "Against"
+      - metric: "A2 blast radius of a SQL-injection elsewhere in the server"
+        value: "changes from a data leak to a key disclosure"
+        source: design lane § R.4 A2 "Against"
+      - metric: "A4 container→host keychain reachability"
+        value: "UNVERIFIED — cannot be tested under this lane's no-Docker rule; SHIP IT runs as a container, the keychain is the host's"
+        source: design lane § Feasibility
+      - metric: "Control-plane authentication today"
+        value: "none declared — apps/server/lib/server.dart:71-72; this would be the first endpoint whose side effect is persisting secret material"
+        source: decision 048f3367, re-verified by the design lane
+    qualitative_tradeoffs:
+      - dimension: "Where the guarantee lives"
+        option_a: "SHIP IT holds a reference and asks a manager for the bytes (A3)"
+        option_b: "SHIP IT holds or writes the bytes itself (A1/A2/A4)"
+        assessment: >-
+          A3 is literally the existing contract — SHIP IT never touches key bytes — so
+          `referenceName` needs no reinterpretation at all. The cost is a runtime dependency whose
+          unavailability lands directly on the fail-open/fail-closed question in
+          `7b1bc8b7-6cd1-4ddc-a94f-366de2bed38a`.
+      - dimension: "Insider/backup exposure"
+        option_a: "A3 (manager-held) or A2 (encrypted, KEK outside the DB)"
+        option_b: "A1 (plaintext file)"
+        assessment: >-
+          A1 yields the key in cleartext from a stolen volume, a backup, or a `docker cp`. On a
+          single local machine that may be an acceptable trade for having no new dependency; it is
+          not acceptable if the store ever moves off that machine.
+      - dimension: "Blast radius of a mistake"
+        option_a: "A2/A3 — a mistake in one component"
+        option_b: "A1 — a mistake in filesystem permissions exposes the whole key store"
+        assessment: >-
+          A2 also concentrates risk in the KEK, which becomes the single most valuable secret in the
+          system and needs its own rotation story.
+  recommendation:
+    recommended_option: OPTION_C
+    rationale: >-
+      A3 if a secret manager is genuinely reachable in the target topology, because it is the only
+      option that preserves "referenced by name, never by value" verbatim; otherwise A2 with a KEK
+      whose rotation is explicitly owned, as the strongest option that stays inside the current
+      transactional store. The design lane records confidence MEDIUM and explicitly does **not**
+      recommend A4, whose feasibility it could not test.
+  options:
+    - option_id: OPTION_A
+      label: "Filesystem 0600 (A1)"
+      description: >-
+        Private half written under a dedicated directory outside the work tree, owned by the
+        service user, mode 0600, on a volume not shared with application code.
+      implications: >-
+        No new dependency; works in the current Compose topology; trivially inspectable when a
+        registration is stuck. But protection is entirely the host filesystem's: a stolen volume,
+        a backup or a `docker cp` yields the key in cleartext, and permissions do not defend
+        against a same-uid process — which is the git transport.
+      estimated_effort: "smallest; no migration"
+      risk_level: HIGH
+    - option_id: OPTION_B
+      label: "Envelope-encrypted table (A2)"
+      description: >-
+        Private half sealed with a key-encryption key held outside the database; ciphertext stored
+        in its own table, not on `product_credential`. `referenceName` becomes an opaque row
+        reference.
+      implications: >-
+        Survives container replacement; a database backup alone no longer discloses the key; keeps
+        rotation transactional. Costs a migration and a second persistence path, and makes the KEK
+        the most valuable secret in the system. Turns any SQL injection elsewhere in the server into
+        a key disclosure rather than a data leak. **This is the only option that changes the shape
+        of the data layer.**
+      estimated_effort: "largest of the four; migration + KEK lifecycle"
+      risk_level: MEDIUM
+    - option_id: OPTION_C
+      label: "External secret manager (A3)"
+      description: >-
+        SHIP IT never writes key bytes; it writes a reference and asks the manager for the material
+        at transport time. `referenceName` is a secret path or ARN.
+      implications: >-
+        Strongest separation, and it is literally the existing contract, so `referenceName` needs no
+        reinterpretation. Rotation and revocation become manager features. Costs a runtime
+        dependency that can be unavailable — which feeds the fail-open/fail-closed decision — and on
+        a single local machine may be more machinery than the problem warrants. Makes the reference
+        itself the most sensitive variant (an ARN discloses vault topology).
+      estimated_effort: "moderate; dependency + reachability"
+      risk_level: MEDIUM
+    - option_id: OPTION_D
+      label: "Host keychain (A4)"
+      description: >-
+        Private half stored in the host's keychain or a TPM-backed store and read by handle at
+        transport time.
+      implications: >-
+        Strongest at-rest property of the four, hardware-bound, with per-item ACLs. **Feasibility is
+        unverified**: SHIP IT runs as a container while the keychain is the host's, and CI or
+        another machine would have a different store. Choosing it makes the "local only" scope in
+        decision `570bb640` load-bearing for correctness, not merely for security posture.
+      estimated_effort: "moderate, but reachability unknown"
+      risk_level: HIGH
+resolution: null
+created_by: orchestrator-main
+created_at: 2026-10-06T09:36:20Z
+updated_at: 2026-10-06T09:36:20Z

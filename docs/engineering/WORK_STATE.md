@@ -312,27 +312,105 @@ SELF_EDITS: >-
 ---
 
 ## WORK_ITEM: Add Product rebuild — IN DESIGN (supersedes the parked register-button round)
-STATE: DESIGN_PENDING — decisions taken, design not yet dispatched
-LANE: (design lane not yet dispatched for the folded scope)
-BASE_SHA: `c5f5f6a` (this commit), `main` = `origin/main` = 1:1
-BLOCKERS:
-  - type: PENDING_DESIGN_DISPATCH
-    detail: >-
-      Four decisions are recorded and resolved; the Design Brief + Revision covering the folded
-      scope has NOT been dispatched. See HUMAN SCOPE below.
+STATE: DESIGN_REVIEWING — both revisions produced; independent design review dispatched; five
+  Human Decisions filed PENDING for Gate D4
+LANE: design-addproduct-keyservice, design-addproduct-mobile — both CLOSED at DESIGN_REVISION_COMPLETE
+BASE_SHA: `77c19f1`, `main` = `origin/main` = 1:1 (verified 0 ahead / 0 behind)
+OWNED_PATHS: keys lane owns `docs/engineering/dispatch/tasks/design-addproduct-keyservice/**`;
+  mobile lane owns `docs/engineering/dispatch/tasks/design-addproduct-mobile/**` + 4 Penpot boards.
+  Disjoint; verified non-intersecting before launch. MAX_CONCURRENT_WRITERS 3, 2 used.
+DESIGN_RESULT:
+  - keys lane: `RESULT: DESIGN_REVISION_COMPLETE`, REVISION_ID `46980EE0-E638-409C-A7D3-E1B9399FECE5`,
+    BRIEF_ID `97484D0E-E16C-485E-BAA2-A277889C0FB6`, **RISK_LEVEL 3**, compliance PARTIAL / a11y
+    PARTIAL / feasibility MEDIUM. Report:
+    `docs/engineering/dispatch/tasks/design-addproduct-keyservice/report.md`
+  - mobile lane: `RESULT: DESIGN_REVISION_COMPLETE`, REVISION_ID `65995C2B-4905-419F-A6E9-E547E86D8ECE`,
+    BRIEF_ID `52CB4098-FF87-4B78-81DA-1104269551A1`, **RISK_LEVEL 2**, compliance PARTIAL / a11y
+    PARTIAL / feasibility MEDIUM. Report:
+    `docs/engineering/dispatch/tasks/design-addproduct-mobile/report.md`
+  - Both lanes reported analyzer/build/test as `NOT_RUN` and derived no feasibility claim from one.
+    Both lanes ran **zero** Docker commands, as instructed.
+FOUR BOARDS AUTHORED (390x844, Penpot page `d8ac01df-6646-81d2-8008-a366c09aa9d3`):
+  - `SM - Add Product - Unknown host - Light`  `6d055762-a70b-804c-8008-bf65ff750422` (42 layers)
+  - `SM - Add Product - Unknown host - Dark`   `6d055762-a70b-804c-8008-bf65e644269b` (42 layers)
+  - `SM - Add Product - Verified - Light`      `6d055762-a70b-804c-8008-bf660e124738` (34 layers)
+  - `SM - Add Product - Verified - Dark`       `6d055762-a70b-804c-8008-bf65f36b1c9a` (34 layers)
+  Board count 156 → 160; two scratch boards from failed API calls were detected by inventory diff and
+  removed. All four carry "private half stays server-side" — **zero** occurrences of "this device" or
+  "keychain", correcting copy that decision `b869ec24` made false.
+DESIGN_SYSTEM_OWNER_NOTIFICATIONS (Level 1, AUTO — recorded, not escalated):
+  - Penpot board naming: the page convention is `·` (U+00B7) with `S ·` for state boards; the four new
+    boards use the dispatched `SM - ` hyphens, so the page now carries two conventions. A rename to
+    `S · Add Product · …` is the recommended fix.
+  - `ShipItPalette.negative` FAILS WCAG AA on dark — 4.02:1 on `canvas`, 3.68:1 on `card` (measured from
+    `core/design_tokens.dart:99-101/:120-122`); it passes light at 5.33:1 / 5.72:1. No compliant
+    alternative token exists and the new Unknown-host boards inherit it because the existing desktop
+    boards already use it there.
+  - `ShipItPalette` has **no** disabled-primary token, so no board in the file represents the disabled
+    appearance of a primary action; Flutter derives it from `ColorScheme`.
 DECISIONS:
-  - resolved: 73097d48-3e8b-48d7-b3d8-8834168c5113 (PRODUCT, OPTION_A) — real deploy-key
-    generation over the existing mock; folded the parked register-button round into this item.
-  - resolved: b869ec24-236e-4e9c-8703-70656fa368c4 (ARCHITECTURE, OPTION_A) — deploy keys are
-    generated and stored **server-side** behind an API returning only the public half, because
-    SHIP IT pushes from its backend, not the browser. Verified: `onboarding_worker.dart`,
-    `product_registry_engine.dart` and `control_plane_service.dart` already perform clone/push,
-    and no deploy-key infrastructure exists server-side today.
-  - folded-in prior round: `docs/engineering/dispatch/tasks/design-register-button/` — report
-    persisted; its D3/D6 gating questions are answered by the human's points 2d and 2e.
-SAFE_PARALLEL: Penpot board authoring for the four missing mobile boards (additive, disjoint).
-NEXT_AUTOMATIC_ACTION: dispatch the Design Brief + Revision, split so a failure costs less —
-  (a) server-side key service + `hostUnrecognised` trust state, (b) mobile boards + layout/copy.
+  - resolved: 73097d48-3e8b-48d7-b3d8-8834168c5113 (PRODUCT, OPTION_A) — real deploy-key generation;
+    folded the parked register-button round into this item.
+  - resolved: b869ec24-236e-4e9c-8703-70656fa368c4 (ARCHITECTURE, OPTION_A) — server-side generation and
+    storage behind an API returning only the public half. **Its evidence is partly wrong** (it claims
+    zero existing infrastructure, from a grep for the wrong identifiers) but its conclusion is
+    unaffected and strengthened: the infrastructure exists and was designed for a *local* secret store.
+    Not amended — the audit trail is immutable; corrected here instead.
+  - **PENDING: 9417f8bf-73b8-4827-9515-bdfe92e5a9d5 (SECURITY)** — at-rest substrate. **The decision the
+    human explicitly reserved.**
+  - **PENDING: 7b1bc8b7-6cd1-4ddc-a94f-366de2bed38a (SECURITY)** — fail closed vs fail open when the
+    chosen protection cannot be established.
+  - **PENDING: 79e860e2-4edf-4510-8d5f-435460255848 (SECURITY)** — private-half disposal on revocation.
+  - **PENDING: 898b07d0-e848-4774-8007-f4dacbd89c78 (ARCHITECTURE)** — the registration-ordering circular
+    dependency. **Found by the design lane, not requested by the human**, and provable:
+    `recordGeneratedCredential` (engine:924-925) requires the Product and RepositoryReference rows that
+    `createProduct` creates, so human point 2b's gate is unsatisfiable as written.
+  - **PENDING: 27ea6536-8a4e-4cf1-b24c-cdd3ce5bdab0 (DESIGN)** — does human point 2f's footer-copy removal
+    apply to desktop as well as mobile? The desktop boards carry copy; the mobile ones do not.
+BLOCKERS:
+  - type: PENDING_HUMAN_DECISION
+    detail: >-
+      Gate D4 cannot be reached until the five PENDING decisions above resolve. The keys lane's own
+      blocker is `OPEN-D4-1`; it explicitly reports `READY_FOR_INDEPENDENT_DESIGN_REVIEW: YES` for Gate D3
+      while both of its OPEN-D4 decisions remain unanswered.
+SAFE_PARALLEL: independent design review of both revisions (Gate D3) — dispatched. Read-only
+  reconnaissance of the SSH transport seam (`HostKeyStatus` has no runtime enforcer) is safe but is
+  deliberately NOT dispatched as a writer.
+PROHIBITED_PARALLEL: >-
+  Any implementation lane. The keys lane names the reason precisely: implementing a private-half store
+  now would pre-empt a decision the human explicitly reserved, and each option has a different
+  migration and dependency footprint. Also prohibited: the SSH transport seam as a side effect of this
+  feature — D-3 below shows no host-key verification exists anywhere, and that work is
+  security-critical and needs its own review.
+NEXT_AUTOMATIC_ACTION: >-
+  Independent design review of both revisions (Gate D3), then Phase 2 presentation of the five PENDING
+  decisions through the structured question UI, then Design Contract freeze.
+SELF_EDITS: >-
+  Workflow bookkeeping only, per `aef-orchestrator` §2: this file, `docs/engineering/dispatch/LANES.md`,
+  `docs/engineering/dispatch/DECISIONS.md`, `docs/engineering/dispatch/tasks/*/`, and the five Human
+  Decision objects under `.decisions/`. **No production source was self-edited.** The VERIFIED FACTS
+  corrections above are bookkeeping of verified source state, not new design claims.
+CONVENTIONS_USED: (project declares none — root `AGENTS.md` § Product-specific policy is `TBD`, so
+  `aef-orchestrator` §3 defaults apply; inherited from the prior block unchanged)
+  - SUBTASK_PROMPT_TEMPLATE / SUBTASK_REPORT_TEMPLATE: `.agents/skills/aef-orchestrator/templates/`
+  - DISPATCH_STATE_DIR: `docs/engineering/dispatch/` · DECISION_DIR: `.decisions/`
+  - ISOLATION_CONVENTION: `git worktree add -b <branch> <abs-path> <base>`
+  - MAX_CONCURRENT_WRITERS: 3 · ROUTING_CLASS: keys lane PRECISION, mobile lane STANDARD (bounded
+    design exploration with the a11y figures and layout already computed for it by the prior review)
+
+## OPEN RISKS carried into review — recorded, not yet actioned
+- **D-3 — `HostKeyStatus` has NO runtime enforcer.** `git_workspace_inspector.dart:106-112` runs
+  `Process.run` with no `environment:`, and a repo-wide grep for
+  `SSH_AUTH_SOCK|known_hosts|ssh-keyscan|StrictHostKeyChecking|IdentityFile` returns nothing. The
+  domain's "refuses to connect to an unconfirmed host" guarantee is **decorative today**. This is why
+  feasibility is MEDIUM and not HIGH, and why the transport seam must not be a side effect.
+- **D-7 — the loopback pinning decision `570bb640` relies on is NOT implemented.** `grep "127.0.0.1:"`
+  across `docker/*.yaml` and `apps/server/docker-compose.yaml` returns no match, so its accepted
+  "local only" risk is live on any shared network today. Relevant because a credential-minting
+  endpoint would be the first endpoint whose side effect is persisting secret material.
+- **G-2 still open** — no read-only-over-Docker rule in `AGENTS.md`. Every design lane in this round
+  was instructed to run no Docker command at all, as the interim control.
+- **G-3** — zero tests import `add_product_page.dart`; the page's gate behaviour is unverified by any test.
 
 ## HUMAN SCOPE — verbatim, for the next session
 > 1. It looks like we're missing mobile designs for these screens
@@ -367,10 +445,49 @@ Human addenda, verbatim:
   Each "Check access" press REGENERATES the pair (`:113-120`) while "Copy public key" copies the current one,
   so the key a user just installed is silently orphaned.
 - **Zero test coverage**: 0 of 26 test files import `add_product_page.dart`.
-- **Footer**: copy line present at `:383`; "Show technical details" appears NOWHERE in current code — it was
-  removed, not de-duplicated (the original report said there were two rows).
 - **Required-field convention ALREADY EXISTS**: `create_defect_page.dart:458,477,495,504` mark optional fields
   with an in-label `(OPTIONAL)` suffix; absence marks required. Re-ground on this; do not add a second convention.
+  Real path is `apps/control_plane/lib/features/defect_report/`, NOT `features/defects/`.
+  Real token path is `apps/control_plane/lib/core/design_tokens.dart`, NOT `lib/shared/`; the ink tokens
+  are at `:99-101` (light) and `:120-122` (dark), not `:96,101,117,122`. Both path errors were made by
+  a Manager dispatch prompt and caught by the lane.
+
+### CORRECTED 2026-10-06 at `77c19f1` — the three facts above this line that were WRONG
+
+A previous entry in this section, and Human Decision `b869ec24`'s evidence, recorded that **no
+deploy-key infrastructure exists server-side**. **That was false.** It came from a grep for
+`deployKey`/`deploy_key`; the infrastructure is named `credential`. Verified at `77c19f1`:
+
+| Already exists | Where |
+|---|---|
+| `RepositoryCredential` — no key material; `referenceName` names the private half, never its value | `packages/platform_contracts/lib/src/types/repository_credential.dart` |
+| `CredentialStatus` `generated\|verified\|failing\|revoked`; `HostKeyStatus` `unknown\|confirmed\|changed`, `changed` fails closed | `packages/platform_contracts/lib/src/enums/credential_status.dart` |
+| `canReachRepository` = `status.isUsable && hostKeyStatus.permitsConnection` — **both** halves required | `repository_credential.dart:128` |
+| Store API: `saveProductCredential`, `readProductCredential`, `readActiveCredentialForRepository`, `readCredentialsForProduct` | `packages/product_registry/lib/src/store/product_registry_store.dart:35-54` |
+| `recordGeneratedCredential` + 5 more credential methods, enforcing ONE active credential per repository | `packages/product_registry/lib/src/engine/product_registry_engine.dart:898-1138` |
+| 16-test credential suite | product_registry tests |
+| `product_credential` table (`serverOnly`), `RepositoryCredentialView`, `UiViewMappers.repositoryCredentialView` | `apps/server/lib/src/database/repository_credential.spy.yaml`, `apps/server/lib/src/models/repository_credential_view.yaml`, `apps/server/lib/src/services/ui_view_mappers.dart:169` |
+| Already surfaced to the client as `ProductDetailView.credentials` | `apps/server/lib/src/services/control_plane_service.dart:362-403` |
+
+`grep` for `RepositoryCredentialView` in `apps/server/lib/src/endpoints/*.yaml` returns **0** — no
+endpoint currently exposes a credential, so a mint endpoint is genuinely new surface.
+
+Two further corrections:
+- **"Show technical details appears NOWHERE in current code — it was removed" is FALSE.** It renders
+  via the shared `TechnicalDetails` primitive (`design_primitives.dart:415`), instantiated twice by
+  Add Product at `:316` (desktop) and `:925` (mobile). Grepping for the literal in the page file is a
+  false negative against a centralised label.
+- **The footer copy line at `:383` is DESKTOP-ONLY.** `_buildFooter` is called solely from `:314`;
+  `_MobileAddProduct` renders no footer copy. Desktop paints **two** `ContentRule`s and two copy
+  lines at the footer; mobile has one row and no copy.
+
+### ADR 0018 DOES NOT EXIST — recorded so no lane cites a document it cannot read
+
+Nine code locations cite "ADR 0018" and "AGENTS.md §13a". `docs/engineering/adr/` contains only
+`0001`, `0002`, `0003`, and `AGENTS.md` is the 71-line framework template with no `§13`. The
+governing ADR for the credential model is **absent from the repository**. The design lane recorded ten
+substitute assumptions rather than inventing ADR content — correct, and a standing trap for any lane
+that cites ADR 0018 as authority.
 - **a11y**: the specified `inkTertiary` on `palette.card` measures 4.23:1 in dark (fails AA), not the claimed
   6.0:1. Today's nested subtext is `inkPrimary` on the button fill = 2.72:1. Use `inkSecondary`
   (6.74:1 light / 6.10:1 dark).

@@ -1,0 +1,105 @@
+# human-decision.yaml
+decision_id: 27ea6536-8a4e-4cf1-b24c-cdd3ce5bdab0
+type: DESIGN
+status: PENDING
+question: >-
+  Does human point 2f ("there's no copy at the bottom and only one footer line") apply to the
+  desktop Add Product page as well as the mobile one?
+context:
+  summary: >-
+    A small copy question the design lane refused to decide, and it is the only place where the
+    human's own description and the existing desktop boards disagree.
+
+    Three facts, each verified by the design lane rather than assumed:
+
+    1. **The mobile boards have no bottom copy at all.** `BPM · Add Product · Light/Dark` carry
+       exactly one element below the helper — the `Show technical details` disclosure. The
+       *desktop* boards carry a copy line **beside** the disclosure, on one line.
+    2. **The desktop build has that copy and the mobile build does not.** `_buildFooter` is called
+       solely from the desktop path (`add_product_page.dart:314`), so the copy line at `:383`
+       exists on desktop only; `_MobileAddProduct` renders no footer copy whatsoever.
+    3. On desktop the build also paints **two** `ContentRule`s and **two** copy lines at the footer
+       — `_buildFooter`'s own rule plus `TechnicalDetails`' rule (`design_primitives.dart:396`
+       always paints one). So desktop has a genuine duplication; mobile has an absence.
+
+    The lane read point 2f against the mobile boards and specified no copy there. But removing it on
+    desktop too would **contradict the existing desktop boards**, and editing those boards is
+    outside the lane's ownership. Hence the escalation.
+  blocking_work_item:
+    item_type: DESIGN_REVISION
+    item_id: 65995C2B-4905-419F-A6E9-E547E86D8ECE
+    item_ref: "Add Product rebuild — mobile SM boards + layout/copy corrections, Design Revision 1"
+  evidence:
+    documents:
+      - type: DESIGN_REVISION
+        id: 65995C2B-4905-419F-A6E9-E547E86D8ECE
+        url: docs/engineering/dispatch/tasks/design-addproduct-mobile/design-revision.md
+      - type: OTHER
+        id: 73097d48-3e8b-48d7-b3d8-8834168c5113
+        url: .decisions/73097d48-3e8b-48d7-b3d8-8834168c5113.yaml
+    quantitative_data:
+      - metric: "Bottom copy on the mobile boards"
+        value: "0 — one element below the helper: the 'Show technical details' disclosure"
+        source: design lane Penpot board inspection at 77c19f1
+      - metric: "Bottom copy on the desktop boards"
+        value: "present, beside the disclosure on a single line"
+        source: design lane Penpot board inspection at 77c19f1
+      - metric: "Footer copy in the build, per platform"
+        value: "desktop only — _buildFooter called solely from :314; _MobileAddProduct renders none"
+        source: design lane source inspection at 77c19f1
+      - metric: "ContentRules painted at the desktop footer"
+        value: "2 — _buildFooter's own plus TechnicalDetails' unconditional one (design_primitives.dart:396)"
+        source: design lane source inspection at 77c19f1
+      - metric: "Implementation cost of the desktop option"
+        value: "one line — note: null at :317, which also removes the duplicate ContentRule"
+        source: design lane § B3
+    qualitative_tradeoffs:
+      - dimension: "Consistency with the existing boards"
+        option_a: "Keep the desktop copy"
+        option_b: "Remove it on desktop too"
+        assessment: >-
+          Keeping it preserves the four existing desktop boards untouched. Removing it makes desktop
+          match mobile but requires editing desktop boards the lane does not own, and discards
+          content that may be deliberate.
+      - dimension: "Consequence of the duplication"
+        option_a: "Keep the desktop copy"
+        option_b: "Remove it on desktop too"
+        assessment: >-
+          On desktop the build currently paints two rules and two copy lines at the footer. Keeping
+          the copy still permits fixing the duplicated rule, so the duplication is fixable either
+          way — this question is only about whether any copy survives on desktop.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Read point 2f against the screens it describes — the mobile ones — and keep the desktop copy
+      while removing the duplicated rule. The human's sentence is a description of the mobile boards,
+      and changing desktop content the human did not describe would alter four boards outside the
+      work item's stated scope. If the human confirms removal, it is a one-line change plus a board
+      edit.
+    confidence: MEDIUM
+  options:
+    - option_id: OPTION_A
+      label: "Mobile only; keep desktop copy"
+      description: >-
+        The mobile footer keeps one `Show technical details` row and no copy (as designed). The
+        desktop footer keeps its copy line; only the duplicated `ContentRule` is removed.
+      implications: >-
+        Touches nothing outside the work item's scope and leaves the four existing desktop boards
+        valid. Leaves desktop and mobile footers differing in copy, which is defensible only if the
+        difference is intentional.
+      estimated_effort: "as already designed"
+      risk_level: LOW
+    - option_id: OPTION_B
+      label: "Remove on both platforms"
+      description: >-
+        No footer copy anywhere; one `Show technical details` row per platform.
+      implications: >-
+        Consistent across platforms and the strictest reading of point 2f. Requires `note: null` at
+        `add_product_page.dart:317` **and** editing the four existing desktop boards, which no
+        current lane owns — so it needs a design-system-owner board edit.
+      estimated_effort: "one line plus a board edit"
+      risk_level: LOW
+resolution: null
+created_by: orchestrator-main
+created_at: 2026-10-06T09:36:20Z
+updated_at: 2026-10-06T09:36:20Z

@@ -1,0 +1,103 @@
+# human-decision.yaml
+decision_id: 79e860e2-4edf-4510-8d5f-435460255848
+type: SECURITY
+status: PENDING
+question: >-
+  On credential revocation, is the stored private half destroyed, retained, or retained for a grace
+  period and then destroyed?
+context:
+  summary: >-
+    Part of the at-rest protection model the human explicitly reserved: what happens to the key
+    bytes themselves when a credential is revoked.
+
+    The existing design already settles the *record*: `revokedAt`/`revokedReason` exist on
+    `RepositoryCredential` (`:115-117`) and `revokeCredential`
+    (`product_registry_engine.dart:1058-1076`) never deletes the row, so the history stays readable
+    — asserted by `credential_test.dart:246` ("revoked credentials stay readable, never deleted").
+    That test asserts the record, not the bytes. **Nothing in the repository currently governs the
+    private half's disposal**, which is a separate question and is what this decision asks.
+
+    Rotation is *not* part of this decision and is already specified: `rotateCredential`
+    (`engine:1084-1119`) revokes the old credential, records `supersedesCredentialId`, and creates a
+    new one, and host confirmation deliberately does **not** carry over — so a rotated key
+    re-enters `hostUnrecognised` by design. Covered by `credential_test.dart:221`.
+  blocking_work_item:
+    item_type: DESIGN_REVISION
+    item_id: 46980EE0-E638-409C-A7D3-E1B9399FECE5
+    item_ref: "Add Product rebuild — server-side deploy-key service, Design Revision 1"
+  evidence:
+    documents:
+      - type: DESIGN_REVISION
+        id: 46980EE0-E638-409C-A7D3-E1B9399FECE5
+        url: docs/engineering/dispatch/tasks/design-addproduct-keyservice/design-revision.md
+    quantitative_data:
+      - metric: "Existing revoke behaviour"
+        value: "row is retained, never deleted (engine:1058-1076); revokedAt/revokedReason already on the type (repository_credential.dart:115-117)"
+        source: source inspection at 77c19f1
+      - metric: "Test asserting retention"
+        value: "credential_test.dart:246 — asserts the record stays readable, so destroying the BYTES does not contradict it"
+        source: design lane § R.6
+      - metric: "Disposal logic for key bytes anywhere in the repository"
+        value: "0 — no such logic exists; this is net-new"
+        source: design lane reuse table
+    qualitative_tradeoffs:
+      - dimension: "What 'revoked' means to an operator"
+        option_a: "Destroy the bytes (C-1)"
+        option_b: "Retain the bytes (C-2)"
+        assessment: >-
+          With C-2, `revoked` is a label with no corresponding security property: the key stays
+          usable at the host until someone removes it there, and the operator's mental model is
+          misleading. C-1 makes revocation real at the SHIP IT side.
+      - dimension: "Forensic re-verification"
+        option_a: "Destroy the bytes (C-1)"
+        option_b: "Retain, or grace-period then destroy (C-2/C-3)"
+        assessment: >-
+          C-1 forecloses re-verifying an old credential or investigating a suspected compromise.
+          C-3 buys that back for a bounded window but needs a background job and a durable
+          schedule, and introduces a grace-period parameter nobody has justified.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Destroy the private half on revoke and keep the row. Nothing in the design requires the key
+      bytes to survive — only the record does — so C-1 makes `revoked` a real security state at no
+      cost to the audit trail, and it is compatible with the existing retention test because that
+      test asserts the record rather than the bytes.
+    confidence: MEDIUM
+  options:
+    - option_id: OPTION_A
+      label: "Destroy bytes on revoke (C-1)"
+      description: >-
+        `revokeCredential` additionally destroys the key bytes and deletes any secret-store handle.
+        The credential row remains fully readable with `status: revoked`, `revokedAt`,
+        `revokedReason`.
+      implications: >-
+        Revocation becomes real; a leaked key stops working on the SHIP IT side immediately; the
+        audit trail is untouched and the existing retention test still passes. Cost: an old
+        credential cannot be re-verified and a forensic re-check is impossible.
+      estimated_effort: "small"
+      risk_level: LOW
+    - option_id: OPTION_B
+      label: "Retain bytes; logical flag only (C-2)"
+      description: >-
+        The private half is kept. Revocation marks the credential unusable in SHIP IT but the key
+        material remains on disk.
+      implications: >-
+        Forensic re-verification stays possible and the implementation is simplest. Cost: `revoked`
+        becomes a label that corresponds to no security property, and the key remains usable until
+        removed at the host — which is the operator's mental model of "revoked" being wrong.
+      estimated_effort: "smallest"
+      risk_level: HIGH
+    - option_id: OPTION_C
+      label: "Grace period, then destroy (C-3)"
+      description: >-
+        Retain for a bounded period after revocation, then destroy automatically.
+      implications: >-
+        Supports rolling back an accidental revocation and keeps a bounded forensic window. Cost: a
+        background job and a durable schedule, plus a grace-period tuning parameter that nobody has
+        justified — an unjustified constant governing secret lifetime.
+      estimated_effort: "larger; scheduler + durable job"
+      risk_level: MEDIUM
+resolution: null
+created_by: orchestrator-main
+created_at: 2026-10-06T09:36:20Z
+updated_at: 2026-10-06T09:36:20Z

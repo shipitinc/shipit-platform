@@ -170,3 +170,45 @@ Human's points 2d and 2e answer that round's D6 (SSH trust-on-first-use cancel) 
 (button vs helper-text layout). Its B1-B6 blockers remain open and are folded into the new scope:
 re-ground the required-field work on the existing `(OPTIONAL)` suffix, ship D1 as two explicit
 variants, fix the AA-failing token, give V9-equivalent classification a committed source.
+
+## Add Product rebuild — DESIGN PRODUCED, Gate D3 dispatched
+
+Item ref: Add Product rebuild (folded register-button round + server-side deploy-key service).
+Base `77c19f1`, `main` = `origin/main` 1:1. Two design lanes dispatched **in parallel**, split by the
+Manager so a failure costs less; `OWNED_PATHS` verified disjoint before launch.
+
+| task_id | type | state | worktree | branch | base_sha | head_sha | routing_class | result | next action |
+|---|---|---|---|---|---|---|---|---|---|
+| design-addproduct-keyservice | design-produce | CLOSED — COMPLETE | /private/tmp/shipit-design-addproduct-keys | design/addproduct-keyservice | 77c19f1 | 77c19f1 | PRECISION | `DESIGN_REVISION_COMPLETE`, `RISK_LEVEL: 3`, `READY_FOR_INDEPENDENT_DESIGN_REVIEW: YES` — compliance PARTIAL / a11y PARTIAL / feasibility MEDIUM; 2 OPEN Gate D4 decisions surfaced, neither answered | independent design review (Gate D3) |
+| design-addproduct-mobile | design-produce | CLOSED — COMPLETE | /private/tmp/shipit-design-addproduct-mobile | design/addproduct-mobile | 77c19f1 | 77c19f1 | STANDARD | `DESIGN_REVISION_COMPLETE`, `RISK_LEVEL: 2`, `READY_FOR_INDEPENDENT_DESIGN_REVIEW: YES` — compliance PARTIAL / a11y PARTIAL / feasibility MEDIUM; 4 boards authored, 2 copied to existing boards in error and corrected | independent design review (Gate D3) |
+| design-review-addproduct-keyservice | design-review | DISPATCHED | read-only (canonical) | — | 77c19f1 | — | PRECISION | — | parse `DESIGN_REVIEW_*` token |
+| design-review-addproduct-mobile | design-review | DISPATCHED | read-only (canonical) | — | 77c19f1 | — | PRECISION | — | parse `DESIGN_REVIEW_*` token |
+
+Both lanes: **zero Docker commands issued**, no commits, no pushes, no self-approval. Both reported
+analyzer/build/test as `NOT_RUN` and derived no feasibility claim from one. Artifacts persisted from
+each worktree into `docs/engineering/dispatch/tasks/<task_id>/`.
+
+### What the lanes found that the Manager had recorded wrongly
+Three VERIFIED FACTS in `WORK_STATE.md` were false and are now corrected there:
+1. **"No deploy-key infrastructure exists server-side" is FALSE.** It came from grepping
+   `deployKey`/`deploy_key`; the infrastructure is named `credential`. `RepositoryCredential`,
+   `CredentialStatus`, `HostKeyStatus`, the `product_credential` table, `RepositoryCredentialView`,
+   4 store methods, 6 engine methods and a 16-test suite all exist. The keys lane designed onto them
+   with a 35-row reuse table and invented no parallel abstraction. **Decision `b869ec24`'s evidence
+   is wrong but its conclusion is unaffected and strengthened.**
+2. **"'Show technical details' was removed" is FALSE** — it renders via the shared `TechnicalDetails`
+   primitive (`design_primitives.dart:415`), instantiated at `:316` and `:925`. A literal grep in the
+   page file is a false negative against a centralised label.
+3. **The footer copy at `:383` is DESKTOP-ONLY** — `_buildFooter` is called solely from `:314`.
+
+Also recorded: **ADR 0018 and `AGENTS.md §13a` do not exist.** Nine code locations cite them; the
+governing ADR for the credential model is absent from the repository.
+
+### Process note
+A Manager dispatch prompt asserted four "verified" premises that were wrong: two nonexistent paths
+(`features/defects/create_defect_page.dart`, `shared/design_tokens.dart` — the real ones are
+`features/defect_report/` and `core/design_tokens.dart`), stale token line numbers, and the false
+"Show technical details was removed" claim. The mobile lane caught all four, re-ran each against the
+correct path, and reported them rather than working around them — which is the behaviour the dispatch
+asked for. Recorded per `LEARNING_POLICY.md` as a WORKFLOW_IMPROVEMENT: a corrected premise handed to a
+child is still a premise, and must be re-verified rather than trusted.
