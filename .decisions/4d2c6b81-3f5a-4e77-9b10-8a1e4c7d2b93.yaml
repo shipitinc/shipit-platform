@@ -1,0 +1,144 @@
+# human-decision.yaml
+decision_id: 4d2c6b81-3f5a-4e77-9b10-8a1e4c7d2b93
+type: ARCHITECTURE
+status: PENDING
+question: >-
+  The one-active-credential-per-repository index exists only in
+  apps/server/tool/schema_bootstrap.sql, which no deployed environment runs. How is ADR 0018 A1's
+  invariant made to reach production — by also adding it to a migration, or by accepting that it holds
+  on fresh and CI databases only?
+context:
+  summary: >-
+    **Filed by the `fix-credential-store-integrity` implementer, which escalated rather than absorbed
+    this.** It landed the index in the only place its granted scope allowed, got every gate green, and
+    then stopped — because closing this needs `apps/server/migrations/**`, which the dispatch prohibited.
+
+    **The fact.** `apps/server/tool/schema_bootstrap.dart` is wired into exactly two places:
+    `Makefile:228` and `.github/workflows/integration.yaml:131`. **No QA, staging or production path runs
+    it.** `grep -rl` across `apps/server/migrations/` finds no trace of the new index. So:
+
+    - a **fresh** database gets the index (bootstrap runs);
+    - a **chain-migrated** database does **not**;
+    - and **no deployed database gets it at all**.
+
+    The consequence is that the invariant ADR 0018 A1 depends on — "one keypair per repository" — holds in
+    development and CI and evaporates in production, where two concurrent mints can produce two active
+    credentials for one repository.
+
+    **The repository already documents this as the defect its own mechanism exists to remove.**
+    `apps/server/tool/schema_bootstrap.sql:37-44` states the parity contract: the bootstrap and the
+    migration chain must create the same objects. The guard's check 3 enforces it — for the three objects
+    that predate it. And the identical shape has been solved here before:
+    `design_revision_approved_unique_per_work_item` is a **partial unique index**, put in **both**
+    `tool/schema_bootstrap.sql` **and** `migrations/20260920232118956/migration.sql`, in commit `14608dc`
+    ("fix-design-triggers"), which was independently reviewed and merged.
+
+    **So the repository has already answered this once, by precedent and by its own written contract.**
+    It is escalated rather than decided because the alternative path means editing `apps/server/migrations/**`
+    in a repository with a documented migration-lineage history: nine migrations were activated for the
+    first time at the baseline and never executed; `migration_manager.dart:169-172` throws when a
+    database's recorded version has no directory; and a fresh database replays only the latest
+    `definition.sql` while an existing one replays every `migration.sql` positionally.
+
+    **A second, smaller gap rides along.** `apps/server/tool/verify_schema_bootstrap.sh:69-73` hardcodes
+    three required objects. The new index is not among them, so the guard **exits 0 while blind to it** —
+    deleting the `CREATE` would leave CI green, which is the exact failure the guard's own header says it
+    exists to prevent. That is a mechanical fix needing only ownership of that file, and it is **not**
+    part of this question; it is recorded here so it is not lost.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: fix-credential-store-integrity
+    item_ref: "Credential store integrity — D-2 partial unique index, deployed-database reach"
+  evidence:
+    documents:
+      - type: OTHER
+        id: fix-credential-store-integrity
+        url: docs/engineering/dispatch/tasks/fix-credential-store-integrity/report.md
+      - type: OTHER
+        id: 14608dc
+        url: .github/workflows/integration.yaml
+      - type: ADR
+        id: "0018"
+        url: docs/adr/0018-per-product-git-credentials.md
+    quantitative_data:
+      - metric: "Environments running the bootstrap"
+        value: "2 — Makefile:228 and .github/workflows/integration.yaml:131. Zero QA, staging or production paths."
+        source: implementation lane, verified by grep
+      - metric: "Traces of the index in apps/server/migrations/"
+        value: "0 files"
+        source: implementation lane, verified by grep -rl
+      - metric: "Index predicate vs the read path"
+        value: "identical — index is ON (repositoryId) WHERE status <> 'revoked'; readActiveCredentialForRepository selects WHERE repositoryId = @repositoryId AND status <> 'revoked' (store:257-268). They cannot contradict."
+        source: implementation lane + design Revision 2 § R.15b
+      - metric: "Gate result with the index in place"
+        value: "make test-integration +161 -1, T-A and T-B both green against real Postgres; the sole failure is the pre-existing dogfood .git file-vs-directory assertion, proven identical on pristine 064703d (+157 -1)"
+        source: implementation lane report
+      - metric: "Existing precedent for this exact shape"
+        value: "design_revision_approved_unique_per_workitem — a partial unique index in both tool/schema_bootstrap.sql and migrations/20260920232118956/migration.sql, commit 14608dc, independently reviewed and merged"
+        source: WORK_STATE.md § Integrated and verified on main
+    qualitative_tradeoffs:
+      - dimension: "What the invariant is actually for"
+        option_a: "Make it reach production"
+        option_b: "Accept divergence"
+        assessment: >-
+          The blast radius of two active credentials for one repository is a deploy key whose rotation
+          history is ambiguous — and rotation is the mechanism that keeps a leaked key revocable. An
+          invariant that holds only where tests run is a weaker guarantee than it reads.
+      - dimension: "Cost and risk of the conforming path"
+        option_a: "Add the index to the migration chain"
+        option_b: "Accept bootstrap-only"
+        assessment: >-
+          The conforming path matches both the written parity contract and an already-merged precedent,
+          but it writes into the one directory whose hazards are documented in WORK_STATE, and it means
+          confirming the index is correct in a chain-replay context as well as the fresh one.
+      - dimension: "Whether this is a decision at all"
+        option_a: "Take the precedent and apply it"
+        option_b: "Escalate and let the human see the trade"
+        assessment: >-
+          An honest reading is that the repository's own contract and its own precedent already answer
+          this, so OPTION_A may simply be "do what 14608dc did". It is escalated because the alternative
+          is a recorded, accepted divergence in a security invariant — which is exactly the kind of thing
+          that should never be settled silently by an agent.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Add the index to the migration chain as well, matching `design_revision_approved_unique_per_workitem`
+      in commit `14608dc`. That is what the parity contract at `schema_bootstrap.sql:37-44` requires and
+      what this repository has already done for the same shape of object. The alternative records, in
+      writing, that a credential invariant holds only in development and CI — which is a weaker guarantee
+      than every artifact in this repository claims.
+    confidence: MEDIUM
+  options:
+    - option_id: OPTION_A
+      label: "Add to the migration chain too"
+      description: >-
+        Put the same `CREATE UNIQUE INDEX IF NOT EXISTS product_credential_active_repo_unique ON
+        "product_credential" ("repositoryId") WHERE "status" <> 'revoked'` into the appropriate migration
+        SQL as well as the bootstrap, exactly as `14608dc` did for
+        `design_revision_approved_unique_per_workitem`, and verify it holds in a chain-replayed database
+        and not only a fresh one.
+      implications: >-
+        Satisfies the parity contract; the invariant reaches production; matches an already-reviewed,
+        already-merged precedent in this repository. Cost: writes into `apps/server/migrations/**`, the one
+        directory with a documented lineage hazard, so the correction lane must verify the chain-replay
+        case and not only the fresh one — and must not edit a shipped `definition.sql`.
+      estimated_effort: "small, plus a real-Postgres chain-replay verification"
+      risk_level: MEDIUM
+    - option_id: OPTION_B
+      label: "Accept bootstrap-only divergence"
+      description: >-
+        Leave the index in `tool/schema_bootstrap.sql` only, and record that ADR 0018 A1's
+        one-active-credential-per-repository invariant is enforced on fresh and CI databases but not on
+        deployed ones.
+      implications: >-
+        No migration is touched and no lineage risk is taken. Cost: the credential invariant silently
+        weakens in exactly the environments that matter, the parity contract is knowingly violated, and
+        two concurrent mints can still produce two active credentials in production — with a rotation
+        history that is then ambiguous, which is the property that keeps a leaked key revocable. This must
+        be recorded as an accepted risk, not left implicit.
+      estimated_effort: "zero"
+      risk_level: HIGH
+resolution: null
+created_by: orchestrator-main
+created_at: 2026-10-06T12:40:00Z
+updated_at: 2026-10-06T12:40:00Z
