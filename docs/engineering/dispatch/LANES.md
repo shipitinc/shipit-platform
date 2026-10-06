@@ -372,3 +372,28 @@ database, but the only credential-bearing one holds **0 rows**, which is a vacuo
 as dispatched **does not execute**: `repositoryId` is quoted camelCase, and unquoted it errors — which reads
 exactly like "no duplicates". The migration embeds the corrected form, and a human with target access must run
 the audit before deploying.
+
+## Review wave after the merge
+
+| task_id | type | result | note |
+|---|---|---|---|
+| review-credential-identity-invariants | review | `APPROVE_WITH_NON_BLOCKING_FOLLOWUP` | no blockers, no HIGH. 1 MEDIUM: the new full-DDL parity check's `IF NOT EXISTS` normalisation forgives the one divergence that would break migration `20261006150645000` on a bootstrapped database — a **gap in the guard, not a live defect** (both files carry the clause today). 4 LOW, all comment/doc |
+| review-addproduct-keys-rev3 (rev 3) | design-review | `DESIGN_REVIEW_CHANGES_REQUIRED` | 4 BLOCKERS, 7 HIGH, risk 3 agreed. The reserved decision is **not nudged anywhere** and D-18 was re-derived and confirmed |
+| design-correct-addproduct-keys (rev 4) | design-produce | **DISPATCH FAILED — subagent returned corrupted output, nothing produced** | must be re-dispatched |
+
+`fix-credential-identity-invariants` (D-4 mint is `DO NOTHING`, D-18 resurrection closed by D-4, D-5 scope
+immutable, LOW-1 full-DDL parity, LOW-2 derived offender list): **`make test-integration` `+171 -1`**, sole
+failure the pre-existing dogfood assertion, re-proven on pristine `0bf2fa0` at `+164 -1`. **Not committed.**
+
+**The reviewer independently overrode the implementer's own self-assessment in the implementer's favour:**
+"6 of 6 red", not the 5 of 6 reported. And it caught that the implementer's self-reported file list
+misclassified `product_credential_immutability_postgres_test.dart` as added when it already carried D-1/D-2's
+tests — cosmetic, but it is the provenance record for an uncommitted change.
+
+### The governance gate that no code lane can discharge
+
+`design-revision-3.md` — the specification D-4/D-18/D-5 implement — is **uncommitted and unapproved**, existing
+only as an untracked file in the design lane's worktree at `77c19f1`. Both the engineering reviewer and the
+implementer flagged it. **The code cannot land with reviewed provenance behind it until the design is
+committed and independently approved.** That is the next dependency, and it is why the keys revision-4
+correction is on the critical path rather than optional.
