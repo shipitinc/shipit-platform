@@ -31,9 +31,18 @@ context:
     different route.
 
     There is no pre-registration `ProductState` to hide in: `createProduct` hardcodes
-    `ProductState.registered` (`engine:52`), and `registered` is already defined as *"no baseline,
+    `ProductState.registered` (`engine:54`), and `registered` is already defined as *"no baseline,
     no governance, no work … a product is visible here before anything about it has been approved"*
-    (`product_state.dart:29-32`) — which is precisely the semantic option 1 relies on.
+    (`product_state.dart:24-27`) — which is precisely the semantic option 1 relies on.
+
+    **This is an ADR contradiction, not only a design-level circularity.** Independently verified at
+    Gate D3: **ADR 0018 exists** — `docs/adr/0018-per-product-git-credentials.md`, status "Proposed
+    (amended — A1)" — and `:100-102` already settles human point 2b as architecture: *"Access is
+    proven, not assumed. A product cannot be registered until a connectivity check has succeeded
+    against the real host with the real key."* So the ordering the human asked for is **already
+    recorded architecture**, and it is **unsatisfiable against the current engine**. That raises the
+    stakes on this decision well above "which of three options": the ADR must either be amended or
+    Option 3 accepted as an explicit divergence from it.
 
     **What is NOT open regardless of the answer:** the endpoint shapes, the `hostUnrecognised` trust
     state machine, the "Check access" semantics and the structural kill of the silent-key-rotation
@@ -50,13 +59,19 @@ context:
       - type: OTHER
         id: 73097d48-3e8b-48d7-b3d8-8834168c5113
         url: .decisions/73097d48-3e8b-48d7-b3d8-8834168c5113.yaml
+      - type: ADR
+        id: "0018"
+        url: docs/adr/0018-per-product-git-credentials.md
     quantitative_data:
       - metric: "Ordering constraint, proven"
         value: "recordGeneratedCredential requires an existing RepositoryReference and product ownership (engine:924-925); createProduct is what creates them (engine:43-63)"
-        source: source inspection at 77c19f1
+        source: source inspection at 77c19f1, independently re-verified at Gate D3
+      - metric: "ADR 0018 on registration ordering"
+        value: "'A product cannot be registered until a connectivity check has succeeded against the real host with the real key' — :100-102. The requested ordering is already architecture, and is unsatisfiable as the engine stands."
+        source: docs/adr/0018-per-product-git-credentials.md, verified at Gate D3
       - metric: "Pre-registration ProductState available"
-        value: "0 — createProduct hardcodes ProductState.registered (engine:52); 6 members exist, none of them pre-registration"
-        source: product_state.dart:29-32
+        value: "0 — createProduct hardcodes ProductState.registered (engine:54); 6 members exist, none of them pre-registration"
+        source: product_state.dart:24-27
       - metric: "productId nullability today"
         value: "non-null and load-bearing — 'scope enforcement so that knowing a credential id does not bypass the ownership graph' (repository_credential.dart:62-65)"
         source: source inspection at 77c19f1

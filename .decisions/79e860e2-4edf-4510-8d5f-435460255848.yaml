@@ -17,6 +17,15 @@ context:
     That test asserts the record, not the bytes. **Nothing in the repository currently governs the
     private half's disposal**, which is a separate question and is what this decision asks.
 
+    **LIKELY ALREADY ANSWERED — verify before presenting.** The Independent Design Review (Gate D3,
+    blocker H2) found that **ADR 0018 `:113-114` already settles this**: "Revocation is
+    provider-native: removing the deploy key from the repository is sufficient and **requires no
+    Shipit-side action**." Under that ADR the private half is the operator's local keychain item, so
+    ShipIt has nothing to dispose of. `b869ec24` moves custody server-side, which reopens the question —
+    but only if `b869ec24` genuinely **supersedes** ADR 0018 rather than complementing it. That
+    supersession question is itself unresolved and is the real content of this decision; if the ADR
+    stands, this object should be withdrawn.
+
     Rotation is *not* part of this decision and is already specified: `rotateCredential`
     (`engine:1084-1119`) revokes the old credential, records `supersedesCredentialId`, and creates a
     new one, and host confirmation deliberately does **not** carry over — so a rotated key
@@ -30,7 +39,13 @@ context:
       - type: DESIGN_REVISION
         id: 46980EE0-E638-409C-A7D3-E1B9399FECE5
         url: docs/engineering/dispatch/tasks/design-addproduct-keyservice/design-revision.md
+      - type: ADR
+        id: "0018"
+        url: docs/adr/0018-per-product-git-credentials.md
     quantitative_data:
+      - metric: "ADR 0018 on ShipIt-side revocation"
+        value: "'Revocation is provider-native: removing the deploy key from the repository is sufficient and requires no Shipit-side action' — :113-114"
+        source: Independent Design Review H2, verified 2026-10-06
       - metric: "Existing revoke behaviour"
         value: "row is retained, never deleted (engine:1058-1076); revokedAt/revokedReason already on the type (repository_credential.dart:115-117)"
         source: source inspection at 77c19f1

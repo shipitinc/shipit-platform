@@ -212,3 +212,72 @@ A Manager dispatch prompt asserted four "verified" premises that were wrong: two
 correct path, and reported them rather than working around them — which is the behaviour the dispatch
 asked for. Recorded per `LEARNING_POLICY.md` as a WORKFLOW_IMPROVEMENT: a corrected premise handed to a
 child is still a premise, and must be re-verified rather than trusted.
+
+## Gate D3 — INDEPENDENT DESIGN REVIEW: BOTH `CHANGES_REQUIRED`
+
+| task_id | type | state | result | risk |
+|---|---|---|---|---|
+| design-review-addproduct-keyservice | design-review | CLOSED — CHANGES_REQUIRED | `DESIGN_REVIEW_CHANGES_REQUIRED`, `CORRECTION_REQUIRED: YES`, `HUMAN_DECISION_REQUIRED: YES`, `INDEPENDENT_RISK_LEVEL: 3`, `RISK_LEVEL_AGREEMENT: YES` | agrees with producer's 3 |
+| design-review-addproduct-mobile | design-review | CLOSED — CHANGES_REQUIRED | `DESIGN_REVIEW_CHANGES_REQUIRED`, `CORRECTION_REQUIRED: YES`, `HUMAN_DECISION_REQUIRED: **NO**`, `INDEPENDENT_RISK_LEVEL: 2`, `RISK_LEVEL_AGREEMENT: YES` | agrees with producer's 2 |
+
+Neither reviewer ran a Docker or Compose command; neither persisted anything. Reports at
+`tasks/design-review-addproduct-keyservice/report.md` and `tasks/design-review-addproduct-mobile/report.md`.
+Both independently **re-measured** the inherited a11y contrast figures rather than accepting them, and
+both reproduced every value.
+
+### ⚠ A MANAGER ERROR THE REVIEW CAUGHT — ADR 0018 EXISTS
+
+Both the design lane and the Manager asserted that ADR 0018 was absent, because both looked in
+`docs/engineering/adr/` (three framework-distribution ADRs). **The product ADRs are in `docs/adr/` —
+21 of them, `0001`–`0021`.** `docs/adr/0018-per-product-git-credentials.md` exists, 158 lines,
+"Proposed (amended — A1)".
+
+This is the **third** instance in one session of the same error class (D-1 `deployKey` vs
+`credential`; now `adr/` vs `docs/engineering/adr/`): grep one identifier, conclude an artifact is
+absent, and write that into the ledger as a VERIFIED FACT. The Manager repeated the false claim into
+`WORK_STATE.md` and two Human Decision objects before either was reviewed. **The design-reviewer
+caught it; the ledger is now corrected and all three decision objects carry the ADR.**
+
+ADR 0018 already decides four things the revision presented as open — most importantly that the
+private half goes to **the local secret store** and is "never … persisted to the durable record",
+which **excludes the A2 option** (`9417f8bf`) outright and makes the revocation question
+(`79e860e2`) largely pre-answered. **`9417f8bf` must be reissued before it is presented to the human.**
+
+### The security finding that matters most (keys lane, B2)
+
+The revision's headline claim — that silent key rotation is *structurally* impossible — is true of the
+in-memory object and **false at the persistence boundary**. Verified in
+`apps/server/lib/src/persistence/postgres_product_registry_store.dart:177-243`: with a null
+`expectedVersion`, `saveProductCredential` runs
+`INSERT … ON CONFLICT ("credentialId") DO UPDATE SET … "publicKey" = @publicKey …`, and
+`recordGeneratedCredential` (`engine:965`) calls it with **no** `expectedVersion`. So a caller
+supplying both `credentialId` and a matching `supersedesCredentialId` passes the one-active guard
+(`engine:941`) and **overwrites the stored public key in place** — no rotation record, status reset to
+`generated`, host confirmation lost. `copyWith` is not on that path at all. Separately, `repositoryId`
+has only a **non-unique** index, so two concurrent mints can both insert, yielding two active
+credentials for one repository and violating ADR 0018 A1's "one per repository".
+
+This is the same defect class as the original B6 finding — a user installs the key they just copied and
+SHIP IT silently rotates it — reachable through the domain API rather than the UI. It is a **store-level
+defect that exists today**, independent of this feature.
+
+### Blockers summary
+
+**keys lane:** B1 (ADR 0018 exists → rewrite § R.21, repopulate `architecture_refs`, revise the
+substrate options against what the ADR already decides) · B2 (persistence-layer immutability gap +
+missing partial unique index) · H1 (§ R.3 leaks the reserved decision by selecting a substrate in
+normative voice) · H2 (Q3 pre-answered by the ADR) · H3 (A2's threat model omits the committed
+`SERVERPOD_DATABASE_PASSWORD: shipit` and the 0.0.0.0-published 5432) · H4 (§ R.18 omits the
+direct-database path) · M1–M4 · L1–L6.
+
+**mobile lane:** B-R1 (all four boards render every emphasis layer at weight 400 — tokens and the
+reference board require 500/600; the producer's justification "Penpot's IBM Plex Sans has no 500
+weight" is **false**, `500normal` exists and `900` does not) · H-R1 (`Trust Host` — the host
+fingerprint the user must read to decide whether to trust a host — ships at `inkTertiary`, **4.23:1
+in dark, failing AA**, the exact pairing the same revision rejects elsewhere) · H-R2 (the false
+key-custody claim also lives at `product_detail_page.dart:614`, outside this lane's scope) · H-R3
+(published audit count not reproducible) · H-R4 (human point 2b's gating has **no** visual expression
+on any board) · M-R1–M-R4 · L-R1–L-R7.
+
+Both corrections are mechanical-to-bounded and **neither touches the human's reserved decision**, which
+is why both are `CHANGES_REQUIRED` rather than new escalations.
