@@ -36,6 +36,32 @@ abstract interface class ProductRegistryStore {
   //
   // Scoped to one repository. The store never sees key material: only the
   // public half and a reference name to the local secret store.
+
+  /// Writes [credential], optionally guarded by [expectedVersion].
+  ///
+  /// KEY MATERIAL IS IMMUTABLE (ADR 0018 A1). Key material — `publicKey`,
+  /// `fingerprint`, `algorithm` and `referenceName` — is chosen once, when the
+  /// credential is minted, and is never changed afterwards by any path. A write
+  /// whose `credentialId` already exists but whose key material differs MUST
+  /// throw and MUST leave the stored row untouched.
+  ///
+  /// This is a store contract, not an engine convention. `RepositoryCredential
+  /// .copyWith` cannot change these fields, but `copyWith` is not on the mint
+  /// path: `ProductRegistryEngine.recordGeneratedCredential` constructs a fresh
+  /// credential and writes it. Without this contract the upsert silently
+  /// replaced the key an operator had installed — same `credentialId`, no
+  /// rotation record, verification state and host confirmation discarded.
+  ///
+  /// The guard is enforced in the write itself, not by a read before it, on
+  /// BOTH paths: with a null [expectedVersion] and with a CAS. A check-then-write
+  /// is a race against any other connection, and the mint path reaches this
+  /// write with a null [expectedVersion] precisely because a new credential has
+  /// no prior version — so the CAS cannot carry this on its own.
+  ///
+  /// When the guard refuses, an implementation reports the immutability refusal
+  /// rather than a version conflict, even if the supplied [expectedVersion] was
+  /// also stale. Telling a caller that re-pointed key material that it lost a
+  /// concurrency race invites it to retry the same re-point.
   Future<void> saveProductCredential(
     RepositoryCredential credential, {
     int? expectedVersion,

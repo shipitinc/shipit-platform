@@ -161,8 +161,27 @@ class InMemoryProductRegistryStore implements ProductRegistryStore {
     RepositoryCredential credential, {
     int? expectedVersion,
   }) async {
+    final existing = _credentials[credential.credentialId];
+
+    // Key material is chosen once, at mint. Checked BEFORE the version guard
+    // so an attempt to re-point an existing credential reports the reason it
+    // was refused rather than a version number.
+    //
+    // Unlike the Postgres store this needs no predicating write: the map read
+    // above and the write below are separated by no `await`, so no other
+    // coroutine on this isolate can interleave between them. The Postgres
+    // implementation cannot claim that and must therefore close the guard in
+    // the statement itself.
+    if (existing != null && !_sameKeyMaterial(existing, credential)) {
+      throw CredentialNotUsableException(
+        credential.credentialId,
+        'the key material of an existing credential cannot be changed; rotate '
+        'it to issue a new credentialId instead',
+      );
+    }
+
     if (expectedVersion != null) {
-      final actual = _credentials[credential.credentialId]?.version ?? 0;
+      final actual = existing?.version ?? 0;
       if (actual != expectedVersion) {
         throw ConcurrentModificationException(
           entityId: credential.credentialId,
@@ -173,6 +192,21 @@ class InMemoryProductRegistryStore implements ProductRegistryStore {
     }
     _credentials[credential.credentialId] = credential;
   }
+
+  /// Whether [next] carries the same key material as [previous].
+  ///
+  /// The four fields that identify the keypair itself. `credentialId` is the
+  /// map key, so it cannot differ here. `repositoryId`/`productId` are
+  /// deliberately not part of this predicate: it mirrors the immutability the
+  /// Postgres store's write enforces, and the two must agree.
+  static bool _sameKeyMaterial(
+    RepositoryCredential previous,
+    RepositoryCredential next,
+  ) =>
+      previous.publicKey == next.publicKey &&
+      previous.fingerprint == next.fingerprint &&
+      previous.algorithm == next.algorithm &&
+      previous.referenceName == next.referenceName;
 
   @override
   Future<RepositoryCredential> readProductCredential(
