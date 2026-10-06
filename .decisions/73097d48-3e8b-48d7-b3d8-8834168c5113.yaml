@@ -1,0 +1,159 @@
+# human-decision.yaml
+decision_id: 73097d48-3e8b-48d7-b3d8-8834168c5113
+type: PRODUCT
+status: RESOLVED
+question: >-
+  For the Add Product rebuild: should the deploy key become a real generated SSH
+  key, and should the parked "register-button" work item be folded into this one?
+context:
+  summary: >-
+    Two consequential choices were escalated rather than decided by the Manager, because
+    each carries a security or scope consequence an agent must not settle alone.
+
+    **Real key generation.** `apps/control_plane/lib/features/products/add_product_page.dart`
+    currently builds its deploy key with `_generateMockKeyPair` (`:126-138`) —
+    `ssh-ed25519 <base64 of 32 random bytes> shipit+<name>`. It is not an installable SSH key,
+    and no public key is ever added to any host's `authorized_keys`, so no repository could
+    ever be reached. The Penpot boards present this key as real: "ed25519 · created on this
+    device · the private half stays in the keychain". Implementing the board's stated flow
+    ("A deploy key is generated for this product", and the host-trust handshake the Unknown-host
+    board depicts) is therefore impossible with a mock. The alternative — keeping the mock —
+    would mean the rebuilt page still cannot register a product, which is the defect the human
+    originally reported.
+
+    **Re-scoping.** A prior design round for this same page is parked at
+    `DESIGN_REVIEW_HUMAN_DECISION_REQUIRED` (report at
+    `docs/engineering/dispatch/tasks/design-register-button/report.md`). The human's new
+    request answers two of its blockers outright: point 2d settles the SSH trust-on-first-use
+    "Cancel" affordance that round had escalated as Level 3 security, and point 2e settles the
+    button/helper-text layout. Both lanes would edit the same 1117-line file.
+  blocking_work_item:
+    item_type: DESIGN_REVISION
+    item_id: 73097d48-3e8b-48d7-b3d8-8834168c5113
+    item_ref: >-
+      Add Product rebuild — mobile SM boards, host-trust transition, points 2a-2f
+  evidence:
+    documents:
+      - type: DESIGN_REVISION
+        id: 18A97195
+        url: docs/engineering/dispatch/tasks/design-register-button/report.md
+      - type: OTHER
+        id: 96c88b5
+        url: apps/control_plane/lib/features/products/add_product_page.dart
+    quantitative_data:
+      - metric: Mock key generator
+        value: "_generateMockKeyPair at add_product_page.dart:126-138 - 'ssh-ed25519 <base64 of 32 random bytes> shipit+<name>'; not an installable key"
+        source: source inspection at 2922fef
+      - metric: AccessStatus.verified producers
+        value: "0 anywhere in the repository; the only accessStatus assignment is :118 -> notChecked. canRegister is the constant false."
+        source: design-reviewer, exhaustive repo-wide grep
+      - metric: canGenerateKey call sites
+        value: "0 - only its own declaration exists, so deployKey can never be created (bootstrap deadlock)"
+        source: design-reviewer
+      - metric: Tests importing add_product_page.dart
+        value: "0 of 26 test files - this page has no regression coverage"
+        source: design-reviewer finding F6
+      - metric: Missing mobile boards
+        value: "4 - no 'SM - Add Product - *' board exists at any state, theme or breakpoint"
+        source: Penpot board inventory, 152 boards enumerated
+      - metric: Existing mobile convention
+        value: "'BPM - Add Product - Light' at 390x844: back link, title, NOT REGISTERED YET eyebrow, 3 fields, deploy-key panel, Register product, helper below, 'Show technical details', bottom nav. No 'What you're registering' or 'What happens next' panel."
+        source: Penpot board inspection
+      - metric: Footer copy in build
+        value: "present at :383 ('Your decision is recorded permanently...'); 'Show technical details' appears nowhere in the current code - it was removed, not de-duplicated"
+        source: source inspection at 2922fef
+    qualitative_tradeoffs:
+      - dimension: Key generation
+        option_a: Real key generation
+        option_b: Keep the mock
+        assessment: >-
+          A real key means generating a keypair in the app, storing the private half in a
+          keychain-equivalent, and presenting a genuinely installable public key. It is the only
+          way the board's flow can work end to end, but it introduces real key material into a
+          Flutter web build, where browser storage is not a hardware keychain — a security
+          property the boards assert ("the private half stays in the keychain") that web cannot
+          literally honour. That gap must be surfaced, not papered over.
+      - dimension: Scope
+        option_a: Fold the parked round in
+        option_b: Keep them separate
+        assessment: >-
+          Both concern the same file and the same gate. Running them separately guarantees two
+          writers on one file and a re-litigated decision. Folding them in loses the parked
+          round's audit trail unless its report is linked, which it now is.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Real key generation, because the mock makes the entire board-specified flow unbuildable and
+      the human's reported defect unfixable. Fold the parked round in, because the new request
+      answers its blockers and both would otherwise edit the same file.
+    confidence: HIGH
+options:
+  - option_id: OPTION_A
+    label: Real key generation, fold scope
+    description: >-
+      Generate a real deploy keypair, store the private half appropriately for a web build, and
+      present a genuinely installable public key. Fold the parked register-button design round
+      into this work item, linking its report so the audit trail survives.
+    implications: >-
+      Makes the board-specified flow implementable and the reported defect genuinely fixable.
+      Introduces real key material into a web build, so the "stays in the keychain" claim needs
+      honest wording. Widest single scope; one writer on one file.
+    estimated_effort: "largest of the options; security-sensitive"
+    risk_level: MEDIUM
+  - option_id: OPTION_B
+    label: Real key, keep scope separate
+    description: >-
+      Generate a real keypair, but run the parked register-button round as its own work item.
+    implications: >-
+      Same key-generation outcome, but two work items contend for one file and the already-settled
+      decisions may be re-litigated.
+    estimated_effort: "same implementation cost, plus coordination"
+    risk_level: MEDIUM
+  - option_id: OPTION_C
+    label: Keep the mock
+    description: >-
+      Keep the mock key pair and scope the rebuild to layout, copy and mobile boards only.
+    implications: >-
+      The page still cannot register a product, so the originally reported defect survives a
+      rebuild. Cheapest, and no key material in the browser.
+    estimated_effort: "small"
+    risk_level: HIGH
+resolution:
+  selected_option: OPTION_A
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-06T08:50:42Z
+  rationale: >-
+    The human answered "Real key generation" and "Yes" (to folding the parked register-button
+    round into this work item). Recorded as OPTION_A.
+  follow_up_actions:
+    - action: >-
+        Design the real deploy-key lifecycle: generation, private-half storage appropriate to a
+        Flutter web build, and honest copy. The boards assert "the private half stays in the
+        keychain", which a web build cannot literally honour - the design must state what
+        actually happens rather than reuse the claim.
+      owner: orchestrator-main
+    - action: >-
+        Model the host-trust transition the boards depict and the build lacks: the
+        `hostUnrecognised` state, "Trust this host", and REMOVAL of "Cancel" per the human's
+        point 2d (cancelling dead-ends the user and leaves the product unregistrable).
+      owner: orchestrator-main
+    - action: >-
+        Document what "Check access" does (point 2c) - it is currently undocumented on the boards
+        and unexplained in the code.
+      owner: orchestrator-main
+    - action: >-
+        Author the four missing mobile state boards: 'SM - Add Product - Unknown host - Light/Dark'
+        and 'SM - Add Product - Verified - Light/Dark' at 390x844, following the existing
+        'BPM - Add Product' mobile conventions.
+      owner: orchestrator-main
+    - action: >-
+        Re-ground the required-field convention on the existing '(OPTIONAL)' label suffix in
+        create_defect_page.dart rather than introducing a second convention.
+      owner: orchestrator-main
+    - action: >-
+        Establish first-ever test coverage for add_product_page.dart, whose gate behaviour is
+        currently unverified by any test.
+      owner: orchestrator-main
+created_by: orchestrator-main
+created_at: 2026-10-06T08:50:42Z
+updated_at: 2026-10-06T08:50:42Z
