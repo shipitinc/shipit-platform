@@ -39,7 +39,9 @@ help:
 	@echo ""
 	@echo "Test Environment (Automated Testing - Isolated from QA):"
 	@echo "  make test-env-up          Start test stack (ephemeral DB, different ports)"
-	@echo "  make test-env-down        Stop and remove test stack"
+	@echo "  make test-env-down        Stop and remove test stack. WARNING: it also"
+	@echo "                            stops the QA stack - both compose files are in"
+	@echo "                            the same compose project, 'docker'."
 	@echo "  make test-env-test        Run E2E tests, then remove everything it created"
 	@echo "  make test-env-logs        View test stack logs"
 	@echo "  make test-env-ps          Show test stack status"
@@ -51,15 +53,19 @@ help:
 	@echo ""
 	@echo "E2E Environment (Legacy):"
 	@echo "  make e2e-up          Start E2E stack"
-	@echo "  make e2e-down        Stop and remove E2E stack"
+	@echo "  make e2e-down        Stop and remove E2E stack. WARNING: it also stops"
+	@echo "                      the QA stack - same compose project, 'docker'."
 	@echo "  make e2e-test        Run E2E tests, then remove everything it created"
 	@echo ""
 	@echo "Client Development (Hot Reload):"
 	@echo "  make client-dev      Start backend only, run Flutter dev server"
 	@echo ""
 	@echo "Utilities:"
-	@echo "  make clean           SAFETY STUB - removes nothing. Use qa-down /"
-	@echo "                        test-env-down / e2e-down for real teardown."
+	@echo "  make clean           SAFETY STUB - removes nothing. To tear down without"
+	@echo "                        touching the QA stack use test-integration,"
+	@echo "                        test-env-test or e2e-test. qa-down deletes the QA"
+	@echo "                        database on purpose; test-env-down and e2e-down"
+	@echo "                        take the QA stack down with them."
 	@echo "  make ps              Show running containers"
 	@echo ""
 
@@ -308,22 +314,41 @@ client-dev:
 #    host. At the time of writing this host had 45 dangling volumes, 11 of them
 #    belonging to unrelated projects (3 devops_*, 8 partnerhub*/teamhub*).
 #    A repository Makefile has no authority over any of them.
-# 3. THE SILENCED EXIT. Every one of those commands ended in
+# 3. THE SILENCED EXIT. Six of those seven lines ended in
 #    `2>/dev/null || true`, so a teardown that failed halfway reported success
-#    and its error text was discarded. That is the same pattern AGENTS.md
+#    and its error text was discarded. The seventh - `docker volume prune -f` -
+#    carried neither, which is the worse of the two arrangements: the
+#    machine-wide prune was the one line whose FAILURE was visible, while its
+#    partial effect went unreported. That is the same pattern AGENTS.md
 #    section "Test resource hygiene" already names as the cause of a container
 #    leak that shipped here once; here it ran in the other direction, hiding a
 #    partial removal rather than a failed one.
 #
-# There is no capability gap here, which is why no replacement target was added.
-# Everything `clean` used to remove is removed by a target that already exists
-# under a name nobody types by accident: `qa-down` for the QA stack (where
-# destroying the database IS the documented job), `test-env-down` and
-# `e2e-down` for the other two. A consolidated label-scoped sweep is being
-# designed (design/port-and-cleanup); adding a second, differently-named
-# destructive path today would give the machine one more way to reach those
-# volumes, not one fewer. Until that sweep lands, the safe behaviour for a
-# target with this name is to do nothing and say so.
+# No replacement target was added, and that is a judgement - not a claim that
+# nothing was missing. Two reasons.
+#
+# First, the teardowns that are genuinely safe already exist under names nobody
+# types by accident, because each one NAMES its own compose project with `-p`
+# and then destroys exactly that project: `test-integration` (project
+# `shipit_integration_<pid>`), `test-env-test` (`shipit_test`) and `e2e-test`
+# (`shipit_e2e`). Read the recipe above each one; the project name and the trap
+# are right there. `qa-down` is a fourth, and for it destroying project `docker`
+# IS the documented job.
+#
+# Second, the gap that IS left - a teardown for what `test-env-up` and `e2e-up`
+# start, that cannot reach the QA stack - is exactly what the label-scoped sweep
+# in design/port-and-cleanup is being designed to close, and a second,
+# differently-named destructive path added today would give this machine one more
+# way to reach those volumes rather than one fewer.
+#
+# Stated explicitly, because it is the one claim a reader is most likely to
+# assume: `test-env-down` and `e2e-down` do NOT fill that gap. Their compose
+# files live in `docker/` and declare no top-level `name:` either, so they
+# resolve to project `docker` as well - running either one takes the QA stack
+# down with it. That is a scoping bug in those two targets, not a property to
+# rely on, and re-scoping them belongs to that same design lane. Until the sweep
+# lands, the safe behaviour for a target with this name is to do nothing and say
+# so.
 #
 # If you are restoring a teardown here, do not restore the quoted recipe above.
 # Use the per-stack targets, and give any new one its own compose project name so
@@ -340,19 +365,35 @@ clean:
 	@echo "  * no other project's Docker volumes (a prune of every unused volume on"
 	@echo "    the host used to sit in this recipe; that is not a repository scope)"
 	@echo ""
-	@echo "WHAT REALLY DOES TEARDOWN - each one scoped to its own compose project:"
+	@echo "WHAT REALLY DOES TEARDOWN:"
+	@echo ""
 	@echo "  make qa-down          Stop the QA stack and delete its database."
+	@echo "                        This one IS scoped to the stack it owns -"
+	@echo "                        compose project 'docker' - and that is its job."
 	@echo "                        Destructive on purpose: the QA database holds"
 	@echo "                        real data. Run it when you mean it."
-	@echo "  make test-env-down    Stop the test stack and delete its ephemeral database."
-	@echo "  make e2e-down         Stop the legacy E2E stack and delete its volumes."
 	@echo ""
-	@echo "WHAT LEAVES NOTHING BEHIND - each creates its own project and removes it"
-	@echo "from a trap on EXIT INT TERM, so a failure or a Ctrl-C cannot leak it:"
-	@echo "  make test-integration Run the server integration suite against a"
-	@echo "                        throwaway Postgres, then destroy it."
-	@echo "  make test-env-test    Run the E2E suite, then destroy what it created."
-	@echo "  make e2e-test         Same, against the legacy E2E compose file."
+	@echo "  DO NOT REACH FOR EITHER OF THESE:"
+	@echo "    make test-env-down  Both resolve to compose project 'docker' as well -"
+	@echo "    make e2e-down       docker/compose.test.yaml and docker/compose.e2e.yaml"
+	@echo "                        live in docker/ and declare no top-level name:. So"
+	@echo "                        either one ALSO stops the QA containers and removes"
+	@echo "                        the QA volumes, docker_postgres_data_qa among them."
+	@echo "                        Today they are qa-down with extra steps, not a"
+	@echo "                        narrower teardown. Both are listed here so the"
+	@echo "                        consequence is on the record, not to recommend"
+	@echo "                        them. Re-scoping them is design/port-and-cleanup."
+	@echo ""
+	@echo "WHAT LEAVES NOTHING BEHIND - each names its own compose project with -p and"
+	@echo "removes it from a trap on EXIT INT TERM, so a failure or a Ctrl-C cannot leak"
+	@echo "it. These are the safe options, and none of them can reach the QA stack:"
+	@echo "  make test-integration Run the server integration suite against a throwaway"
+	@echo "                        Postgres (project shipit_integration_<pid>), then"
+	@echo "                        destroy it."
+	@echo "  make test-env-test    Run the E2E suite (project shipit_test), then destroy"
+	@echo "                        what it created."
+	@echo "  make e2e-test         Same, against the legacy E2E compose file (project"
+	@echo "                        shipit_e2e)."
 	@echo ""
 	@echo "TO SEE WHAT IS RUNNING:  make ps"
 	@echo "A label-scoped replacement sweep is being designed in design/port-and-cleanup."

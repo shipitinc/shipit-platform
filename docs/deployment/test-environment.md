@@ -11,7 +11,7 @@ make test-env-up
 # Run tests against test environment
 make test-env-test
 
-# Stop and clean up
+# Stop and clean up - see the warning below: this also stops the QA stack
 make test-env-down
 ```
 
@@ -121,7 +121,8 @@ docker compose -f docker/compose.test.yaml up --build --abort-on-container-exit
 
 ```bash
 make test-env-up      # Build and start test environment
-make test-env-down    # Stop and remove test environment
+make test-env-down    # Stop and remove test environment. WARNING: this also
+                      # stops the local QA stack - same compose project.
 make test-env-test    # Run E2E tests against test environment
 make test-env-logs    # View test environment logs
 make test-env-ps      # Show test environment status
@@ -140,7 +141,7 @@ and it matters when you are cleaning up:
 
 | Command | Compose project | Cleanup |
 |---------|-----------------|---------|
-| `test-env-up`, `test-env-down`, `test-env-logs`, `test-env-ps` | the default one, derived from the `docker/` directory | `make test-env-down` (or `make clean`) |
+| `test-env-up`, `test-env-down`, `test-env-logs`, `test-env-ps` | the default one, derived from the `docker/` directory — which is the QA stack's project too | `make test-env-down` |
 | `test-env-test` | its own, `shipit_test` | itself — it traps `down -v`, so nothing survives the run |
 
 So `make test-env-test` is self-contained and leaves nothing behind, and
@@ -155,6 +156,23 @@ docker compose -p shipit_test -f docker/compose.test.yaml logs -f
 
 Conversely, `make test-env-up && make test-env-test` does not put the runner in
 front of the `test-env-up` stack — `test-env-test` builds and starts its own.
+
+### `test-env-down` is not a narrow teardown: it also stops the QA stack
+
+That default project is not this document's to own. `docker/` is where
+`docker/compose.qa.yaml` lives, no compose file in it declares a top-level
+`name:`, and neither the repository nor the gitignored local `.env` sets
+`COMPOSE_PROJECT_NAME`, so `docker compose -f docker/compose.test.yaml` resolves
+to project `docker` — the live local QA stack. So `make test-env-down` stops the
+QA containers and removes the QA volumes, `docker_postgres_data_qa` among them.
+It is the documented partner of `make test-env-up`, not a way to tidy up after a
+test run, and `make e2e-down` behaves the same way against
+`docker/compose.e2e.yaml`.
+
+To run these tests and have nothing survive, use `make test-env-test` (or
+`make e2e-test`, or `make test-integration`): each one names a compose project
+of its own with `-p` and removes exactly that project from a trap. `make clean`
+is a safety stub that removes nothing at all.
 
 ### `make test-integration` (separate, and the only target that needs a credential)
 

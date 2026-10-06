@@ -175,17 +175,37 @@ make qa-build-client # Build client image (includes Flutter build)
 
 # E2E Environment
 make e2e-up         # Start E2E stack
-make e2e-down       # Stop E2E stack
-make e2e-test       # Run E2E tests
+make e2e-down       # Stop E2E stack - ALSO stops this QA stack, because both
+                    # compose files resolve to the same compose project
+make e2e-test       # Run E2E tests in a project of its own, then remove it
 
 # Client Development
 make client-dev     # Start backend + run Flutter dev server
 
 # Cleanup
-make clean          # Remove everything
+make clean          # SAFETY STUB - removes nothing. See the note below.
 ```
 
 See `Makefile` for all targets.
+
+`make clean` is a disarmed safety stub: it prints what it did *not* do and removes nothing. The recipe
+it used to run ended in `docker volume prune -f` and three `docker compose down -v` calls that all
+resolved to this QA stack's compose project, and it destroyed `docker_postgres_data_qa` — the database
+in the stack this document describes — irrecoverably, once already. Do not expect it to tidy up.
+
+What to use instead, for this stack:
+
+| Target | Effect on the QA stack |
+|--------|-------------------------|
+| `make qa-down` | Stops it and deletes its database, which is its documented job |
+| `make test-env-down` | Also stops it — same compose project, not a separate one |
+| `make e2e-down` | Also stops it — same compose project, not a separate one |
+| `make test-integration` | Leaves it alone (throwaway project of its own) |
+| `make test-env-test` | Leaves it alone (project `shipit_test`) |
+| `make e2e-test` | Leaves it alone (project `shipit_e2e`) |
+
+`test-env-down` and `e2e-down` stopping the QA stack is a scoping defect in those two targets, not a
+guarantee you should rely on; it is being fixed in `design/port-and-cleanup`.
 
 ## Common Operations
 

@@ -93,11 +93,28 @@ enforced by tooling, not by discipline.
   declares a top-level `name:`, so they all resolve to the SAME project (`docker`, named after the
   directory), which is the live QA stack's project. Those `down -v` lines destroyed `docker_postgres_data_qa`
   once already, irrecoverably, when an agent ran `make clean` as a probe. It also ran
-  `docker volume prune -f`, which is machine-wide and not scoped to a repository, and silenced every
-  exit code with `|| true`. Do not restore that recipe. Teardown belongs to the per-stack targets
-  (`qa-down`, `test-env-down`, `e2e-down`), which each know which stack they own; a label-scoped
-  replacement sweep is being designed in `design/port-and-cleanup`. Any new teardown target must
-  declare its own compose project name.
+  `docker volume prune -f`, which is machine-wide and not scoped to a repository, and six of those seven
+  lines silenced every exit code with `|| true` (the prune line silenced nothing). Do not restore that
+  recipe.
+- Teardown is scoped by the compose **project**, not by the compose file, and only `qa-down` is
+  deliberately aimed at the stack it owns: project `docker`, where destroying the database is the
+  documented job. `test-env-down` and `e2e-down` are **not** scoped to a stack of their own —
+  `docker/compose.test.yaml` and `docker/compose.e2e.yaml` live in `docker/` and declare no top-level
+  `name:` either, and neither the repository nor the gitignored local `.env` sets
+  `COMPOSE_PROJECT_NAME`, so they resolve to that same project `docker`. Either target therefore also
+  stops the QA containers and removes the QA volumes, `docker_postgres_data_qa` among them. Treat that
+  as a scoping defect in those two targets, never as a teardown of a separate stack.
+- Never rely on the default project name to keep a `down -v` away from someone else's stack. Compose
+  derives it from the directory holding the compose file, and `.env` is gitignored and auto-loaded, so
+  a single untracked local line can redirect every `up`/`down` in the repository to a project no one
+  reviewed. Name the project explicitly with `-p` instead.
+- A teardown is safe only when its target gives the stack a compose project name of its own with `-p`,
+  and then destroys exactly that project. That is what `test-integration` (`shipit_integration_<pid>`),
+  `test-env-test` (`shipit_test`) and `e2e-test` (`shipit_e2e`) do, which is why they are the safe way
+  to run tests and the wrong answer to "remove everything". `make clean` is not that answer either — it
+  is the stub above. Re-scoping `test-env-down`/`e2e-down`, and the label-scoped replacement sweep that
+  would close the gap, are both being designed in `design/port-and-cleanup`. Any new teardown target
+  must declare its own compose project name.
 - A mandatory Compose variable (`${VAR:?...}`) in a shared compose file breaks every command that
   reads that file, not just the one service that needs it: Compose interpolates the whole file before
   filtering profiles, and it interpolates even for read-only commands like `ps`. Keep such a value
