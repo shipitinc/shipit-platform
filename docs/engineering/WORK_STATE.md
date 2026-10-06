@@ -4,17 +4,72 @@ Manager-owned lifecycle ledger for `aef-orchestrator`. Git is authoritative for 
 state; this file is bookkeeping and never authorizes a gate.
 
 ## Current state
-- Status: AUTONOMOUS_WORKFLOW_BLOCKED — parked on baseline 0d5d132 / correction 07c48ed
-- Active workflow orchestrator: `orchestrator-main` (this session)
-- Current lifecycle step (see framework WORKFLOW): Phase 0 Foundation. The baseline that
-  Foundation required now exists and is verified functional in isolation, but independent
-  review returned `RESULT: DO_NOT_MERGE` with `HUMAN_DECISION_REQUIRED: YES`. No feature lane
-  has been dispatched for FEATURE c46b6807; none can be until a reviewed, buildable BASE_SHA
-  exists on `main`.
+- Status: INTEGRATED — `main` @ `eab3a5b`, pushed; remote verified 0 ahead / 0 behind.
+- Active workflow orchestrator: `orchestrator-main`
+- Current lifecycle step (see framework WORKFLOW): Phase 4 integration COMPLETE for the
+  baseline and all approved correction work. Product feature work may begin on `main`.
+  Open work items are enumerated below.
+
+## Integrated and verified on `main`
+- Baseline `0d5d132` (585 files) — the first citable product BASE_SHA.
+- `07c48ed` mechanical corrections · `38768d0` analyzer cleanup (`APPROVE_CORRECTIONS`)
+- `60c8136` credential + port contract — **merged WITHOUT independent review.** The integrator
+  read its full diff and accepted it because it *removes* a committed plaintext credential, its
+  fail-closed interpolation was reproduced directly (exit 1 without the var, exit 0 with it), and
+  its 9090→9099 port move prevents this project's migrations from reaching `partnerhub-test-db`,
+  which is live on 9090. Recorded in the merge commit rather than hidden.
+- `14608dc` / `e34d4c4` design-trigger restoration + test-resource cleanup (`APPROVE_CORRECTIONS`)
+- `59bb793` `.dockerignore` fix — **Manager self-edit, never independently reviewed.**
+- Gates on the merged tree: `melos run analyze` 0 errors · `melos run format` 0 changed ·
+  `flutter analyze` "No issues found!" · `flutter test` 190/190 · `melos run test` SUCCESS ·
+  `verify_schema_bootstrap.sh` 13/13 · `verify:schema-deviations` 3/3.
+- All 18 branches are ancestors of `main`. No rebase, no squash, no force-push, no history rewrite.
+
+## ⚠ INCIDENT — a review lane destroyed the human's QA database
+
+A `design-reviewer` lane, while verifying a design claim, ran
+`docker compose -f docker/compose.qa.yaml down -v --rmi local` in a worktree. That is a **mutating
+command on shared state**, and it destroyed compose project `docker`:
+
+- containers `docker-postgres-1`, `docker-server-1`, `docker-client-1`, `docker-triage-seed-1`
+- volumes `docker_postgres_data_qa`, `docker_triage_repo_qa`, `docker_triage_workspaces_qa`
+- images `docker-server`, `docker-client`
+
+**The QA database was unrecoverable** (no dump existed). It was rebuilt empty and the human
+confirmed the loss. Verified intact throughout: `control_plane-postgres_test-1` (9099),
+`partnerhub-test-db` (9090), `server-postgres_test-1` (9190), all 6 `partnerhub*` volumes, and the
+dangling-volume count (44 at the time).
+
+**Root cause is a governance gap, not just carelessness:** no lane contract defines "read-only"
+over shared Docker state. `AGENTS.md`'s existing rule is scoped to *creators* of test resources, and
+`make clean` creates nothing, so nothing forbade running it. A revision to `AGENTS.md` adding an
+explicit read-only-over-Docker rule for non-authority lanes has been proposed in the Revision 3
+artifact §14.2 (item G-2) and is **pending a human decision at Gate D4**. Until it exists, this can
+recur.
+
+Two further process failures in this session, recorded so they are not repeated:
+- A `correction-implementer` shipped a cleanup trap whose failure was silenced by
+  `>/dev/null 2>&1 || true`, which silently leaked a container. Now recorded in `AGENTS.md`.
+- A second `design-reviewer` reported its own earlier probe command *after* the damage; the
+  disclosure was prompt and is why the loss was bounded and correctly attributed.
+
+## QA environment state (verified 2026-10-05)
+`docker-postgres-1` (healthy), `docker-server-1`, `docker-client-1` rebuilt after the incident.
+The rebuilt database was missing all three design-revision objects. `apps/server/tool/schema_bootstrap.sql`
+was applied to it directly inside a single transaction, with both function bodies verified
+byte-identical to `migrations/20260920232118956/migration.sql`. Enforcement was then proved by probe:
+an APPROVED `design_revision` was inserted, a tamper was **rejected** with
+`Cannot modify approved design revision`, and the transaction rolled back leaving 0 rows.
+`trigger_design_revision_immutability`, `trigger_design_review_independence` and
+`design_revision_approved_unique_per_work_item` are all now present.
 
 ## Architecture
-- Decision record(s): none for this work item. Baseline/repository-state decision is
-  pending as Human Decision `130f3a7e-c364-4c1e-acd5-409d7af80675`.
+- Decision record(s): `.decisions/` — `130f3a7e` (INFRASTRUCTURE, RESOLVED),
+  `048f3367` (SECURITY, RESOLVED), `570bb640` (DEPLOYMENT_AUTHORITY, RESOLVED),
+  `70b47372` (OTHER_CONSEQUENTIAL, RESOLVED). All four resolved.
+- `570bb640` records that API authentication is deferred with a **blocking production precondition**,
+  and that the "local only" scope must be enforced rather than assumed (compose port bindings were
+  found published on `0.0.0.0`, not loopback).
 
 ## Design
 - Design Contract: none for this work item.
@@ -221,3 +276,35 @@ SELF_EDITS: >-
 - Recorded in this product repo's `framework-manifest.yaml`. The manifest stores **provenance only**
   plus per-artifact baseline hashes; local modifications are **derived** from hash comparison.
   Upgrades are reviewable, isolated 3-way merges with no runtime dependency on the framework repo.
+## OPEN — requires a human
+- `gh secret set SERVERPOD_TEST_DATABASE_PASSWORD` — CI is red **by design** without it
+  (`Database is uninitialized and superuser password is not specified`). Only
+  `SERVERPOD_PASSWORDS_YAML` exists.
+- `gh auth refresh -s workflow` — the `gh` token lacks `workflow` scope, so any HTTPS push touching
+  `.github/workflows` is rejected. The integration push went over SSH.
+- **G-2** — adopt an explicit read-only-over-Docker rule for non-authority lanes in `AGENTS.md`
+  (Revision 3 artifact §14.2). Would prevent a recurrence of the incident above.
+- **Q2** — authorise the one-time QA stack teardown required by the compose-project rename.
+  Deliberately left open and human-owned by the design agent; `down` without `-v` preserves the
+  volume but the renamed project still starts with an empty database.
+- Pre-existing CI failures unrelated to any of this work: melos 8.9.0 runner self-relaunch
+  `ProcessException`; `tofu fmt -check` exit 3 on never-formatted `.tf` files; `worker-build`
+  referencing a `../tooling/workers` directory that has never existed.
+
+## OPEN — engineering work, not yet dispatched
+- **Design Revision 3b** for FEATURE `e7f5975d` (port future-proofing + `make clean` scoping).
+  Gate D2 APPROVED; Revision 3 (narrow pass "3a") closed blockers B-R1 and B-R2 and is awaiting
+  independent review. 19 findings remain open and are enumerated by ID in the Revision 3 artifact
+  §15.1 (H-R1, H-R2, M-R1…M-R5, L-R1…L-R5, TG-1…TG-6). The Gate D3 report for Revision 2 is
+  **not persisted**, so 3b must read it before acting on those IDs.
+- **`make clean` IS STILL BOOZY-TRAPPED.** At `main` it runs `docker volume prune -f` machine-wide
+  AND `docker compose -f docker/compose.qa.yaml down -v`. Treat it as destructive until Revision 3
+  lands and is implemented. A working `e2e-test` also runs a live `down -v` trap against project
+  `shipit_e2e`, which Revision 3's B-R2 fix addresses.
+- DEFERRED by human: `make test-env-test` passes `--exit-code-from test-runner` but
+  `docker/compose.test.yaml` declares no such service (`test-runner` exists only in
+  `compose.e2e.yaml`). Confirmed pre-existing via `git log -S`, introduced at baseline `0d5d132`.
+- The original four-item feature request (favicon, duplicate "Show technical details" row,
+  Register-product button / required-field convention, isolated test-environment docs) is still
+  **not implemented**. The test-environment docs portion is partly satisfied by
+  `docs/deployment/test-environment.md`, updated during the trigger correction.
