@@ -19,33 +19,47 @@
 --   (serverpod_cli-3.4.13/lib/src/migrations/generator.dart:543-581,
 --   `definitionSqlFile.writeAsString(definitionSql)`), so a hand edit to a
 --   generated `definition.sql` is silently erased by the next regeneration.
---   That is exactly how the objects below came to exist in
---   `migrations/20260920232118956/migration.sql` only, and in no
---   `definition.sql` at all.
+--   That is exactly how the objects below came to exist in a
+--   `migrations/*/migration.sql` only, and in no `definition.sql` at all:
+--   `20260920232118956` carries the two triggers and the approved-revision
+--   index, `20261006150645000` carries the active-credential index.
 --
 --   So the hand-maintained content lives HERE, outside `migrations/`, where
 --   regeneration cannot reach it, and is applied after Serverpod's own
 --   migration step by `tool/schema_bootstrap.dart`. See that file for the
 --   apply/verify contract and the wiring into CI and the local test path.
 --
+--   Every object below therefore has TWO homes, and both are required. This
+--   file covers the fresh path (no recorded migration version -> Serverpod
+--   applies `definition.sql`, which cannot carry any of them). The `migration.sql`
+--   counterpart covers the chain path, which is the one a deployed database
+--   takes. `tool/verify_schema_bootstrap.sh` fails if the two disagree.
+--
 -- IDEMPOTENCE CONTRACT. Every statement is safe to re-run against a database
 -- that already has these objects (chain-migrated, or a previous bootstrap
--- run): functions are CREATE OR REPLACE, the index is CREATE ... IF NOT
+-- run): functions are CREATE OR REPLACE, the indexes are CREATE ... IF NOT
 -- EXISTS, and each trigger is DROP ... IF EXISTS immediately followed by
 -- CREATE. Running the file twice must be a no-op.
 --
--- PARITY CONTRACT. The function bodies and the guarded column list below are
--- deliberately byte-identical to `migrations/20260920232118956/migration.sql`
--- so a bootstrapped (fresh) database enforces exactly what a chain-migrated
--- one enforces. Do not tighten or loosen the column list here without the same
--- change in that migration's semantics — an asymmetry here is a fresh-vs-chain
--- divergence, which is the defect this file exists to remove. In particular
--- `updatedAt` is NOT in the guarded list: that column is Serverpod-managed and
--- the chain path does not guard it either.
+-- PARITY CONTRACT. Every object below must ALSO be created by some
+-- `migrations/*/migration.sql`, so a bootstrapped (fresh) database enforces
+-- exactly what a chain-migrated one enforces. The function bodies and the
+-- guarded column list are deliberately byte-identical to
+-- `migrations/20260920232118956/migration.sql`; the two indexes are
+-- byte-identical to theirs (`20260920232118956` and `20261006150645000`
+-- respectively). Do not change an object here without the same change in its
+-- migration counterpart — an asymmetry is a fresh-vs-chain divergence, which is
+-- the defect this file exists to remove. In particular `updatedAt` is NOT in
+-- the guarded list: that column is Serverpod-managed and the chain path does
+-- not guard it either.
 --
--- Adding a new hand-maintained object: append it here, append it to the
--- `_requiredObjects` list in `tool/schema_bootstrap.dart` so the applier fails
--- loudly if it does not take effect, and add a probe case.
+-- Adding a new hand-maintained object: append it here, add the matching
+-- `CREATE` to a NEW `migrations/<version>/migration.sql` (never to an existing
+-- `definition.sql`, and never to a `migration.sql` that has already shipped),
+-- append it to the `_requiredObjects` list in `tool/schema_bootstrap.dart` so
+-- the applier fails loudly if it does not take effect, add it to
+-- `required_objects` in `tool/verify_schema_bootstrap.sh`, and add a probe
+-- case.
 -- ============================================================================
 
 BEGIN;
@@ -59,6 +73,31 @@ BEGIN;
 CREATE UNIQUE INDEX IF NOT EXISTS "design_revision_approved_unique_per_work_item"
     ON "design_revision" USING btree ("workItemId")
     WHERE ("status" = 'approved');
+
+-- ---------------------------------------------------------------------------
+-- product_credential_active_repository_unique
+-- Partial unique index: at most one NON-REVOKED credential per repository. This
+-- is what makes "one active credential per repository" exclusive under
+-- concurrency; a second active credential for the same repository is a database
+-- error, not a read-modify-write race.
+--
+-- The predicate is deliberately byte-identical to the read that defines
+-- "active" in `PostgresProductRegistryStore.readActiveCredentialForRepository`
+-- (`WHERE "repositoryId" = @repositoryId AND "status" <> 'revoked'`). A
+-- constraint whose predicate is wider than the query that relies on it would
+-- refuse rows the application considers legal; narrower would let two rows the
+-- application treats as one through. Keeping them identical is what makes
+-- rotation work: `rotateCredential` revokes the old credential FIRST, and a
+-- revoked row is excluded from this index, so a replacement may be inserted.
+--
+-- Note this narrows nothing that previously succeeded in a single-threaded
+-- caller: `ProductRegistryEngine.recordGeneratedCredential` already refuses a
+-- second active credential for a repository before it writes. What the index
+-- adds is the guarantee that two callers cannot both pass that read first.
+-- ---------------------------------------------------------------------------
+CREATE UNIQUE INDEX IF NOT EXISTS "product_credential_active_repository_unique"
+    ON "product_credential" USING btree ("repositoryId")
+    WHERE ("status" <> 'revoked');
 
 -- ---------------------------------------------------------------------------
 -- trigger_design_revision_immutability

@@ -171,7 +171,38 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
   // ---------------------------------------------------------------------
   // ProductCredential (ADR 0018 A1 — one per repository, no key material)
   // Table: product_credential
+  //
+  // KEY MATERIAL IS IMMUTABLE, and the guard is in the statement on BOTH
+  // branches below — the CAS branch and the upsert branch. The `expectedVersion`
+  // CAS cannot carry it: the mint path reaches this write with a null
+  // `expectedVersion` (a new credential has no prior version) and hardcodes
+  // `version: 1`, which an already-minted row also carries — so `expectedVersion:
+  // 1` matches and the update still rewrites `publicKey`. Hence the same
+  // predicate over the four immutable fields on both branches: a write whose
+  // key material differs from the stored row updates nothing, which is reported
+  // as a refusal. Dropping either predicate silently reopens the hole, and the
+  // in-memory store's equivalent check — which is unconditional — would then be
+  // the only tier enforcing the contract.
+  //
+  // ONE ACTIVE CREDENTIAL PER REPOSITORY is enforced by
+  // `_activeCredentialUniqueIndex`, a partial unique index declared in
+  // `tool/schema_bootstrap.sql`. It cannot be an `ON CONFLICT` arbiter like
+  // `credentialId` is, because the two are different invariants: here the
+  // correct outcome of a conflict is to REFUSE, not to update. So the loser of
+  // that race reaches this method as a Postgres unique violation and is
+  // translated below into the same typed refusal every other refusal here
+  // raises, rather than leaking a driver exception through the domain API.
   // ---------------------------------------------------------------------
+
+  /// Name of the partial unique index that enforces one active credential per
+  /// repository. Must match `tool/schema_bootstrap.sql`; it is the name the
+  /// driver reports in [DatabaseQueryException.constraintName] when the index
+  /// refuses a write.
+  static const _activeCredentialUniqueIndex =
+      'product_credential_active_repository_unique';
+
+  /// Postgres SQLSTATE for `unique_violation`.
+  static const _uniqueViolationSqlState = '23505';
 
   @override
   Future<void> saveProductCredential(
@@ -209,9 +240,21 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
         '"version" = @version';
 
     if (expectedVersion != null) {
+      // The same key-material predicate as the INSERT branch below, and for the
+      // same reason: the store contract in `product_registry_store.dart` is
+      // UNCONDITIONAL — a write whose credentialId exists with different key
+      // material must throw whatever the caller passed for `expectedVersion`.
+      // Without this predicate the CAS branch silently rewrote `publicKey`, so
+      // the two tiers disagreed: the in-memory store refuses, this one accepted.
+      // The predicate closes the hole in the statement, not in a read before it,
+      // so it holds against any other connection.
       final affected = await _db.execute(
         'UPDATE "product_credential" SET $assignments '
-        'WHERE "credentialId" = @credentialId AND "version" = @expected',
+        'WHERE "credentialId" = @credentialId AND "version" = @expected '
+        'AND "publicKey" = @publicKey '
+        'AND "fingerprint" = @fingerprint '
+        'AND "algorithm" = @algorithm '
+        'AND "referenceName" = @referenceName',
         parameters: QueryParameters.named({
           ..._credentialParams(credential),
           'expected': expectedVersion,
@@ -219,25 +262,95 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
       );
       if (affected == 1) return;
 
+      // Zero rows is ambiguous: the version may have moved, or the key material
+      // may have been re-pointed. Distinguish them by reading the row back, so
+      // the caller is told WHICH invariant it violated. A caller that re-points
+      // key material must not be told "concurrent modification", or it will
+      // retry the same re-point and eventually succeed on a version match.
       final rows = await _db.query(
-        'SELECT "version" FROM "product_credential" '
+        'SELECT "version", "publicKey", "fingerprint", "algorithm", '
+        '"referenceName" FROM "product_credential" '
         'WHERE "credentialId" = @credentialId',
         parameters: QueryParameters.named({
           'credentialId': credential.credentialId,
         }),
       );
-      final actual = rows.isEmpty ? 0 : rows[0].toColumnMap()['version'] as int;
+
+      if (rows.isEmpty) {
+        throw ConcurrentModificationException(
+          entityId: credential.credentialId,
+          expectedVersion: expectedVersion,
+          actualVersion: 0,
+        );
+      }
+
+      final existing = rows[0].toColumnMap();
+      if (existing['publicKey'] != credential.publicKey ||
+          existing['fingerprint'] != credential.fingerprint ||
+          existing['algorithm'] != credential.algorithm ||
+          existing['referenceName'] != credential.referenceName) {
+        throw CredentialNotUsableException(
+          credential.credentialId,
+          'the key material of an existing credential cannot be changed; rotate '
+          'it to issue a new credentialId instead',
+        );
+      }
+
       throw ConcurrentModificationException(
         entityId: credential.credentialId,
         expectedVersion: expectedVersion,
-        actualVersion: actual,
+        actualVersion: existing['version'] as int,
       );
     }
 
-    await _db.execute(
-      'INSERT INTO "product_credential" ($cols) VALUES ($vals) '
-      'ON CONFLICT ("credentialId") DO UPDATE SET $assignments',
-      parameters: QueryParameters.named(_credentialParams(credential)),
+    // `RETURNING` is the whole detection mechanism: a conflicting row whose key
+    // material differs is filtered out by the `WHERE` above, so no row comes
+    // back and this write is refused. Checking the affected-row count of a
+    // bare `execute` would work too, but `RETURNING` cannot be ignored by
+    // accident — an empty result is unmissable here.
+    //
+    // Only THIS branch can be refused by `_activeCredentialUniqueIndex`, and
+    // so only this one translates it. The `expectedVersion` branch above is an
+    // UPDATE, and no reachable path moves a credential from revoked back into
+    // the active set: `revokeCredential` is the only writer of `revoked` and
+    // `recordCredentialCheck` refuses a revoked credential outright, so the
+    // index can never be the constraint an UPDATE trips. `rotateCredential`
+    // relies on that ordering — it revokes first, so the old row leaves the
+    // index before the replacement is inserted.
+    DatabaseResult written;
+    try {
+      written = await _db.query(
+        'INSERT INTO "product_credential" ($cols) VALUES ($vals) '
+        'ON CONFLICT ("credentialId") DO UPDATE SET $assignments '
+        'WHERE "product_credential"."publicKey" = @publicKey '
+        'AND "product_credential"."fingerprint" = @fingerprint '
+        'AND "product_credential"."algorithm" = @algorithm '
+        'AND "product_credential"."referenceName" = @referenceName '
+        'RETURNING "credentialId"',
+        parameters: QueryParameters.named(_credentialParams(credential)),
+      );
+    } on DatabaseQueryException catch (error) {
+      if (error.code != _uniqueViolationSqlState ||
+          error.constraintName != _activeCredentialUniqueIndex) {
+        rethrow;
+      }
+      // Another caller minted for this repository first. Matched on SQLSTATE
+      // AND index name, not on message text: this refuses exactly the race
+      // `_activeCredentialUniqueIndex` exists to refuse, and every other
+      // database error keeps its own type and reaches the caller unchanged.
+      throw CredentialNotUsableException(
+        credential.credentialId,
+        'repository ${credential.repositoryId} already has an active '
+        'credential; another caller recorded one first, so rotate it instead '
+        'of issuing a second one',
+      );
+    }
+    if (written.isNotEmpty) return;
+
+    throw CredentialNotUsableException(
+      credential.credentialId,
+      'the key material of an existing credential cannot be changed; rotate '
+      'it to issue a new credentialId instead',
     );
   }
 

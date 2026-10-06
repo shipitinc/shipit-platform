@@ -903,12 +903,26 @@ class ProductRegistryEngine {
   // *public* half plus the reference name under which the private half sits
   // in the operator's secret store. A private key must never reach this
   // package.
+  //
+  // KEY MATERIAL IS CHOSEN ONCE, AT MINT. `recordGeneratedCredential` accepts a
+  // caller-supplied `credentialId` and a null `expectedVersion`, and the
+  // one-active guard below declines to refuse when `supersedesCredentialId`
+  // equals the active credential's id — so this method can be called with an
+  // existing id and reach the store with fresh key material. The store refuses
+  // that write (`ProductRegistryStore.saveProductCredential`); it is not
+  // enforced here, because only the write can be atomic. To change the key for
+  // a repository, use [rotateCredential], which mints a NEW `credentialId` and
+  // leaves the superseded row's key material as it was.
 
   /// Records a newly generated credential for [repositoryId].
   ///
-  /// The credential starts [CredentialStatus.generated] with an
+  /// The credential starts [CredentialStatus.generated] with a
   /// [HostKeyStatus.unknown] host: it cannot reach anything until a human
   /// confirms the host key and a real connection succeeds.
+  ///
+  /// [credentialId] must be a NEW identity. Supplying one that already exists
+  /// with different key material is refused by the store and changes nothing;
+  /// see the section note above.
   Future<RepositoryCredential> recordGeneratedCredential({
     required String productId,
     required String repositoryId,

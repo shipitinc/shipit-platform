@@ -9,7 +9,16 @@
 # Serverpod model-driven generator cannot render, so the class of drift it was
 # meant to catch passed silently while every fresh database — CI included — was
 # missing the design-revision immutability trigger, the design-review
-# independence trigger and the one-approved-revision-per-work-item index.
+# independence trigger, the one-approved-revision-per-work-item index and the
+# one-active-credential-per-repository index.
+#
+# PARITY IS CHECKED AGAINST THE WHOLE CHAIN, NOT ONE MIGRATION. An object added
+# after 20260920232118956 belongs in its own migration directory, so requiring
+# every object to appear in that one file would report a correct later migration
+# as a divergence. The chain is the concatenation of every `migrations/*/
+# migration.sql`, which is what a chain-migrated database actually replays. The
+# single reference migration is still used for the guarded-column comparison,
+# because that is specifically about the immutability function it defines.
 #
 # WHY THIS IS A STATIC CHECK. The fresh-vs-chain difference is a property of the
 # SQL that each path applies, not of any particular database:
@@ -45,9 +54,18 @@ repo_root="$(cd "${server_dir}/../.." && pwd)"
 asset="${server_dir}/tool/schema_bootstrap.sql"
 applier="${server_dir}/tool/schema_bootstrap.dart"
 
-# The migration that first created these objects by hand. Its `migration.sql` is
-# what a chain-migrated database replays, so it is the reference for parity.
+# The migration that first created the design-revision objects by hand. Its
+# `migration.sql` is still the reference for the guarded-column comparison in
+# check 3, which is specifically about that function.
 reference_migration="${server_dir}/migrations/20260920232118956/migration.sql"
+
+# Every `migration.sql` a chain-migrated database replays, concatenated. This —
+# not the single reference migration — is the true chain path: Serverpod applies
+# every version after the recorded one (`migration_manager.dart`
+# `_getVersionsToApply`), and objects legitimately land in different migrations
+# as they are added over time. Anchoring parity on one file would have made a
+# later migration for a new object look like a fresh-vs-chain divergence.
+chain_migrations=("${server_dir}"/migrations/*/migration.sql)
 
 ci_workflow="${repo_root}/.github/workflows/integration.yaml"
 makefile="${repo_root}/Makefile"
@@ -70,6 +88,7 @@ required_objects=(
   "trigger:trigger_design_revision_immutability"
   "trigger:trigger_design_review_independence"
   "index:design_revision_approved_unique_per_work_item"
+  "index:product_credential_active_repository_unique"
 )
 
 # The DDL statement that must create <kind> "<name>". `[^;]*` stops the match
@@ -156,14 +175,24 @@ done
 #    function: a column present in one and absent in the other is a
 #    fresh-vs-chain divergence in either direction.
 # ---------------------------------------------------------------------------
-reference_ddl="$(sql_without_comments "${reference_migration}")"
+chain_ddl=""
+for migration in "${chain_migrations[@]}"; do
+  if [ -r "${migration}" ]; then
+    chain_ddl+="$(sql_without_comments "${migration}")"$'\n'
+  fi
+done
+if [ -z "${chain_ddl}" ]; then
+  fail "could not read any migrations/*/migration.sql, so chain parity cannot be checked"
+  exit 2
+fi
+
 for entry in "${required_objects[@]}"; do
   kind="${entry%%:*}"
   object="${entry#*:}"
-  if grep -qE "$(ddl_pattern "${kind}" "${object}")" <<<"${reference_ddl}"; then
+  if grep -qE "$(ddl_pattern "${kind}" "${object}")" <<<"${chain_ddl}"; then
     ok "chain path creates ${kind} ${object}"
   else
-    fail "chain path (migrations/20260920232118956/migration.sql) no longer creates ${kind} ${object}, but the bootstrap does: fresh and chain databases now differ"
+    fail "no migrations/*/migration.sql creates ${kind} ${object}, but the bootstrap does: fresh and chain databases now differ"
   fi
 done
 
@@ -241,7 +270,8 @@ if [ "${status}" -ne 0 ]; then
   echo "SCHEMA BOOTSTRAP GUARD FAILED. Fresh and chain-migrated databases no longer agree on:"
   echo "  - the design_revision immutability trigger,"
   echo "  - the design_review_result independence trigger,"
-  echo "  - the one-approved-revision-per-work-item index."
+  echo "  - the one-approved-revision-per-work-item index,"
+  echo "  - the one-active-credential-per-repository index."
   echo "Fix apps/server/tool/schema_bootstrap.sql and its migration counterpart together;"
   echo "never add the DDL to a generated definition.sql."
 fi

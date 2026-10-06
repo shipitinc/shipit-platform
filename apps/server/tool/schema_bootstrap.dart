@@ -10,9 +10,15 @@
 // `migration.sql` instead and therefore receives every hand-written object ever
 // placed in one. Anything the model-driven generator cannot render — the
 // design-revision immutability trigger, the design-review independence trigger,
-// the partial unique index enforcing one approved revision per work item —
-// exists only in `migrations/20260920232118956/migration.sql`, so it is absent
-// from every fresh database, CI included.
+// the partial unique index enforcing one approved revision per work item, the
+// partial unique index enforcing one active credential per repository —
+// therefore exists only in a `migration.sql`, never in a `definition.sql`.
+//
+// This tool exists for the half that a chain-migrated database does NOT get:
+// `make test-integration` and CI create their database fresh, so Serverpod
+// applies `definition.sql` to them and they never replay the chain. Both paths
+// need the objects, so both carry a copy and
+// `tool/verify_schema_bootstrap.sh` fails if they drift apart.
 //
 // It cannot be fixed by editing a generated `definition.sql`: the generator
 // rewrites that file verbatim from the Dart models on every
@@ -23,14 +29,21 @@
 // migration step.
 //
 // FAIL LOUDLY. Applying is not success. This tool then asserts, in the live
-// database, that every object in `_requiredObjects` exists AND that the three
-// mutations the schema exists to prevent are each rejected by the database. A
-// bootstrap that did not take effect exits 1, so a caller cannot mistake it for
-// a clean run.
+// database, that every object in `_requiredObjects` exists AND that every
+// mutation the schema exists to prevent is rejected by the database, while the
+// one it must ALLOW — a second, revoked credential for a repository that
+// already has an active one, which is what rotation does — is still accepted.
+// A bootstrap that did not take effect exits 1, so a caller cannot mistake it
+// for a clean run.
 //
-// The probes run inside a transaction that is always rolled back, so they
-// leave no rows behind and cannot interfere with a test suite sharing the
-// database.
+// PROBE ROWS. The probes write rows, so they are not read-only: each probe
+// COMMITS its fixture and its mutation (Serverpod's `session.db.transaction`
+// maps to postgres `runTx`, which commits when the callback returns — it is not
+// a rollback). Nothing leaks, because `_deleteProbeRows` removes every row whose
+// id carries the probe prefix, in a `finally`, before and after each probe — but
+// that explicit cleanup is what keeps them invisible to a later probe or a
+// sharing test suite, not the transaction. Do not describe these probes as
+// rolled back; if the cleanup is ever removed, this is what stops holding.
 //
 // WIRING (both required; a missing site is the drift this guards against):
 //   * CI    — `.github/workflows/integration.yaml`, step "Apply schema
@@ -65,6 +78,7 @@ const _requiredObjects = <(String, String)>[
   ('function', 'enforce_design_review_independence'),
   ('trigger', 'trigger_design_review_independence'),
   ('index', 'design_revision_approved_unique_per_work_item'),
+  ('index', 'product_credential_active_repository_unique'),
 ];
 
 /// Raised when the bootstrap could not be applied or did not take effect.
@@ -116,6 +130,9 @@ Future<void> _run(bool verifyOnly) async {
 
   await pod.start();
 
+  // Hoisted out of the `try` so the summary line can report what actually
+  // executed; it stays -1 when verification throws, which cannot reach it.
+  var probes = -1;
   try {
     final session = await Serverpod.instance.createSession(
       enableLogging: false,
@@ -140,14 +157,14 @@ Future<void> _run(bool verifyOnly) async {
     }
 
     await _verifyObjectsExist(session);
-    await _verifyEnforcement(session);
+    probes = await _verifyEnforcement(session);
   } finally {
     await pod.shutdown(exitProcess: false);
   }
 
   stdout.writeln(
     'Schema bootstrap OK: ${_requiredObjects.length} objects present, '
-    '3 enforcement probes rejected as required.',
+    '$probes enforcement probes behaved as required.',
   );
 }
 
@@ -202,19 +219,31 @@ Future<void> _verifyObjectsExist(Session session) async {
 /// touching anything a test suite owns.
 const _probeIdPrefix = 'schema-bootstrap-probe';
 
-/// Probes that the database rejects each mutation the schema exists to prevent.
+/// Repository the credential probes compete for. Distinct per probe run is not
+/// needed: `_deleteProbeRows` clears every probe row before each probe, and
+/// `product_credential` has no foreign keys, so credential rows are deleted on
+/// their own.
+const _probeRepoId = '$_probeIdPrefix-repo';
+
+/// Probes that the database rejects each mutation the schema exists to prevent,
+/// plus the one it must still accept.
 ///
 /// Each probe commits its own fixture, then runs the mutation in a separate
 /// transaction. Separating them matters twice over: a fixture that fails to
 /// insert is then an unambiguous failure rather than indistinguishable from a
 /// rejected mutation, and the mutation's transaction is rolled back by the
 /// driver when Postgres refuses it, so a rejected probe leaves the committed
-/// fixture intact for the next one.
+/// fixture intact for the next one. A probe the database ACCEPTS also commits;
+/// see [_expectAccepted].
 ///
 /// Probe rows are deleted both before and after, so a previous run that was
 /// killed mid-probe cannot make this one fail on a duplicate key. Every row is
 /// removed in a `finally`.
-Future<void> _verifyEnforcement(Session session) async {
+///
+/// Returns the number of probes run, so the summary line below counts what
+/// actually executed instead of asserting a literal that can drift out of sync
+/// with this function.
+Future<int> _verifyEnforcement(Session session) async {
   await _deleteProbeRows(session);
 
   final approved = _insertRevisionSql(
@@ -239,7 +268,23 @@ Future<void> _verifyEnforcement(Session session) async {
       '$_probeIdPrefix-designer', 'approved', '[]', '[]', now(), 1
     );
     """;
+  final activeCredential = _insertCredentialSql(
+    credentialId: '$_probeIdPrefix-cred-active',
+    repositoryId: _probeRepoId,
+    status: 'generated',
+  );
+  final secondActiveCredential = _insertCredentialSql(
+    credentialId: '$_probeIdPrefix-cred-active-2',
+    repositoryId: _probeRepoId,
+    status: 'verified',
+  );
+  final revokedCredential = _insertCredentialSql(
+    credentialId: '$_probeIdPrefix-cred-revoked',
+    repositoryId: _probeRepoId,
+    status: 'revoked',
+  );
 
+  var probes = 0;
   try {
     await _expectRejected(
       session,
@@ -252,6 +297,7 @@ Future<void> _verifyEnforcement(Session session) async {
           'trigger_design_revision_immutability is not enforcing, so an approved '
           'design can be edited after approval.',
     );
+    probes++;
 
     await _expectRejected(
       session,
@@ -262,6 +308,7 @@ Future<void> _verifyEnforcement(Session session) async {
           'design_revision_approved_unique_per_work_item is not enforcing, so '
           'approval exclusivity is not protected under concurrency.',
     );
+    probes++;
 
     await _expectRejected(
       session,
@@ -272,9 +319,42 @@ Future<void> _verifyEnforcement(Session session) async {
           'trigger_design_review_independence is not enforcing, so a design '
           'execution can approve its own revision.',
     );
+    probes++;
+
+    await _expectRejected(
+      session,
+      fixture: activeCredential,
+      mutation: secondActiveCredential,
+      onAccepted:
+          'A second non-revoked product_credential for one repository was '
+          'ACCEPTED. product_credential_active_repository_unique is not enforcing, so '
+          '"one active credential per repository" is not protected under '
+          'concurrency and two callers can both mint one.',
+    );
+    probes++;
+
+    // The negative probe above passes just as well against a NON-partial index
+    // that rejects every second credential for a repository — including the
+    // revoked one `rotateCredential` writes after revoking the old credential.
+    // That would break rotation with a schema that still satisfied the four
+    // probes, so the predicate's partial-ness is asserted here rather than
+    // assumed: the second row for this repository is refused only because it is
+    // active, and is accepted because it is revoked.
+    await _expectAccepted(
+      session,
+      fixture: activeCredential,
+      mutation: revokedCredential,
+      onRejected:
+          'A revoked product_credential alongside an active one for the same '
+          'repository was REJECTED. product_credential_active_repository_unique is '
+          'not partial, so credential rotation cannot mint its replacement.',
+    );
+    probes++;
   } finally {
     await _deleteProbeRows(session, quietly: true);
   }
+
+  return probes;
 }
 
 /// Commits [fixture], then asserts Postgres refuses [mutation].
@@ -318,6 +398,53 @@ Future<void> _expectRejected(
   throw BootstrapFailure(onAccepted);
 }
 
+/// Commits [fixture], then asserts Postgres ACCEPTS [mutation].
+///
+/// The mirror of [_expectRejected], and the reason the negative probes above are
+/// not sufficient on their own: a constraint that is too broad refuses the
+/// mutation that keeps the schema honest. Everything it asserts is that the
+/// mutation was not refused.
+///
+/// The accepted row COMMITS and is not rolled back: `session.db.transaction` maps
+/// to postgres `runTx`, which commits when the callback returns
+/// (serverpod-3.4.13 `database_connection.dart:756-778`). Nothing leaks only
+/// because the caller runs this last and `_deleteProbeRows` removes every probe
+/// row in a `finally`. That cleanup, not the transaction, is what keeps the row
+/// invisible to a later probe or a sharing test suite.
+///
+/// Throws [BootstrapFailure] when Postgres refuses [mutation] — the constraint
+/// is then broader than the behaviour the application depends on — or when the
+/// fixture cannot be committed, which would make the probe meaningless.
+Future<void> _expectAccepted(
+  Session session, {
+  required String fixture,
+  required String mutation,
+  required String onRejected,
+}) async {
+  await _deleteProbeRows(session);
+
+  try {
+    await session.db.unsafeSimpleExecute(fixture);
+  } catch (error, stackTrace) {
+    throw BootstrapFailure(
+      'enforcement probe fixture could not be committed, so the probe is '
+      'meaningless: $error\n$stackTrace',
+    );
+  }
+
+  try {
+    await session.db.transaction((transaction) async {
+      await session.db.unsafeSimpleExecute(mutation, transaction: transaction);
+    });
+  } on BootstrapFailure {
+    rethrow;
+  } catch (error) {
+    throw BootstrapFailure('$onRejected\nPostgres said: $error');
+  }
+
+  stdout.writeln('  accepted by the database: ${_firstLine(mutation)}');
+}
+
 /// Removes every row the probes created. Child tables first.
 ///
 /// Cleanup must never mask the failure that triggered it, so when [quietly] is
@@ -326,6 +453,8 @@ Future<void> _expectRejected(
 Future<void> _deleteProbeRows(Session session, {bool quietly = false}) async {
   try {
     await session.db.unsafeSimpleExecute(
+      'DELETE FROM "product_credential" WHERE "credentialId" LIKE '
+      "'$_probeIdPrefix%'; "
       'DELETE FROM "design_revision_event" WHERE "designRevisionId" LIKE '
       "'$_probeIdPrefix%'; "
       'DELETE FROM "design_finding" WHERE "revisionId" LIKE '
@@ -362,6 +491,27 @@ String _insertRevisionSql({
     '$revisionId', '$workItemId', '$_probeIdPrefix-product', 'dsr', 'penpot',
     '[]', '[]', '[]', '[]', '$designerExecutionId', '[]', '$status', 'low',
     now(), now(), ${status == 'approved' ? 'now()' : 'NULL'}, 1
+  );
+""";
+
+/// Builds the `product_credential` INSERT used by the credential probes.
+///
+/// [status] is the only value that distinguishes the probe that must be refused
+/// from the one that must be allowed; every other column is a constant, so a
+/// refusal can only be the partial unique index doing its job.
+String _insertCredentialSql({
+  required String credentialId,
+  required String repositoryId,
+  required String status,
+}) =>
+    """
+  INSERT INTO "product_credential" (
+    "credentialId", "productId", "repositoryId", "referenceName", "publicKey",
+    "fingerprint", "algorithm", "status", "createdAt", "hostKeyStatus", "version"
+  ) VALUES (
+    '$credentialId', '$_probeIdPrefix-product', '$repositoryId',
+    'GIT_SCHEMA_BOOTSTRAP_PROBE', 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 $_probeIdPrefix',
+    'SHA256:$_probeIdPrefix', 'ed25519', '$status', now(), 'unknown', 1
   );
 """;
 
