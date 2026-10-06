@@ -312,8 +312,8 @@ SELF_EDITS: >-
 ---
 
 ## WORK_ITEM: Add Product rebuild — IN DESIGN (supersedes the parked register-button round)
-STATE: DESIGN_REVIEWING — keys revision **APPROVED** (risk 3, agreement YES); mobile revision at
-  cycle 4 (risk 2), awaiting a final focused re-review; five Human Decisions PENDING for Gate D4
+STATE: GATE D4 RESOLVED — keys revision **APPROVED** (risk 3); mobile revision 4 awaiting its focused
+  re-review; **all six Human Decisions RESOLVED**; store-integrity complete and awaiting re-review
 LANE: design-addproduct-keyservice, design-addproduct-mobile — both CLOSED at DESIGN_REVISION_COMPLETE
 BASE_SHA: `77c19f1`, `main` = `origin/main` = 1:1 (verified 0 ahead / 0 behind)
 OWNED_PATHS: keys lane owns `docs/engineering/dispatch/tasks/design-addproduct-keyservice/**`;
@@ -382,41 +382,74 @@ DESIGN_REVIEW:
     (`A69AB98C`, record-only, 0 board edits). The cycle-3 reviewer warned that approving "because it is
     cycle 3" would relax a standard on the calendar, so **rev 4 still needs a focused re-review.**
 BLOCKERS:
-  - type: PENDING_HUMAN_DECISION
-    detail: >-
-      Gate D4 cannot be reached until the five PENDING decisions resolve. Three were **reissued** after the
-      approving review: `9417f8bf` (now the ADR-supersession question, with A2 marked FORBIDDEN by ADR
-      0018 at the option itself), `79e860e2` (restated as Q3′), `898b07d0` (reframed as an ADR
-      contradiction, severity raised). None may be presented in its previous form.
   - type: PENDING_REVIEW
     detail: >-
-      Mobile revision 4 (`A69AB98C`) has not been independently reviewed. It is a record-only pass, so
-      this is a focused re-review, not a full one.
-  - type: GAP_NOT_CLOSED
+      Two lanes await independent review: mobile revision 4 (`A69AB98C`, record-only, needs a focused
+      re-review) and `fix/credential-store-integrity` (needs a second engineering review covering the GAP-2
+      migration and the GAP-1 guard change).
+  - type: DESIGN_SUPERSEDED_BY_DECISION
     detail: >-
-      **GAP-2** — the D-2 partial unique index that enforces ADR 0018 A1's one-credential-per-repository
-      exists ONLY in `apps/server/tool/schema_bootstrap.sql`, and `schema_bootstrap.dart` is wired into
-      `Makefile:228` and `integration.yaml:131` only — **no QA, staging or production path runs it.** A
-      chain-migrated database therefore does not get the index and the invariant does not reach a deployed
-      database, which the repository's own parity contract (`schema_bootstrap.sql:37-44`) calls "the defect
-      this file exists to remove". The identical shape (`design_revision_approved_unique_per_work_item`) was
-      solved by putting the index in BOTH the bootstrap and `migrations/20260920232118956/migration.sql`.
-      Closing it needs `apps/server/migrations/**`, which is prohibited — see the decision filed with it.
-      **GAP-1** — `verify_schema_bootstrap.sh:69-73` hardcodes three required objects and is now **blind**
-      to the new index: deleting the CREATE would leave the guard green, the exact failure its own header
-      says it exists to prevent.
-SAFE_PARALLEL: independent design review of both revisions (Gate D3) — dispatched. Read-only
-  reconnaissance of the SSH transport seam (`HostKeyStatus` has no runtime enforcer) is safe but is
-  deliberately NOT dispatched as a writer.
+      The approved keys revision 2 was written against **unresolved** Gate D4 decisions. All six are now
+      resolved, so it needs a **revision 3** that incorporates them — chiefly: A3 replaces the four substrate
+      options, `referenceName` must leave `RepositoryCredentialView` (G-7), revocation becomes a manager-handle
+      deletion, and the key flow now creates the Product and RepositoryReference rows as an explicit first step.
+      The mobile revision is coupled to that last change (the Unknown-host state must show the product row
+      already existing) and to the footer correction the human supplied.
+  - type: DEPLOYMENT_PRECONDITION
+    detail: >-
+      The duplicate-credential audit must be run **by a human** against every deployed database before the new
+      migration is applied. No QA, staging or production database is reachable from a lane.
+GATE_D4_RESOLVED:
+  - `9417f8bf` **OPTION_C** — supersede ADR 0018 `:85-88`; **A3, an external secret manager**. A2 permanently
+    excluded. **G-7 becomes REQUIRED**: under A3 the `referenceName` reference IS the sensitive artifact, so
+    `RepositoryCredentialView` must stop exposing it.
+  - `7b1bc8b7` **OPTION_A** — fail closed with named remediation. The remediation copy is a required
+    deliverable, and under A3 the substrate is a runtime dependency, so this path is common, not edge.
+  - `79e860e2` **OPTION_A** — destroy the manager handle on revoke, keep the row. **ADR 0018 `:113-114`
+    SUPERSEDED**: revocation now has a ShipIt-side action.
+  - `898b07d0` **OPTION_A** — split identity from registration. **ADR 0018 `:100-102` UPHELD**: human point 2b
+    becomes satisfiable, so the ADR and the engine stop contradicting each other.
+  - `4d2c6b81` **OPTION_A** — index goes into a NEW migration as well. No template exists (the prior instance
+    ran the other way); a duplicate audit must run first because `CREATE UNIQUE INDEX` fails on duplicates.
+  - `27ea6536` **OPTION_A with a recorded deviation** — the human checked the boards and corrected both lanes:
+    desktop = divider + **right-aligned** `Show technical details` text button, no copy; mobile =
+    **left-aligned** button, **no** divider, no copy. "Stay true to both designs in Penpot and in code."
+  - **ADR 0018 is now partly superseded** — `:85-88` and `:113-114` need amendment; `:100-102` stands.
+    Owner: the human, as ADR owner.
+STORE_INTEGRITY:
+  - `fix/credential-store-integrity` — `RESULT: IMPLEMENTED`, `READY_FOR_INDEPENDENT_REVIEW: YES`, **nothing
+    committed**. **D-1, D-2, GAP-1 and GAP-2 all closed.** Gates: format pass · analyze "No issues found!" ·
+    `dart test packages/product_registry/test` `+142` · `make test-integration` `+164 -1` (sole failure the
+    pre-existing dogfood `.git` file-vs-directory assertion, **re-proven on pristine `064703d` this pass** at
+    `+157 -1`) · `verify_schema_bootstrap.sh` 16 OK, exit 0, now covering the new index.
+  - **GAP-2 closed three ways**, the strongest being the product's own machinery: a database built at baseline
+    (index absent) then `dart run tool/schema_bootstrap.dart` applies `20261006150645000`. This also settles
+    `migration_registry.txt` empirically — it never listed the new version and serverpod applied it anyway,
+    because `listVersions()` enumerates directories. Both directions are tested, located by *content*.
+  - The implementer found its own prior pass's defects: the in-memory M-2 test was green against an **empty
+    store** and would have stayed green asserting nothing; and the Postgres CAS predicate had **no test at all**.
+    Both fixed. Every check now has a negative control proving it goes red when the covered thing is removed.
+  - **Disclosed, not smoothed:** the duplicate audit against a *deployed* database is `NOT_RUN`. Zero
+    duplicates in every reachable database, but the only credential-bearing one holds **0 rows**, which is a
+    vacuous "no". Also: the audit query as dispatched **does not execute** — `repositoryId` is quoted
+    camelCase and unquoted it errors, which reads exactly like "no duplicates". The migration embeds the
+    corrected form.
+SAFE_PARALLEL: the keys revision 3 and the mobile footer/coupling correction, which are disjoint documents
+  and both depend only on the recorded resolutions. Read-only reconnaissance of the SSH transport seam
+  (`HostKeyStatus` has no runtime enforcer) remains safe but deliberately undispatched as a writer.
 PROHIBITED_PARALLEL: >-
-  Any implementation lane. The keys lane names the reason precisely: implementing a private-half store
-  now would pre-empt a decision the human explicitly reserved, and each option has a different
-  migration and dependency footprint. Also prohibited: the SSH transport seam as a side effect of this
+  Any **feature** implementation lane. The substrate is now decided but the design has not yet been
+  revised to carry the decision, and A3's runtime reachability is UNVERIFIED — the design records LOW
+  confidence and states no option was runtime-verified. Also prohibited: the SSH transport seam as a side effect of this
   feature — D-3 below shows no host-key verification exists anywhere, and that work is
   security-critical and needs its own review.
 NEXT_AUTOMATIC_ACTION: >-
-  Independent design review of both revisions (Gate D3), then Phase 2 presentation of the five PENDING
-  decisions through the structured question UI, then Design Contract freeze.
+  Focused re-review of mobile revision 4; engineering re-review of `fix/credential-store-integrity`; then a
+  keys **revision 3** incorporating the six resolutions (the approved revision 2 predates them) plus the
+  mobile coupling and the footer correction; then Design Contract freeze, QA Contract, and the feature's
+  implementation lane. `fix/credential-store-integrity` should merge ahead of the feature — it is
+  independently reviewed, it closes a live defect, and the feature's key service depends on the invariant it
+  establishes.
 SELF_EDITS: >-
   Workflow bookkeeping only, per `aef-orchestrator` §2: this file, `docs/engineering/dispatch/LANES.md`,
   `docs/engineering/dispatch/DECISIONS.md`, `docs/engineering/dispatch/tasks/*/`, and the five Human
