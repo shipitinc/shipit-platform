@@ -335,3 +335,40 @@ lane that could execute it — which is blocked at Gate D4. A live silent-key-ro
 `X` is a **cited** identifier, follow the citations; enumerate locations with `glob`, not `ls` on one guessed
 path. Instance 2 fails into *false confidence* — it produced a fabricated traceability gap plus ten
 "substitute assumptions" where seven were recorded ADR decisions.
+
+## Gate D4 — RESOLVED, and what it changed
+
+Six decisions resolved by the repository owner through the structured question UI; tamper-checked on each
+(`selected_option` matches an `option_id` as presented, with one recorded deviation on `27ea6536`, where the
+human rejected both framings and supplied a per-platform footer spec after checking the boards directly).
+
+The single most consequential outcome: **the at-rest protection model is A3, an external secret manager** —
+SHIP IT never holds key bytes, only a reference. That makes the credential reference *itself* the sensitive
+artifact, so **G-7 (exposing `referenceName` to clients) is no longer optional**. It also supersedes two ADR
+0018 clauses while upholding a third.
+
+### Lanes awaiting review
+| task_id | type | state | result |
+|---|---|---|---|
+| design-review-addproduct-mobile (rev 4, focused) | re-review | DISPATCHED, network-failed, retry pending | — |
+| review-fix-credential-store-integrity (2nd pass) | review | PENDING | must cover the GAP-2 migration + GAP-1 guard change |
+
+### Store-integrity — COMPLETE, nothing committed
+`fix/credential-store-integrity` @ `BASE_SHA 064703d`: **D-1, D-2, GAP-1, GAP-2 all closed.** `RESULT:
+IMPLEMENTED`, `READY_FOR_INDEPENDENT_REVIEW: YES`.
+
+Gates: format pass · analyze "No issues found!" · `+142` unit · `make test-integration` `+164 -1` · schema
+guard 16 OK. The one failure is the pre-existing dogfood `.git` assertion, **re-proven on pristine `064703d`
+this pass** at `+157 -1`, so the delta is exactly the seven new tests.
+
+**The implementer's own quality findings on its prior pass, which is the pattern worth keeping:** the in-memory
+M-2 test was green against an **empty store** and would have stayed green asserting nothing; and the Postgres
+CAS predicate had **no test at all**. Both are now fixed, and **every check carries a negative control proving
+it goes red when the covered thing is removed.**
+
+**Disclosed rather than smoothed:** the duplicate audit against a *deployed* database is `NOT_RUN` — no QA,
+staging or production database is reachable from a lane. Zero duplicates were found in every reachable
+database, but the only credential-bearing one holds **0 rows**, which is a vacuous "no". And the audit query
+as dispatched **does not execute**: `repositoryId` is quoted camelCase, and unquoted it errors — which reads
+exactly like "no duplicates". The migration embeds the corrected form, and a human with target access must run
+the audit before deploying.
