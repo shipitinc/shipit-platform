@@ -308,3 +308,72 @@ SELF_EDITS: >-
   Register-product button / required-field convention, isolated test-environment docs) is still
   **not implemented**. The test-environment docs portion is partly satisfied by
   `docs/deployment/test-environment.md`, updated during the trigger correction.
+
+---
+
+## WORK_ITEM: Add Product rebuild — IN DESIGN (supersedes the parked register-button round)
+STATE: DESIGN_PENDING — decisions taken, design not yet dispatched
+LANE: (design lane not yet dispatched for the folded scope)
+BASE_SHA: `c5f5f6a` (this commit), `main` = `origin/main` = 1:1
+BLOCKERS:
+  - type: PENDING_DESIGN_DISPATCH
+    detail: >-
+      Four decisions are recorded and resolved; the Design Brief + Revision covering the folded
+      scope has NOT been dispatched. See HUMAN SCOPE below.
+DECISIONS:
+  - resolved: 73097d48-3e8b-48d7-b3d8-8834168c5113 (PRODUCT, OPTION_A) — real deploy-key
+    generation over the existing mock; folded the parked register-button round into this item.
+  - resolved: b869ec24-236e-4e9c-8703-70656fa368c4 (ARCHITECTURE, OPTION_A) — deploy keys are
+    generated and stored **server-side** behind an API returning only the public half, because
+    SHIP IT pushes from its backend, not the browser. Verified: `onboarding_worker.dart`,
+    `product_registry_engine.dart` and `control_plane_service.dart` already perform clone/push,
+    and no deploy-key infrastructure exists server-side today.
+  - folded-in prior round: `docs/engineering/dispatch/tasks/design-register-button/` — report
+    persisted; its D3/D6 gating questions are answered by the human's points 2d and 2e.
+SAFE_PARALLEL: Penpot board authoring for the four missing mobile boards (additive, disjoint).
+NEXT_AUTOMATIC_ACTION: dispatch the Design Brief + Revision, split so a failure costs less —
+  (a) server-side key service + `hostUnrecognised` trust state, (b) mobile boards + layout/copy.
+
+## HUMAN SCOPE — verbatim, for the next session
+> 1. It looks like we're missing mobile designs for these screens
+> 2. It looks like our implementation agent failed in it's implementation of these designs in that:
+>    a. The UI seems to indicate the Add a product page should generate a key on Repository SSH URL input
+>    b. And that Register product is dependent on upon this key generation and trust of this host before product creation
+>    c. It's not documented what Check access is supposed to do
+>    d. Design allows for cancelling the trust this host operation, but I don't think we want to allow that b/c it causes us to get stuck and unable to register
+>    e. Only "Registers product" is supposed to be in the button. The helper text goes below and according to the design seems to indicate starting with the top what the user must do to enable the Register product button.
+>    f. Furthermore there's no copy at the bottom and only one footer line according to the design for Add a product. There's only a Show technical details widget down there.
+>
+> Using the penpot design add mobile light and dark counterparts to penpot for the add product page and implement the Add Product page correctly in SHIP IT.
+
+Human addenda, verbatim:
+> 1. We should have an API for private-key creation and storage. B/c we won't be git pushing in SHIP IT from the web browser from it's backend correct. This should settle your issue there.
+> 2. Even if we remove cancel from the key flow we can always just go back to teh products page. We're not blocked, and if when down the road we want to create that product we'll find the key on the machine ready to be verified again.
+
+## VERIFIED FACTS a fresh session must NOT re-derive
+- **Mobile boards missing**: no `SM - Add Product - *` board exists at any state/theme. Convention is
+  `SM -` for mobile states, `BPM -` for mobile pages. Needed: `SM - Add Product - Unknown host - Light/Dark`
+  and `SM - Add Product - Verified - Light/Dark` at 390x844. Penpot page `Page 1` = `d8ac01df-6646-81d2-8008-a366c09aa9d3`.
+- **Mobile grammar** from the existing `BPM - Add Product - Light`: back link, title, `NOT REGISTERED YET`
+  eyebrow, 3 fields, deploy-key panel (`Copy key`, `Check access`), `Register product`, helper BELOW,
+  `Show technical details`, bottom nav. No "What you're registering" or "What happens next" panel.
+- **`canRegister` is the constant `false`**: requires `accessStatus == AccessStatus.verified`, and the only
+  `accessStatus:` assignment in the repo is `add_product_page.dart:118` -> `notChecked`. Nothing anywhere
+  assigns `.verified`/`.checking`/`.failed`.
+- **Bootstrap deadlock**: `deployKey` is set only by `CheckAccessRequested`, dispatched only from inside
+  `_buildKeyBox`, which renders only `if (state.deployKey != null)`. `canGenerateKey` (`:230`) has ZERO call
+  sites. So `deployKey ≡ null` and registration is unreachable regardless of the gating decision.
+- **Key is a mock**: `_generateMockKeyPair` (`:126-138`) emits `ssh-ed25519 <base64 of 32 random bytes>`.
+  Each "Check access" press REGENERATES the pair (`:113-120`) while "Copy public key" copies the current one,
+  so the key a user just installed is silently orphaned.
+- **Zero test coverage**: 0 of 26 test files import `add_product_page.dart`.
+- **Footer**: copy line present at `:383`; "Show technical details" appears NOWHERE in current code — it was
+  removed, not de-duplicated (the original report said there were two rows).
+- **Required-field convention ALREADY EXISTS**: `create_defect_page.dart:458,477,495,504` mark optional fields
+  with an in-label `(OPTIONAL)` suffix; absence marks required. Re-ground on this; do not add a second convention.
+- **a11y**: the specified `inkTertiary` on `palette.card` measures 4.23:1 in dark (fails AA), not the claimed
+  6.0:1. Today's nested subtext is `inkPrimary` on the button fill = 2.72:1. Use `inkSecondary`
+  (6.74:1 light / 6.10:1 dark).
+- **OWNED_PATHS must widen**: no longer control-plane-only. Needs `apps/server/**` and possibly a new package
+  for the key service. A server-side secret-storage decision (at-rest protection, host permissions) must be
+  designed explicitly, not defaulted.

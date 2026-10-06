@@ -147,3 +147,26 @@ and interrupt. Rule recorded in `AGENTS.md` § Product-specific policy.
 
 Owner action required: the owner's `control_plane-postgres_test-1` on 9099 lacks the trigger and
 will not self-heal.
+
+## make clean disarm — APPROVED and merged
+
+| task_id | type | state | worktree | branch | base_sha | head_sha | result |
+|---|---|---|---|---|---|---|---|
+| fix/disarm-make-clean | correct | CLOSED — MERGED | /private/tmp/shipit-disarm-clean | fix/disarm-make-clean | 59ad603 | 2922fef | `CORRECTION_COMPLETE` then `APPROVE_CORRECTIONS`, `READY_FOR_MERGE: YES` |
+
+Merged fast-forward into `main` as `2922fef` and pushed. `clean` is now a pure-`echo` safety stub:
+zero Docker invocations, structurally incapable of mutation. Three correction cycles were needed:
+cycle 1 produced a stub whose own guidance pointed at `test-env-down`/`e2e-down`, which resolve to
+compose project `docker` and also stop the QA stack; cycle 2 corrected the false claims.
+
+## Add Product design — FOLDED, brief not yet dispatched
+
+| task_id | type | state | worktree | branch | base_sha | result |
+|---|---|---|---|---|---|---|
+| design-register-button | design-produce | SUPERSEDED — folded into the Add Product rebuild | /private/tmp/shipit-design-register | design/register-button | 2922fef | `DESIGN_REVISION_COMPLETE`, risk 2 |
+| (design review of the above) | design-review | CLOSED | read-only | — | 2922fef | `DESIGN_REVIEW_HUMAN_DECISION_REQUIRED` — report persisted at `tasks/design-register-button/report.md` |
+
+Human's points 2d and 2e answer that round's D6 (SSH trust-on-first-use cancel) and F4/D1
+(button vs helper-text layout). Its B1-B6 blockers remain open and are folded into the new scope:
+re-ground the required-field work on the existing `(OPTIONAL)` suffix, ship D1 as two explicit
+variants, fix the AA-failing token, give V9-equivalent classification a committed source.
