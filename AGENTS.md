@@ -62,6 +62,37 @@ at runtime and is not generated content.
 - Orchestration conventions (see `aef-orchestrator` skill § 3 — override the defaults for every
   convention your project does not want defaulted): TBD
 
+### Shared Docker state — read-only for every lane without deployment authority
+
+Human-mandated rule, adopted after a review lane destroyed the QA database (compose project `docker`:
+containers, volumes `docker_postgres_data_qa` / `docker_triage_repo_qa` / `docker_triage_workspaces_qa`,
+and images) by running `docker compose -f docker/compose.qa.yaml down -v --rmi local`. The database was
+unrecoverable; no dump existed. Until then the only rule here was scoped to *creators* of test resources,
+and `make clean` created nothing, so nothing forbade running it.
+
+**This rule binds every agent and every lane — implementers, reviewers, designers, QA and research alike.
+"Read-only" over shared Docker state is not satisfied by a command that happens not to mutate anything; it
+is satisfied by not issuing a mutating command at all.**
+
+- A lane without explicit deployment or infrastructure authority runs **no** Docker or Compose command that
+  can change state: no `down`, `stop`, `rm`, `prune`, `volume rm`, `compose up`, `pull`, `build`, or
+  `--rmi`. Not even a read-only-looking one. `docker compose ps`, `logs`, `config` and `docker info` are
+  **not** granted either — they are unnecessary, because compose files are readable as text, and every
+  exception is a precedent for the next exception.
+- **The exemption is narrow and named:** `make test-integration`, which creates a disposable Postgres under
+  compose project `shipit_integration_<pid>` and removes it on success, failure and interrupt alike. It is
+  the only sanctioned way to obtain a real database.
+- **These are never safe, for any lane, under any circumstances** — they resolve to compose project `docker`,
+  which is the **live QA stack**: `make clean`, `make test-env-down`, `make e2e-down`, and any bare
+  `docker compose … down -v` without an explicit `-p <project>`.
+- Reading a compose file or the Dockerfile as **text** is the supported way to establish what a stack does.
+  Do not start it to find out.
+- A lane that needs a mutating Docker operation and does not hold the authority must stop and escalate it as
+  a blocker. It does not run the operation and report afterwards.
+- A lane that discovers it has already breached this must **disclose it in its report immediately**, naming
+  the exact commands — the disclosure is what bounds the damage and is never held back to avoid a worse
+  report.
+
 ### Test resource hygiene
 
 Human-mandated rule: **every test database, container, volume and compose project created for
