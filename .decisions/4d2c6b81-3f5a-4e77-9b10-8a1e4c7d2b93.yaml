@@ -55,8 +55,8 @@ context:
         id: fix-credential-store-integrity
         url: docs/engineering/dispatch/tasks/fix-credential-store-integrity/report.md
       - type: OTHER
-        id: 14608dc
-        url: .github/workflows/integration.yaml
+        id: d374ff2
+        url: apps/server/tool/schema_bootstrap.sql
       - type: ADR
         id: "0018"
         url: docs/adr/0018-per-product-git-credentials.md
@@ -73,9 +73,15 @@ context:
       - metric: "Gate result with the index in place"
         value: "make test-integration +161 -1, T-A and T-B both green against real Postgres; the sole failure is the pre-existing dogfood .git file-vs-directory assertion, proven identical on pristine 064703d (+157 -1)"
         source: implementation lane report
-      - metric: "Existing precedent for this exact shape"
-        value: "design_revision_approved_unique_per_workitem — a partial unique index in both tool/schema_bootstrap.sql and migrations/20260920232118956/migration.sql, commit 14608dc, independently reviewed and merged"
-        source: WORK_STATE.md § Integrated and verified on main
+      - metric: "Existing instance of this exact shape"
+        value: "design_revision_approved_unique_per_work_item — a partial unique index in both tool/schema_bootstrap.sql and migrations/20260920232118956/migration.sql, and listed in verify_schema_bootstrap.sh required_objects. It reached the migration in 305cdc8 (baseline) and the bootstrap in d374ff2."
+        source: git log -S, verified by the engineering review
+      - metric: "Is there a template for adding an index to the migration chain?"
+        value: "NO. The precedent runs the other way - the index existed in the migration first (305cdc8) and the bootstrap was added afterwards (d374ff2) to fix parity for fresh databases. OPTION_A must author a NEW migration."
+        source: engineering review finding M-1, independently re-verified by the Manager
+      - metric: "Operational hazard in OPTION_A"
+        value: "CREATE UNIQUE INDEX fails if a deployed database already holds duplicate non-revoked credentials per repository. A duplicate audit must run BEFORE the migration."
+        source: engineering review finding H-2
     qualitative_tradeoffs:
       - dimension: "What the invariant is actually for"
         option_a: "Make it reach production"
@@ -102,11 +108,13 @@ context:
   recommendation:
     recommended_option: OPTION_A
     rationale: >-
-      Add the index to the migration chain as well, matching `design_revision_approved_unique_per_workitem`
-      in commit `14608dc`. That is what the parity contract at `schema_bootstrap.sql:37-44` requires and
-      what this repository has already done for the same shape of object. The alternative records, in
-      writing, that a credential invariant holds only in development and CI — which is a weaker guarantee
-      than every artifact in this repository claims.
+      Add the index to the migration chain as well. That is what the parity contract at
+      `schema_bootstrap.sql:37-44` requires, and the shape already exists in this repository
+      (`design_revision_approved_unique_per_work_item`). Confidence is MEDIUM and **not** HIGH because
+      there is no template to copy: the previous instance went the other way, so this needs a new migration,
+      a pre-flight duplicate audit, and real-Postgres chain-replay verification. The alternative records, in
+      writing, that a credential invariant holds only in development and CI — a weaker guarantee than every
+      artifact in this repository claims.
     confidence: MEDIUM
   options:
     - option_id: OPTION_A
@@ -122,7 +130,7 @@ context:
         already-merged precedent in this repository. Cost: writes into `apps/server/migrations/**`, the one
         directory with a documented lineage hazard, so the correction lane must verify the chain-replay
         case and not only the fresh one — and must not edit a shipped `definition.sql`.
-      estimated_effort: "small, plus a real-Postgres chain-replay verification"
+      estimated_effort: "larger than first stated: a NEW migration must be authored (no template exists), a duplicate-credential audit run first, and the chain-replay path verified against real Postgres"
       risk_level: MEDIUM
     - option_id: OPTION_B
       label: "Accept bootstrap-only divergence"
