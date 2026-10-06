@@ -1,0 +1,144 @@
+# human-decision.yaml
+decision_id: b869ec24-236e-4e9c-8703-70656fa368c4
+type: ARCHITECTURE
+status: RESOLVED
+question: >-
+  Where does deploy-key generation and storage belong, given that SHIP IT pushes from
+  its backend and not from the web browser?
+context:
+  summary: >-
+    Decision 73097d48 chose REAL deploy-key generation over the existing mock, and its
+    follow-up actions flagged one concern: the Penpot boards assert "ed25519 · created on
+    this device · the private half stays in the keychain", which a Flutter **web** build
+    cannot literally honour. The Manager raised that a private key reaching browser storage
+    is a material weakening of the guarantee the design claims.
+
+    The human resolved it architecturally rather than accepting the weakening: there should
+    be an API for private-key creation and storage, because SHIP IT pushes from its own
+    backend, not from the browser.
+
+    **Verified true by the Manager.** The server already performs the git work —
+    `packages/worker_runtime/lib/src/worker/onboarding_worker.dart`,
+    `packages/product_registry/lib/src/engine/product_registry_engine.dart` and
+    `apps/server/lib/src/services/control_plane_service.dart` reference clone/push. The
+    browser is only ever a control-plane client; it never holds git credentials. And there
+    is currently **no** deploy-key infrastructure anywhere on the server — `grep` for
+    `deployKey`/`deploy_key` across `apps/server/lib` and `packages/*/lib` returns nothing,
+    and the only `ssh` references are incidental type/enum names. So this is net-new
+    server-side capability, not an existing thing to extend.
+
+    This **changes the shape of the work**: it is no longer a control-plane-only UI change.
+    It requires a new server capability (keypair creation + storage + retrieval of the public
+    half), which widens OWNED_PATHS from `apps/control_plane/lib/**` to include
+    `apps/server/**` and possibly a package.
+  blocking_work_item:
+    item_type: DESIGN_REVISION
+    item_id: 73097d48-3e8b-48d7-b3d8-8834168c5113
+    item_ref: "Add Product rebuild — real deploy-key lifecycle"
+  evidence:
+    documents:
+      - type: OTHER
+        id: 73097d48
+        url: .decisions/73097d48-3e8b-48d7-b3d8-8834168c5113.yaml
+      - type: OTHER
+        id: dbe1cae
+        url: packages/worker_runtime/lib/src/worker/onboarding_worker.dart
+    quantitative_data:
+      - metric: Server-side git execution
+        value: "present - onboarding_worker.dart, product_registry_engine.dart, control_plane_service.dart all reference clone/push"
+        source: source inspection
+      - metric: Browser-side git credentials
+        value: "none - the Flutter client is a control-plane client only"
+        source: source inspection
+      - metric: Existing deploy-key infrastructure
+        value: "0 - grep for deployKey/deploy_key across apps/server/lib and packages/*/lib returns nothing"
+        source: source inspection
+      - metric: Current mock key
+        value: "_generateMockKeyPair, add_product_page.dart:126-138 - 'ssh-ed25519 <base64 of 32 random bytes>'"
+        source: source inspection
+      - metric: Trust-flow escape hatch
+        value: "not required - the Products page is always reachable, and the generated key persists on the machine so a product can be created later"
+        source: human decision
+    qualitative_tradeoffs:
+      - dimension: Where the private half lives
+        option_a: Server-side, never returned to the browser
+        option_b: Browser-side storage
+        assessment: >-
+          Server-side removes the browser-storage exposure entirely and matches how the
+          product actually pushes. It introduces server-side secret storage, which is its own
+          decision - at-rest encryption, filesystem permissions, and whether the host keychain
+          is available. That storage decision is real and must be designed, not defaulted.
+      - dimension: Blast radius of the change
+        option_a: Server-side key service
+        option_b: Browser-side key generation
+        assessment: >-
+          Server-side widens the change to apps/server and adds an API surface. Browser-side
+          keeps the change local to the UI but ships private key material to a web client,
+          which the boards explicitly claim does not happen.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Generate and store the keypair server-side behind an API that returns only the public
+      half. It matches how SHIP IT actually pushes, removes the browser-storage exposure the
+      Manager flagged, and makes the boards' keychain claim closer to true rather than
+      aspirational.
+    confidence: HIGH
+options:
+  - option_id: OPTION_A
+    label: Server-side key service
+    description: >-
+      New server capability generates the keypair, stores the private half server-side, and
+      exposes only the public key to the control plane. The browser never receives private key
+      material. The design must specify at-rest protection and host permissions for the
+      stored private half.
+    implications: >-
+      Removes the browser-storage exposure and matches the real git topology. Widens the change
+      to apps/server and adds an API surface. Introduces a server-side secret-storage decision
+      that must be made explicitly.
+    estimated_effort: "larger than a UI-only change"
+    risk_level: MEDIUM
+  - option_id: OPTION_B
+    label: Browser-side key generation
+    description: >-
+      Keep key generation in the Flutter client and store the private half in browser storage.
+    implications: >-
+      Keeps the change inside apps/control_plane. Ships private key material to a web client,
+      contradicting the boards' stated guarantee, and is the exposure the human just declined.
+    estimated_effort: "smaller"
+    risk_level: HIGH
+resolution:
+  selected_option: OPTION_A
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-06T08:57:01Z
+  rationale: >-
+    The human's words: "We should have an API for private-key creation and storage. B/c we
+    won't be git pushing in SHIP IT from the web browser from it's backend correct. This
+    should settle your issue there." Recorded as OPTION_A.
+
+    Second point, also recorded here: removing "Cancel" from the trust flow does NOT leave the
+    user stuck. The Products page remains reachable, and the generated key persists on the
+    machine, so if the product is wanted later it can be created and the key re-verified. That
+    closes the dead-end objection raised against point 2d of the human's original request — no
+    escape hatch is needed on the trust screen itself.
+  follow_up_actions:
+    - action: >-
+        Design the server-side deploy-key service: keypair generation, private-half storage and
+        its at-rest protection, and an endpoint that returns only the public half. Specify
+        permissions and what happens when the server cannot protect the key adequately.
+      owner: orchestrator-main
+    - action: >-
+        Widen the work item's OWNED_PATHS to include apps/server/** and any new package, and
+        state the widened scope explicitly in the Design Brief so the human sees that this is no
+        longer a control-plane-only change.
+      owner: orchestrator-main
+    - action: >-
+        Correct the boards' copy if needed: "the private half stays in the keychain" should
+        describe what actually happens on the server, not imply browser storage.
+      owner: orchestrator-main
+    - action: >-
+        Record that no escape hatch is required on the trust screen; the Products page is the
+        way out and the key persists for later verification.
+      owner: orchestrator-main
+created_by: orchestrator-main
+created_at: 2026-10-06T08:57:01Z
+updated_at: 2026-10-06T08:57:01Z
