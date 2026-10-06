@@ -58,7 +58,8 @@ help:
 	@echo "  make client-dev      Start backend only, run Flutter dev server"
 	@echo ""
 	@echo "Utilities:"
-	@echo "  make clean           Remove all containers, volumes, images"
+	@echo "  make clean           SAFETY STUB - removes nothing. Use qa-down /"
+	@echo "                        test-env-down / e2e-down for real teardown."
 	@echo "  make ps              Show running containers"
 	@echo ""
 
@@ -275,16 +276,87 @@ client-dev:
 	@echo ""
 	@echo "Or use the VS Code launch configuration 'Flutter Web (Local QA)'"
 
-# Cleanup
+# `make clean` is DISARMED. It removes nothing at all.
+#
+# The recipe it used to run, kept here so that the removal is visibly
+# quarantined rather than quietly deleted and then re-added by the next person
+# who goes looking for a "cleanup" target:
+#
+#   docker compose -f docker/compose.qa.yaml  down -v --rmi local 2>/dev/null || true
+#   docker compose -f docker/compose.e2e.yaml  down -v --rmi local 2>/dev/null || true
+#   docker compose -f docker/compose.test.yaml down -v --rmi local 2>/dev/null || true
+#   docker image rm shipit-client:local 2>/dev/null || true
+#   docker image rm docker-client 2>/dev/null || true
+#   docker image rm docker-server 2>/dev/null || true
+#   docker volume prune -f
+#
+# Three independent reasons each of those lines had to go:
+#
+# 1. THE QA DATABASE. `docker compose down -v` is PROJECT-scoped, not
+#    file-scoped. None of docker/compose.qa.yaml, compose.e2e.yaml or
+#    compose.test.yaml declares a top-level `name:`, so all three resolve to the
+#    same project, named after the directory they live in: `docker`. That is
+#    the live QA stack's project - docker-postgres-1, docker-server-1,
+#    docker-client-1 - and its volume docker_postgres_data_qa. So the first
+#    `down -v` deleted the human's QA database, and the second and third lines
+#    were then no-ops against the project it had already emptied: three lines
+#    that looked like three scopes, all aimed at one live database. This was not
+#    hypothetical - a design-reviewer lane ran this recipe as a probe and
+#    destroyed that database irrecoverably.
+# 2. THE MACHINE-WIDE PRUNE. `docker volume prune -f` does not care which
+#    repository you are standing in; it deletes every unused volume on the
+#    host. At the time of writing this host had 45 dangling volumes, 11 of them
+#    belonging to unrelated projects (3 devops_*, 8 partnerhub*/teamhub*).
+#    A repository Makefile has no authority over any of them.
+# 3. THE SILENCED EXIT. Every one of those commands ended in
+#    `2>/dev/null || true`, so a teardown that failed halfway reported success
+#    and its error text was discarded. That is the same pattern AGENTS.md
+#    section "Test resource hygiene" already names as the cause of a container
+#    leak that shipped here once; here it ran in the other direction, hiding a
+#    partial removal rather than a failed one.
+#
+# There is no capability gap here, which is why no replacement target was added.
+# Everything `clean` used to remove is removed by a target that already exists
+# under a name nobody types by accident: `qa-down` for the QA stack (where
+# destroying the database IS the documented job), `test-env-down` and
+# `e2e-down` for the other two. A consolidated label-scoped sweep is being
+# designed (design/port-and-cleanup); adding a second, differently-named
+# destructive path today would give the machine one more way to reach those
+# volumes, not one fewer. Until that sweep lands, the safe behaviour for a
+# target with this name is to do nothing and say so.
+#
+# If you are restoring a teardown here, do not restore the quoted recipe above.
+# Use the per-stack targets, and give any new one its own compose project name so
+# `down -v` cannot resolve to someone else's stack.
 clean:
-	@echo "Cleaning up all SHIP IT containers, volumes, and images..."
-	docker compose -f docker/compose.qa.yaml down -v --rmi local 2>/dev/null || true
-	docker compose -f docker/compose.e2e.yaml down -v --rmi local 2>/dev/null || true
-	docker compose -f docker/compose.test.yaml down -v --rmi local 2>/dev/null || true
-	docker image rm shipit-client:local 2>/dev/null || true
-	docker image rm docker-client 2>/dev/null || true
-	docker image rm docker-server 2>/dev/null || true
-	docker volume prune -f
+	@echo "make clean removes NOTHING. It is a disarmed safety stub."
+	@echo ""
+	@echo "NOT TOUCHED - none of the following was stopped, removed, created or"
+	@echo "pruned by running this command:"
+	@echo "  * no container, volume or network, of this repository or any other"
+	@echo "  * the QA stack (compose project 'docker') is untouched, and so is its"
+	@echo "    database volume docker_postgres_data_qa"
+	@echo "  * no Docker image, including shipit-client:local"
+	@echo "  * no other project's Docker volumes (a prune of every unused volume on"
+	@echo "    the host used to sit in this recipe; that is not a repository scope)"
+	@echo ""
+	@echo "WHAT REALLY DOES TEARDOWN - each one scoped to its own compose project:"
+	@echo "  make qa-down          Stop the QA stack and delete its database."
+	@echo "                        Destructive on purpose: the QA database holds"
+	@echo "                        real data. Run it when you mean it."
+	@echo "  make test-env-down    Stop the test stack and delete its ephemeral database."
+	@echo "  make e2e-down         Stop the legacy E2E stack and delete its volumes."
+	@echo ""
+	@echo "WHAT LEAVES NOTHING BEHIND - each creates its own project and removes it"
+	@echo "from a trap on EXIT INT TERM, so a failure or a Ctrl-C cannot leak it:"
+	@echo "  make test-integration Run the server integration suite against a"
+	@echo "                        throwaway Postgres, then destroy it."
+	@echo "  make test-env-test    Run the E2E suite, then destroy what it created."
+	@echo "  make e2e-test         Same, against the legacy E2E compose file."
+	@echo ""
+	@echo "TO SEE WHAT IS RUNNING:  make ps"
+	@echo "A label-scoped replacement sweep is being designed in design/port-and-cleanup."
+	@echo "Until it lands, nothing named 'clean' will delete your database."
 
 # Status
 ps:

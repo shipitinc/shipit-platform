@@ -88,6 +88,16 @@ enforced by tooling, not by discipline.
   `make test-env-test` and `make e2e-test` (both trap a `down -v`). Each trap reports CLEANUP FAILED
   only when a labelled container, volume or network for its project actually exists, so a compose file
   that cannot be parsed never produces a false leak report.
+- `make clean` is a **disarmed safety stub and removes nothing**. It used to run
+  `docker compose -f docker/compose.*.yaml down -v` against all three compose files — but none of them
+  declares a top-level `name:`, so they all resolve to the SAME project (`docker`, named after the
+  directory), which is the live QA stack's project. Those `down -v` lines destroyed `docker_postgres_data_qa`
+  once already, irrecoverably, when an agent ran `make clean` as a probe. It also ran
+  `docker volume prune -f`, which is machine-wide and not scoped to a repository, and silenced every
+  exit code with `|| true`. Do not restore that recipe. Teardown belongs to the per-stack targets
+  (`qa-down`, `test-env-down`, `e2e-down`), which each know which stack they own; a label-scoped
+  replacement sweep is being designed in `design/port-and-cleanup`. Any new teardown target must
+  declare its own compose project name.
 - A mandatory Compose variable (`${VAR:?...}`) in a shared compose file breaks every command that
   reads that file, not just the one service that needs it: Compose interpolates the whole file before
   filtering profiles, and it interpolates even for read-only commands like `ps`. Keep such a value
