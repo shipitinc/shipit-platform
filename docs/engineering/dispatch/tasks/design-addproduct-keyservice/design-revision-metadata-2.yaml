@@ -1,0 +1,281 @@
+revision_id: "F21D5C64-006D-4203-A813-841E08E38B95"
+brief_id: "97484D0E-E16C-485E-BAA2-A277889C0FB6"
+brief_version: "1.1.0"          # design-brief-1.1.0.md; supersedes v1.0.0 (design-brief.md, retained intact)
+revision_number: 2
+supersedes_revision_id: "46980EE0-E638-409C-A7D3-E1B9399FECE5"
+status: "DRAFT"
+risk_level: 3
+risk_rationale: |
+  Level 3 (Major Workflow / Navigation / IA Change) per DESIGN_GOVERNANCE.md.
+
+  Revision 2 keeps level 3 on the Independent Design Review's own assessment (INDEPENDENT_RISK_LEVEL: 3,
+  RISK_LEVEL_AGREEMENT: YES), re-derived here rather than accepted:
+
+  1. HANDLING KEY MATERIAL FOR THE FIRST TIME. SHIP IT will hold a private key authorising WRITE access
+     to a customer repository. No such secret exists in the repository today. Compromise is repository
+     compromise, irreversible without a host-side uninstall.
+  2. OVERTURNS A DOCUMENTED ARCHITECTURAL ASSUMPTION — and revision 2 makes this larger, not smaller.
+     ADR 0018:85-88 (read, 158 lines) places the private half in the operator's local secret store and
+     forbids persisting it to the durable record; DEC-b869ec24 moves generation and storage server-side.
+     The revision does not resolve that tension — it is the human's (OPEN-D4-1, re-framed as Q1') — but a
+     design whose outcome may contradict an existing ADR is not a component-level change.
+  3. CHANGES THE CORE REGISTRATION WORKFLOW. Human points 2a/2b make key generation and host trust
+     preconditions of product registration. ADR 0018:100-102 independently requires the same, so the
+     workflow change is mandated by architecture and cannot be deferred as a UI preference.
+  4. INTRODUCES A CREDENTIAL-MINTING ENDPOINT ON AN UNAUTHENTICATED, NOT-LOOPBACK-PINNED CONTROL PLANE.
+     apps/server/lib/server.dart:71-72 declares no authentication services; the loopback-pinning
+     follow-up in DEC-570bb640 is confirmed UN-IMPLEMENTED. This is the first endpoint whose side effect
+     is persisting secret material.
+  5. NEW IN REVISION 2 — the design's central security claim was false at the persistence layer and is
+     now specified as unbuilt work. product_credential's publicKey is overwritable in place through
+     recordGeneratedCredential's own API (engine:920/941/965 + ON CONFLICT DO UPDATE at
+     postgres_product_registry_store.dart:239-243), and ADR 0018 A1's one-per-repository invariant is not
+     a database constraint at all (definition.sql:646 is non-unique). Until D-1 and D-2 (design-revision-2
+     § R.15b) are built, finding B6 is documented rather than closed. A workflow whose central invariant
+     is unenforceable is not a workflow-level change of the safe kind.
+
+  Level 3 requires product/design/architecture human approval at Gate D4. This revision does not
+  pre-empt it: OPEN-D4-1 (re-framed as Q1') and OPEN-D4-2 remain OPEN and are defaulted nowhere.
+
+changelog:
+  - "Revision 2. Correction lane, applying RESULT: DESIGN_REVIEW_CHANGES_REQUIRED (REVIEWED_HEAD 77c19f1,
+     INDEPENDENT_RISK_LEVEL 3, RISK_LEVEL_AGREEMENT YES). Revision 1 (46980EE0-…) is retained intact at
+     design-revision.md as the reviewed artifact and is NOT edited. No commit, no push."
+
+  # ---- B: BLOCKERS ----
+  - "B1 — ADR 0018 EXISTS; R1's G-1 was FALSE. WITHDRAWN. Revision 1 asserted as a 'traceability gap of the
+     first order' that the governing ADR 'does not exist in this repository', produced by listing
+     docs/engineering/adr/ instead of docs/adr/. Verified: docs/adr/0018-per-product-git-credentials.md
+     is 158 lines, status 'Proposed (amended — A1)'; docs/adr/ holds 21 ADRs (0001–0021). 13 production
+     files cite ADR 0018 by number, several by amendment (postgres_product_registry_store.dart:172,
+     product_registry_store.dart:35, repository_credential.spy.yaml:4, repository_credential.dart:10 and
+     :22, credential_status.dart:1 and :36, repository_provider.dart:8, product_state.dart:1,
+     product_registry_engine.dart:898 and :1057, exceptions.dart:213, ui_view_mappers.dart:138,
+     products_page.dart:308) — including files revision 1 cited as evidence of its absence. Retraction
+     stated first in design-revision-2.md § 0.1; false G-1 removed from requirements_gaps and from
+     traceability-matrix-2.md § 4; D-6 restated in place in discoveries.md with the retraction appended."
+  - "B1 (cont.) — § R.21 REWRITTEN. The surviving real gap is that AGENTS.md has NO §13 (verified: 129 lines;
+     sections Inherited invariants/Orchestration/Product-specific policy/Test resource hygiene/Framework
+     provenance; Product-specific policy is 'TBD' at :59-63; §13b absent too). So ADR 0018's carve-out
+     (:140-141) and ADR 0012:34 and ADR 0019:121 all point at text that does not exist. Recorded as G-1' and
+     escalated as a governance action — AGENTS.md is outside OWNED_PATHS and was NOT edited."
+  - "B1 (cont.) — § R.4 A1/A2/A4 and § R.6 C-1..C-3 rewritten against what the ADR already decides. A2 is
+     marked FORBIDDEN by ADR 0018:87-88 ('never … persisted to the durable record'), with the sentence
+     attached at the option itself so the human cannot choose it unknowingly. Q1 collapsed to Q1' (does
+     b869ec24's server-side custody supersede :85-88?) — the genuinely open delta. Seven of R1's ten
+     'substitute assumptions' demoted from assumptions to recorded ADR decisions (R.21.2)."
+  - "B1 (cont.) — architecture_refs REPOPULATED with ADR 0012/0015/0018/0019/0020/0021, each read and each
+     mapped to the sections it governs (design-brief-1.1.0.md; traceability-matrix-2.md § 4). R1 listed only
+     ADR-0001/0002/0003 — framework-distribution ADRs governing nothing here — so no design element traced
+     to the architecture it depends on. Those three are retained in the list, annotated, so the mistake's
+     source stays visible."
+  - "B2 — R1's 'B6 is structurally impossible — four independent mechanisms' is FALSE at the persistence
+     layer. Verified: saveProductCredential with null expectedVersion runs INSERT … ON CONFLICT
+     (\"credentialId\") DO UPDATE SET … \"publicKey\" = @publicKey … (postgres_product_registry_store.dart:
+     238-243, assignments :195-210); recordGeneratedCredential calls it at engine:965 with NO
+     expectedVersion, accepts a caller-supplied credentialId (engine:920), and its one-active guard
+     (engine:940-941) is 'if (active != null && active.credentialId != supersedesCredentialId)'. So
+     recordGeneratedCredential(credentialId: <existing>, supersedesCredentialId: <same>, publicKey: <new>)
+     passes the guard and overwrites the stored key in place, resetting status to generated and discarding
+     host confirmation. copyWith is NOT on that path (a fresh object is constructed at engine:950-964)."
+  - "B2 (cont.) — § R.15 REWRITTEN as TWO mechanisms, not four, and explicitly NOT independent, with a
+     per-mechanism statement of what each actually buys (two are properties of not-yet-written endpoint
+     code; one is a refusal of a second ROW keyed on supersedesCredentialId, not an immutability guard;
+     copyWith protects the in-memory object and nothing at the boundary that persists the row). R1's
+     sentence 'These are independent … mechanism 4 still prevents silent substitution' is WITHDRAWN. § R.2
+     constraint 3 corrected to say immutability holds in memory only."
+  - "B2 (cont.) — § R.16 step 4 REWRITTEN. R1 resolved a concurrent mint on 'the engine's one-active
+     exception (engine:940-947)', which WILL NOT FIRE: product_credential carries a unique index on
+     credentialId only (definition.sql:645) and repositoryId has a NON-UNIQUE index (:646), so two
+     concurrent mints both pass the read-then-write and both insert. Now resolved on D-2's unique
+     violation. Added: mint must pass no caller-supplied credentialId (the precondition of the overwrite);
+     an immutability violation is a defect and must not be converted into alreadyExisted."
+  - "B2 (cont.) — NEW § R.15b: THREE REQUIRED DESIGN DELIVERABLES. D-1 store-level key-material immutability
+     guard on saveProductCredential, with the preferred predicated 'ON CONFLICT … DO UPDATE … WHERE
+     publicKey = … AND fingerprint = … AND algorithm = … AND referenceName = … RETURNING' form and an
+     alternative typed-refusal form; D-2 the required partial unique index
+     'ON product_credential (repositoryId) WHERE status <> ''revoked''' (PROPOSED ONLY — C-09 forbids
+     creating it), whose predicate is identical to readActiveCredentialForRepository's own predicate
+     (postgres_product_registry_store.dart:262) so constraint and query cannot contradict, and whose order
+     is satisfied by rotateCredential's revoke-then-mint (engine:1104, :1108-1119); D-3 two engine-level
+     tests, T-A (same-credentialId re-mint must throw, stored key byte-identical) and T-B (two concurrent
+     mints yield exactly one active row), both of which FAIL TODAY. D-1/D-2 are substrate-independent and
+     therefore NOT gated on OPEN-D4-1."
+  - "B2 (cont.) — NEW finding while reading: a version CAS alone does NOT close the D-1 hole, because
+     recordGeneratedCredential hardcodes version: 1 (engine:963), so a previously-minted row is also at
+     version 1 and 'expectedVersion: 1' would match and still overwrite publicKey. The guard must be
+     expressed on the immutable fields themselves. The engine already uses CAS correctly on the other four
+     credential writers (engine:997, :1011, :1052, :1074), which is why the pattern was noticed — but the
+     mint path is the one that cannot use it."
+  - "B2 (cont.) — SC-02 and SC-03 EXTENDED with T-A and T-B; SC-08 re-framed to require the D4 decision be
+     taken against ADR 0018 in evidence. R1's SC-03 concurrency clause ('resolves via the engine's
+     one-active rule') corrected."
+
+  # ---- H: HIGH ----
+  - "H1 — § R.3 REWRITTEN invariant-only. Deleted 'Decision (normative … it selects a substrate)', deleted
+     'SHIP IT's own at-rest store' (which silently excluded A3, the option § R.8 and 9417f8bf recommend),
+     and deleted 'No wire-contract break from the field's existence' (asserted then retracted 30 lines
+     later). § R.3 now states exactly one normative invariant — referenceName names a reference and never
+     a value — and marks three things OPEN: its subject, the substrate, and client exposure. Reuse row #35's
+     migration cell marked explicitly CONDITIONAL on the substrate instead of 'none proposed'."
+  - "H1 (cont.) — L4 fixed inside § R.3: R1 claimed referenceName is 'already indexed as part of the row'.
+     It has NO index; repository_credential.spy.yaml:7-14 declares exactly three (credentialId unique,
+     repositoryId, productId)."
+  - "H2 — Q3 is NOT withdrawn but RE-FRAMED, with the reason stated. ADR 0018:113-114 already answers
+     'Revocation is provider-native … requires no Shipit-side action' — under the ADR's own custody model,
+     where SHIP IT holds no bytes. b869ec24 moves custody server-side and is SILENT on revocation
+     (grep -i 'revoc|rotat' over .decisions/b869ec24-*.yaml returns no match). So Q3' asks whether :113-114
+     survives the move, and C-2 is named as the ADR's answer under Q3'=YES rather than being presented as an
+     unexplored option. 79e860e2 must be restated in these terms."
+  - "H3 — A2's threat model CORRECTED. R1's A2 'For' bullet claimed 'backups of the database alone no longer
+     disclose the key'; that is false comfort. An attacker needs no backup: docker/compose.yaml:62 hardcodes
+     SERVERPOD_DATABASE_PASSWORD: shipit in a committed file, docker/compose.yaml:16-17 publishes 5432:5432
+     unqualified (0.0.0.0), .env.example:16-18 documents POSTGRES_USER/PASSWORD=shipit, and
+     DEC-570bb640:34-37 and :73-75 record exactly this exposure. A2's 'For' claim is WITHDRAWN and the
+     direct-read path added to A2's 'Against' and to the new § R.7.1 threat-model table."
+  - "H4 — § R.18 gains a FOURTH point: the direct-database path. An off-host caller reaching 5432 with the
+     committed default credentials bypasses the endpoint entirely, so endpoint auditing and endpoint
+     constraints do not constrain the data; and under a Q1'-supersession selecting A2 that is exactly where
+     the sealed key material sits. § R.18's existing honesty is preserved verbatim and extended, not
+     softened."
+
+  # ---- M: MEDIUM ----
+  - "M1 — Brief's cross-lane instruction CORRECTED. R1 told design-addproduct-mobile the enforced order is
+     'four steps — not the current three-step _StepText list (add_product_page.dart:650-672)'. There are FOUR
+     _StepText entries, at :650, :656, :662, :668. v1.1.0 states the current list is four steps (generate /
+     install+prove / read revision+build baseline / approve baseline) and that the key-flow order replaces
+     steps 1–2 with Generate → Trust → Check, adding Register as distinct. Issued as design-brief-1.1.0.md so
+     v1.0.0 stays intact; notifying the sibling lane is a Manager action (it owns its own artifacts)."
+  - "M2 — § R.8 confidence SPLIT PER OPTION, all Q1 options now LOW. R1's single MEDIUM was indefensible on its
+     own stated basis: A4 was untested and A3 equally untested, and nothing about any option was
+     runtime-verified. Q2 keeps MEDIUM (independently accepted by the review); Q1/Q3'/Q4 are LOW."
+  - "M3 — N-8 ADDED, NORMATIVE. 'inkTertiary' on the card surface measures 4.23:1 dark and FAILS WCAG AA, and it
+     is the current idiom for exactly this copy (add_product_page.dart:542, :590) — so all seven new strings
+     (five failure kinds + two host states) would follow the failing idiom by default. New requirement N-8 makes
+     palette.inkSecondary (6.74:1 light / 6.10:1 dark) the REQUIRED token for every new string, moved out of
+     § R.8's recommendation table where an implementer reading requirements would not find it. SC-06 extended.
+     Ratios labelled inherited and independently re-measured by the review; NOT re-measured by this lane."
+  - "M4 — G-7 now has a named owner: 9417f8bf. R1 recorded 'may referenceName reach the client' as a gap with no
+     owner, while 9417f8bf's stated question is the substrate only. § R.4.1 names it, explains that client
+     exposure is a CONSEQUENCE of the substrate answer (path vs ARN vs opaque row reference), and asks the
+     Manager to widen the reissued object's question to cover it."
+
+  # ---- L: LOW ----
+  - "L1 — engine:52 → engine:54 for 'state: ProductState.registered' (verified: createProduct spans 43-61,
+     hardcoded state at :54)."
+  - "L2 — product_state.dart:29-32 → product_state.dart:24-27 for the 'no baseline, no governance, no work' text
+     (verified: enum ProductState at :23-28, registered at :28). Substance unchanged and re-verified: no
+     pre-registration ProductState exists."
+  - "L3 — range endpoints corrected after re-reading: createProduct 43-63 → 43-61; addRepositoryReference
+     150-174 → 150-170; requireUsableCredential 1138-1160 → 1138-1162. All other cited ranges spot-checked and
+     found exact."
+  - "L4 — see H1: referenceName has no index."
+  - "L5 — D-7 RESTATED in discoveries.md as a CONFIRMED-UNIMPLEMENTED FOLLOW-UP to 570bb640, not a first-time
+     finding; 570bb640's own context already records that 'local only' is unenforced (:22-27, :67-72). § R.18
+     carries the same framing."
+  - "L6 — REPORTED, NOT EDITED: docs/engineering/dispatch/DECISIONS.md's index table (:8-12) omits 570bb640, which
+     appears only in the closing prose. DECISIONS.md is outside OWNED_PATHS (Manager-owned); recorded as gap L-6."
+
+  # ---- Carried forward deliberately, unchanged ----
+  - "KEPT INTACT (reviewer-confirmed strengths): N-1's normative no-Cancel rule with rationale and cost; N-2–N-7;
+     § R.9's state machine on the existing HostKeyStatus; § R.12's traceable way out (field + read path) and its
+     explicit dependence on OPEN-D4-2; N-6's HostKeyStatus.changed path with no 'trust anyway'; § R.18's honesty
+     about the endpoint (extended, not rewritten); § R.5's fail-closed framing; § R.7's single-boundary constraint;
+     R.13/R.14's normative Check-access definition and five-way failure taxonomy; § R.19.2's three options."
+
+traceability:
+  architecture_refs:            # B1 — was ADR-0001/0002/0003 only, which govern nothing in this design
+    - "ADR 0012  docs/adr/0012-immutable-artifact-promotion.md  (Accepted, amended A1, 241 lines) — READ;
+       :34 'Credentials referenced by name only (AGENTS.md §13 convention)' — the same convention ADR 0018 carves
+       out of; write access to product repositories is required by its promotion/result-branch flows"
+    - "ADR 0015  docs/adr/0015-worker-execution-layer.md  (Accepted, 77 lines) — READ; the worker layer the
+       credential must be injected into: :19-22 worktree pinned to the requested revision, :29-31
+       WorkspaceDescriptor written OUTSIDE the worktree, :55-59 EnvironmentPolicy allowlist→request→policy
+       precedence. The seam ADR 0018:67 anticipated"
+    - "ADR 0018  docs/adr/0018-per-product-git-credentials.md  (Proposed, amended A1, 158 lines) — READ IN FULL;
+       GOVERNING. :15-30 scope is per-repository; :79-80 deliberate scoped deviation from AGENTS.md §13; :85-88
+       local secret store, never persisted to the durable record (FORBIDS A2); :92-95 referenced by name never by
+       value; :96-99 TOFU with explicit human confirmation, refuses unrecognised hosts; :100-102 registration
+       requires a successful real check; :113-114 revocation is provider-native; :140-141 the §13 carve-out
+       mitigation that was never applied"
+    - "ADR 0019  docs/adr/0019-standing-policy-authorisations.md  (Proposed, 122 lines) — READ; :49-51 every
+       authorised action cites its policy (the obligation AuditEntityType.productCredential serves); :121 cites
+       AGENTS.md §13b, also absent"
+    - "ADR 0020  docs/adr/0020-defect-domain-model.md  (ACCEPTED, 178 lines) — READ; :137 EvidenceRedactor's
+       sensitive-pattern list (private_key, secret, token, signing_key) is the existing redaction vocabulary a § R.7
+       audit record should reuse"
+    - "ADR 0021  docs/adr/0021-design-defect-routing.md  (ACCEPTED, 179 lines) — READ; :86-91 hard rules — a coding
+       agent must not adjust layout/spacing/flow to fix a design defect, which is why N-8 specifies the contrast
+       token instead of leaving it to an implementer"
+    - "ADR 0001/0002/0003  docs/engineering/adr/  — READ; framework-distribution ADRs. They govern NOTHING in
+       this design. Retained in the list (annotated) only because R1's false 'ADR absent' conclusion began by
+       listing that directory, and hiding the mistake's source would hide the mistake"
+  requirements_covered:
+    - "R-2a  (human point 2a - generate the deploy keypair from the repository SSH URL)"
+    - "R-2b  (human point 2b - registration gated on key generation AND host trust) — now also ADR 0018:100-102"
+    - "R-2c  (human point 2c - 'Check access' documented and able to succeed)"
+    - "R-2d  (human point 2d - trust step has NO cancel affordance)"
+    - "R-H1  (human addendum 1 - server-side API for private-key creation and storage)"
+    - "R-H2  (human addendum 2 - Products page is the way out; the key persists for later)"
+    - "R-B4  (finding B4 - the deploy key is a mock)"
+    - "R-B5  (finding B5 - 'Check access' is a control that cannot succeed)"
+    - "R-B6  (finding B6 - each press silently rotates the key the user just installed) — NOW EXPLICITLY NOT
+       CLOSED until D-1 and D-2 are built (§ R.15b); T-A and T-B fail today"
+    - "R-R1  (dispatch R1 - at-rest model surfaced as an open Gate D4 decision, not defaulted) — honoured; H1
+       fixed the one place R1 leaked it"
+    - "R-4   (dispatch R4 - reuse the existing domain contract, do not reinvent)"
+    - "R-5   (dispatch R5 - endpoint returns only the public half, with its exposure stated)"
+    - "R-6   (dispatch R6 - traceability and risk; gaps reported, not hidden)"
+    - "DEC-73097d48  (PRODUCT, RESOLVED - real key generation over the mock)"
+    - "DEC-b869ec24  (ARCHITECTURE, RESOLVED - generate and store server-side behind an API)"
+    - "DEC-048f3367  (SECURITY, RESOLVED - control-plane API auth, production precondition)"
+    - "DEC-570bb640  (DEPLOYMENT_AUTHORITY, RESOLVED - unauthenticated accepted risk, local-only scope)"
+  requirements_gaps:
+    - "OPEN-D4-1 (Q1' does b869ec24's server-side custody supersede ADR 0018:85-88?; Q2 fail-open vs
+       fail-closed; Q3' does :113-114 survive the move?; Q4 may referenceName reach the client?) - OPEN,
+       HUMAN DECISION REQUIRED AT GATE D4, owner 9417f8bf (Q1', Q2, Q4) and 79e860e2 (Q3'). Deliberately not
+       answered per the human's instruction. The private-half store cannot be specified until it is resolved."
+    - "OPEN-D4-2 (registration ordering) - OPEN, HUMAN DECISION REQUIRED AT GATE D4, owner 898b07d0. A provable
+       circular dependency between human point 2b / ADR 0018:100-102 and the credential domain's
+       product-ownership requirement. RE-ESCALATED IN SEVERITY by revision 2: it is a contradiction with a
+       recorded ADR, not only a design-level circularity."
+    - "G-1'  AGENTS.md has no §13 and no §13b (verified: 129 lines; Product-specific policy is 'TBD' at
+       :59-63). ADR 0018's carve-out (:140-141), ADR 0012:34 and ADR 0019:121 all depend on text that does not
+       exist. A documented mitigation of the governing ADR was never applied. Manager/human action —
+       AGENTS.md is outside this lane's OWNED_PATHS and was NOT edited."
+    - "G-2  No read-only-over-Docker rule exists in AGENTS.md, so no runtime claim could be verified; five
+       claims are marked UNVERIFIED with the command a human should run. This correction lane ran no Docker or
+       Compose command at all, not even a read-only one."
+    - "G-3  Zero test files import add_product_page.dart, so SC-02/SC-04/SC-06 have no existing harness."
+    - "G-4  No SSH host-key verification exists anywhere in the repository; HostKeyStatus has no runtime
+       enforcer today. MANDATED by ADR 0018:96-99 and given a home by ADR 0015:55-59, but unbuilt."
+    - "G-5  No read-only endpoint for a product's public key exists; the client must hold a credentialId to
+       re-read it."
+    - "G-6  recordGeneratedCredential's host parameter is optional and defaults to null, so a credential can
+       exist with no host. The design refuses to mint without one; the domain does not enforce it."
+    - "G-7  RepositoryCredentialView exposes referenceName to clients. Under server-side storage that is a
+       path/ARN disclosure. OWNER NAMED (M4): 9417f8bf, as Q4 of the reissued object."
+    - "G-8  How the host-key fingerprint is obtained (ssh-keyscan vs handshake) is unspecified; part of the new
+       transport seam."
+    - "G-9  NEW. ADR 0018 A1's one-credential-per-repository invariant is documented but NOT a database
+       constraint: repositoryId carries only a non-unique index (definition.sql:646) and the one-active rule
+       is an untransacted read-then-write (engine:940-941). Two concurrent mints yield two active credentials
+       (§ R.15.4). Remedy is required deliverable D-2."
+    - "L-6  REPORTED, NOT EDITED: docs/engineering/dispatch/DECISIONS.md's index table omits 570bb640. Manager-owned."
+    - "Human points 2e and 2f, and the four mobile Penpot boards, are OUT OF SCOPE for this lane and belong to
+       design-addproduct-mobile. Their implications are stated in the Brief (v1.1.0) so the sibling lane can
+       align, but they are not designed here and are recorded as not-covered, not as gaps."
+design_system_compliance: "PARTIAL"
+ux_accessibility_score: "PARTIAL"
+implementation_feasibility: "MEDIUM"
+created_by: "design-agent"
+created_at: "2026-10-06T00:00:00Z"
+worktree: "/private/tmp/shipit-correct-addproduct-keys"
+branch: "design/correct-addproduct-keys"
+base_sha: "77c19f1"
+head_sha: "77c19f1"
+committed: false
+reviewed_by: ""
+reviewed_at: ""
+approved_by: ""
+approved_at: ""

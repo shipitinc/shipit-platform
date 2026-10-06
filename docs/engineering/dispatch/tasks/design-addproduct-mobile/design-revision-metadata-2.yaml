@@ -1,0 +1,242 @@
+# Design Revision Metadata — revision 2
+
+Required by `docs/engineering/DESIGN_GOVERNANCE.md` § *Artifacts → Design Revision Required Metadata*.
+**Revision 1's metadata is retained unedited** as `design-revision-metadata.yaml`; this file
+describes the current revision.
+
+```yaml
+revision_id: 1F8DC787-E88C-4DF2-B2CC-E8B0E60BBF67
+brief_id: 52CB4098-FF87-4B78-81DA-1104269551A1
+revision_number: 2
+supersedes: 65995C2B-4905-419F-A6E9-E547E86D8ECE   # revision 1, retained intact
+status: UNDER_REVIEW
+
+risk_level: 2
+risk_rationale: >
+  Unchanged from revision 1 and independently agreed by the Gate D3 reviewer
+  (INDEPENDENT_RISK_LEVEL: 2, RISK_LEVEL_AGREEMENT: YES). Every correction in this revision is
+  Level 0/1: 52 mechanical emphasis-weight corrections to match production type tokens, one
+  foreground-token swap (Trust Host inkTertiary -> inkSecondary), a corrected geometry derivation on
+  already-drawn boards, 16 layer renames that carry an existing deferral into the file, the addition
+  of a nav badge the primitive already renders, and copy harmonisation across the four boards.
+  None of them changes an interaction pattern, a navigation or information-architecture surface, or
+  the primary action's structure. Two corrections make a measured accessibility failure explicit
+  (Trust Host 4.23:1 dark on card -> 6.10:1) and one states a design consequence that routes a
+  missing disabled-primary token to the design-system owner rather than inventing a treatment; both
+  are reporting, not re-design.
+  Revision 1's risk rationale is retained above in design-revision-metadata.yaml with one factual
+  correction applied here: the desktop submit button collapses 50.4px -> 36.4px, NOT 50.4 -> 36px.
+  `minimumSize: Size(0,36)` is a minimum; `Size.constrain` raises only values below it, and the
+  content-driven height of 36.4px already exceeds it, so it is not binding. The 36px claim has been
+  deleted from § 2a, from the risk rationale and from report.md. The correction does not move the
+  risk level.
+
+risk_rationale_would_escalate_to_3_if:
+  - the human confirms the footer copy is to be removed on desktop too, contradicting BP / S boards
+    (already filed as Human Decision 27ea6536 — NOT re-raised by this revision)
+  - the sibling lane's hostUnrecognised design turns the trust step into a navigation/IA change
+
+changelog:
+  - revision 2 — correction pass after Gate D3 (DESIGN_REVIEW_CHANGES_REQUIRED,
+    CORRECTION_REQUIRED: YES, HUMAN_DECISION_REQUIRED: NO, INDEPENDENT_RISK_LEVEL: 2).
+    Applied 16 findings: B-R1, H-R1, H-R2, H-R3, H-R4, M-R1, M-R2, M-R3, M-R4, L-R1 … L-R7.
+    One finding needed a decision rather than a copy (Submit L) and was decided in favour of the
+    production primitive. One dispatched premise was disproved (F8 deleted) and one was corrected by
+    the reviewer (desktop boards draw 12/600, not 13/600).
+    See design-revision-2.md for the finding-by-finding changelog and the independent verification
+    of every finding against source and the live Penpot file.
+  - revision 1 — initial revision. No prior revision of this brief exists. The parked register-button
+    round (revision 18A97195) was folded in by decision 73097d48; its blockers B1, B2, H1, H2, H3 and
+    traceability gaps 5 and 6 were addressed there. Retained intact as design-revision.md.
+
+corrections_applied:
+  B-R1: >
+    All emphasis layers rendered at weight 400 on all four boards; F8's premise (no 500 weight) was
+    false in both directions. 52 weight changes: Back 12/400->500; H1 20/400->600; Status, F K 0/1/2,
+    Art K, Trust K 9/400 ls0 -> 600 ls1.1; Art T 13/400->600; Art L1/Art L2 11/400->500;
+    Disclose 10/400->500; Trust Btn L 12/400->600. F8 DELETED, not corrected — its premise is disproved
+    (500normal exists, 900 does not, 100 exists).
+  H-R1: >
+    Trust Host moved inkTertiary -> inkSecondary on both Unknown-host boards. Was #6e706e/#8a8983 =
+    4.99:1 light / 4.23:1 dark on the trust panel's card surface (DesignPanel = palette.card,
+    design_primitives.dart:320) — the dark value fails AA 4.5. Now 6.74:1 / 6.10:1. Ledger row added
+    with the surface named, and the missing foreground token added to the Trust K/Body/Body 2/Host
+    traceability row. Kept DISTINCT from B4/G3 (negative on dark), which is a different token with no
+    compliant alternative.
+  H-R2: >
+    product_detail_page.dart:614 carries the same false keychain guarantee ("One key per repository.
+    The private half never leaves this device.") on a live user-facing screen. G6 re-scoped from
+    _buildInfoPanel alone. Routed as production source (PROHIBITED to this lane). Lower-stakes sites
+    also named: sidebar.dart:389, decision_detail_page.dart:337 and :436, defect_detail_page.dart:1087.
+  H-R3: >
+    The 'Register product' count is now published with the counting rule. Case-sensitive substring
+    count = 2 on both Unknown-host boards (label + substring inside the helper), 1 on both Verified;
+    exact-equality count = 1 on all four. SC-3 intent satisfied.
+  H-R4: >
+    Stated the design consequence rather than only the missing token: the Register rect is 358x34 at
+    opacity 1 and byte-identical between the Unknown-host (canRegister == false) and Verified states,
+    so a human requirement has ZERO board expression and an implementer would ship a control that
+    looks enabled and does nothing. Helper-only signalling is NOT accepted as the answer; the
+    disabled-primary token is raised as a design-system-owner item (N4) beside B4. No disabled
+    treatment was invented.
+  M-R1: >
+    minimumSize is a MINIMUM; Size.constrain only raises values below it. Content+padding is
+    14.4 + 22 = 36.4, already above 36, so the height is 36.4 — NOT clamped to 36. Now written
+    50.4 -> 36.4; every clamp claim deleted from § 2a, the risk_rationale and report.md. § 2b
+    corrected: the helper is monoMeta at fontSize 10 = 12px, so 8 + 12 = 20 gained against a 14.0
+    loss and the panel's inner height GROWS ~5.6px rather than being unchanged.
+  M-R2: >
+    All 8 Trust * layers on both Unknown-host boards renamed to
+    '<name> · PROVISIONAL (G1 hostUnrecognised)', matching the treatment
+    'Art S · PENDING D4 (at-rest model)' already had. 16 renames, so a designer opening the file can
+    see which layers are conditional on the sibling lane's state machine.
+  M-R3: >
+    The Unknown-host helper 'Confirm the host above to enable Register product.' matches NONE of the
+    six strings _registerButtonSubtext returns (add_product_page.dart:726-735). The Verified boards'
+    helper matches :734 byte-for-byte. Added to the categorized mismatch list as AMBIGUOUS, naming
+    the state that must produce it (hostUnrecognised — a deploy key exists, name and repository are
+    non-empty, and the HOST is the outstanding item, distinct from row 5's 'access not verified'),
+    and stating it arrives with the sibling lane's hostUnrecognised.
+  M-R4: >
+    create_defect_bloc.dart guards corrected to :201, :207, :216, :225, :234. Revision 1 cited
+    :229 and :238, which are errorMessage: lines. Field-by-field table published so a later
+    correction lane does not 'fix' the wrong lines.
+  L-R1: >
+    Nav Badge added to all four boards. MobileNavBar renders badge: (needsYouCount ?? 0) > 0 ? … 
+    (mobile_chrome.dart:185) and BPM · Add Product · Light/Dark both carry 'Nav Badge' "2"; the nav
+    clones omitted it. Geometry derived from the primitive (mobile_chrome.dart:267-286): 18x18
+    attentionTick #f7a42c at (206, 772), numeral IBM Plex Mono 11/700 #241a02 centred. Contrast 8.42:1.
+  L-R2: >
+    Nav token mapping is per-theme, not global: light = inkQuiet #6A6C6A on rail (4.60:1), dark =
+    inkTertiary #8A8983 on rail (4.88:1) — NOT dark inkQuiet #85847E. Both pass AA. The boards are
+    faithful to the reference boards; the MATRIX was wrong. Added to the ledger per theme.
+  L-R3: >
+    The same product TeamHub showed git@git.internal.acme.com:platform/teamhub.git on the Unknown
+    pair and git@github.com:acme/teamhub.git on the Verified pair. Harmonised on the internal host,
+    which is the value the Unknown pair's trust panel already fingerprints. Consequence caught on
+    visual read-back: Art T on the Verified pair derived its text from the old path and read
+    'Installed on acme/teamhub' — corrected to 'Installed on platform/teamhub' on both. The opposite
+    harmonisation is named, with the requirement that Field Val 1 and Trust Host move as a pair.
+  L-R4: >
+    The 64px pitch (boxes at y=194/258/322) is exact; revision 1's decomposition (14 + 4 + 34 = 52)
+    was wrong. Replaced with the MEASURED decomposition from the board's own coordinates:
+    34 box + 14 gap-to-next-label + 16 label-slot = 64. Noted that FormMetrics.labelGap is 4 and
+    labelSlot 14, so the board's 14/16 split is not those two constants.
+  L-R5: >
+    Trust Btn L is flush-left (Trust Btn x=30 w=180, Trust Btn L x=30, 0px inset). Recorded as
+    design-system notification N8 rather than treated as new — it faithfully copies the desktop
+    board's identical Host Btn / Host Btn L pattern at x=254.
+  L-R6: >
+    'What you're registering' exists only at :405 (desktop left column); mobile renders only
+    'What happens next' at :859. The platform split is now stated in § 1 and in the mismatch list
+    instead of implying a shared screen. Board absence unchanged.
+  L-R7: >
+    Ledger row added for the EXPANDED technical-details lines (monoMeta + inkTertiary,
+    design_primitives.dart:391) — but with the surface corrected. On canvas, which is the surface
+    these mobile boards govern, inkTertiary is 4.65:1 light / 4.62:1 dark and PASSES AA. The 4.23:1
+    figure applies to card, i.e. the desktop _RightPanel only. Recorded as N7 for the desktop owner
+    rather than copying a ratio that does not apply to the governed platform.
+
+premises_corrections:
+  - >
+    F8's premise 'Penpot's IBM Plex Sans has no 500 weight (supported: 200/300/400/600/700/900)' is
+    FALSE IN BOTH DIRECTIONS. Variants are 100/200/300/400/500/600/700: 500normal exists, 900 does not
+    exist, and 100 exists though F8 omitted it. F8 deleted rather than corrected.
+  - >
+    The dispatch states 'the reference BPM board and both desktop boards draw 13/600' for Submit L.
+    Both desktop boards were read directly: 'R Submit L' is 12/600 IBM Plex Sans ls 0 on
+    S · Add Product · Unknown host · Light AND S · Add Product · Verified · Light. Only the BPM
+    reference draws 13px, and 13px matches no primitive on either platform (mobile
+    buttonLabelMobile = 11; desktop code = monoMeta 12/600/ls 1.1 at add_product_page.dart:700-706).
+  - >
+    L-R7's surface is wrong for the governed platform; the token is right. Corrected in the ledger
+    rather than copied.
+  - >
+    The dispatched review report path docs/engineering/dispatch/tasks/design-review-addproduct-mobile/
+    report.md does not exist and never has (not in the tree, not untracked, 0 objects in
+    git rev-list --all). LANES.md:224 asserts it exists. Every finding was therefore re-verified
+    independently against source and the live Penpot file rather than trusted. See G11.
+
+traceability:
+  requirements_covered: [R1, R2, R3, R4, R5, R6, R7]
+  requirements_gaps: []
+  non_requirement_gaps:      # design-system / ownership items, see design-revision-2.md § 12
+    - "G1 normative hostUnrecognised state machine and 'Check access' semantics — sibling lane"
+    - "G2 at-rest protection wording for layer 'Art S' — open human decision; string marked PENDING D4"
+    - "G3 negative on dark fails AA (4.02:1 canvas / 3.68:1 card); no compliant token exists"
+    - "G4 TechnicalDetails paints an unconditional ContentRule the mobile board does not have"
+    - "G5 the build's 'What you're registering' / 'What happens next' panels have no board"
+    - "G6 RE-SCOPED: _buildInfoPanel AND product_detail_page.dart:614 repeat the false keychain guarantee"
+    - "G7 34px board submit vs 36px MobilePrimaryButton"
+    - "G8 flutter analyze not executed, so implementation_feasibility cannot be HIGH"
+    - "G9 NEW — no board expresses canRegister == false and ShipItPalette has no disabled-primary token"
+    - "G10 NEW — 'Confirm the host above to enable Register product.' has no producer in _registerButtonSubtext"
+    - "G11 NEW — the mobile design review report was never persisted; LANES.md asserts it exists"
+
+design_system_compliance: PARTIAL
+design_system_compliance_reason: >
+  Still PARTIAL, moved in the right direction. Improved by this pass: the emphasis layers now match
+  the production type tokens (Back 500, H1 600, microLabel 600/ls 1.1, sectionTitle 600, link 500,
+  linkMicro 500, buttonLabelMobile 600); Trust Host no longer ships an AA-failing foreground; and the
+  bottom nav now carries the badge MobileNavBar actually renders. Still PARTIAL because the file now
+  holds boards disagreeing with mine — 'BPM · Add Product · Light' still draws Submit L at 13/600
+  (N5) and microLabel at ls 0 (N6) — and because negative on dark remains 4.02:1/3.68:1 with no
+  compliant alternative (N2). All of those boards are PROHIBITED to this lane, so none may be fixed
+  here; they are recorded as design-system-owner notifications.
+
+ux_accessibility_score: PARTIAL
+ux_accessibility_score_reason: >
+  Every ratio re-measured from design_tokens.dart:99-101 / :120-122 with a WCAG 2.1 implementation
+  sanity-checked at black-on-white = 21.00; all ten revision-1 figures reproduced exactly. The one
+  AA failure this lane had the authority to fix is fixed: Trust Host 4.23:1 dark on card -> 6.10:1
+  via inkSecondary. Not PASS, and the reasons are stated rather than rounded away: (a) Key State still
+  uses negative, 5.72:1 light but 3.68:1 on card in dark, with no compliant token in ShipItPalette
+  (N2, pre-existing on the desktop boards too); (b) the canRegister == false state has no board
+  expression at all — the Register rect is byte-identical across the two states, so the highest-
+  consequence interaction on the board is undrawn and an implementer would ship a control that looks
+  enabled and does nothing (§ 7, N4). Both are design-system or sibling-lane owned.
+
+implementation_feasibility: MEDIUM
+implementation_feasibility_reason: >
+  Unchanged at MEDIUM, deliberately. Every primitive, token and call site this design depends on was
+  verified to exist at HEAD 77c19f1 by source inspection in this lane as well. But the deterministic
+  gate was NOT executed in this lane: flutter analyze was NOT_RUN. The prior review recorded that at
+  this HEAD it returns 8090 undefined_identifier issues because
+  apps/control_plane/.dart_tool/package_config.json does not exist, and resolving that needs
+  flutter pub get, which writes outside this lane's OWNED_PATHS. No feasibility claim is derived from
+  a gate that was not run. Raise to HIGH only after flutter pub get && flutter analyze passes on the
+  implementation branch.
+
+created_by: design-agent (correction lane, task correct-addproduct-mobile)
+created_at: 2026-10-06T00:00:00Z
+
+reviewed_by: null       # Gate D3 re-review — an independent design-reviewer, never the author
+reviewed_at: null
+approved_by: null       # Gate D4 — Level 2 requires human approval
+approved_at: null
+
+provenance:
+  worktree: /private/tmp/shipit-correct-addproduct-mobile
+  branch: design/correct-addproduct-mobile
+  base_sha: 77c19f1
+  head_sha: 77c19f1
+  committed: NO            # policy: the Manager persists artifacts; Penpot authoring is not a git operation
+  penpot_page: d8ac01df-6646-81d2-8008-a366c09aa9d3
+  base_of_correction: "77c19f114ee691e8c434afe37b7c84494b66dc40"
+  review_report_read: NOT_AVAILABLE
+  docker_or_compose_commands_run: NONE
+
+artifact_paths:
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/design-revision-2.md
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/design-revision-metadata-2.yaml
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/correction-report.md
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/design-brief.md
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/design-revision.md            # revision 1, intact
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/design-revision-metadata.yaml # revision 1, intact
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/penpot-board-evidence.md       # revision 1, intact
+  - docs/engineering/dispatch/tasks/design-addproduct-mobile/report.md                      # revision 1, intact
+  - "penpot:d8ac01df-6646-81d2-8008-a366c09aa9d3 :: SM - Add Product - Unknown host - Light  (6d055762-a70b-804c-8008-bf65ff750422)  44 layers"
+  - "penpot:d8ac01df-6646-81d2-8008-a366c09aa9d3 :: SM - Add Product - Unknown host - Dark   (6d055762-a70b-804c-8008-bf65e644269b)  44 layers"
+  - "penpot:d8ac01df-6646-81d2-8008-a366c09aa9d3 :: SM - Add Product - Verified - Light      (6d055762-a70b-804c-8008-bf660e124738)  36 layers"
+  - "penpot:d8ac01df-6646-81d2-8008-a366c09aa9d3 :: SM - Add Product - Verified - Dark       (6d055762-a70b-804c-8008-bf65f36b1c9a)  36 layers"
+```
