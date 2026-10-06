@@ -1,0 +1,154 @@
+# human-decision.yaml
+decision_id: ae1c1f79-338c-4d8f-97e0-452adaed021d
+type: ARCHITECTURE
+status: RESOLVED
+question: >-
+  If the secret manager is unavailable and the substrate precondition fails, does the key flow's first
+  step — creating the Product row and the RepositoryReference — still run?
+# Created RESOLVED rather than PENDING-then-resolved: the human was asked this directly in the structured
+# question UI in the same session, and the audit trail records the answer rather than a later edit. Per
+# HUMAN_DECISIONS.md the audit trail is immutable, so an amendment would need a new object; this object
+# exists so the answer has a citable id that Design Revision 3 and the implementation lane can point at.
+context:
+  summary: >-
+    **This exists because two already-resolved decisions interact and neither one addresses the other's
+    row.** Design Revision 3 (`docs/engineering/dispatch/tasks/design-addproduct-keyservice/design-revision-3.md`,
+    § 5.2 and finding D-19) escalated it rather than deriving it, correctly — the two objects are
+    Manager-owned and the interaction is genuinely under-specified.
+
+    - `7b1bc8b7` (fail closed) scopes its refusal to *"no keypair is generated and no credential row is
+      created"*. It is **silent about the Product row.**
+    - `898b07d0` (split identity from registration) makes the `Product` row and the `RepositoryReference`
+      **the key flow's first step**, so they are created *before* any credential work.
+
+    So *"if the secret manager is down, does a Product row exist afterwards?"* has no answer in either
+    object, and the two literal readings disagree.
+
+    **Why it matters more than it looks.** `898b07d0` was accepted with a known trade: leaving the page
+    early leaves a **visible product with no usable credential**, and that trade was accepted because
+    step 1 buys something real — it makes the mint satisfiable, which is what honours human point 2b. If
+    the substrate fails instead, that same bad state appears with **none of the benefit that made it
+    acceptable**: the user is blocked by an outage they cannot fix from the UI, and is left looking at a
+    product that exists but cannot be used.
+  blocking_work_item:
+    item_type: DESIGN_REVISION
+    item_id: 4B017787-25A0-4F45-ABDA-805C250AF63F
+    item_ref: "Add Product rebuild — server-side deploy-key service, Design Revision 3"
+  evidence:
+    documents:
+      - type: DESIGN_REVISION
+        id: 4B017787-25A0-4F45-ABDA-805C250AF63F
+        url: docs/engineering/dispatch/tasks/design-addproduct-keyservice/design-revision-3.md
+      - type: OTHER
+        id: D-19
+        url: docs/engineering/dispatch/tasks/design-addproduct-keyservice/discoveries.md
+      - type: OTHER
+        id: 7b1bc8b7-6cd1-4ddc-a94f-366de2bed38a
+        url: .decisions/7b1bc8b7-6cd1-4ddc-a94f-366de2bed38a.yaml
+      - type: OTHER
+        id: 898b07d0-e848-4774-8007-f4dacbd89c78
+        url: .decisions/898b07d0-e848-4774-8007-f4dacbd89c78.yaml
+    quantitative_data:
+      - metric: "Rows a fail-closed refusal creates under each reading"
+        value: "reading A (refusal creates nothing): 0 Product, 0 RepositoryReference, 0 credential. reading B (step 1 runs first): 1 Product + 1 RepositoryReference, 0 credential."
+        source: derived from the two decision objects' scopes
+      - metric: "State the avoided outcome leaves behind"
+        value: "a visible product with no usable credential — the exact state 898b07d0 accepted as a trade, minus the benefit that made it acceptable"
+        source: Design Revision 3 § 5.2
+      - metric: "Precedent for 'the substrate is checked before any write'"
+        value: "ADR 0018 A2's 'access is proven, not assumed' posture; and the credential design's own refusal paths, none of which create a row before verifying"
+        source: ADR 0018 § 235-242; product_registry_engine.dart refusal paths
+    qualitative_tradeoffs:
+      - dimension: "Atomicity of the flow"
+        option_a: "Refusal creates nothing"
+        option_b: "Step 1 runs, then the mint fails"
+        assessment: >-
+          A treats the substrate as a precondition of the whole flow, which is how the credential domain
+          already treats it. B treats the flow's steps as independent of each other's success, which is
+          more uniform — but it converts an infrastructure outage into a persistent, visible artefact.
+      - dimension: "What the user sees after an outage"
+        option_a: "Refusal creates nothing"
+        option_b: "Step 1 runs, then the mint fails"
+        assessment: >-
+          A leaves the Products list unchanged, so the user's state is exactly as it was. B leaves a
+          product they must reason about with no way to complete it — while the remediation the
+          fail-closed answer requires is an operator action, not a user action.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Evaluate the substrate precondition **before any write**, so a refusal creates nothing at all.
+      Step 1 of the split-identity decision exists solely to make the mint satisfiable; with no substrate
+      it achieves nothing and produces the accepted bad state without any of the benefit that made that
+      state acceptable.
+    confidence: HIGH
+  options:
+    - option_id: OPTION_A
+      label: "Refusal creates nothing"
+      description: >-
+        The substrate precondition is evaluated before any write. If it fails, no `Product` row, no
+        `RepositoryReference` and no credential row are created, and the user is told the remediation.
+      implications: >-
+        The flow is atomic with respect to its precondition. An outage leaves the user's state exactly as
+        it was — nothing to clean up, nothing to reason about, and no visible product that cannot be used.
+        Cost: the user cannot pre-stage a product while the manager is down, so recovery requires
+        retrying the whole flow once the operator has fixed the substrate.
+      estimated_effort: "small; the check moves ahead of the first write"
+      risk_level: LOW
+    - option_id: OPTION_B
+      label: "Product row IS created, then the mint fails"
+      description: >-
+        Step 1 completes and creates the `Product` and `RepositoryReference`; the mint then fails closed
+        on the substrate.
+      implications: >-
+        The flow's steps do not depend on each other's success, which is uniform with the rest of the
+        onboarding flow. Cost: an infrastructure outage produces a **persistent, visible artefact** — a
+        product that exists but cannot be used, with no user-side remedy — which is the dead end human
+        point 2d rejected, reached by a different route.
+      estimated_effort: "smallest"
+      risk_level: HIGH
+    - option_id: OPTION_C
+      label: "Create it, but hide it until verified"
+      description: >-
+        Create the row but keep it invisible until the credential verifies, so the accepted bad state is
+        never user-visible.
+      implications: >-
+        Preserves uniform step semantics while avoiding the visible dead end. Cost: requires a
+        `ProductState` with no pre-registration meaning today — `createProduct` hardcodes
+        `ProductState.registered` (`engine:54`) and no other member fits — and changes what the Products
+        page shows, which is a UX change owned by the mobile lane.
+      estimated_effort: "larger; a domain state, a query filter and a UI change"
+      risk_level: MEDIUM
+resolution:
+  selected_option: OPTION_A
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-06T13:50:00Z
+  rationale: >-
+    **Refusal creates nothing.** The substrate precondition is evaluated before any write.
+
+    Presented as three options; the human chose the design lane's recommendation. The reasoning that
+    carried it: step 1 of the split-identity decision exists only to make the mint satisfiable, so with
+    no substrate it achieves nothing while still producing the visible-product-with-no-usable-credential
+    state that decision's trade was accepted to permit — that is, the dead end human point 2d rejected,
+    reached by a different route. Under Option A an outage leaves the user's state exactly as it was, so
+    there is nothing to clean up and nothing to reason about, and the remediation the fail-closed answer
+    already requires is an operator action rather than something the user must act on.
+
+    This does not change either parent decision: `7b1bc8b7` still fails closed, and `898b07d0` still
+    splits identity from registration. It specifies the one interaction point they left unaddressed.
+  follow_up_actions:
+    - action: >-
+        Specify in Design Revision 3 that the substrate precondition is evaluated before the first write,
+        and that no `Product`, `RepositoryReference` or credential row is created on refusal. Add a test
+        that asserts zero rows after a refused mint - not merely that the credential row is absent.
+      owner: design-agent
+    - action: >-
+        State the consequence for the mobile boards: after a refused mint the Products list is unchanged,
+        so the Unknown-host state must not imply that a product was created.
+      owner: design-agent (coupled to design-addproduct-mobile)
+    - action: >-
+        Implement the precondition check ahead of the first write, and cover it with a test proving a
+        refusal leaves `Product` and `RepositoryReference` counts unchanged.
+      owner: implementer
+created_by: orchestrator-main
+created_at: 2026-10-06T13:50:00Z
+updated_at: 2026-10-06T13:50:00Z

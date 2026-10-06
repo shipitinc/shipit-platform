@@ -62,6 +62,45 @@ at runtime and is not generated content.
 - Orchestration conventions (see `aef-orchestrator` skill § 3 — override the defaults for every
   convention your project does not want defaulted): TBD
 
+### §13 Credentials
+
+One **role-scoped service-profile token** covers all shipit-platform products; never a token per
+project.
+
+Separation comes from role-scoping, never from spreading more secret values.
+
+#### §13a Referenced by name, never by value
+
+A credential is referenced by **name**. Its value is never written into a repository, a record, a log
+or a message. The record stores a reference plus whatever is safe to display — for a key credential,
+that is the public half and its fingerprint.
+
+#### §13b Git credentials — a scoped deviation
+
+ADR 0018 (`docs/adr/0018-per-product-git-credentials.md`) is a **deliberate, scoped deviation from
+§13 for git credentials only**, and §13 continues to govern Penpot and other tooling credentials
+unchanged.
+
+Git hosting does not work the way §13 assumes. The provider-native mechanism for scoping access to a
+single repository **is** a per-repository key (GitHub/GitLab Deploy Keys, Bitbucket Access Keys);
+there is no equivalent of Penpot's workspace-membership indirection. A single service-profile key must
+attach to a bot account holding permission on *every* product repository — a standing write grant
+across all products held in one secret, with a blast radius of every governed product and fleet-wide
+rotation.
+
+So: **one SSH deploy keypair per repository**, referenced by name per §13a, private half never
+displayed, logged, persisted to the durable record, or transmitted. ADR 0018 records the full decision,
+its amendment history (A1 scope = per repository; A2 custody = external secret manager, revocation =
+two-sided), and the invariants it now depends on other components enforcing.
+
+> **Restored 2026-10-06.** §13 was quoted verbatim by ADR 0018 and depended on by ADR 0012:34
+> ("Credentials referenced by name only (AGENTS.md §13 convention)") and ADR 0019:121
+> ("AGENTS.md §13b"), but **§13 did not exist in this file** — `AGENTS.md` had been reduced to the
+> framework template with `Product-specific policy: TBD`. Three ADRs pointed at absent text, and the
+> ADR 0018 carve-out was a documented mitigation that was never applied. The §13 wording above is what
+> ADR 0018 already quoted, not new policy; §13a and §13b are the two conventions those ADRs cite.
+> Human-authorized this session.
+
 ### Shared Docker state — read-only for every lane without deployment authority
 
 Human-mandated rule, adopted after a review lane destroyed the QA database (compose project `docker`:

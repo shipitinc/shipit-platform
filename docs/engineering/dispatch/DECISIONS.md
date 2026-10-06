@@ -87,3 +87,17 @@ Governing spec: **desktop** = divider + right-aligned `Show technical details` t
 `:85-88` (custody) and `:113-114` (revocation) are superseded by the human's answers. `:100-102`
 (registration gated on a proven connectivity check) is **upheld** and becomes satisfiable. Owner: the human,
 as ADR owner.
+
+## Resolved after the merge — three more, 2026-10-06
+
+| decision_id | type | outcome | note |
+|---|---|---|---|
+| `ae1c1f79-338c-4d8f-97e0-452adaed021d` | ARCHITECTURE | **OPTION_A — refusal creates nothing** | Created RESOLVED, not PENDING-then-resolved. Exists because **two already-resolved decisions interacted and neither addressed the other's row**: `7b1bc8b7` scopes its fail-closed refusal to the credential and is silent on the `Product` row, while `898b07d0` makes that row the flow's first step. Design Revision 3 finding D-19 escalated it rather than deriving it |
+| ADR 0018 A2 status | ADR OWNER | **Accepted, with four gaps recorded as accepted** | The amendment lane deliberately did not mark it Accepted — that is the ADR owner's call. Now given |
+| `AGENTS.md` §13 | GOVERNANCE | **Written, with §13a and the §13b carve-out** | §13 was quoted verbatim by ADR 0018 and depended on by ADR 0012:34 and ADR 0019:121, yet did not exist in the file. The wording restored is what ADR 0018 already quoted — a restoration, not new policy |
+
+**Why D-19 was worth asking rather than deriving.** `898b07d0` was accepted with a known trade: leaving
+early leaves a **visible product with no usable credential**, accepted because step 1 makes the mint
+satisfiable and so honours human point 2b. If the substrate fails instead, that same bad state appears with
+**none of the benefit that made it acceptable** — an infrastructure outage leaves a persistent, visible
+artefact the user cannot complete. That is the dead end human point 2d rejected, reached by a different route.
