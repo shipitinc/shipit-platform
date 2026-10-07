@@ -40,6 +40,12 @@ import 'test_tools/serverpod_test_tools.dart';
 const _productId = 'credimm-fixture';
 const _repoId = 'credimm-repo-1';
 
+/// A second repository of the SAME product, created only by the tests that
+/// need one. It is the precondition D-5's mint-path case requires: the engine's
+/// one-active guard reads the TARGET repository, so it passes when the target
+/// has no credential of its own.
+const _repoId2 = 'credimm-repo-2';
+
 /// The partial unique index enforcing one active credential per repository.
 const _activeIndexName = 'product_credential_active_repository_unique';
 
@@ -79,16 +85,28 @@ Future<void> _closeSessions() async {
 /// Targeted DELETEs, never a TRUNCATE: `test/integration` shares one database
 /// with files that run concurrently, and truncating `product` out from under
 /// them breaks their assertions. Every statement is scoped to this file's
-/// fixture Product, so no other file's row can match. Runs in `setUp` as well
-/// as `tearDown`, because a previous run that aborted mid-test leaves rows
+/// fixture ids, so no other file's row can match. Runs in `setUp` as well as
+/// `tearDown`, because a previous run that aborted mid-test leaves rows
 /// behind and re-registering the Product would then violate a unique
 /// constraint.
+///
+/// The credential DELETEs match by PREFIX on both `productId` and
+/// `repositoryId`, not on the one product id. A test whose subject is a
+/// re-point has, by design, moved a row to a different `productId` — so an
+/// exact-match purge silently fails to clean up the very rows the broken
+/// invariant produced, and the leak surfaces as an unrelated failure in the
+/// NEXT test. That is not hypothetical: it is what removing D-5's predicate
+/// does, and it is why the purge here is prefix-based.
 Future<void> _purgeSuiteRows() async {
   final db = await _newDb();
   const statements = <String>[
-    'DELETE FROM "product_credential" WHERE "productId" = \'$_productId\'',
-    'DELETE FROM "repository_reference" WHERE "productId" = \'$_productId\'',
-    'DELETE FROM "product" WHERE "productId" = \'$_productId\'',
+    'DELETE FROM "product_credential" WHERE "productId" LIKE \'credimm-%\'',
+    'DELETE FROM "product_credential" '
+        'WHERE "repositoryId" LIKE \'credimm-%\'',
+    'DELETE FROM "repository_reference" WHERE "productId" LIKE \'credimm-%\'',
+    'DELETE FROM "repository_reference" '
+        'WHERE "repositoryId" LIKE \'credimm-%\'',
+    'DELETE FROM "product" WHERE "productId" LIKE \'credimm-%\'',
   ];
   for (final statement in statements) {
     await db.query(statement);
@@ -273,6 +291,82 @@ Future<RepositoryCredential> _fullyVerified(
     credentialId: 'cred-1',
     succeeded: true,
     checkedBy: 'operator',
+  );
+}
+
+/// Adds [_repoId2] to the fixture product. Idempotent, so a test may call it
+/// without knowing whether `setUp` already did — it does not; only these tests
+/// need it.
+Future<void> _addSecondRepo(ProductRegistryEngine engine) =>
+    engine.addRepositoryReference(
+      repositoryId: _repoId2,
+      productId: _productId,
+      uri: 'git@github.com:acme/shipit-docs.git',
+      provider: RepositoryProvider.github,
+    );
+
+/// A same-id, self-superseding re-mint of `cred-1` with material IDENTICAL to
+/// what is stored.
+///
+/// This is the call shape D-1's predicate is SATISFIED by, so before D-4 it took
+/// the `ON CONFLICT ... DO UPDATE` path and rewrote the row from the freshly
+/// constructed credential. No key substitution is required to reach it.
+Future<RepositoryCredential> _remintIdentical(
+  ProductRegistryEngine engine, {
+  String repositoryId = _repoId,
+  String? credentialId,
+}) => engine.recordGeneratedCredential(
+  productId: _productId,
+  repositoryId: repositoryId,
+  credentialId: credentialId ?? 'cred-1',
+  supersedesCredentialId: credentialId ?? 'cred-1',
+  referenceName: 'GIT_PRODUCT_CREDIMM_REPO1_SSH',
+  publicKey: _pub,
+  fingerprint: _fp,
+  algorithm: 'ed25519',
+  host: 'github.com',
+);
+
+/// [base] with [overrides] applied, field by field.
+///
+/// `copyWith` cannot express what the scope and durable-evidence tests need,
+/// and that is why no engine call site reaches them: it has NO parameter for
+/// `productId`/`repositoryId`, and every nullable parameter it does have falls
+/// back to the current value, so it cannot CLEAR one. A key present in
+/// [overrides] is used verbatim, including a `null` — which is how "clear this
+/// column" is expressed.
+RepositoryCredential _clone(
+  RepositoryCredential base,
+  Map<String, Object?> overrides,
+) {
+  T pick<T>(String key, T fallback) =>
+      overrides.containsKey(key) ? overrides[key] as T : fallback;
+
+  return RepositoryCredential(
+    credentialId: pick('credentialId', base.credentialId),
+    productId: pick('productId', base.productId),
+    repositoryId: pick('repositoryId', base.repositoryId),
+    referenceName: pick('referenceName', base.referenceName),
+    publicKey: pick('publicKey', base.publicKey),
+    fingerprint: pick('fingerprint', base.fingerprint),
+    algorithm: pick('algorithm', base.algorithm),
+    status: pick('status', base.status),
+    createdAt: pick('createdAt', base.createdAt),
+    lastVerifiedAt: pick('lastVerifiedAt', base.lastVerifiedAt),
+    lastVerifiedBy: pick('lastVerifiedBy', base.lastVerifiedBy),
+    lastFailureReason: pick('lastFailureReason', base.lastFailureReason),
+    hostKeyStatus: pick('hostKeyStatus', base.hostKeyStatus),
+    host: pick('host', base.host),
+    hostKeyFingerprint: pick('hostKeyFingerprint', base.hostKeyFingerprint),
+    hostConfirmedAt: pick('hostConfirmedAt', base.hostConfirmedAt),
+    hostConfirmedBy: pick('hostConfirmedBy', base.hostConfirmedBy),
+    revokedAt: pick('revokedAt', base.revokedAt),
+    revokedReason: pick('revokedReason', base.revokedReason),
+    supersedesCredentialId: pick(
+      'supersedesCredentialId',
+      base.supersedesCredentialId,
+    ),
+    version: pick('version', base.version),
   );
 }
 
@@ -616,6 +710,385 @@ void main() {
             'transient',
             reason: 'a non-key-material CAS write must still land',
           );
+        },
+      );
+
+      test(
+        'T-C: an identical-material re-mint is refused and the row is untouched '
+        'against Postgres too',
+        () async {
+          // D-1's `WHERE` predicate is satisfied by IDENTICAL values, so before
+          // D-4 this call took `ON CONFLICT ... DO UPDATE` and rewrote all
+          // twenty mutable columns from a freshly constructed credential:
+          // `status` back to `generated`, `hostKeyStatus` back to `unknown`, and
+          // host confirmation, verification and diagnostics nulled. No key
+          // substitution is needed, so this is reachable through the public
+          // domain API by anyone holding the stored credential's id.
+          final engine = await _engine(
+            PostgresProductRegistryStore(await _newDb()),
+          );
+          final before = await _fullyVerified(engine);
+
+          await expectLater(
+            _remintIdentical(engine),
+            throwsA(
+              isA<CredentialNotUsableException>().having(
+                (e) => e.reason,
+                'reason',
+                allOf(
+                  contains('already exists'),
+                  isNot(contains('key material')),
+                ),
+              ),
+            ),
+          );
+
+          final stored = (await engine.readCredentials(
+            _productId,
+          )).firstWhere((c) => c.credentialId == 'cred-1');
+          expect(stored.status, CredentialStatus.verified);
+          expect(stored.hostKeyStatus, HostKeyStatus.confirmed);
+          expect(stored.hostConfirmedAt, isNotNull);
+          expect(stored.hostConfirmedBy, 'operator');
+          expect(stored.hostKeyFingerprint, _hostFp);
+          expect(stored.lastVerifiedAt, isNotNull);
+          expect(stored.lastVerifiedBy, 'operator');
+          expect(stored.createdAt, before.createdAt);
+          expect(stored.version, before.version);
+          expect(
+            stored,
+            before,
+            reason: 'the refusal must change nothing at all on the row',
+          );
+        },
+      );
+
+      test(
+        'T-E: a different-material re-mint is refused too, against Postgres',
+        () async {
+          // The regression guard for D-4, and the only one that can catch the
+          // wrong implementation of it. "Insert-only" can be faked by predicating
+          // the conflict on the material DIFFERING — which is exactly what the
+          // branch did before — and that restores the re-point D-1 closed. On
+          // this tier the mistake is a mistake in the STATEMENT, so only a real
+          // Postgres can witness it; the in-memory store would refuse either way.
+          //
+          // The refusal is an identity conflict because `DO NOTHING` cannot see
+          // the supplied material — see the store's own comment on that.
+          final engine = await _engine(
+            PostgresProductRegistryStore(await _newDb()),
+          );
+          final before = await _fullyVerified(engine);
+
+          await expectLater(
+            engine.recordGeneratedCredential(
+              productId: _productId,
+              repositoryId: _repoId,
+              credentialId: 'cred-1',
+              supersedesCredentialId: 'cred-1',
+              referenceName: 'GIT_PRODUCT_CREDIMM_REPO1_ROTATED',
+              publicKey: _pub2,
+              fingerprint: _fp2,
+              algorithm: 'ecdsa-sha2-nistp256',
+              host: 'github.com',
+            ),
+            throwsA(
+              isA<CredentialNotUsableException>().having(
+                (e) => e.reason,
+                'reason',
+                contains('already exists'),
+              ),
+            ),
+          );
+
+          final stored = (await engine.readCredentials(
+            _productId,
+          )).firstWhere((c) => c.credentialId == 'cred-1');
+          expect(
+            stored.publicKey,
+            _pub,
+            reason: 'the installed key must survive',
+          );
+          expect(stored.fingerprint, _fp);
+          expect(stored.algorithm, 'ed25519');
+          expect(stored, before, reason: 'the refusal must change nothing');
+
+          // D-1 keeps its own refusal on the CAS branch, where the material is
+          // visible. The M-2 test above pins that and is unchanged.
+        },
+      );
+
+      test(
+        'T-D: a revoked credential cannot be resurrected, and the repository '
+        'stays mintable',
+        () async {
+          // This is the one that needs THIS tier. The resurrection is a
+          // statement-level defect, but the damage it does is only complete
+          // because of the index: a resurrected row occupies the active set for
+          // the repository, so the legitimate fresh mint afterwards is refused
+          // by `$_activeIndexName` with "already has an active credential" —
+          // and the row that refuses it claims a deploy key exists while, under
+          // human decision 79e860e2, its private-half handle was DESTROYED at
+          // revocation.
+          final store = PostgresProductRegistryStore(await _newDb());
+          final engine = await _engine(store);
+          await _fullyVerified(engine);
+          await engine.revokeCredential(
+            productId: _productId,
+            credentialId: 'cred-1',
+            reason: 'compromised',
+          );
+          final revoked = (await engine.readCredentials(
+            _productId,
+          )).firstWhere((c) => c.credentialId == 'cred-1');
+          expect(revoked.status, CredentialStatus.revoked);
+          expect(
+            await engine.readActiveCredential(_productId, _repoId),
+            isNull,
+            reason: 'precondition: a revoked row is outside the active set',
+          );
+
+          await expectLater(
+            _remintIdentical(engine),
+            throwsA(isA<CredentialNotUsableException>()),
+          );
+
+          final after = (await engine.readCredentials(
+            _productId,
+          )).firstWhere((c) => c.credentialId == 'cred-1');
+          expect(after.status, CredentialStatus.revoked);
+          expect(after.revokedAt, revoked.revokedAt);
+          expect(after.revokedReason, 'compromised');
+          expect(
+            await engine.readActiveCredential(_productId, _repoId),
+            isNull,
+            reason: 'the refused mint must not re-enter the active set',
+          );
+
+          // And the repository is still mintable — the state an operator is
+          // actually left in. Before D-4 this INSERT was refused by the index,
+          // because the resurrected row had taken the slot.
+          final fresh = await engine.recordGeneratedCredential(
+            productId: _productId,
+            repositoryId: _repoId,
+            referenceName: 'GIT_PRODUCT_CREDIMM_REPO1_SSH',
+            publicKey: _pub2,
+            fingerprint: _fp2,
+            host: 'github.com',
+            credentialId: 'cred-2',
+          );
+          expect(fresh.credentialId, 'cred-2');
+          final all = await engine.readCredentials(_productId);
+          expect(
+            all.where((c) => c.status != CredentialStatus.revoked),
+            hasLength(1),
+          );
+
+          // Recovery by rotation also still works: revoke-then-mint needs the
+          // old row out of the index before the replacement goes in.
+          final rotated = await engine.rotateCredential(
+            productId: _productId,
+            repositoryId: _repoId,
+            referenceName: 'GIT_PRODUCT_CREDIMM_REPO1_SSH',
+            publicKey: _pub,
+            fingerprint: _fp,
+            reason: 'post-incident rotation',
+            credentialId: 'cred-3',
+          );
+          expect(rotated.credentialId, 'cred-3');
+          expect(rotated.supersedesCredentialId, 'cred-2');
+        },
+      );
+
+      test(
+        'T-F: repositoryId cannot be re-pointed on an existing identity',
+        () async {
+          final engine = await _engine(
+            PostgresProductRegistryStore(await _newDb()),
+          );
+          final before = await _fullyVerified(engine);
+          await _addSecondRepo(engine);
+          expect(
+            await engine.readActiveCredential(_productId, _repoId2),
+            isNull,
+            reason: 'precondition: the target repository has no credential',
+          );
+
+          await expectLater(
+            _remintIdentical(engine, repositoryId: _repoId2),
+            throwsA(isA<CredentialNotUsableException>()),
+          );
+
+          final stored = (await engine.readCredentials(
+            _productId,
+          )).firstWhere((c) => c.credentialId == 'cred-1');
+          expect(
+            stored,
+            before,
+            reason: 'the installed key must still belong to $_repoId',
+          );
+          expect(
+            await engine.readActiveCredential(_productId, _repoId2),
+            isNull,
+            reason: '$_repoId2 must gain no credential from this write',
+          );
+
+          // ADR 0018 :96-99 requires a human to be shown the host, key type and
+          // fingerprint and to confirm it. A re-point moves the record onto a
+          // repository whose host was never shown to anybody; the guard is what
+          // stops that row from claiming a confirmation it never earned.
+          expect(stored.hostKeyStatus, HostKeyStatus.confirmed);
+          expect(stored.hostConfirmedBy, 'operator');
+        },
+      );
+
+      test('T-G: the scope fields are immutable on the CAS path too', () async {
+        // A CAS write has no D-4 to save it: `productId`/`repositoryId` are in
+        // `$assignments` on both branches and in neither predicate, so the guard
+        // has to be there explicitly. Unreachable through the engine, so this is
+        // the store contract a future caller would be held to.
+        final store = PostgresProductRegistryStore(await _newDb());
+        final engine = await _engine(store);
+        final before = await _fullyVerified(engine);
+        await _addSecondRepo(engine);
+
+        for (final scope in ['repositoryId', 'productId']) {
+          await expectLater(
+            store.saveProductCredential(
+              _clone(before, {
+                scope: scope == 'repositoryId'
+                    ? _repoId2
+                    : 'credimm-other-product',
+              }),
+              expectedVersion: before.version,
+            ),
+            throwsA(
+              isA<CredentialNotUsableException>().having(
+                (e) => e.reason,
+                'reason',
+                contains('cannot be changed'),
+              ),
+            ),
+            reason: '$scope is immutable once minted, even on a matching CAS',
+          );
+          expect(
+            await store.readProductCredential(before.credentialId),
+            before,
+            reason: '$scope must not have been written',
+          );
+        }
+
+        // And the guard is not simply refusing every update.
+        await store.saveProductCredential(
+          before.copyWith(lastFailureReason: 'transient'),
+          expectedVersion: before.version,
+        );
+        expect(
+          (await store.readProductCredential(
+            before.credentialId,
+          )).lastFailureReason,
+          'transient',
+        );
+      });
+
+      test(
+        'a CAS write cannot clear host confirmation, verification or revocation',
+        () async {
+          final store = PostgresProductRegistryStore(await _newDb());
+          final engine = await _engine(store);
+          final before = await _fullyVerified(engine);
+
+          for (final column in [
+            'hostConfirmedAt',
+            'hostConfirmedBy',
+            'lastVerifiedAt',
+            'lastVerifiedBy',
+          ]) {
+            await expectLater(
+              store.saveProductCredential(
+                _clone(before, {column: null}),
+                expectedVersion: before.version,
+              ),
+              throwsA(isA<CredentialNotUsableException>()),
+              reason: '$column is durable evidence and cannot be cleared',
+            );
+            expect(
+              await store.readProductCredential(before.credentialId),
+              before,
+            );
+          }
+
+          await engine.revokeCredential(
+            productId: _productId,
+            credentialId: 'cred-1',
+            reason: 'compromised',
+          );
+          final revoked = await store.readProductCredential('cred-1');
+          await expectLater(
+            store.saveProductCredential(
+              _clone(revoked, {'revokedAt': null, 'revokedReason': null}),
+              expectedVersion: revoked.version,
+            ),
+            throwsA(isA<CredentialNotUsableException>()),
+            reason: 'revocation cannot be un-done by a CAS write',
+          );
+          expect(await store.readProductCredential('cred-1'), revoked);
+        },
+      );
+
+      test(
+        'D-4 under concurrency: two mints of one id yield one row and one '
+        'identity conflict',
+        () async {
+          // The same race as T-B, but the two callers claim the SAME identity
+          // instead of two different ones. That is the race `DO NOTHING` exists
+          // to resolve, and it must resolve as an identity conflict — NOT as
+          // the `$_activeIndexName` refusal T-B asserts, because the index is
+          // not what is being violated here and the two must stay tellable
+          // apart: one means "someone else got there first", the other means
+          // "this id is already taken".
+          final gate = _ReadBarrier();
+          final engineA = await _engine(_GatedStore(await _newDb(), gate));
+          final engineB = await _engine(_GatedStore(await _newDb(), gate));
+
+          Future<Object?> attempt(
+            Future<RepositoryCredential> Function() body,
+          ) async {
+            try {
+              return await body();
+            } catch (error) {
+              return error;
+            }
+          }
+
+          final results = await Future.wait([
+            attempt(() => _remintIdentical(engineA, credentialId: 'cred-race')),
+            attempt(() => _remintIdentical(engineB, credentialId: 'cred-race')),
+          ]);
+
+          expect(
+            results.whereType<RepositoryCredential>(),
+            hasLength(1),
+            reason:
+                'a concurrent double mint of one id must not both succeed; '
+                'results were $results',
+          );
+          final refusal = results.firstWhere((r) => r is! RepositoryCredential);
+          expect(refusal, isA<CredentialNotUsableException>());
+          expect(
+            (refusal as CredentialNotUsableException).reason,
+            allOf(
+              contains('already exists'),
+              isNot(contains('already has an active credential')),
+            ),
+            reason:
+                'this refusal must name the identity conflict, not the '
+                'one-active-per-repository race',
+          );
+
+          final all = await engineA.readCredentials(_productId);
+          expect(all, hasLength(1), reason: 'no second row may exist at all');
+          expect(all.single.credentialId, 'cred-race');
         },
       );
 

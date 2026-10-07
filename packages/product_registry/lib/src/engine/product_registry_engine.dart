@@ -904,15 +904,25 @@ class ProductRegistryEngine {
   // in the operator's secret store. A private key must never reach this
   // package.
   //
-  // KEY MATERIAL IS CHOSEN ONCE, AT MINT. `recordGeneratedCredential` accepts a
-  // caller-supplied `credentialId` and a null `expectedVersion`, and the
-  // one-active guard below declines to refuse when `supersedesCredentialId`
-  // equals the active credential's id — so this method can be called with an
-  // existing id and reach the store with fresh key material. The store refuses
-  // that write (`ProductRegistryStore.saveProductCredential`); it is not
-  // enforced here, because only the write can be atomic. To change the key for
-  // a repository, use [rotateCredential], which mints a NEW `credentialId` and
-  // leaves the superseded row's key material as it was.
+  // KEY MATERIAL, SCOPE AND IDENTITY ARE ALL CHOSEN ONCE, AT MINT.
+  // `recordGeneratedCredential` accepts a caller-supplied `credentialId` and a
+  // null `expectedVersion`, and the one-active guard below declines to refuse
+  // when `supersedesCredentialId` equals the active credential's id — so this
+  // method can be called with an existing id and reach the store. The store
+  // refuses that write, on three counts, and none of them is enforced here
+  // because only the write can be atomic:
+  //
+  //   * the key material must not change (ADR 0018 A1);
+  //   * `productId`/`repositoryId` must not change — they are the scope, and a
+  //     re-point would move an installed deploy key to another repository with
+  //     no rotation record;
+  //   * a null `expectedVersion` is a MINT, and a mint never overwrites an
+  //     existing `credentialId` at all — not even with identical material,
+  //     which used to reset `status` and `hostKeyStatus` and null out host
+  //     confirmation, verification and revocation evidence.
+  //
+  // To change the key for a repository, use [rotateCredential], which mints a NEW
+  // `credentialId` and leaves the superseded row's key material as it was.
 
   /// Records a newly generated credential for [repositoryId].
   ///
@@ -920,9 +930,10 @@ class ProductRegistryEngine {
   /// [HostKeyStatus.unknown] host: it cannot reach anything until a human
   /// confirms the host key and a real connection succeeds.
   ///
-  /// [credentialId] must be a NEW identity. Supplying one that already exists
-  /// with different key material is refused by the store and changes nothing;
-  /// see the section note above.
+  /// [credentialId] must be a NEW identity. A mint is insert-only: supplying an
+  /// id that already exists is refused by the store and changes nothing —
+  /// whether the supplied material differs, matches, or the existing credential
+  /// is revoked. See the section note above.
   Future<RepositoryCredential> recordGeneratedCredential({
     required String productId,
     required String repositoryId,

@@ -39,26 +39,80 @@ abstract interface class ProductRegistryStore {
 
   /// Writes [credential], optionally guarded by [expectedVersion].
   ///
+  /// A NULL [expectedVersion] is what marks this write as a MINT, and a mint is
+  /// INSERT-ONLY. It is the shape `ProductRegistryEngine.recordGeneratedCredential`
+  /// uses, and no other call site passes null.
+  ///
   /// KEY MATERIAL IS IMMUTABLE (ADR 0018 A1). Key material — `publicKey`,
   /// `fingerprint`, `algorithm` and `referenceName` — is chosen once, when the
   /// credential is minted, and is never changed afterwards by any path. A write
   /// whose `credentialId` already exists but whose key material differs MUST
   /// throw and MUST leave the stored row untouched.
   ///
-  /// This is a store contract, not an engine convention. `RepositoryCredential
-  /// .copyWith` cannot change these fields, but `copyWith` is not on the mint
-  /// path: `ProductRegistryEngine.recordGeneratedCredential` constructs a fresh
-  /// credential and writes it. Without this contract the upsert silently
-  /// replaced the key an operator had installed — same `credentialId`, no
-  /// rotation record, verification state and host confirmation discarded.
+  /// THE SCOPE SET IS IMMUTABLE TOO. `productId` and `repositoryId` are the
+  /// fields that say what the key is allowed to reach (ADR 0018 A1, "scope is
+  /// the repository"), and they are fixed at mint like the key material. A write
+  /// that moves an existing credential to another `productId` or `repositoryId`
+  /// MUST throw and MUST leave the stored row untouched — otherwise an installed
+  /// deploy key is silently re-pointed at another repository with no rotation
+  /// record, and any host confirmation travels with it to a host whose key was
+  /// never shown to anybody (ADR 0018 "the operator is shown the host, key type
+  /// and fingerprint and must confirm it").
   ///
-  /// The guard is enforced in the write itself, not by a read before it, on
-  /// BOTH paths: with a null [expectedVersion] and with a CAS. A check-then-write
-  /// is a race against any other connection, and the mint path reaches this
-  /// write with a null [expectedVersion] precisely because a new credential has
-  /// no prior version — so the CAS cannot carry this on its own.
+  /// MINTING NEVER OVERWRITES AN EXISTING IDENTITY. On the mint path a
+  /// `credentialId` that already exists MUST be refused and the row MUST be left
+  /// exactly as it was, whether or not the supplied key material matches.
+  /// Two things follow that this contract used to leave open:
   ///
-  /// When the guard refuses, an implementation reports the immutability refusal
+  ///   * an identical-material re-mint used to take an upsert branch and rewrite
+  ///     the row from the freshly minted object — resetting `status` to
+  ///     `generated` and `hostKeyStatus` to `unknown`, and clearing host
+  ///     confirmation, verification, diagnostics and revocation evidence. No key
+  ///     substitution is needed to do that;
+  ///   * a REVOKED credential could be resurrected the same way. The active-set
+  ///     read excludes revoked rows, so the engine's one-active guard cannot
+  ///     fire against one, and the resurrected row then both claims a deploy key
+  ///     whose private half was destroyed on revocation and occupies the active
+  ///     set, so the legitimate replacement mint is refused.
+  ///
+  ///   Rotation is the supported way to replace a key, and it mints a NEW
+  ///   `credentialId` — so refusing a re-mint of an existing one costs no
+  ///   legitimate path.
+  ///
+  /// DURABLE EVIDENCE CANNOT BE CLEARED. The seven guarded columns are
+  /// `hostConfirmedAt`, `hostConfirmedBy`, `lastVerifiedAt`, `lastVerifiedBy`,
+  /// `hostKeyFingerprint`, `revokedAt` and `revokedReason` — they record
+  /// decisions and events that happened. A CAS write MUST NOT set any of them
+  /// back to null on an existing row. `RepositoryCredential.copyWith` cannot
+  /// express that (each nullable parameter falls back to the current value), so
+  /// today no engine call site attempts it — but the store contract is
+  /// unconditional, and a store that accepted it would let one be written.
+  ///
+  /// `hostKeyFingerprint` belongs in that list and was missing from an earlier
+  /// wording of this contract: both tiers have always guarded it, and a reader
+  /// of the prose alone would have concluded that re-recording a host key was
+  /// permitted. All SEVEN names are written out, in both tiers' order, so this
+  /// paragraph does not have to be edited again when the set changes.
+  ///
+  /// NOT YET GUARDED, and deliberately not claimed here: `lastFailureReason`,
+  /// the eighth recorded column. Design rev5's `D-6` requires eight columns and
+  /// both tiers currently enforce seven. It is latent, not live —
+  /// `copyWith` preserves it on a null argument and the only engine writer sets
+  /// it without clearing it, so no engine path can erase it today — but a
+  /// store-level caller handing in a null would erase it on both tiers, and it is
+  /// live on the Postgres `SET` clause. It must be guarded before migration
+  /// `20261006150645000` reaches a deployed database. Naming it in the list above
+  /// would overstate what the tiers enforce today, which is the same defect as
+  /// omitting `hostKeyFingerprint` was.
+  ///
+  /// These are store contracts, not engine conventions. `copyWith` cannot change
+  /// these fields, but `copyWith` is not on the mint path:
+  /// `ProductRegistryEngine.recordGeneratedCredential` constructs a fresh
+  /// credential and writes it with no `expectedVersion`. Every check is enforced
+  /// in the write itself, not by a read before it, so it holds against any other
+  /// connection and cannot be raced.
+  ///
+  /// When a guard refuses, an implementation reports the immutability refusal
   /// rather than a version conflict, even if the supplied [expectedVersion] was
   /// also stale. Telling a caller that re-pointed key material that it lost a
   /// concurrency race invites it to retry the same re-point.
