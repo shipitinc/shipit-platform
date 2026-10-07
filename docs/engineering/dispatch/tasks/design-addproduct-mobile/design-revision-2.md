@@ -606,6 +606,22 @@ None of these raise the risk level and none are mine to fix.
 Carried from revision 1 and **not** re-raised: **B3** (footer-copy scope) remains filed as Human
 Decision `27ea6536`. **G2** (`Art S` at-rest wording) stays `PENDING D4` and unresolved.
 
+> ⚠️ **REVISION 5 — BOTH CLAIMS IN THE PARAGRAPH ABOVE ARE SUPERSEDED. BOTH ARE RESOLVED; NEITHER IS
+> RE-RAISED.** *(Revision 5 finding L-1 — retention without a marker is not neutral. The text above is
+> retained unedited.)*
+>
+> * **B3 / `27ea6536`** — **RESOLVED** (`decided_at 2026-10-06T13:05:00Z`). The human checked the boards and
+>   ruled: **desktop** = a divider plus a **right-aligned** `Show technical details` text button, **no footer
+>   copy**; **mobile** = the button **left-aligned with no divider**, **no footer copy**. Mobile is measured
+>   conformant on all four `SM` boards; **the four desktop `S` boards are NOT** — they carry footer copy.
+>   See finding **F6** in `design-revision-5.md` §4.4 and `penpot-board-evidence.md` §6.4.
+> * **G2 / `PENDING D4`** — **RESOLVED** by `9417f8bf` (**OPTION_C / A3**, an external secret manager; SHIP IT
+>   holds only a reference and asks the manager for material at push time). The layer is **no longer**
+>   `PENDING D4` on any board: renamed `Art S`, string corrected to `ed25519 · generated on the server · the
+>   private half stays in the secret manager` on **all four boards**, verified by live read-back. The rev-2
+>   string this was written against asserted the private half is SHIP IT's; under A3 it is not SHIP IT's.
+
+
 ---
 
 ## 11. Categorized mismatch list after this pass (boards vs the build at `77c19f1`)
@@ -646,7 +662,7 @@ Decision `27ea6536`. **G2** (`Art S` at-rest wording) stays `PENDING D4` and unr
 | Id | Gap | Why it is not mine |
 |---|---|---|
 | G1 | normative `hostUnrecognised` state machine; "Check access" semantics | sibling lane `design-addproduct-keyservice` |
-| G2 | at-rest wording for `Art S` | open human decision; layer stays `PENDING D4` |
+| G2 | at-rest wording for `Art S` | ~~open human decision; layer stays `PENDING D4`~~ — **RESOLVED at revision 5 by `9417f8bf` (OPTION_C / A3); layer renamed `Art S`, string corrected on all four boards** |
 | G3 | `negative` on dark fails AA and no compliant token exists | `ShipItPalette` is design-system-owned (N2) |
 | G4 | `TechnicalDetails`' unconditional `ContentRule` | shared primitive, 4 other screens (N3) |
 | G5 | build's "What you're registering" / "What happens next" have no board | removing them is a UX change (F1) |

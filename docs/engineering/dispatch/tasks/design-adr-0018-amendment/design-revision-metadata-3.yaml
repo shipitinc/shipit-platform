@@ -1,0 +1,366 @@
+revision_id: "ADR0018-A2-REV3"
+brief_id: "design-adr-0018-amendment"
+brief_version: "n/a"
+brief_note: |
+  No formal Design Brief exists for this work item. The Engineering Manager's dispatch header served
+  as the brief: FEATURE "ADR 0018 amendment A2 correction (revision 2)", ACCEPTANCE_CRITERIA,
+  OWNED_PATHS / READ_ONLY_PATHS / PROHIBITED_PATHS and VALIDATION_COMMANDS, in
+  docs/engineering/dispatch/tasks/design-adr-0018-a2-2/prompt.md. This is recorded rather than
+  back-filled with a synthetic brief id, because DESIGN_GOVERNANCE.md requires a Design Brief to
+  precede design exploration and inventing one would misrepresent the lifecycle that actually
+  happened. This is also true of revisions 1 and 2, which is why brief_version is "n/a" in all three.
+
+revision_number: 3
+supersedes_revision_id: "ADR0018-A2-REV2"
+amends: "docs/adr/0018-per-product-git-credentials.md (amendment A2, supersedes amendment A1 in part)"
+
+status: "DRAFT"
+
+status_note: |
+  DRAFT, deliberately, and this is a change from revision 2.
+
+  Revision 2 carried status ACCEPTED. That was accurate for what it recorded — the repository owner
+  accepted amendment A2 and its four gaps (876c6b97, OPTION_A, 2026-10-06) — and that acceptance is
+  real, unchanged, and correctly cited here. But revision 2 was subsequently returned CHANGES_REQUIRED
+  with two HIGH findings, and this revision is the response to them. An artifact carrying ACCEPTED
+  while under correction would invite a reviewer to read the wording as settled.
+
+  ACCEPTANCE IS NOT REVIEW, and revision 2 said so. Revision 2 was accepted and has never been
+  independently reviewed; revision 3 corrects it and has never been independently reviewed either.
+  reviewed_by and reviewed_at remain null in both.
+
+status_changed_from: "ACCEPTED"
+status_change_reason: |
+  Revision 2 was ACCEPTED (owner's acceptance of the design, per 876c6b97). Revision 3 is DRAFT
+  because it is a correction in flight and has not been reviewed. The owner's acceptance of A2 is NOT
+  withdrawn, re-opened, or affected by this revision; it is cited in full at ADR §Status and
+  §Accepted risks.
+
+provenance:
+  repository: "/Users/alkebut/air/shipit-platform"
+  worktree: "/private/tmp/shipit-design-adr0018"
+  branch: "design/adr-0018-amendment"
+  base_sha: "289f1d3"
+  head_sha: "289f1d3"
+  committed: false
+  pushed: false
+  rebased_from: "43d328b"
+  rebase_method: |
+    git diff > <out-of-tree>.patch (edit captured BEFORE anything else) -> copy ADR + untracked task
+    directory to an out-of-tree backup -> SHA-256 compare local ADR against main -> git stash push
+    (never checkout --) -> remove four untracked task files verified byte-identical to main's tracked
+    copies -> git merge --ff-only 289f1d3 (clean fast-forward) -> stash RETAINED.
+  note: |
+    HEAD equals BASE_SHA because no commit was made, per the dispatch instruction ("Do not commit or
+    push unless explicitly instructed. It is not."). The change is present as an uncommitted
+    working-tree modification in the worktree above, so a reviewer must read the worktree and
+    `git diff` rather than a commit.
+
+  preflight_finding_uncommitted_local_edit: |
+    FINDING: the uncommitted local edit to docs/adr/0018-per-product-git-credentials.md WAS amendment
+    A2 itself, already present on main, and was fully superseded. Nothing was lost.
+
+    Evidence:
+      - local working-tree file: 580 lines, SHA-256 9e5b47723e40fd0fd42b69ddf4b5330768ca4fcf782acb0f1992e7aebb83b4fb
+      - HEAD 43d328b version: 158 lines
+      - main 289f1d3 version: 580 lines, SHA-256 9e5b47723e40fd0fd42b69ddf4b5330768ca4fcf782acb0f1992e7aebb83b4fb
+      - diff -u between local and main: 0 bytes
+      - after the fast-forward, the worktree ADR SHA-256 is still 9e5b4772..., i.e. identical to the
+        preserved local edit
+
+    Interpretation: `git merge --ff-only 289f1d3` failed only because git cannot fast-forward a
+    branch carrying a local modification to a file the merge touches, even when the merged result
+    would be byte-identical. The edit was NOT a divergent or newer revision, and NOT a stale
+    reversion. It was the same 158 -> 580 amendment that landed on main in 5436a4d.
+
+    SECOND OBSTACLE, not in the Manager's pre-flight: after stashing the ADR edit, the fast-forward
+    still failed with "The following untracked working tree files would be overwritten by merge" for
+    all four files in the task directory, because 5436a4d began tracking them. All four were verified
+    byte-identical to main's tracked copies by SHA-256, backed up out of tree, and only then removed.
+
+    PRESERVATION: the edit is preserved three ways — the patch file, an out-of-tree copy of the ADR
+    and the task directory, and stash@{0}, which is RETAINED and NOT dropped. A reviewer may drop it
+    after confirming the SHA above.
+
+  verified_against:
+    - sha: "289f1d3"
+      branch: "main"
+      relation: |
+        THE revision every line number in this revision and in the amended ADR refers to. HEAD of
+        this worktree.
+    - sha: "5436a4d"
+      branch: "main"
+      relation: |
+        The commit that took ADR 0018 from 158 to 580 lines (amendment A2) AND created
+        .decisions/876c6b97 in the same commit. Established by
+        `git log --diff-filter=A -- .decisions/876c6b97*` -> 5436a4d, 2026-10-06 22:11:24 -0400, and
+        by `git log -- docs/adr/0018-per-product-git-credentials.md`. This is the commit that both
+        published the ADR's denial of its own acceptance decision and made that denial false.
+        NOTE: the dispatch cited 6220951 for this; that SHA is an AGENTS.md commit which does not
+        touch this ADR. Corrected here as discovery F-6.
+    - sha: "43d328b"
+      branch: "main"
+      relation: |
+        The revision revisions 1 and 2 were written against, and the base this worktree was stranded
+        on. 13 decision objects existed there, none recording the A2 acceptance, which is why
+        revision 2's denial was TRUE at its base and false 48 minutes later. 876c6b97 is the 14th.
+    - sha: "876c6b97"
+      branch: "n/a — decision object id, NOT a commit"
+      relation: |
+        The acceptance of A2 with four knowingly-open gaps (ARCHITECTURE, OPTION_A,
+        decided_at 2026-10-06T14:20:00Z, created_by orchestrator-main). Read in full (164 lines)
+        before drafting. Its gap-A4 follow-up wording ("no adapter exists yet, so there is nothing to
+        probe") is the basis for the decided-vs-built distinction in §Decision status. Its line 20-21
+        repeats HIGH 1's absolute claim and is PROHIBITED to this lane — reported as F-1.
+    - sha: "9417f8bf"
+      branch: "n/a — decision object id"
+      relation: |
+        A3 custody (SECURITY, OPTION_C). Its :116-119 same-uid reasoning is the basis for the
+        transport-time consequence recorded in the scoping subsection; its :210-211 repeats HIGH 1's
+        absolute claim and is reported, not edited (F-1).
+    - sha: "e391c02"
+      branch: "main"
+      relation: |
+        The merge that put the predicating credential upsert and the partial unique index into main.
+        It is why two "not present at this revision" markers are false at 43d328b and at 289f1d3.
+    - sha: "0bf2fa0"
+      branch: "main"
+      relation: |
+        Restored AGENTS.md sections 13 / 13a / 13b. Closes discovery ADR-0018-A2-D1. Re-read and
+        confirmed still present at 289f1d3.
+
+risk_level: 3
+
+risk_rationale: |
+  Level 3 (Major Workflow / Architecture Change) per DESIGN_GOVERNANCE.md, unchanged from revisions 1
+  and 2. The level describes the change, not whether a human has blessed it, and a precision
+  correction does not lower it.
+
+  1. AMENDS RECORDED ARCHITECTURE ON A SECURITY BOUNDARY. It governs where a private key capable of
+     authorising repository WRITE access is held, and what "revoked" means. No such secret exists in
+     the repository today.
+  2. CHANGES A CORE WORKFLOW. Revocation acquires a ShipIt-side action where ADR 0018 said none was
+     required, plus a runtime dependency (the secret manager) that can block the credential path.
+  3. DEPENDS ON ENFORCEMENT THAT LIVES ELSEWHERE AND IS STILL PARTLY ABSENT. Improved at 43d328b
+     (one-active index and predicating upsert merged in e391c02) and still unsatisfied at 289f1d3: no
+     transport host-key enforcer, no secret-manager adapter, no manager-handle destruction, and
+     registration not wired to a connectivity check. §Decision status records all of this per clause.
+  4. CARRIES FOUR ACCEPTED RISKS ON A SECURITY BOUNDARY, recorded with their consequences at ADR
+     §Accepted risks A1-A4. This revision does NOT close any of them and does NOT add a fifth. It
+     makes gap A4's evidence accurate, which narrows the work without changing the risk.
+  5. THIS REVISION NEWLY DISCLOSES A SECURITY CONSEQUENCE THE EARLIER REVISION OBSCURED — the
+     same-uid exposure during the transport-time window in which SHIP IT holds the materialised
+     private half (9417f8bf:116-119 rejected A1 for exactly this reason). It is a DISCLOSURE, not an
+     added risk: the exposure existed in the accepted architecture from the moment A3 was chosen.
+     Stating it plainly is why the level does not fall.
+
+  Level 3's approval requirement was satisfied on 2026-10-06 by the repository owner as ADR owner
+  (876c6b97, OPTION_A). That satisfied the HUMAN GATE. It does not satisfy INDEPENDENT REVIEW, which
+  has still never happened for any revision of this artifact.
+
+changelog:
+  - "Revision 3. Responds to the independent review of revision 2 (CHANGES_REQUIRED, 0 BLOCKERS, 2 HIGH) and to finding G-17 from the keys rev-5 review. Scopes the 'never holds key bytes' absolute (HIGH 1); marks A3 custody decided-and-unbuilt throughout and adds §Decision status (HIGH 2); corrects the ADR's denial that its own acceptance decision object exists (G-17); corrects gap A4's *.dart-only evidence, which had hidden a GCP Secret Manager substrate already provisioned in this repository's Terraform; adds an A1-A4 identifier disambiguation. Revisions 1 and 2 retained unaltered as history."
+
+  # ---- Findings from the review of revision 2 ----
+  - "H1 — HIGH 1 (verified, then corrected): the ADR asserted the absolute 'SHIP IT never holds key bytes' at :83, :226, :33 and :331-333 while requiring SHIP IT to retrieve the private half from the manager at transport time — false by the ADR's own next sentence. Scoped by dimension: never STORED (the guarantee, and it excludes A2) versus materialised transiently at transport time (true, and not a guarantee). Records the consequence the absolute obscured — the same-uid exposure moves from the filesystem to process memory for the connection's lifetime, per 9417f8bf:116-119. Weakenes no clause; changes no decision."
+  - "H2 — HIGH 2 (verified, then corrected): A3 was stated in the present indicative (:4, :33, :78 'Current', :226, :284-293) with no adapter, no resolver and no endpoint in existence — the same defect class the keys review caught as B5. New §Decision status marks all nine clauses Decided/Built with per-clause file evidence; the ADR's own existing idiom at :368-370 ('Requirement, not yet enforced at the transport') is applied rather than a new device invented. Two clauses recorded as PARTLY built: revocation writes the audit row but does not destroy the handle, and the connectivity check exists but is not wired to registration."
+  - "H3 — G-17 (verified, then corrected): ADR :16-21 and :572-580 denied that any Human Decision object recorded the acceptance, and 876c6b97 landed in 5436a4d — the SAME commit that wrote the denial. Both passages now cite the object with its decision fields, and the correction block gives the --diff-filter=A evidence and the 13-versus-14 timeline. Recorded precisely: revision 2's verification was SOUND at its base 43d328b; the defect was writing a fact with a shelf life as a standing claim."
+
+  # ---- New in revision 3 ----
+  - "N1 — status: ACCEPTED -> DRAFT. The owner's acceptance of A2 is unchanged and cited in full; the artifact is under correction and unreviewed, so ACCEPTED would invite a reviewer to read the wording as settled. See status_note."
+  - "N2 — NEW ADR §Decision status (':278-312'): nine-clause Decided/Built table, the stated consequence, and the GCP Secret Manager infrastructure finding."
+  - "N3 — NEW ADR §Amendments A2 subsection 'never holds key bytes — what that claim does and does not mean': three-part scoping (what is the guarantee / what is not / the same-uid consequence)."
+  - "N4 — NEW ADR §Accepted risks disambiguation table: A1-A4 denote substrate options in §Amendments and accepted risk ids in §Accepted risks, and 'A3' is both. Flagged because it has already produced one wrong conclusion this session."
+  - "N5 — ADR A2 table row re-worded to carry the scoping pointer; §Positive revocation bullet retitled 'specified to be two-sided' with 'today revocation is one-sided in practice'; fallback clause records that NEITHER substrate is implemented; §Invariants preamble carries a correction note binding every downstream reader to the scoped reading."
+  - "N6 — gap A4 evidence corrected. The earlier search was *.dart-only and so could not see that a secret manager is already provisioned in this repository's Terraform (modules/secrets/main.tf:23,31,39; modules/cloudsql/main.tf:77-89; modules/iam/main.tf:31-34 grants secretAccessor to the Cloud Run SA; modules/cloudbuild/main.tf:72-76; main/main.tf:82-87), while NO deploy-key secret is declared in infrastructure/ and nothing binds the server at runtime. Makes A4 narrower and more concrete; the accepted consequence is RESTATED UNCHANGED and the gap stays OPEN."
+  - "N7 — 876c6b97 added to §Related → 'Decisions governing amendment A2', with the note that it was added in the same commit as the amended ADR text."
+  - "N8 — §Related → 'The acceptance itself' rewritten to cite the object, with the dated correction block, the commit evidence table, and the explicit statement that the earlier verification was not fabricated."
+
+  # ---- Corrections to revision 2 ----
+  - "C1 — revision 2's own metadata (decision_object: null, plus a note asserting no object exists) and design-revision-2.md (R25, :430) carried the same false denial. Both RETAINED UNALTERED as history and superseded by this revision; revising them in place would repeat the exact defect being corrected."
+  - "C2 — R25 counted 14 decision files at 43d328b; `git ls-tree --name-only 43d328b .decisions/` returns 13. R25's conclusion was correct; its parenthetical count was not."
+  - "C3 — the dispatch's provenance for the A2 revision (6220951) is wrong; it is 5436a4d. Material because G-17's whole argument is a commit-ordering argument. Recorded as F-6."
+  - "C4 — reviewed_by / reviewed_at: STILL null, deliberately unchanged. Independent design review has never happened for any revision of this artifact."
+
+  # ---- Not changed ----
+  - "N-NOT — Revisions 1 and 2 untouched, per the ADR's own no-silent-rewrite convention (:37-40). The four accepted risks are the same four, none closed, none added. The owner's answer in 876c6b97 is not re-opened and no clause of it was rewritten. The nine governing decisions are read and cited, none edited; .decisions/** untouched (14 objects). Every other ADR, all production source, and all QA artifacts are unmodified."
+
+# ---- Approval fields (unchanged in substance; see status_note) ----
+reviewed_by: null
+reviewed_at: null
+review_note: |
+  Independent design review HAS NEVER HAPPENED for this artifact, at any revision.
+
+  Revision 2 was reviewed and returned CHANGES_REQUIRED with 0 BLOCKERS and 2 HIGH findings; that
+  review's report.md is ABSENT from the task directory (this work item has lost reports three times),
+  so the finding set was reconstructed from the ADR text and checked against the Manager's recorded
+  summary and the source decisions. Both HIGH findings were independently re-verified before being
+  acted on; the per-site ledgers are design-revision-3.md §2 and §3.
+
+  reviewed_by and reviewed_at stay null until a reviewer signs. This lane does not approve its own
+  work.
+
+approved_by: "repository owner (ADR owner, interactive structured question UI, session orchestrator-main)"
+approved_at: "2026-10-06"
+approval_note: |
+  UNCHANGED and not re-opened. The owner accepted amendment A2 and its four gaps on 2026-10-06
+  ("Accept A2, record the gaps as accepted"), recorded as Human Decision
+  876c6b97-3e23-459d-aa9d-3a5faeb33702 (ARCHITECTURE, OPTION_A). That acceptance covers the DESIGN.
+
+  This revision changes wording, tense, scoping and evidence inside that accepted architecture. It
+  changes no substrate, no revocation model, no accepted gap, and no clause of the owner's answer,
+  and it adds no requirement on any implementer beyond what A2 already specified. It therefore
+  raises no new human gate — see design-revision-3.md §10 for why manufacturing one would itself be
+  the error this revision exists to fix.
+
+accepted_decision_answer: "Accept A2, record the gaps as accepted."
+
+acceptance_provenance:
+  granted_by: "repository owner (ADR owner, interactive structured question UI, session orchestrator-main)"
+  granted_at: "2026-10-06"
+  relayed_by: "Engineering Manager, dispatch design-adr-0018-amendment"
+  corroborated_on_disk:
+    - ".decisions/876c6b97-3e23-459d-aa9d-3a5faeb33702.yaml — RESOLVED, OPTION_A, decided_at 2026-10-06T14:20:00Z, created_by orchestrator-main. THE CITABLE ID."
+    - "docs/engineering/WORK_STATE.md:326-327 — 'amendment A2 is drafted and awaiting independent review, and the human has accepted it with four gaps recorded as accepted.'"
+  decision_object: "876c6b97-3e23-459d-aa9d-3a5faeb33702"
+  decision_object_correction: |
+    CORRECTED at 289f1d3. Revision 2 recorded `decision_object: null` with a note stating that NO Human
+    Decision object in .decisions/ records this acceptance, verified against all decision files at
+    43d328b.
+
+    That verification was CORRECT AT THE TIME. The object did not exist at 43d328b
+    (2026-10-06 21:23:01 -0400), where `git ls-tree --name-only 43d328b .decisions/` returns 13
+    objects, none recording this acceptance.
+
+    The object was added in commit 5436a4d (2026-10-06 22:11:24 -0400) — established by
+    `git log --diff-filter=A -- .decisions/876c6b97*` -> 5436a4d — which is THE SAME COMMIT that took
+    ADR 0018 from 158 to 580 lines and wrote the ADR's denial of the object's existence. The denial
+    and the object it denied arrived together, 48 minutes after the revision that had verified the
+    denial was true.
+
+    The object itself explains why it exists (876c6b97:8-12): the amendment lane recorded the owner's
+    answer inside its own artifact and flagged that no object backed it, so "a sibling design artifact
+    was able to assert an 'Accepted by the human' amendment that nothing on disk supported. This
+    object is the citable id that closes that gap." It cites ae1c1f79:8-11 as precedent — the same
+    citation ADR 0018 gave.
+
+    The defect was the TENSE: a fact with a shelf life was recorded as a standing claim. Revision 3
+    records the id, the commit, and the timeline at ADR §Status and §Related.
+
+acceptance_is_not_review: true
+acceptance_is_not_review_note: |
+  ACCEPTANCE IS NOT REVIEW, and this artifact has been accepted and has never been reviewed.
+
+  Acceptance is the ADR owner's authority over the design: they decide the amendment is right for
+  this repository. Review is an independent agent's judgement of the artifact: whether it is complete,
+  correctly sourced, internally consistent, and honest about what it does not establish. Neither
+  substitutes for the other, and an accepted design is not a reviewed artifact.
+
+  Three revisions in, the point is sharper than revision 2 recorded it. Revision 3 finds that the
+  ADR asserted BOTH a human acceptance and the absence of any record supporting it, in the same
+  commit. An acceptance whose provenance is misstated is worse for a future reader than no acceptance
+  at all, because the misstatement invites reliance and suppresses checking. The acceptance is real
+  (876c6b97) and is now cited correctly; it has still never been reviewed.
+
+human_gate:
+  required: false
+  level: 3
+  question: null
+  options: []
+  blocking_items: []
+  note: |
+    Level 3 approval was granted on 2026-10-06 by the repository owner as ADR owner (876c6b97,
+    OPTION_A) and is unchanged. This revision raises NO new gate: it changes wording, tense and
+    scoping inside an already-accepted architecture, and the dispatch directs exactly that
+    ("Scope the clauses; do not assert flatly"). See design-revision-3.md §10.
+
+    Two items are surfaced to the Manager for routing rather than decided here:
+    F-1 — the same "never holds key bytes" absolute persists in 9417f8bf:210-211 and 876c6b97:20-21,
+    both Manager-owned and PROHIBITED to this lane. This is a CONTRADICTION touching recorded
+    security architecture and is human/Manager authority.
+    G-b — the transport-time same-uid exposure is recorded as a property of the accepted
+    architecture but is not one of the four accepted risks, so no follow-up action owns it.
+
+traceability:
+  brief_requirements_covered:
+    - "HIGH 1 — the 'never holds key bytes' claim must stop contradicting the ADR's own transport-time retrieval clause. Scoped by dimension at ADR §Amendments A2, §Decision, §Invariants, and the amendments table. Verified before acting; per-site ledger in design-revision-3.md §2."
+    - "HIGH 2 — A3 custody must stop being stated in the present indicative while no substrate adapter exists. ADR §Decision status added; :4, :33, :78, :226, revocation and fallback bullets all re-tensed. Per-site ledger in §3."
+    - "Re-verify both HIGH findings yourself before acting. Done; §2 and §3 are the ledgers, and V-5 re-runs the substrate searches."
+    - "G-17 — correct the denial of 876c6b97 and say how you established it. Done at ADR §Status and §Related; evidence table with --diff-filter=A, the same-commit proof, and the 13-versus-14 timeline."
+    - "Make the ADR's tense match 876c6b97's acceptance-with-four-gaps. Done; §Accepted risks now states the count is unchanged at four, none closed, none added."
+    - "Read 876c6b97 in full before drafting. Done (164 lines); supplied gap A4's wording and the four-gap count."
+    - "Do not re-open settled decisions. The nine governing decisions are read and cited; none edited; .decisions/** untouched."
+    - "Isolation: preserve the uncommitted local edit, re-base, re-apply only what main lacks, report exactly what was found and done. Done; captured before touching anything, identified as superseded by SHA-256, stash RETAINED. See provenance.preflight_finding_uncommitted_local_edit."
+    - "State what is decided versus what is merely planned. §Decision status; every clause marked."
+    - "Search the domain's own vocabulary and verify paths exist before trusting UNCHANGED. Found a GCP Secret Manager substrate a *.dart-only search could not see (F-2)."
+    - "Run no Docker or Compose command whatsoever. None issued; not even a read-only one."
+    - "Persist the full report to disk before returning. report.md written in this task directory."
+  brief_requirements_gaps:
+    - "G-a — 9417f8bf:210-211 and 876c6b97:20-21 still carry HIGH 1's absolute wording. PROHIBITED to this lane; routed as F-1. Until corrected, the overclaim remains in two authoritative records."
+    - "G-b — the transport-time same-uid exposure has no owning follow-up action. It is not one of the four accepted risks, so 876c6b97's assignments (gap A2 to design-agent, gaps A3/A4 to implementation/deployment authority) do not reach it. Surfaced, deliberately not self-assigned."
+    - "G-c — A3 reachability remains UNVERIFIED and cannot be closed by a design lane; it needs the runtime probe assigned outside this scope. No Docker or Compose command was run and no probe is claimed."
+    - "G-d — the review report this task was created from is ABSENT, so the finding set was reconstructed from ADR text plus the Manager's summary. If the report surfaces with findings beyond the two HIGHs and G-17, they are not addressed here."
+    - "G-e — §Known gaps 'Rotation is still described in product scope in two places' remains OPEN by design: a documentation reconciliation with no security consequence, recorded rather than silently rewritten per the ADR's convention, and outside this task's scope."
+    - "G-f — 876c6b97 records confidence HIGH for accepting A2 while 9417f8bf records confidence LOW for the substrate itself. Both are Manager-owned records of the same substrate; not resolved here, noted so a reader comparing them is not surprised."
+
+design_system_compliance: PASS
+design_system_compliance_note: |
+  PASS — not applicable. No UI change: this revision touches ADR prose and a design artifact, and adds
+  no component, token or layout.
+
+  It does affect operator-facing copy constraints. ADR §Amendments A2 already forbids UI text claiming
+  the key "stays in the keychain" on a device that no longer holds it, and §1.1 strengthens the
+  underlying truth that copy must not rely on: under A3 the private half IS materialised in SHIP IT's
+  process at transport time, so no copy may claim SHIP IT "never holds" it. No copy was authored or
+  changed; the constraint is recorded for the mobile lane, which owns that text
+  (add_product_page.dart:542 and :1038, per the existing ADR note).
+
+ux_accessibility_score: PASS
+ux_accessibility_score_note: |
+  PASS — not applicable. No interface is added, removed or restyled.
+
+  The accessibility surface of this artifact is the ADR itself, and revision 3 improves it. §Decision
+  status is a table rather than prose, so a reader can scan decided-vs-built without reading
+  paragraphs. Both correction blocks are dated and attributed, so which text is current is never in
+  doubt. Every negative claim carries the file-level evidence that makes it independently checkable,
+  which is the accessibility property that matters for a document a future reader must be able to
+  trust without the author's session in front of them.
+
+implementation_feasibility: MEDIUM
+implementation_feasibility_note: |
+  MEDIUM — unchanged from revision 2, and for the same reason recorded there.
+
+  A3 depends on a substrate that is decided, already provisioned in this repository's Terraform, and
+  not yet wired to the credential path, whose reachability is UNVERIFIED — plus a transport-time
+  window that revision 3 has just made visible for the first time. The identity/registration split
+  (898b07d0) and two-sided revocation (79e860e2) are likewise specified and not implemented.
+
+  Revision 3 REDUCES the uncertainty an implementer faces — F-2 turns "is there a secret manager?"
+  into a concrete work item against an existing GCP Secret Manager and an existing secretAccessor
+  grant — while INCREASING the honesty about what must be built. Feasibility does not rise because
+  nothing was implemented; the estimate gets sharper, and two clauses are now labelled "partly built"
+  so an implementer meets the real state rather than a binary one.
+
+created_by: design-agent
+created_at: "2026-10-07T00:00:00Z"
+updated_by: design-agent
+updated_at: "2026-10-07"
+
+correction_of_review:
+  review_of_revision: "ADR0018-A2-REV2"
+  verdict_received: "CHANGES_REQUIRED"
+  blockers_received: 0
+  high_received: 2
+  review_report_present: false
+  review_report_note: |
+    docs/engineering/dispatch/tasks/design-adr-0018-amendment/report.md DOES NOT EXIST. This work item
+    has now lost its reports three times. The finding set was reconstructed from the ADR text, then
+    checked against the Manager's recorded summary (CHANGES_REQUIRED, 0 BLOCKERS, 2 HIGH) and against
+    the source decisions; both HIGH findings were independently re-verified before being acted on.
+    Reconstruction is recorded rather than presented as if the report had been read.
+  findings_addressed:
+    - "HIGH 1 — 'SHIP IT never holds key bytes' contradicts the ADR's own transport-time retrieval clause. VERIFIED and CORRECTED. See §1.1 and §2."
+    - "HIGH 2 — A3 custody stated in the present indicative while no substrate adapter exists. VERIFIED and CORRECTED. See §1.2 and §3."
+    - "G-17 — the ADR denies the existence of the 876c6b97 decision object, which landed in the same commit that wrote the denial. VERIFIED and CORRECTED. See §1.3."
+
+blockers: []

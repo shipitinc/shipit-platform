@@ -1,11 +1,13 @@
 # Design Revision 4 — Add Product mobile boards, correction pass 3 after the Gate D3 re-review of revision 3
 
 Per `docs/engineering/DESIGN_GOVERNANCE.md` § *Artifacts → Design Revision*. Metadata in
-`design-revision-metadata-4.yaml`. **Revisions 1, 2 and 3 are retained unedited** as `design-revision.md`,
-`design-revision-2.md` and `design-revision-3.md`; this file is the current revision. Each retained file
-carries a one-line **supersession header** naming the claims the current revision overturns (§ 7.1).
+`design-revision-metadata-4.yaml`. **SUPERSEDED BY REVISION 5** (`design-revision-5.md` /
+`design-revision-metadata-5.yaml`), which changed **four live Penpot boards** — this pass changed none.
+**Revisions 1, 2 and 3 are retained** as `design-revision.md`, `design-revision-2.md` and
+`design-revision-3.md`; each retained file carries a **supersession header** naming the claims the current
+revision overturns (§ 7.1), and revision 5 additionally corrects this file's own § 0.1 numbers.
 
-**This pass changed no board.** Every correction is to a record. Revision 3's substantive text is carried
+**This pass changed no board** — revision 5 did. Every correction here is to a record. Revision 3's substantive text is carried
 forward unchanged except where § 14 lists a correction; the four corrections are in § 3.2, § 6, § 8, § 11 and
 § 14.
 
@@ -56,22 +58,39 @@ Revision 3's `design-revision-3.md:29` and its metadata asserted the "36px" clai
 **`design-revision-metadata.yaml:15-16` is correct. Every other citation in that sentence is stale**, because
 revision 3's own withdrawal markers were inserted at those very sites and shifted them:
 
-| Revision 3 cited | Actually at (revision 4) | What moved it |
-|---|---|---|
-| `design-revision.md:70`, `:72-73` | **`:77`** and **`:79`** (marker at `:83-89`) | the marker block inserted at `:83` |
-| `design-revision.md:414` (F8 row) | **`:429`** (marker at `:431-438`) | the same insertions |
-| `report.md:48` | **`:62`** (marker at `:64-68`) | revision 3's `report.md` supersession header |
-| `report.md:100` | **`:120`** (marker at `:122-…`) | same |
-| `report.md:197` | **`:224`** (marker at `:231-…`) | same |
-| `design-revision.md:6` "lines 70 and 72-73" | **`:77`** and **`:79`** | the header's own claim, also stale |
-| `design-revision.md:7` "line 414" | **`:429`** | the header's own claim, also stale |
-| `report.md:7` "line ~100", "lines ~48 and ~197" | **`:120`**, **`:62`** and **`:224`** | the header's own claims, also stale |
-| `report.md:8` "see the marker at line ~13" | the provenance note is at **`report.md:26-31`** | same |
+| Revision 3 cited | "Actually at (revision 4)" | **Actually at (revision 5, re-read)** | What moved it |
+|---|---|---|---|
+| `design-revision.md:70`, `:72-73` | `:77` and `:79` (marker at `:83-89`) | **`:83`** (the `total` row) and **`:85`** (the "collapses ≈50px" sentence); marker block **`:89-95`** | the marker block inserted at `:89` |
+| `design-revision.md:414` (F8 row) | `:429` (marker at `:431-438`) | **`:435`** (marker **`:437-444`**) | the same insertions |
+| `report.md:48` | `:62` (marker at `:64-68`) | **`:68`** (marker **`:70-74`**) | revision 3's `report.md` supersession header |
+| `report.md:100` | `:120` (marker at `:122-…`) | **`:126`** (marker **`:128-133`**) | same |
+| `report.md:197` | `:224` (marker at `:231-…`) | **`:230`** (marker **`:237-243`**) | same |
+| `design-revision.md:6` "lines 70 and 72-73" | `:77` and `:79` | **`:83`** and **`:85`** | the header's own claim, also stale — twice |
+| `design-revision.md:7` "line 414" | `:429` | **`:435`** | the header's own claim, also stale — twice |
+| `report.md:7` "line ~100", "lines ~48 and ~197" | `:120`, `:62` and `:224` | **`:126`**, **`:68`** and **`:230`** | the header's own claims, also stale — twice |
+| `report.md:8` "see the marker at line ~13" | the provenance note is at `report.md:26-31` | **`:31-37`** | same |
 
+**Revision 4's middle column was wrong, and revision 4 said so about itself in the wrong direction.**
+`report.md:12` already published `lines 31-37` for the provenance note, while this table's last row
+published `26-31` — the self-contradiction the Gate-D3 review of revision 4 charged, and it is now
+resolved in favour of `31-37`, which is where the note actually is.
+
+**No uniform offset repairs this column, and the "+6" rule is a trap.** Re-measured per site at `289f1d3`:
+
+| Item | Δ from the cited number | Why it is not +6 |
+|---|---|---|
+| the six single-line claim citations | **+6** | — |
+| the provenance note (`26-31` → `31-37`) | **+5** on **both** endpoints | a note, not a table row |
+| the three marker **ranges** | **+8**, **+8**, **+13** | a range has two endpoints, and the block was *lengthened* by the marker, not merely shifted |
+
+Anyone applying +6 mechanically would have fixed six numbers and **broken three**. Every number in the
+right-hand column was obtained by reading the live file after the edit, because a marker written at a
+cited line moves that line — the exact rule revision 4 wrote in § 12.1 rule 6 and then broke.
 **The markers are unambiguous about *what* is withdrawn; the numbers no longer resolved.** Corrected here,
-in revision 4 and in the two retained headers this lane owns (`design-revision.md:3-7`, `report.md:3-8`),
-with in-place pointers left in `design-revision-3.md` rather than its text rewritten. Retention is not
-neutral — but neither is rewriting history to make a stale citation look right.
+in revision 4, in the two retained headers this lane owns (`design-revision.md:3-7`, `report.md:3-8`),
+in `design-revision-3.md`'s re-published pointer, and again in `design-revision-5.md`, with in-place
+pointers left rather than body text rewritten. Retention is not neutral — but neither is rewriting
+history to make a stale citation look right.
 
 **The lesson is persisted** (`design-revision-3.md` §0 **and §12**; classified `WORKFLOW_IMPROVEMENT`
 entries at `correction-report-3.md:261-281`): byte-identical retention silently resurrects a disproven claim
@@ -138,7 +157,7 @@ writes, zero board edits.
 | **M-R1** | `DesignPanel` = `palette.card`; the `DEPLOY KEY · THIS PRODUCT ONLY` `MicroLabel` is `palette.inkTertiary` at `add_product_page.dart:533` / `:1029`, inside `DesignPanel(` at `:503` / `:1002`; `Art K` is the only `inkTertiary` text on `card`; the "now unused on these boards" annotation is therefore false | **CONFIRMED on all six claims.** `design_primitives.dart:318-320` — `DecoratedBox(… color: palette.card …)`, so `DesignPanel` = `card`. `add_product_page.dart:531-534` and `:1027-1030` — both `MicroLabel('DEPLOY KEY  ·  THIS PRODUCT ONLY', color: palette.inkTertiary)`, the colour line at **`:533`** and **`:1029`**, each inside a `DesignPanel(` opened at **`:503`** and **`:1002`**. Live board read: `Art K` = `#6e706e` / `#8a8983` = `inkTertiary`, inside `Art Bg` = `#ffffff` / `#262827` = `card`, **all four boards**; `Art Bg` spans y 11120–11236 (Light) / 10170–10286 (Dark) and `Art K` sits inside it. A subtree sweep of **every** `type === 'text'` layer against every `#ffffff`/`#262827` rect returns **`Art K` as the only `inkTertiary` layer on `card`** — `Status` and `F K 0/1/2` are `inkTertiary` but sit on the board's own fill, `#f7f7f5` / `#1f2120` = `canvas`. Contrast recomputed: **4.99:1 light, 4.23:1 dark → PASS / FAIL**. **The annotation was false and the boards were right.** |
 | **M-R2** | the matrix names `inkSecondary` for the `Submit Sub` helper; the build uses `palette.inkTertiary` at `add_product_page.dart:918`; board surface is `canvas`, code surface is `card` (inside `DesignPanel(` at `:853`); `Submit Sub` is at y 11470–11485 and `Trust Bg` ends at 11412 | **CONFIRMED on all claims.** `:913-920` — `Text(_registerButtonSubtext(state), style: ShipItType.monoMeta.copyWith(fontSize: 10, color: palette.inkTertiary))`, inside the `DesignPanel(` at **`:853`**. Live board read: `Submit Sub · helper BELOW button` = `#5a5c5b` / `#a8a6a0` = **`inkSecondary`** on all four boards; its bounds on the Unknown-Light board are y **11470–11485**, and the two `card`-coloured rects there are `Art Bg` (11120–11236) and `Trust Bg` (11252–**11412**) — so the helper is **outside every panel** and sits on the board's own fill `#f7f7f5` / `#1f2120` = **`canvas`**. Recomputed for `inkTertiary`: **4.65:1 light / 4.62:1 dark on `canvas` (pass)**, **4.99:1 light / 4.23:1 dark on `card` (FAIL in dark)** — the compounding the reviewer describes. (For completeness: the board's `inkSecondary` on `canvas` is 6.28 / 6.65, pass both.) |
 | **M-R3** | `b869ec24` is `RESOLVED` and asks *where* deploy-key generation and storage belongs; the open gate is `.decisions/9417f8bf-73b8-4827-9515-bdfe92e5a9d5.yaml`, `status: PENDING`, *"Which substrate holds the server-stored private half of a product's deploy key?"*; revision 3 and its metadata cite `9417f8bf` **zero** times | **CONFIRMED, with one provenance fact the dispatch did not state.** `b869ec24` — `status: RESOLVED`, `type: ARCHITECTURE`, question *"Where does deploy-key generation and storage belong, given that SHIP IT pushes from its backend and not from the web browser?"* → it settles **where**, not the at-rest substrate. `9417f8bf` — `status: PENDING`, `type: SECURITY`, question verbatim as dispatched, and its own `context.summary` records the human's reservation: *"I have NOT approved the at-rest protection model for the server-stored private half. Surface it as a decision at Gate D4; do not default it."* `grep -c 9417f8bf` on `design-revision-3.md`, `design-revision-metadata-3.yaml`, `penpot-board-evidence.md` and `correction-report-3.md` = **0 / 0 / 0 / 0**. **The layer name, §8, §11's G2 and the metadata all keep `Art S` `PENDING D4` — the human's decision has NOT been quietly resolved; the defect is confined to one matrix cell.** ⚠️ `9417f8bf` is **not present at this worktree's HEAD `77c19f1`** — `.decisions/` holds six files there. It was filed in commit **`064703d`** (*"five Gate D4 decisions filed"*, child of `77c19f1`) and is readable at the canonical checkout. Recorded in the metadata's provenance; revision 3 already cites `27ea6536` on the same footing. |
-| **L-R1** | `design-revision-3.md:37` persists the `WORKFLOW_IMPROVEMENT` lesson to "§ 13", which is *Assumptions carried forward* and contains no learning; the lesson is in §0 and §12, classified at `correction-report-3.md:261-278` | **CONFIRMED.** `grep -n '^## ' design-revision-3.md` → `:558 ## 13. Assumptions carried forward` (A1–A6 only). The lesson text is at `design-revision-3.md:37-39` (inside §0) and `:535-554` (§12). The classified entries run **`:261-281`** (four `WORKFLOW_IMPROVEMENT / REUSABLE / independent-review` items at 261, 267, 274 and 278) — the dispatch's `261-278` names the start of the fourth; `:281` is its last line. Corrected cross-reference below. |
+| **L-R1** | `design-revision-3.md:37` persists the `WORKFLOW_IMPROVEMENT` lesson to "§ 13", which is *Assumptions carried forward* and contains no learning; the lesson is in §0 and §12, classified at `correction-report-3.md:261-278` | **CONFIRMED.** `grep -n '^## ' design-revision-3.md` → **`:646 ## 13. Assumptions carried forward`** (A1–A6 only). The lesson text is at `design-revision-3.md:60-62` (inside §0) and **`:624-644`** (§12, heading at `:623`). *(Revision 4 measured `:633` and `:610-629`; revision 5's own §4.4 correction to rev 3 added **13 lines** above these sites, so revision 4's corrected numbers have themselves gone stale. Re-measured at `289f1d3`.)* The classified entries run **`:261-281`** (four `WORKFLOW_IMPROVEMENT / REUSABLE / independent-review` items at 261, 267, 274 and 278) — the dispatch's `261-278` names the start of the fourth; `:281` is its last line. Corrected cross-reference below. **All four numbers re-read at revision 5 (§ M-1): revision 4's `:558`, `:37-39` and `:535-554` were each wrong — `:37` is a code fence, and the first two shifted under revision 5's own L-1 pointers.** |
 | **L-R2** | `docs/engineering/dispatch/tasks/design-review-addproduct-mobile/report.md` now exists (commit `25f723d`), is revision 1's review, and its own header says *"This file is the authoritative copy; the correction lane's G11 is now closed"*; §11 and the metadata still list G11 as an open gap | **CONFIRMED by reading the canonical checkout read-only.** The file exists; header lines 5–11 carry the persistence note and the quoted sentence verbatim. `git log --all --oneline` → **`25f723d` docs(review): persist the mobile Gate D3 review that ran but was never written**. §11's G11 row and `design-revision-metadata-3.yaml:196-198` both still carry it as open. Closed below. **Provenance fact:** the file does not exist *in this worktree* — the worktree's HEAD is `77c19f1`, one commit before `25f723d`; it was read at the canonical checkout at `3a87e27`. |
 | **L-R3** | the withdrawal markers invalidated their own line citations: `design-revision.md:70`/`:72-73`/`:414` and `report.md:48`/`:100`/`:197` no longer resolve; `design-revision.md:7` states "line 414" flatly | **CONFIRMED, every number, and the true sites are in § 0.1's table.** Verified by reading the marked files: the 36px claim is at `design-revision.md:77`/`:79` (marker `:83-89`), F8 at `:429` (marker `:431-438`); `report.md:62` (marker `:64-68`), `:120` (marker `:122-…`), `:224` (marker `:231-…`). `design-revision-metadata.yaml:15-16` is **still correct** and is left as it stands. |
 | **L-R4** *(record only, not a finding)* | `MobilePrimaryButton` is at `:902` (rev-3 says `:904-911`); `FilledButton` at `:678` (rev-3 says `:679`, which is the `onPressed:` line); `defaultColor` at `:267-274` (cited `:266-273`); `effectiveValue` at `:382-387` (cited `:381-391`) | **CONFIRMED; every load-bearing citation is EXACT, as the dispatch says.** `grep -n` gives `902: MobilePrimaryButton(`, `678: child: FilledButton(`, `679: onPressed: state.canRegister …`, `:853: DesignPanel(`. Flutter 3.44.7 `button_style_button.dart`: `266 static WidgetStateProperty<Color?>? defaultColor(` … `274 }`, and `382 T? effectiveValue<T>(…) {` … `387 }` — so `:266-274` and `:382-387` are the exact spans. `:679` is correct *as the `onPressed:` citation* and `:678` is correct *as the widget citation*; both are now written, labelled, so neither can be misread again. Fixed as instructed; **not** recorded as a finding. |
@@ -402,7 +421,22 @@ parameterised on. Revision 3 and its metadata cited `9417f8bf` **zero times**. T
 **This is invariant 8 failing in the direction that makes an open gate look settled** — on the one row that is
 explicitly *not* closed. Note what did **not** go wrong: the layer's name, its string, its `PENDING D4`
 marker, §8's "G2 stays `PENDING D4`", §11's G2 and the metadata all keep it open. **The human's decision has
-not been quietly resolved and is not resolved here.** One cell was wrong; the layer is untouched.
+not been quietly resolved and is not resolved here.**
+
+> ⚠️ **REVISION 5 — THE PARAGRAPHS ABOVE ARE SUPERSEDED, AND THE THING THEY SAY DID NOT HAPPEN.** They are
+> *correct for `77c19f1`*, where `9417f8bf` genuinely was `status: PENDING` and the layer genuinely was
+> untouched. **At `289f1d3` `9417f8bf` is `RESOLVED`** (OPTION_C / A3), the matrix cell's `9417f8bf (PENDING D4)`
+> is stale, and **the layer was edited on all four boards** — renamed `Art S`, string corrected. Retained
+> unedited with this pointer rather than rewritten. See `design-revision-5.md` §3. One cell was wrong; the layer is untouched.
+
+> ⚠️ **REVISION 5 — THIS WHOLE M-R3 ROW IS SUPERSEDED. IT WAS CORRECT *FOR `77c19f1`* AND IS NOT NOW.**
+> *(It is a historical verification row, so it is **pointed at, not rewritten** — the same treatment rev 4's
+> own § 1.2 rows received.)* Two independent changes: **`9417f8bf` is `status: RESOLVED`** — OPTION_C / A3,
+> an external secret manager; SHIP IT holds a reference only — so this row's `status: PENDING`, its
+> *"open human gate"* framing and its `"the human's decision has not been resolved"` conclusion are all **false
+> at `289f1d3`**. And the layer is **no longer untouched**: it was renamed `Art S` and its string corrected on
+> **all four boards**, verified by live read-back. `b869ec24` still settles *where* the keypair lives and is still
+> correctly cited. Governing text: `design-revision-5.md` §3; evidence `penpot-board-evidence.md` §6.2.
 
 **`Submit Sub` helper below button — the wrong foreground token, and no surface (M-R2).** Corrected above.
 The row now names the build's `inkTertiary`, the same surface note the `Submit` row carries, and states
@@ -507,6 +541,12 @@ forward unchanged except where a pointer says otherwise.
 Carried from revision 1 and **not** re-raised: **B3** (footer-copy scope) remains filed as Human Decision
 `27ea6536`. **G2** (`Art S` at-rest wording) stays `PENDING D4` and unresolved — the open gate is
 **`9417f8bf`**, and the at-rest protection model remains the human's decision at Gate D4 (§ 6.1).
+
+> ⚠️ **REVISION 5 — ALL THREE CLAIMS IN THE PARAGRAPH ABOVE ARE SUPERSEDED. NOT RE-RAISED.** *(Revision 5
+> finding L-1. Retained unedited.)* `9417f8bf` is **RESOLVED** (**OPTION_C / A3**) — it is **not** `PENDING`,
+> and the at-rest model is **not** the human's open decision. The layer is renamed `Art S` and its string
+> corrected on all four boards. `27ea6536` is **RESOLVED**; mobile is measured conformant, **the four
+> desktop `S` boards are not** (finding **F6**). Full specification: `design-revision-5.md` §3, §4.
 
 ---
 
@@ -636,7 +676,7 @@ each board's full subtree and filtered to `inkTertiary`.
 | Id | Gap | Why it is not mine |
 |---|---|---|
 | G1 | normative `hostUnrecognised` state machine; "Check access" semantics | sibling lane `design-addproduct-keyservice` |
-| G2 | at-rest wording for `Art S` | **open human decision `9417f8bf` (`status: PENDING`)**; layer stays `PENDING D4`. `b869ec24` settles only *where* the keypair lives, not the at-rest substrate (§ 6.1) |
+| G2 | at-rest wording for `Art S` | ~~**open human decision `9417f8bf` (`status: PENDING`)**; layer stays `PENDING D4`. `b869ec24` settles only *where* the keypair lives, not the at-rest substrate~~ — **RESOLVED at revision 5: `9417f8bf` is `status: RESOLVED` (OPTION_C / A3, an external secret manager); layer renamed `Art S`, string corrected on all four boards** | (§ 6.1) |
 | G3 | `negative` on dark fails AA and no compliant token exists | `ShipItPalette` is design-system-owned (N2) |
 | G4 | `TechnicalDetails`' unconditional `ContentRule` | shared primitive, 4 other screens (N3) |
 | G5 | the build's "What you're registering" / "What happens next" panels have no board | removing them is a UX change (F1) |
@@ -683,6 +723,12 @@ each board's full subtree and filtered to `inkTertiary`.
 **No human gate is raised by this revision.** B3 remains with decision `27ea6536` and is not re-opened.
 `Art S` stays `PENDING D4` under open gate `9417f8bf`; the at-rest protection model remains the human's
 decision at Gate D4, and revision 4 records it as open rather than as settled.
+
+> ⚠️ **REVISION 5 — THE SENTENCE ABOVE IS NOW FALSE AND WAS ACCURATE WHEN WRITTEN.** `9417f8bf` is
+> **`RESOLVED`** (OPTION_C / A3, `decided_at 2026-10-06T13:05:00Z`); the at-rest protection model **was settled**
+> at Gate D4, by the human; and `Art S` **no longer stays `PENDING D4`** — it is renamed and corrected on all
+> four boards. Revision 4 recorded it as open *because it was* open. `B3`/`27ea6536` is likewise **RESOLVED**
+> and was not re-opened — it was **decided**. See `design-revision-5.md` §2, §3, §4.
 
 ---
 
@@ -790,6 +836,14 @@ The Gate D3 re-review of revision 3 returned `RESULT: DESIGN_REVIEW_CHANGES_REQU
 **Not touched, deliberately:** H-N1, H-R1, M-N5, M-N1, M-N4, M-N3, L-N4, M-N6, L-N2, L-N3 (all confirmed
 closed by the re-review); `27ea6536` (B3), N1, N2, N4, N6 (not re-raised); the `Art S` string and its
 `PENDING D4` marker; and **every board** — 0 edits, 0 creations, 0 renames, 0 moves, 0 deletions.
+
+> ⚠️ **REVISION 5 — TWO ITEMS ON THAT "not touched, deliberately" LIST WERE TOUCHED, DELIBERATELY, AT
+> REVISION 5.** (a) **The `Art S` string and its `PENDING D4` marker** — both corrected/retired on **all four
+> boards** under `9417f8bf`. (b) **Every board** — revision 4 edited none; **revision 5 edited four** (the `SM`
+> pair for custody + the `Unknown host` pair for `898b07d0`). Items (c) `27ea6536` and (d) N1/N2/N4/N6 remain
+> correctly untouched, though (c) was **decided** rather than merely filed. No BPM or `S` board was touched by
+> revision 5 either — those remain read-only, and finding **F6** records that they do not conform to the
+> resolved footer spec.
 
 **The one thing this pass did not do, and it is deliberate:** it did not persist the Gate D3 re-review report
 of revision 3. That document is the independent reviewer's, it is not in this lane's `OWNED_PATHS`, and

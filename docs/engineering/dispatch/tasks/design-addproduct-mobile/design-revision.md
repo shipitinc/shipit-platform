@@ -1,16 +1,16 @@
 # Design Revision — Add Product mobile state boards + layout/copy corrections
 
-> **SUPERSEDED — this is revision 1. The current revision is `design-revision-4.md`.** This file is retained
+> **SUPERSEDED — this is revision 1. The current revision is `design-revision-5.md`.** This file is retained
 > **unedited** so the whole correction history stays diffable. Retention without a marker is not neutral,
 > because a reader who opens this file first sees only this file — so **two claims inside it are disproven
-> and are marked in place**: the 36px `minimumSize` derivation (§2a, **lines 77 and 79**) and follow-up
-> **F8** (§10, **line 429**). Both carry `WITHDRAWN` markers. See `design-revision-4.md` §0.1 and §7.1.
+> and are marked in place**: the 36px `minimumSize` derivation (§2a, **lines 83 and 85**) and follow-up
+> **F8** (§10, **line 435**). Both carry `WITHDRAWN` markers. See `design-revision-5.md` § M-1.
 >
-> **Line numbers corrected at revision 4 (L-R3).** The numbers this header used to give — "lines 70 and
-> 72-73" and "line 414" — were correct when revision 3 wrote them and were then **invalidated by the
-> withdrawal markers themselves**, which sit *at* the cited sites. The body's text is untouched; only these
-> pointers moved. **This is the second half of the retention rule: a cross-reference is a claim about a
-> file, and it goes stale the moment you edit the file it points into.**
+> **Corrected twice: revision 4 (L-R3), then revision 5 (§ M-1).** Revision 4's numbers — "lines 77 and
+> 79", "line 429" — were themselves wrong; those lines hold `ShipItType._lh = 1.2` and the **F2** row.
+> Re-read live at `289f1d3`: **`:83`**, **`:85`**, F8 at **`:435`**; markers at **`:89-95`** and
+> **`:437-444`**. **No uniform offset repairs these** — a marker at a cited line moves it, which is why
+> this header's line budget is held fixed: adding a line here would invalidate every number below it.
 
 Per `docs/engineering/DESIGN_GOVERNANCE.md` § *Artifacts → Design Revision*. Metadata in
 `design-revision-metadata.yaml`. Board evidence in `penpot-board-evidence.md` — **regenerated** at
@@ -364,7 +364,7 @@ Audit confirms 0 occurrences of "Cancel" across all four boards.
 | Id | Gap | Why it is not mine |
 |---|---|---|
 | G1 | The normative `hostUnrecognised` state machine and what "Check access" verifies | sibling lane `design-addproduct-keyservice` owns it |
-| G2 | At-rest protection wording for `Art S` | open human decision; string marked `PENDING D4` |
+| G2 | At-rest protection wording for `Art S` | ~~open human decision; string marked `PENDING D4`~~ — **RESOLVED at revision 5 by `9417f8bf` (OPTION_C / A3, an external secret manager); layer renamed `Art S`, string corrected to `ed25519 · generated on the server · the private half stays in the secret manager` on all four boards** |
 | G3 | `negative` on dark fails AA (4.02:1 / 3.68:1) and no compliant token exists | `ShipItPalette` is design-system-owned |
 | G4 | `TechnicalDetails`' unconditional `ContentRule` vs a board with none | shared primitive used by 4 other screens |
 | G5 | The build's "What you're registering" / "What happens next" panels have no board | removing them is a UX change; see F1 |

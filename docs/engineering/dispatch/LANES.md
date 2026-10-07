@@ -425,3 +425,50 @@ usable"*.
 The keys revision-4 correction and the mobile revision-4 re-review **both** returned corrupted subagent output
 on first dispatch and had to be re-sent. Both succeeded on retry. Recorded because two-for-two is a pattern
 worth watching, not because either dispatch was wrong.
+
+## Session 2026-10-07 (orchestrator-main) — resume
+
+**Penpot reachable.** The two-session `SESSION_LIMITED` blocker is cleared; the mobile lane was
+dispatched immediately. `main` = `origin/main` = `289f1d3`, unmoved throughout. **No Human Decision was
+raised this session** — every lane resolved on the recorded resolutions alone.
+
+| task_id | type | state | worktree | branch | base | head | routing | result | next action |
+|---|---|---|---|---|---|---|---|---|---|
+| design-correct-addproduct-mobile-5b | design-produce | CLOSED — COMPLETE | /private/tmp/shipit-correct-addproduct-mobile | design-correct-addproduct-mobile | 289f1d3 | 289f1d3 (uncommitted) | STANDARD | `DESIGN_REVISION_COMPLETE`, risk 3, a11y **PASS** | independent review |
+| design-review-addproduct-keys-rev5 | design-review | CLOSED — CHANGES_REQUIRED | read-only | — | 289f1d3 | 289f1d3 | PRECISION | 1 BLOCKER, 0 HIGH, 4 MEDIUM, 3 LOW | keys rev-6 correction (needs F6 grant) |
+| design-correct-adr-0018-a2-2 | design-produce | CLOSED — COMPLETE | /private/tmp/shipit-design-adr0018 | design/adr-0018-amendment | 289f1d3 | 289f1d3 (uncommitted) | PRECISION | `DESIGN_REVISION_COMPLETE`, risk 3 | independent review |
+| review-credential-identity-invariants-rereview | review | CLOSED — NOT APPROVED | read-only | — | 0bf2fa0 | **no commit** | PRECISION | `DO_NOT_APPROVE_CORRECTIONS`, `READY_FOR_MERGE: NO` | correction dispatched |
+| correct-credential-identity-invariants-guard | correct | CLOSED — COMPLETE | /private/tmp/shipit-credential-identity | fix/credential-identity-invariants | 0bf2fa0 | **a4c211c** | PRECISION | `CORRECTION_COMPLETE` | focused re-review |
+| review-credential-identity-invariants-final | review | CLOSED — APPROVED | read-only | — | 3f3f4f4 | a4c211c | PRECISION | **`APPROVE_CORRECTIONS`**, no regressions, `READY_FOR_MERGE: YES` | integrator |
+| integrate-credential-identity-invariants | integrate | **CLOSED — READY, AWAITING AUTHORITY** | /private/tmp/shipit-credential-identity | fix/credential-identity-invariants | 0bf2fa0 | a4c211c | PRECISION | **`READY_FOR_INTEGRATION`**; merge rehearsed `08c7590`, 0 conflicts | **human merge authority** |
+
+### Three things a fresh session must not re-derive
+
+1. **The reviewed tree had no commit, and it survived nowhere.** `3f3f4f4` was **reconstructed by exact
+   inverse edits** after the correction lane searched 26 worktrees and found the reviewed state absent.
+   The final review verified it against every recorded oracle **plus one the lane could not check — the
+   MEDIUM defect itself reproduces at `3f3f4f4`** — and 11 further line-level oracles. One disclosed
+   outlier (a cited line was `:293`, not `:281`). **Do not assume a reconstructed commit is faithful
+   because the lane says so; check it against an oracle.**
+2. **The obvious guard fix fails OPEN.** Check 4 derived names with `sed 's/^[^:]*://'` — one field
+   stripped. Adding a third colon-delimited field without updating that sed makes the regex stop
+   matching, `offenders` empty, and **check 4 silently passes** (planted index: `exit 1` → `exit 0`).
+   Reproduced independently by both the reviewer and the correction lane. Accepted fix: one list,
+   `exit 2` on an absent expectation, `cut -d: -f2` in the same commit.
+3. **T4 is a real determinism defect, not noise.** 3 of 8 integration runs had an extra failure: both
+   callers mint the same id into one repository, so the loser violates **two** unique constraints at once
+   and **which one Postgres names is not pinned**. One row is written either way — **no masked security
+   bug** — and `T-C` (sequential) never flakes. The integrator ran it 4 more times (0 of 4) and recorded
+   that **0-in-4 does not make the suite deterministic** rather than overturning the diagnosis. Fix the
+   **mint-branch read-back, not the test**.
+
+### Lane failures this session
+
+- **One dispatch cancelled mid-flight** (mobile). It left board edits and part of the record sweep applied
+  with **no revision artifact and no report**. The Manager measured the live state and dispatched a
+  **resume** note rather than restarting, so the applied work was finished rather than redone — and the
+  resumed lane re-verified every Manager claim independently before relying on it.
+- **Two reports lost this session, one for the third time.** The ADR lane found its own review report
+  **absent** and reconstructed the finding set from the ADR text, saying so. The keys rev-5 review report
+  and three of four credential reports are **still untracked**. A verdict with no provenance is this work
+  item's repeating failure.

@@ -1,10 +1,11 @@
-# Design Revision Metadata — revision 4
+# Design Revision Metadata — revision 4  (SUPERSEDED by `design-revision-metadata-5.yaml`)
 
 Required by `docs/engineering/DESIGN_GOVERNANCE.md` § *Artifacts → Design Revision Required Metadata*.
 **Revisions 1, 2 and 3 are retained unedited** as `design-revision.md` / `design-revision-metadata.yaml`,
 `design-revision-2.md` / `design-revision-metadata-2.yaml` and `design-revision-3.md` /
 `design-revision-metadata-3.yaml`; each carries a supersession header naming the claims the current revision
-overturns. This file describes the current revision.
+overturns. **Revision 5 is the current revision** — see `design-revision-metadata-5.yaml`. This file
+describes revision 4, which changed no board.
 
 **Revision 4 is a RECORD-ONLY pass: zero board edits.** Seven dispatched items, six corrections and one
 record-only citation fix. Every number the risk rationale, the traceability block and the assessment below
@@ -39,9 +40,22 @@ risk_rationale: >
   is now named in the matrix cell that governs that row.
 
 risk_rationale_would_escalate_to_3_if:
-  - the human confirms the footer copy is to be removed on desktop too, contradicting BP / S boards
-    (already filed as Human Decision 27ea6536 — NOT re-raised by this revision)
-  - the sibling lane's hostUnrecognised design turns the trust step into a navigation/IA change
+  # ⚠️ REVISION 5 — THE FIRST TWO TRIGGERS BELOW ARE **FIRED**. Both are struck, not re-raised, so no
+  # reviewer is sent to a discharged gate. Neither was reached by this lane escalating anything: the human
+  # resolved `27ea6536` and `898b07d0` directly, and the work they mandate is now executed in
+  # `design-revision-5.md`. The two remaining triggers are LIVE and are carried forward unchanged.
+  - ~~the human confirms the footer copy is to be removed on desktop too, contradicting BP / S boards
+    (already filed as Human Decision 27ea6536 — NOT re-raised by this revision)~~
+    # **FIRED 2026-10-06T13:05:00Z — STRUCK at revision 5.** `27ea6536` is RESOLVED: the human confirmed
+    # exactly this (footer copy removed on BOTH platforms), checked the boards personally, and added the
+    # per-platform alignment specification. Verified live against all four `S` boards and all four `SM`
+    # boards — see `penpot-board-evidence.md` §6.3. **Not re-opened.**
+  - ~~the sibling lane's hostUnrecognised design turns the trust step into a navigation/IA change~~
+    # **FIRED — STRUCK at revision 5.** `898b07d0` (split identity from registration) + `ae1c1f79`
+    # (refusal creates nothing) are RESOLVED and the Unknown-host boards have been re-grounded on them:
+    # step order re-set, the eyebrow corrected, and a new user-facing `Trust Created` element added
+    # carrying "a product now exists but is not yet usable". This is the Level-3 content of revision 5 and
+    # the human gate for it is **already discharged** — the decisions name `design-agent` as owner.
   - G12 is escalated from a recorded mismatch to a decision to move the primary action off `DesignPanel`,
     which would change the feature's committing control's surface on both platforms
   - the design-system owner acts on N10 and changes `ShipItPalette.inkTertiary` (or adds a card-safe
@@ -136,8 +150,8 @@ corrections_applied:
   L-R1: >
     RECORD-ONLY. design-revision-3.md:37 persisted the WORKFLOW_IMPROVEMENT lesson to "§ 13", which is
     *Assumptions carried forward* (A1-A6) and contains no learning at all. Verified: `grep -n '^## '` gives
-    design-revision-3.md:558 as "## 13. Assumptions carried forward"; the lesson text is at :37-39 (inside §0)
-    and :535-554 (§12); the classified entries with authority levels are correction-report-3.md:261-281 (four
+    design-revision-3.md:646 as "## 13. Assumptions carried forward"; the lesson text is at :60-62 (inside §0)
+    and :623-644 (§12, heading at :623); the classified entries with authority levels are correction-report-3.md:261-281 (four
     WORKFLOW_IMPROVEMENT / REUSABLE / independent-review items beginning at :261, :267, :274 and :278).
     Revision 4's cross-reference names §0 and §12 of the predecessor and the exact classified range. This is
     the same "claim about an artifact made from memory" class that revision 3's own §12 rule 2 forbids, one

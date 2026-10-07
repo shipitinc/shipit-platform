@@ -312,9 +312,89 @@ SELF_EDITS: >-
 ---
 
 ## WORK_ITEM: Add Product rebuild — IN DESIGN (supersedes the parked register-button round)
-STATE: MERGED + IN CORRECTION — `fix/credential-store-integrity` **merged to `main` as `e391c02`** and
-  verified 0/0; all eight Human Decisions RESOLVED; three work items in independent review or correction
-BASE_SHA: `main` = `origin/main` = `43d328b`
+STATE: DESIGN + ADR IN CORRECTION, FEATURE IMPLEMENTATION NOT YET UNBLOCKED
+BASE_SHA: `main` = `origin/main` = `289f1d3`
+
+### SESSION 2026-10-07 (orchestrator-main) — what changed
+
+**PENPOT IS REACHABLE.** The two-session `SESSION_LIMITED` blocker is cleared: `penpotUtils.getPages()`
+returns `["Page 1"]` and all four `SM - Add Product` boards resolve. **The mobile lane was dispatched
+immediately** and is the only design lane that required it. `main` unmoved at `289f1d3` throughout.
+
+| lane | result | disposition |
+|---|---|---|
+| mobile Design Revision 5 | `DESIGN_REVISION_COMPLETE`, `RISK_LEVEL: 3`, a11y **PASS** | **ready for independent review**; never reviewed |
+| keys Revision 5 review | `DESIGN_REVIEW_CHANGES_REQUIRED` — 1 BLOCKER, 0 HIGH, 4 MEDIUM, 3 LOW | correction lane needed |
+| ADR 0018 A2 | `DESIGN_REVISION_COMPLETE`, `RISK_LEVEL: 3` | ready for independent review; never reviewed |
+| credential-identity integration | `APPROVE_CORRECTIONS` → `READY_FOR_INTEGRATION` | **awaiting human merge authority** |
+
+**The merge is the one thing that changes a live security posture.** `fix/credential-identity-invariants`
+is approved at `a4c211c` and verified merge-ready; **until it lands, a revoked credential can be
+resurrected on `main`.** Merge commit rehearsed as `08c7590` (tree `5b66ae0`, 0 conflicts); `main` and
+`origin/main` are both still `289f1d3`.
+
+### Findings this session that change the ledger
+
+- **F6 — a resolved human decision is not satisfied by the boards it governs.** `27ea6536`'s desktop
+  clause *"No footer copy"* is **false on all four desktop `S` boards**: each carries a `Footer` text layer
+  at `(236,862)`, and the divider is at `(236,**848**)`. The keys reviewer re-measured this
+  independently and reproduced the byte-identical string from `add_product_page.dart:383-384`.
+  **No lane currently owns the fix.** `27ea6536` called the boards authoritative, so the defect is in the
+  boards, not the decision. Routed as an ownership question, not a human question.
+- **D-8 RESOLVED — `SM` and `BPM` are two *states* of one mobile design,** established by a measured
+  coordinate table. Consequence: `27ea6536`'s mobile footer spec was **already satisfied** on all four
+  `SM` boards, so H-1(b) needed **no mobile board edit**. `BPM` carries the **same false custody claim**
+  and the now-false `NOT REGISTERED YET` eyebrow — and `BPM` is owned by nobody.
+- **G-17 — an ADR asserts a falsehood about its own acceptance.** ADR 0018 `:16-21` and `:572-580`
+  **deny** the existence of `.decisions/876c6b97`, and `git log --diff-filter=A` proves `876c6b97` landed
+  in the **same commit** that wrote the denial (`5436a4d`). Corrected.
+- **A Manager provenance error, caught by its own lane.** I recorded `6220951` as the A2 amendment
+  commit. It is an `AGENTS.md` commit; **the A2 revision is `5436a4d`.** `876c6b97` is a decision id,
+  not a commit — which matters, because G-17's whole argument is a commit-ordering argument.
+- **A gap's evidence was narrower than it looked.** ADR gap A4's evidence was `*.dart`-only and **hid a
+  GCP Secret Manager already provisioned in this repo's Terraform**, with `secretAccessor` already
+  granted to the Cloud Run SA (`modules/secrets/main.tf:23,31,39`; `modules/iam/main.tf:31-34`) — but
+  **no deploy-key secret and no runtime binding**. Narrows A4; does not close it. Four accepted gaps
+  remain four.
+- **New MEDIUM, latent.** `lastFailureReason` is unguarded on **both** tiers while committed rev5 requires
+  **eight** durable-evidence columns. **Not exploitable today** — `copyWith` uses `?? this.` and the only
+  engine writer never clears it. Must land before `20261006150645000` reaches a deployed database.
+- **T4 — the integration suite is NOT deterministically green.** 3 of 8 runs across two lanes had an extra
+  failure in the D-4 concurrency test: both callers mint the same id into one repository, so the loser
+  violates **two** unique constraints at once and **which constraint Postgres names is not pinned**.
+  Exactly one row is written either way — **no masked security bug.** Corroborated by `T-C`, which builds
+  the same double-violation sequentially and never flakes. The integrator ran it 4× more (0 of 4) and said
+  plainly that **0-in-4 does not make the suite deterministic** rather than overturning the diagnosis.
+  Recommended disposition: **fix the mint-branch read-back, not the test** — that fixes the flake *and* a
+  false diagnostic ("another caller recorded one first" when no race happened).
+- **D-6's shape is a trap, now recorded.** `T-J` asserts the legitimate setters must still **succeed**,
+  so the obvious implementation of `D-6` ("forbid the columns") turns it **red**. Two reviews now
+  independently warn against folding `D-6` into an existing change.
+
+### The correction-loop cost, and why it is recorded rather than buried
+
+The reviewed tree had **no commit**. `3f3f4f4` was reconstructed by **exact inverse edits** after the
+correction lane reported the reviewed state **survived nowhere on disk** across 26 worktrees. The final
+re-review verified it against every oracle the baseline recorded — and added one the lane could not
+check: **the MEDIUM defect itself reproduces at `3f3f4f4`.** Eleven further line-level oracles matched;
+one disclosed outlier (a cited line was `:293`, not `:281`, provably not a consistent alternative).
+
+**The trap the reviewer caught and the lane did not:** the proposed guard fix, done naively, **fails
+open** — check 4 derives names with `sed 's/^[^:]*://'`, so adding a third colon field without updating
+that sed makes the regex stop matching and **check 4 silently passes**. Reproduced in both directions by
+both lanes. The accepted fix keeps **one** list, **fails closed** (`exit 2`) on an absent expectation, and
+fixes the derivation with `cut -d: -f2` in the same commit.
+
+MERGED (and green):
+MERGED (and green):
+  - `e391c02` `fix/credential-store-integrity` — human-authorized, verified 0/0. The integrator **refused
+    the first merge** because a second implementer pass had mutated the tree the review approved and it had
+    no pinnable SHA; it committed `07c8c8f`, got a fresh `APPROVE_CORRECTIONS`, and only then merged.
+    `make test-integration` in the canonical checkout is **fully green at `+165`**.
+  - `6220951` the ADR 0018 amendment A2 edit itself (158 -> 580 lines).
+  - `AGENTS.md` gained the read-only-over-shared-Docker rule (item **G-2**, open three sessions) and
+    **§13 / §13a / §13b**, which ADR 0018 quotes verbatim and ADR 0012:34 and ADR 0019:121 depend on.
+  - **Eight Human Decisions RESOLVED**, plus `876c6b97` recording the ADR acceptance.
 GATE_D4_RESOLVED: all six original decisions plus two later ones. `9417f8bf` **OPTION_C** (supersede ADR
   0018 `:85-88`; **A3 external secret manager**; A2 permanently excluded; **G-7 becomes REQUIRED**) ·
   `7b1bc8b7` **OPTION_A** (fail closed, remediation copy required) · `79e860e2` **OPTION_A** (destroy the
@@ -338,31 +418,57 @@ MERGED:
     **§13 / §13a / §13b**, which ADR 0018 quotes verbatim and ADR 0012:34 and ADR 0019:121 depend on — three
     ADRs had been pointing at absent text.
   - `main` is **fully green**: analyze clean, `+142` unit, `+165` integration, schema guard 16 OK.
-IN_REVIEW:
-  - `fix/credential-identity-invariants` (D-4 mint is `DO NOTHING`, D-18 resurrection, D-5 scope immutable,
-    LOW-1 full-DDL parity, LOW-2 derived offender list) — `APPROVE_WITH_NON_BLOCKING_FOLLOWUP`, no blockers,
-    no HIGH, **uncommitted**. 1 MEDIUM guard gap: the `IF NOT EXISTS` normalisation forgives the divergence
-    that would break migration `20261006150645000` on a bootstrapped database (not live today). The reviewer
-    independently found **6 of 6** new tests red on pristine base where the implementer reported 5.
-  - ADR 0018 amendment A2 (158 → 465 lines) — drafted, awaiting independent review.
+IN_REVIEW / AWAITING INDEPENDENT REVIEW:
+  - **mobile Design Revision 5** — `DESIGN_REVISION_COMPLETE`, `RISK_LEVEL: 3` (gate re-verified
+    discharged), compliance **PARTIAL**, a11y **PASS**, feasibility **MEDIUM**. Never reviewed.
+  - **ADR 0018 A2 revision 3** (`ADR0018-A2-REV3`, ADR 811 lines) — `DESIGN_REVISION_COMPLETE`,
+    `RISK_LEVEL: 3`. Never reviewed. See the session findings above for G-17 and the narrowed A4.
+IN_REVIEW / AWAITING MERGE AUTHORITY:
+  - `fix/credential-identity-invariants` @ **`a4c211c`** — **now pinnable**, which it was not last session.
+    Chain: baseline `APPROVE_WITH_NON_BLOCKING_FOLLOWUP` → re-review `DO_NOT_APPROVE_CORRECTIONS` (no
+    commit existed) → correction `a4c211c` → **`APPROVE_CORRECTIONS` / `READY_FOR_MERGE: YES`** →
+    integrator **`READY_FOR_INTEGRATION`**, stopped before merging on authority grounds. Rehearsed merge
+    `08c7590`, tree `5b66ae0`, **0 conflicts**; all 9 reviewed blobs `IDENTICAL` in the merged tree.
+    Gates on the **merged** tree: format 631/0 · analyze exit 0 · `+148` unit · guard **20 OK** (18 + 2 by
+    pure addition, zero removed) · negative controls 12/0 · integration `+171 -1` on all four runs.
 IN_CORRECTION:
-  - keys **revision 4** — rev 3 returned `DESIGN_REVIEW_CHANGES_REQUIRED` with 4 BLOCKERS, 7 HIGH. Risk 3
-    agreed, and the reviewer confirmed the reserved decision is **not nudged anywhere**.
+  - **keys Revision 5** (`7C1E4A96`) — first review returned `DESIGN_REVIEW_CHANGES_REQUIRED`,
+    **1 BLOCKER, 0 HIGH, 4 MEDIUM, 3 LOW**, `RISK_LEVEL_AGREEMENT: YES`, `HUMAN_DECISION_REQUIRED: NO`.
+    The BLOCKER is **F6** (recorded above) — a resolved human decision is not satisfied by the boards it
+    governs, and revision 5 records no board-conformance gap anywhere.
 BLOCKERS:
-  - type: INFRASTRUCTURE_BLOCKED
+  - type: ~~SESSION_LIMITED~~ **RESOLVED 2026-10-07**
     detail: >-
-      **Penpot MCP instance resolution fails.** The plugin appears connected — `penpot_penpot_api_info`
+      **CLEARED.** `penpotUtils.getPages()` returns `["Page 1"]` and all four `SM - Add Product` boards
+      resolve by id. The mobile lane was dispatched on the strength of this and completed. The
+      `SESSION_LIMITED` and `INFRASTRUCTURE_BLOCKED` entries below are retained as the record of the
+      diagnosis; both are moot.
+    superseded: >-
+      ~~**This session cannot reach Penpot.** The token was regenerated and set in the MCP config, but this
+      session's MCP client still holds the old one: `penpotUtils.getPages()` returns
+      `No Penpot instance connected for user token` while `penpot_high_level_overview` works, because the
+      former is instance-bound and the latter is static. **A session restart is required.** The human said so
+      unprompted. Until then the mobile revision cannot be corrected and **four boards carry security copy
+      that is FALSE under decision `9417f8bf`** — they read `private half stays server-side`, and under A3
+      SHIP IT does not hold the private half at all.~~
+  - type: ~~INFRASTRUCTURE_BLOCKED~~ **RESOLVED 2026-10-07**
+    detail: >-
+      **CLEARED.** The token-to-instance binding is now valid for this session.
+    superseded: >-
+      ~~**Penpot MCP instance resolution fails.** The plugin appears connected — `penpot_penpot_api_info`
       returns full schema docs — but every *instance-bound* call fails with `No Penpot instance connected
       for user token` **before the JavaScript executes** (proved by wrapping a call in `try/catch`: the
       `catch` never ran). So the fault is the **token-to-instance binding**, not a missing plugin. Either
       the plugin registered against a different MCP client's token than this session uses, or the server's
       token map predates the connection. Needs the client *this session* talks to reconnected, or the MCP
-      server restarted after the plugin connected.
-    impact: >-
-      Mobile revision 5 is `DESIGN_REVISION_BLOCKED` twice over and cannot proceed. **`Art S` on all four
-      boards reads `private half stays server-side`, which is FALSE under decision `9417f8bf`** — under A3
-      SHIP IT does not hold the private half at all. That is wrong security copy on four boards, and it
-      cannot be corrected without Penpot.
+      server restarted after the plugin connected.~~
+    retained_narrowing: >-
+      Narrowed after diagnosis: the plugin **is** connected (the API-info tool returns full schema docs on
+      every call). Only *instance-bound* calls fail, and they fail **before** any JavaScript runs — proved by
+      wrapping a call in `try/catch` and watching the `catch` never execute, the error arriving as the
+      tool's own result. So the fault is the **token-to-instance binding**, not a missing plugin. The human
+      regenerated the token and set it in the MCP config; this session's client predates that. **Restart
+      required.**
   - type: DESIGN_GOVERNANCE
     detail: >-
       `design-revision-3.md` — the specification D-4/D-18/D-5 implement — is **uncommitted and unapproved**,
@@ -371,19 +477,42 @@ BLOCKERS:
       the design is committed and independently approved.** No code lane can discharge this.
   - type: PENDING_REVIEW
     detail: >-
-      Keys **revision 5** — rev 4 returned `DESIGN_REVIEW_CHANGES_REQUIRED` with 2 BLOCKERS (one of them:
-      the design asserts the ADR amendment is "Accepted" in 13+ places, which nothing on disk supported until
-      decision `876c6b97` recorded it), 3 HIGH, 4 MEDIUM, 9 LOW. ADR 0018 A2 revision 2 needs its
-      independent review — **human acceptance is recorded, independent review never happened.**
+      Two lanes await independent review: **keys revision 5** (`7C1E4A96`, all 18 rev-4 findings applied)
+      and **ADR 0018 A2 revision 2** (`CHANGES_REQUIRED`, 0 blockers, 2 HIGH — "SHIP IT never holds key
+      bytes" contradicts the ADR's own transport-time retrieval clause, and A3 custody is stated in the
+      present indicative while no substrate adapter exists).
     owner: independent design reviewer
+  - type: DESIGN_NOT_UNBLOCKING_IMPLEMENTATION
+    detail: >-
+      **The feature's implementation is still not unblocked**, and the ledger should say so plainly:
+      `D-4`/`D-5`/`D-6`, `G-7`, `G-13`, `G-14` and the new **`G-16`** are all specified and unbuilt; the
+      `SecretProvider` and the three endpoints **including the new ownership step (3a)** do not exist; A3's
+      reachability is `UNVERIFIED`; and the SSH transport seam carries an ADR requirement with no
+      implementation. **`fix/credential-identity-invariants` is approved at `a4c211c` and awaiting merge
+      authority, so the resurrection gap is still live on `main` today** — it is one merge commit away.**
   - type: OWNERSHIP_GAP
     detail: >-
       `CredentialIdentityConflictException` was not created — `packages/product_registry/lib/src/exceptions.dart`
       is outside every lane's `OWNED_PATHS`. Behaviour is complete (a distinct greppable reason, typed 500 per
       the design's table, so no API change). Same precedent as D-1 at `e391c02`; needs an ownership grant.
-SAFE_PARALLEL: the keys revision 3 and the mobile footer/coupling correction, which are disjoint documents
-  and both depend only on the recorded resolutions. Read-only reconnaissance of the SSH transport seam
-  (`HostKeyStatus` has no runtime enforcer) remains safe but deliberately undispatched as a writer.
+  - type: OWNERSHIP_GAP (new 2026-10-07) — **F6, the desktop footer copy**
+    detail: >-
+      `27ea6536` resolved that the desktop `S - Add Product` boards carry **no footer copy**, and it named
+      those boards authoritative. **All four carry a `Footer` text layer at `(236,862)`**, byte-identical to
+      `add_product_page.dart:383-384`; the divider is at `(236,848)`. Measured independently by the mobile
+      lane and reproduced by the keys reviewer. **No lane owns those boards** — `S -`/`DESKTOP -` and
+      `BPM -` are read-only to both design lanes. So a resolved human decision is unsatisfiable by any
+      current `OWNED_PATHS`. **Needs an ownership grant, not a human re-decision.** `BPM` additionally
+      carries the same false custody string and the now-false `NOT REGISTERED YET` eyebrow.
+  - type: DESIGN_GOVERNANCE (revised 2026-10-07)
+    detail: >-
+      The `design-revision-3.md` blocker above is **partly resolved**: rev5 (`7C1E4A96`) now exists and is
+      **committed on `main`**, so the specification is no longer an untracked file. But rev5 is itself
+      `DESIGN_REVIEW_CHANGES_REQUIRED` (1 BLOCKER, 4 MEDIUM, 3 LOW). **No code lane can discharge this.**
+SAFE_PARALLEL: the keys revision-5 correction and independent review of mobile revision 5 and of ADR 0018
+  A2 revision 3 — disjoint documents, all read-only, none of them gates another. Read-only reconnaissance
+  of the SSH transport seam (`HostKeyStatus` has no runtime enforcer) remains safe but deliberately
+  undispatched as a writer.
 PROHIBITED_PARALLEL: >-
   Any **feature** implementation lane. The substrate is now decided but the design has not yet been
   revised to carry the decision, and A3's runtime reachability is UNVERIFIED — the design records LOW
@@ -391,12 +520,13 @@ PROHIBITED_PARALLEL: >-
   feature — D-3 below shows no host-key verification exists anywhere, and that work is
   security-critical and needs its own review.
 NEXT_AUTOMATIC_ACTION: >-
-  Focused re-review of mobile revision 4; engineering re-review of `fix/credential-store-integrity`; then a
-  keys **revision 3** incorporating the six resolutions (the approved revision 2 predates them) plus the
-  mobile coupling and the footer correction; then Design Contract freeze, QA Contract, and the feature's
-  implementation lane. `fix/credential-store-integrity` should merge ahead of the feature — it is
-  independently reviewed, it closes a live defect, and the feature's key service depends on the invariant it
-  establishes.
+  **1. Merge `fix/credential-identity-invariants` @ `a4c211c`** — needs human authority only; the
+  integrator stopped before merging and rehearsed `08c7590`. It is the cheapest real improvement available
+  and the only item that closes a live security gap. **2. Independent review of mobile revision 5 and of
+  ADR 0018 A2 revision 3**, both read-only and disjoint, dispatchable in parallel. **3. Keys revision 5
+  correction** (1 BLOCKER + 4 MEDIUM + 3 LOW), which needs the **F6 ownership grant** first, since no lane
+  can edit the boards where the defect lives. **4.** Then Design Contract freeze, QA Contract, and only
+  then the feature's implementation lane — which is **still not unblocked**.
 SELF_EDITS: >-
   Workflow bookkeeping only, per `aef-orchestrator` §2: this file, `docs/engineering/dispatch/LANES.md`,
   `docs/engineering/dispatch/DECISIONS.md`, `docs/engineering/dispatch/tasks/*/`, and the five Human

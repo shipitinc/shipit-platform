@@ -374,11 +374,16 @@ whichever file a reader opens first is the only file they read. Two kinds of mar
 | `correction-report.md:67` | "every clamp claim deleted from § 2a, the `risk_rationale` and `report.md`" | `> **CORRECTED — revision 3 §0.** This claim was **false**: nothing was deleted from § 2a, the `risk_rationale` or `report.md`. The corrected statement is "**superseded by revision 2 §6a, not deleted**", and withdrawal markers are now in place at all five sites.` |
 | `design-revision-metadata-2.yaml` `risk_rationale` | "The 36px claim has been deleted from § 2a, from the risk rationale and from report.md" | `SUPERSEDED — see design-revision-3.md §0. The claim is "superseded by revision 2 §6a, not deleted"; markers applied.` |
 
-> ⚠️ **THE `Site` COLUMN ABOVE IS SUPERSEDED BY REVISION 4 § 7.1 (L-R3).** This table's line numbers were
-> correct when written and were then **invalidated by this lane's own markers**, which sit *at* the cited
-> sites. Live numbers: `design-revision.md:77`, `:79` (marker `:83-89`); F8 at `design-revision.md:429`
-> (marker `:431-438`); `report.md:62` (marker `:64-68`), `:120` (marker `:122-…`), `:224` (marker `:231-…`).
-> `design-revision-metadata.yaml:15-16` is **still correct**. Full map: `design-revision-4.md` § 0.1.
+> ⚠️ **THE `Site` COLUMN ABOVE IS SUPERSEDED BY REVISION 4 § 7.1 (L-R3) AND CORRECTED AGAIN BY REVISION 5
+> (§ M-1).** This table's line numbers were correct when written, were then **invalidated by this lane's own
+> markers**, which sit *at* the cited sites, and **revision 4's replacement numbers were themselves low by
+> six**. Live numbers, re-read from the files at `289f1d3`:
+> `design-revision.md:83` (the `total` row), `:85` (the "collapses from ≈50px" sentence), marker block
+> **`:89-95`**; F8 at `design-revision.md:435`, marker **`:437-444`**;
+> `report.md:68` (marker **`:70-74`**), `:126` (marker **`:128-133`**), `:230` (marker **`:237-243`**).
+> **Applying a uniform "+6" would have fixed six of these and broken the three ranges** — the marker blocks
+> moved +8, +8 and +13, and the provenance note moved +5 (`26-31` → `31-37`). `design-revision-metadata.yaml:15-16`
+> is **still correct**. Full map: `design-revision-4.md` § 0.1 and `design-revision-5.md` § M-1.
 
 ### 7.2 L-N2 — the branch name, corrected
 
@@ -443,6 +448,42 @@ None of these raise the risk level and none are mine to fix.
 
 Carried from revision 1 and **not** re-raised: **B3** (footer-copy scope) remains filed as Human Decision
 `27ea6536`. **G2** (`Art S` at-rest wording) stays `PENDING D4` and unresolved.
+
+> ⚠️ **BOTH CLAIMS IN THE PARAGRAPH ABOVE ARE SUPERSEDED BY REVISION 5. BOTH ARE RESOLVED; NEITHER IS
+> RE-RAISED.** *(Revision 5 finding L-1 — retention without a marker is not neutral.)*
+>
+> * **B3 / `27ea6536`** — now **RESOLVED** (OPTION_A as nearest equivalent, `decided_by: repository owner`,
+>   `decided_at: 2026-10-06T13:05:00Z`). The human checked the boards and ruled: **desktop**
+>   (`S · Add Product · …`) = a divider plus a **right-aligned** `Show technical details` text button and
+>   **no footer copy**; **mobile** (`BPM · Add Product · …`) = the button **left-aligned with no
+>   divider** and **no footer copy**.
+>
+>   **⚠️ CORRECTED AT REVISION 5 AFTER A SECOND LIVE READ. The mobile half is confirmed; the desktop half
+>   is NOT — and revision 5's own first draft of this pointer got it wrong too.** Re-read at `289f1d3`:
+>
+>   | Claim | Verdict |
+>   |---|---|
+>   | Mobile matches all four `SM` boards | **CONFIRMED.** `Disclose` at `parentX` 16 = the content left edge; zero divider rectangles in the band between the button helper and `Disclose`; zero footer-copy text layers. `SM` Verified `16,580`; `SM` Unknown `16,748`. |
+>   | Desktop `Disclose` right-aligned at rel 1036,862, width 220 | **CONFIRMED** on all four `S` boards. Right edge `1036 + 220 = 1256` = the content column's right edge (`236 + 1020`). |
+>   | Desktop carries a `Footer Rule` divider at rel 236,848, 1020×1 | **CONFIRMED** on all four `S` boards. |
+>   | **"…and no copy"** | **FALSE.** All four `S` boards carry a **`Footer` text layer at rel 236,862, 1020×15**, `align: left`, reading *"Your decision is recorded permanently. The same piece of work then continues — nothing is restarted."* |
+>
+>   **This lane's original coordinate reading of a footer copy at (236,862) was therefore CORRECT, not a
+>   misidentification, and is reinstated as measured.** Revision 5's first draft of this pointer asserted
+>   that (236,862) was "the `Footer Rule` divider, not a text layer". That is wrong on both halves: the
+>   divider is at (236,**848**), and a text layer *does* sit at (236,862). The human's **normative outcome is
+>   unchanged and is not re-opened here** — the finding is that the four desktop boards do not conform to it,
+>   closing them is a board edit this lane does not own, and it is escalated as an ownership blocker. See
+>   finding **F6** in `design-revision-5.md`.
+> * **G2 / `PENDING D4`** — now **RESOLVED** by `9417f8bf` (**OPTION_C / A3**, an external secret manager;
+>   SHIP IT holds only a reference and asks the manager for material at push time). The layer is **no
+>   longer** `PENDING D4` on any board: it was renamed `Art S` and its string corrected to
+>   `ed25519 · generated on the server · the private half stays in the secret manager` on **all four
+>   boards**, verified by live read-back. The rev-2 string this paragraph was written against
+>   (`ed25519 · private half stays server-side`) asserted the private half is SHIP IT's; under A3 it is
+>   not SHIP IT's at all.
+>
+> **Retained unedited above, superseded, not deleted.** Full specification: `design-revision-5.md` § 4.
 
 ---
 
@@ -539,7 +580,7 @@ written to, plus the two new page-level annotation groups.
 | Id | Gap | Why it is not mine |
 |---|---|---|
 | G1 | normative `hostUnrecognised` state machine; "Check access" semantics | sibling lane `design-addproduct-keyservice` |
-| G2 | at-rest wording for `Art S` | open human decision; layer stays `PENDING D4` |
+| G2 | at-rest wording for `Art S` | **~~open human decision; layer stays `PENDING D4`~~ — RESOLVED at revision 5 by `9417f8bf` (OPTION_C / A3); layer renamed `Art S`, string corrected on all four boards |
 | G3 | `negative` on dark fails AA and no compliant token exists | `ShipItPalette` is design-system-owned (N2) |
 | G4 | `TechnicalDetails`' unconditional `ContentRule` | shared primitive, 4 other screens (N3) |
 | G5 | the build's "What you're registering" / "What happens next" panels have no board | removing them is a UX change (F1) |
@@ -548,7 +589,7 @@ written to, plus the two new page-level annotation groups.
 | G8 | `flutter analyze` not run → feasibility cannot be HIGH | see metadata |
 | G9 | no `ShipItPalette` disabled-primary token; the appearance is derived from M3 defaults | design-system owner (N4); consequence stated in § 5 |
 | G10 | `Confirm the host above to enable Register product.` has no producing state | arrives with G1's `hostUnrecognised` |
-| G11 | the mobile design review report was never persisted (revision 2 § 0) | `LANES.md` is PROHIBITED; Manager-owned. **Note:** the re-review report for revision 2 *was* reachable to me this pass, at the canonical checkout, so G11's practical impact on this pass was nil |
+| G11 | ~~the mobile design review report was never persisted (revision 2 § 0)~~ **— CLOSED in revision 4 (L-R2); re-confirmed at revision 5 (L-1).** The file `docs/engineering/dispatch/tasks/design-review-addproduct-mobile/report.md` exists and carries the closing sentence | `LANES.md` is PROHIBITED; Manager-owned. **Note:** the re-review report for revision 2 *was* reachable to me this pass, at the canonical checkout, so G11's practical impact on this pass was nil |
 | **G12** | **new — the primary action's surface: in code `Register` sits on `palette.card` inside `DesignPanel` on both platforms; the boards draw it on the bare page background** | consequence of G5; recorded with the surface named (N9) |
 
 **Assessment movement:**

@@ -1,0 +1,304 @@
+# Design Revision Metadata — revision 5
+
+Required by `docs/engineering/DESIGN_GOVERNANCE.md` § *Artifacts → Design Revision Required Metadata*.
+Supersedes `design-revision-metadata-4.yaml` (revision 4, which changed **no board**; this revision changed
+**four live Penpot boards**). Revisions 1–4 are retained; each carries a supersession header naming the
+claims this revision overturns.
+
+```yaml
+revision_id: CB4BEECA-CA9D-4F26-9464-E1B6F7C9BDCB
+brief_id: 52CB4098-FF87-4B78-81DA-1104269551A1
+revision_number: 5
+supersedes_revision_id: A69AB98C-A672-4D98-9DCE-0F089D55A9B5   # revision 4
+status: UNDER_REVIEW            # the Design Agent never approves its own work
+worktree: /private/tmp/shipit-correct-addproduct-mobile
+branch: design-correct-addproduct-mobile
+base_sha: 289f1d33dcf1a2f24ead765c9e573b2f1ba1f107
+head_sha: 289f1d33dcf1a2f24ead765c9e573b2f1ba1f107
+committed: NO
+```
+
+## risk_level: 3
+
+> **Re-derived this pass from `DESIGN_GOVERNANCE.md` against what this pass actually did — not inherited, and
+> not asserted on an artifact that does not exist.** Three independent clauses of the Level-3 definition are
+> met: (1) **core workflow / user mental model** — `898b07d0` splits identity from registration, so "Register
+> product" changes meaning from *creates the product* to *commits verification of a product that already
+> exists*, and two of four boards' eyebrow strings were rewritten for that reason; (2) **information
+> architecture** — the accepted consequence (a visible product with no usable credential) required a NEW
+> user-facing element, `Trust Created`, absent from every prior revision of this design; (3) **navigation
+> structure** — R.11g item 3 requires the flow be re-enterable from the product, a resume route on
+> `ProductDetailPage` that the Products list does not have.
+>
+> **THE LEVEL-3 HUMAN GATE IS DISCHARGED AND MUST NOT BE RE-OPENED — re-verified directly this pass, not
+> inherited.** `9417f8bf`, `27ea6536`, `898b07d0`, `ae1c1f79` and `7b1bc8b7` are all `status: RESOLVED`, all
+> `decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"`, and all
+> carry `follow_up_actions` with `owner: design-agent`. **The decisions did not remove the risk; they moved it
+> into this lane as a mandate.** The rev-4 reviewer's 3-escalation trigger
+> (`design-revision-metadata-4.yaml:44-45`, host-trust navigation/IA) **FIRED** — that is exactly what
+> `898b07d0` + R.11g item 3 require — and is struck in the revision-4 file so no reviewer is sent to a
+> discharged gate.
+>
+> **One residual component is NOT human-decided and is NOT a gate: D-2.** The human's mobile footer spec (no
+> divider, left-aligned) is not expressible with `TechnicalDetails` as built, so the choice between a new
+> primitive parameter and a mobile-local footer widget is a **shared-component choice at Level 1**, routed to
+> the design-system owner as **N6**. The human already decided the *outcome*; only the mechanism is open.
+> **It does not raise the risk level and does not require the human.**
+>
+> The rev-4 reviewer was right that revision 4's *marginal* risk was Level 0 — that is inapplicable here,
+> because this pass carries board writes and Level-3 content.
+
+risk_rationale_would_escalate_beyond_3_if:
+  # Nothing below is fired. Listed so a future reviewer can see the ceiling was considered, not assumed.
+  - a Human Decision were opened on the four desktop boards' footer copy (F6) in a way that changes the
+    normative outcome — it does not; the outcome is settled and only a board edit is unowned
+  - the resume affordance (R.11g item 3 / G13) were built as a new top-level navigation destination rather than
+    a resume route into the existing credential flow
+
+## The three resolved decisions, re-verified this pass
+
+| decision_id | type | status | selected_option | decided_at | design-agent follow-ups |
+|---|---|---|---|---|---|
+| `9417f8bf-73b8-4827-9515-bdfe92e5a9d5` | SECURITY | **RESOLVED** | OPTION_C — **A3, external secret manager** | `2026-10-06T13:05:00Z` | **2** |
+| `27ea6536-8a4e-4cf1-b24c-cdd3ce5bdab0` | DESIGN | **RESOLVED** | OPTION_A as nearest equivalent; per-platform alignment **new** | `2026-10-06T13:05:00Z` | **3** |
+| `898b07d0-e848-4774-8007-f4dacbd89c78` | ARCHITECTURE | **RESOLVED** | OPTION_A — **split identity from registration** | `2026-10-06T13:05:00Z` | **2** |
+| `ae1c1f79-338c-4d8f-97e0-452adaed021d` | ARCHITECTURE | **RESOLVED** | OPTION_A — **refusal creates nothing** | `2026-10-06T13:50:00Z` | **2**, one naming this lane |
+| `7b1bc8b7-6cd1-4ddc-a94f-366de2bed38a` | SECURITY | **RESOLVED** | OPTION_A — **fail closed, with remediation** | `2026-10-06T13:05:00Z` | **1** (copy) |
+
+## Corrections applied in this revision
+
+```yaml
+H-1(a): >
+  CONFIRMED AND APPLIED. `9417f8bf` (A3) means SHIP IT holds NO key bytes, so the boards'
+  `ed25519 · private half stays server-side` asserted custody SHIP IT does not have. All four SM boards now
+  carry `N-9`'s string — `ed25519 · generated on the server · the private half stays in the secret manager` —
+  verified by live read-back on all four, with the layer renamed `Art S · PENDING D4 (at-rest model)` ->
+  `Art S` and `Key State` moved 436 -> 446 and `Art L1`/`Art L2` 456 -> 466 to clear the two-line wrap. Zero
+  PENDING/PROVISIONAL layer names and zero forbidden text on all four boards. The ~30 record sites were swept
+  (D-1), not the four the review named. Reported, not fixed: `BPM` carries the same false custody string
+  (F5) and the build's `:542`/`:1038` carry a two-halves-false variant (D-4) — both outside OWNED_PATHS.
+
+H-1(b): >
+  CONFIRMED AND ALREADY CONFORMANT ON MOBILE. `27ea6536`'s per-platform spec is now the governing footer
+  specification, quoted verbatim in design-revision-5.md §4.1, and both `note:` sites plus `_buildFooter` are
+  specified to the line (D-3). Measured: the mobile spec — `Disclose` left-aligned at parentX 16, zero
+  divider, zero footer copy — is ALREADY satisfied on all four SM boards, so **no mobile board edit was
+  required**. **F6, NEW AND A BLOCKER: the four desktop S boards carry a `Footer` TEXT layer at rel 236,862
+  on all four boards, so they do NOT satisfy the desktop "no footer copy" clause.** The divider is at
+  236,848; a text layer does sit at 236,862, so the decision's "misidentification" note is wrong about the
+  observation while remaining right about the outcome. `27ea6536` is NOT re-opened; the gap is escalated as
+  an OWNERSHIP blocker (N6b) because closing it is a board edit on four read-only boards.
+
+H-1(c): >
+  APPLIED. `898b07d0` (product row exists before trust) + `ae1c1f79` (refusal creates nothing). Unknown-host
+  pair: `Status` `NOT REGISTERED YET` -> `REGISTERED · NOT YET USABLE`; `Trust K` ->
+  `CONFIRM THIS HOST TO FINISH REGISTERING`; the false `Trust Body 2` ("pushes and merges on its own")
+  REMOVED; NEW user-facing element `Trust Created` at 30,566 330×24 — "This product is already in your list.
+  It cannot push or merge until you finish registering." — which is what discharges the requirement, since
+  `· PROVISIONAL (G1 hostUnrecognised)` is an invisible layer-name annotation. Verified pair:
+  `REGISTERED · READY TO REGISTER`. Seventeen `· PROVISIONAL` suffixes retired. R.11g item 3's resume
+  affordance specified in §4.5 but NOT rendered (G13 — `ProductDetailPage` is not in OWNED_PATHS).
+
+M-1: >
+  APPLIED, BY RE-READING, NOT BY ARITHMETIC. All 13 published numbers re-read from the live files at
+  289f1d3 after the edits and all are exact: design-revision.md :83, :85, marker :89-95, F8 :435, marker
+  :437-444; report.md :68, :126, :230, markers :70-74, :128-133, :237-243, provenance note :31-37;
+  design-revision-metadata.yaml:15-16 still correct. "+6 is unsafe" is preserved and the per-item deltas are
+  published: +6 on the six single-line citations, +5 on both endpoints of the provenance note, +8/+8/+13 on
+  the three marker ranges. **The blanket "CONFIRMED, every number" claim is NOT carried forward** — the claim
+  is exactly the per-row table in §8. Revision 4's self-contradiction is resolved in favour of `31-37`,
+  checked against the committed blob.
+
+L-1: >
+  ALL THREE PRESENT. `design-revision-3.md:583` (G2) and `:592` (G11) struck in the gap table, and
+  `:449-450` — the paragraph carrying BOTH the B3 "remains filed as 27ea6536" claim AND, on the same
+  paragraph, the G2 "stays PENDING D4 and unresolved" claim the review did not name — marked by one in-place
+  block at :452-486 with the retained text untouched. Line numbers re-measured AFTER this pass's own edit to
+  rev 3, which added 13 lines above the gap table. That block was SUBSTANTIALLY CORRECTED this pass: it
+  asserted the desktop boards carry no footer copy, and they do (F6).
+
+D-2_escalated: >
+  `TechnicalDetails` (apps/control_plane/lib/shared/design_primitives.dart — the true path is lib/shared/,
+  not lib/core/) paints `ContentRule` UNCONDITIONALLY at :396, and :398-410 is
+  Row[Expanded(note ?? SizedBox.shrink()), InlineLink]. So `note: null` yields divider + RIGHT-aligned
+  disclosure = the human's DESKTOP spec, free, with no new parameter. MOBILE's spec (no divider, left-aligned)
+  is NOT expressible today. F4 is therefore now a SPECIFIED shared-primitive requirement: suppress the
+  ContentRule and align start-aligned. Level 1, design-system owner (N6). NOT a human gate.
+```
+
+## design_system_compliance: PARTIAL
+
+> Every board element maps to a named token or production primitive, re-read and token-matched against the
+> live file at 289f1d3: board fill `#f7f7f5`/`#1f2120` = `canvas`; `Trust Bg`/`Art Bg` `#ffffff`/`#262827` =
+> `card`; `Art S` `#5a5c5b`/`#a8a6a0` = `inkSecondary`; `Status` `#6e706e`/`#8a8983` = `inkTertiary`;
+> `Trust Btn L` `#ffffff` on `#1668d6` / `#06121f` on `#4496fc`.
+>
+> **Not PASS**, for two named reasons rather than rounding: (a) **D-2** — the mobile footer cannot be
+> expressed by the primitive it uses, so the design does not yet conform to its own component contract;
+> (b) **F6** — four desktop boards do not conform to the resolved footer spec. Both are escalated, neither is
+> a defect this lane introduced.
+
+## ux_accessibility_score: PASS (on the surfaces this pass touched)
+
+> Contrast recomputed from `apps/control_plane/lib/core/design_tokens.dart` at 289f1d3, sanity-checked
+> (black/white 21.00, white/white 1.00). Layers this pass added or moved, all ≥ 4.5:1 in BOTH themes:
+> `Art S` `inkSecondary` on `card` **6.74 light / 6.10 dark**; `Trust Created` `inkSecondary` on `card`
+> **6.74 / 6.10**; `Status` `inkTertiary` on `canvas` **4.65 / 4.62**; `Trust Btn L` **5.27 / 6.30**.
+>
+> **The known `inkTertiary`-on-`card` FAIL at 4.99 light / 4.23 dark is real, unchanged, and is not on any
+> layer this pass touched** — it is N10, design-system-owned. Stated rather than rounded away.
+>
+> **No WCAG criterion beyond colour contrast is claimed.** No screen reader was run, no focus order was
+> verified on the new element, and the disclosure's expanded state was not exercised. Those are QA's, not a
+> design-lane claim.
+
+## implementation_feasibility: MEDIUM
+
+> **Not HIGH, and the reason is stated rather than hedged.** `flutter analyze` was **NOT_RUN**: it requires
+> `flutter pub get`, which writes outside this lane's read-only scope, and
+> `apps/control_plane/.dart_tool/` does not exist at this HEAD. A prior revision of this lane claimed HIGH
+> with the analyzer never having resolved packages; that is not repeated, and no score here is derived from
+> the analyzer.
+>
+> **What IS verified:** every line number this revision cites was re-read at `289f1d3`, and
+> `git diff --name-only 43d328b 289f1d3 -- apps/control_plane packages` returns **empty**, so all of them
+> hold. The change is three edits in one file (`note: null` at `:317` and `:926`, delete `_buildFooter` at
+> `:375`/`:314`) plus one shared-primitive change (D-2). MEDIUM rather than LOW because the primitive change
+> reaches five other call sites and its owner is not this lane.
+
+## traceability
+
+```yaml
+requirements_covered:
+  - R1   # four boards authored, 390x844, both themes — unchanged by this pass and re-verified
+  - R2   # one button/helper structure, both platforms; helper below the button — unchanged, re-verified
+  - R3   # footer framed as a restoration; now specified per platform by 27ea6536
+  - R4   # required-field convention re-grounded on the existing (OPTIONAL) suffix — unchanged
+  - R5   # inkSecondary specified with cited ratios; no unmeasured contrast claim
+  - R6   # visual consequence of 2a/2b; "Check access" labelled; the step's meaning remains the sibling's
+  - R7   # traceability + risk + honest self-assessment
+  - H-1(a)  # custody string on four boards and ~30 record sites
+  - H-1(b)  # human's normative footer alignment, per platform
+  - H-1(c)  # Unknown-host re-grounded on 898b07d0 + ae1c1f79, with a genuine user-facing element
+  - M-1     # cross-references corrected by re-reading
+  - L-1     # all three missing pointers present
+  - 9417f8bf_followup_1  # G-7: referenceName / non-identifying handle — SPECIFIED, blast radius measured
+  - 9417f8bf_followup_2  # A3 unavailability path with remediation copy — SPECIFIED (7b1bc8b7 + R.5.4)
+requirements_gaps:
+  - id: G13
+    gap: R.11g item 3's resume affordance on ProductDetailPage is specified but NOT rendered
+    why: that board and file are production source / outside OWNED_PATHS
+  - id: G14
+    gap: the A3 refused-mint surface needs two boards this lane does not own
+    why: OWNED_PATHS names four boards by id; R.11g item 5 forbids folding it onto the Unknown-host board
+  - id: SC-9
+    gap: "the A3 substrate-unavailable path has concrete remediation copy RENDERED on a board"
+    status: NOT MET — reported, not claimed. The copy and layout are fully specified in §6.2.
+```
+
+## non_requirement_gaps
+
+| Id | Gap | Disposition |
+|---|---|---|
+| G2 | ~~at-rest wording for `Art S`~~ | **CLOSED** — `9417f8bf`; corrected on all four boards |
+| G11 | ~~the mobile design review report was never persisted~~ | **CLOSED** in revision 4 (L-R2), re-confirmed |
+| G3 | `negative` on dark fails AA; no compliant token | design-system owner (N2) |
+| G4 | `TechnicalDetails`' unconditional `ContentRule` | **now a specified requirement** — N6 / D-2 |
+| G8 | `flutter analyze` not run | see `implementation_feasibility` |
+| G9 | no `ShipItPalette` disabled-primary token | design-system owner (N4) |
+| G12 | primary action's surface differs code vs board | recorded with the surface named (N9) |
+| G13 | resume affordance specified, not rendered | **new** — ownership, N6c |
+| G14 | refused-mint boards unowned | **new** — ownership, N6c |
+
+## notifications
+
+```yaml
+- id: N6
+  to: design-system owner
+  level: 1
+  item: >
+    TechnicalDetails must be able to suppress its ContentRule and align its disclosure start-aligned.
+    The human decided the outcome (27ea6536); only the mechanism is open. NOT a human gate.
+- id: N6a
+  to: keys lane / implementer
+  item: >
+    G-7 is REQUIRED: remove referenceName from RepositoryCredentialView, or replace it with a
+    non-identifying handle. This lane MEASURED 6 sites: the YAML source of truth
+    (apps/server/lib/src/models/repository_credential_view.yaml:10-11), two generated packages, four
+    projections in control_plane_repository.dart, and — the reason this is security-relevant rather than
+    cosmetic — TWO UI RENDER SITES at product_detail_page.dart:471 and :676. Under A3 the reference is a
+    secret path or ARN and "discloses vault topology", so SHIP IT is currently showing vault topology to
+    users. The YAML's own comments also still claim the private half is "held locally" — false twice over.
+- id: N6b
+  to: MANAGER — ownership
+  level: blocker
+  item: >
+    F6: the four desktop S boards carry footer copy and do not satisfy 27ea6536's desktop clause. Closing
+    it is a board edit on four READ-ONLY boards. 27ea6536's OPTION_B anticipated this cost verbatim. No lane
+    currently owns those boards. The decision's OUTCOME is not in question and is not re-opened here.
+- id: N6c
+  to: MANAGER — ownership
+  level: blocker
+  item: >
+    G14 / SC-9 — two boards needed for the A3 refused-mint surface; copy and layout fully
+    specified in §6.2
+- id: N6d
+  to: keys lane
+  item: >
+    D-3 — "no footer copy" is two `note:` sites (:317-319, :926-928) plus `_buildFooter`
+    (:375). The sibling's own revision 5 corrected this (its L8); recorded so both lanes agree.
+- id: N6e
+  to: keys lane
+  item: D-5 — N-9's "name no substrate" rule contradicts its own prescribed string. Read as generic-category-permitted, identity-prohibited. Adopted verbatim as a binding item; not rewritten.
+- id: F5
+  to: MANAGER
+  item: BPM - Add Product - Light/Dark carry the same false custody string and the now-false NOT REGISTERED YET eyebrow. Read-only to this lane.
+- id: N4
+  to: design-system owner
+  level: 1
+  item: no ShipItPalette disabled-primary token (G9)
+- id: N9
+  to: design-system owner
+  level: 1
+  item: G12 — the primary action's surface
+- id: N10
+  to: design-system owner
+  level: 1
+  item: inkTertiary on card = 4.99:1 light / 4.23:1 dark (AA FAIL in dark), unchanged and not on any layer this pass touched
+```
+
+## human_decision_gate
+
+```yaml
+required: NO
+reason: >
+  No Human Decision is needed from this pass. 9417f8bf, 27ea6536, 898b07d0, ae1c1f79 and 7b1bc8b7 are all
+  RESOLVED, all decided_by the repository owner, and all name design-agent as a follow-up owner. The Level-3
+  gate is discharged and is NOT re-opened. The one residual undecided component (D-2) is a shared-component
+  choice at Level 1, not a gate. F6 is escalated as an OWNERSHIP blocker, not as a design question, because
+  the normative outcome is settled and only the board edit is unowned.
+not_re_raised: [B2/N1, B4/N2, N4/G9, N6, N10, B3, the N-1 no-Cancel rule]
+```
+
+## board_writes
+
+```yaml
+boards_edited: 4        # the four SM boards this lane owns, and no others
+boards_created: 0
+boards_deleted: 0
+read_only_boards_inspected: 6   # BPM x2 (read-only, D-8), S x4 (read-only, 27ea6536 conformance)
+read_only_boards_modified: 0
+verification: live read-back after the last write — 160 boards / 164 root children, identical before and after
+pre_edit_state: NOT_REVERIFIABLE — the Penpot API exposes no version history. Every "before" value is a recorded rev-2-era value, not a live pre-edit read.
+```
+
+## not_run
+
+```yaml
+flutter_analyze: NOT_RUN   # requires flutter pub get, which writes outside this lane's read-only scope
+flutter_widget_render: NOT_RUN
+visual_diff_or_pixel_comparison: NOT_RUN
+docker_or_compose_any_including_read_only: NOT_RUN   # none issued; no breach. AGENTS.md § Shared Docker state honoured
+commit_or_push: NOT_RUN   # forbidden by the dispatch
+production_source_edits: NONE
+```

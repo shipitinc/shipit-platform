@@ -1,16 +1,16 @@
 # Report — Design Agent, `design-addproduct-mobile`
 
-> **SUPERSEDED — this is revision 1's report. The current revision is `design-revision-4.md`; the current
-> lane report is `correction-report-4.md`.** This file is retained **unedited** so the correction history
+> **SUPERSEDED — this is revision 1's report. The current revision is `design-revision-5.md`; the current
+> lane report is `correction-report-5c.md`.** This file is retained **unedited** so the correction history
 > stays diffable. Retention without a marker is not neutral — a reader who opens this file first sees only
 > this file — so **three claims inside it are disproven and are marked in place**: the "no `500` weight"
-> claim (**line 120**, marked), and the 36px `minimumSize` derivation (**lines 62 and 224**, marked).
+> claim (**line 126**, marked), and the 36px `minimumSize` derivation (**lines 68 and 230**, marked).
 >
-> **Line numbers corrected at revision 4 (L-R3).** "line ~100" and "lines ~48 and ~197" were correct when
-> revision 3 wrote them and were invalidated by the `WITHDRAWN` markers, which sit *at* those sites. The
-> body's text is untouched. The `BRANCH` field below is **correct for revision 1's own lane** — see the
-> provenance note at **lines 31-37**, which supersedes the older "marker at line ~13" pointer and must not
-> be "corrected".
+> **Corrected twice: revision 4 (L-R3), then revision 5 (§ M-1).** Revision 4 published `line 120`,
+> `lines 62 and 224`; those lines hold a `What you're registering` bullet, the `git status` line and a
+> `penpot:` board-id line. Re-read live at `289f1d3`: **`:126`**, **`:68`**, **`:230`**; markers at
+> **`:70-74`**, **`:128-133`**, **`:237-243`**. This header's line budget is held fixed on purpose —
+> adding a line here would invalidate the provenance note's own citation at **lines 31-37** below.
 
 Returned verbatim by the `design-agent` lane and persisted here per `aef-orchestrator` §14.
 
