@@ -1,7 +1,14 @@
 # Correction Report — Design Revision 6 (record-only pass on revision 5)
 
-Persisted per `aef-orchestrator` §14. Lane: `design-agent`. Report persists to
-`docs/engineering/dispatch/tasks/design-correct-addproduct-mobile-6/report.md`.
+Persisted per `aef-orchestrator` §14. Lane: `design-agent`. **This file IS the report**, at
+`docs/engineering/dispatch/tasks/design-addproduct-mobile/correction-report-6.md`, committed on `main`.
+
+> **Manager correction 2026-10-07, at the re-reviewer's finding MR6-1.** This line originally declared the
+> report to persist at `docs/engineering/dispatch/tasks/design-correct-addproduct-mobile-6/report.md`.
+> **That path never existed** — the directory holds `prompt.md` only. The substance was never at risk, since
+> the report is this file and was committed at `1c3f5ad`; only the declaration was false, in the one area
+> where this work item has lost three reports. Corrected in place rather than deleted. See
+> `tasks/design-rereview-mobile-rev6/report.md` MR6-1.
 
 ```yaml
 RESULT: DESIGN_REVISION_COMPLETE

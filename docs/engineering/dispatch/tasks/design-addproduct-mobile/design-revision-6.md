@@ -74,7 +74,7 @@ suffixed; the Verified pair carries **0**. 8 × 2 = **16**.
 | `design-revision-5.md:361` · `penpot-board-evidence.md:262` | **`7 ×`** `Trust *` names | **WRONG** — the per-board count is **8** | `8 ×`, with *"16 suffixes across the pair"* stated in-cell |
 | `design-revision-metadata-5.yaml:99` · `traceability-matrix-5.md:77` | **17** / **Seventeen** | **WRONG** — off by one from the measured 16 | **16** / **Sixteen** |
 
-**Why the reviewer's alternative was not taken.** MR5-6's option of retiring the count as `NOT_VERIFIABLE`
+**Why the reviewer's alternative was not taken.** MR5-1's option of retiring the count as `NOT_VERIFIABLE`
 was declined, with the reviewer's own reasoning: Penpot exposes no version history, so the *before* state is
 unverifiable — but the *end* state **is** live-verifiable, and 8 unsuffixed layers × 2 boards is the direct
 measurement of the retirement. **Publishing the correct number is better than publishing none**, and a
