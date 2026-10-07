@@ -30,6 +30,18 @@
 # That check is what makes the "byte-identical" claim in
 # `tool/schema_bootstrap.sql` true rather than aspirational.
 #
+# THE IDEMPOTENCE CLAUSE IS NOT EXEMPT — IT IS DECLARED. A full-DDL comparison has
+# one divergence it cannot judge on its own: `IF NOT EXISTS`. It is genuinely
+# optional for one index (the asset must be re-runnable; an older migration has no
+# reason to be) and MANDATORY for the other, because a chain migration replayed
+# onto an already-bootstrapped database must be a no-op rather than an error. A
+# blanket normalisation cannot tell those apart: normalising the clause away
+# forgives it on BOTH objects, so dropping it from the credential index — the one
+# divergence that breaks the chain path — passed at exit 0. So the clause is
+# stripped from the DDL comparison and then compared SEPARATELY against an
+# expectation that each index entry states for itself. An absent or unrecognised
+# expectation is exit 2, never the forgiving default.
+#
 # WHY THIS IS A STATIC CHECK. The fresh-vs-chain difference is a property of the
 # SQL that each path applies, not of any particular database:
 #
@@ -94,12 +106,112 @@ ok() {
 # Objects every fresh and chain-migrated database must have, as `kind:name`.
 # The kind is not decoration: it is what lets checks 1 and 3 anchor on the DDL
 # that creates the object instead of on its name.
+#
+# An INDEX entry carries a third field: the `IF NOT EXISTS` idempotence clause it
+# declares for itself — `both` (both homes must carry it) or `asset-only` (the
+# bootstrap asset must, the migration must not). It is part of THIS entry on
+# purpose. A second table of per-object expectations would reintroduce exactly
+# the two-places bookkeeping this script exists to prevent, and the temptation to
+# maintain it is why the divergence below could hide in the first place.
+#
+# `design_revision_approved_unique_per_work_item:asset-only` IS A DECLARED
+# ASYMMETRY, NOT A VERIFIED ONE. `20261006150645000` states in its own comment why
+# its clause is mandatory; `20260920232118956` gives no such rationale, and is the
+# older migration. If the credential index's clause is required for
+# chain-replay-onto-bootstrapped safety, this one is plausibly missing it too —
+# a pre-existing latent defect, out of scope for the change that added this
+# check. Writing the expectation down forces a human to look at it; it does not
+# settle it. See the tracked follow-up, and do not "fix" the SQL without deciding
+# whether `20260920232118956` may still be rewritten at all.
 required_objects=(
   "trigger:trigger_design_revision_immutability"
   "trigger:trigger_design_review_independence"
-  "index:design_revision_approved_unique_per_work_item"
-  "index:product_credential_active_repository_unique"
+  "index:design_revision_approved_unique_per_work_item:asset-only"
+  "index:product_credential_active_repository_unique:both"
 )
+
+# The expectation is load-bearing, so an absent or unrecognised one means the
+# guard cannot judge — the same class as a missing input file, and the same exit
+# code. It must never fall back to tolerating the clause: that fallback IS the
+# defect this check was added to close.
+expectation_error() {
+  local headline="$1"
+  shift
+  local line
+  echo "FAIL: cannot run the guard, ${headline}"
+  for line in "$@"; do
+    echo "      ${line}"
+  done
+  exit 2
+}
+
+# Parse and validate every entry ONCE, up front, before any check can report a
+# pass. `checked_objects` is `required_objects` reduced to the `kind:name` the
+# existing checks match on; `clause_expectations` carries the third field in
+# step. Checks 1-4 read from these, so no check can re-derive a name by stripping
+# a fixed number of fields and get it wrong after an entry gains one.
+checked_objects=()
+clause_expectations=()
+
+for entry in "${required_objects[@]}"; do
+  kind="${entry%%:*}"
+  rest="${entry#*:}"
+  name="${rest%%:*}"
+  expectation=""
+  # `${name}` equals `${rest}` exactly when the entry carries no second colon, so
+  # an empty `${expectation}` with a differing `${rest}` is a trailing colon
+  # (`index:name:`) — still an absent expectation, never a permissive one.
+  has_expectation_field=0
+  if [ "${name}" != "${rest}" ]; then
+    expectation="${rest#*:}"
+    has_expectation_field=1
+  fi
+
+  case "${kind}" in
+    index)
+      if [ -z "${name}" ]; then
+        expectation_error \
+          "index entry '${entry}' has no name." \
+          "An index entry is kind:name:expectation."
+      fi
+      # Unrecognised, absent, or carrying a further colon — all the same thing:
+      # this check cannot say what the clause should be, so it must not guess.
+      case "${expectation}" in
+        both) ;;
+        asset-only) ;;
+        *)
+          expectation_error \
+            "index entry '${entry}' does not declare a usable idempotence expectation." \
+            "Every index entry must end in :both or :asset-only. Declaring it is what" \
+            "replaces the clause normalisation that forgave the credential index's" \
+            "IF NOT EXISTS dropping out of its migration."
+          ;;
+      esac
+      ;;
+    trigger)
+      if [ -z "${name}" ]; then
+        echo "FAIL: cannot run the guard, trigger entry '${entry}' has no name."
+        exit 2
+      fi
+      if [ "${has_expectation_field}" -eq 1 ]; then
+        expectation_error \
+          "trigger entry '${entry}' declares an idempotence expectation." \
+          "Triggers are deliberately NOT compared by full DDL (the asset wraps" \
+          "each in DROP+CREATE so re-running it is a no-op), so there is nothing" \
+          "for an expectation to be compared against."
+      fi
+      ;;
+    *)
+      expectation_error \
+        "required_objects entry '${entry}' has unknown kind '${kind}'." \
+        "This guard knows how to check index and trigger objects only; an" \
+        "unrecognised kind would skip checks 3 and 4 without saying so."
+      ;;
+  esac
+
+  checked_objects+=("${kind}:${name}")
+  clause_expectations+=("${expectation}")
+done
 
 # The DDL statement that must create <kind> "<name>". `[^;]*` stops the match
 # from running past the end of the statement, so a name cannot be borrowed from a
@@ -152,7 +264,7 @@ echo "guard: verifying ${asset#${repo_root}/}"
 #    comment does not count; see sql_without_comments above.
 # ---------------------------------------------------------------------------
 asset_ddl="$(sql_without_comments "${asset}")"
-for entry in "${required_objects[@]}"; do
+for entry in "${checked_objects[@]}"; do
   kind="${entry%%:*}"
   object="${entry#*:}"
   if grep -qE "$(ddl_pattern "${kind}" "${object}")" <<<"${asset_ddl}"; then
@@ -168,7 +280,7 @@ done
 #    sides must not drift apart: a rename on one side only would leave the
 #    other checking for an object that no longer exists.
 # ---------------------------------------------------------------------------
-for entry in "${required_objects[@]}"; do
+for entry in "${checked_objects[@]}"; do
   kind="${entry%%:*}"
   object="${entry#*:}"
   if grep -qF -- "'${object}'" "${applier}"; then
@@ -196,7 +308,7 @@ if [ -z "${chain_ddl}" ]; then
   exit 2
 fi
 
-for entry in "${required_objects[@]}"; do
+for entry in "${checked_objects[@]}"; do
   kind="${entry%%:*}"
   object="${entry#*:}"
   if grep -qE "$(ddl_pattern "${kind}" "${object}")" <<<"${chain_ddl}"; then
@@ -247,29 +359,64 @@ fi
 #
 # Two normalisations, and only two:
 #   * whitespace collapsed, so line wrapping is not a difference;
-#   * the `IF NOT EXISTS` idempotence clause removed, because the bootstrap
-#     asset must be re-runnable (its IDEMPOTENCE CONTRACT) and the chain path
-#     must not fail where the bootstrap already ran. That clause is the ONLY
-#     permitted difference, and it is permitted deliberately.
+#   * the `IF NOT EXISTS` idempotence clause removed, so the remaining DDL can be
+#     compared for everything it CAN speak about.
 # Everything else — table, key column, `WHERE` predicate — must match.
+#
+# Removing the clause is not a licence for it to differ, and this comment used to
+# read as if it were. It is why the clause cannot be judged by the comparison
+# above: the asset must be re-runnable (its IDEMPOTENCE CONTRACT) while an older
+# migration has no such duty, so the two legitimately differ; but
+# `20261006150645000` says in its own comment that ITS clause is what makes a
+# replay onto an already-bootstrapped database a no-op instead of an error. A
+# blanket normalisation forgives it on both objects, and deleting it from the
+# credential index's migration exited 0. So the clause is judged separately,
+# below, against the expectation its own `required_objects` entry declares.
 #
 # The triggers are deliberately NOT compared this way: the asset wraps each in
 # `DROP TRIGGER IF EXISTS` + `CREATE` so re-running it is a no-op, and the
 # migration does not. For those, the guarded-column comparison above is what is
 # actually enforced, and `tool/schema_bootstrap.sql` says so.
-ddl_statement() {
+ddl_statement_raw() {
   local name="$1" file="$2"
   sql_without_comments "${file}" \
     | tr '\n' ' ' \
     | grep -oE "CREATE[^;]*\"${name}\"[^;]*" \
     | head -1 \
-    | sed -e 's/[[:space:]][[:space:]]*/ /g' -e 's/^ //' -e 's/ *$//' \
-          -e 's/CREATE UNIQUE INDEX IF NOT EXISTS/CREATE UNIQUE INDEX/'
+    | sed -e 's/[[:space:]][[:space:]]*/ /g' -e 's/^ //' -e 's/ *$//'
 }
 
-for entry in "${required_objects[@]}"; do
+# The clause-stripped statement: identical to what this check compared before the
+# expectation existed, so table / key / `WHERE` / `UNIQUE` parity is unchanged.
+ddl_statement() {
+  ddl_statement_raw "$1" "$2" \
+    | sed 's/CREATE UNIQUE INDEX IF NOT EXISTS/CREATE UNIQUE INDEX/'
+}
+
+# Whether <name>'s DDL in <file> carries the `IF NOT EXISTS` idempotence clause,
+# as `yes` / `no`, or empty when the statement itself could not be read. Empty is
+# deliberately not `no`: "the guard could not read it" and "the clause is absent"
+# are different findings and must not be reported as the same one.
+#
+# Matched through a herestring for the reason given on `sql_without_comments`.
+clause_presence() {
+  local statement
+  statement="$(ddl_statement_raw "$1" "$2")"
+  if [ -z "${statement}" ]; then
+    printf ''
+  elif grep -qE 'CREATE[[:space:]]+UNIQUE[[:space:]]+INDEX[[:space:]]+IF[[:space:]]+NOT[[:space:]]+EXISTS' \
+    <<<"${statement}"; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+}
+
+for entry_index in "${!checked_objects[@]}"; do
+  entry="${checked_objects[${entry_index}]}"
   kind="${entry%%:*}"
   object="${entry#*:}"
+  expectation="${clause_expectations[${entry_index}]}"
   [ "${kind}" = "index" ] || continue
 
   declaring=""
@@ -297,6 +444,32 @@ for entry in "${required_objects[@]}"; do
     echo "      bootstrap: ${asset_ddl_for_object}"
     echo "      chain    : ${chain_ddl_for_object}"
   fi
+
+  # Second comparison, in a direction the clause-stripped one cannot see: the
+  # clause itself, per home, against what this object declared for itself. Same
+  # code for every object — the per-object fact is data in `required_objects`, not
+  # a branch in here.
+  asset_clause="$(clause_presence "${object}" "${asset}")"
+  chain_clause="$(clause_presence "${object}" "${declaring}")"
+
+  case "${expectation}" in
+    both)         expected_asset_clause="yes"; expected_chain_clause="yes" ;;
+    asset-only)   expected_asset_clause="yes"; expected_chain_clause="no" ;;
+    *)
+      # Unreachable: the parse pass above exits 2 on anything else.
+      expectation_error "index ${object} has unrecognised expectation '${expectation}'"
+      ;;
+  esac
+
+  if [ -z "${asset_clause}" ] || [ -z "${chain_clause}" ]; then
+    fail "could not read the IF NOT EXISTS idempotence clause of ${object} out of the bootstrap asset or ${declaring}"
+  elif [ "${asset_clause}" = "${expected_asset_clause}" ] \
+    && [ "${chain_clause}" = "${expected_chain_clause}" ]; then
+    ok "${kind} ${object}: IF NOT EXISTS is ${expectation} as declared (bootstrap ${asset_clause}, chain ${chain_clause})"
+  else
+    fail "${kind} ${object}: IF NOT EXISTS is ${expectation} as declared, but the bootstrap carries ${asset_clause:-<unreadable>} and ${declaring#"${server_dir}/"} carries ${chain_clause:-<unreadable>}; the divergence the clause was normalised away for is exactly the one that decides whether a chain migration replayed onto a bootstrapped database is a no-op or an error"
+    echo "      expected: bootstrap ${expected_asset_clause}, chain ${expected_chain_clause}"
+  fi
 done
 
 # ---------------------------------------------------------------------------
@@ -310,8 +483,16 @@ done
 # one-active-credential index came to be missing from this check while every
 # other check covered it: adding an object to `required_objects` is enough, and
 # nothing has to be remembered in two places.
+#
+# `cut -d: -f2`, NOT `sed 's/^[^:]*://'`. An index entry gained a third field (its
+# idempotence expectation), and a sed that strips exactly one field would have
+# left `product_credential_active_repository_unique:both` in the pattern below —
+# which matches no definition.sql, so `offenders` came back empty and this check
+# SILENTLY PASSED with the object planted in a generated definition.sql. Deriving
+# the name by position rather than by "strip the prefix" makes the entry's arity
+# unable to leak into the regex, in this check and in every future one.
 hand_maintained_names="$(
-  printf '%s\n' "${required_objects[@]}" | sed 's/^[^:]*://' | paste -sd'|' -
+  printf '%s\n' "${required_objects[@]}" | cut -d: -f2 | paste -sd'|' -
 )"
 
 offenders="$(grep -lE "${hand_maintained_names}" \

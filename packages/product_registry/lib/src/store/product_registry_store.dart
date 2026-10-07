@@ -79,13 +79,31 @@ abstract interface class ProductRegistryStore {
   ///   `credentialId` — so refusing a re-mint of an existing one costs no
   ///   legitimate path.
   ///
-  /// DURABLE EVIDENCE CANNOT BE CLEARED. `hostConfirmedAt`, `hostConfirmedBy`,
-  /// `lastVerifiedAt`, `lastVerifiedBy` and `revokedAt`/`revokedReason` record
+  /// DURABLE EVIDENCE CANNOT BE CLEARED. The seven guarded columns are
+  /// `hostConfirmedAt`, `hostConfirmedBy`, `lastVerifiedAt`, `lastVerifiedBy`,
+  /// `hostKeyFingerprint`, `revokedAt` and `revokedReason` — they record
   /// decisions and events that happened. A CAS write MUST NOT set any of them
   /// back to null on an existing row. `RepositoryCredential.copyWith` cannot
   /// express that (each nullable parameter falls back to the current value), so
   /// today no engine call site attempts it — but the store contract is
   /// unconditional, and a store that accepted it would let one be written.
+  ///
+  /// `hostKeyFingerprint` belongs in that list and was missing from an earlier
+  /// wording of this contract: both tiers have always guarded it, and a reader
+  /// of the prose alone would have concluded that re-recording a host key was
+  /// permitted. All SEVEN names are written out, in both tiers' order, so this
+  /// paragraph does not have to be edited again when the set changes.
+  ///
+  /// NOT YET GUARDED, and deliberately not claimed here: `lastFailureReason`,
+  /// the eighth recorded column. Design rev5's `D-6` requires eight columns and
+  /// both tiers currently enforce seven. It is latent, not live —
+  /// `copyWith` preserves it on a null argument and the only engine writer sets
+  /// it without clearing it, so no engine path can erase it today — but a
+  /// store-level caller handing in a null would erase it on both tiers, and it is
+  /// live on the Postgres `SET` clause. It must be guarded before migration
+  /// `20261006150645000` reaches a deployed database. Naming it in the list above
+  /// would overstate what the tiers enforce today, which is the same defect as
+  /// omitting `hostKeyFingerprint` was.
   ///
   /// These are store contracts, not engine conventions. `copyWith` cannot change
   /// these fields, but `copyWith` is not on the mint path:
