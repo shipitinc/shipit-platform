@@ -332,6 +332,81 @@ passes here because `dogfood_shipit_postgres_test.dart:87` asserts a git working
 checkout is one — **independently confirming the linked-worktree diagnosis from `e391c02`.**
 `main` = `16cd497`, `main`…`origin/main` 0/0.
 
+### ROUND 3 — human decisions discharged; G-18 closed; F5 exposed at 22 layers
+
+**Four human decisions, all taken 2026-10-07 via structured question UI:** grant `G-18` board
+ownership · retire accepted risk **A1** · dispatch round 3 · unblock the substrate-independent
+implementation. Later: F5 copy scope, and `BP` measured under the same footer criterion.
+
+| item | outcome |
+|---|---|
+| **G-18 desktop footer** | **DISCHARGED.** All four `S · Add Product · …` boards now satisfy `27ea6536` |
+| **G-23 `BPM` footer** | **DISCHARGED** — needed no edit; the clause was already satisfied |
+| **Accepted risk A1** | **RETIRED by the owner.** **THREE** remain: A2, A3, A4 |
+| **Mobile revision 6** | **`DESIGN_REVIEW_APPROVED`** — 0 BLOCKERS / 0 HIGH / 0 MEDIUM / 0 LOW, **now recorded in the artifact's own metadata** |
+| **F5 custody copy** | 8 boards fixed; **scope found to be 22 layers / 12 boards / 9 strings**; 2 geometry regressions found and repaired |
+
+**⚠ G-18's edit is the clearest instance of this work item's hardest lesson.** The design lane issued
+its four deletions, **the call timed out**, and Penpot went dormant — so it reported
+`DESIGN_REVISION_BLOCKED` rather than claim a green it had not measured. **That was correct.** A
+verifier reproduced it, and the Manager confirmed the decisive numbers directly: **68/68/64/64 against a
+recorded before-state of 69/69/65/65**, exactly −1, with each footer band holding precisely `Footer Rule`
+(236,848) and `Disclose` (1036,862, right edge 1256).
+
+**And my verification dispatch carried inverted arithmetic** — I told the verifier that a before-state of
+68/68/64/64 would mean the edit had not run. The recorded before-state was 69/69/65/65. **Applied
+literally, my instruction would have produced a false negative on four boards that were exactly one
+deletion from conformant.** The verifier caught it. **That is the fourth time a Manager premise in this
+work item has been wrong, and the second time it was load-bearing.**
+
+**A Penpot write timeout does not mean the write failed — twice now, both writes had landed.** Never
+re-apply on a timeout; **read first**.
+
+### F5 — three passes, each correcting the one before
+
+The lesson is that **a census is only as good as its needle list, and a list derived from the prior
+census inherits its blind spots.** Three dispatch counts in a row were wrong (8, 16, 8) because each
+searched for the *known* bad phrase and could not see sibling phrasings of the same lie. Measured scope:
+**22 layers / 12 boards / 9 distinct strings**, including `BP · Rotate Key`, which asserts the lie
+**three times**.
+
+**And the approved string is an 80-character EYEBROW keyed on key type — not a drop-in.** Pasting it
+into the 8 body-prose layers, 4 metadata rows keyed on `GIT_PRODUCT_PR_SHIP_SSH`, or 4 step labels would
+**delete those layers' content**. This is now a **Level 2 content decision**, correctly escalated rather
+than guessed at. **A custody-copy fix's unit is the board, not the layer.**
+
+**Two geometry regressions were introduced and repaired**, both from one cause — **copy approved on one
+platform's board is not thereby approved on another's, nor is its geometry**:
+
+| pass | change | effect |
+|---|---|---|
+| 1 | string on 8 boards | **7px overlap** on both `BPM` — box 220×15 cannot hold an 80-char two-line string |
+| 2 | `Art S` 220×15→220×24, `Key State` 436→446 | cleared it; **exposed** `Art L1/L2` at 456 vs SM's 466 |
+| 3 | `Art L1`/`Art L2` 456→466 | BPM now reads **418/446/466**, gaps **4/5** — **exact match to SM**; `Submit L` clear by 38px |
+
+**The predicted knock-on collision did not occur.** The prior move had to overflow *above*; this one
+fits *below* with room to spare. **The asymmetry is in available clearance, not in move count** — so a
+collision predicted from an earlier collision is worth measuring rather than assuming.
+
+**A lane caught its own method fault**: `Art L1`/`Art L2` are **suffixed** on every SM board
+(`Art L1 · Copy key`), so exact-equality name matching returned zero rows and nearly cost it its
+reference measurement. **A search that returns nothing is evidence about the query, not about the file** —
+the same class as the id-substring trap, on the name axis.
+
+### What is still open, and it is narrower than it was
+
+- **`F5` Part 2 — 22 layers / 12 boards.** Needs the A3-correct copy per slot type, human-approved, then
+  applied. **Drafting is authorized**; applying is not yet.
+- **The build diverges from the boards.** `add_product_page.dart` carries the false claim at **four**
+  sites — `:542`/`:1038` (the eyebrow) and **`:480-481`/`:979-980`** (the `Ev Body` pair). A fix scoped
+  to the eyebrow would correct it while leaving the copy directly beneath it contradicting it. The
+  **boards are now current; the build is stale on both.**
+- **`BP`'s footer is a TEXT layer carrying 100 chars at (236,862)** — the same violation the `S` boards
+  had. Measured per directive, **not edited**.
+- **Keys revision 7 and ADR revision 5 are corrected but not yet re-reviewed.**
+- **`N6c` and the `F5` remainder still block the Design Contract freeze.** Mobile revision 6 is approved
+  *and* the freeze is withheld — both true, deliberately.
+
 ### ROUND 2 — all three corrections made, all three re-reviewed, none approved
 
 | lane | correction | re-review |
