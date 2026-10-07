@@ -510,3 +510,60 @@ tree, **independently confirming the linked-worktree diagnosis from `e391c02`.**
 **Bookkeeping now on `main` at `16cd497`** — 37 files, **zero production source**. This includes both
 design revisions, all three review verdicts, the credential correction and both re-reviews, the
 integrator's report, and attempt 1's full mobile report that had existed only in a worktree.
+
+## Round 3 — human decisions discharged, mobile revision 6 APPROVED
+
+**Human decisions taken 2026-10-07, surfaced via structured question UI:**
+
+1. **G-18 — GRANTED board ownership.** A scoped design-system lane will own the four desktop
+   `S - Add Product` boards (and `BPM`) to remove the single `Footer` text layer at (236,862).
+   **Not a re-decision** — `27ea6536`'s outcome stands; the boards just don't match it yet.
+   ⚠ **Penpot went dormant during the session** (`getPages()` returns "no heartbeat for 42s"), so the
+   lane is **blocked on the plugin tab being re-focused.** A grant is not an execution.
+2. **Accepted risk A1 RETIRED** — the owner was shown `08c7590` made the mint insert-only on both tiers.
+   **THREE accepted risks remain: A2, A3, A4.** Two prior design lanes had deliberately declined to
+   retire it and were right to; the ADR lane recorded the retirement as **the owner's decision.**
+   **Retiring A1 discharged the resurrection half only** — no code destroys a secret-manager handle, so
+   revocation is **still one-sided in practice**, and that half was never an accepted risk.
+3. **Round 3 dispatched** — mobile Rev 7, keys Rev 7, ADR Rev 5.
+
+| task_id | result | note |
+|---|---|---|
+| design-correct-adr-0018-a2-4 (rev 5) | `DESIGN_REVISION_COMPLETE` | H-R1/2/3 closed; **A1 retired**; full referential re-derivation found **9 distinct broken refs across 14 sites** vs 3 reported |
+| design-correct-addproduct-keys-7 (rev 7) | `DESIGN_REVISION_COMPLETE` | **7 dangling targets across 45 sites** vs 1/2 reported; own extraction then caught 4 it introduced itself |
+| design-approve-mobile-rev6 | **`DESIGN_REVIEW_APPROVED`** | **0 BLOCKERS / 0 HIGH / 0 MEDIUM / 0 LOW. First clean artifact in this work item** |
+
+**Mobile revision 6 is approved — but a Design Contract freeze is deliberately NOT available.** Gate D5
+triggers on "all applicable gates", and invariant 7 makes a frozen contract **immutable**, while N6b and
+N6c both need **board changes** to discharge. Freezing now would make the edits that clear the revision's
+own gaps a change to an immutable artifact. **Approval is real; the freeze is withheld on purpose.**
+
+### Three things a fresh session must not re-derive
+
+1. **The referential class is separate from the claims class.** The ADR sweep covered *claims* and found
+   11 — confirmed independently, no twelfth. But its axes could not see **wrong `file:line` citations**,
+   and revision 4 had just been handed a finding proving that class exists. Re-deriving found **9 broken
+   references across 14 sites**; keys revision 7 found **45 sites across 7 targets**. **Three reported
+   was an undercount in both artifacts.** Sweep references, not just claims.
+2. **A Manager edit to a resolved decision is the most sensitive edit class here.** Five append-only dated
+   notes have now been applied across three objects. Each was **verified against source before applying**
+   — every `file:line` the notes assert was read. **No rationale was rewritten; `status`,
+   `selected_option` and `decided_at` unchanged in all three.**
+3. **⚠ A Manager premise was wrong again, and a lane caught it.** I dispatched keys revision 7 naming
+   `762e5cd` when `main` was at `14b0267`; the lane based on the real head and disclosed it. **The keys
+   lane has twice declined a false Manager premise** — once a file asserted committed when a basename
+   glob had matched another lane's file, once this. **Verify Manager claims against `git log --all
+   --diff-filter=A -- <exact path>`; full paths, never basenames.**
+
+### Infrastructure this session
+
+- **Penpot reachable at session start** (`getPages()` → `["Page 1"]`, all four `SM` boards located) after
+  two sessions blocked on the token binding. **It went dormant mid-session** — the plugin tab is suspended.
+  **G-18's board edit is blocked until it is re-focused.**
+- **`git push` rejected 6/6 attempts** with `Internal Server Error` while `git ls-remote` kept working.
+  Transient and remote-side; recovered on retry. **A rejected push leaves the commit safe locally** —
+  verify `rev-list --left-right --count main...origin/main` before assuming a push landed.
+- **F-16: `--ff-only` fails when untracked files shadow content already on `main`.** Hit twice — six files
+  on the ADR lane, nineteen on the keys lane. **All were byte-identical.** A lane obeying that pre-flight
+  blindly would have had to choose between refusing to start and deleting unchecked files. Compare by
+  blob hash, back up outside the repo, move rather than delete.
