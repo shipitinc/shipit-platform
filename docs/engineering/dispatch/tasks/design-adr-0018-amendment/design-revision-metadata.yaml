@@ -1,0 +1,175 @@
+revision_id: "ADR0018-A2-REV1"
+brief_id: "design-adr-0018-amendment"
+brief_version: "n/a"
+brief_note: |
+  No formal Design Brief exists for this work item. The Engineering Manager's dispatch header served
+  as the brief: FEATURE "ADR 0018 amendment A2 — supersede the custody and revocation clauses",
+  ACCEPTANCE_CRITERIA, OWNED_PATHS / READ_ONLY_PATHS / PROHIBITED_PATHS and VALIDATION_COMMANDS.
+  This is recorded rather than back-filled with a synthetic brief id, because DESIGN_GOVERNANCE.md
+  requires a Design Brief to precede design exploration and inventing one would misrepresent the
+  lifecycle that actually happened.
+
+revision_number: 1
+supersedes_revision_id: null
+amends: "docs/adr/0018-per-product-git-credentials.md (amendment A2, supersedes amendment A1 in part)"
+
+status: "DRAFT"
+
+provenance:
+  repository: "/Users/alkebut/air/shipit-platform"
+  worktree: "/private/tmp/shipit-design-adr0018"
+  branch: "design/adr-0018-amendment"
+  base_sha: "6220951"
+  head_sha: "6220951"
+  committed: false
+  pushed: false
+  note: |
+    HEAD equals BASE_SHA because no commit was made, per the dispatch instruction. The change is
+    present as an uncommitted working-tree modification in the worktree above, so a reviewer must
+    read the worktree and `git diff` rather than a commit.
+  verified_against:
+    - sha: "6220951"
+      branch: "main"
+      relation: "the revision this amendment is written against; all code line numbers cited for it refer to this tree"
+    - sha: "07c8c8f"
+      branch: "fix/credential-store-integrity"
+      relation: |
+        where the partial unique index and the predicating ON CONFLICT upsert exist. NOT an ancestor
+        of 6220951 and not merged. Cited with explicit provenance markers in the ADR.
+    - sha: "77c19f1"
+      branch: "design-correct-addproduct-keys"
+      relation: "where design-revision-3.md § R.9.2 (finding D-18) and discoveries.md live. Not merged."
+
+risk_level: 3
+
+risk_rationale: |
+  Level 3 (Major Workflow / Architecture Change) per DESIGN_GOVERNANCE.md, derived here rather
+  than inherited:
+
+  1. AMENDS RECORDED ARCHITECTURE ON A SECURITY BOUNDARY. It changes where a private key capable
+     of authorising repository WRITE access is held, and what "revoked" means. No such secret
+     exists in the repository today.
+  2. CHANGES A CORE WORKFLOW. Revocation acquires a ShipIt-side action where ADR 0018 said none
+     was required, and a new runtime dependency (the secret manager) can block the credential
+     path. The operator's mental model of revocation changes.
+  3. DEPENDS ON ENFORCEMENT THAT LIVES ELSEWHERE AND IS PARTLY ABSENT HERE. Under A3, SHIP IT
+     holds no key bytes, so every property once followed from possessing a key must now be
+     enforced by another component. At this base SHA the one-active-credential index and the
+     predicating credential upsert do not exist at all; they exist only on 07c8c8f.
+  4. RECORDS OPEN GAPS RATHER THAN CLOSING THEM — resurrection of a revoked credential, absent
+     host-key verification at the transport, an unenforced "local only" scope, and a missing
+     AGENTS.md §13 carve-out. Accepting this amendment accepts a knowingly-incomplete security
+     posture, which is an architecture-level judgement.
+
+  Level 3 requires product/design/architecture approval. The substance is already decided by six
+  resolved Human Decisions; the remaining approval is the ADR owner's sign-off, plus a judgement
+  on whether to accept the recorded gaps or gate A2 behind them. This revision does not
+  pre-empt that and does not assert Accepted.
+
+changelog:
+  - "Revision 1, first and only revision of this artifact. Amendment A2 added to the ADR's existing amendment table in the file's own four-column format (:16); the convention sentence generalised to name the superseding amendment and to state that cited line numbers refer to the named revision (:8-11)."
+
+  # ---- Additions ----
+  - "N1 — Custody clause added: external secret manager (A3); SHIP IT holds a reference, never key bytes (:208-214). Traces to 9417f8bf (OPTION_C) and b869ec24 (OPTION_A)."
+  - "N2 — A1 (filesystem 0600) / A4 (host keychain) recorded as the documented fallback, selected as a recorded precondition and never defaulted (:215-217). Traces to 9417f8bf follow-up action 1."
+  - "N3 — Envelope-encrypted-table substrate recorded as PERMANENTLY EXCLUDED, with the reason, so it is not re-proposed (:218-220). Traces to 9417f8bf resolution consequence 2."
+  - "N4 — Two-sided revocation clause added: provider-side removal AND destruction of the secret-manager handle, credential row retained (:266-274). Traces to 79e860e2 (OPTION_A)."
+  - "N5/N6/N7/N8 — Amendment-table row; the A2 section (:35-143) including the six-decision traceability table (:40-52); status line extended to name A2's two changes (:4); convention generalised (:8-11)."
+  - "§Invariants enforced elsewhere (:310-383) — what now enforces each externalised invariant, with per-item verified provenance."
+  - "§Preconditions (:384-406) — local-only scope unenforced; secret-manager reachability as a blocking runtime dependency; fallback selection."
+  - "§Known gaps (:407-443) — revocation resurrection; absent AGENTS.md §13 carve-out; product-scoped rotation wording left unreconciled."
+  - "Related → Decisions governing amendment A2 (:454-465) — the seven authorising decision ids."
+
+  # ---- Supersessions ----
+  - "S1 — ADR :85-88 superseded IN PART in place, old wording retained (:198-201) and marked 'SUPERSEDED (A2) in part' (:202-207). Deliberately partial: only the custody clause is superseded. The A1 scope clause and the whole prohibition clause ('never displayed, logged, persisted to the durable record, or transmitted') are stated as surviving, because marking the whole block superseded would have silently repealed the prohibition that permanently excludes the envelope-encrypted-table substrate — the opposite of what was decided."
+  - "S2 — ADR :113-114 superseded in place, old wording retained and struck through (:261-262), marked 'SUPERSEDED (A2)' (:262-265)."
+
+  # ---- Left standing, with recorded qualification ----
+  - "L1 — 'Referenced by name, never by value' (:92-95 → :224-227): wording UNCHANGED. Strengthened by A3, and stated as strengthened in §Amendments A2 (:70-77)."
+  - "L2 — Public half surfaced in the UI / no secret value ever typed into ShipIt (:89-91 → :221-223): wording UNCHANGED. 27ea6536 was read in full and found to be a footer-copy and alignment decision that does not reach this clause; the ADR records that check explicitly (:138-143) rather than silently leaving the question open."
+  - "L3 — Host keys are TOFU with human confirmation (:96-99 → :228-234): clause STANDS as a requirement; annotated in place as not yet enforced at the transport."
+  - "L4 — Access is proven, not assumed (:100-102 → :235-242): UPHELD, not superseded, per 898b07d0. Annotated in place with the material fact that it was unsatisfiable as written and how splitting identity from registration resolves it."
+  - "L5 — Amendment A1 in its entirety (:15, :18-33): UNTOUCHED."
+
+  # ---- Corrections to the dispatch brief's premises ----
+  - "BRIEF CORRECTION 1 — 'HostKeyStatus has no runtime enforcer today' is OVER-BROAD and was not written as given. It does have a domain enforcer: product_registry_engine.dart:1033 and :1148 throw HostKeyNotConfirmedException unless permitsConnection, and repository_credential.dart:128-129 defines canReachRepository over both halves. What has no enforcer is the TRANSPORT: git_workspace_inspector.dart:107 runs Process.run with no environment:, and a repo-wide search for SSH_AUTH_SOCK|known_hosts|ssh-keyscan|StrictHostKeyChecking|IdentityFile across *.dart and *.sql returns 0 matches. The ADR records the split precisely, because a blanket 'decorative' label would have been false and would have invited a reviewer to trust a gate that does exist."
+  - "BRIEF CORRECTION 2 — the partial unique index and the predicating ON CONFLICT upsert are true at 07c8c8f and ABSENT at this amendment's base SHA 6220951. schema_bootstrap.sql declares no product_credential index at all and the newest migration is 20261001205247600. The ADR cites both with explicit provenance and a 'not present at this revision' marker rather than asserting enforcement its own tree does not contain."
+  - "BRIEF CORRECTION 3 — the resurrection gap is WORSE at this revision than on 07c8c8f, not merely present. At 07c8c8f the upsert branch is predicating, so resurrection needs identical material; at 6220951 postgres_product_registry_store.dart:237-241 is a bare ON CONFLICT DO UPDATE SET $assignments with no WHERE and no RETURNING, and $assignments (:196-209) overwrites status, revokedAt, revokedReason, hostKeyStatus, host confirmation and verification fields — so any re-mint naming a revoked credentialId resurrects it with no material match required and nothing returned to detect it."
+  - "BRIEF CORRECTION 4 — docker/compose.yaml:63 is the password line (SERVERPOD_DATABASE_PASSWORD: shipit); :62 is the USER line. An earlier design artifact cites :62. The ADR cites :63."
+  - "BRIEF CORRECTION 5 — design-revision-3.md and finding D-18 are NOT on this branch; they are at design-correct-addproduct-keys (77c19f1). A first search on the wrong path produced a false absence; the artifacts were then located by name across worktrees. Derivation is design-revision-3.md § R.9.2 (line 876); the discovery id is registered at discoveries.md:452."
+  - "BRIEF CORRECTION 6 — 27ea6536 does not bear on ADR :89-91. Read in full it is solely about the footer: the Show technical details button, dividers, and removal of footer copy on both platforms. It makes no statement about custody, references or key material. :89-91 is left standing unchanged and the negative check is recorded in the ADR."
+  - "ADDITIONAL FINDING — AGENTS.md has NO §13 at this revision (sections: Inherited invariants, Orchestration, Product-specific policy, Shared Docker state, Test resource hygiene, Framework provenance; the product-specific policy block is still unfilled TBD). So this ADR's own §Mitigation carve-out (:300-301) and its §Related entry (:446-447) point at absent text, as do ADR 0012:34 and ADR 0019:121. The documented §13-versus-0018 contradiction is unreconciled because the reconciling text was never written. Recorded in §Known gaps."
+  - "CITE COUNT — 'ADR 0018' appears 19 times across 15 distinct production Dart files under apps/server/lib and packages/*/lib at 6220951 (an earlier design artifact recorded 13 files)."
+
+traceability:
+  requirements_covered:
+    - "Record A2 in the existing amendment-table format → :16"
+    - "Supersede :85-88 in place, superseded wording retained and marked → :198-207 with replacements at :208-220"
+    - "Supersede :113-114 in place, same treatment → :261-274"
+    - "Leave :100-102 and amendment A1 standing → :235-242 and :15-33, both retained"
+    - "Record that :100-102 was unsatisfiable and how the split resolves it → :112-130 and :238-242"
+    - "Every superseded clause's replacement traceable to a decision object → :40-52 plus per-clause attribution"
+    - "Preserve 'never persisted to the durable record' and record A2's permanent exclusion → :202-207 and :218-220"
+    - "Record that 'referenced by name, never by value' is strengthened, not weakened → :70-77 and :224-227"
+    - "Record the invariants the ADR now depends on being enforced elsewhere → :310-383"
+    - "Record the partial unique index and the predicating upsert with provenance → :318-344"
+    - "Verify and honestly record the HostKeyStatus enforcement gap → :345-367"
+    - "Record the reference as the most sensitive artifact held → :250-259 and :368-383"
+    - "Record 'local only' and A3 availability as preconditions → :384-406"
+    - "Verify, restate and record the revocation-resurrection finding → :412-430"
+    - "Record the six resolved decisions with their ids → :40-52 and :454-465"
+    - "State what the status line should become and why → :4 and §4 of this revision"
+
+  requirements_gaps:
+    - "Status remains 'Proposed', NOT 'Accepted'. Only the ADR owner may accept an ADR; this lane proposes the wording and the reason and does not claim the authority. Owner: human (ADR owner)."
+    - "Host-key verification at the transport is specified, not built. Owner: implementation, and security-critical enough to warrant its own review."
+    - "The one-active-credential index and the predicating upsert are absent at this revision; implemented and independently reviewed at 07c8c8f, awaiting integration. Owner: integration."
+    - "Resurrection (D-18) is recorded, not closed. Closing it requires a mint path that can never write to an existing credentialId. Owner: implementation."
+    - "referenceName is still exposed to clients; 9417f8bf follow-up 2 makes its removal REQUIRED under A3. Generated-contract change in two packages. Owner: implementation."
+    - "AGENTS.md §13 does not exist, so this ADR's carve-out is unfulfilled. AGENTS.md is outside this lane's owned paths. Owner: human."
+    - "A3 reachability was never runtime-probed; 9417f8bf records confidence LOW and states no substrate option was runtime-verified. No Docker command was run under the no-Docker rule. Owner: implementer, per 9417f8bf follow-up action 4."
+    - "Remediation copy for secret-manager unavailability is assigned to a design lane by 9417f8bf follow-up 3 and is recorded here as a precondition, not specified. Owner: design."
+    - "Boards' 'the private half stays in the keychain' copy is not corrected here; it is owned by the Add Product mobile lane and apps/control_plane/** is outside this lane's read scope. Owner: design (existing lane)."
+
+design_system_compliance: PASS
+design_system_compliance_note: |
+  No board, token, component or layout is changed. The only UI-facing consequence is copy that must
+  no longer assert device-local key custody. Scoped to what this revision changes; the board-copy
+  corrections owned by the mobile lane are not assessed here.
+
+ux_accessibility_score: PASS
+ux_accessibility_score_note: |
+  Scoped to what this revision changes. :89-91 is unchanged and remains screen-reader-safe; nothing
+  here removes a label, a focus target or a confirmation affordance, and two-sided revocation adds
+  no new user-facing surface. NOT ASSESSED and not claimed: the mobile lane's board-copy
+  corrections, and the remediation copy for secret-manager unavailability, which is recorded as a
+  precondition rather than specified.
+
+implementation_feasibility: MEDIUM
+implementation_feasibility_note: |
+  The amendment itself is documentation and is complete. Feasibility of the architecture it
+  RECORDS is MEDIUM and was never higher: 9417f8bf states confidence LOW and that no substrate
+  option was runtime-verified, and A3 adds a runtime dependency whose availability now gates the
+  credential path. The documented A1/A4 fallback is what keeps this MEDIUM rather than LOW.
+
+created_by: design-agent
+created_at: "2026-10-06T13:36:00Z"
+
+reviewed_by: null
+reviewed_at: null
+approved_by: null
+approved_at: null
+
+human_gate:
+  required: true
+  level: 3
+  reason: |
+    Level 3 requires product/design/architecture approval. The substance is already decided by six
+    resolved Human Decisions; what remains is the ADR owner's sign-off on ADR 0018 as amended, and
+    a judgement on whether to accept the recorded gaps (resurrection, absent host-key
+    verification, unenforced local-only scope, missing §13 carve-out) or gate A2 behind them.
+  blocking_items:
+    - "ADR 0018 status remains Proposed. This lane does not declare it Accepted."
+    - "ADR-0018-A2-D1 (AGENTS.md §13 absent) is a CONTRADICTION touching governance and escalates to the human per LEARNING_POLICY.md."
+
+blockers: []

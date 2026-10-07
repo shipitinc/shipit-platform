@@ -314,7 +314,7 @@ SELF_EDITS: >-
 ## WORK_ITEM: Add Product rebuild — IN DESIGN (supersedes the parked register-button round)
 STATE: MERGED + IN CORRECTION — `fix/credential-store-integrity` **merged to `main` as `e391c02`** and
   verified 0/0; all eight Human Decisions RESOLVED; three work items in independent review or correction
-BASE_SHA: `main` = `origin/main` = `361256c`
+BASE_SHA: `main` = `origin/main` = `43d328b`
 GATE_D4_RESOLVED: all six original decisions plus two later ones. `9417f8bf` **OPTION_C** (supersede ADR
   0018 `:85-88`; **A3 external secret manager**; A2 permanently excluded; **G-7 becomes REQUIRED**) ·
   `7b1bc8b7` **OPTION_A** (fail closed, remediation copy required) · `79e860e2` **OPTION_A** (destroy the
@@ -349,20 +349,33 @@ IN_CORRECTION:
   - keys **revision 4** — rev 3 returned `DESIGN_REVIEW_CHANGES_REQUIRED` with 4 BLOCKERS, 7 HIGH. Risk 3
     agreed, and the reviewer confirmed the reserved decision is **not nudged anywhere**.
 BLOCKERS:
-  - type: PENDING_REVIEW
+  - type: INFRASTRUCTURE_BLOCKED
     detail: >-
-      Mobile revision 4 (`A69AB98C`) needs its focused re-review. **Dispatch failed on a network error and
-      must be re-sent.**
+      **Penpot MCP instance resolution fails.** The plugin appears connected — `penpot_penpot_api_info`
+      returns full schema docs — but every *instance-bound* call fails with `No Penpot instance connected
+      for user token` **before the JavaScript executes** (proved by wrapping a call in `try/catch`: the
+      `catch` never ran). So the fault is the **token-to-instance binding**, not a missing plugin. Either
+      the plugin registered against a different MCP client's token than this session uses, or the server's
+      token map predates the connection. Needs the client *this session* talks to reconnected, or the MCP
+      server restarted after the plugin connected.
+    impact: >-
+      Mobile revision 5 is `DESIGN_REVISION_BLOCKED` twice over and cannot proceed. **`Art S` on all four
+      boards reads `private half stays server-side`, which is FALSE under decision `9417f8bf`** — under A3
+      SHIP IT does not hold the private half at all. That is wrong security copy on four boards, and it
+      cannot be corrected without Penpot.
   - type: DESIGN_GOVERNANCE
     detail: >-
       `design-revision-3.md` — the specification D-4/D-18/D-5 implement — is **uncommitted and unapproved**,
       existing only as an untracked file in the design lane's worktree at `77c19f1`. Both the engineering
       reviewer and the implementer flagged it. **The code cannot land with reviewed provenance behind it until
       the design is committed and independently approved.** No code lane can discharge this.
-  - type: LANE_LOST
+  - type: PENDING_REVIEW
     detail: >-
-      The keys revision-4 correction dispatch returned **corrupted subagent output and produced nothing**.
-      Re-dispatch required.
+      Keys **revision 5** — rev 4 returned `DESIGN_REVIEW_CHANGES_REQUIRED` with 2 BLOCKERS (one of them:
+      the design asserts the ADR amendment is "Accepted" in 13+ places, which nothing on disk supported until
+      decision `876c6b97` recorded it), 3 HIGH, 4 MEDIUM, 9 LOW. ADR 0018 A2 revision 2 needs its
+      independent review — **human acceptance is recorded, independent review never happened.**
+    owner: independent design reviewer
   - type: OWNERSHIP_GAP
     detail: >-
       `CredentialIdentityConflictException` was not created — `packages/product_registry/lib/src/exceptions.dart`

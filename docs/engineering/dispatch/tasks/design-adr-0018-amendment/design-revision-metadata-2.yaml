@@ -1,0 +1,289 @@
+revision_id: "ADR0018-A2-REV2"
+brief_id: "design-adr-0018-amendment"
+brief_version: "n/a"
+brief_note: |
+  No formal Design Brief exists for this work item. The Engineering Manager's dispatch header served
+  as the brief: FEATURE "ADR 0018 amendment A2 — record the human's acceptance, then await independent
+  review", ACCEPTANCE_CRITERIA, OWNED_PATHS / READ_ONLY_PATHS / PROHIBITED_PATHS and
+  VALIDATION_COMMANDS. This is recorded rather than back-filled with a synthetic brief id, because
+  DESIGN_GOVERNANCE.md requires a Design Brief to precede design exploration and inventing one would
+  misrepresent the lifecycle that actually happened. This is also true of revision 1, which is why
+  brief_version is "n/a" in both.
+
+revision_number: 2
+supersedes_revision_id: "ADR0018-A2-REV1"
+amends: "docs/adr/0018-per-product-git-credentials.md (amendment A2, supersedes amendment A1 in part)"
+
+status: "ACCEPTED"
+
+status_note: |
+  ACCEPTED by the repository owner as ADR owner, through the structured question UI, on 2026-10-06.
+  The recorded answer to the two questions this lane escalated was: "Accept A2, record the gaps as
+  accepted." The acceptance covers amendment A2 and the four knowingly-open gaps it carries, which
+  the ADR records as accepted risks at :446-524 with their consequences stated.
+
+  This status was previously "DRAFT" in revision 1. That was correct then: revision 1 correctly
+  declined to declare an acceptance it had not been given, and it recorded the absence explicitly.
+  A downstream revision read revision 1 and asserted in thirteen-plus places that the amendment was
+  "Accepted" — an approval that existed nowhere on disk. This field is now populated from the
+  owner's actual decision rather than from that assertion, which is the whole point of the change.
+
+provenance:
+  repository: "/Users/alkebut/air/shipit-platform"
+  worktree: "/private/tmp/shipit-design-adr0018"
+  branch: "design/adr-0018-amendment"
+  base_sha: "43d328b"
+  head_sha: "43d328b"
+  committed: false
+  pushed: false
+  rebased_from: "6220951"
+  rebase_method: "git stash push -u -> git rebase main -> git stash pop; fast-forward, no conflicts (6220951 is a clean ancestor of 43d328b and the branch carried no commits of its own)"
+  note: |
+    HEAD equals BASE_SHA because no commit was made, per the dispatch instruction. The change is
+    present as an uncommitted working-tree modification in the worktree above, so a reviewer must
+    read the worktree and `git diff` rather than a commit.
+  verified_against:
+    - sha: "43d328b"
+      branch: "main"
+      relation: |
+        THE revision every line number in this revision and in the ADR refers to. Re-verified after
+        the re-base; revision 1's citations were against 6220951 and have been corrected where main
+        moved under them.
+    - sha: "6220951"
+      branch: "main (historical)"
+      relation: |
+        the revision revision 1 was written against. Retained because the ADR's provenance-correction
+        blockquote (ADR :336-340) states what was true there and is false at 43d328b.
+    - sha: "e391c02"
+      branch: "main"
+      relation: |
+        the merge that put the predicating credential upsert and the partial unique index into main.
+        It is why revision 1's two "not present at this revision" markers were false at 43d328b.
+    - sha: "0bf2fa0"
+      branch: "main"
+      relation: |
+        restored AGENTS.md section 13 / 13a / 13b and recorded the D-19 resolution. It closes discovery
+        ADR-0018-A2-D1.
+    - sha: "07c8c8f"
+      branch: "fix/credential-store-integrity"
+      relation: |
+        where revision 1 read the predicating upsert and the partial unique index before they landed.
+        Now an ancestor of main; superseded as a provenance marker by 43d328b.
+    - sha: "361256c"
+      branch: "design-correct-addproduct-keys / origin/main"
+      relation: |
+        where design-revision-3.md § R.9.2 (finding D-18) and discoveries.md live. Read-only; D-18 is
+        carried by that lane and is not re-registered here.
+
+risk_level: 3
+
+risk_rationale: |
+  Level 3 (Major Workflow / Architecture Change) per DESIGN_GOVERNANCE.md, unchanged from revision 1.
+  Acceptance did not lower it: the level describes the change, not whether a human has blessed it.
+
+  1. AMENDS RECORDED ARCHITECTURE ON A SECURITY BOUNDARY. It changes where a private key capable of
+     authorising repository WRITE access is held, and what "revoked" means. No such secret exists in
+     the repository today.
+  2. CHANGES A CORE WORKFLOW. Revocation acquires a ShipIt-side action where ADR 0018 said none was
+     required, and a new runtime dependency (the secret manager) can block the credential path. The
+     operator's mental model of revocation changes.
+  3. DEPENDS ON ENFORCEMENT THAT LIVES ELSEWHERE AND IS STILL PARTLY ABSENT. Under A3, SHIP IT holds
+     no key bytes, so every property once followed from possessing a key must now be enforced by
+     another component. That dependence improved at 43d328b — the one-active index and the predicating
+     upsert are merged (e391c02) — and remains partly unsatisfied: there is still no transport
+     host-key enforcer.
+  4. CARRIES FOUR ACCEPTED RISKS ON A SECURITY BOUNDARY. ADR :446-524 records each with its
+     consequence: a revoked credential can be resurrected; host keys are not verified at the
+     transport; the "local only" scope is a stated posture rather than a property; and the secret
+     manager's reachability was never runtime-probed. The owner accepted these alongside A2 rather
+     than gating A2 behind them.
+
+  Level 3's approval requirement was satisfied on 2026-10-06 by the repository owner as ADR owner.
+  That satisfies the HUMAN GATE. It does not satisfy INDEPENDENT REVIEW, which has never happened.
+
+changelog:
+  - "Revision 2. Records the repository owner's acceptance of amendment A2 and its four gaps, corrects two 'not present at this revision' markers that main invalidated by merging e391c02, closes discovery ADR-0018-A2-D1 against 0bf2fa0, re-verifies every claim at 43d328b, and converts the four knowingly-open gaps from blockers into recorded accepted risks with their consequences."
+
+  # ---- Approval fields ----
+  - "P1 — status: DRAFT -> ACCEPTED. The owner's decision, recorded. (design-revision-2.md §1.1)"
+  - "P2 — approved_by: null -> 'repository owner (ADR owner, interactive structured question UI, session orchestrator-main)'."
+  - "P3 — approved_at: null -> '2026-10-06'."
+  - "P4 — reviewed_by / reviewed_at: STILL null. Independent design review of this artifact has never happened and is the next gate. Deliberately unchanged."
+  - "P5 — NEW field acceptance_is_not_review: true, with a statement distinguishing the ADR owner's authority over the design from an independent agent's judgement of the artifact, and a warning that a downstream artifact must not treat acceptance as review. Added because a sibling revision asserted an acceptance that this artifact did not carry."
+  - "P6 — human_gate.required: true -> false (the gate was answered). human_gate.level stays 3. blocking_items: 2 -> [] — both were answered, and ADR-0018-A2-D1 was resolved by 0bf2fa0 rather than answered."
+
+  # ---- ADR: status and acceptance ----
+  - "C1 — ADR :4 Status line 'Proposed' -> 'Accepted', keeping the file's own parenthesised convention and both amendments' scope/custody summaries."
+  - "C2 — NEW ADR :6-21 acceptance block: who accepted, the recorded answer verbatim, what the acceptance covers, what it is NOT (not independent review), and the authority note that no .decisions/ object records it."
+  - "C3 — ADR :546-549 §Related AGENTS.md entry rewritten; the section exists as of 0bf2fa0 and the 'does not exist' note is retired."
+  - "C4 — NEW ADR :572-580 'The acceptance itself', recording the absence of a citable decision id and why it matters."
+
+  # ---- Provenance corrections (main moved under revision 1's markers) ----
+  - "C5 — ADR :342-359. CORRECTION. Revision 1 said the partial unique index was 'not present at this revision ... Do not cite the index as present until it lands'. e391c02 landed it. Now recorded as present in BOTH schema_bootstrap.sql:98-100 and migrations/20261006150645000/migration.sql:53-55 at 43d328b, with verify_schema_bootstrap.sh:91 asserting the two agree. Adds what the index does and does not do (see D5)."
+  - "C6 — ADR :361-378. CORRECTION. Revision 1 said the predicating ON CONFLICT upsert 'does not exist' at its base SHA. It exists at 43d328b at apps/server/lib/src/persistence/postgres_product_registry_store.dart:322-331. Adds the unique-constraint translation at :332-347 and the empty-result detection at :348-350, and states explicitly that immutability makes the DO UPDATE branch PREDICATED, not UNREACHABLE — so it does not close accepted risk A1."
+  - "C7 — ADR :334-340. Section lead-in now names 43d328b, and a dated blockquote records that the section was first written against 6220951 and exactly which claims the merge invalidated. A stale absence in a frozen ADR is corrected, not carried."
+  - "C8 — ADR :530-537. ADR-0018-A2-D1 RESOLVED. The §13 gap is CLOSED as of 0bf2fa0: AGENTS.md:65 (§13), :72 (§13a), :78 (§13b), :91 (one keypair per repository), :96-101 (the restoration note naming ADR 0018, 0012 and 0019 as the dependents). The three formerly dangling §13 references are no longer dangling. It is removed from human_gate.blocking_items and is no longer escalated."
+
+  # ---- Blockers converted to accepted risks ----
+  - "R1 — NEW ADR :453-481 §Accepted risks A1. 'A revoked credential can be resurrected by a re-mint.' Mechanism re-verified at 43d328b and stated precisely; the e391c02 fix's effect and non-effect both recorded; the fix on fix/credential-identity-invariants is APPROVE_WITH_NON_BLOCKING_FOLLOWUP but UNCOMMITTED and not on main. Consequence accepted: the two-sided revocation clause is specified but not enforceable end to end."
+  - "R2 — NEW ADR :482-497 §Accepted risks A2. Host-key verification is enforced in the domain and not at the transport, while ADR :96-99 requires a transport enforcer. Consequence accepted: the connection itself is unverified; a MITM against the git transport is prevented by nothing this ADR can point at."
+  - "R3 — NEW ADR :498-510 §Accepted risks A3. The 'local only' scope is a stated posture, not a property; docker/compose.yaml:16-17 publishes 5432:5432 unqualified and all nine mappings are unqualified. Consequence accepted, and widened by A3 from a local QA database to the substrate holding production key references."
+  - "R4 — NEW ADR :511-524 §Accepted risks A4. The external secret manager's reachability has never been runtime-probed; 9417f8bf records confidence LOW and no option runtime-verified, and no substrate adapter exists to have been probed. NO DOCKER COMMAND WAS RUN. Consequence accepted: a dependency whose availability is unproven, discovered late."
+  - "R5 — ADR :446-452 §Accepted risks lead-in records the question put and the answer, and states that nothing in the section is closed."
+  - "R6 — ADR :125-128 and :291-293. The two revocation caveats no longer point at '§Known gaps'; they say accepted risk A1 and name the owner and the date."
+  - "R7 — ADR :250-252. The host-key clause now cites §Accepted risks A2 as well as §Invariants enforced elsewhere."
+
+  # ---- Corrections to revision 1 found during re-verification ----
+  - "D5 — ADR :352-359. FACTUAL CORRECTION. Revision 1 claimed the partial unique index 'refuses the legitimate fresh mint for that repository'. It does not: rotateCredential (product_registry_engine.dart:1116-1132) revokes first, so the superseded row is already excluded from the index when the replacement is inserted. The index refuses a SECOND non-revoked row for one repository — the two-caller race — not a fresh mint. Revision 1 over-claimed the index's protection, in the direction that would have made accepted risk A1 look closed."
+  - "D3 — ADR :382-400. COMPLETENESS CORRECTION. There are THREE HostKeyNotConfirmedException sites, not two: product_registry_engine.dart:1012-1015 additionally throws when a CHANGED host fingerprint is presented, recording the change before failing closed. That site existed at 6220951 too (:998), so this is a missed site rather than new code. Conclusion about accepted risk A2 is unchanged."
+  - "D4 — Every citation now gives the full path apps/server/lib/src/persistence/postgres_product_registry_store.dart. Revision 1's bare filename invited a wrong-directory lookup."
+
+  # ---- Not amended ----
+  - "N-1 — A2's SUBSTANCE IS UNCHANGED. The custody clause, the two-sided revocation clause, the A1/A4 fallback precondition, the permanent exclusion of the envelope-encrypted-table substrate, the upheld registration clause and amendment A1 are all untouched. Every change above is a status record, a provenance correction, or a gap re-classification. Per the dispatch: A2 is what the human accepted, and no further amendment was made."
+
+reviewed_by: null
+reviewed_at: null
+review_note: |
+  Null on purpose, and it must stay null until an independent design reviewer signs this artifact.
+  Independent design review of ADR 0018 amendment A2 has NEVER happened. READY_FOR_INDEPENDENT_DESIGN_REVIEW
+  is YES precisely because that gate is still open.
+
+approved_by: "repository owner (ADR owner, interactive structured question UI, session orchestrator-main)"
+approved_at: "2026-10-06"
+approval_note: |
+  The ADR owner accepted amendment A2 and its four knowingly-open gaps, answering the two questions
+  this lane had escalated and correctly declined to answer: STATUS AUTHORITY ("the status line may be
+  set to Accepted — ADR owner's to give") and ACCEPTANCE OF RECORDED GAPS ("accept them alongside A2
+  or gate A2 behind them"). The recorded answer to both was: "Accept A2, record the gaps as accepted."
+
+  This lane did not grant that authority and does not claim to have. It recorded the authority the
+  owner granted, in the fields the artifact actually has, so the approval exists on disk and can be
+  read by a reviewer or by a downstream lane instead of being asserted from memory.
+
+accepted_decision_answer: "Accept A2, record the gaps as accepted."
+
+acceptance_provenance:
+  granted_by: "repository owner (ADR owner, interactive structured question UI, session orchestrator-main)"
+  granted_at: "2026-10-06"
+  relayed_by: "Engineering Manager, dispatch design-adr-0018-amendment"
+  corroborated_on_disk:
+    - "docs/engineering/WORK_STATE.md:326-327 — 'amendment A2 is drafted and awaiting independent review, and the human has accepted it with four gaps recorded as accepted.'"
+  decision_object: null
+  decision_object_note: |
+    NO Human Decision object in .decisions/ records this acceptance. Verified at 43d328b: all 14 files
+    inspected, and grep for the acceptance language returns 0 matches; the newest object, ae1c1f79, is
+    about the substrate precondition and not about accepting A2.
+
+    This is recorded rather than papered over with an invented id. .decisions/** is PROHIBITED to
+    design lanes and every existing object is created_by: orchestrator-main, so creating one is the
+    Manager's to do. ae1c1f79:8-11 states the precedent explicitly — an object exists "so the answer
+    has a citable id that Design Revision 3 and the implementation lane can point at". The absence of
+    such an id is precisely what allowed a downstream artifact to assert an acceptance that nothing on
+    disk supported. Tracked as ADR-0018-A2-D6 and routed to the Manager.
+
+acceptance_is_not_review: true
+acceptance_is_not_review_note: |
+  ACCEPTANCE IS NOT REVIEW, and this artifact has been accepted and has never been reviewed.
+
+  Acceptance is the ADR owner's authority over the design: they decide the amendment is right for
+  this repository. Review is an independent agent's judgement of the artifact: whether it is complete,
+  correctly sourced, internally consistent, and honest about what it does not establish. Neither
+  substitutes for the other, and an accepted design is not a reviewed artifact.
+
+  This field exists because the distinction was lost once already. Revision 1 correctly refused to
+  declare an acceptance it had not been given — it carried status DRAFT, approved_by null, and a
+  blocking item reading "ADR 0018 status remains Proposed. This lane does not declare it Accepted." A
+  sibling design revision read that work and asserted in thirteen-plus places that the amendment was
+  "Accepted". The acceptance existed nowhere on disk; the downstream artifact invented it. Now that
+  the acceptance is real and recorded, this field records the other half of the truth, so the same
+  drift cannot recur by treating an accepted ADR as a reviewed one.
+
+human_gate:
+  required: false
+  level: 3
+  reason: |
+    Level 3 requires product/design/architecture approval. That requirement was met on 2026-10-06 by
+    the repository owner as ADR owner, who accepted the amendment and its four knowingly-open gaps
+    ("Accept A2, record the gaps as accepted"). The gate is therefore no longer required — it has been
+    answered.
+
+    The level stays 3. It describes the change, not whether a human was asked, and it must not be read
+    as downgraded by the fact that the answer was favourable.
+  blocking_items: []
+  blocking_items_note: |
+    Revision 1 carried two. Both are now resolved, and neither was resolved by this lane:
+
+    1. "ADR 0018 status remains Proposed. This lane does not declare it Accepted." — ANSWERED. The
+       owner declared it Accepted; recorded at ADR :4 and :6-21 and in status/approved_by/approved_at.
+       The sentence was correct when written and remains the accurate statement of this lane's
+       authority: this lane records the acceptance, it does not grant it.
+    2. "ADR-0018-A2-D1 (AGENTS.md §13 absent) is a CONTRADICTION touching governance and escalates to
+       the human." — RESOLVED, not answered. 0bf2fa0 restored AGENTS.md section 13 / 13a / 13b, so
+       the three dangling §13 references (ADR 0012:34, ADR 0019:121, and this ADR's own carve-out)
+       are no longer dangling. Re-verified at AGENTS.md:65, :72, :78, :91 and :96-101. No longer
+       escalated.
+
+traceability:
+  requirements_covered:
+    - "Re-base onto main before producing the update -> design-revision-2.md §0 Re-base; stash/rebase/pop, fast-forward from 6220951 to 43d328b"
+    - "Set the artifact's status to reflect human acceptance -> status: ACCEPTED; ADR :4 'Accepted (amended — ...)'"
+    - "Populate approved_by and approved_at with the owner and the decision timestamp -> P2, P3; approval_note"
+    - "Leave reviewed_by / reviewed_at null -> P4; both remain null; review_note states why"
+    - "State plainly that acceptance is not review -> ADR :12-15; acceptance_is_not_review + acceptance_is_not_review_note; design-revision-2.md §2"
+    - "ADR Status line -> Accepted, following the file's existing convention -> ADR :4, same parenthesised shape as the A1/A2 convention"
+    - "Convert the four knowingly-open gaps from blockers into recorded accepted risks -> ADR §Accepted risks :446-524; A1 :453-481, A2 :482-497, A3 :498-510, A4 :511-524"
+    - "State each accepted risk's consequence -> one 'Consequence accepted.' paragraph per risk"
+    - "Verify each gap against main before recording it as accepted -> design-revision-2.md §3 R7-R21; each risk carries a 'Verified at 43d328b' line"
+    - "Correct the stale 'not present at this revision' markers for the merged e391c02 objects -> C5, C6, C7; ADR :336-378"
+    - "Re-verify and update the AGENTS.md §13 gap -> C8; ADR :530-537; R23"
+    - "Re-verify D-3 at main, checking the +14 offset rather than assuming it -> R13; offset confirmed uniform +14 across all three sites (1047-14=1033, 1162-14=1148, 1012-14=998)"
+    - "Do not amend A2 further -> N-1; git diff touches no A2 clause"
+    - "Report a substantive new problem rather than quietly revising A2 -> design-revision-2.md §8 F-1, F-3 and D6 are reported, not silently fixed"
+    - "Cite file:line verified at 43d328b -> every file:line in the ADR and in §3"
+
+  requirements_gaps:
+    - "Independent design review of this artifact has never happened. It is the next gate and this lane cannot perform it. Owner: independent design reviewer."
+    - "No .decisions/ object records the acceptance (ADR-0018-A2-D6). .decisions/** is PROHIBITED to this lane; every existing object is created_by: orchestrator-main. Owner: Manager."
+    - "Accepted risk A1 (resurrection) is open at 43d328b. A fix on fix/credential-identity-invariants is APPROVE_WITH_NON_BLOCKING_FOLLOWUP but UNCOMMITTED and not on main (WORK_STATE.md:342-346). Owner: implementation."
+    - "Accepted risk A2 (no transport host-key enforcer) is specified, not built. Security-critical enough to warrant its own review. Owner: implementation."
+    - "Accepted risk A3 (loopback pinning absent) is in docker/**, entirely outside this lane's ownership. Owner: implementation."
+    - "Accepted risk A4 (substrate reachability unprobed) needs a runtime probe. No substrate adapter exists to probe (R21) and no Docker command may be issued by this lane. Owner: implementer, per 9417f8bf follow-up action 4."
+    - "referenceName is still exposed to clients (9417f8bf gap G-7, now REQUIRED under A3); generated-contract change in two packages. Owner: implementation."
+    - "Board copy asserting device-local custody appears at four sites, not the two the ADR names — observed while reading apps/control_plane/**, which is OUTSIDE this dispatch's READ_ONLY_PATHS, so it is reported and NOT recorded in the ADR as verified fact (design-revision-2.md §8 F-1). Owner: Add Product mobile design lane."
+    - "docs/engineering/WORK_STATE.md:347 still reads 'awaiting independent review' without the acceptance, while :326-327 records it. PROHIBITED to this lane. Owner: Manager."
+
+design_system_compliance: PASS
+design_system_compliance_note: |
+  Unchanged from revision 1 and unchanged by revision 2. No board, no token, no component and no
+  layout is changed. The only UI-facing consequence is copy that must no longer assert device-local
+  key custody. Scoped to what this revision changes; the board-copy corrections owned by the mobile
+  lane are not assessed here, and F-1's out-of-scope observation is not treated as an assessment.
+
+ux_accessibility_score: PASS
+ux_accessibility_score_note: |
+  Scoped to what this revision changes. ADR :89-91 is unchanged and remains screen-reader-safe;
+  nothing here removes a label, a focus target or a confirmation affordance, and two-sided revocation
+  adds no new user-facing surface. Recording a risk as accepted is a documentation act with no
+  user-facing surface at all.
+  NOT ASSESSED and not claimed: the mobile lane's board-copy corrections, and the remediation copy for
+  secret-manager unavailability, which remains a recorded precondition rather than a specification.
+
+implementation_feasibility: MEDIUM
+implementation_feasibility_note: |
+  Unchanged, and the re-verification moved it in neither direction. The amendment itself is
+  documentation and is complete. Feasibility of the architecture it RECORDS is MEDIUM and was never
+  higher: 9417f8bf records confidence LOW and states that no substrate option was runtime-verified, and
+  A3 adds a runtime dependency whose availability now gates the credential path. The documented A1/A4
+  fallback is what keeps this MEDIUM rather than LOW.
+
+  Note the direction of the correction: at 6220951 two of the invariants this ADR externalised were
+  enforced by nothing at all. At 43d328b both are enforced in the database. That is a real
+  improvement, and it is also why the level-3 rating is unchanged rather than lower — what remains
+  missing is the transport host-key enforcer, which is the security-critical one.
+
+created_by: design-agent
+created_at: "2026-10-06T13:36:00Z"
+updated_by: design-agent
+updated_at: "2026-10-06"
+
+blockers: []
