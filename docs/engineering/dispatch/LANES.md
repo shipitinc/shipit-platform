@@ -397,3 +397,31 @@ only as an untracked file in the design lane's worktree at `77c19f1`. Both the e
 implementer flagged it. **The code cannot land with reviewed provenance behind it until the design is
 committed and independently approved.** That is the next dependency, and it is why the keys revision-4
 correction is on the critical path rather than optional.
+
+## Revision 4 wave
+
+| task_id | type | result | note |
+|---|---|---|---|
+| design-correct-addproduct-keys (rev 4) | design-produce | `DESIGN_REVISION_COMPLETE` | `F2D5AF31-CA53-481A-ACB4-C75DB033A15A`, **re-based onto `361256c`** first — B1 was the stale base. Risk 3 re-derived with one published tally in three places |
+| design-review-addproduct-mobile-rev4 | re-review | `DESIGN_REVIEW_CHANGES_REQUIRED` | 0 BLOCKERS, **1 HIGH**: three Gate D4 decisions were resolved 63 minutes after the revision was written and it is stale against all three |
+
+### The finding that matters most on the mobile side
+
+**`Art S`'s board string is now FALSE.** The four boards read `ed25519 · private half stays server-side` — and
+under the human's A3 decision **SHIP IT does not hold the private half at all**. The design lane had correctly
+designated that layer "the single string parameterized on the at-rest protection model", so the one element it
+properly held open is now the one element that is wrong, **on four boards, in user-facing security copy**. The
+reviewer could not verify it against the live Penpot file (no instance connected) and flagged that every
+board-read claim should be treated as unconfirmed by it.
+
+Also unapplied: the human's normative **footer alignment** (desktop right-aligned with a divider, mobile
+left-aligned with none) is **specified nowhere**, and the inherited spec still carries the desktop copy the
+human overruled. And `898b07d0` (split identity from registration) appears **zero times** in the artifact set —
+the Unknown-host boards carry the product fields but no element conveying *"a product exists but is not yet
+usable"*.
+
+### Two lanes failed on infrastructure, not judgement
+
+The keys revision-4 correction and the mobile revision-4 re-review **both** returned corrupted subagent output
+on first dispatch and had to be re-sent. Both succeeded on retry. Recorded because two-for-two is a pattern
+worth watching, not because either dispatch was wrong.

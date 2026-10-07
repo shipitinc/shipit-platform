@@ -1,0 +1,603 @@
+# =====================================================================================
+# Design Revision Metadata — server-side deploy-key service
+# Artifact:  design-revision-metadata-4.yaml
+# Body:     design-revision-4.md
+#
+# Revision 4 is a CORRECTION pass over Revision 3 (4B017787-…), which an independent
+# reviewer returned DESIGN_REVIEW_CHANGES_REQUIRED on, with 4 BLOCKERS, 7 HIGH,
+# 2 MEDIUM and 4 LOW. Revision 3 was NEVER approved, and NO approval of any kind
+# carries over to this revision. Revisions 1, 2 and 3 are retained intact.
+# =====================================================================================
+
+revision_id: "F2D5AF31-CA53-481A-ACB4-C75DB033A15A"
+brief_id: "97484D0E-E16C-485E-BAA2-A277889C0FB6"
+brief_version: "1.1.0"          # design-brief-1.1.0.md — NOT re-issued. The brief's AC-03/SC-08/C-01
+                                 # obligations were discharged by the resolutions; design-revision-4.md § 8
+                                 # records the successor criteria (SC-08a, SC-11..SC-19). The brief is
+                                 # retained intact and NOT edited; design-revision-4.md § 0.6 maps every
+                                 # superseded item and § 0.5 lists what is carried verbatim.
+revision_number: 4
+supersedes_revision_id: "4B017787-25A0-4F45-ABDA-805C250AF63F"   # revision 3, retained intact
+status: "DRAFT"
+risk_level: 3
+
+# -------------------------------------------------------------------------------------
+# risk_rationale — the SINGLE tally, reproduced verbatim from design-revision-4.md § 9.1.
+# H6: Revision 3 tallied the same reasons four different ways across three artifacts.
+#      This block, design-revision-4.md § 9.1 and report-revision-4.md must carry the SAME
+#      sentence. If a fourth number appears anywhere, the finding has recurred.
+# -------------------------------------------------------------------------------------
+risk_rationale: |
+  Level 3 (Major Workflow / Navigation / IA Change) per DESIGN_GOVERNANCE.md § Design-Change
+  Risk Levels. Revision 4 RE-DERIVES the level rather than inheriting it, per Invariant 6,
+  which requires the classification for EVERY revision. Revision 3 was independently agreed
+  at 3 (INDEPENDENT_RISK_LEVEL: 3, RISK_LEVEL_AGREEMENT: YES); agreement is recorded, not
+  inherited — and H6 concerned the ARITHMETIC behind the level, not the level.
+
+  THE SIX REASONS AND THEIR STATUS
+
+  R1. FIRST HANDLING OF KEY MATERIAL — UNCHANGED. This design is the first time SHIP IT
+      handles a private deploy-key half in a flow it controls. Still irreversible: a leaked
+      key authorising WRITE access to a customer repository cannot be recalled from SHIP
+      IT's side — it must be uninstalled at the host. No such secret exists in the
+      repository today.
+
+  R2. CREDENTIAL EXPOSED THROUGH AN UNAUTHENTICATED, UNPINNED CONTROL PLANE — WORSE.
+      Under A3 the endpoint is not the only exposure; there is now a RUNTIME DEPENDENCY
+      whose unavailability blocks the credential path, so the failure mode is disclosure
+      AND denial. apps/server/lib/server.dart:71-73 declares no authentication services;
+      570bb640's loopback pinning is still un-implemented; docker/compose.yaml:16-17
+      publishes 5432:5432 unqualified and :63 hardcodes SERVERPOD_DATABASE_PASSWORD in a
+      COMMITTED file. Revision 4 sharpens it: an attacker with the database can also set
+      status = 'revoked', and D-2's index would then block the legitimate re-mint — so D-4
+      is an AVAILABILITY control here, not only an integrity one.
+
+  R3. CHANGE TO THE CORE REGISTRATION WORKFLOW — WORSE. Under 898b07d0 the change is no
+      longer only "registration is gated"; it is IDENTITY SEMANTICS — a Product becomes
+      visible BEFORE registration commits, and the accepted consequence is a visible
+      product with no usable credential. That changes what a Product means across the
+      Products page, product detail and Add Product: closer to information architecture
+      than to a gate. ae1c1f79 adds a second interaction — the same flow's FIRST step is
+      now conditional on an infrastructure dependency, so the flow has TWO distinct
+      failure shapes with different user-visible consequences (design-revision-4.md
+      § R.11g item 5).
+
+  R4. CREDENTIAL INVARIANTS REACHABLE AND NOT ENFORCED — WORSE. R-B6's original defect is
+      closed by D-1/D-2 (design-revision-4.md § R.8.2). But D-4, D-5 and D-6 are STILL
+      UNMERGED, and this pass found THREE MORE defects in the specified flow: G-13 (the
+      get-or-create step rewrites a product's state and createdAt, because saveProduct and
+      saveRepositoryReference are both ON CONFLICT DO UPDATE), G-14 (a revoked credential
+      is invisible to the product detail, so the user is told "no key generated yet" about a
+      withdrawn key), and G-15 (D-4's named CredentialIdentityConflictException does not
+      exist). The COUNT of unbuilt or newly-found credential invariants ROSE, which is the
+      opposite of the direction the net should move.
+
+  R5. AN SSH TRANSPORT SEAM WITH NO PRECEDENT — WORSE. The seam must deliver host-key TOFU
+      verification AT THE TRANSPORT and manager-backed material resolution — two
+      security-critical capabilities, one with no precedent anywhere in the repository, and
+      ADR 0018 :96-99 makes the first a REQUIREMENT. Revision 4's contribution is PRECISION,
+      not reduction: the DOMAIN half IS enforced (product_registry_engine.dart:1047-1052 and
+      :1162-1167), so the remaining half is cleanly nameable — and a cleanly nameable half
+      is still an unbuilt half. This also WITHDRAWS Revision 3's over-broad "no runtime
+      enforcer / decorative" claim (§ R.10.3).
+
+  R6. A DESIGN WHOSE OUTCOME MAY CONTRADICT AN EXISTING RECORDED ADR — IMPROVED, with a
+      stated residual. Revision 2's reason for 3 was ADR 0018 :85-88 in tension with
+      b869ec24; Revision 3 re-framed it as a known, human-owned, PENDING amendment. The ADR
+      0018 AMENDMENT IS NOW WRITTEN AND ACCEPTED by the human (158 -> 465 lines; it
+      supersedes :85-88, keeps :87-88's prohibition, supersedes :113-114 and upholds
+      :100-102). The contradiction is resolved in a recorded artifact rather than merely
+      anticipated. RESIDUAL, stated rather than dropped: the amendment is UNCOMMITTED and not
+      yet in docs/adr/**, so code shipping before the merge briefly contradicts a live ADR.
+      That residual is an ownership and sequencing matter, not a design uncertainty — and it
+      is why the merge appears in design-revision-4.md § 10.1 action 1.
+
+  THE TALLY — one, and it is the only one
+
+  RISK_LEVEL: 3 (Major Workflow / Navigation / IA Change), re-derived on this evidence.
+  1 reason IMPROVED (R6), 1 reason UNCHANGED (R1), 4 reasons WORSE (R2, R3, R4, R5).
+
+  Three places must carry this exact sentence: this block, design-revision-4.md § 9.1, and
+  report-revision-4.md. Revision 3's four tallies — "5 rows" / "one improved, two unchanged,
+  three worse" / "IMPROVED (2 reasons) … UNCHANGED OR WORSE (4 reasons)" enumerating five /
+  "Two improved, four unchanged or worse" — are WITHDRAWN as arithmetic. Their LEVEL was
+  right; the counting was incoherent, and incoherent counting in a risk rationale is not a
+  typo, because the tally is what a reviewer checks to see whether the reasoning was done.
+
+  WHAT THE LEVEL MEANS. Level 3 requires product/design/architecture human approval at Gate
+  D4. The six Gate D4 decisions are taken and ae1c1f79 is taken. The CONTENT of Revision 4
+  still requires human approval: D-4, D-5, D-6, G-13, G-14, SC-11..SC-19, the N-9 copy, and
+  § R.5.7's compensation construct.
+
+# -------------------------------------------------------------------------------------
+# Provenance — SINGLE BASE. H6/B1: a design citing SHAs that are none of them ancestors of
+# its own base cannot be verified by anyone reviewing it.
+# -------------------------------------------------------------------------------------
+provenance:
+  worktree: "/private/tmp/shipit-correct-addproduct-keys"
+  branch: "design-correct-addproduct-keys"
+  base_sha: "361256c8948b00da7f0609a4f29cf075eef26ca2"
+  head_sha: "361256c8948b00da7f0609a4f29cf075eef26ca2"
+  rebased: true
+  rebase_from: "77c19f114ee691e8c434afe37b7c84494b66dc40"
+  rebase_method: "git merge --ff-only main  (77c19f1 was an ancestor of 361256c, so this was
+                  a fast-forward, not a rebase commit — stated precisely because the word
+                  'rebased' would otherwise imply a rewrite)"
+  committed: false
+  pushed: false
+  ancestors_verified:
+    # Every SHA this revision cites, checked against the base. Output quoted in § 0.3.
+    - "e391c02   ANCESTOR"   # merged credential-store-integrity work (D-1, D-2)
+    - "07c8c8f   ANCESTOR"   # the store/engine/tests that work produced
+    - "4e2d237   ANCESTOR"   # the LANES.md retraction
+    - "0bf2fa0   ANCESTOR"   # the restored AGENTS.md §13/§13a/§13b
+    - "1aa8755   ANCESTOR"   # the Revision-3 review report
+    - "674b871   ANCESTOR"   # the six Gate D4 resolutions
+    - "6220951   ANCESTOR"   # the decision objects' filing commit
+    - "3a87e27   ANCESTOR"   # where Revision 2's artifacts are tracked
+    - "361256c   ANCESTOR"   # the base itself
+  unlabelled_citations_are_at: "361256c"
+  citation_index: "design-revision-4.md § 0.3 — 22 rows, with a one-command completeness check"
+  non_ancestor_sources:
+    # The ONLY two sources outside the base, both uncommitted working trees, both read
+    # READ-ONLY, both labelled at every point of use. Neither confers approval.
+    - label: "[UNCOMMITTED 0bf2fa0]"
+      where: "/private/tmp/shipit-credential-identity, branch fix/credential-identity-invariants, HEAD == BASE == 0bf2fa0"
+      used_for: "evidence that a construct of the shape D-4/D-5/D-6 specify exists and was reviewed
+                 at APPROVE_WITH_NON_BLOCKING_FOLLOWUP level. NOT cited as repository state. Its
+                 review found a MEDIUM gap in its own guard (verify_schema_bootstrap.sh:267, the
+                 IF NOT EXISTS normalisation forgives the one divergence that breaks the chain path)."
+    - label: "[UNCOMMITTED 6220951]"
+      where: "/private/tmp/shipit-design-adr0018, branch design/adr-0018-amendment, HEAD 6220951"
+      used_for: "its § 3.1 finding that HostKeyStatus HAS a domain enforcer and the TRANSPORT has
+                 none, adopted as § R.10.3. Its engine citations (:1033, :1148) are ITS base and
+                 are re-verified by this lane at 361256c as :1047 and :1162."
+  inherited_not_measured:
+    - "a11y contrast ratios — design-register-button/report.md:71-76. inkTertiary 4.23:1 dark
+       (FAILS WCAG AA); inkSecondary 6.74:1 light / 6.10:1 dark. NOT re-measured by this lane;
+       no contrast tool was run."
+
+gates:
+  docker_or_compose: "NOT_RUN — none issued, not even a read-only one. Compose files read as TEXT
+                      (docker/compose.yaml:16-17, :63; .env.example:16-18). AGENTS.md's
+                      read-only-over-shared-Docker rule binds this lane; make test-integration is
+                      the only exemption and it was not used."
+  dart_analyze: "NOT_RUN"
+  flutter_analyze: "NOT_RUN"
+  build: "NOT_RUN"
+  dart_test_product_registry: "NOT_RUN"
+  make_test_integration: "NOT_RUN"
+  contrast_measurement: "NOT_RUN — figures INHERITED, not re-measured"
+  tests_T_A_to_T_K: "NOT_RUN — T-A/T-B reported green by the implementer at 07c8c8f and NOT re-run
+                     by me; T-C..T-K SPECIFIED, not executed, and their predicted pre-fix failures
+                     are stated as predictions from the code path, never as results."
+  identity_branch_gates: "NOT_RUN by me — that lane reports format/analyze/unit/integration/schema
+                          passing and its review re-ran them. I did not re-run any and do not adopt
+                          its results as mine."
+  penpot: "NOT_RUN / not authored — C-11 forbids it for this lane"
+  adr_0018_amendment_merge: "NOT_RUN — docs/adr/** is PROHIBITED_PATHS. State reported in § R.17.1."
+  deletions: "NONE MADE. This lane created/edited only files under
+              docs/engineering/dispatch/tasks/design-addproduct-keyservice/**. No file was deleted,
+              moved or renamed anywhere in the repository, and no such action is claimed."
+  read_only_source_inspection: "pass — every file:line opened and read at 361256c, plus the two
+                                uncommitted worktrees above, plus § 0.3's ancestor check (output quoted)"
+
+design_system_compliance:
+  value: "PARTIAL"
+  rationale: "Unchanged for the same reason as Revisions 2 and 3: the boards are the sibling lane's
+              (C-11), so board compliance is UNVERIFIED by this lane. What this revision adds is
+              token-level and copy-level and is normative: N-8 binds § R.5.4's remediation copy,
+              N-9 fixes the custody line, § R.11g item 7 fixes the footer, and
+              product_detail_page.dart:471/:676 must lose their leading referenceName token, which
+              invalidates the committed product_detail goldens."
+
+ux_accessibility_score:
+  value: "PARTIAL"
+  rationale: "Unchanged. Contrast figures are INHERITED, NOT RE-MEASURED (design-register-button/
+              report.md:71-76); no contrast tool was run by this lane. Revision 4 adds one new
+              user-facing surface — § R.11g item 5's refused-mint state — and deliberately specifies
+              NO copy for it, because the copy belongs to the sibling lane and N-8's token binding
+              applies to it automatically. A surface with no copy yet specified is a reason the score
+              cannot be PASS, and saying so is more useful than scoring copy that does not exist."
+
+implementation_feasibility:
+  value: "MEDIUM"
+  rationale: "Unchanged at the revision level; the composition underneath is stated per component so
+              the aggregate does not hide a split. HIGH: domain half; store half (D-4/D-5/D-6 — three
+              statements plus two Dart predicates, five tests, one doc paragraph); G-14 (one method's
+              data source, zero schema or wire change); G-13 (two reads and a catch); G-7's wire
+              change (one field, two regenerations, twelve rows across eleven files). MEDIUM:
+              substrate integration — no precedent in this repository, reachability UNVERIFIED (G-10),
+              and § R.5.7's compensation construct has four obligations of which the subtle one is
+              that a destroy throwing inside a finally MASKS the real error. LOW: the SSH transport
+              seam — nothing exists at the transport, two security-critical capabilities, one an ADR
+              requirement, and the domain's existing enforcer does not help because the domain does
+              not make the connection."
+
+requirements_covered:
+  # Every requirement this revision discharges, with where.
+  - id: "OPEN-D4-1"
+    disposition: "CLOSED by 9417f8bf (OPTION_C, A3), 7b1bc8b7 (fail closed), 79e860e2 (two-sided
+                  revocation) — § R.1, § R.5, § R.6"
+  - id: "OPEN-D4-2"
+    disposition: "CLOSED by 898b07d0 OPTION_A — § R.10"
+  - id: "the substrate-failure / Product-row interaction"
+    disposition: "CLOSED by ae1c1f79 OPTION_A, which adopted Revision 3's reading. § R.5.2 is now
+                  DECIDED content and § 10.1 asks the human nothing about it. Follow-up actions 1
+                  and 2 are discharged in § R.5.2 (T-H) and § R.11g item 5; action 3 is § 10.1 item 4."
+  - id: "G-7"
+    disposition: "REQUIRED WORK, specified with a VERIFIED site-by-site change list — § R.3.2 twelve
+                  rows across eleven files, plus § R.3.3 and § R.3.4. protocol.dart marked NO-OP."
+  - id: "G-9"
+    disposition: "CLOSED — D-2 landed at 07c8c8f in BOTH homes — § R.8.1"
+  - id: "G-1'"
+    disposition: "CLOSED by 0bf2fa0, which restored AGENTS.md §13/§13a/§13b. B1. Revision 3 carried
+                  this as open and asked the Manager for an action already taken. NO further action."
+  - id: "the surviving false ledger claim at LANES.md:204-205"
+    disposition: "CLOSED at 4e2d237. B1. At the new base LANES.md is 399 lines and :204-205 reads the
+                  RETRACTION. § 10.1's item requesting it is WITHDRAWN, not re-requested."
+  - id: "ADR 0018 amendment as a predecessor"
+    disposition: "WRITTEN AND ACCEPTED by the human (158 -> 465 lines). § R.17.1 records exactly what
+                  it supersedes, keeps and upholds, and the RESIDUAL: it is uncommitted and not in
+                  docs/adr/**, so the MERGE remains — § 10.1 action 1."
+  - id: "SC-02 / SC-03 / SC-15 / SC-16"
+    disposition: "Extended to require the tests on BOTH tiers — § R.9.6"
+
+requirements_gaps:
+  # BOTH registers. M1: the duplicate-credential audit was carried in prose and a changelog only,
+  # which is the 'hidden in a second list' pattern. Every entry here ALSO appears in
+  # design-revision-4.md § R.18.2 — a reviewer should check the two agree.
+  - id: "G-4"
+    summary: "No SSH host-key verification AT THE TRANSPORT. git_workspace_inspector.dart:106-112 runs
+              Process.run with no environment:; the five host-key tokens grep to 0 matches across apps
+              and packages. The DOMAIN half exists (engine:1047-1052, :1162-1167), so ADR 0018
+              :96-99 is HALF-implemented, not unimplemented."
+    owner: "Implementation (architecture) — § 10 asks that it get its OWN review"
+  - id: "G-3"
+    summary: "Zero test files import add_product_page.dart, so SC-02/SC-04/SC-06 have no existing harness."
+    owner: "Implementation / QA Contract"
+  - id: "G-5"
+    summary: "No read-only endpoint for a product's public key."
+    owner: "Implementation"
+  - id: "G-6"
+    summary: "recordGeneratedCredential's host is optional and defaults to null; the design refuses to
+              mint without one but the domain does not enforce it."
+    owner: "Implementation"
+  - id: "G-8"
+    summary: "Host-fingerprint provenance unspecified (ssh-keyscan vs handshake). N-4's copy says 'the
+              fingerprint the server actually observed'; HOW is part of the new seam."
+    owner: "Implementation"
+  - id: "G-10"
+    summary: "A3's reachability in the target topology is UNVERIFIED. No secret manager exists here, no
+              probe was run, and this lane issued no Docker command. 9417f8bf assigns the probe to the
+              implementer; the decision records confidence: LOW."
+    owner: "Implementer, before completion"
+  - id: "G-11"
+    summary: "D-4/D-5/D-6 are specified, not merged. R-B6's state-loss family, § R.6's revocation
+              semantics, N-7's durability and § R.9.4's evidence rule all rest on them. B4 SHARPENED
+              it: the Revision-3 specification was incomplete for one whole tier."
+    owner: "Implementer — a fix/credential-identity-invariants merge, AFTER this design is approved"
+  - id: "G-12"
+    summary: "THE DUPLICATE-CREDENTIAL AUDIT — a human-run deployment precondition, previously carried in
+              prose and a changelog ONLY (M1). CREATE UNIQUE INDEX fails on duplicates; the query as
+              originally dispatched DOES NOT EXECUTE ('repositoryId' is quoted camelCase; unquoted it
+              folds to repositoryid and ERRORS, which reads exactly like 'no duplicates'). Zero
+              duplicates were found in every database reachable to the implementer, but the only
+              credential-bearing one held 0 ROWS — a vacuous 'no'. No QA, staging or production
+              database is reachable from any lane."
+    owner: "HUMAN — against every deployed database, with the CORRECTED query, BEFORE migration
+            20261006150645000 is applied anywhere. § R.8.4 row 7, § 10.1 item 8."
+  - id: "G-13"
+    summary: "The § R.14.1 get-or-create step is DESTRUCTIVE on both rows: saveProduct (:91-101) and
+              saveRepositoryReference (:127-145) are both ON CONFLICT DO UPDATE, so re-running either
+              resets a product's state to 'registered' and rewrites name, createdAt, uri and addedAt.
+              Found by THIS revision while correcting § R.14.1 (H2) — Revision 3 called the step
+              'idempotent by read-then-write' without checking what the writes do. Silent, and it
+              un-commits a registered product."
+    owner: "Implementation — the read-first discipline is normative in § R.14.1 step 3"
+  - id: "G-14"
+    summary: "State 4 (revoked) is NOT derivable from the read path this design keeps. loadProductDetail
+              (:360-367) populates credentials EXCLUSIVELY from readActiveCredentialForRepository,
+              which excludes revoked rows on BOTH tiers, and ProductDetailView carries no revoked
+              summary. So state 4 is INDISTINGUISHABLE FROM STATE 1: the user is told 'no key generated
+              yet' about a key that existed, was withdrawn, and may still be installed on the
+              repository. Revision 3's stated cause (AccessStatus has no revoked member) MISLOCATED it
+              one layer down — AccessStatus is downstream of a query that never emits the row. This is a
+              QUERY change, not a new model: RepositoryCredentialView.status already lists revoked."
+    owner: "Implementation — § R.11.2, ONE method. MUST land before the revoke UI ships (§ R.14.3)."
+  - id: "G-15"
+    summary: "CredentialIdentityConflictException is named by D-4 and DOES NOT EXIST. The implementer
+              reports it could not be created because packages/product_registry/lib/src/exceptions.dart
+              was outside its OWNED_PATHS. Behaviour is complete and the refusal carries a distinct
+              greppable reason, so no API behaviour changes; D-5's separate scope reason makes the
+              distinction meaningful."
+    owner: "Implementation, with an ownership grant — § 10.1 item 7"
+  - id: "L-6"
+    summary: "DECISIONS.md's index table (:8-12) omits 570bb640, which appears only in the closing prose
+              at :44-46; and :16 still reads 'All five are PENDING', which is FALSE — all six resolved
+              at :53+."
+    owner: "Manager — REPORTED, NOT EDITED (DECISIONS.md is outside this lane's OWNED_PATHS)"
+  - id: "ADR 0018 :103 wording"
+    summary: "':103 Rotation is per product' is inconsistent with its own ':104 re-installing the new
+              public key on that repository' and with A1 (:19-21). D-2 enforces ONE ACTIVE CREDENTIAL
+              PER REPOSITORY. § R.17 UPHOLDS the clause as the design relies on it and flags the wording."
+    owner: "ADR lane / human — § 10.1 item 8"
+
+traceability:
+  matrix: "traceability-matrix-4.md"
+  design_elements_without_a_requirement:
+    - "§ R.1.7's three-layer composition boundary — derived from C-02 and engine:897-915, and required by
+       H7. Not traceable to a brief AC because no brief anticipated a composition root; it traces to a
+       CONSTRAINT instead, which is recorded here rather than left looking like an addition."
+    - "§ R.5.7's five compensation obligations — obligation 3 (destroy must not rethrow) is not derived
+       from any requirement; it is derived from AGENTS.md's teardown-failure rule applied to the mint
+       path. Recorded so a reviewer can see it is a judgement and not a requirement."
+    - "T-I — specified because its ABSENCE is what let B2 through; it asserts a property no requirement
+       stated. Named as a judgement, per the same convention."
+
+artifacts:
+  - path: "design-revision-4.md"
+    role: "THIS REVISION — the normative body"
+  - path: "design-revision-metadata-4.yaml"
+    role: "THIS FILE"
+  - path: "traceability-matrix-4.md"
+    role: "requirement -> section -> test -> gap matrix"
+  - path: "discoveries.md"
+    role: "D-20..D-24 added by this revision; D-1..D-19 unchanged"
+  - path: "report-revision-4.md"
+    role: "the producing lane's report; carries § 9.1's tally VERBATIM"
+  - path: "design-revision-3.md"
+    role: "RETAINED INTACT — superseded. Not edited."
+  - path: "design-revision-2.md"
+    role: "RETAINED INTACT — superseded twice. Not edited below its header."
+  - path: "design-revision.md"
+    role: "RETAINED INTACT — superseded twice. Not edited below its header."
+
+# -------------------------------------------------------------------------------------
+# changelog — PER FINDING. Every item names the review finding it discharges.
+# -------------------------------------------------------------------------------------
+changelog:
+  - "Revision 4. CORRECTION PASS over Revision 3 (4B017787-…), returned DESIGN_REVIEW_CHANGES_REQUIRED
+     by a fresh independent reviewer with 4 BLOCKERS, 7 HIGH, 2 MEDIUM and 4 LOW, INDEPENDENT_RISK_LEVEL 3
+     and RISK_LEVEL_AGREEMENT YES (tasks/review-addproduct-keys-rev3/report.md, tracked on main at
+     1aa8755, REVIEWED_HEAD 77c19f1). REVISION 3 WAS NEVER APPROVED AND NO APPROVAL CARRIES OVER. No
+     commit, no push, no Docker command, no test run, no deletion."
+
+  # ---- BLOCKERS ----
+  - "B1 (BLOCKER) — STALE BASE. Revision 3's HEAD_SHA was 77c19f1, which is NOT an ancestor of main and
+     does not contain the resolved decisions, the store-integrity work, the LANES retraction or the
+     restored AGENTS.md §13. A design citing SHAs that are none of them ancestors of its own base cannot
+     be verified by anyone reviewing it. FIX: this worktree is re-based onto 361256c (a fast-forward —
+     77c19f1 was an ancestor). All nine cited SHAs verified as ancestors; output quoted in § 0.3.
+     CONSEQUENCES RE-VERIFIED, NOT ASSUMED: (a) LANES.md:204-205 is NOT a surviving false claim — at
+     77c19f1 the file was 172 lines with no such assertion, and at the new base it is 399 lines with the
+     RETRACTION at :204-205 (landed 4e2d237), so § 10.1's item requesting it is WITHDRAWN;
+     (b) G-1' is CLOSED — 0bf2fa0 restored AGENTS.md §13/§13a/§13b (now at :65-101), so § 10.1's item
+     asking for that action is also WITHDRAWN; (c) ae1c1f79 IS now present and is cited (H4).
+     § R.18.1 records both closures and § R.18.2 no longer lists either as open."
+
+  - "B2 (BLOCKER) — destroy(handle) IN A finally DESTROYS THE HANDLE ON THE SUCCESS PATH. Revision 3 said
+     'compensate: destroy(handle) in a finally' (§ R.5.2 step 5) and 'inside a try, with destroy(handle)
+     in the finally on any failure' (§ R.14.1 step 5). DART HAS NO FAILURE-ONLY finally. On the literal
+     reading the success path destroys the handle just recorded — the exact forbidden state § R.5.2
+     names. FIX: § R.5.7 states the construct ONCE, normatively, with two acceptable forms (a success
+     flag, or catch-and-rethrow), and § R.5.2 step 6, § R.10.1 step 4 and § R.14.1 step 6 all REFERENCE
+     IT AND REPRODUCE NO VARIANT. Five obligations, each testable: (1) destroy iff the row was not
+     recorded; (2) ON SUCCESS THE HANDLE SURVIVES AND MUST BE RESOLVABLE; (3) destroy on the failure path
+     is best-effort and its own failure is audited, NEVER rethrown — because a destroy throwing inside a
+     finally REPLACES the original error and hides the real failure; (4) the buffer is zeroed on EVERY
+     path; (5) the construct is apps/server code (§ R.1.7). Ordering inside the failure path is normative:
+     destroy FIRST, then zero. T-I IS ADDED — T-H'S COUNTERPART — asserting that after a SUCCESSFUL mint
+     resolve(handle) returns the material. Its absence is why the success path went unchecked."
+
+  - "B3 (BLOCKER) — STATE 4 (revoked) IS NOT PRODUCIBLE FROM THE READ PATH THE DESIGN KEEPS. § R.16 row 46
+     specified RegistrationCommitState as client-derived from ProductDetailView.credentials with 'no new
+     server field', while § R.12 said a revoked credential 'does not come back — that is state 4'. Both
+     cannot hold. VERIFIED AT 361256c: loadProductDetail (control_plane_service.dart:360-367) populates
+     credentials EXCLUSIVELY from readActiveCredentialForRepository, which excludes revoked rows on both
+     tiers (store:370-381; in_memory:220-231), and ProductDetailView carries no revoked summary. So state
+     4 is INDISTINGUISHABLE FROM STATE 1 — the user is told 'no key generated yet' about a key that
+     existed, was withdrawn, and may still sit installed on the repository. REVISION 3'S STATED CAUSE WAS
+     WRONG AND IS CORRECTED: 'AccessStatus has no revoked member' mislocates it one layer down —
+     AccessStatus is DOWNSTREAM of a query that never emits the row. FIX: § R.11.2 specifies the
+     SERVER-SIDE CHANGE AS A REQUIRED DELIVERABLE, gap G-14 — one method's data source, switched to the
+     EXISTING readCredentialsForProduct (whose contract already says 'including revoked ones',
+     product_registry_store.dart:78-82), plus one selection rule (active preferred, else most recent
+     revoked, so a repository keeps exactly one entry). NO new model field, NO new wire field, NO schema
+     change, NO migration — RepositoryCredentialView.status ALREADY lists revoked. AccessStatus gains a
+     revoked member AS A CONSEQUENCE. Added to § R.16 as row 47, to § R.18.2 as G-14, to § R.8.4's
+     blast-radius accounting, to § 8 as SC-19, and to requirements_gaps. § R.12's first claim is rewritten
+     — Revision 3 used the revoked-row EXCLUSION as evidence that hiding a revocation is designed, when
+     it is a read answering a different question."
+
+  - "B4 (BLOCKER) — D-4/D-5 SPECIFIED AS SQL-ONLY WHILE THEIR NAMED TESTS RUN IN-MEMORY. The in-memory
+     store's _sameKeyMaterial (in_memory:196-209 — doc :196-201, method :202-209) DELIBERATELY excludes
+     repositoryId/productId — 'it mirrors the immutability the Postgres store's write enforces, and the two
+     must agree' — and then overwrites wholesale at :193. T-C, T-F and T-G are ALL in
+     packages/product_registry/test/credential_test.dart, which is ENTIRELY in-memory. After a
+     Postgres-only fix those tests STILL FAIL, and D-5 would leave the tiers holding DIFFERENT predicates
+     — the exact defect product_credential_immutability_postgres_test.dart:29-31 exists to catch. The
+     words 'InMemory', 'both tiers' and 'memory tier' appeared ZERO times in all four Revision-3
+     artifacts. FIX: § R.9.1 (D-4) and § R.9.3 (D-5) now each carry a TIER A construct AND a TIER B
+     construct; § R.9.6's test table has a TIER(S) column and requires T-C, T-F, T-G, T-J and T-K on BOTH
+     tiers; § R.9.1 states the TIER ORDERING (the identity guard is checked FIRST on Tier B, because
+     DO NOTHING evaluates no column predicate so the tiers would otherwise disagree about WHICH invariant
+     was violated); § R.9.3 states that Tier A's mint branch needs NO scope predicate (DO NOTHING updates
+     nothing) so a reader who assumes symmetry does not add a predicate that can never be evaluated; and
+     § R.9.7 makes the tier requirement a sentence IN THE STORE CONTRACT (M2)."
+
+  # ---- HIGH ----
+  - "H1 (HIGH) — HOST DERIVED FROM A ROW THE NEXT STEP CREATES. § R.5.2 step 1 read 'derive host from
+     RepositoryReference.uri' and its step 2 created that reference — an UNSATISFIABLE ordering in one of
+     two normative locations (§ R.14.1 had it right). FIX: § R.5.2 step 1 now derives host by PARSING THE
+     ENDPOINT'S OWN repositoryUri PARAMETER, with an explicit note that no row may be read because none
+     exists yet on a first mint; § R.10.1 step 1 and § R.14.1 step 2 both point at it. The derived host
+     is written to both RepositoryReference.uri and the credential's host field in the same step, so they
+     cannot diverge."
+
+  - "H2 (HIGH) — § R.14.1 STEP 2'S GET-OR-CREATE READ PRECEDED THE RepositoryReference IT REQUIRES; THE
+     ENDPOINT HAD NO repositoryId; THE ERROR TABLE NAMED THE WRONG EXCEPTION. VERIFIED: engine:1139 calls
+     _store.readRepositoryReference, which THROWS RepositoryNotFoundException when absent
+     (in_memory:145; store:155; exceptions.dart:12), so on a first mint Revision 3's step 2 THREW instead
+     of returning null. FIX, three parts: (a) the endpoint signature gains 'required String repositoryId',
+     with the rule that it is NOT derived from repositoryUri (resolveRepository, engine:175, states durable
+     repository identity is never derived) and that the existing caller's
+     'repositoryId: productId /* for simplicity */' placeholder (add_product_page.dart:171) must be retired;
+     WHO ISSUES THE ID is explicitly NOT decided here, because both options satisfy the design;
+     (b) the get-or-create read MOVES to step 4 — after the reference exists — and switches to the STORE
+     method readActiveCredentialForRepository, which is a pure lookup returning null and never resolving a
+     reference; ownership is not re-derived (that is the engine's _ensureOwned); (c) the error table is
+     REWRITTEN into seven rows, with 'unknown repository' mapped to RepositoryNotFoundException and
+     'unknown product' to ProductNotFoundException — and both marked as EXPECTED conditions on a first
+     mint, not errors."
+
+  - "H3 (HIGH) — D-4's CAS-BRANCH EXTENSION HAD NO CONSTRUCT AND NO TEST, AND ITS ARGUMENT NEVER REACHED
+     IT. Revision 3 rejected 'DO UPDATE … WHERE <always false>' as a second source of truth and then
+     extended D-4 to the CAS branch with no construct and no test, while that branch's predicate IS that
+     shape — AND revokeCredential legitimately SETS revokedAt through it. FIX: THE REQUIREMENT IS SPLIT.
+     D-4 governs the MINT branch only (§ R.9.1). D-6 IS NEW (§ R.9.4) and governs the CAS branch, in the
+     ONLY satisfiable formulation: 'a write MAY SET these eight columns, including overwriting a non-null
+     value; a write MUST NOT transition any of them from NON-NULL TO NULL.' Its construct is given for
+     both tiers — Tier A's _noClear(column, type) with the 42P08/42804 inference trap documented and the
+     seven column types named, Tier B's _clearsDurableEvidence — and it carries the tier-scoping argument
+     (Tier A's DO NOTHING evaluates NO column predicate, so applying the evidence guard to Tier B's mint
+     path would MASK D-4 behind a later check). TWO TESTS ADDED: T-J (the legitimate setters still
+     succeed — D-6's regression guard) and T-K (the erasure is refused). SC-17 added."
+
+  - "H4 (HIGH) — ae1c1f79 WAS ABSENT; REVISION 3 PREDATED IT. FIX: cited, and § R.5.2 is RE-FRAMED FROM
+     'CONFIRM OR CORRECT' TO 'IMPLEMENTED AS DECIDED' — the human adopted OPTION_A, which was Revision
+     3's own recommendation, so § R.5.2 is decided content and § 10.1's item 3 is WITHDRAWN. All three of
+     its follow-up actions are traced: action 1 to § R.5.2's table plus T-H; action 2 to § R.11g item 5;
+     action 3 to § 10.1 item 4. Its SECOND FOLLOW-UP ACTION IS NOW DISCHARGED: § R.11g GAINS ITEM 5 —
+     after a refused mint the Products list is UNCHANGED, the refused-mint state is a SEPARATE SURFACE,
+     and the Unknown-host board must NOT double as the refused-mint board because they differ in what
+     exists afterwards. § R.18.1 records the closure; requirements_gaps no longer carries it."
+
+  - "H5 (HIGH) — G-7's BLAST RADIUS WAS SEVEN ROWS, NOT TWELVE, TWO SITES WILL NOT COMPILE, AND
+     protocol.dart IS A NO-OP. FIX: § R.3.2 is REWRITTEN as a site-by-site table derived by grepping every
+     referenceName occurrence in apps/** and packages/** at 361256c, with the grep quoted so a reviewer
+     can regenerate it. TWELVE ROWS ACROSS ELEVEN FILES must be edited (model source :11 and its doc :4;
+     ui_view_mappers.dart:176; control_plane_repository.dart :1691, :1709, :1708, :108, :1098;
+     product_detail_page.dart :471, :676; and the two fixtures product_detail_mobile_golden_test.dart:33
+     and widgets/product_detail_page_test.dart:18). THE THREE COMPILE-BREAKING SITES ARE MARKED AS SUCH:
+     CredentialResponse's constructor parameter is REQUIRED (control_plane_repository.dart:1691), so both
+     fixtures are compile ERRORS rather than visual diffs. protocol.dart IS MARKED NO-OP — grep gives 0
+     and it enumerates CLASSES, not fields (:164, :533, :608) — and is DROPPED from the change list;
+     the SERVER generated protocol.dart DOES change, because it carries a ColumnDefinition for the field
+     at :3841-3844. Files that legitimately keep the field (the table definition, the schema, the domain
+     type, the tests) are listed with the reason. MY COUNT DIFFERS FROM THE FINDING'S 'nine' AND I SAY SO:
+     I count twelve rows / eleven edit sites, and the difference is that the finding counted only sites
+     inside files already listed. The completeness, not the count, is the claim."
+
+  - "H6 (HIGH) — THE RISK RATIONALE WAS TALLIED FOUR DIFFERENT WAYS. FIX: ONE TALLY, published once and
+     reproduced VERBATIM in three places — design-revision-4.md § 9.1, this file's risk_rationale, and
+     report-revision-4.md: RISK_LEVEL 3, 1 reason IMPROVED (R6), 1 UNCHANGED (R1), 4 WORSE (R2, R3, R4,
+     R5). Revision 3's four tallies are withdrawn as arithmetic, by name. The six reasons are re-derived
+     with three CHANGED in this pass: R4 is WORSE because this pass found three MORE defects (G-13, G-14,
+     G-15); R6 is IMPROVED because the ADR amendment is now written and Accepted (residual: unmerged);
+     R5 is WORSE but more precisely stated because the domain/transport split is now named. § 10.2 item 11
+     makes a fourth tally a review finding."
+
+  - "H7 (HIGH) — § R.6.1's PSEUDOCODE WOULD PLACE A SecretProvider CALL INSIDE packages/product_registry.
+     It is headed revokeCredential and uses the engine's private _ensureOwned, so it reads as the engine
+     method's body — which § R.1.2 and C-02 forbid and which engine:897-915 states in its own section
+     header. FIX: § R.1.7 IS NEW and states the composition boundary as THREE NAMED LAYERS — domain /
+     application / transport — with the code sample attributed to apps/server, and THREE testable
+     obligations: SecretProvider is never a constructor parameter of ProductRegistryEngine ('grep
+     SecretProvider packages/product_registry/' must return 0 matches, SC-18); the substrate precondition
+     and the compensation construct are application-layer code; and the engine's participation in
+     revocation is exactly ONE READ AND ONE CAS WRITE, which is why rotateCredential keeps working
+     unchanged. § R.6.1's pseudocode is rewritten with its attribution fixed and its four steps and their
+     order UNCHANGED. § R.16 row 49 and § 9.3 record it."
+
+  # ---- MEDIUM ----
+  - "M1 (MEDIUM) — THE DUPLICATE-CREDENTIAL AUDIT WAS IN NO GAP REGISTER. FIX: it is gap G-12, in
+     BOTH § R.18.2 and requirements_gaps above, and as row 7 of § R.8.4's blast-radius accounting, with
+     the full disclosure carried verbatim — including that the query as dispatched DOES NOT EXECUTE and
+     that the only credential-bearing database reachable to the implementer held 0 ROWS, making its 'no'
+     VACUOUS. M1 named the 'hidden in a second list' pattern; the audit is now in the register, and
+     § 10.2 item 12 makes register/prose divergence a review finding."
+
+  - "M2 (MEDIUM) — THE STORE CONTRACT DOC WAS IN NO CHANGE LIST, THOUGH D-4/D-5 WIDEN THAT CONTRACT. FIX:
+     § R.9.7 names product_registry_store.dart:40-68 as a REQUIRED change with FOUR specific edits, each
+     justified by what becomes false or incomplete: the current sentence narrows D-4 to 'differs', so a
+     reader implementing to it REPRODUCES M-3; the 'both paths' sentence describes only D-1's predicate;
+     the refusal-reason paragraph is correct and D-4/D-5 must join it with their OWN reasons (scope ≠
+     key ≠ identity); and a FOURTH sentence is added requiring identical predicates on every tier — which
+     is the sentence that turns B4 from a defect in a design into a property of the contract."
+
+  # ---- LOW ----
+  - "L1 (LOW) — D-18's MECHANISM WAS MISNAMED, AND THE LANDED STORE COMMENT IS FALSIFIED. FIX: § R.9.2
+     GAINS AN EXPLICIT MECHANISM TABLE naming the ENGINE'S ONE-ACTIVE GUARD (engine:954-961) as the guard
+     that STANDS DOWN because readActiveCredentialForRepository returns null — its stand-down IS the
+     mechanism — and D-2's index as the thing the re-mint EVADES and the BACKSTOP that blocks the
+     legitimate fresh mint afterwards, not the refuser. D-1's predicate is named as satisfied, not
+     refusing. The reason the naming matters is stated: a reader told 'the index stops this' will look for
+     the index, find it satisfied, and conclude the path is closed. SECOND HALF: the landed comment at
+     store:312-319 asserting 'no reachable path moves a credential from revoked back into the active set'
+     IS FALSIFIED BY D-18 — § R.8.5 shows the path, shows the comment's two justifications failing, and
+     makes correcting it a REQUIRED DELIVERABLE OF D-4 in three parts (insert-only; correct the comment to
+     the branch-specific claim that survives, with the reason; and let T-D make it true so it cannot rot
+     into a new falsehood)."
+
+  - "L2 (LOW) — NO CITATION INDEX EXISTED, YET § 10.2 ASKED A REVIEWER TO VERIFY THE LABELLING WAS
+     COMPLETE. FIX: § 0.3 carries a 22-ROW CITATION INDEX — every citation class, its revision, the files
+     and ranges cited from it, and how to check it — plus a ONE-COMMAND COMPLETENESS CHECK whose output I
+     ran and quoted. § 10.2's item 10 now names what to run and what would falsify it, and the old item 6
+     ('verify the labelling is complete') is GONE because it was uncheckable."
+
+  - "L3 (LOW) — 'REACHABLE THROUGH THE PUBLIC DOMAIN API TODAY' IS TRUE OF THE DART LIBRARY AND FALSE OF
+     ANY HTTP SURFACE. FIX: § R.9's preamble states it precisely — recordGeneratedCredential is a public
+     method on ProductRegistryEngine, so any in-process code can reach it, and 'grep -rn
+     recordGeneratedCredential apps/server/lib/src/endpoints/' RETURNS NO MATCH: there is NO HTTP-REACHABLE
+     SURFACE today. It is still a live defect and NOT softened — the engine's own section header says the
+     method is reached with an existing id and fresh key material, and G-7's endpoint work will make it
+     reachable over the wire. The claim is 'reachable in-process, and about to become reachable over HTTP',
+     and § 9.4 records the negative grep as VERIFIED (negative)."
+
+  - "L4 (LOW) — credential_test.dart's ROTATION TEST IS AT :521, CITED :520. FIX: § R.9.1 and § R.9.3 both
+     cite :521, verified at 361256c ('rotation is the only way to change the key, and it mints a new id')."
+
+  # ---- also new in this pass ----
+  - "NEW — § R.10.3's HOST-KEY ENFORCEMENT CLAIM IS CORRECTED. Revision 3 said HostKeyStatus.permitsConnection
+     has NO RUNTIME ENFORCER and called ADR 0018 :96-99 'decorative'. BOTH WERE OVER-BROAD, per the
+     accepted ADR 0018 amendment design's § 3.1, and Revision 4 adopts its corrected SPLIT: the DOMAIN
+     DOES ENFORCE (recordCredentialCheck at engine:1047-1052, requireUsableCredential at :1162-1167,
+     confirmHostKey at :1003-1015, canReachRepository at repository_credential.dart:128-129), and it is
+     the TRANSPORT THAT HAS NO ENFORCER (git_workspace_inspector.dart:106-112; the five host-key tokens
+     grep to 0). I re-verified the whole split at 361256c because that lane cited its own base (6220951,
+     where the guards are :1033 and :1148 — the store-integrity work shifted them by +14). § R.7.1's
+     threat-model row is SPLIT INTO TWO so a single over-broad claim cannot stand. G-4 is reclassified from
+     'unimplemented' to 'HALF-IMPLEMENTED', which is more useful and equally true."
+
+  - "NEW — § R.9.3's HOST-TRUST PROSE IS CORRECTED, per the engineering review's confirmed finding which I
+     verified. Revision 3 said a re-point 'carries a human's confirmation of repo-1's host across to
+     repo-2's host'. That is TRUE OF THE CAS BRANCH AND FALSE OF THE MINT PATH: the mint path builds the
+     row with hostKeyStatus defaulting to unknown and no hostConfirmedAt, so it DESTROYS the confirmation
+     rather than carrying it. Both branches contradict ADR 0018 :96-99, differently. The sentence is split
+     into a two-row table. The D-5 REQUIREMENT IS UNAFFECTED — immutability of the scope set is one
+     requirement with two harms — and only the prose was wrong."
+
+  - "NEW — G-13. § R.14.1's get-or-create step is DESTRUCTIVE on both rows (saveProduct :91-101 and
+     saveRepositoryReference :127-145 are both ON CONFLICT DO UPDATE), so re-entry would reset a product's
+     state to 'registered' and rewrite its name, createdAt, uri and addedAt. Revision 3 called the step
+     'idempotent by read-then-write' WITHOUT CHECKING WHAT THE WRITES DO. Found while correcting H2.
+     § R.14.1 step 3 now specifies read-first / write-only-when-absent normatively, with the exceptions
+     that make absence testable (ProductNotFoundException, RepositoryNotFoundException), and § R.12's
+     re-entry depends on it."
+
+  - "NEW — G-15. CredentialIdentityConflictException is named by D-4 and does not exist; the implementer
+     reports it could not be created because exceptions.dart was outside its OWNED_PATHS. Behaviour is
+     complete and the refusal carries a distinct greppable reason, so no API behaviour changes — but the
+     design naming a type that does not exist is a gap in its terminology, and D-5's separate scope reason
+     makes the distinction meaningful. Recorded with an ownership-grant action."
+
+  - "CARRIED VERBATIM, NOT RE-OPENED — § R.1.1–R.1.6 (including § R.1.3's opaque-handle judgement, which
+     the reviewer confirmed as a proper judgement and raised no HIGH against); § R.2 constraints 1–3 and
+     R.2.4; § R.3.1/R.3.3/R.3.4; § R.4's withdrawal notice; § R.5.1/R.5.3/R.5.4/R.5.5/R.5.6; § R.6.2/R.6.3;
+     § R.7 and § R.7.1 (except the one row corrected by § R.10.3); § R.8.1–R.8.3; § R.9.1's CALL-SITE
+     TABLE, which the reviewer confirmed is exact and which I re-verified; § R.9.5's field sets; § R.10.0;
+     § R.10.2's N-1..N-9 including the exact custody string; § R.11's two axes and canRegister; § R.12's
+     claims table (except row 1, rewritten by B3); § R.13.1/R.13.2's taxonomy; § R.14.2; § R.15 in full;
+     § R.16 rows 1–45; § R.17; SC-01..SC-16 except where extended; § 9.2's three ratings. § 0.5 lists
+     this set explicitly so a reviewer can confirm nothing was quietly changed."
