@@ -1,0 +1,884 @@
+# =====================================================================================
+# Design Revision Metadata — server-side deploy-key service
+# Artifact:  design-revision-metadata-7.yaml
+# Body:     design-revision-7.md
+# Matrix:   traceability-matrix-7.md
+# Report:   report-revision-7.md   (this file's OWN blob hash is printed THERE — see L-R5-1's
+#           corrected property, quoted at provenance.content_pins.note below)
+#
+# Revision 7 is a PRECISION CORRECTION PASS over Revision 6 (d2665821…), which an
+# independent reviewer returned DESIGN_REVIEW_CHANGES_REQUIRED on with 0 BLOCKERS,
+# 3 HIGH, 1 MEDIUM and 4 LOW. Revision 6 was NEVER approved, and NO approval of any
+# kind carries over from any revision in this chain.
+#
+# Revision 7 CHANGES NO DESIGN CONTENT about the key flow. What it corrects is
+# Revision 6's SELF-DESCRIPTION — chiefly the dangling/mis-resolving cross-reference
+# class, which Revision 6 introduced inside the artifact built to eliminate it.
+#
+# Revision 6's four artifacts are RETAINED BYTE-IDENTICAL and are COMMITTED on main at
+# af8e30f. This revision edits NO line of them — and that is precisely what lets it cite
+# design-revision-6.md:277 and :523 as stable evidence, which is how it found two of the
+# defects. See design-revision-7.md section R.1-j and G-22 for the cost of that choice.
+# =====================================================================================
+
+revision_id: "3877696f-c15d-4ea8-9941-898fa601bf44"
+revision_id_minting: |
+  A UUIDv4 minted by this lane with `uuidgen` (lowercased) on 2026-10-07, as Revision 6 did for its own.
+  It identifies THIS artifact only. It is NOT an approval, and it does not inherit or replace any revision
+  id in the chain.
+brief_id: "97484D0E-E16C-485E-BAA2-A277889C0FB6"
+brief_version: "1.1.0"          # design-brief-1.1.0.md — NOT re-issued. No brief AC changes in this pass.
+revision_number: 7
+supersedes_revision_id: "d26658219dea4955b0d2b4004a70aa4d"   # revision 6, retained byte-identical
+status: "DRAFT"
+risk_level: 3
+
+# -------------------------------------------------------------------------------------
+# risk_rationale — the SINGLE tally, reproduced VERBATIM from design-revision-7.md § 2.1,
+# which carries it verbatim from design-revision-5.md § 9.1 through Revision 6.
+#
+# Revision 7 moves NO reason's status in either direction and claims NO NEW REASON.
+# Claiming one for bookkeeping is the same error class as H10 (a count asserted in five
+# places). The LEVEL is re-derived, not inherited: design-revision-7.md § 2.2 re-states
+# the six level-3 grounds and confirms every one is present at 14b0267.
+# -------------------------------------------------------------------------------------
+risk_rationale: |
+  Level 3 — "Change to core workflow, navigation structure, or information architecture
+  affecting multiple features or user mental models" (DESIGN_GOVERNANCE.md:94-99). Approval
+  path: HUMAN_DECISION_REQUIRED — product/design/architecture approval. This revision does
+  NOT have it and does not claim it.
+
+  Six grounds, re-confirmed present at this revision's base 14b0267:
+    1. 898b07d0 makes a Product VISIBLE before registration commits and turns registration
+       into a commit — what a Product IS changes across the Products page, product detail
+       and Add Product.
+    2. RegistrationCommitState is a FIVE-STATE client model; § R.11.1 state 4 changes what
+       product detail asserts and is currently indistinguishable from state 1 (G-14).
+    3. Revision 5 § R.11g item 3 adds a RESUME ROUTE from the product into the credential
+       flow — new IA, and without it 898b07d0's accepted consequence is a dead end.
+    4. First handling of key material by SHIP IT; irreversible from SHIP IT's side.
+    5. An SSH transport seam with NO precedent, carrying an ADR requirement that is
+       HALF-IMPLEMENTED (G-4), on the credential path.
+    6. A credential-minting endpoint on a control plane server.dart:71-73 that declares
+       NO AUTHENTICATION.
+
+  THE TALLY — one, and it is the only one, carried character-for-character from Revision 5:
+
+  0 reasons IMPROVED, 2 reasons UNCHANGED (R1, R6), 4 reasons WORSE (R2, R3, R4, R5)
+
+  UNCHANGED BY REVISION 7. Revision 7 claims no movement in either direction.
+
+  WHAT REVISION 7 ADDS TO THE LEVEL: three new open gap-register entries — G-21 (ADR 0018's
+  own body still records FOUR accepted risks after the owner retired one), G-22 (Revision
+  6's false and mis-resolving text is committed and this correction does not travel with the
+  file), G-23 (the board-ownership grant is broader than G-18's measured obligation) — plus two
+  residual items on G-19. SIX open governance items against a design whose level is 3 is
+  itself an argument FOR level 3, not against it: a design at level 1 does not accumulate
+  governance debt. Revision 6 argued this with three; Revision 7 argues it with six and the
+  argument is STRONGER, not weaker. A correction pass that lowered the level because it
+  changed no design content would be measuring the correction rather than the design.
+
+  ACCEPTED-RISK COUNT IS NOW THREE — A2, A3, A4. A1 (the RESURRECTION risk) was retired BY THE
+  REPOSITORY OWNER on 2026-10-07, after 08c7590 made the mint insert-only on both tiers.
+  Verified at 14b0267 by reading the shipped source, not adopted:
+    - apps/server/lib/src/persistence/postgres_product_registry_store.dart:190-191
+      "A MINT NEVER OVERWRITES AN EXISTING IDENTITY — the null-`expectedVersion` branch is
+      `DO NOTHING`, not a predicated `DO UPDATE`."
+    - packages/product_registry/lib/src/store/in_memory_product_registry_store.dart:167-169,184
+      "is INSERT-ONLY. Checked FIRST…"
+    - packages/product_registry/lib/src/engine/product_registry_engine.dart:933-936
+      "A mint is insert-only: supplying an id that already exists is refused by the store and
+      changes nothing — whether the supplied material differs, matches, or the existing
+      credential is revoked."
+  Two prior lanes were RIGHT TO DECLINE to retire it — 876c6b97's first scope note says
+  "RETIRING IT IS THE OWNER'S CALL". A design lane may not retire an accepted risk. The owner
+  has; this revision records that and attributes it.
+
+  ⚠ THREE READINGS OF "A1" EXIST AND MUST NOT BE CONFLATED. This has already caused one wrong
+  conclusion in this work item; ADR 0018 now carries a three-way identifier table for that reason.
+    - ACCEPTED RISK A1 ("a revoked credential can be resurrected by a re-mint") — RETIRED 2026-10-07.
+    - AMENDMENT A1 ("Scope is the repository, not the product", ADR:35) — LIVE, and live IN THE
+      CODE TODAY: packages/product_registry/lib/src/store/product_registry_store.dart:47 reads
+      "KEY MATERIAL IS IMMUTABLE (ADR 0018 A1)" and :52-53 "ADR 0018 A1, 'scope is the
+      repository'". A reader told "A1 was retired" who meets these comments must NOT conclude the
+      immutability rule is retired. It is not.
+    - SUBSTRATE OPTION A1 (filesystem 0600) — LIVE, ADR:107 and :442, the documented fallback.
+
+  ⚠ RETIRING A1 DISCHARGED THE RESURRECTION HALF ONLY. Verified at 14b0267:
+  grep -rniE 'destroySecret|deleteSecret|removeSecret|secretManager\.delete' --include='*.dart'
+  apps packages  ->  0 MATCHES. No code destroys a secret-manager handle, so REVOCATION REMAINS
+  ONE-SIDED IN PRACTICE, and THAT HALF WAS NEVER AN ACCEPTED RISK. Retiring A1 did not accept it,
+  close it, or transfer it to A2–A4. It belongs to 79e860e2. Carried against Revision 5 § R.6 at
+  design-revision-7.md § R.6-j. A CLOSED GAP MUST NEVER LAUNDER AN OPEN ONE.
+
+  ⚠ ADR 0018's OWN BODY STILL RECORDS FOUR. Verified at 14b0267:
+  grep -c 'Consequence accepted' docs/adr/0018-per-product-git-credentials.md  ->  4
+  :453 still reads "**A1 — A revoked credential can be resurrected by a re-mint. ACCEPTED.**"
+  :448-451 still says "The four gaps A2 carries" and "Nothing here is closed"; :527 and :557 and
+  :574 still say four. The retirement is in the DECISION OBJECTS, not in the ADR. That gap is
+  G-21, owned by the ADR lane + Manager; docs/adr/** is PROHIBITED_PATHS for this lane and
+  NOTHING WAS WRITTEN THERE. The ADR lane has ALREADY SPECIFIED the edit in
+  design-adr-0018-amendment/design-revision-5.md section 4; its own report records the ADR as
+  UNCOMMITTED (999 -> 1212 lines), so at 14b0267 the specified edit is not on disk either.
+
+  SCOPE OF THIS PASS: no design content about the key flow was changed. Substrate choice, the
+  custody model, the eight-column D-6 set, G-14, G-10's unrun probe and A4's unproven reachability
+  are all untouched. A4 remains accepted AND unproven, which is the combination worth recording.
+
+# -------------------------------------------------------------------------------------
+# Provenance. Base moved from Revision 6's 1c3f5ad to 14b0267. main advanced by five commits
+# while Revision 6 was under review, and 14b0267 carries material this pass must not miss.
+# design-revision-7.md § 0.3 carries the FULL pre-flight narrative, including the F-16
+# merge-precondition failure and the 19-file recovery.
+# -------------------------------------------------------------------------------------
+provenance:
+  repository: "/Users/alkebut/air/shipit-platform"
+  worktree: "/private/tmp/shipit-correct-addproduct-keys"
+  branch: "design-correct-addproduct-keys"
+  base_sha: "14b026719a1433362059fb02d3fccc37c678462b"
+  head_sha: "14b026719a1433362059fb02d3fccc37c678462b"
+  committed: false
+  pushed: false
+  rebased: true
+  rebased_from: "1c3f5ad2e6fe206e77277f948ada70bbebed672c"
+  rebase_method: |
+    git merge --ff-only 14b0267
+    Fast-forward 1c3f5ad..14b0267. NOT a rebase commit; nothing was rewritten.
+
+  merge_precondition_note: |
+    REFUSED FIRST TIME, AND THE RESOLUTION IS RECORDED RATHER THAN SMOOTHED. This is discovery
+    F-16, and it is the SECOND time this worktree has refused a fast-forward — Revision 6
+    recorded the identical event for Revision 5's four artifacts.
+
+    `git merge --ff-only 14b0267` aborted with 11 tracked files "would be overwritten by merge"
+    and 8 untracked files "would be overwritten by merge" — 19 shadowing files in total.
+
+    NOTHING WAS DELETED AND NO LANE HAD TO BE STOPPED, because all 19 were byte-identical to the
+    blobs 14b0267 carries. Verified with `git hash-object` on every file BEFORE anything moved:
+
+      6c6553b972cf5730b722a634aa70d0dc7474e279  design-revision-2.md
+      9b29820e5bb2a40745815dfc12487e48eebab19c  design-revision-4.md
+      a85326a959971ee208fc4357c17b2712d781a2c7  design-revision-metadata-2.yaml
+      e6acea88ef58d848038da9e65d8e63d9a644ed34  design-revision-metadata-4.yaml
+      ffff28a50569774300a0103efb0a6025efaae132  design-revision-metadata.yaml
+      b68e2df3f8b0f43d5c7c5b7c6e7425f9db1162e7  design-revision.md
+      9846ae773f1080bf78b8435bda3c5014be2e321f  discoveries.md
+      c010db17699345bcf46dcd31e6db9c84b938f8d6  report-revision-4.md
+      7dabea29ca7f5009ccd63d344ad3062b088bab22  traceability-matrix-2.md
+      1098f03fbf0fc74eedfbb40b9fedfc631dfce8b5  traceability-matrix-4.md
+      7bbc6ec26463b550521d0f77f13a1774828970eb  traceability-matrix.md
+      13647274346f183f87ef6510ca2da9d539120a6a  design-revision-3.md
+      2187065c0beffc3020886cc1b16027865f7ae71c  design-revision-6.md
+      8831c35b1f5f97f9d1b07968f3ba7087681e0036  design-revision-metadata-3.yaml
+      5a9b5ae03dfa64f97fe7962edec60308805be889  design-revision-metadata-6.yaml
+      75115580c1e8b616807f41b0d8ec158d08299b59  report-revision-3.md
+      49b74ba5925ac3dc480292c357e488274b3b2804  report-revision-6.md
+      6209f6d466b1911323911c3ff51df77eb70052ef  traceability-matrix-3.md
+      fafcf362dc873fa2a9169448bec39711d4b7dd9f  traceability-matrix-6.md
+
+    THE RECOVERY, in order: a full copy of the lane's directory was taken OUTSIDE THE REPOSITORY
+    FIRST; the 8 untracked copies were MOVED OUT (not deleted) to that backup; the 11 tracked
+    modifications were restored with `git checkout --` against the hashes verified above; the
+    fast-forward proceeded; and the 8 files were RE-COMPARED AFTER THE MERGE against the backup —
+    ALL 8 IDENTICAL. `git status --porcelain` is clean. No content was discarded.
+
+  eleven_uncommitted_banners: |
+    THIS IS NOW COMMITTED, AND THE CHANGE IS RECORDED AS A STATUS CHANGE, NOT A SILENT ONE.
+    At 1c3f5ad these 11 tracked files carried Revision 3/4/5 supersession banners plus a
+    discoveries.md addition, modified and uncommitted; Revision 6 registered that residue as
+    G-20. At 14b0267 `git status --porcelain` for this lane's directory returns EMPTY and
+    design-revision-2.md:1 and design-revision-4.md:1 carry
+    "> ## SUPERSEDED BY DESIGN REVISION 5". G-20 IS DISCHARGED — see blockers[] and § 0.6.
+
+  revisions_never_committed:
+    - "NONE. Revision 3's four artifacts were NEVER ADDED ON ANY REF before af8e30f; they were
+       committed there. Revision 6's four artifacts were committed at af8e30f and are unchanged
+       at 14b0267. Revision 7's four artifacts are UNCOMMITTED in this worktree, as instructed,
+       with Revision 6 committed underneath them."
+
+  g20_discharged: |
+    G-20 (registered by Revision 6: "this lane's own supersession chain is not on disk") is
+    CLOSED — DISCHARGED at af8e30f. Re-verified at 14b0267 with full paths, never basenames:
+      git log --all --oneline --diff-filter=A -- .../design-revision-3.md   ->  af8e30f (one commit)
+    and the same single commit for design-revision-metadata-3.yaml, report-revision-3.md and
+    traceability-matrix-3.md; plus the 11 banners committed alongside them.
+    Revision 6's "before" claims are TRUE AND RETAINED, re-anchored to 1c3f5ad, which is the base
+    they were written at. The register entry KEEPS a status rather than being deleted: a gap that
+    was real and was discharged is a fact, and deleting it would send the next reader to re-derive
+    the residue.
+
+  content_pins:  # L-R5-1 CORRECTED — the claim is corrected here; the PINS ARE NOT RE-FIXED.
+    method: "git hash-object <artifact>  (run at 14b0267, inside docs/engineering/dispatch/tasks/design-addproduct-keyservice/)"
+    note: |
+      L-R5-1 WAS REAL. Revision 5's metadata said "A FILE CANNOT CONTAIN ITS OWN HASH, so this
+      file's own value is printed in report-revision-5.md" — and it was not: that report read
+      "design-revision-5.yaml (pinned in the Manager-facing report)", naming a document that does
+      not exist as an artifact. The pointer was circular and dangling, and the UNPINNED file was
+      the one carrying risk_level, gates, requirements_gaps and the changelog.
+
+      THE PIN LOOP IS FIXED AND IS NOT RE-FIXED HERE. report-revision-6.md prints this file's
+      OWN blob hash, and the rev-6 reviewer verified all four Revision-6 hashes byte-exact
+      against the committed blobs at af8e30f. THAT PART IS ACCEPTED AS SETTLED.
+
+      ⚠ THE CLAIM WAS FALSE IN EIGHT PLACES, NOT FIVE, AND IS CORRECTED HERE. The re-review
+      located five. THREE MORE EXIST:
+        design-revision-6.md:162        — inside Revision 6's OWN correction-map row for L-R5-1,
+                                         so the row disposing of the finding was itself false
+        report-revision-6.md:286        — inside the per-finding disposition
+        report-revision-6.md:518        — inside the structured CHANGELOG the Manager parses
+      And design-revision-metadata-6.yaml:470 additionally miscounts the self-excluded files as
+      "THE TWO self-excluded files"; in fact ALL FOUR Revision-6 entries are self-excluded or
+      pointers.
+
+      ⚠ THE FALSE CLAIM, verbatim, at all eight sites: "EVERY entry in `artifacts[]` below carries
+      a REAL blob_hash" / "Every entry here carries a REAL hash" / "every `artifacts[]` entry is a
+      real hash" / "every `artifacts[]` entry carries a real `blob_hash`" / "Every `artifacts[]`
+      entry now carries a real `blob_hash`". NOT ONE of the four Revision-6 entries carries a
+      hash. The actual values are: design-revision-6.md -> "RECORDED IN report-revision-6.md
+      section Content pins AND design-revision-6.md section 7.1 V-2";
+      design-revision-metadata-6.yaml -> "SELF-EXCLUDED BY CONSTRUCTION — printed in
+      report-revision-6.md"; traceability-matrix-6.md -> "RECORDED IN report-revision-6.md";
+      report-revision-6.md -> "SELF-EXCLUDED BY CONSTRUCTION — this file is the report".
+      Only the four SUPERSEDED Revision-5 entries carry real hashes.
+
+      ⚠ THE FALSIFIER PUBLISHED FOR THIS CORRECTION WAS ITSELF SATISFIED. traceability-matrix-6.md
+      line 85 read: "every `artifacts[]` entry carries a real `blob_hash`" with the falsifier
+      "find an `artifacts[]` entry whose `blob_hash` is a pointer string rather than a hash". A
+      reviewer running that test finds FOUR. A FALSIFIER AN ARTIFACT FAILS IS WORSE THAN NO
+      FALSIFIER, because it teaches a reviewer that the row's own test is not worth running.
+
+      THE PROPERTY THAT IS TRUE, AND TESTABLE — stated at design-revision-7.md § R.11g-j § B and
+      used as the amended falsifier in traceability-matrix-7.md § 2:
+        Every `artifacts[]` entry carries EITHER a real 40-character `blob_hash` (the four
+        SUPERSEDED Revision-5 artifacts) OR a pointer to report-revision-7.md § 1.1, where the
+        hash is printed; AND every pointer resolves to a printed hash, EXCEPT the report's own
+        entry, which no artifact can print, because a file cannot contain its own hash and no
+        artifact is written after it.
+      That one limit is STRUCTURAL, not a defect, and the command that recovers it is
+      `git hash-object report-revision-7.md`. Claiming otherwise is what Revision 5 did.
+
+      A reviewer should therefore read the pins from provenance.content_pins.this_revision,
+      which carries every artifact of THIS revision including this file, and cross-check the
+      values against report-revision-7.md § 1.1.
+    this_revision:
+      design-revision-7.md:            "SEE report-revision-7.md § 1.1 — printed there. NOTE: an `artifacts[]`
+                                      entry cannot carry its own file's hash, so this one is a POINTER, and
+                                      saying otherwise is the defect this note corrects."
+      design-revision-metadata-7.yaml: "SELF-EXCLUDED BY CONSTRUCTION — a file cannot contain its own hash. Printed
+                                      in report-revision-7.md § 1.1."
+      traceability-matrix-7.md:        "SEE report-revision-7.md § 1.1"
+      report-revision-7.md:            "SELF-EXCLUDED BY CONSTRUCTION — this file is the report, and no artifact is
+                                      written after it, so NO artifact in this set carries its hash. Recover it with
+                                      `git hash-object report-revision-7.md`. Stated rather than papered over."
+    superseded_revision_6_artifacts:
+      design-revision-6.md:            "2187065c0beffc3020886cc1b16027865f7ae71c"
+      design-revision-metadata-6.yaml: "5a9b5ae03dfa64f97fe7962edec60308805be889"
+      traceability-matrix-6.md:        "fafcf362dc873fa2a9169448bec39711d4b7dd9f"
+      report-revision-6.md:            "49b74ba5925ac3dc480292c357e488274b3b2804"
+    superseded_revision_5_artifacts:
+      design-revision-5.md:            "fb99f9e216b10db655b673111062355e690d61fa"
+      design-revision-metadata-5.yaml: "bae3c019be3a28c2d9347944eacc8eca4ccecec6"
+      traceability-matrix-5.md:        "0778b37d567c25d60efd4a6fb2dbac316212334c"
+      report-revision-5.md:            "121273aee65c2e771f2cc3cf3be25f534fe09d14"
+    superseded_artifact_pins_verified: |
+      Revision 5's four hashes verified byte-identical at 14b0267 (unchanged through af8e30f).
+      Revision 6's four hashes verified byte-identical at 14b0267 AND at af8e30f — this lane did
+      NOT re-fix them and does not claim to have; the re-reviewer verified them byte-exact and
+      that is accepted as settled.
+
+  non_ancestor_sources: []           # none consulted this pass
+  inherited_not_measured:
+    - "a11y contrast ratios — design-register-button/report.md:71-76. inkTertiary 4.23:1 dark
+       (FAILS WCAG AA); inkSecondary 6.74:1 light / 6.10:1 dark. NOT re-measured by this lane;
+       no contrast tool was run. The citation was re-read at 14b0267 and resolves exactly (V-1)."
+    - "The F6 / G-18 board measurement. THREE independent read-only measurements (the sibling
+       lane's penpot-board-evidence.md § 6.4, the Rev-5 reviewer's own live pass, and the
+       Manager's ledger). ARE CITED. THIS LANE RAN NO PENPOT TOOL AND READ NO BOARD. Source named
+       as evidence, not as authority."
+    - "The board-ownership GRANT and Penpot's DORMANCY. Both are the Manager's report of the
+       human's decision and of a runtime condition, recorded in design-revision-7.md § 10.1-j
+       item 12. NOT verified against Penpot — this lane holds no board ownership. `BPM`'s separate
+       defects are cited from WORK_STATE.md:639, and the QUESTION of whether BPM carries a
+       `Footer` layer is registered as UNVERIFIED (G-23), not answered."
+    - "Revision 5's 3372 incorporated lines. Only their HEADING EXISTENCE was re-derived (V-2).
+       Their substance was not, and this lane does not claim otherwise."
+    - "The ADR lane's accepted-risk retirement edit. ALREADY SPECIFIED by that lane in
+       design-adr-0018-amendment/design-revision-5.md section 4 and recorded by it as UNCOMMITTED.
+       This lane specified nothing new; it verified the count that must be corrected (four -> three)
+       and the sites that carry it."
+
+gates:
+  docker_or_compose: "NOT_RUN — none issued, not even a read-only one. Not `info`, not `ps`, not `logs`,
+                      not `config`, not `down`, not `--rmi`. This repository has ALREADY LOST ITS QA DATABASE to a lane
+                      running `docker compose -f docker/compose.qa.yaml down -v --rmi local`. The rule was
+                      NOT tested, because testing it is the forbidden act. Compose files were NOT READ this
+                      pass."
+  penpot: "NOT_RUN — NO PENPOT TOOL WAS CALLED. No board was read, listed, edited, renamed, moved, exported
+           or deleted. This lane holds NO board ownership in this pass and every board is PROHIBITED_PATHS.
+           G-18's measurement, G-23's BPM state and Penpot's dormancy are all CITED or REPORTED, NOT
+           reproduced — an unowned second measurement would not have made the first more true."
+  dart_analyze: "NOT_RUN"
+  flutter_analyze: "NOT_RUN"
+  build: "NOT_RUN"
+  dart_test_product_registry: "NOT_RUN"
+  make_test_integration: "NOT_RUN"
+  contrast_measurement: "NOT_RUN — figures INHERITED from design-register-button/report.md:71-76, not re-measured"
+  tests_T_A_to_T_L: "NOT_RUN — specified, not executed. T-A/T-B/GAP-2 remain reported-passing by the
+                     implementer's report and are NOT adopted as this lane's result."
+  identity_branch_gates: "NOT_RUN by me — that lane reports its own gates; not adopted as mine"
+  decisions_read: "READ ONLY — 27ea6536, 876c6b97 and 9417f8bf in full, at their SCOPED readings.
+                   NOTHING WAS WRITTEN under .decisions/**. G-19's two residual items and G-21's ADR edit are
+                   SPECIFIED, ready to apply, in design-revision-7.md § 7-j for the Manager."
+  adr_0018: "READ ONLY (the 580-line body at 14b0267, to count `Consequence accepted` and to read the A1
+             heading). docs/adr/** is PROHIBITED_PATHS: NOTHING WAS WRITTEN. G-17 and G-21 stand, unedited and
+             unclaimed. G-21's edit is ALREADY SPECIFIED by the ADR lane and is uncommitted there too."
+  deletions: "NONE. Files displaced by the F-16 merge-precondition recovery went OUTSIDE THE REPOSITORY to a
+              backup and were re-verified after the merge; the 11 tracked modifications were restored with
+              `git checkout --` against hashes verified byte-identical first. No file was deleted, moved or
+              renamed inside the repository."
+  read_only_source_inspection: "pass (V-1) — every file:line citation Revision 6 carries into its superseded
+                                siblings was re-read at 14b0267. design-revision-6.md:280 -> design-revision-5.md:2388-2393 is
+                                Revision 5 § R.11g item 7 verbatim; :158 and this file's changelog ->
+                                design-revision-5.md:2414 is the ':925 is mobile' correction; -> design-revision-metadata-5.yaml:739-742
+                                and traceability-matrix-5.md:139 BOTH state 'the mobile site exists and has a note:' and
+                                AGREE with the corrected claim; design-revision-6.md:599 -> design-register-button/report.md:71-76
+                                resolves and carries inkTertiary 4.23:1 dark / FAILS AA. All resolve exactly."
+  cross_reference_audit: "pass, WITH 7 FINDINGS (V-2) — EVERY `section` token in all four Revision-6 artifacts was
+                          extracted with its file:line and resolved against the LIVE heading inventory of its
+                          target document: Revision 6, Revision 5, report-revision-6.md, traceability-matrix-6.md,
+                          the mobile lane's penpot-board-evidence.md, the rev-5 review report, AGENTS.md and
+                          .agents/skills/aef-orchestrator/SKILL.md. RESULT: 7 distinct mis-resolving targets across 45
+                          sites; the re-review reported 1 target / 2 sites. Itemised at design-revision-7.md
+                          § R.11g-j § A. The METHOD is published as normative rule R4 so the next pass re-runs it."
+  register_recount: "pass (V-4) — Revision 5 § R.18.2 = 15 rows, counted from the live body; Revision 5
+                    requirements_gaps = 16 entries. Revision 6 = 18 rows / 19 entries. REVISION 7 = 21 ROWS /
+                    22 ENTRIES. The 18/19 pair Revision 6 published was wrong in both registers."
+  em_dash_and_third_statement: "pass (V-6) — BOTH CONFIRMED, and the cause is Revision 6's. add_product_page.dart:383-384
+                                renders \\u2014, an EM DASH. 27ea6536:175, design-revision-6.md:523 (the paste-ready block) and
+                                design-revision-metadata-6.yaml:360 all carry a HYPHEN. 27ea6536:120 asserts the mobile
+                                boards 'carry a copy plus a disclosure'; its own context.summary at :15-17 says 'no
+                                bottom copy at all'. Three of the four hyphen sites are this lane's predecessors' and
+                                are fixed in Revision 7; the .decisions/** copy is not this lane's and is specified for
+                                the Manager."
+  accepted_risk_A1_retirement: "pass (V-7) — verified against the SHIPPED SOURCE, not adopted. Insert-only on both
+                                tiers (postgres_product_registry_store.dart:190-191; in_memory_product_registry_store.dart:167-169,184;
+                                product_registry_engine.dart:933-936). 876c6b97's second scope note at 14b0267 records 'THREE
+                                are now recorded (A2, A3, A4)'. ATTRIBUTED TO THE OWNER, not to a design lane; two prior
+                                lanes were right to decline. REVOCATION'S OTHER HALF: grep for handle-destroying calls
+                                across apps/packages -> 0 MATCHES, so revocation remains ONE-SIDED IN PRACTICE and that
+                                half was never an accepted risk. ADR 0018's body still records FOUR -> G-21."
+  g20_discharge: "pass (V-8) — all four Revision-3 artifacts added at af8e30f (full paths, --diff-filter=A); the 11
+                  banners committed; `git status --porcelain` for this lane's directory EMPTY at 14b0267."
+  commit_push: "NOT_RUN — COMMITTED: NO, PUSHED: NO, as instructed. Revision 6 IS committed underneath."
+
+design_system_compliance:
+  value: "PARTIAL"
+  rationale: |
+    CARRIED UNCHANGED from Revision 5 section 9.2 through Revision 6, incorporated by reference. The boards are the
+    sibling lane's and board compliance is UNVERIFIED by this lane — and this lane read no board.
+
+    What Revision 7 adds is NOT a compliance improvement; it is a REGISTERED NON-CONFORMANCE and a register
+    that no longer under-reports itself. G-18 remains a design-system compliance defect — the four desktop S boards
+    carry a footer text layer the governing decision forbids. G-23 is new and is also a compliance fact: the
+    ownership grant covers BPM, whose recorded defects are the false custody string and the now-false
+    "NOT REGISTERED YET" eyebrow (WORK_STATE.md:639) — NOT a footer layer, which no measurement supports on BPM.
+
+    H-3's correction moves this rating's evidence, not its value: the register previously OVER-REPORTED its own size
+    (19 -> 22 where reality was 15 -> 18), which is the safer direction but still means the register could not be
+    counted by the party publishing it. 21 rows / 22 entries is countable.
+
+    UNCHANGED for the same reasons as Revisions 2, 3 and 4: token-level and copy-level work is normative and this
+    pass changed none of it, and product_detail_page.dart:471 and :676 must still lose their leading referenceName
+    token, which invalidates committed product_detail goldens (Revision 5 § R.3.4).
+
+ux_accessibility_score:
+  value: "PARTIAL"
+  rationale: |
+    CARRIED UNCHANGED from Revision 5 section 9.2. The contrast figures are INHERITED, NOT RE-MEASURED
+    (design-register-button/report.md:71-76: inkTertiary 4.23:1 dark, which FAILS WCAG AA; inkSecondary 6.74:1 light /
+    6.10:1 dark, both passing). NO CONTRAST TOOL WAS RUN by this lane, and the citation was re-read at 14b0267 (V-1).
+
+    Revision 7 adds NO new user-facing surface and changes no copy, contrast, focus order or semantic. The G-18 board
+    edit REMOVES a text layer rather than adding one, so it cannot raise or lower an accessibility score; and it is a
+    conformance obligation, not a copy decision. A score that moved on a bookkeeping correction would be a score
+    measuring the correction pass rather than the design.
+
+    ONE NOTE, because it is a copy defect and not a contrast one: the string this design quotes at
+    add_product_page.dart:383-384 was quoted with the WRONG DASH CHARACTER in three places Revision 6 controlled and
+    one place this lane does not. That is a quotation-accuracy defect in a record, not a user-facing one, and it is
+    corrected in this revision's own text and specified for the Manager elsewhere.
+
+implementation_feasibility:
+  value: "MEDIUM"
+  rationale: |
+    CARRIED UNCHANGED from Revision 5 section 9.2's per-component table, incorporated by reference. The aggregate is
+    unchanged because this pass changes no implementation: the three code edits of Revision 6 section R.11g-h are
+    exactly the three Revision 5 specified, and they remain HIGH feasibility.
+
+    ONE COMPONENT'S STATE HAS CHANGED, and it changes the other way, so it is stated rather than absorbed.
+    THE FOUR-BOARD EDIT (G-18) still has UNKNOWN feasibility as an executed task — but NOT for the reason Revision 6
+    gave. The blocker is no longer primarily ownership: THE HUMAN HAS NOW GRANTED BOARD OWNERSHIP to a scoped
+    design-system lane, and that lane is dispatched. The remaining blocker is MECHANICAL: Penpot went dormant during
+    the Manager's session (the plugin tab is suspended and getPages() returns a heartbeat error), so the lane may be
+    blocked on the plugin being re-focused. THAT IS AN INFRASTRUCTURE PRECONDITION, NOT A DESIGN DIFFICULTY, and
+    27ea6536's own OPTION_B predicted the cost and named the owner.
+
+    G-23 ADDS A SCOPE PRECONDITION, not a difficulty: the grant covers BPM and G-18's obligation does not, so the
+    design-system lane must establish BPM's own state before editing it. Recorded so the extra ownership is not
+    mistaken for extra obligation.
+
+    MEDIUM at the revision level for Revision 5's stated reason, which this pass does not disturb: the
+    high-feasibility work is most of the change and the low-feasibility work is a named, homed,
+    separately-reviewable seam. Settling WHICH store to use does not make the transport that fetches from it any less
+    new, and it enlarges that seam.
+
+requirements_covered:
+  - id: "R-B1"   # provenance
+    disposition: "CLOSED — BASE_SHA = HEAD_SHA = 14b0267 by git merge --ff-only, a fast-forward. Nothing rewritten.
+                  The merge precondition it hit and the 19-file recovery are recorded in full: design-revision-7.md
+                  § 0.3.1. Nothing was deleted; the displaced copies went outside the repository and were re-verified."
+  - id: "R-B2"   # compensation construct
+    disposition: "UNCHANGED — Revision 5 § R.5.7's FIVE obligations and BOTH forms are incorporated by reference.
+                  Untouched by every finding in the rev-6 review."
+  - id: "R-B3"   # state 4 renderable
+    disposition: "UNCHANGED — Revision 5 § R.11.2 incorporated by reference. G-14 remains open and unaffected."
+  - id: "R-B4"   # per-tier specification
+    disposition: "UNCHANGED — Revision 5 § R.9 incorporated by reference. Untouched by every finding, which is why
+                  the rev-6 reviewer listed G-11 as SAFE_PARALLEL_WORK."
+  - id: "R-B5"   # the ADR acceptance cited, and acceptance-is-not-review
+    disposition: "CLOSED and CONFIRMED — verified by the Rev-5 reviewer and NOT re-derived here. Revision 5 § 0.2
+                  incorporated by reference."
+  - id: "R-B6"   # cross-product disclosure
+    disposition: "UNCHANGED — Revision 5 § R.14.1 step 3a and T-L incorporated by reference. G-16 stays first."
+  - id: "R-R1"   # ADR 0018 dependence
+    disposition: "UNCHANGED — Revision 5 § R.17 incorporated by reference. G-17 remains OPEN and unedited by me:
+                  docs/adr/** is PROHIBITED_PATHS. G-21 is its SIBLING, not a correction of it — see below."
+  - id: "R-UX1"  # refusal leaves no residue
+    disposition: "UNCHANGED — Revision 5 § R.11g item 5 incorporated by reference."
+  - id: "R-UX2"  # the boards must match the code and the code must match the boards
+    disposition: "★ STILL PARTIALLY COVERED, AND THE STATUS HAS MOVED — SEE THE MATRIX'S OWN WORDS, WHICH ARE NOT
+                  REUSED BLIND. Revision 6 recorded: the requirement is COVERED; the OBLIGATION is UNOWNED and BLOCKED.
+                  THAT WAS TRUE AT 1c3f5ad. AT 14b0267: THE CODE SIDE IS UNCHANGED AND FULLY SPECIFIED (the three code
+                  edits of Revision 6 § R.11g-h). THE BOARD SIDE HAS AN OWNER — the human has GRANTED board ownership to
+                  a scoped design-system lane — AND THE EDIT HAS NOT BEEN DONE. So the obligation is now OWNED and
+                  EXECUTED-PENDING, blocked on Penpot's dormancy rather than on ownership. Coverage and completion are
+                  different claims and ONLY THE FIRST IS TRUE. G-18 is OPEN. G-23 records that the grant is broader
+                  than the obligation. THE WORK ITEM MUST NOT CLOSE OVER G-18 UNTIL THE BOARD EDIT IS DONE AND REVIEWED —
+                  A GRANT IS NOT AN EXECUTION."
+
+requirements_gaps:
+  # Revision 5's G-3..G-17, L-6 and the ADR :103 wording entry, plus Revision 6's G-18, G-19 and
+  # G-20, are incorporated BY REFERENCE and are UNCHANGED in substance. They are not restated
+  # here, because restating a register is how two registers drift apart — which is the exact
+  # defect B-R5-1 part 1 exists to prevent, and which H-3 shows the counts were never checked
+  # against. THE THREE NEW ENTRIES FOLLOW, plus ONE entry that Revision 6 carried and this
+  # revision closes.
+  #
+  # REGISTER AGREEMENT (design-revision-7.md § R.18.2-j, counted at § 0.5): requirements_gaps and
+  # the body's § R.18.2-j carry the SAME THREE new entries, G-21, G-22 and G-23. A reviewer
+  # checking one against the other must find identical ids, summaries and owners.
+  #
+  # COUNTS, FROM THE LIVE DOCUMENTS AND NOT FROM REVISION 6's ASSERTION:
+  #   Revision 5   § R.18.2 = 15 rows   requirements_gaps = 16 entries
+  #   Revision 6   § R.18.2 = 18 rows   requirements_gaps = 19 entries   (published as 19 -> 22; WRONG)
+  #   Revision 7   § R.18.2 = 21 rows   requirements_gaps = 22 entries
+  # The asymmetry between the two registers is NOT an error: § R.18.2 has no row for "the Rev-4
+  # review report" because that entry is CLOSED at § 0.5, while requirements_gaps carries it marked
+  # CLOSED so the residue survives. 21 vs 22 is stated, not smoothed.
+  - id: "G-21"
+    summary: |
+      ★ NEW — ADR 0018's OWN BODY STILL RECORDS FOUR ACCEPTED RISKS AFTER THE OWNER RETIRED ONE.
+      Verified read-only at 14b0267: `grep -c 'Consequence accepted' docs/adr/0018-per-product-git-credentials.md`
+      -> 4. :453 still reads "**A1 — A revoked credential can be resurrected by a re-mint. ACCEPTED.**";
+      :448-451 still says "The four gaps A2 carries" and "Nothing here is closed"; :527 says "the four
+      accepted risks above"; :557 and :574 say "the four accepted risks". The owner's retirement of A1
+      IS recorded — in 876c6b97's second scope note, appended at 14b0267, which states "THREE are now
+      recorded (A2, A3, A4)" — but only in the DECISION OBJECTS, not in the ADR.
+      WHY IT IS A GAP: a reader who checks the ADR — the artifact every lane cites for custody — concludes
+      four accepted risks are live and that A1 is one of them. The ADR and the decision objects now disagree,
+      and the ADR is the one that gets cited. SAME CLASS AS G-17, which was ADR 0018 asserting no decision
+      object records its acceptance in the same commit that added the object: a record that will not be
+      re-checked, because it is authoritative, asserting a state the owner has changed. SIBLING, NOT THE SAME
+      FINDING — different file, different owner.
+      ALREADY SPECIFIED, NOT YET APPLIED: the ADR lane specified this exact edit in
+      design-adr-0018-amendment/design-revision-5.md section 4, and its own report records the ADR as
+      UNCOMMITTED (999 -> 1212 lines). So at 14b0267 the specified edit is not on disk either. This lane
+      specified NOTHING NEW; it verified the count that must change (four -> three) and the sites that
+      carry it, and recorded the three things the edit must not get wrong (substrate option A1 is live;
+      amendment A1 is live and live in the code; retiring A1 did not discharge the revocation half).
+    owner: "ADR LANE + MANAGER — apply the already-specified edit and commit it. NOT THIS LANE'S:
+            docs/adr/** is PROHIBITED_PATHS, NOTHING WAS WRITTEN THERE, and no such edit is claimed.
+            WHEN APPLIED, THE COUNT IS THREE: A2, A3, A4. A1 was retired BY THE REPOSITORY OWNER on
+            2026-10-07 — two prior lanes were right to decline to make that call themselves. AND THE
+            RETIREMENT DOES NOT DISCHARGE REVOCATION: no code destroys a secret-manager handle, so
+            revocation remains one-sided in practice and that half was never an accepted risk."
+  - id: "G-22"
+    summary: |
+      ★ NEW — REVISION 6'S FALSE AND MIS-RESOLVING TEXT IS COMMITTED, AND THIS CORRECTION DOES NOT TRAVEL
+      WITH THE FILE.
+      45 cross-reference sites across 7 distinct targets mis-resolve (design-revision-7.md § R.11g-j § A:
+      `§ 10.2-h` at 2 sites, `§ 10.2` at 1, the ADR amendment's `§ 3.1` at 1, `§ Content pins` at 7, bare
+      `§ R.11g` at 17, `§ 10.1 item 12` at 16, bare `§ R.1` at 1), and 8 sites assert a false
+      `artifacts[]`-entry-carries-a-real-hash claim. All of it is COMMITTED on main at af8e30f in four
+      artifacts this revision RETAINS BYTE-IDENTICAL, and those are the ones a reader will open.
+      WHY IT IS A GAP: a correction does not travel with a file. A reader who opens design-revision-6.md
+      directly — by search, by a citation, by `git show` at an older SHA — gets the false text with no
+      pointer to this revision. The chain only helps a reader who walks it. This is LOW-4's mechanism
+      GENERALISED: Revision 5 has no forward pointer to Revision 6, and now neither does Revision 6.
+      THE CHOICE, AND ITS COST, STATED RATHER THAN MADE SILENTLY: not editing a committed artifact is
+      CORRECT — it is why design-revision-6.md:277 and :523 are citable at af8e30f at all, and it is how
+      this revision found two of its own defects in them. It is not free. The cost is this entry.
+      THE FIX IS EXACT: a supersession banner on design-revision-5.md naming Revision 6 (LOW-4) and on
+      design-revision-6.md naming Revision 7. Both are one-line prepends to committed files and belong to
+      whoever commits. Exact banner text: report-revision-7.md § 7. NOT THIS LANE'S — it may not commit.
+    owner: "MANAGER — add both supersession banners with the next commit. UNTIL THEN, THIS ENTRY IS THE
+            REDIRECT, and it is one line that will not travel with the file it corrects."
+  - id: "G-23"
+    summary: |
+      ★ NEW — THE BOARD-OWNERSHIP GRANT IS BROADER THAN G-18's MEASURED OBLIGATION, AND THE DIFFERENCE IS
+      RECORDED NOWHERE.
+      THE HUMAN HAS GRANTED BOARD OWNERSHIP to a scoped design-system lane, covering the four desktop
+      `S · Add Product · …` boards AND `BPM`, to remove the single `Footer` text layer at (236, 862).
+      EVERY MEASUREMENT OF THAT LAYER — three independent lanes, all read-only — is on the four desktop
+      `S` boards. BPM WAS MEASURED AS CARRYING NO FOOTER COPY: penpot-board-evidence.md § 6.3 and § 6.4,
+      and Revision 6 section R.11g-h amendment 2, both record BPM and SM as TWO STATES OF ONE MOBILE
+      DESIGN WHOSE SPEC IS ALREADY SATISFIED, and Revision 6 states "There is no substantive conflict and
+      no mobile board edit is required".
+      WHAT BPM DOES CARRY is a DIFFERENT defect: WORK_STATE.md:639 records that "BPM additionally carries
+      the same false custody string and the now-false `NOT REGISTERED YET` eyebrow" — the item Revision 6
+      registered under blockers[] EXTERNAL_BLOCKER_NOT_MINE (b), NOT under G-18.
+      WHY IT MUST BE RECORDED RATHER THAN RESOLVED: A GRANT OF OWNERSHIP IS NOT A FINDING OF FACT. If the
+      design-system lane reads "you own BPM" as "edit BPM's footer", it will make an edit NO MEASUREMENT
+      SUPPORTS and Revision 6 explicitly says is not required. That is the B-R5-1 failure mode — the build
+      diverging from the authority it declares — reappearing in the opposite direction, on the board
+      rather than in the code.
+      WHAT IS DECIDED AND WHAT IS NOT: the grant is the human's and is DECIDED; this entry does NOT
+      narrow it. It records only that G-18's OBLIGATION is scoped to the four desktop S boards, and that
+      if the design-system lane measures a `Footer` layer on BPM, that is A NEW MEASUREMENT TO REGISTER —
+      not an authorisation this artifact confers. THE QUESTION IS CURRENTLY UNVERIFIED IN BOTH
+      DIRECTIONS and is the granted lane's to establish; this lane called no Penpot tool and read no board.
+    owner: "THE GRANTED DESIGN-SYSTEM LANE (to establish BPM's state before editing it) + MANAGER.
+            RECORDED by this lane, which holds NO BOARD OWNERSHIP and read no board."
+
+traceability:
+  matrix: "traceability-matrix-7.md"
+  design_elements_without_a_requirement:
+    - "G-18's required four-board edit — it traces to 27ea6536's 'No footer copy' desktop clause, which IS a
+       decided requirement. What it lacks is not an ownership grant any more — THE GRANT EXISTS — but the EXECUTION.
+       Recorded here so it does not read as an untraceable design choice; it is a decided requirement, now owned,
+       not yet done."
+    - "G-19's two residual items (the hyphen-normalised quotation and the third inaccurate statement about the
+       mobile boards) — neither is a design element. Both are RECORD-INTEGRITY defects in the same authoritative
+       object G-19 already covers, which is why they extend G-19 rather than becoming two new entries."
+    - "G-21 and G-22 — neither is a design element. Both are RECORD-INTEGRITY gaps: an ADR that still says four
+       where the owner retired one, and a committed revision whose false text has no redirect. Named explicitly so
+       a reviewer does not read them as scope creep."
+    - "G-23 — a SCOPE-PRECISION entry, not a design element: it records that a permission and an obligation do not
+       coincide. Named so the granted lane is not handed an obligation nobody measured."
+    - "design-revision-7.md § R.11g-j's five citation rules — a CONSUMPTION AID and a process rule, not a
+       requirement. They add no normative product content. They exist because the class they close recurred inside
+       the artifact built to close it, and because a reading cannot detect it — only an extraction can."
+    - "design-revision-7.md § R.6-j — an ANNOTATION on an incorporated requirement, not a new one. Revision 5 § R.6
+       is incorporated unchanged; § R.6-j records which of its two halves now has a status, because this is the
+       revision that records A1's retirement and that is where a reader will conclude the clause is discharged."
+  acceptance_of_dependency_is_not_acceptance_of_this_design: |
+    CARRIED UNCHANGED from Revision 5, incorporated by reference. The ADR 0018 amendment is HUMAN-ACCEPTED
+    (876c6b97) and has NEVER been independently APPROVED (reviewed_by: null). SCOPED READING, as the reviewer
+    re-verified and this lane carries: the absolute "never holds key bytes" is TRUE ONLY IN THE STORAGE
+    DIMENSION — at transport time SHIP IT MUST materialise the private half in process memory, which is what
+    transmitting it requires of it — and the absolute appears at FOUR sites, 9417f8bf:140 being the load-bearing
+    uniqueness argument. BOTH DECISIONS ARE CITED AT THAT SCOPED READING AND NEITHER IS RE-OPENED.
+
+    ⚠ ACCEPTED RISKS: THREE. A2, A3, A4. A1 was retired BY THE OWNER on 2026-10-07. ADR 0018's body still
+    says four — that is G-21, and this lane does not match the ADR by editing the count in the wrong place.
+    Revision 6 published "exactly four were put to the owner and exactly four are recorded" at THREE sites;
+    all three are STALE and are corrected in Revision 7's own artifacts. The historical fact that four WERE put
+    to the owner on 2026-10-06 remains true and is not what is being corrected.
+
+artifacts:
+  # ⚠ THE HONEST PROPERTY, stated here rather than claimed away — see provenance.content_pins.note.
+  # An `artifacts[]` entry CANNOT carry its own file's blob hash. Only the SUPERSEDED Revision-5
+  # entries below carry real hashes. Revision 6 asserted otherwise at eight sites; the re-review
+  # found five of them and three more existed. DO NOT RESTORE THAT CLAIM.
+  - path: "design-revision-7.md"
+    role: "THIS REVISION — the normative body. Carries the five citation rules (section R.11g-j), the audit of
+           45 mis-resolving sites, the register counts, and the two record fixes (section 7-j)."
+    blob_hash: "SEE report-revision-7.md § 1.1 — a POINTER, not a hash. An artifacts[] entry cannot carry its own
+                file's hash; saying otherwise is the defect this entry documents."
+  - path: "design-revision-metadata-7.yaml"
+    role: "THIS FILE — carries risk_level, gates, requirements_gaps and the changelog. SELF-EXCLUDED BY
+           CONSTRUCTION: a file cannot contain its own hash."
+    blob_hash: "SELF-EXCLUDED BY CONSTRUCTION — printed in report-revision-7.md § 1.1"
+  - path: "traceability-matrix-7.md"
+    role: "requirement -> section -> test -> gap matrix, and the rev-6 review finding -> correction map, with
+           THE AMENDED FALSIFIER that the rev-6 matrix's own falsifier failed."
+    blob_hash: "SEE report-revision-7.md § 1.1"
+  - path: "report-revision-7.md"
+    role: "the producing lane's report; carries § 1.1's pin table INCLUDING THIS FILE'S OWN metadata hash, and the
+           two supersession banner texts G-22 needs."
+    blob_hash: "SELF-EXCLUDED BY CONSTRUCTION — this file is the report and NO artifact is written after it, so no
+                artifact in this set carries its hash. Recover it with `git hash-object report-revision-7.md`.
+                STATED RATHER THAN PAPERED OVER — claiming a report prints a hash it does not is what Revision 5 did."
+  - path: "design-revision-6.md"
+    role: "SUPERSEDED, RETAINED BYTE-IDENTICAL, COMMITTED on main at af8e30f. NOT EDITED by this revision. Its
+           45 mis-resolving sites and 8 false-claim sites are CORRECTED HERE, NOT THERE — and that text is
+           therefore still on disk; G-22 is the redirect that is missing."
+    blob_hash: "2187065c0beffc3020886cc1b16027865f7ae71c"
+  - path: "design-revision-metadata-6.yaml"
+    role: "SUPERSEDED, RETAINED BYTE-IDENTICAL. NOT EDITED. Carries three of the eight false hash claims and the
+           `two self-excluded files` miscount."
+    blob_hash: "5a9b5ae03dfa64f97fe7962edec60308805be889"
+  - path: "traceability-matrix-6.md"
+    role: "SUPERSEDED, RETAINED BYTE-IDENTICAL. NOT EDITED. Carries the L-R5-1 row whose OWN FALSIFIER the
+           artifact satisfied — the falsifier is amended in traceability-matrix-7.md, not here."
+    blob_hash: "fafcf362dc873fa2a9169448bec39711d4b7dd9f"
+  - path: "report-revision-6.md"
+    role: "SUPERSEDED, RETAINED BYTE-IDENTICAL. NOT EDITED. Carries TWO of the eight false hash claims, and the
+           paste-ready block at :523 whose hyphen is the CAUSE of the one in .decisions/27ea6536:175."
+    blob_hash: "49b74ba5925ac3dc480292c357e488274b3b2804"
+  - path: "design-revision-5.md"
+    role: "SUPERSEDED, RETAINED BYTE-IDENTICAL, COMMITTED on main at 16cd497. NOT EDITED. STILL HAS NO FORWARD
+           POINTER to Revision 6 or Revision 7 (verified at 14b0267: zero mentions of either) — LOW-4, and the
+           half of G-22 that is cheapest to fix."
+    blob_hash: "fb99f9e216b10db655b673111062355e690d61fa"
+  - path: "design-revision-metadata-5.yaml"
+    role: "SUPERSEDED, RETAINED BYTE-IDENTICAL. NOT EDITED."
+    blob_hash: "bae3c019be3a28c2d9347944eacc8eca4ccecec6"
+  - path: "traceability-matrix-5.md"
+    role: "SUPERSEDED, RETAINED BYTE-IDENTICAL. NOT EDITED."
+    blob_hash: "0778b37d567c25d60efd4a6fb2dbac316212334c"
+  - path: "report-revision-5.md"
+    role: "SUPERSEDED, RETAINED BYTE-IDENTICAL. NOT EDITED — including the pin table this chain names as the
+           dangling pointer L-R5-1 found."
+    blob_hash: "121273aee65c2e771f2cc3cf3be25f534fe09d14"
+  - path: "design-revision-3.md"
+    role: "RETAINED, SUPERSEDED, NOW COMMITTED at af8e30f — Revision 6's G-20(a) residue, DISCHARGED. Was NEVER
+           ADDED ON ANY REF before that commit; Revision 6 correctly declined the false premise that it was
+           committed on main."
+  - path: "design-revision-2.md"
+    role: "RETAINED, SUPERSEDED three times. Its supersession banner is COMMITTED at af8e30f — G-20(b) residue,
+           DISCHARGED."
+  - path: "design-revision.md"
+    role: "RETAINED, SUPERSEDED three times. Its supersession banner is COMMITTED at af8e30f — DISCHARGED."
+  - path: "design-revision-4.md"
+    role: "RETAINED, SUPERSEDED. Its supersession banner is COMMITTED at af8e30f — DISCHARGED."
+  - path: "discoveries.md"
+    role: "D-1..D-34 carried from Revisions 5 and 6 unchanged in substance; D-35..D-40 added by THIS revision.
+           CONTRADICTION-class items are REPORTED, not persisted, per LEARNING_POLICY.md."
+
+# -------------------------------------------------------------------------------------
+# changelog — PER FINDING. Every item names the rev-6 re-review finding it discharges.
+#   0 BLOCKERS; 3 HIGH (H-1, H-2, H-3); 1 MEDIUM (M-1); 4 LOW (LOW-1..LOW-4).  = 8.
+#   The rev-6 re-review found 3 HIGH / 1 MEDIUM / 4 LOW; the review it answered found
+#   1 BLOCKER / 0 HIGH / 4 MEDIUM / 3 LOW; the review before that found 8 Rev-4 findings.
+# -------------------------------------------------------------------------------------
+changelog:
+  - "Revision 7. PRECISION CORRECTION PASS over Revision 6 (d2665821…), returned
+     DESIGN_REVIEW_CHANGES_REQUIRED at REVIEWED_HEAD af8e30f with 0 BLOCKERS, 3 HIGH, 1 MEDIUM, 4 LOW.
+     Revision 6 was NEVER approved and NO approval carries over. Revision 7 CHANGES NO DESIGN CONTENT
+     about the key flow — what it corrects is Revision 6's SELF-DESCRIPTION, and chiefly the
+     dangling/mis-resolving cross-reference class that Revision 6 introduced inside the artifact
+     built to eliminate it."
+  - "H-1 (HIGH) — NOT PATCHED. RE-DERIVED. The two dead pointers to the nonexistent `§ 10.2-h` are corrected
+     by DESCRIBING § 10.2 correctly (Revision 7 § R.1-j: carried UNCHANGED BY REFERENCE to
+     design-revision-5.md:3299-3362, not restated, and Revision 6's claim that it restated items 10 and 12
+     was false). AND EVERY CROSS-REFERENCE IN THE REVISION-6 ARTIFACT SET WAS RE-DERIVED FROM THE LIVE
+     DOCUMENTS: every `§` token extracted with its file:line and resolved against the live heading
+     inventory of its target. THE AUDIT FOUND 7 DISTINCT MIS-RESOLVING TARGETS ACROSS 45 SITES. The
+     re-review reported 1 target / 2 sites; SIX TARGETS AND 43 SITES WERE UNREPORTED. Itemised at
+     design-revision-7.md § R.11g-j § A, and the METHOD is published as normative rule R4 so the next pass
+     re-runs it instead of reading. A patch to the three sites would have left 42 of the 45 in place."
+  - "H-2 (HIGH) — THE PINS ARE NOT RE-FIXED; THE CLAIM IS. The pin loop is real and the re-reviewer verified
+     it byte-exact, so that is accepted as settled. The FALSE claim — that every `artifacts[]` entry carries
+     a real blob_hash — is corrected at ALL EIGHT SITES that make it. THE RE-REVIEW FOUND FIVE;
+     THREE MORE EXIST: design-revision-6.md:162 (inside Revision 6's OWN correction-map row for L-R5-1, so
+     the row closing the finding was itself false), report-revision-6.md:286 and :518. The
+     'THE TWO self-excluded files' comment at metadata-6.yaml:470 is corrected to FOUR. THE FALSIFIER at
+     traceability-matrix-6.md:85 — WHICH THE ARTIFACT ITSELF SATISFIED WITH FOUR ENTRIES — IS AMENDED at
+     traceability-matrix-7.md § 2 to test what the artifact actually does. The irreducible limit is stated:
+     report-revision-7.md's own hash is carried by NO artifact, because a file cannot contain its own hash
+     and nothing is written after it; `git hash-object report-revision-7.md` recovers it. Claiming
+     otherwise is exactly what Revision 5 did."
+  - "H-3 (HIGH) — BOTH REGISTER COUNTS RE-COUNTED FROM THE LIVE DOCUMENTS. Actual: Revision 5 § R.18.2 = 15
+     ROWS and requirements_gaps = 16 ENTRIES; Revision 6 = 18 rows / 19 entries. Revision 6 published
+     '19 -> 22' in both registers (design-revision-6.md:433 and traceability-matrix-6.md section 3); both
+     absolute 'before' figures were wrong, by 4 and 3. The DELTAS (+3/+3) and the entry-level agreement were
+     right, and those are the load-bearing claims. REVISION 7'S OWN FIGURES ARE COUNTED FROM THE SAME
+     BASES: 21 ROWS / 22 ENTRIES. The asymmetry between the two registers is stated rather than smoothed:
+     § R.18.2 has no row for 'the Rev-4 review report' because it is CLOSED, while requirements_gaps carries
+     it marked CLOSED so the residue survives."
+  - "M-1 (MEDIUM) — § 0.4.1's ENUMERATION RECOUNTED. It listed 17 names under the words 'all sixteen rows check
+     out', and included L13, which the next bullet declares WRONG — so the row that disposed of L8 and M5 was
+     itself internally contradictory. L13 is dropped, leaving 16 names that check out. Coverage: 16 + L8 +
+     M5 + L13 = 19. The count can no longer diverge from the list because the list is now produced by
+     extraction (rule R4) rather than typed."
+  - "LOW-1 (LOW) — THE ROOT CAUSE IS IN REVISION 6, NOT IN THE DECISION. add_product_page.dart:383-384 renders
+     \\u2014, an EM DASH. The hyphen appears at design-revision-6.md:523 — the PASTE-READY BLOCK REVISION 6
+     SUPPLIED — and at design-revision-metadata-6.yaml:360. The Manager pasted 27ea6536's note faithfully,
+     so the hyphen in 27ea6536:175 is INHERITED, not introduced there. Three of the four hyphen sites are
+     in artifacts this chain controls and are corrected in Revision 7. The .decisions/** copy is NOT this
+     lane's and the corrected block is specified at Revision 7 § 7-j.1 for the Manager."
+  - "LOW-2 (LOW) — REGISTERED AS G-19 RESIDUAL ITEM R-2. 27ea6536:120 asserts the design lane recorded that
+     'the MOBILE boards carry a copy plus a disclosure'; the SAME OBJECT's context.summary at :15-17 says
+     'The MOBILE boards have no bottom copy at all'. Pre-existing (written by the Manager at 674b871), NOT
+     introduced by Revision 6, and NOT measured by any pass — every measurement was of the four DESKTOP S
+     boards. REGISTERED SO NO FUTURE READER RE-DERIVES IT. IT DOES NOT WIDEN G-18: it adds no board
+     obligation and creates no outcome conflict, because the decision's mobile outcome is consistent with
+     the boards per BOTH context.summary and the human's own check."
+  - "LOW-3 (LOW) — G-20 DISCHARGED, RE-VERIFIED AT 14b0267. Revision 6 registered G-20 because its own
+     supersession chain was not on disk, true at 1c3f5ad and false at af8e30f. Verified with FULL PATHS and
+     --diff-filter=A: all four Revision-3 artifacts were added at af8e30f, and the 11 banners were committed
+     alongside them (git status for the directory is EMPTY at 14b0267). The register entry KEEPS A STATUS
+     rather than being deleted. Revision 6's 'before' claims are TRUE AND RETAINED, re-anchored to 1c3f5ad."
+  - "LOW-4 (LOW) — NOT FIXED ON REVISION 5, AND THE REASON IS RECORDED RATHER THAN REPEATED. Revision 5 is
+     committed, this lane may not commit, and editing it would dirty a committed artifact to add a pointer the
+     chain already provides. Verified at 14b0267: design-revision-5.md has ZERO mentions of Revision 6 or
+     Revision 7. THE RESIDUAL IS GENERALISED AND REGISTERED AS G-22, which also covers Revision 6's own
+     committed false text. Both fixes are one-line supersession banners, specified at report-revision-7.md § 7
+     and owned by the Manager."
+  - "★ ACCEPTED RISKS: FOUR -> THREE. A1 (the RESURRECTION risk) WAS RETIRED BY THE REPOSITORY OWNER on
+     2026-10-07, after 08c7590 made the mint insert-only on both tiers. Verified here against the shipped
+     source rather than adopted (V-7). TWO PRIOR LANES WERE RIGHT TO DECLINE — 876c6b97's first scope note
+     says 'RETIRING IT IS THE OWNER'S CALL', and a design lane may not retire an accepted risk. Revision 6
+     published 'exactly four were put to the owner and exactly four are recorded' at THREE SITES
+     (design-revision-6.md:651-652, design-revision-metadata-6.yaml:465, report-revision-6.md:165-166); ALL
+     THREE ARE NOW CORRECTED TO THREE. THE HISTORICAL FACT THAT FOUR WERE PUT TO THE OWNER ON 2026-10-06
+     REMAINS TRUE AND IS NOT WHAT IS BEING CORRECTED. THREE READINGS OF 'A1' ARE KEPT APART: the accepted
+     risk (retired), AMENDMENT A1 'scope is the repository' (LIVE, and live in the code at
+     product_registry_store.dart:47 and :52-53), and the SUBSTRATE OPTION A1 = filesystem 0600 (LIVE, ADR:107
+     and :442). AND RETIRING A1 DISCHARGED THE RESURRECTION HALF ONLY: no code destroys a secret-manager
+     handle, so REVOCATION REMAINS ONE-SIDED IN PRACTICE and that half was NEVER AN ACCEPTED RISK."
+  - "★ G-21 — NEW. ADR 0018's OWN BODY STILL RECORDS FOUR ACCEPTED RISKS. The retirement is in the decision
+     objects; the ADR is where readers look. Already specified by the ADR lane and uncommitted there too.
+     docs/adr/** is PROHIBITED_PATHS — nothing written."
+  - "★ G-22 — NEW. REVISION 6'S FALSE AND MIS-RESOLVING TEXT IS COMMITTED AND THIS CORRECTION DOES NOT TRAVEL
+     WITH THE FILE. 45 sites, 7 targets, 8 false-claim sites — all on main at af8e30f, in artifacts retained
+     byte-identical. The choice not to edit a committed artifact is CORRECT and is what made
+     design-revision-6.md:277 and :523 citable, and it is not free. Owner: Manager (two one-line banners)."
+  - "★ G-23 — NEW. THE BOARD-OWNERSHIP GRANT COVERS BPM; G-18's MEASURED OBLIGATION DOES NOT. Every measurement
+     of a `Footer` layer at (236,862) is on the four desktop S boards; BPM was measured as carrying no footer
+     copy and its recorded defects are the false custody string and the now-false 'NOT REGISTERED YET' eyebrow
+     (WORK_STATE.md:639). A GRANT OF OWNERSHIP IS NOT A FINDING OF FACT: the granted lane must establish BPM's
+     state before editing it, and must not read this artifact as authorising a BPM footer edit. Whether BPM
+     carries the layer is UNVERIFIED IN BOTH DIRECTIONS and is the granted lane's to establish."
+  - "★ § R.6-j — NEW. REVOCATION IS STILL ONE-SIDED, recorded against Revision 5 § R.6 because this is the
+     revision that records A1's retirement, and that is exactly where a reader will conclude the clause is
+     discharged. grep for handle-destroying calls across apps/packages -> 0 MATCHES at 14b0267. The clause is
+     INCORPORATED UNCHANGED and remains correct; what changes is that one of its two halves now has a status.
+     It belongs to 79e860e2 and was never an accepted risk, so NO new register entry was invented for it."
+  - "★ § R.11g-j — NEW. THE CROSS-REFERENCE CONVENTION: five normative rules (R1 suffix collision-avoidance,
+     R2 a superseded revision's section is cited as 'Revision N § X', R3 every reference resolves or names
+     where it resolves — a CLAIM about a section is a reference and is audited as one, R4 the audit is an
+     EXTRACTION and not a reading, R5 an unnumbered heading is never cited with a §). This is the design
+     content of the pass: the class recurred because a target-existence check cannot see a false claim about a
+     target, and only a mechanical resolution can."
+  - "★ G-18 — OPEN, AND ITS STATE HAS MOVED. THE HUMAN HAS GRANTED BOARD OWNERSHIP to a scoped design-system
+     lane for the four desktop S boards (and BPM — see G-23). THE OBLIGATION IS NOT DISCHARGED: a grant is not
+     an execution, and the board edit has not been done. The blocker has changed FORM, from 'no lane owns those
+     boards' to 'Penpot went dormant — the plugin tab is suspended and getPages() returns a heartbeat error',
+     so the lane may be dispatched but blocked on the plugin being re-focused. THE WORK ITEM MUST NOT CLOSE
+     OVER G-18 UNTIL THE BOARD EDIT IS DONE AND REVIEWED."
+  - "SC-01..SC-20 AND REVISION 5's SUCCESS CRITERIA CARRIED UNCHANGED. No criterion was added, removed or
+     re-scoped. G-18's board edit is a CONFORMANCE obligation, not a new user-visible criterion, and inventing
+     one would be a redesign."
+  - "RISK TALLY CARRIED VERBATIM: '0 reasons IMPROVED, 2 reasons UNCHANGED (R1, R6), 4 reasons WORSE (R2, R3,
+     R4, R5)'. NO REASON MOVES in this pass and NO NEW REASON IS CLAIMED — claiming one for bookkeeping is the
+     same error class as H10. Level 3 RE-AFFIRMED on Revision 7's own content: all six grounds re-confirmed
+     present at 14b0267. SIX open governance items are an argument FOR level 3, not against it: a design at
+     level 1 does not accumulate governance debt."
+  - "REVISION 6's ARTIFACTS ARE NOT EDITED, INCLUDING NO SUPERSESSION-BANNER EXTENSION. They are committed on
+     main at af8e30f and this lane is instructed not to commit. That choice is what makes
+     design-revision-6.md:277 and :523 citable as stable evidence — which is how H-1 and LOW-1's cause were
+     found at all — and its cost is registered as G-22 rather than paid silently."
+  - "SAFE_PARALLEL_WORK CARRIED UNCHANGED: G-11 (D-4/D-5/D-6, both tiers, eight columns); G-13 step 3a +
+     G-16 step 3a + T-L + SC-20, shipping G-16 first; G-14; the repositoryId:productId placeholder
+     retirement; and the three code edits of Revision 6 § R.11g-h. NONE is touched by any rev-6 finding.
+     NOT SAFE while G-18 is open: any board edit by a lane that does not hold the grant; treating
+     'boards are authoritative' as unconditional; reading the grant as authorising a BPM footer edit; and
+     CLOSING THE WORK ITEM."
+  - "NO DOCKER OR COMPOSE COMMAND WAS RUN, NOT EVEN A READ-ONLY ONE, AND NO PENPOT TOOL WAS CALLED. No board
+     was read, listed, edited, renamed, moved, exported or deleted; this lane holds NO board ownership. The
+     F6/G-18 measurement, the BPM state and Penpot's dormancy are all CITED or REPORTED, never reproduced.
+     Reading a compose file or a board to find out is not permitted, and the temptation is named here because
+     this repository has already lost its QA database to a lane that ran a command it had no authority to run."
+
+reviewed_by: null
+reviewed_at: null
+approved_by: null
+approved_at: null
+created_by: design-agent
+created_at: "2026-10-07"
+updated_by: design-agent
+updated_at: "2026-10-07"
+
+blockers:
+  - type: PROVENANCE_GAP
+    status: "CLOSED — Revision 6, M-R5-4. NOT RE-OPENED, and NOT RE-CLAIMED as this lane's work. The report was
+             recovered at 289f1d3 and remains an ancestor of 14b0267."
+    closed_at: "1c3f5ad"
+    detail: |
+      CARRIED FORWARD UNCHANGED FROM REVISION 6. A revision may not re-claim a closure it did not perform, and
+      this lane did not re-verify the 19-finding reconciliation line by line — it verified only that 289f1d3 is
+      still an ancestor of this base. Revision 6's closure stands on its own evidence.
+
+  - type: CHAIN_NOT_ON_DISK
+    status: "CLOSED — DISCHARGED at af8e30f. Revision 6 registered this as G-20; it is CLOSED and is retained with
+             that status rather than deleted."
+    closed_at: "af8e30f"
+    detail: |
+      RE-VERIFIED AT 14b0267, WITH FULL PATHS AND --diff-filter=A, NEVER BASENAMES:
+        git log --all --oneline --diff-filter=A -- .../design-revision-3.md            -> af8e30f
+        .../design-revision-metadata-3.yaml, .../report-revision-3.md,
+        .../traceability-matrix-3.md                                                     -> the SAME commit
+      and `git status --porcelain` for this lane's directory returns EMPTY, with design-revision-2.md:1 and
+      design-revision-4.md:1 carrying "> ## SUPERSEDED BY DESIGN REVISION 5". The 11 uncommitted banners are
+      committed.
+
+      A DISCLOSURE THIS LANE OWNS, because it is a second instance of the same false-premise class and this lane
+      checked rather than adopted: a basename glob `*design-revision-3.md` returns commits for OTHER lanes'
+      files (16cd497 adds design-adr-0018-amendment/design-revision-3.md; 4e2d237 adds
+      design-addproduct-mobile/design-revision-3.md). A Manager premise built on that glob is satisfied by two
+      commits that have nothing to do with this lane. EVERY command above uses the FULL PATH.
+
+  - type: EXTERNAL_BLOCKER_NOT_MINE
+    status: "OPEN — its FORM has changed and is recorded below. Penpot is still unreachable; the mechanism is
+             different from the one Revision 6 recorded."
+    detail: |
+      PENPOT WENT DORMANT DURING THE MANAGER'S SESSION. The plugin tab is suspended and getPages() returns a
+      HEARTBEAT ERROR. This is a DIFFERENT fault from the one Revision 6 recorded — "No Penpot instance
+      connected for user token", a token-to-instance binding failure — though the destination is the same: no
+      lane can reach a board. REPORTED BY THE MANAGER, NOT VERIFIED BY THIS LANE: no Penpot tool was called.
+
+      CONSEQUENCES THIS REVISION RECORDS, because both are owned by someone else and neither is fixable here:
+        (a) G-18 — the four desktop S boards cannot be brought into conformance with 27ea6536's "No footer copy"
+            clause until the binding is cleared. OWNERSHIP IS NO LONGER THE BLOCKER: the human has granted
+            board ownership to a scoped design-system lane. The remaining blocker is mechanical.
+        (b) Carried from Revision 5 — four boards carry an `Art S` line reading "private half stays
+            server-side", which is FALSE under A3, and BPM additionally carries the same false custody string
+            and a now-false "NOT REGISTERED YET" eyebrow (WORK_STATE.md:639). This lane cannot correct copy on
+            any board.
+      SCOPED READING, carried: the absolute "never holds key bytes" is true in the STORAGE dimension and false
+      in the TRANSPORT dimension — at transport time SHIP IT must materialise the private half in process
+      memory, which is what transmitting it requires of it. Either way "stays server-side" is not the sentence
+      the architecture produces. Owner: Manager (Penpot) and the granted design-system lane (the boards).
+
+  - type: UNOWNED_REQUIRED_WORK
+    status: "OPEN — and it is the reason the work item must not close. ONE of its four items is no longer unowned,
+             which is a change of KIND, not of obligation."
+    detail: |
+      G-18, G-19, G-21, G-22 and G-23 are open governance items against a design whose risk level is 3. None is
+      a design question and none needs the human:
+        G-18  needs the BOARD EDIT DONE AND REVIEWED. The ownership GRANT EXISTS; the EXECUTION does not. A
+              grant is not an execution, and the build would then be able to diverge permanently from the
+              authority it declares. Owner: the granted design-system lane.
+        G-19  needs two RESIDUAL record items applied to .decisions/27ea6536 — a hyphen normalised in a quoted
+              string, and a third inaccurate statement about the mobile boards. Its main note landed at af8e30f
+              and the re-review found its framing sound. Owner: Manager.
+        G-21  needs ADR 0018's accepted-risk section corrected from four to three. The edit is ALREADY
+              SPECIFIED by the ADR lane and is uncommitted there too. Owner: ADR lane + Manager.
+        G-22  needs two supersession banners so the committed false text has a redirect. Owner: Manager.
+        G-23  needs BPM's state ESTABLISHED before the granted lane edits it, and the distinction between the
+              grant's breadth and G-18's obligation recorded — which is this entry. Owner: the granted lane +
+              Manager.
+      At the moment of writing all five are OPEN. G-18's ownership grant is the one that changed, and it did not
+      discharge the obligation.

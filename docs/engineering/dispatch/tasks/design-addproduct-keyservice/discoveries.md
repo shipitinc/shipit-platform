@@ -1156,3 +1156,118 @@ need a commit decision. Recorded as **`G-20`** in both gap registers. See `desig
 | Any gate result | **No analyzer, build, test, contrast measurement or integration run.** Every `NOT_RUN` remains `NOT_RUN`. **No feasibility claim is drawn from any of them** |
 | **Any Docker or Compose command** | **NONE ISSUED**, not even a read-only one. **This repository has already lost its QA database** to a lane running `docker compose -f docker/compose.qa.yaml down -v --rmi local`. The rule was **not tested**, because testing it is the forbidden act. Compose files were **not read** |
 | **The 9417f8bf / 876c6b97 scope notes' corrected reading** | **Cited, not adjudicated.** The Manager appended them at `1c3f5ad`; both decisions are cited **at that scoped reading** and **neither is re-opened**. **No accepted-risk count changed** |
+
+---
+
+# D-35…D-40 — Design Revision 7 (the cross-reference convention)
+
+**Persisted per `LEARNING_POLICY.md`. Revision 7 is a precision correction pass over Revision 6; it changed
+no design content about the key flow. These six entries are about how this work item's own records fail.**
+
+## D-35 — A target-existence check cannot see a false claim about a target
+
+**`DESIGN_DISCOVERY`** · **Persisted.**
+
+The rev-6 reviewer enumerated every target named in Revision 6's § R.1 incorporation table, confirmed
+**every one exists**, and still confirmed a row that says *"Carried with § 10.2-h below, which restates items
+10 and 12"* — for a section that does not exist. **The method was sound and structurally blind to the defect
+in front of it:** asking *"does the thing I pointed at exist?"* cannot answer *"is what I said about it
+true?"*, and in a table where 23 of 24 rows are true, the twenty-fourth is not detectable by
+presence-checking its neighbours.
+
+**The executable rule:** **a cross-reference is audited by EXTRACTION against a live heading inventory of
+the target document, never by reading.** Extract every `§`-token with its `file:line`, enumerate the
+target's headings, resolve. Rule **R4** in `design-revision-7.md` § R.11g-j.
+
+**What it found: 7 distinct mis-resolving targets across 45 sites, where reading found 1 target at 2.**
+
+## D-36 — A revision that introduces a colliding heading poisons its own citations
+
+**`DESIGN_DISCOVERY`** · **Persisted.**
+
+Revision 6 created `## R.11g` — **with no numbered items** — and `## 10.1-h`, then cited the **bare**
+`§ R.11g item 7` **17 times** and `§ 10.1 item 12` **16 times**. Revision 5's `### R.11g` carries items
+1–7; Revision 5's `### 10.1` carries items 1–11. **So every one of those 33 sites resolves to a section that
+does not contain the named item.** **33 of the 45 sites are Revision 6 colliding with itself.**
+
+**The rule:** **a revision's new sections carry a distinct suffix** (Revision 6: `-h`/`-i`; Revision 7:
+`-j`) **and a superseded revision's section is cited as `Revision N § X`, never bare.** Rules **R1**/**R2**.
+
+## D-37 — A falsifier an artifact fails is worse than no falsifier
+
+**`PROJECT_FACT`** · **Persisted.**
+
+`traceability-matrix-6.md:85` published, as the falsifier for its own `L-R5-1` correction: *"find an
+`artifacts[]` entry whose `blob_hash` is a pointer string rather than a hash."* **A reviewer running that
+test finds four.** The correction row therefore **fails its own stated test** while reporting a finding as
+closed. The harm is not the four entries — it is that a reviewer who ran the test and got a hit has been
+taught **the row's own test is not worth running**, and will not run the next one either.
+
+**The rule:** **every falsifier in this artifact set is executed against the artifact before it is
+published.** Revision 7's amended `L-R5-1` falsifier was executed, and passes: 17 entries parsed, 8 real
+hashes verified against `git hash-object`, 2 pointers resolving to printed hashes, 2 permitted
+self-exclusions, 5 entries with no `blob_hash` key — **and the 5 are named in the matrix so the falsifier's
+scope is not mistaken for coverage.**
+
+## D-38 — A record-correction note is only as byte-accurate as the block that produced it
+
+**`PROJECT_FACT`** · **Persisted.**
+
+`27ea6536`'s note quotes the build's footer string with a **hyphen** where
+`add_product_page.dart:383-384` renders an **em dash**. The hyphen's origin is **`design-revision-6.md:523`
+— the paste-ready block Revision 6 supplied** — plus `design-revision-metadata-6.yaml:360`. **The Manager
+pasted it faithfully.** The defect is therefore **upstream of the decision object**, in the artifact that
+*specified* the fix, and reviewing the decision object alone would have found the symptom and missed the
+cause.
+
+**The rule:** **when a lane supplies literal text for another owner to paste, that lane owns the byte
+accuracy of the result** — and a byte check on a supplied block is cheaper than a byte check on a published
+object. Revision 7 fixes both of its own sites and re-supplies the corrected block.
+
+## D-39 — The basename glob returns a *different lane's* answer
+
+**`PROJECT_FACT`** · **Persisted.**
+
+`git log --all --diff-filter=A -- '*design-revision-3.md'` returns **exactly two commits** —
+`16cd497` and `4e2d237` — **and both add a different lane's `design-revision-3.md`**. A premise built on
+that glob looks *satisfied* while having nothing to do with this lane. **Three separate false conclusions in
+this work item trace to the same trap**, and Revision 6's `G-20` exists because one of them nearly retired a
+revision from the record.
+
+**The rule:** **`git log --all --diff-filter=A -- <EXACT FULL PATH>`, always.** Verified in Revision 7's
+`G-20` discharge: the full-path form returns `af8e30f` for all four of this lane's Revision-3 artifacts.
+
+## D-40 — A merge precondition that refuses on untracked shadows, twice in one worktree
+
+**`WORKFLOW_IMPROVEMENT`** · **Routed for independent review, NOT auto-persisted as tooling.**
+
+**`F-16`.** `git merge --ff-only` was refused here **again** — 11 tracked + 8 untracked = **19 shadowing
+files** — after Revision 6 recorded the identical event for Revision 5's four artifacts. The same lane
+directory, two corrections apart.
+
+**The reusable part is the recovery, and it is not a formality:** compare **every** shadowing file by
+`git hash-object` against the target commit **before** touching anything; copy the directory **outside the
+repository** first; **move** the untracked copies rather than deleting them; restore tracked modifications
+with `git checkout --`; fast-forward; then **re-compare the moved files against the backup**. All 19 were
+byte-identical, so nothing was lost — and **had any genuinely differed, the correct action was to stop and
+name it, not to proceed.**
+
+**Reported, not persisted as a script,** because a design lane should not author repository tooling as a side
+effect. **An `AUTOMATION_OPPORTUNITY` rides with it:** the cross-reference audit of `D-35` is mechanical and
+could fail a build on an unresolved `§`-token — the check that found 45 sites where reading found 2.
+
+## Not persisted — Revision 7
+
+| Finding | Why not |
+|---|---|
+| **The `Footer` text layer at (236,862) on the four desktop boards** | **CITED, NOT MEASURED.** Three agreeing independent read-only passes (sibling lane's `penpot-board-evidence.md` § 6.4, the Rev-5 reviewer's own live pass, and the Manager's ledger), all named as **source of evidence, not as authority**. **This lane called no Penpot tool and read no board**; it holds no board ownership and every board is `PROHIBITED_PATHS`. Recorded as **`G-18`** — **OPEN** |
+| **The board-ownership GRANT, and Penpot's dormancy** | **REPORTED, NOT VERIFIED.** The grant is the human's decision and the dormancy is a runtime condition, both conveyed by the Manager. **Recorded as reported, in the shape Revision 6 used.** The grant **does not discharge `G-18`**, and its breadth exceeding the obligation is registered as **`G-23`** |
+| **Whether `BPM` carries a `Footer` layer** | **`UNVERIFIED IN BOTH DIRECTIONS.**** No measurement exists either way and this lane holds no board ownership. **Registered as `G-23`** for the granted lane to establish — **not answered, and not assumed** |
+| **ADR 0018's own body still recording four accepted risks** | **`CONTRADICTION` — ESCALATED, NOT PERSISTED.** The owner's retirement of A1 is in the decision objects; the ADR is where readers look. **Governance-touching, and `docs/adr/**` is `PROHIBITED_PATHS`** — nothing written, no such edit claimed, and the edit is **already specified** by the ADR lane and uncommitted there too. Recorded as **`G-21`** |
+| **`27ea6536:120` contradicting its own `:15-17`** | **`CONTRADICTION` — ESCALATED, NOT PERSISTED.** `.decisions/**` is `PROHIBITED_PATHS` and Manager-owned. **Pre-existing** (Manager, `674b871`), **unmeasured** by any pass, and **it does not widen `G-18`**. Registered as **`G-19` residual R-2**, with the exact append-only text specified at `design-revision-7.md` § 7-j.1 |
+| **Retiring `A1` discharged the resurrection half only; revocation remains one-sided** | **NOT PERSISTED AS A NEW GAP, DELIBERATELY.** It is **already registered and owned** by `79e860e2`, and inventing a fourth entry for a known gap is how a register stops being an index. Recorded against **Revision 5 § R.6** at `design-revision-7.md` § R.6-j, **because this is the revision that records A1's retirement and that is exactly where a reader will conclude the clause is discharged.** Verified here: `grep` for handle-destroying calls across `apps`/`packages` → **0 matches** |
+| **Revision 6's committed false and mis-resolving text** | **NOT PATCHED, DELIBERATELY.** Editing a committed superseded artifact destroys the evidence this revision cites (`design-revision-6.md:277` and `:523` are *how* two findings were found). **The cost is registered as `G-22`** — a correction does not travel with the file — and the two one-line banners that fix it are specified at `report-revision-7.md` § 7 for the Manager |
+| **The footer spec, the three code edits, `design_primitives.dart:396`, Revision 5's 3 372 incorporated lines** | **Confirmed by reviewers against source and NOT re-derived.** This lane re-read only what its own citations name, at `14b0267` — **a citation check, not a re-argument.** Revision 5's substance was not re-derived and no claim is made about it |
+| **Any gate result** | **No analyzer, build, test, contrast measurement or integration run.** Every `NOT_RUN` remains `NOT_RUN`. **No feasibility claim is drawn from any of them** |
+| **Any Docker or Compose command** | **NONE ISSUED**, not even a read-only one. **This repository has already lost its QA database** to a lane running `docker compose -f docker/compose.qa.yaml down -v --rmi local`. The rule was **not tested**, because testing it is the forbidden act. **Compose files were not read** |
+| **The accepted-risk retirement itself** | **NOT THIS LANE'S TO PERSIST AS ITS OWN.** Recorded as **the repository owner's decision** on 2026-10-07, verified against the shipped source. **Two prior lanes were right to decline to make that call**, and this lane does not claim the credit of having made it |
