@@ -279,3 +279,37 @@ updated_at: 2026-10-06T13:05:00Z
 # Correcting source of record: docs/adr/0018-per-product-git-credentials.md, amendment A2
 # (Design Revision 4, correcting Design Revision 3). Read this object at the ADR's scoped
 # reading, not at its literal wording.
+
+# ---- CITATION CORRECTION appended 2026-10-07 by orchestrator-main. APPEND-ONLY: no line above
+# this comment is altered. The scope note above stands; only a citation inside it is corrected.
+# -------------------------------------------------------------------------------------------
+#
+# The scope note above says "WHY THIS OBJECT IS NOT INTERNALLY CONSISTENT. :116-119 already
+# contains the CORRECT reasoning". THAT POINTER IS WRONG. :116-119 is the tail of the "Where the
+# guarantee lives" assessment ("unavailability lands directly on the fail-open/fail-closed question
+# in 7b1bc8b7-...") plus the head of the "Insider/backup exposure" dimension. It contains no
+# same-uid text.
+#
+# THE CORRECT CITATIONS ARE:
+#   :159-160  inside OPTION_A's `implications` -
+#             "...a stolen volume, a backup or a `docker cp` yields the key in cleartext, and
+#              permissions do not defend against a same-uid process - which is the git transport."
+#   :96-97    an INDEPENDENT, second statement of the same property, recorded as a quantitative
+#             metric rather than as prose -
+#             metric "A1 filesystem-only protection against a same-uid process",
+#             value "none - the git transport runs as the same uid that would read the file".
+#             :96-97 is the stronger witness, because it is a stated measurement.
+#
+# THE SUBSTANCE OF THE NOTE IS UNCHANGED AND CORRECT. The object does contain the correct same-uid
+# reasoning, so it is internally inconsistent with its own "SHIP IT never holds key bytes" absolute,
+# and the reconciliation in the note above stands. Only the pointer was wrong.
+#
+# Why this is recorded rather than quietly fixed: ADR 0018 argues (Amendments A2 -> "never holds
+# key bytes") that a wrong absolute is worse than an absent one, "because a reader who trusts it
+# will not look for the real exposure". A pointer 43 lines off the quoted text produces exactly
+# that behaviour - and a decision object is where a reader is most likely to land, because this
+# file is the citable id.
+#
+# Read with: the dated scope note above (absolute scoping), this correction (pointer), and
+# docs/adr/0018-per-product-git-credentials.md sections "Amendments A2", "Accepted risks" and
+# "Known gaps" (Design Revision 5, superseding Revision 4).

@@ -161,7 +161,7 @@ resolution:
       owner: none — closed
 created_by: orchestrator-main
 created_at: 2026-10-06T14:20:00Z
-updated_at: 2026-10-07T00:00:00Z   # scope note appended; the resolution itself is unaltered
+updated_at: 2026-10-07T00:00:00Z   # scope note + citation-correction notes appended; the resolution itself is unaltered
 # ---- SCOPE NOTE appended 2026-10-07 by orchestrator-main. APPEND-ONLY: no line above this
 # comment is altered. The acceptance above stands, is NOT withdrawn, and no clause of the
 # owner's answer is re-opened. --------------------------------------------------
@@ -198,3 +198,37 @@ updated_at: 2026-10-07T00:00:00Z   # scope note appended; the resolution itself 
 #
 # Correcting source of record: docs/adr/0018-per-product-git-credentials.md, amendment A2
 # (Design Revision 4, correcting Design Revision 3).
+
+# ---- SCOPE NOTE appended 2026-10-07 by orchestrator-main. APPEND-ONLY: no line above this
+# comment is altered. The resolution above stands, is NOT withdrawn, and no clause of the owner's
+# answer is re-opened. -----------------------------------------------------------------------
+#
+# A SECOND FALSE STANDING CLAIM, in resolution.rationale at :122-123:
+#
+#   "`reviewed_by` and `reviewed_at` remain `null` because independent design review of the
+#    amendment has still never happened."
+#
+# That was true when written and is FALSE NOW, in the same shape as the :20 absolute the scope
+# note above already corrects: a fact with a shelf life recorded as a standing claim. Independent
+# design review of amendment A2 has happened, twice -
+#   - docs/engineering/dispatch/tasks/design-review-adr-0018-a2-rev3/report.md
+#     RESULT: DESIGN_REVIEW_CHANGES_REQUIRED, REVIEWED_HEAD: 289f1d3
+#   - docs/engineering/dispatch/tasks/design-rereview-adr-0018-a2-rev4/report.md
+#     RESULT: DESIGN_REVIEW_CHANGES_REQUIRED
+# The human-recorded rationale is NOT edited; this note supersedes its wording only.
+#
+# WHAT IS TRUE, and is the durable form: `reviewed_by` remains `null` because NO REVIEWER HAS
+# APPROVED ANY REVISION OF A2. "Never reviewed" and "reviewed but not approved" are the same
+# operational state for anything deciding whether to trust the prose; the field fills when someone
+# approves.
+#
+# ALSO NOW STALE AT :54-55 (cited as :53-55 elsewhere): the "Four gaps the amendment recorded as
+# open" metric. Four gaps were accepted; the repository owner RETIRED A1 on 2026-10-07 after being
+# shown that 08c7590 made the mint insert-only on both tiers. THREE are now recorded (A2, A3, A4).
+# The owner's answer - "Accept A2, record the gaps as accepted" - is not withdrawn or re-opened, and
+# nothing is added. Also: the OTHER half of the revocation clause - no code destroys a
+# secret-manager handle - remains unimplemented, so revocation is still one-sided in practice.
+# That half was never an accepted risk and retiring A1 did not accept it.
+#
+# Read with: the scope note above, this note, and ADR 0018 sections "Accepted risks" and
+# "Known gaps" (Design Revision 5).
