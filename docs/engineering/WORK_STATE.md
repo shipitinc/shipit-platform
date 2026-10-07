@@ -332,6 +332,61 @@ passes here because `dogfood_shipit_postgres_test.dart:87` asserts a git working
 checkout is one — **independently confirming the linked-worktree diagnosis from `e391c02`.**
 `main` = `16cd497`, `main`…`origin/main` 0/0.
 
+### ROUND 2 — all three corrections made, all three re-reviewed, none approved
+
+| lane | correction | re-review |
+|---|---|---|
+| mobile | Rev 6 — 0 BLOCKERS in, 3 record corrections, **zero board writes** | `CHANGES_REQUIRED` — 0 BLOCKERS, 1 MEDIUM, 1 LOW. **Confirms rev 6 needs NO board change** |
+| keys | Rev 6 (`d2665821`) — B-R5-1's four parts, **nothing redesigned** | `CHANGES_REQUIRED` — 0 BLOCKERS, **3 HIGH**, 1 MEDIUM, 4 LOW |
+| ADR 0018 | Rev 4 (`ADR0018-A2-REV4`) — the stale-text **sweep** | `CHANGES_REQUIRED` — 0 BLOCKERS, **3 HIGH** |
+
+**The ADR sweep found ELEVEN sites where the review reported four** — and the re-reviewer independently
+re-ran all six axes and confirmed eleven, **finding no twelfth.** The producing lane's number survives
+the test it itself nominated as the one that mattered.
+
+**But it found the sweep's axes cover CLAIMS while the defect class is REFERENTIAL integrity** — and
+revision 4 had just been handed M-3, which proves that class exists, then swept only hex tokens. Three
+consequences, all propagated:
+
+- **A wrong citation reached a resolved human decision.** `9417f8bf:116-119` is cited for the same-uid
+  reasoning; **it is at `:159-160`**. The pointer is **43 lines off** — inside the very note recording that
+  a wrong absolute is worse than an absent one. Present at five ADR sites, in §11.1, in §1.4's decline
+  table, and in the note the Manager applied.
+- **`:687` still says "Nothing here is closed"** — 23 lines above revision 4's own rewritten A1 heading
+  saying the opposite. **A section claim falsified by its own body, on the exact axis M-4 is about.**
+- **Three internal `:NNN` citations broke** under the +188-line growth; one was **introduced by revision 4**,
+  and it is **self-refuting** — the §Related scope note justifies itself with a wrong pointer.
+
+**F-9 is stronger than recorded.** Not merely a client-side mock: the register flow **never transmits the
+key at all** and passes `repositoryId: productId`, so the build violates **A1's scope invariant**.
+
+**Two of my own errors this round, both caught by the lanes I warned:**
+1. I told the keys lane `design-revision-3.md` "exists and is committed on `main`". **It does not** — that
+   came from a glob matching **two other lanes'** rev-3 files. The lane declined it and registered the
+   residue as **G-20**; adopting it would have retired a revision on a false statement. Now persisted.
+2. I wrote `6220951` as the A2 amendment commit; it is an `AGENTS.md` commit. The A2 revision is
+   `5436a4d`, and `876c6b97` is a **decision id, not a commit** — which matters, because G-17's entire
+   argument is a commit-ordering argument. A lane found the remaining instance (`570bb640`, M-3).
+
+### G-18 — the one thing blocking closure, and it needs YOUR decision
+
+`27ea6536` resolved that the desktop `S` boards carry **no footer copy** and named those boards
+authoritative. **All four carry a `Footer` TEXT layer at `(236,862)`**, byte-identical to
+`add_product_page.dart:383-384`, with the divider at `(236,848)`. Measured **three times** now, by three
+independent lanes, always read-only.
+
+**The build side is fully specified — three edits, and desktop's spec falls out of `note: null` for free.
+Mobile's is genuinely not expressible today** (`design_primitives.dart:396` paints the `ContentRule`
+unconditionally), which is a **Level 1** design-system-owner item, not a gate.
+
+**The board side has no owner.** `S -`/`DESKTOP -` and `BPM -` are `PROHIBITED` to every lane, so the
+four-board edit — remove one layer, nothing else — **cannot be dispatched at all**. Both design lanes
+now carry it as an open gap (`G-18` in keys, `F6`/`N6b` in mobile) and both reviewers say the same thing:
+**it needs an ownership grant, not a re-decision, and the human must not be asked to re-decide the footer.**
+
+The keys reviewer notes a distinction worth keeping: **R-UX2 is COVERED but the OBLIGATION is UNOWNED.**
+Coverage and completion are different claims and only the first is true.
+
 ### SESSION 2026-10-07 (orchestrator-main) — what changed
 
 **PENPOT IS REACHABLE.** The two-session `SESSION_LIMITED` blocker is cleared: `penpotUtils.getPages()`
@@ -485,11 +540,23 @@ MERGED:
     **§13 / §13a / §13b**, which ADR 0018 quotes verbatim and ADR 0012:34 and ADR 0019:121 depend on — three
     ADRs had been pointing at absent text.
   - `main` is **fully green**: analyze clean, `+142` unit, `+165` integration, schema guard 16 OK.
-IN_REVIEW / AWAITING INDEPENDENT REVIEW:
-  - **mobile Design Revision 5** — `DESIGN_REVISION_COMPLETE`, `RISK_LEVEL: 3` (gate re-verified
-    discharged), compliance **PARTIAL**, a11y **PASS**, feasibility **MEDIUM**. Never reviewed.
-  - **ADR 0018 A2 revision 3** (`ADR0018-A2-REV3`, ADR 811 lines) — `DESIGN_REVISION_COMPLETE`,
-    `RISK_LEVEL: 3`. Never reviewed. See the session findings above for G-17 and the narrowed A4.
+IN_CORRECTION (round 3 — all three re-reviewed 2026-10-07, none approved):
+  - **mobile Revision 6** — `CHANGES_REQUIRED`, 0 BLOCKERS, **1 MEDIUM (MR6-1, fixed at `bd01bc0`)**,
+    1 LOW (MR6-2, fixed). **Zero board writes; the boards need no change.** Its two findings were a
+    **false persistence declaration** — the lane named a report path that never existed, in the one area
+    where this work item has lost three reports — and a **wrong finding reference**.
+  - **keys Revision 6** (`d2665821`) — `CHANGES_REQUIRED`, 0 BLOCKERS, **3 HIGH**, 1 MEDIUM, 4 LOW. The
+    notable: **`§ 10.2-h` does not exist** yet `design-revision-6.md:277` and `metadata-6.yaml:352` make
+    three untrue claims about it — **the dangling-pointer class recurring inside the artifact built to fix
+    it.** `L-R5-1` reported closed on a false claim, with the matrix's own falsifier satisfied by four
+    entries. Both register row counts wrong (15→18, 16→19). **The Manager's G-19 note is audited
+    byte-level and sound, framing included.**
+  - **ADR 0018 A2 Revision 4** (`ADR0018-A2-REV4`, ADR 999 lines, uncommitted) — `CHANGES_REQUIRED`,
+    0 BLOCKERS, **3 HIGH**: a citation **43 lines off** that reached a resolved decision object; `:687`
+    saying "Nothing here is closed" 23 lines above its own contradiction; three broken internal `:NNN`
+    citations, **one self-refuting**. **The eleven-site sweep is independently confirmed — no twelfth.**
+  - A fourth correction (mobile Rev 7, keys Rev 7, ADR Rev 5) is the natural next round; all three are
+    bounded and record-level. **Dispatchable on your word.
 IN_REVIEW / AWAITING MERGE AUTHORITY:
   - `fix/credential-identity-invariants` @ **`a4c211c`** — **now pinnable**, which it was not last session.
     Chain: baseline `APPROVE_WITH_NON_BLOCKING_FOLLOWUP` → re-review `DO_NOT_APPROVE_CORRECTIONS` (no
@@ -587,13 +654,12 @@ PROHIBITED_PARALLEL: >-
   feature — D-3 below shows no host-key verification exists anywhere, and that work is
   security-critical and needs its own review.
 NEXT_AUTOMATIC_ACTION: >-
-  **1. Merge `fix/credential-identity-invariants` @ `a4c211c`** — needs human authority only; the
-  integrator stopped before merging and rehearsed `08c7590`. It is the cheapest real improvement available
-  and the only item that closes a live security gap. **2. Independent review of mobile revision 5 and of
-  ADR 0018 A2 revision 3**, both read-only and disjoint, dispatchable in parallel. **3. Keys revision 5
-  correction** (1 BLOCKER + 4 MEDIUM + 3 LOW), which needs the **F6 ownership grant** first, since no lane
-  can edit the boards where the defect lives. **4.** Then Design Contract freeze, QA Contract, and only
-  then the feature's implementation lane — which is **still not unblocked**.
+  **1. Round-3 corrections** — mobile Rev 7, keys Rev 7 (`§ 10.2-h`, L-R5-1's false closure, the two
+  register counts), ADR Rev 5 (the 43-lines-off citation, `:687`, the three broken `:NNN`s). All bounded
+  and record-level. **2. `G-18` needs an ownership grant from the human** — the four-board footer edit has
+  no owner and **cannot be dispatched** until one exists; it is an ownership gap, not a re-decision.
+  **3.** Then Design Contract freeze, QA Contract, and only then the feature's implementation lane —
+  which is **still not unblocked**. The merge (`08c7590`) is **done** and needs nothing further.
 SELF_EDITS: >-
   Workflow bookkeeping only, per `aef-orchestrator` §2: this file, `docs/engineering/dispatch/LANES.md`,
   `docs/engineering/dispatch/DECISIONS.md`, `docs/engineering/dispatch/tasks/*/`, and the five Human
