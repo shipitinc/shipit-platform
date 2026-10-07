@@ -172,17 +172,44 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
   // ProductCredential (ADR 0018 A1 — one per repository, no key material)
   // Table: product_credential
   //
-  // KEY MATERIAL IS IMMUTABLE, and the guard is in the statement on BOTH
-  // branches below — the CAS branch and the upsert branch. The `expectedVersion`
-  // CAS cannot carry it: the mint path reaches this write with a null
-  // `expectedVersion` (a new credential has no prior version) and hardcodes
-  // `version: 1`, which an already-minted row also carries — so `expectedVersion:
-  // 1` matches and the update still rewrites `publicKey`. Hence the same
-  // predicate over the four immutable fields on both branches: a write whose
-  // key material differs from the stored row updates nothing, which is reported
-  // as a refusal. Dropping either predicate silently reopens the hole, and the
-  // in-memory store's equivalent check — which is unconditional — would then be
-  // the only tier enforcing the contract.
+  // THREE GUARDS, all in the statement, none of them in a read before it.
+  //
+  // 1. KEY MATERIAL IS IMMUTABLE — `publicKey`, `fingerprint`, `algorithm`,
+  //    `referenceName` — on the CAS branch below.
+  //
+  // 2. THE SCOPE SET IS IMMUTABLE — `productId`, `repositoryId`. ADR 0018 A1
+  //    makes the repository the unit of scope, so these two fields say what the
+  //    key is allowed to reach, and they are as fixed-at-mint as the key
+  //    itself. They were in `$assignments` on both branches and in no predicate,
+  //    so a CAS write could move an installed deploy key to another repository
+  //    of the same product: no rotation record, `supersedesCredentialId`
+  //    untouched, and any host confirmation travelling with it to a host whose
+  //    key was never shown to anybody (ADR 0018: "the operator is shown the
+  //    host, key type and fingerprint and must confirm it").
+  //
+  // 3. A MINT NEVER OVERWRITES AN EXISTING IDENTITY — the null-`expectedVersion`
+  //    branch is `DO NOTHING`, not a predicated `DO UPDATE`. `DO UPDATE` was the
+  //    wrong construct for a predicate that is SATISFIED by identical values:
+  //    an identical-material re-mint passed it and rewrote every mutable column
+  //    from the freshly minted object, resetting `status` to `generated`,
+  //    `hostKeyStatus` to `unknown` and nulling host confirmation, verification,
+  //    diagnostics and revocation evidence. It also made a REVOKED credential
+  //    resurrectable, because `readActiveCredentialForRepository` excludes
+  //    revoked rows, so the engine's one-active guard cannot fire against one —
+  //    and the resurrected row then occupies the active set, so the legitimate
+  //    replacement mint is refused by `_activeCredentialUniqueIndex`. `DO
+  //    NOTHING` refuses the conflict regardless of what the caller supplied,
+  //    which is also why it cannot keep the key-material distinction alive on
+  //    this branch: there is nothing left to update.
+  //
+  //    Rotation mints a NEW `credentialId`, so nothing legitimate is lost.
+  //
+  // DURABLE EVIDENCE CANNOT BE CLEARED on the CAS branch: `hostConfirmedAt`,
+  // `hostConfirmedBy`, `lastVerifiedAt`, `lastVerifiedBy`, `revokedAt`,
+  // `revokedReason` and `hostKeyFingerprint` record decisions and events that
+  // happened. `copyWith` cannot unset them, which is what keeps every engine
+  // call site away from this today; the predicate is what makes it true against
+  // any other connection.
   //
   // ONE ACTIVE CREDENTIAL PER REPOSITORY is enforced by
   // `_activeCredentialUniqueIndex`, a partial unique index declared in
@@ -203,6 +230,30 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
 
   /// Postgres SQLSTATE for `unique_violation`.
   static const _uniqueViolationSqlState = '23505';
+
+  /// The predicate refusing a CAS write that CLEARS the recorded value of
+  /// `"column"`, while still allowing one that sets it or leaves it alone.
+  ///
+  /// THE CAST IS LOAD-BEARING, and so is [type]. Serverpod binds every
+  /// parameter here as `Type.unspecified` and lets the server infer the type,
+  /// and a bare `@param IS NOT NULL` gives Postgres nothing to infer from: the
+  /// statement then fails at Parse time with `42P08 could not determine data
+  /// type of parameter $n`, before a single row is examined. Verified on this
+  /// file's own statement, not read out of the docs. Casting to `text` does not
+  /// work either — it pins the parameter to `text`, and the assignment in SET
+  /// then fails with `42804 column "lastVerifiedAt" is of type timestamp
+  /// without time zone but expression is of type text`. The cast has to name
+  /// the column's real type, which is what [type] is.
+  ///
+  /// [type] is read off `migrations/*/definition.sql`. If a column's type ever
+  /// changes, this statement starts failing at Parse time on every CAS write —
+  /// loudly, and inside this file's integration tests, not silently.
+  static String _noClear(String column, String type) =>
+      'AND ("$column" IS NULL OR CAST(@$column AS $type) IS NOT NULL)';
+
+  /// `timestamp without time zone`, as declared for the credential timestamps
+  /// in `migrations/*/definition.sql`.
+  static const _timestampType = 'timestamp';
 
   @override
   Future<void> saveProductCredential(
@@ -239,38 +290,60 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
         '"supersedesCredentialId" = @supersedesCredentialId, '
         '"version" = @version';
 
+    final params = _credentialParams(credential);
+
     if (expectedVersion != null) {
-      // The same key-material predicate as the INSERT branch below, and for the
-      // same reason: the store contract in `product_registry_store.dart` is
-      // UNCONDITIONAL — a write whose credentialId exists with different key
-      // material must throw whatever the caller passed for `expectedVersion`.
-      // Without this predicate the CAS branch silently rewrote `publicKey`, so
-      // the two tiers disagreed: the in-memory store refuses, this one accepted.
-      // The predicate closes the hole in the statement, not in a read before it,
-      // so it holds against any other connection.
+      // Three predicates, all UNCONDITIONAL: the store contract in
+      // `product_registry_store.dart` holds whether or not the caller passed a
+      // version, because a matching `expectedVersion` must not buy a rewrite of
+      // anything fixed at mint.
+      //
+      //   * key material — without this the CAS branch silently rewrote
+      //     `publicKey`, so the two tiers disagreed: the in-memory store
+      //     refused, this one accepted;
+      //   * scope — `productId`/`repositoryId` were in `$assignments` and in no
+      //     predicate, so a CAS write could re-point an installed deploy key;
+      //   * durable evidence — each clause refuses a non-null → null
+      //     transition, so re-recording a host confirmation with a fresh
+      //     timestamp still lands and erasing what is on the record does not.
+      //
+      // All of it is in the statement, not in a read before it, so it holds
+      // against any other connection.
       final affected = await _db.execute(
         'UPDATE "product_credential" SET $assignments '
         'WHERE "credentialId" = @credentialId AND "version" = @expected '
         'AND "publicKey" = @publicKey '
         'AND "fingerprint" = @fingerprint '
         'AND "algorithm" = @algorithm '
-        'AND "referenceName" = @referenceName',
+        'AND "referenceName" = @referenceName '
+        'AND "productId" = @productId '
+        'AND "repositoryId" = @repositoryId '
+        '${_noClear("hostConfirmedAt", _timestampType)} '
+        '${_noClear("hostConfirmedBy", 'text')} '
+        '${_noClear("lastVerifiedAt", _timestampType)} '
+        '${_noClear("lastVerifiedBy", 'text')} '
+        '${_noClear("hostKeyFingerprint", 'text')} '
+        '${_noClear("revokedAt", _timestampType)} '
+        '${_noClear("revokedReason", 'text')}',
         parameters: QueryParameters.named({
-          ..._credentialParams(credential),
+          ...params,
           'expected': expectedVersion,
         }),
       );
       if (affected == 1) return;
 
-      // Zero rows is ambiguous: the version may have moved, or the key material
-      // may have been re-pointed. Distinguish them by reading the row back, so
-      // the caller is told WHICH invariant it violated. A caller that re-points
-      // key material must not be told "concurrent modification", or it will
-      // retry the same re-point and eventually succeed on a version match.
+      // Zero rows is ambiguous: the version may have moved, the key material may
+      // have been re-pointed, the scope may have been changed, or recorded
+      // evidence may have been cleared. Distinguish them by reading the row
+      // back, so the caller is told WHICH invariant it violated. A caller that
+      // re-points key material must not be told "concurrent modification", or it
+      // will retry the same re-point and eventually succeed on a version match.
       final rows = await _db.query(
         'SELECT "version", "publicKey", "fingerprint", "algorithm", '
-        '"referenceName" FROM "product_credential" '
-        'WHERE "credentialId" = @credentialId',
+        '"referenceName", "productId", "repositoryId", "hostConfirmedAt", '
+        '"hostConfirmedBy", "lastVerifiedAt", "lastVerifiedBy", '
+        '"hostKeyFingerprint", "revokedAt", "revokedReason" '
+        'FROM "product_credential" WHERE "credentialId" = @credentialId',
         parameters: QueryParameters.named({
           'credentialId': credential.credentialId,
         }),
@@ -285,6 +358,9 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
       }
 
       final existing = rows[0].toColumnMap();
+      // Immutability refusals FIRST, in a fixed order, and ahead of the version
+      // conflict. Order among them is only for a stable message: each is its own
+      // defect and none of them is a lost race.
       if (existing['publicKey'] != credential.publicKey ||
           existing['fingerprint'] != credential.fingerprint ||
           existing['algorithm'] != credential.algorithm ||
@@ -295,6 +371,37 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
           'it to issue a new credentialId instead',
         );
       }
+      if (existing['productId'] != credential.productId ||
+          existing['repositoryId'] != credential.repositoryId) {
+        throw CredentialNotUsableException(
+          credential.credentialId,
+          'the scope of an existing credential cannot be changed; it belongs to '
+          'the product and repository it was minted for, and re-pointing a key '
+          'means minting a new credentialId',
+        );
+      }
+      for (final column in const [
+        'hostConfirmedAt',
+        'hostConfirmedBy',
+        'lastVerifiedAt',
+        'lastVerifiedBy',
+        'hostKeyFingerprint',
+        'revokedAt',
+        'revokedReason',
+      ]) {
+        // Only a null on either side can clear the column, so this compares
+        // presence rather than values — the stored side comes back as a
+        // `DateTime` for the timestamp columns and the supplied one is a
+        // string, so a value comparison would be wrong twice over.
+        if (existing[column] != null && params[column] == null) {
+          throw CredentialNotUsableException(
+            credential.credentialId,
+            'the $column of an existing credential is a recorded fact and '
+            'cannot be cleared; host confirmation, verification and revocation '
+            'stay readable',
+          );
+        }
+      }
 
       throw ConcurrentModificationException(
         entityId: credential.credentialId,
@@ -303,31 +410,35 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
       );
     }
 
-    // `RETURNING` is the whole detection mechanism: a conflicting row whose key
-    // material differs is filtered out by the `WHERE` above, so no row comes
-    // back and this write is refused. Checking the affected-row count of a
-    // bare `execute` would work too, but `RETURNING` cannot be ignored by
-    // accident — an empty result is unmissable here.
+    // THE MINT IS INSERT-ONLY. `DO NOTHING`, not a predicated `DO UPDATE`:
+    // a conflicting `credentialId` updates nothing at all, whatever the caller
+    // supplied. That is the whole point — the previous `DO UPDATE` predicated on
+    // the four immutable fields being UNCHANGED, so a re-mint with identical
+    // material satisfied it and rewrote every mutable column of an existing
+    // row, and a predicating `DO UPDATE … WHERE <always false>` would have the
+    // same effect while keeping the predicate alive as an accidental second
+    // source of truth for a rule that is now "a mint never writes".
     //
-    // Only THIS branch can be refused by `_activeCredentialUniqueIndex`, and
-    // so only this one translates it. The `expectedVersion` branch above is an
+    // `RETURNING` is the detection mechanism: `DO NOTHING` returns no row for a
+    // conflict, and an empty result cannot be ignored by accident the way an
+    // affected-row count can.
+    //
+    // Only THIS branch can be refused by `_activeCredentialUniqueIndex`, and so
+    // only this one translates it. The `expectedVersion` branch above is an
     // UPDATE, and no reachable path moves a credential from revoked back into
-    // the active set: `revokeCredential` is the only writer of `revoked` and
-    // `recordCredentialCheck` refuses a revoked credential outright, so the
-    // index can never be the constraint an UPDATE trips. `rotateCredential`
-    // relies on that ordering — it revokes first, so the old row leaves the
-    // index before the replacement is inserted.
+    // the active set: `revokeCredential` is the only writer of `revoked`,
+    // `recordCredentialCheck` refuses a revoked credential outright, and D-4
+    // removes the mint's ability to resurrect one — so the index can never be
+    // the constraint an UPDATE trips. `rotateCredential` relies on that
+    // ordering: it revokes first, so the old row leaves the index before the
+    // replacement is inserted.
     DatabaseResult written;
     try {
       written = await _db.query(
         'INSERT INTO "product_credential" ($cols) VALUES ($vals) '
-        'ON CONFLICT ("credentialId") DO UPDATE SET $assignments '
-        'WHERE "product_credential"."publicKey" = @publicKey '
-        'AND "product_credential"."fingerprint" = @fingerprint '
-        'AND "product_credential"."algorithm" = @algorithm '
-        'AND "product_credential"."referenceName" = @referenceName '
+        'ON CONFLICT ("credentialId") DO NOTHING '
         'RETURNING "credentialId"',
-        parameters: QueryParameters.named(_credentialParams(credential)),
+        parameters: QueryParameters.named(params),
       );
     } on DatabaseQueryException catch (error) {
       if (error.code != _uniqueViolationSqlState ||
@@ -347,10 +458,16 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
     }
     if (written.isNotEmpty) return;
 
+    // The id is taken. Reported as an IDENTITY conflict and not as a
+    // key-material one: `DO NOTHING` cannot see the supplied material, and
+    // telling a caller that re-minted with a different key that its key was
+    // refused would be false. Both are defects, both leave the row untouched,
+    // and the remedy is the same — a NEW `credentialId`, or `rotateCredential`.
     throw CredentialNotUsableException(
       credential.credentialId,
-      'the key material of an existing credential cannot be changed; rotate '
-      'it to issue a new credentialId instead',
+      'a credential with this id already exists; minting is insert-only, so '
+      'issue a NEW credentialId — or use rotateCredential — instead of '
+      're-minting this one',
     );
   }
 

@@ -20,6 +20,16 @@
 # single reference migration is still used for the guarded-column comparison,
 # because that is specifically about the immutability function it defines.
 #
+# NAME-ANCHORED PARITY IS NOT PARITY. Finding `CREATE UNIQUE INDEX ... "<name>"`
+# says the object EXISTS in both homes; it says nothing about whether they
+# declare the same thing. The two copies of
+# `product_credential_active_repository_unique` could disagree about the table,
+# the key column or the WHERE predicate and every name-anchored check here would
+# still pass — while a fresh database and a chain-migrated one enforced different
+# invariants. So the index objects are additionally compared by their FULL DDL.
+# That check is what makes the "byte-identical" claim in
+# `tool/schema_bootstrap.sql` true rather than aspirational.
+#
 # WHY THIS IS A STATIC CHECK. The fresh-vs-chain difference is a property of the
 # SQL that each path applies, not of any particular database:
 #
@@ -225,13 +235,86 @@ else
   echo "      only in migration: $(comm -13 <(echo "${asset_columns}") <(echo "${reference_columns}") | tr '\n' ' ')"
 fi
 
+# The index objects are compared by their FULL DDL, not by their name.
+#
+# Name-anchored parity is not parity. `ddl_pattern` matches
+# `CREATE UNIQUE INDEX ... "<name>"` anywhere in the statement, so the two
+# copies of `product_credential_active_repository_unique` could disagree about
+# everything that matters — the table, the key column, the WHERE predicate — and
+# this check would still have reported them as agreeing. That is exactly the
+# failure the predicate at `schema_bootstrap.sql` and its migration counterpart
+# is written to prevent, so the guard must be able to see it.
+#
+# Two normalisations, and only two:
+#   * whitespace collapsed, so line wrapping is not a difference;
+#   * the `IF NOT EXISTS` idempotence clause removed, because the bootstrap
+#     asset must be re-runnable (its IDEMPOTENCE CONTRACT) and the chain path
+#     must not fail where the bootstrap already ran. That clause is the ONLY
+#     permitted difference, and it is permitted deliberately.
+# Everything else — table, key column, `WHERE` predicate — must match.
+#
+# The triggers are deliberately NOT compared this way: the asset wraps each in
+# `DROP TRIGGER IF EXISTS` + `CREATE` so re-running it is a no-op, and the
+# migration does not. For those, the guarded-column comparison above is what is
+# actually enforced, and `tool/schema_bootstrap.sql` says so.
+ddl_statement() {
+  local name="$1" file="$2"
+  sql_without_comments "${file}" \
+    | tr '\n' ' ' \
+    | grep -oE "CREATE[^;]*\"${name}\"[^;]*" \
+    | head -1 \
+    | sed -e 's/[[:space:]][[:space:]]*/ /g' -e 's/^ //' -e 's/ *$//' \
+          -e 's/CREATE UNIQUE INDEX IF NOT EXISTS/CREATE UNIQUE INDEX/'
+}
+
+for entry in "${required_objects[@]}"; do
+  kind="${entry%%:*}"
+  object="${entry#*:}"
+  [ "${kind}" = "index" ] || continue
+
+  declaring=""
+  for migration in "${chain_migrations[@]}"; do
+    if [ -r "${migration}" ] \
+      && grep -qE "$(ddl_pattern "${kind}" "${object}")" \
+        <<<"$(sql_without_comments "${migration}")"; then
+      declaring="${migration}"
+      break
+    fi
+  done
+  if [ -z "${declaring}" ]; then
+    fail "no migrations/*/migration.sql declares ${kind} ${object}, so its DDL cannot be compared"
+    continue
+  fi
+
+  asset_ddl_for_object="$(ddl_statement "${object}" "${asset}")"
+  chain_ddl_for_object="$(ddl_statement "${object}" "${declaring}")"
+  if [ -z "${asset_ddl_for_object}" ] || [ -z "${chain_ddl_for_object}" ]; then
+    fail "could not read the DDL of ${object} out of the bootstrap asset or ${declaring}"
+  elif [ "${asset_ddl_for_object}" = "${chain_ddl_for_object}" ]; then
+    ok "${kind} ${object} declares byte-identical DDL in both homes (${declaring#"${server_dir}/"})"
+  else
+    fail "${kind} ${object} differs between the bootstrap asset and ${declaring#"${server_dir}/"}; a fresh and a chain-migrated database would enforce different things"
+    echo "      bootstrap: ${asset_ddl_for_object}"
+    echo "      chain    : ${chain_ddl_for_object}"
+  fi
+done
+
 # ---------------------------------------------------------------------------
 # 4. No generated definition.sql may be relied on to supply these objects. If a
 #    hand edit were added to one it would be silently erased by the next
 #    `serverpod create-migration`, which is how these objects came to exist on
 #    the chain path only.
 # ---------------------------------------------------------------------------
-offenders="$(grep -lE "trigger_design_revision_immutability|trigger_design_review_independence|design_revision_approved_unique_per_work_item" \
+# The object NAMES are taken from `required_objects` above, not written out
+# again here. A hand-maintained second list is exactly how the
+# one-active-credential index came to be missing from this check while every
+# other check covered it: adding an object to `required_objects` is enough, and
+# nothing has to be remembered in two places.
+hand_maintained_names="$(
+  printf '%s\n' "${required_objects[@]}" | sed 's/^[^:]*://' | paste -sd'|' -
+)"
+
+offenders="$(grep -lE "${hand_maintained_names}" \
   "${server_dir}"/migrations/*/definition.sql 2>/dev/null || true)"
 if [ -n "${offenders}" ]; then
   fail "these generated definition.sql files mention the hand-maintained objects:"

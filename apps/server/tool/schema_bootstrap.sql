@@ -43,15 +43,29 @@
 --
 -- PARITY CONTRACT. Every object below must ALSO be created by some
 -- `migrations/*/migration.sql`, so a bootstrapped (fresh) database enforces
--- exactly what a chain-migrated one enforces. The function bodies and the
--- guarded column list are deliberately byte-identical to
--- `migrations/20260920232118956/migration.sql`; the two indexes are
--- byte-identical to theirs (`20260920232118956` and `20261006150645000`
--- respectively). Do not change an object here without the same change in its
--- migration counterpart — an asymmetry is a fresh-vs-chain divergence, which is
--- the defect this file exists to remove. In particular `updatedAt` is NOT in
--- the guarded list: that column is Serverpod-managed and the chain path does
--- not guard it either.
+-- exactly what a chain-migrated one enforces.
+--
+-- WHAT IS ENFORCED, PRECISELY, so this paragraph is not a claim the guard
+-- cannot back up:
+--   * the two indexes are compared by their FULL DDL — same table, same key
+--     column, same WHERE predicate — against the migration that declares each.
+--     That is what `tool/verify_schema_bootstrap.sh` check 3 asserts, and it is
+--     what makes the byte-identical statement below true. The only permitted
+--     difference is the `IF NOT EXISTS` idempotence clause, which this file
+--     needs and the chain path does not.
+--   * the immutability function is compared by its GUARDED COLUMN LIST only.
+--     Its body is not compared, because the asset wraps it in
+--     `DROP TRIGGER IF EXISTS` + `CREATE` so re-running this file is a no-op
+--     while the migration is not — that difference is required by the
+--     IDEMPOTENCE CONTRACT above, so a body comparison would have to normalise
+--     it, and a normalised comparison of a trigger body is worth less than the
+--     column list it is really about.
+--
+-- Do not change an object here without the same change in its migration
+-- counterpart — an asymmetry is a fresh-vs-chain divergence, which is the defect
+-- this file exists to remove. In particular `updatedAt` is NOT in the guarded
+-- list: that column is Serverpod-managed and the chain path does not guard it
+-- either.
 --
 -- Adding a new hand-maintained object: append it here, add the matching
 -- `CREATE` to a NEW `migrations/<version>/migration.sql` (never to an existing

@@ -163,6 +163,30 @@ class InMemoryProductRegistryStore implements ProductRegistryStore {
   }) async {
     final existing = _credentials[credential.credentialId];
 
+    // A null `expectedVersion` is what marks this write as a MINT, and a mint
+    // is INSERT-ONLY. Checked FIRST, and ahead of the key-material check below,
+    // because that is the order the Postgres store is forced into: its mint
+    // branch is a single `ON CONFLICT ("credentialId") DO NOTHING`, which
+    // returns nothing for a conflicting row whatever the supplied material, so
+    // the two tiers must not disagree about which invariant the caller violated.
+    //
+    // Without this, an identical-material re-mint reaches
+    // `_credentials[id] = credential` below and overwrites the row with the
+    // freshly minted object: `status` back to `generated`, `hostKeyStatus` back
+    // to `unknown`, and host confirmation, verification, diagnostics and
+    // revocation evidence all cleared. It also resurrects a REVOKED credential,
+    // which no other guard here could see — `readActiveCredentialForRepository`
+    // excludes revoked rows, so the engine's one-active guard cannot fire
+    // against one.
+    if (existing != null && expectedVersion == null) {
+      throw CredentialNotUsableException(
+        credential.credentialId,
+        'a credential with this id already exists; minting is insert-only, so '
+        'issue a NEW credentialId — or use rotateCredential — instead of '
+        're-minting this one',
+      );
+    }
+
     // Key material is chosen once, at mint. Checked BEFORE the version guard
     // so an attempt to re-point an existing credential reports the reason it
     // was refused rather than a version number.
@@ -177,6 +201,48 @@ class InMemoryProductRegistryStore implements ProductRegistryStore {
         credential.credentialId,
         'the key material of an existing credential cannot be changed; rotate '
         'it to issue a new credentialId instead',
+      );
+    }
+
+    // Scope is chosen once, at mint, for the same reason as the key: it says
+    // what the key may reach (ADR 0018 A1). A re-point would move an installed
+    // deploy key to another repository of the same product with no rotation
+    // record, carrying any host confirmation with it to a host nobody confirmed.
+    //
+    // Reachable on the mint path too, and deliberately so: the identity guard
+    // above fires first there, so in practice it is the CAS branch that needs
+    // this. But the two guards are independent rules and a re-point must be
+    // refused whichever one happens to be running — a change to `repositoryId`
+    // is the defect, not the branch it arrived on. (Its reason still names the
+    // scope, never the key, so the two refusals stay tellable apart.)
+    if (existing != null &&
+        (existing.productId != credential.productId ||
+            existing.repositoryId != credential.repositoryId)) {
+      throw CredentialNotUsableException(
+        credential.credentialId,
+        'the scope of an existing credential cannot be changed; it belongs to '
+        'the product and repository it was minted for, and re-pointing a key '
+        'means minting a new credentialId',
+      );
+    }
+
+    // Durable evidence is evidence. CAS branch ONLY — and that restriction is
+    // load-bearing, not tidiness. The Postgres mint branch is a single
+    // `ON CONFLICT ("credentialId") DO NOTHING`, which evaluates no column
+    // predicate at all: on that branch the ONLY guard is the identity conflict
+    // above. Applying this check on the mint path here would mean the in-memory
+    // store refuses a re-mint for a reason the Postgres one cannot see, which
+    // would (and did) mask the identity guard behind it in T-D.
+    //
+    // `copyWith` cannot express a null here, so no engine call site attempts it;
+    // this is the contract one would be held to.
+    if (existing != null &&
+        expectedVersion != null &&
+        _clearsDurableEvidence(existing, credential)) {
+      throw CredentialNotUsableException(
+        credential.credentialId,
+        'host confirmation, verification and revocation are recorded facts; a '
+        'write that clears them is refused, so the record stays readable',
       );
     }
 
@@ -196,9 +262,9 @@ class InMemoryProductRegistryStore implements ProductRegistryStore {
   /// Whether [next] carries the same key material as [previous].
   ///
   /// The four fields that identify the keypair itself. `credentialId` is the
-  /// map key, so it cannot differ here. `repositoryId`/`productId` are
-  /// deliberately not part of this predicate: it mirrors the immutability the
-  /// Postgres store's write enforces, and the two must agree.
+  /// map key, so it cannot differ here. `repositoryId`/`productId` are checked
+  /// separately, above: they are immutable too, but for a different reason —
+  /// they are the scope, not the key — and they get their own refusal message.
   static bool _sameKeyMaterial(
     RepositoryCredential previous,
     RepositoryCredential next,
@@ -207,6 +273,27 @@ class InMemoryProductRegistryStore implements ProductRegistryStore {
       previous.fingerprint == next.fingerprint &&
       previous.algorithm == next.algorithm &&
       previous.referenceName == next.referenceName;
+
+  /// Whether [next] drops any decision or event [previous] had recorded.
+  ///
+  /// Only a non-null → null transition counts. Re-recording a host confirmation
+  /// with a fresh timestamp, or replacing one value with another, is something
+  /// `copyWith` can express and nothing legitimate does today; erasing what is
+  /// already on the record is not.
+  static bool _clearsDurableEvidence(
+    RepositoryCredential previous,
+    RepositoryCredential next,
+  ) =>
+      _clears(previous.hostConfirmedAt, next.hostConfirmedAt) ||
+      _clears(previous.hostConfirmedBy, next.hostConfirmedBy) ||
+      _clears(previous.lastVerifiedAt, next.lastVerifiedAt) ||
+      _clears(previous.lastVerifiedBy, next.lastVerifiedBy) ||
+      _clears(previous.revokedAt, next.revokedAt) ||
+      _clears(previous.revokedReason, next.revokedReason) ||
+      _clears(previous.hostKeyFingerprint, next.hostKeyFingerprint);
+
+  static bool _clears(Object? previous, Object? next) =>
+      previous != null && next == null;
 
   @override
   Future<RepositoryCredential> readProductCredential(
