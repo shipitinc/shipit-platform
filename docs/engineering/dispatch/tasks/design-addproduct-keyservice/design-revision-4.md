@@ -1,3 +1,26 @@
+> ## SUPERSEDED BY DESIGN REVISION 5 — `7C1E4A96-2B58-4D3F-A0C7-5E19D28B4F63` (`design-revision-5.md`)
+>
+> This artifact is **retained verbatim**. **No body line below has been edited** — only this banner is
+> added. Its `REVISION_ID`, `BASE_SHA` and `HEAD_SHA` are its own and are **not** current: the chain is
+> now at `5436a4d`.
+>
+> **Revision 4 was returned `CHANGES_REQUIRED` (2 BLOCKERS, 3 HIGH, 4 MEDIUM, 9 LOW) and was never
+> approved. NO approval of any kind stands behind Revisions 1, 2, 3 or 4.**
+>
+> **The three things in here that Revision 5 corrects, so a reader does not carry them forward:**
+> **§ 9.1's tally** (`1 reason IMPROVED (R6), 1 UNCHANGED, 4 WORSE`) is **withdrawn** — its IMPROVED
+> leg rested on an ADR-amendment acceptance that did not exist on the record at `361256c`, and the true
+> tally is **0 IMPROVED / 2 UNCHANGED / 4 WORSE**; **every "the amendment is Accepted" sentence here is
+> uncited**, and the acceptance is now real and citable at `876c6b97` + amendment revision 2 — **but
+> acceptance is not review and the amendment has never been independently reviewed**; and **§ R.14.1
+> step 4 as specified below is a cross-product disclosure** — § R.14.1 **step 3a** and test **`T-L`** are
+> the fix. Its `G-13` blast radius also omits `"productId"`, the one column whose rewrite reparents a
+> repository across products.
+>
+> **⚠ The Rev-4 review report is ABSENT from the repository** (`tasks/review-addproduct-keys-rev4/` exists
+> and is empty), so Revision 5 was corrected against the Manager's relay with every finding's evidence
+> re-verified at `5436a4d`. See `design-revision-5.md` § 0.7.
+
 # Design Revision 4 — server-side deploy-key service, correction of Revision 3
 
 **Revision ID**: `F2D5AF31-CA53-481A-ACB4-C75DB033A15A`

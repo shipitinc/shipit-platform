@@ -1,3 +1,24 @@
+> ## SUPERSEDED BY DESIGN REVISION 5 — `traceability-matrix-5.md`
+>
+> **Retained verbatim. No body line below has been edited** — only this banner is added. Its `BASE_SHA`
+> and `HEAD_SHA` (`361256c`) are its own and are **not** current; the chain is now at `5436a4d`.
+>
+> **Revision 4 was returned `CHANGES_REQUIRED` and was never approved.** Three corrections are carried in
+> `traceability-matrix-5.md`: the `AC-12` tally is **0 IMPROVED / 2 UNCHANGED / 4 WORSE**, not
+> 1/1/4; rows 47, 50, 56, 57, 60, 61, 62 and 68 are revised and rows 72–74 are new (`G-16`, `rotateCredential`'s
+> caller-supplied `credentialId`, `G-17`); and the ADR-amendment row is **CITED and MERGED, never
+> reviewed**, where this matrix records it as an uncommitted sibling worktree.
+>
+> **⚠ The Rev-4 review report is ABSENT** — see `design-revision-5.md` § 0.7.
+
+> **SUPERSEDED by Revision 4** (`F2D5AF31-CA53-481A-ACB4-C75DB033A15A`, `traceability-matrix-4.md`).
+> Retained intact as the Revision 2 artifact. **Not edited below this line.** Two corrections matter to a reader
+> of this file: its **citation labels are stale** (Revision 2 was based on `77c19f1`, which is **not** an
+> ancestor of `main`; Revision 4's base is `361256c` and every SHA it cites is a verified ancestor of it —
+> see `discoveries.md` **D-20**), and its **`AC-12` risk tally is withdrawn** (H6: Revision 3 tallied the same
+> reasons four different ways across three artifacts; Revision 4 publishes **one** tally, verbatim, in three
+> places). Successor: `traceability-matrix-4.md`.
+
 # Traceability matrix — Design Revision 2 (`F21D5C64-006D-4203-A813-841E08E38B95`)
 
 Brief `97484D0E-E16C-485E-BAA2-A277889C0FB6` **v1.1.0** · branch `design/correct-addproduct-keys` ·

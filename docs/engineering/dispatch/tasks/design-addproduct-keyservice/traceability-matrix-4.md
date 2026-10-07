@@ -1,3 +1,16 @@
+> ## SUPERSEDED BY DESIGN REVISION 5 — `traceability-matrix-5.md`
+>
+> **Retained verbatim. No body line below has been edited** — only this banner is added. Its `BASE_SHA`
+> and `HEAD_SHA` (`361256c`) are its own and are **not** current; the chain is now at `5436a4d`.
+>
+> **Revision 4 was returned `CHANGES_REQUIRED` and was never approved.** Three corrections are carried in
+> `traceability-matrix-5.md`: the `AC-12` tally is **0 IMPROVED / 2 UNCHANGED / 4 WORSE**, not
+> 1/1/4; rows 47, 50, 56, 57, 60, 61, 62 and 68 are revised and rows 72–74 are new (`G-16`, `rotateCredential`'s
+> caller-supplied `credentialId`, `G-17`); and the ADR-amendment row is **CITED and MERGED, never
+> reviewed**, where this matrix records it as an uncommitted sibling worktree.
+>
+> **⚠ The Rev-4 review report is ABSENT** — see `design-revision-5.md` § 0.7.
+
 # Traceability matrix — Design Revision 4 (`F2D5AF31-CA53-481A-ACB4-C75DB033A15A`)
 
 Brief `97484D0E-E16C-485E-BAA2-A277889C0FB6` **v1.1.0** · worktree

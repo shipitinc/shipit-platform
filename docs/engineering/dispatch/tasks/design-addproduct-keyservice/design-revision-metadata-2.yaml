@@ -1,4 +1,65 @@
+# =====================================================================================
+# SUPERSEDED BY DESIGN REVISION 5 — design-revision-metadata-5.yaml
+# REVISION_ID 7C1E4A96-2B58-4D3F-A0C7-5E19D28B4F63. Retained verbatim; no field below is
+# edited, only this banner. BASE_SHA/HEAD_SHA here are this artifact's own (361256c) and
+# are NOT current — the chain is now at 5436a4d.
+#
+# Revision 4 was returned DESIGN_REVIEW_CHANGES_REQUIRED (2 BLOCKERS, 3 HIGH, 4 MEDIUM,
+# 9 LOW) and was NEVER approved. NO approval of any kind stands behind Revisions 1-4.
+#
+# THREE THINGS CORRECTED BY REVISION 5, so they are not carried forward:
+#  - risk_rationale's TALLY is WITHDRAWN. "1 reason IMPROVED (R6), 1 reason UNCHANGED (R1),
+#    4 reasons WORSE (R2, R3, R4, R5)" rested on an ADR-amendment acceptance that did not
+#    exist on the record at 361256c. The true tally is 0 IMPROVED / 2 UNCHANGED (R1, R6) /
+#    4 WORSE (R2, R3, R4, R5).
+#  - Every "the amendment is Accepted" statement here is UNCITED. The acceptance is now real
+#    and citable — Human Decision 876c6b97-3e23-459d-aa9d-3a5faeb33702.yaml (RESOLVED) and
+#    amendment revision 2 (status: ACCEPTED) — BUT ACCEPTANCE IS NOT REVIEW: the amendment's
+#    reviewed_by / reviewed_at are null ON PURPOSE and independent review has never happened.
+#  - implementation_feasibility says "four obligations"; § R.5.7 lists FIVE (L6).
+#
+# The Rev-4 review report is ABSENT from the repository (tasks/review-addproduct-keys-rev4/
+# exists and is empty). See design-revision-5.md § 0.7.
+# =====================================================================================
+
+# =====================================================================================
+# ⚠ SUPERSEDED BY REVISION 3 — 4B017787-25A0-4F45-ABDA-805C250AF63F
+#
+# Retained intact as the Gate D3-reviewed artifact. NOT edited below except for this
+# banner, and NOT to be implemented. Superseded because it was written against
+# UNRESOLVED Gate D4 decisions; all six were resolved 2026-10-06T13:05:00Z (674b871).
+#
+# Its DESIGN_REVIEW_APPROVED (REVIEWED_HEAD 77c19f1, anchor 3a87e27) certified THIS
+# content only. Per LEARNING_POLICY.md, an approval of a design carrying open decisions
+# certifies the framing, not the design — see design-revision-3.md § 0.2 and D-15.
+#
+# Withdrawn from the fields below, by name:
+#   risk_rationale reason 2 ("a design whose outcome may contradict an existing ADR") —
+#     RESOLVED; the ADR tension is closed and a human-owned amendment is now pending.
+#   changelog B1/B2/D-1/D-2 "proposed only" — D-1 and D-2 LANDED at 07c8c8f, independently
+#     reviewed. T-A/T-B reported green; revision 3 did not re-run them.
+#   requirements_gaps OPEN-D4-1 — CLOSED by 9417f8bf (A3), 7b1bc8b7 (fail closed),
+#     79e860e2 (two-sided revocation).
+#   requirements_gaps OPEN-D4-2 — CLOSED by 898b07d0 (split identity); ADR 0018
+#     :100-102 is UPHELD, so § R.19.1's "ADR contradiction" framing is WITHDRAWN.
+#   requirements_gaps G-7 — was "a gap with a named owner"; now REQUIRED WORK.
+#   requirements_gaps G-9 — CLOSED (the partial unique index is in both homes).
+#   The risk_level VALUE of 3 is re-derived at 3 by revision 3 on new grounds.
+#   3. By Revision 4 (F2D5AF31-CA53-481A-ACB4-C75DB033A15A), which corrects Revision 3 — a
+#      document that was NEVER approved (DESIGN_REVIEW_CHANGES_REQUIRED, 4 BLOCKERS, 7 HIGH).
+#
+# One carried-forward item is CORRECTED by Revision 4, recorded here so a reader of these
+# fields does not read a superseded claim as current: the note below about D-3 ("no runtime
+# enforcer for HostKeyStatus") is OVER-BROAD. The DOMAIN enforces HostKeyStatus
+# (product_registry_engine.dart:1047-1052, :1162-1167, :1003-1015;
+# repository_credential.dart:128-129) and the TRANSPORT is what has none
+# (git_workspace_inspector.dart:106-112, no environment:). ADR 0018 :96-99 is HALF-implemented.
+# See design-revision-4.md § R.10.3 and discoveries.md D-23.
+#
+# Successor: design-revision-metadata-4.yaml.
+# =====================================================================================
 revision_id: "F21D5C64-006D-4203-A813-841E08E38B95"
+
 brief_id: "97484D0E-E16C-485E-BAA2-A277889C0FB6"
 brief_version: "1.1.0"          # design-brief-1.1.0.md; supersedes v1.0.0 (design-brief.md, retained intact)
 revision_number: 2

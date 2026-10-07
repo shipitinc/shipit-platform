@@ -1,3 +1,82 @@
+> ## SUPERSEDED BY DESIGN REVISION 5 — `7C1E4A96-2B58-4D3F-A0C7-5E19D28B4F63` (`design-revision-5.md`)
+>
+> This artifact is **retained verbatim**. **No body line below has been edited** — only this banner is
+> added. Its `REVISION_ID`, `BASE_SHA` and `HEAD_SHA` are its own and are **not** current: the chain is
+> now at `5436a4d`.
+>
+> **Revision 4 was returned `CHANGES_REQUIRED` (2 BLOCKERS, 3 HIGH, 4 MEDIUM, 9 LOW) and was never
+> approved. NO approval of any kind stands behind Revisions 1, 2, 3 or 4.**
+>
+> **The three things in here that Revision 5 corrects, so a reader does not carry them forward:**
+> **§ 9.1's tally** (`1 reason IMPROVED (R6), 1 UNCHANGED, 4 WORSE`) is **withdrawn** — its IMPROVED
+> leg rested on an ADR-amendment acceptance that did not exist on the record at `361256c`, and the true
+> tally is **0 IMPROVED / 2 UNCHANGED / 4 WORSE**; **every "the amendment is Accepted" sentence here is
+> uncited**, and the acceptance is now real and citable at `876c6b97` + amendment revision 2 — **but
+> acceptance is not review and the amendment has never been independently reviewed**; and **§ R.14.1
+> step 4 as specified below is a cross-product disclosure** — § R.14.1 **step 3a** and test **`T-L`** are
+> the fix. Its `G-13` blast radius also omits `"productId"`, the one column whose rewrite reparents a
+> repository across products.
+>
+> **⚠ The Rev-4 review report is ABSENT from the repository** (`tasks/review-addproduct-keys-rev4/` exists
+> and is empty), so Revision 5 was corrected against the Manager's relay with every finding's evidence
+> re-verified at `5436a4d`. See `design-revision-5.md` § 0.7.
+
+> ## ⚠ SUPERSEDED BY REVISION 3 — `4B017787-25A0-4F45-ABDA-805C250AF63F`
+>
+> **This document is retained intact as the Gate D3-reviewed artifact. Its content below is NOT edited
+> and must not be implemented.** It is superseded because it was written against **unresolved** Gate D4
+> decisions, and the human resolved all six on `2026-10-06T13:05:00Z` (`674b871`).
+>
+> **Its approval does not carry over.** `RESULT: DESIGN_REVIEW_APPROVED` (`REVIEWED_HEAD 77c19f1`,
+> content anchor `3a87e27`) certified **this** content. Per `LEARNING_POLICY.md`, an approval of a design
+> carrying open decisions certifies **the framing, not the design** — the reviewer's value was bounded by
+> what was open at review time. See revision 3 § 0.2, and `D-15` in `discoveries.md`.
+>
+> **What is withdrawn from this document, in normative text:**
+>
+> - **§ R.4's four-option substrate set (A1–A4), the `Q1`/`Q1′` framing, the per-option confidence table
+>   and the `A2` option itself.** `9417f8bf` RESOLVED **OPTION_C**: **A3, an external secret manager**.
+>   A1/A4 are the **documented fallback** with an explicit trigger; **A2 is permanently excluded** because
+>   ADR 0018 `:87-88`'s *"never persisted to the durable record"* survives the supersession of `:85-88`.
+> - **§ R.5's `Q2` open marker.** `7b1bc8b7` RESOLVED **OPTION_A** — fail closed, with the remediation copy
+>   as a required deliverable.
+> - **§ R.6's `Q3′` open marker and the C-1/C-2/C-3 menu.** `79e860e2` RESOLVED **OPTION_A** — C-1.
+> - **§ R.4.1's `Q4` open marker.** ANSWERED **no** — `G-7` is now **REQUIRED** work.
+> - **§ R.19/§ R.19.2's three-option menu and the `OPEN-D4-2` marker.** `898b07d0` RESOLVED **OPTION_A**.
+>   The § R.19.1 *ADR contradiction* framing is **withdrawn**: ADR 0018 `:100-102` is **upheld**, not
+>   contradicted.
+> - **§ R.15b's "proposed only" framing for `D-1`/`D-2`.** Both **landed** at `07c8c8f`, independently
+>   reviewed. `T-A`/`T-B` are reported green by the implementer; **revision 3 did not re-run them.**
+> - **`G-9`** (ADR 0018 A1's one-per-repository invariant not a DB constraint) — **CLOSED**.
+>
+> **What remains valid in this document** and is carried forward by revision 3: § R.9's state machine,
+> `N-1`–`N-8`, § R.11's two axes, § R.12's read-path table (whose `OPEN-D4-2` condition is now discharged),
+> § R.13/R.14, § R.18's four exposure points, § R.21, § R.22, and § R.15.3's *"two mechanisms, not four,
+> and not independent"* — which revision 3 **restates** rather than withdraws, with two persistence
+> mechanisms now **real** plus one application requirement.
+>
+> **Superseded a SECOND time by Revision 4** (`F2D5AF31-CA53-481A-ACB4-C75DB033A15A`,
+> `design-revision-4.md`), which corrects **Revision 3** (`4B017787-…`) — a document that was **never
+> approved**: its Gate D3 review returned `RESULT: DESIGN_REVIEW_CHANGES_REQUIRED` with **4 BLOCKERS,
+> 7 HIGH, 2 MEDIUM and 4 LOW** (`tasks/review-addproduct-keys-rev3/report.md`). **No approval has ever stood
+> behind Revision 3, so none is displaced here.** Revision 4's base is `361256c`, which contains every
+> commit this chain depends on.
+>
+> **Not superseded, and still load-bearing:** `D-3` (no runtime enforcer for `HostKeyStatus`) and `D-7`
+> (loopback pinning un-implemented). Both re-verified by revision 3 at `07c8c8f`.
+>
+> ⚠ **`D-3` IS NOW PARTLY CORRECTED, and this is the one place a reader of Revision 2 will read a
+> superseded claim as current.** *"No runtime enforcer for `HostKeyStatus`"* is **over-broad**: the
+> **domain** enforces it (`product_registry_engine.dart:1047-1052`, `:1162-1167`, `:1003-1015`;
+> `repository_credential.dart:128-129`) and the **transport** is what has none
+> (`git_workspace_inspector.dart:106-112`, no `environment:`; five host-key tokens grep to **0** matches).
+> ADR 0018 `:96-99` is **half-implemented**, and `G-4` is scoped to the transport half. See Revision 4
+> § R.10.3 and `discoveries.md` **D-23**. **`D-7` is confirmed still true** at `361256c` and unchanged.
+>
+> Successor: **`design-revision-4.md`** (`F2D5AF31-CA53-481A-ACB4-C75DB033A15A`), `RISK_LEVEL 3`
+> (re-derived), `BASE_SHA`/`HEAD_SHA` `361256c`, `COMMITTED: NO`. **Supersedes `design-revision-3.md`**
+> (`4B017787-…`, `RISK_LEVEL 3`, retained intact and never approved).
+
 # Design Revision 2 — server-side deploy-key service + `hostUnrecognised` trust state
 
 **Revision ID**: `F21D5C64-006D-4203-A813-841E08E38B95`

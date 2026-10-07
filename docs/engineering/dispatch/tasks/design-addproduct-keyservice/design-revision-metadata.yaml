@@ -1,4 +1,40 @@
+# =====================================================================================
+# SUPERSEDED BY DESIGN REVISION 5 — design-revision-metadata-5.yaml
+# REVISION_ID 7C1E4A96-2B58-4D3F-A0C7-5E19D28B4F63. Retained verbatim; no field below is
+# edited, only this banner. BASE_SHA/HEAD_SHA here are this artifact's own (361256c) and
+# are NOT current — the chain is now at 5436a4d.
+#
+# Revision 4 was returned DESIGN_REVIEW_CHANGES_REQUIRED (2 BLOCKERS, 3 HIGH, 4 MEDIUM,
+# 9 LOW) and was NEVER approved. NO approval of any kind stands behind Revisions 1-4.
+#
+# THREE THINGS CORRECTED BY REVISION 5, so they are not carried forward:
+#  - risk_rationale's TALLY is WITHDRAWN. "1 reason IMPROVED (R6), 1 reason UNCHANGED (R1),
+#    4 reasons WORSE (R2, R3, R4, R5)" rested on an ADR-amendment acceptance that did not
+#    exist on the record at 361256c. The true tally is 0 IMPROVED / 2 UNCHANGED (R1, R6) /
+#    4 WORSE (R2, R3, R4, R5).
+#  - Every "the amendment is Accepted" statement here is UNCITED. The acceptance is now real
+#    and citable — Human Decision 876c6b97-3e23-459d-aa9d-3a5faeb33702.yaml (RESOLVED) and
+#    amendment revision 2 (status: ACCEPTED) — BUT ACCEPTANCE IS NOT REVIEW: the amendment's
+#    reviewed_by / reviewed_at are null ON PURPOSE and independent review has never happened.
+#  - implementation_feasibility says "four obligations"; § R.5.7 lists FIVE (L6).
+#
+# The Rev-4 review report is ABSENT from the repository (tasks/review-addproduct-keys-rev4/
+# exists and is empty). See design-revision-5.md § 0.7.
+# =====================================================================================
+
+# =====================================================================================
+# ⚠ SUPERSEDED TWICE. Retained intact as the artifact the FIRST Independent Design Review
+#    reviewed. NOT to be implemented.
+#   1. By Revision 2 (F21D5C64-006D-4203-A813-841E08E38B95), which withdrew the false G-1
+#      below — ADR 0018 EXISTS at docs/adr/0018-per-product-git-credentials.md.
+#   2. By Revision 3 (4B017787-25A0-4F45-ABDA-805C250AF63F), because Revision 2 predated the
+#      six Gate D4 resolutions (674b871). Revision 2's approval does not carry over.
+#   3. By Revision 4 (F2D5AF31-CA53-481A-ACB4-C75DB033A15A), which corrects Revision 3 — a
+#      document that was NEVER approved (DESIGN_REVIEW_CHANGES_REQUIRED, 4 BLOCKERS, 7 HIGH).
+# Successor: design-revision-metadata-4.yaml.
+# =====================================================================================
 revision_id: "46980EE0-E638-409C-A7D3-E1B9399FECE5"
+
 brief_id: "97484D0E-E16C-485E-BAA2-A277889C0FB6"
 revision_number: 1
 status: "DRAFT"

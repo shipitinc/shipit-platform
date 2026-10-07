@@ -158,4 +158,61 @@ resolution:
       owner: implementer
 created_by: orchestrator-main
 created_at: 2026-10-06T09:36:20Z
-updated_at: 2026-10-06T13:05:00Z
+updated_at: 2026-10-07T00:00:00Z   # record-correction scope note appended (G-19); resolution unaltered
+
+# ---- SCOPE NOTE appended 2026-10-07 by orchestrator-main. APPEND-ONLY: no line above this
+# comment is altered. The resolution above stands, is NOT withdrawn, and no clause of the
+# owner's answer is re-opened. --------------------------------------------------
+#
+# RECORD-CORRECTION FINDING (G-19). Two statements in this file assert something that two
+# independent read-only measurements have since measured to be FALSE. Both concern the
+# factual BASIS on which the owner's answer rests. Neither concerns the ANSWER.
+#
+# 1. resolution.supersedes_design_lane_reading states the desktop state boards "carry NO
+#    footer copy - only a divider and a right-aligned Show technical details text button".
+#    MEASURED, twice, independently, on all four desktop S boards: a layer named `Footer`,
+#    of type TEXT, at parentX 236 / parentY 862, size 1020 x 15, align left, carrying
+#    "Your decision is recorded permanently. The same piece of work then continues - nothing
+#    is restarted." - which is the SAME string _buildFooter renders in the shipped build at
+#    apps/control_plane/lib/features/products/add_product_page.dart:383-384. The divider is at
+#    (236, 848); the right-aligned "Show technical details" text layer is at (1036, 862) with
+#    its right edge at 1256 = 236 + 1020.
+#
+# 2. follow_up_action #3 directs that the design lane's coordinate-based reading of a
+#    'Footer' layer at (236,862) "should be treated as a misidentification". IT IS NOT A
+#    MISIDENTIFICATION. The layer exists, at that coordinate, on all four boards.
+#
+# WHAT THE DECISION OVERRULED WAS THE LANE'S CONCLUSION, NOT THE LANE'S OBSERVATION. The
+# observation was correct and is now measured; the conclusion - that the copy stays - is what
+# the owner reversed, and the owner was entitled to reverse it. Nothing here disturbs that.
+#
+# WHAT IS UNCHANGED - stated explicitly, because this object is the citable id:
+#   - The OUTCOME stands: no footer copy on either platform; desktop = divider +
+#     right-aligned "Show technical details" text button; mobile = left-aligned button, no
+#     divider; the boards are authoritative for footer structure. ALL OF IT.
+#   - status: RESOLVED stands. selected_option and deviation_from_presented_options stand.
+#   - decided_at: 2026-10-06T13:05:00Z and decided_by stand.
+#   - human_correction_verbatim stands AS THE OWNER'S WORDS, and is NOT corrected. The
+#     hyphenated board names in it ("S - Add Product - Unknown host - Light/Dark") are the
+#     owner's spelling; the file's names are "S · Add Product · Unknown host · Light" and
+#     "· Dark". A verbatim quote is not a file listing and must not be edited into one.
+#   - All four follow_up_action owners stand.
+#
+# THIS IS THE SAME CLASS AS G-17. There, ADR 0018 asserted that no Human Decision object
+# records its acceptance - in the same commit that added the object. Here, this object
+# asserts a board layer is a misidentification - on a coordinate two reviewers have since
+# measured. In both cases an authoritative record denies a thing that exists, and in both
+# cases nothing will re-check it, because it is authoritative.
+#
+# STILL OPEN, AND NOT CLOSED BY THIS NOTE: the boards themselves. All four desktop S boards
+# carry the copy this decision forbids, so the decision's outcome and the boards it declares
+# authoritative are in conflict on exactly one clause. Removing the layer needs a
+# design-system-owner board edit, which no current lane owns, and it is blocked on the Penpot
+# instance binding. Registered as G-18 by design revision d26658219dea4955b0d2b4004a70aa4d.
+# That gap is an ownership gap, not a re-decision, and the human is NOT asked to re-decide
+# the footer.
+#
+# Correcting source of record for the design side:
+# docs/engineering/dispatch/tasks/design-addproduct-keyservice/design-revision-6.md, § R.11g-h
+# and § R.18.2-h (G-18, G-19); matrix traceable to
+# docs/engineering/dispatch/tasks/design-addproduct-mobile/penpot-board-evidence.md § 6.4.

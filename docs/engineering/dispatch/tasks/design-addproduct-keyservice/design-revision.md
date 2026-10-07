@@ -1,3 +1,63 @@
+> ## SUPERSEDED BY DESIGN REVISION 5 — `7C1E4A96-2B58-4D3F-A0C7-5E19D28B4F63` (`design-revision-5.md`)
+>
+> This artifact is **retained verbatim**. **No body line below has been edited** — only this banner is
+> added. Its `REVISION_ID`, `BASE_SHA` and `HEAD_SHA` are its own and are **not** current: the chain is
+> now at `5436a4d`.
+>
+> **Revision 4 was returned `CHANGES_REQUIRED` (2 BLOCKERS, 3 HIGH, 4 MEDIUM, 9 LOW) and was never
+> approved. NO approval of any kind stands behind Revisions 1, 2, 3 or 4.**
+>
+> **The three things in here that Revision 5 corrects, so a reader does not carry them forward:**
+> **§ 9.1's tally** (`1 reason IMPROVED (R6), 1 UNCHANGED, 4 WORSE`) is **withdrawn** — its IMPROVED
+> leg rested on an ADR-amendment acceptance that did not exist on the record at `361256c`, and the true
+> tally is **0 IMPROVED / 2 UNCHANGED / 4 WORSE**; **every "the amendment is Accepted" sentence here is
+> uncited**, and the acceptance is now real and citable at `876c6b97` + amendment revision 2 — **but
+> acceptance is not review and the amendment has never been independently reviewed**; and **§ R.14.1
+> step 4 as specified below is a cross-product disclosure** — § R.14.1 **step 3a** and test **`T-L`** are
+> the fix. Its `G-13` blast radius also omits `"productId"`, the one column whose rewrite reparents a
+> repository across products.
+>
+> **⚠ The Rev-4 review report is ABSENT from the repository** (`tasks/review-addproduct-keys-rev4/` exists
+> and is empty), so Revision 5 was corrected against the Manager's relay with every finding's evidence
+> re-verified at `5436a4d`. See `design-revision-5.md` § 0.7.
+
+> ## ⚠ SUPERSEDED — three times, and the third supersession is the load-bearing one
+>
+> **Superseded by Revision 2** (`F21D5C64-006D-4203-A813-841E08E38B95`, `design-revision-2.md`), which
+> corrected the findings of the first Independent Design Review — including **withdrawing this
+> document's false `G-1`**, which asserted that `docs/adr/0018-per-product-git-credentials.md` *"does not
+> exist in this repository"*. **It does exist**, 158 lines; the conclusion came from listing
+> `docs/engineering/adr/` instead of `docs/adr/`. See revision 2 § 0.1.
+>
+> **Superseded again by Revision 3** (`4B017787-25A0-4F45-ABDA-805C250AF63F`, `design-revision-3.md`),
+> because Revision 2 was written against **unresolved** Gate D4 decisions and the human resolved all six
+> on `2026-10-06T13:05:00Z`. **Revision 2's approval does not carry over to Revision 3** — and, per
+> `LEARNING_POLICY.md`, an approval of a design carrying open decisions certifies **the framing, not the
+> design**. See revision 3 § 0.2 and `D-15` in `discoveries.md`.
+>
+> **Superseded a third time by Revision 4** (`F2D5AF31-CA53-481A-ACB4-C75DB033A15A`,
+> `design-revision-4.md`), which corrects **Revision 3** — a document that was **never approved**: its
+> Gate D3 review returned `DESIGN_REVIEW_CHANGES_REQUIRED` with 4 BLOCKERS, 7 HIGH, 2 MEDIUM and 4 LOW.
+> **No approval has ever stood behind Revision 3, so none is displaced here.**
+>
+> **This document is retained intact and must not be implemented.** Its content below is **not edited**,
+> including the parts Revision 2 withdrew — Revision 2 stated the retractions at the head of its own
+> document rather than by editing here, so the reviewed artifact stays checkable.
+>
+> **Carried forward unchanged into revision 3, because Revision 2's reviewer confirmed them and no
+> resolution touches them:** § R.9's state machine, `N-1`–`N-7`, § R.11's two client axes, § R.12's
+> read-path table, § R.13's normative "Check access" definition, and § R.14's five-way failure taxonomy.
+>
+> **ONE carried-forward item is corrected by Revision 4, and it is recorded here so a reader of Revision 1
+> does not read it as current:** **`D-3` below is stated as "no runtime enforcer for `HostKeyStatus`", and
+> that is over-broad.** The **domain** enforces it — `recordCredentialCheck`
+> (`product_registry_engine.dart:1047-1052`), `requireUsableCredential` (`:1162-1167`),
+> `confirmHostKey` (`:1003-1015`) and `canReachRepository`
+> (`repository_credential.dart:128-129`) — and the **transport** is what has no enforcer:
+> `git_workspace_inspector.dart:106-112` runs `Process.run` with no `environment:`. ADR 0018 `:96-99` is
+> therefore **half-implemented**. See Revision 4 § R.10.3 and `discoveries.md` **D-23**. `D-7` (loopback
+> pinning un-implemented) is **confirmed still true** at `361256c` and is unchanged.
+
 # Design Revision 1 — server-side deploy-key service + `hostUnrecognised` trust state
 
 **Revision ID**: `46980EE0-E638-409C-A7D3-E1B9399FECE5`
