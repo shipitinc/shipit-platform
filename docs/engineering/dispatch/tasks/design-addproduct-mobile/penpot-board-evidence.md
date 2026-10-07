@@ -259,12 +259,12 @@ This is the live read-back, taken after the last revision-5 write.
 | `Trust K` — `characters` | `CONFIRM THIS HOST BEFORE CONNECTING` | **`CONFIRM THIS HOST TO FINISH REGISTERING`** |
 | `Trust Body 2` | `It pushes and merges on its own. Only promotion to production waits for you.` | **REMOVED** — the claim is false under `898b07d0`; a product with no committed credential cannot push or merge |
 | `Trust Created` | — | **NEW**, `x=30 y=566 330×24`, 10/400, `#5a5c5b`/`#a8a6a0`: `This product is already in your list. It cannot push or merge until you finish registering.` |
-| 7 × `Trust *` layer names | `… · PROVISIONAL (G1 hostUnrecognised)` | suffix stripped |
+| 8 × `Trust *` layer names | `… · PROVISIONAL (G1 hostUnrecognised)` | suffix stripped — **16 across the two Unknown boards; this cell published `7 ×` until revision 6 (MR5-1)** |
 
 `Trust Created` occupies exactly the slot `Trust Body 2` held, so the trust panel's height (160px at
 y=502), its contents' order and the whole submit/helper/disclose chain (678 / 720 / 748) are **unchanged**.
-Verified: zero intra-panel overlaps, zero shapes outside the panel, and **zero collisions with the bottom
-nav** on all four boards.
+Verified: zero intra-panel overlaps **other than the button-rect-plus-label idiom** — `Trust Btn` (`30,618 180×30`) geometrically encloses `Trust Btn L` (`30,624 180×18`), and `Submit (label only — no nested subtext)` (`16,510` / `16,678`, 358×34) encloses `Submit L`; zero shapes outside the panel, and **zero collisions with the bottom
+nav** on all four boards. **CORRECTED AT REVISION 6 (MR5-7):** the former wording, *"zero intra-panel overlaps"*, was not literally true of those two pairs. It is the same distinction this file already draws for the 1px `Art T`/`Art S` box overlap. The substantive claims are unaffected: `Trust Created` is contained, the chain geometry is unchanged, and there are zero nav collisions.
 
 `Status` on the Verified pair was also re-grounded, `NOT REGISTERED YET` → **`REGISTERED · READY TO
 REGISTER`**, because `898b07d0` makes the old eyebrow false there too: it creates the Product row with

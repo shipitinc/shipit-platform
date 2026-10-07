@@ -237,3 +237,45 @@ resolution:
 created_by: orchestrator-main
 created_at: 2026-10-06T09:36:20Z
 updated_at: 2026-10-06T13:05:00Z
+
+# ---- SCOPE NOTE appended 2026-10-07 by orchestrator-main. APPEND-ONLY: no line above this
+# comment is altered. The resolution above stands and is NOT re-opened. ------------------------
+#
+# This object states, as a standing claim, that "SHIP IT never holds key bytes". That was
+# answered on 2026-10-06, before ADR 0018 amendment A2 recorded that at transport time SHIP IT
+# MUST materialise the private half in its own process memory to authenticate the git
+# connection. The claim is therefore FALSE as written and true only in the **storage**
+# dimension: SHIP IT never STORES the private half (not in the durable record, a table, a file,
+# a log, a backup, a client payload), and does transiently HOLD it for the lifetime of the
+# connection.
+#
+# FOUR sites carry the absolute, not two:
+#   - :113  "A3 is literally the existing contract - SHIP IT never touches key bytes"
+#   - :140  "the only option under which SHIP IT never holds key bytes at all"
+#            (the load-bearing UNIQUENESS argument the human actually read)
+#   - :210  "SHIP IT never holds key bytes, only a reference, and asks the manager for the
+#            material at push time"
+#   - 876c6b97:20 (separate object; same absolute)
+#
+# WHAT IS UNCHANGED. The substrate choice (OPTION_C, external secret manager / A3) stands. The
+# exclusion of A2 (envelope-encrypted table) stands - it is a separate conclusion resting on the
+# durable-record prohibition, not on this absolute. G-7's elevation to REQUIRED stands. The
+# uniqueness argument at :140 SURVIVES in the dimension that matters: A1 and A2 both write key
+# bytes at rest, and A3 does not.
+#
+# WHY THIS OBJECT IS NOT INTERNALLY CONSISTENT. :116-119 already contains the CORRECT reasoning -
+# it rejected A1 precisely because "permissions do not defend against a same-uid process - which
+# is the git transport". Under A3 the exposure is process memory rather than the filesystem, and
+# it MOVES rather than disappears; A3 narrows the window and removes the at-rest artefact but
+# does not remove the class. A hardening argument resting on "the key is not on the box" is
+# invalid; one resting on "the key is never on the box at all" was never available.
+#
+# The consequence - a same-uid exposure with no owning follow-up - is recorded at
+# docs/adr/0018-per-product-git-credentials.md (Amendments A2 -> "never holds key bytes", and
+# section Known gaps). It is deliberately NOT a fifth accepted risk: this object and 876c6b97
+# accepted four gaps, and the property is SUBSTRATE-INDEPENDENT - SHIP IT pushes git itself, so it
+# must materialise the private half under A1, A2, A3 and A4 alike.
+#
+# Correcting source of record: docs/adr/0018-per-product-git-credentials.md, amendment A2
+# (Design Revision 4, correcting Design Revision 3). Read this object at the ADR's scoped
+# reading, not at its literal wording.

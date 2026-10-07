@@ -1,0 +1,362 @@
+# Design Revision Metadata — revision 6
+
+Required by `docs/engineering/DESIGN_GOVERNANCE.md` § *Artifacts → Design Revision Required Metadata*.
+Supersedes `design-revision-metadata-5.yaml`. Revision 5 is retained; its body is unedited except the ten
+corrections published in `design-revision-6.md` § 4.
+
+```yaml
+revision_id: CB4BEECA-CA9D-4F26-9464-E1B6F7C9BDCB   # carried from revision 5 — same design, corrected record
+brief_id: 52CB4098-FF87-4B78-81DA-1104269551A1
+revision_number: 6
+supersedes_revision_id: CB4BEECA-CA9D-4F26-9464-E1B6F7C9BDCB
+status: UNDER_REVIEW            # the Design Agent never approves its own work
+created_by: design-agent
+created_at: 2026-10-07T12:33:42Z
+reviewed_by: null               # awaiting Independent Design Review
+reviewed_at: null
+approved_by: null               # no human gate required or requested
+approved_at: null
+worktree: /private/tmp/shipit-correct-addproduct-mobile
+branch: design-correct-addproduct-mobile
+base_sha: 16cd49721646521d13ff6d962dcf82ef4719237e
+head_sha: 16cd49721646521d13ff6d962dcf82ef4719237e
+committed: NO                 # the dispatch forbids commit and push. Revision 5, reviewed untracked at
+                              # 289f1d3, is committed at 16cd497 — verified byte-identical before the
+                              # fast-forward, so nothing was lost by it.
+```
+
+## changelog
+
+```yaml
+- revision 6 — RECORD-ONLY. No board, string, geometry, token, requirement or decision changed.
+  Closes MR5-1 (MEDIUM), MR5-2 (MEDIUM), MR5-3 (MEDIUM), MR5-4 (LOW), MR5-5 (LOW), MR5-6 (LOW), MR5-7 (LOW)
+  from the first independent review of revision 5. 0 BLOCKERS and 0 HIGH in that review; the reviewer
+  characterised all seven as record corrections and found no false claim about a board anywhere in the set.
+- >
+  MR5-1 — the retired-suffix count was wrong in two of its three published forms. The CORRECT value is 16,
+  measured as 8 unsuffixed `Trust *` layers on each of the two Unknown boards. Fixed in all three forms
+  (design-revision-5.md:361 and penpot-board-evidence.md:262 -> `8 ×`; metadata-5.yaml and
+  traceability-matrix-5.md:77 -> 16 / Sixteen), and the conflated sentence at design-revision-5.md:169-172
+  split into its two populations — 4 `· PENDING D4` + 16 `· PROVISIONAL` = 20. THE FORM THAT WAS RIGHT is
+  penpot-board-evidence.md:182-187, "All sixteen suffixes retired", enumerating the eight layers. The
+  reviewer's alternative (retire the count as NOT_VERIFIABLE) was declined — the BEFORE state is
+  unverifiable, but the END state is live-verifiable, so the correct number is published rather than none.
+- >
+  MR5-2 — design-brief.md SC-7 recorded F6, this lane's only blocker, as met; cited §6.3 (which is D-8)
+  instead of §6.4; and never mentioned F6 anywhere. Now `MET on mobile · NOT MET on desktop (F6)`, cites
+  §6.4 for the desktop read-back, and names F6 and N6b. One line, so the brief's other anchors do not move.
+- >
+  MR5-3 — G-7's site table published 6 sites and omitted the SEVENTH, apps/server/lib/src/services/
+  ui_view_mappers.dart:176, the server-side view constructor, which WILL NOT COMPILE once `referenceName`
+  is dropped from the YAML. Added to design-revision-5.md §6.1 and to N6a (the row the implementer works
+  from), to metadata-5.yaml and to traceability-matrix-5.md. The deliberate RETENTIONS under
+  9417f8bf:167 (platform_contracts, product_credential, the persistence layer) are now stated, so a future
+  lane does not strip them too. The 6-site scope itself was correct and is unchanged.
+- >
+  MR5-4 — design-revision-4.md:160 published `:624-644` where metadata-4.yaml:154 and design-revision-5.md
+  published `:623-644`. Measured — heading 623, last content 642, blank 643, `---` 644. `:623-644` starts at
+  the heading and is right, so rev 4 was corrected to it and the re-measurement named.
+- >
+  MR5-5 — the provenance basis `43d328b -> 289f1d3` is stale at the head this revision is reviewed against.
+  Confirmed at 16cd497 — the range now spans 4 files, all in packages/product_registry/**, which this
+  revision cites nothing in. Fixed by the reviewer's second option, the basis restated in a form that still
+  holds: every `:NNN` cited into apps/control_plane/** and apps/server/** was re-read individually at
+  16cd497 and all hold. The empty-diff claim was not deleted, it was qualified in all four places it
+  appeared. Revision 5 is also no longer untracked.
+- >
+  MR5-6 — design-brief.md SC-8 verified `Trust Created` against "§4 of design-revision-5.md"; §4 is H-1(b),
+  the footer. `Trust Created` is in §5.1 / §5.2. Re-cited with the error named in-cell.
+- >
+  MR5-7 — "zero intra-panel overlaps" was not literally true: `Trust Btn` geometrically encloses
+  `Trust Btn L`, and `Submit (label only — no nested subtext)` encloses `Submit L`. That is the
+  button-rect-plus-label idiom, not a defect, and the same file already draws that distinction for the 1px
+  Art T / Art S box overlap. Wording precision only; both sites now name the exception. The substantive
+  claims — Trust Created contained, chain geometry unchanged, zero nav collisions — are unchanged.
+- >
+  Anchor migration PUBLISHED, because the corrections moved lines. design-revision-5.md:588 -> :600 (+12,
+  MR5-3's §6.1 block); metadata-5.yaml:99 -> :101 (+2). Every anchor the review cites into this lane's
+  artifacts is tabulated in design-revision-6.md §5; all others are unchanged.
+```
+
+## risk_level: 3
+
+> **Carried, not re-derived, and the reason is stated rather than asserted.** Revision 6 changes no design,
+> so it neither raises nor lowers the level; re-deriving it from scratch would describe a revision nobody is
+> reviewing. The independent reviewer re-derived 3 for revision 5 independently and recorded
+> `RISK_LEVEL_AGREEMENT: YES`. All three Level-3 clauses remain met on the evidence that reviewer accepted:
+> (1) **core workflow / user mental model** — `898b07d0` splits identity from registration, so "Register
+> product" changes meaning from *creates the product* to *commits verification of a product that already
+> exists*, and two of four boards' eyebrow strings were rewritten for that reason; (2) **information
+> architecture** — the accepted consequence (a visible product with no usable credential) required a NEW
+> user-facing element, `Trust Created`, absent from every prior revision; (3) **navigation structure** —
+> R.11g item 3 requires the flow be re-enterable from the product, a resume route on `ProductDetailPage`
+> that the Products list does not have.
+>
+> **The Level-3 human gate remains DISCHARGED and is NOT re-opened.** `9417f8bf`, `27ea6536`, `898b07d0`,
+> `ae1c1f79` and `7b1bc8b7` are all `status: RESOLVED`, all `decided_by: "repository owner (interactive
+> structured question UI, session orchestrator-main)"`, and their `owner: design-agent` follow-up counts are
+> **2 / 3 / 2 / 2 / 1**. All nine decisions named by the dispatch are RESOLVED; they were read, not
+> re-argued.
+>
+> **The MARGINAL risk of this pass is Level 0** — a correction to published records, in the same sense the
+> rev-4 reviewer applied Level 0 to revision 4's marginal risk: the level describes the change, not the
+> artifact.
+>
+> **Why it does not exceed 3** — the ceiling was considered, not assumed. It would exceed 3 only if a Human
+> Decision were opened on the four desktop boards' footer copy (F6) in a way that changes the normative
+> outcome — it does not; the outcome is settled and only the board edit is unowned — or if the resume
+> affordance were built as a new top-level navigation destination rather than a resume route into the
+> existing credential flow. Neither is fired.
+
+risk_rationale: >
+  Record-only correction of seven findings against an artifact set whose load-bearing content the reviewer
+  verified live. No board write, no string, no geometry, no token, no requirement and no decision changed.
+  Zero BLOCKERS and zero HIGH in the review being answered. Risk level 3 is carried from revision 5 with
+  the reviewer's independent agreement; this pass's marginal risk is Level 0. No human gate.
+
+## design_system_compliance: PARTIAL
+
+> **Unchanged from revision 5, and for the same two named reasons — neither introduced by this pass.**
+> Every board element maps to a named token or production primitive, re-read and token-matched live: board
+> fill `#f7f7f5`/`#1f2120` = `canvas`, `Trust Bg`/`Art Bg` `#ffffff`/`#262827` = `card`, `Art S`
+> `#5a5c5b`/`#a8a6a0` = `inkSecondary`, `Status` `#6e706e`/`#8a8983` = `inkTertiary`, `Trust Btn L` `#ffffff`
+> on `#1668d6` / `#06121f` on `#4496fc`. Re-read at `16cd497`: `design_tokens.dart:92` `canvas: 0xFFF7F7F5`,
+> `:100` `inkSecondary: 0xFF5A5C5B`, `:121` `inkSecondary: 0xFFA8A6A0` — unchanged.
+>
+> **Not PASS**, for two named reasons rather than rounding: (a) **D-2** — the mobile footer cannot be
+> expressed by the primitive it uses, so the design does not yet conform to its own component contract
+> (`design_primitives.dart:396` paints `ContentRule` unconditionally and `:402-403` makes
+> `Expanded(SizedBox.shrink())` consume the width, both re-read at `16cd497`); (b) **F6** — four desktop
+> boards do not conform to the resolved footer spec. Both are escalated, neither is a defect this pass
+> introduced, and **this pass closed neither**.
+
+## ux_accessibility_score: PASS (on the surfaces the design touches)
+
+> **Unchanged from revision 5, and honestly scoped in the same way.** Contrast recomputed from
+> `design_tokens.dart`, sanity-checked (black/white 21.00, white/white 1.00): `Art S` `inkSecondary` on
+> `card` **6.74 light / 6.10 dark**; `Trust Created` `inkSecondary` on `card` **6.74 / 6.10**; `Status`
+> `inkTertiary` on `canvas` **4.65 / 4.62**; `Trust Btn L` `#ffffff` on `#1668d6` **5.27** and `#06121f` on
+> `#4496fc` **6.30**. All ≥ 4.5:1, both themes. The SC-9 remediation copy is `inkSecondary`, measured
+> **6.28 / 6.65** on `canvas` and **6.74 / 6.10** on `card` — PASS both themes.
+>
+> **The known `inkTertiary`-on-`card` FAIL at 4.99 light / 4.23 dark is real, unchanged, and is not on any
+> layer this design touched** — it is N10, design-system-owned. Stated rather than rounded away.
+>
+> **No WCAG criterion beyond colour contrast is claimed.** No screen reader was run, no focus order was
+> verified on `Trust Created`, and the disclosure's expanded state was not exercised. Those are QA's, not a
+> design-lane claim. **This pass re-derived no contrast figure and changed no colour, so it re-verifies none
+> of them by measurement** — it inherits the reviewer's independent recomputation of all ten, which
+> reproduced to 0.00.
+
+## implementation_feasibility: MEDIUM
+
+> **Unchanged from revision 5, and the reason is unchanged.** `flutter analyze` **NOT_RUN** — it requires
+> `flutter pub get`, which writes outside this lane's read-only scope, and `apps/control_plane/.dart_tool/`
+> does not exist at this HEAD. A prior revision of this lane claimed HIGH without the analyzer ever
+> resolving packages; that is not repeated, and no score here is derived from the analyzer.
+>
+> **What IS verified, and re-verified at this pass's base.** Every line number this design cites into
+> `apps/control_plane/**` and `apps/server/**` was **re-read individually at `16cd497`** (the stale
+> empty-diff basis is corrected in `design-revision-5.md` § 14 and `design-revision-metadata-5.yaml`), and
+> all hold — including the newly recorded `ui_view_mappers.dart:176`. **One implementation-facing change
+> improves feasibility and one worsens the risk of an incomplete change:** N6a now names **seven** G-7 sites
+> rather than six, adding the server-side view constructor that will not compile without the edit. A
+> developer working the published six would ship a broken `apps/server` build; working the published seven
+> will not. MEDIUM, not LOW, because the primitive change reaches five other call sites and its owner is
+> not this lane.
+
+## traceability
+
+```yaml
+requirements_covered:
+  - R1   # four boards authored, 390x844, both themes — unchanged by this pass; the reviewer verified live
+  - R2   # one button/helper structure, both platforms; helper below the button — unchanged, re-verified live
+  - R3   # footer framed as a restoration; per-platform spec now from 27ea6536
+  - R4   # required-field convention re-grounded on the existing (OPTIONAL) suffix — unchanged
+  - R5   # inkSecondary specified with cited ratios; no unmeasured contrast claim
+  - R6   # visual consequence of 2a/2b; "Check access" labelled; the step's meaning remains the sibling's
+  - R7   # traceability + risk + honest self-assessment
+  - H-1(a)  # custody string on four boards and ~30 record sites — MET, unchanged
+  - H-1(b)  # human's normative footer alignment, per platform — MET on mobile; GAP on desktop boards (F6)
+  - H-1(c)  # Unknown-host re-grounded on 898b07d0 + ae1c1f79, with a genuine user-facing element — MET
+  - M-1     # cross-references corrected by re-reading — MET, 13 numbers still exact at 16cd497
+  - L-1     # all three missing pointers present — MET, re-confirmed at 16cd497
+  - 9417f8bf_followup_1  # G-7: referenceName / non-identifying handle — SPECIFIED, blast radius 7 sites
+  - 9417f8bf_followup_2  # A3 unavailability path with remediation copy — SPECIFIED (7b1bc8b7 + R.5.4)
+  - MR5_1_to_MR5_7       # the seven findings of the first review of revision 5 — ALL CLOSED, § 4 of rev 6
+requirements_gaps:
+  - id: G13
+    gap: R.11g item 3's resume affordance on ProductDetailPage is specified but NOT rendered
+    why: that board and file are production source / outside OWNED_PATHS
+    status: OPEN — unchanged by this pass
+  - id: G14
+    gap: the A3 refused-mint surface needs two boards this lane does not own
+    why: OWNED_PATHS names four boards by id; R.11g item 5 forbids folding it onto the Unknown-host board
+    status: OPEN — unchanged by this pass. N6c
+  - id: SC-9
+    gap: "the A3 substrate-unavailable path has concrete remediation copy RENDERED on a board"
+    status: >
+      NOT MET — reported, not claimed. A CORRECT scoping call, not an unfunded requirement: the copy and the
+      full layout are fully specified in rev 5 §6.2 and only a board owner is missing. Carried, not worked
+      around. N6c
+  - id: F6   # the ownership gap this pass is required to state and NOT to fix
+    gap: the four desktop `S - Add Product - …` boards carry a `Footer` text layer at rel 236,862 (the
+      divider is at 236,848), so 27ea6536's desktop "no footer copy" clause is unsatisfied on the boards
+      that decision itself names authoritative. `BPM` carries the same false custody string and the
+      now-false `NOT REGISTERED YET` eyebrow (F5).
+    why: those boards are PROHIBITED to this lane AND to the keys lane; NO LANE OWNS THEM
+    status: >
+      OPEN — NOT MINE, NOT FIXED, NOT ABSORBED. It needs an OWNERSHIP GRANT from the Manager, not a
+      re-decision. 27ea6536 is RESOLVED, its normative outcome is settled and unquestioned, and its own
+      OPTION_B named this cost in advance ("editing the four existing desktop boards, which no current lane
+      owns"). N6b. The BUILD change (`note: null`, delete `_buildFooter`) may proceed; the BOARD edits may
+      not, by any lane that does not hold a grant.
+  - id: anchor-migration
+    gap: design-revision-5.md:588 -> :600 and metadata-5.yaml:99 -> :101, because the corrections moved
+      lines. Published, not left for a reader to discover.
+    why: M-1's lesson is that a correction moves the line it cites
+    status: PUBLISHED — rev 6 § 5 tabulates every anchor the review cites; all others are unchanged
+```
+
+## non_requirement_gaps
+
+| Id | Gap | Disposition |
+|---|---|---|
+| G2 | ~~at-rest wording for `Art S`~~ | **CLOSED** — `9417f8bf`; corrected on all four boards |
+| G11 | ~~the mobile design review report was never persisted~~ | **CLOSED** in revision 4 (L-R2), re-confirmed |
+| G3 | `negative` on dark fails AA; no compliant token | design-system owner (N2) |
+| G4 | `TechnicalDetails`' unconditional `ContentRule` | **a specified requirement** — N6 / D-2 |
+| G8 | `flutter analyze` not run | see `implementation_feasibility` |
+| G9 | no `ShipItPalette` disabled-primary token | design-system owner (N4) |
+| G12 | primary action's surface differs code vs board | recorded with the surface named (N9) |
+| G13 | resume affordance specified, not rendered | **open** — ownership, N6c |
+| G14 | refused-mint boards unowned | **open** — ownership, N6c |
+| F5 | `BPM` carries the same false custody string and the now-false eyebrow | **open** — read-only to this lane; Manager |
+| F6 | four desktop boards do not conform to `27ea6536`'s desktop clause | **open** — needs an ownership grant, N6b |
+| F8 | `design-revision-metadata-4.yaml`'s first fenced YAML block does not parse | **reported, not fixed** — pre-existing, unrelated to this pass's findings. Re-confirmed at revision 6: metadata-4 still fails, metadata-2 and -3 also fail, and **metadata-5's 7 of 7 blocks still parse**, so this pass's edits did not introduce one |
+
+## notifications
+
+```yaml
+- id: N6
+  to: design-system owner
+  level: 1
+  item: >
+    TechnicalDetails must be able to suppress its ContentRule and align its disclosure start-aligned. The
+    human decided the outcome (27ea6536); only the mechanism is open. NOT a human gate.
+- id: N6a
+  to: keys lane / implementer
+  item: >
+    G-7 is REQUIRED: remove referenceName from RepositoryCredentialView. THIS LANE MEASURED SEVEN SITES
+    (six as of revision 5, corrected at revision 6 — MR5-3): the YAML source of truth
+    (apps/server/lib/src/models/repository_credential_view.yaml:10-11), two generated packages, four
+    projections in control_plane_repository.dart, TWO UI RENDER SITES at product_detail_page.dart:471 and
+    :676 — the reason this is security-relevant rather than cosmetic, since under A3 the reference is a
+    secret path or ARN and "discloses vault topology", so SHIP IT is currently showing vault topology to
+    users — AND, newly, the SERVER-SIDE VIEW CONSTRUCTOR apps/server/lib/src/services/
+    ui_view_mappers.dart:176. Dropping the field from the YAML regenerates both client packages without it
+    and THAT CALL SITE WILL NOT COMPILE; an implementer working the six previously published would ship a
+    broken apps/server build. The YAML's own comments also still claim the private half is "held locally" —
+    false twice over. The platform_contracts / product_credential / persistence-layer occurrences are
+    DELIBERATELY RETAINED per 9417f8bf:167 ("referenceName becomes an opaque row reference") — do not
+    strip them.
+- id: N6b
+  to: MANAGER — ownership
+  level: blocker
+  item: >
+    F6: the four desktop S boards carry footer copy and do not satisfy 27ea6536's desktop clause. Closing
+    it is a board edit on four READ-ONLY boards that NO LANE OWNS — prohibited to this lane and to the keys
+    lane alike. 27ea6536's OPTION_B anticipated this cost verbatim. The decision's OUTCOME is not in
+    question and is not re-opened here. THIS PASS RE-AFFIRMS F6 AS OPEN AND DID NOT FIX IT: it needs an
+    OWNERSHIP GRANT, not a re-decision and not a lane re-task. BPM (F5) carries the same false custody
+    string and the same now-false NOT REGISTERED YET eyebrow.
+- id: N6c
+  to: MANAGER — ownership
+  level: blocker
+  item: >
+    G14 / SC-9 — two boards needed for the A3 refused-mint surface; copy and layout fully specified in
+    rev 5 §6.2. SC-9 stays NOT MET — reported, not claimed. A correct scoping call: OWNED_PATHS named four
+    boards by id and R.11g item 5 forbids folding the refused-mint surface onto the Unknown-host board.
+    Needs an ownership grant; needs NO human decision.
+- id: N6d
+  to: keys lane
+  item: >
+    D-3 — "no footer copy" is two `note:` sites (:317-319, :926-928) plus `_buildFooter` (:375). The
+    sibling's own revision 5 corrected this (its L8); recorded so both lanes agree.
+- id: N6e
+  to: keys lane
+  item: D-5 — N-9's "name no substrate" rule contradicts its own prescribed string. Read as generic-category-permitted, identity-prohibited. Adopted verbatim as a binding item; not rewritten.
+- id: F5
+  to: MANAGER
+  item: BPM - Add Product - Light/Dark carry the same false custody string and the now-false NOT REGISTERED YET eyebrow. Read-only to this lane.
+- id: N4
+  to: design-system owner
+  level: 1
+  item: no ShipItPalette disabled-primary token (G9)
+- id: N9
+  to: design-system owner
+  level: 1
+  item: G12 — the primary action's surface
+- id: N10
+  to: design-system owner
+  level: 1
+  item: inkTertiary on card = 4.99:1 light / 4.23:1 dark (AA FAIL in dark), unchanged and not on any layer this design touched
+- id: N11   # NEW at revision 6
+  to: MANAGER / framework owner
+  level: WORKFLOW_IMPROVEMENT
+  item: >
+    MR5-1 is the FOURTH hand-caught stale-number defect in this work item (rev 4's M-1, the cancelled
+    lane's §6.3, this artifact set's own §4.4 correction, and MR5-1). It is mechanically checkable: grep
+    every `:NNN` in an owned set and confirm the target line, and diff the owned set's line count after
+    each correction. This pass did both by hand and published the anchor migration (§ 5) rather than
+    leaving it implicit. A checker should do it automatically. Reported, not built — this lane has no
+    tooling ownership.
+```
+
+## human_decision_gate
+
+```yaml
+required: NO
+reason: >
+  No Human Decision is needed from this pass, and none is requested. 9417f8bf, 27ea6536, 898b07d0, ae1c1f79
+  and 7b1bc8b7 are all RESOLVED, all decided_by the repository owner, and all name design-agent as a
+  follow-up owner; all nine decisions named by the dispatch are RESOLVED and were read, not re-argued. The
+  Level-3 gate is discharged and is NOT re-opened. The one residual undecided component (D-2) is a
+  shared-component choice at Level 1, not a gate. F6 is an OWNERSHIP blocker, not a design question: the
+  normative outcome is settled and only the board edit is unowned. This pass is record-only and re-opens
+  nothing.
+not_re_raised: [B2/N1, B4/N2, N4/G9, N6, N10, B3, the N-1 no-Cancel rule, D-8, SC-9's scoping call]
+```
+
+## board_writes
+
+```yaml
+boards_edited: 0        # none. No finding required one.
+boards_created: 0
+boards_deleted: 0
+boards_renamed_or_moved: 0
+read_only_boards_inspected: 0   # not re-measured. The reviewer's live measurement of all six was adopted
+                                # rather than re-spent; this pass opened Penpot once, for getPages().
+verification: >
+  penpotUtils.getPages() -> ["Page 1"], id d8ac01df-6646-81d2-8008-a366c09aa9d3, confirmed at this pass's
+  base. Inventory not re-diffed, because this pass wrote nothing to Penpot and the 160/164 inventory
+  therefore cannot have changed by its hand. The boards are exactly as the reviewer measured them.
+pre_edit_state: NOT_REVERIFIABLE — the Penpot API exposes no version history. Unchanged.
+```
+
+## not_run
+
+```yaml
+flutter_analyze: NOT_RUN   # requires flutter pub get, which writes outside this lane's read-only scope
+flutter_widget_render: NOT_RUN
+visual_diff_or_pixel_comparison: NOT_RUN
+contrast_recomputation: NOT_REPRISE   # no colour changed; the reviewer's independent recomputation of all
+                                       # ten figures reproduced to 0.00 and is inherited, not re-claimed
+live_board_remeasurement: NOT_RUN   # nothing changed on a board; see board_writes
+docker_or_compose_any_including_read_only: NOT_RUN   # none issued; no breach. AGENTS.md § Shared Docker state honoured
+commit_or_push: NOT_RUN   # forbidden by the dispatch
+production_source_edits: NONE   # G-7's seventh site was RECORDED and ROUTED, not implemented. Those are
+                                 # production render/constructor sites under A3 and outside OWNED_PATHS.
+decision_file_edits: NONE   # .decisions/** was read; all nine named decisions are RESOLVED
+read_only_board_edits: NONE   # no BPM or S board was edited, renamed, moved or deleted
+```

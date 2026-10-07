@@ -74,7 +74,7 @@ The four `SM` boards, 390×844. Token values re-read from `apps/control_plane/li
 |---|---|---|---|
 | **H-1(a)** | custody string corrected on four boards and ~30 record sites | **MET** | live read-back, all four boards; zero `PENDING D4`/`PROVISIONAL` names; sweep across brief/rev 2/3/4/evidence/headers |
 | **H-1(b)** | human's normative footer alignment, **both** platforms | **MET on mobile** (already conformant, measured) · **GAP on desktop boards → F6** | `penpot-board-evidence.md` §6.3 (mobile) and §6.4 (desktop, all four `S` boards) |
-| **H-1(c)** | Unknown-host re-grounded on `898b07d0` + `ae1c1f79`, with a genuine **user-facing** element | **MET** | `Status`, `Trust K`, `Trust Created` (new), `Trust Body 2` removed, 17 suffixes retired; Verified eyebrow also re-grounded; compliance with R.11g item 5 stated in rev 5 §5.3 |
+| **H-1(c)** | Unknown-host re-grounded on `898b07d0` + `ae1c1f79`, with a genuine **user-facing** element | **MET** | `Status`, `Trust K`, `Trust Created` (new), `Trust Body 2` removed, **16** `· PROVISIONAL` suffixes retired *(published as 17 until revision 6 — MR5-1)*; Verified eyebrow also re-grounded; compliance with R.11g item 5 stated in rev 5 §5.3 |
 | **M-1** | cross-references corrected by re-reading | **MET** | rev 5 §8 — 13 numbers, each re-read after the edits |
 | **L-1** | three missing pointers | **MET** | rev 5 §9 — `design-revision-3.md:583` (G2), `:592` (G11), `:452-486` (B3 + G2, one block). Re-measured after this pass's own edit to rev 3 |
 
@@ -82,7 +82,7 @@ The four `SM` boards, 390×844. Token values re-read from `apps/control_plane/li
 
 | Follow-up | Requirement | Disposition | Evidence |
 |---|---|---|---|
-| G-7 — remove `referenceName` or replace with a non-identifying handle | **REQUIRED** | **SPECIFIED**, not implemented — `packages/**` and `apps/server/**` are not `OWNED_PATHS` | 6 sites measured, incl. **2 UI render sites** (`product_detail_page.dart:471`, `:676`) — the reason it is security-relevant, not cosmetic |
+| G-7 — remove `referenceName` or replace with a non-identifying handle | **REQUIRED** | **SPECIFIED**, not implemented — `packages/**` and `apps/server/**` are not `OWNED_PATHS` | **7** sites measured *(published as 6 until revision 6 — MR5-3)*, incl. **2 UI render sites** (`product_detail_page.dart:471`, `:676`) — the reason it is security-relevant, not cosmetic — and the **server-side view constructor `apps/server/lib/src/services/ui_view_mappers.dart:176`**, which **will not compile** once the field is dropped |
 | A3 unavailability path with concrete remediation copy | **REQUIRED** | **SPECIFIED**, not rendered — needs boards outside `OWNED_PATHS` | four causes × Title/Body/Action consumed from `7b1bc8b7` + sibling § R.5.4 verbatim; board spec in rev 5 §6.2; contrast 6.28/6.65 on `canvas`, 6.74/6.10 on `card`, PASS both themes |
 
 ---
@@ -104,7 +104,7 @@ The four `SM` boards, 390×844. Token values re-read from `apps/control_plane/li
 
 | Id | Gap | Class | Owner |
 |---|---|---|---|
-| **F6** | four desktop `S` boards carry footer copy; they do not satisfy `27ea6536`'s desktop clause, and they are the decision's own declared authority | `CONTRADICTION` | **Manager — ownership (N6b)**. Outcome settled; only the board edit is unowned |
+| **F6** | four desktop `S` boards carry footer copy; they do not satisfy `27ea6536`'s desktop clause, and they are the decision's own declared authority | `CONTRADICTION` | **Manager — ownership (N6b). Needs an OWNERSHIP GRANT, not a re-decision:** those four boards are `PROHIBITED` to this lane *and* to the keys lane, and no lane owns them. `BPM` (F5) carries the same false custody string and the now-false `NOT REGISTERED YET` eyebrow. Outcome settled; only the board edits are unowned. Re-affirmed and **still open** at revision 6 |
 | **G14 / SC-9** | the A3 refused-mint surface needs two boards; R.11g item 5 forbids folding it onto the Unknown-host board | ownership | **Manager — ownership (N6c)** |
 | **G13** | R.11g item 3's resume affordance on `ProductDetailPage` specified, not rendered | ownership | **Manager — ownership (N6c)** |
 | **D-4** | build `:542` **and** `:1038` carry `created on this device · the private half stays in the keychain` — two false halves | production | keys lane / implementer |

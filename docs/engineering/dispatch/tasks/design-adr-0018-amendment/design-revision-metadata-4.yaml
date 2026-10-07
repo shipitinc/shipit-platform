@@ -1,0 +1,511 @@
+revision_id: "ADR0018-A2-REV4"
+brief_id: "design-adr-0018-amendment"
+brief_version: "n/a"
+brief_note: |
+  No formal Design Brief exists for this work item. The Engineering Manager's dispatch header served as
+  the brief: FEATURE "Add Product rebuild - ADR 0018 amendment A2, revision 4", ACCEPTANCE_CRITERIA,
+  OWNED_PATHS / READ_ONLY_PATHS / PROHIBITED_PATHS and VALIDATION_COMMANDS, in
+  docs/engineering/dispatch/tasks/design-correct-adr-0018-a2-3/prompt.md. Recorded rather than
+  back-filled with a synthetic brief id, because DESIGN_GOVERNANCE.md requires a Design Brief to precede
+  design exploration and inventing one would misrepresent the lifecycle that actually happened. True of
+  revisions 1-4 alike, which is why brief_version is "n/a" in all four.
+
+revision_number: 4
+supersedes_revision_id: "ADR0018-A2-REV3"
+amends: "docs/adr/0018-per-product-git-credentials.md (amendment A2, supersedes amendment A1 in part)"
+
+status: "DRAFT"
+
+status_note: |
+  DRAFT, unchanged in kind from revision 3 and for the same reason.
+
+  Revision 3 was independently reviewed and returned CHANGES_REQUIRED (1 BLOCKER, 3 HIGH, 4 MEDIUM,
+  2 LOW), and this revision responds to that review. An artifact carrying ACCEPTED while under
+  correction would invite a reviewer to read the wording as settled.
+
+  ACCEPTANCE IS NOT REVIEW, and the distinction is sharper in revision 4 than in any prior revision.
+  The owner's acceptance of A2 (876c6b97, OPTION_A, 2026-10-06) is real, unchanged, and cited in
+  full; it has not been withdrawn, re-opened, or affected. Revision 4 is itself UNREVIEWED and
+  reviewed_by and reviewed_at remain null. This lane does not approve its own work.
+
+status_changed_from: "DRAFT"
+status_change_reason: |
+  Unchanged from revision 3 (DRAFT). Revision 3's DRAFT recorded "a correction in flight, not
+  reviewed"; revision 4 is the same, one cycle later. The owner's acceptance of A2 is NOT withdrawn,
+  re-opened, or affected by this revision; it is cited in full at ADR section Status and
+  section Accepted risks.
+
+provenance:
+  repository: "/Users/alkebut/air/shipit-platform"
+  worktree: "/private/tmp/shipit-design-adr0018"
+  branch: "design/adr-0018-amendment"
+  base_sha: "289f1d3"
+  head_sha: "289f1d3"
+  committed: false
+  pushed: false
+
+  note: |
+    HEAD equals BASE_SHA because no commit was made and no rebase or fast-forward was performed
+    (dispatch: "Do not commit or push"). The change is present as an uncommitted working-tree
+    modification, so a reviewer must read the worktree and `git diff` rather than a commit.
+
+  dispatch_provenance_corrections:
+    - |
+      BASE_SHA: the dispatch states 16cd497. main had advanced one commit further, to c6f301d
+      ("docs(state): record the 08c7590 merge, all three review verdicts, and the stale-normative-text
+      class"). Verified 16cd497 IS an ancestor of main (`git merge-base --is-ancestor 16cd497 main` ->
+      yes). The worktree was deliberately NOT fast-forwarded: the reviewed provenance is 289f1d3 and
+      the ADR amendment is uncommitted, so a fast-forward would either have to carry it or conflict
+      with it. Everything M-4 required is therefore verified explicitly against `main` via
+      `git show main:<path>`.
+    - |
+      STASH INDEX: the dispatch states the preserved ADR edit is at stash@{0}. It is at stash@{1}.
+      A concurrent lane created a new stash@{0} ("On design-correct-addproduct-mobile:
+      rev5-uncommitted-identical-to 16cd497") after the dispatch was written, which renumbered the
+      stack. Verified BY LABEL rather than by index:
+      `git show 'stash@{1}:docs/adr/0018-per-product-git-credentials.md' | shasum -a 256` ->
+      9e5b47723e40fd0fd42b69ddf4b5330768ca4fcf782acb0f1992e7aebb83b4fb, matching the label and
+      revision 3's V-10. NEITHER stash was dropped, popped, applied, or modified. Recorded as F-12:
+      a stale stash index is a citation hazard, and dispatch pre-flights should name preserved
+      evidence by label or content hash.
+
+  verified_against:
+    - sha: "289f1d3"
+      branch: "design/adr-0018-amendment"
+      relation: |
+        THE revision every pre-revision line number in design-revision-4.md section 2's ledger
+        refers to. Worktree HEAD, unchanged by this lane.
+    - sha: "c6f301d"
+      branch: "main"
+      relation: |
+        Current main when this lane started. THE revision every "closed on main" claim in this
+        revision and in the ADR's landing note refers to. All M-4 evidence is `git show main:<path>`.
+        Main advanced 08c7590 -> 16cd497 -> c6f301d; 16cd497 is its ancestor.
+    - sha: "08c7590"
+      branch: "main"
+      relation: |
+        "Merge branch 'fix/credential-identity-invariants' into HEAD", 2026-10-07 07:16:35 -0400.
+        CLOSED THE SUBSTANCE OF ACCEPTED RISK A1: the mint path is now insert-only and refuses an
+        existing credentialId in BOTH store tiers. Verified per ADR section Decision status
+        (landing note) and design-revision-4.md section 5. Retiring accepted risk A1 from the owner's
+        register is NOT done here - see traceability.traceability_gaps G-i.
+    - sha: "876c6b97"
+      branch: "n/a - decision object id, NOT a commit"
+      relation: |
+        The acceptance of A2 with four knowingly-open gaps (ARCHITECTURE, OPTION_A, decided_at
+        2026-10-06T14:20:00Z, created_by orchestrator-main). Read in full (164 lines) before any
+        edit. Its :20 carries the absolute this ADR corrects - H-3/F-1; :136-161 assigns the
+        follow-up owners, which is why the same-uid exposure has none (G-b). Its :8-12 records why
+        the object exists.
+    - sha: "9417f8bf"
+      branch: "n/a - decision object id, NOT a commit"
+      relation: |
+        A3 custody (SECURITY, OPTION_C). Read in full (239 lines). :113, :140 and :210 carry the
+        absolute - FOUR sites with 876c6b97:20, not two, and :140 is the load-bearing uniqueness
+        argument. :116-119 contains the CORRECT same-uid reasoning, so the object is internally
+        inconsistent. :218-223 carries the A2 exclusion and G-7 elevation, both of which stand.
+    - sha: "design-review-adr-0018-a2-rev3"
+      branch: "main"
+      relation: |
+        The independent design review of revision 3, RESULT: DESIGN_REVIEW_CHANGES_REQUIRED,
+        REVIEWED_HEAD: 289f1d3. THIS REVIEW EXISTS ON MAIN, which is what makes the ADR's former
+        "has never been independently reviewed" claim (S-6) false. Verified with
+        `git ls-tree -r --name-only main -- docs/engineering/dispatch/tasks/design-review-adr-0018-a2-rev3/`
+        -> prompt.md, report.md.
+    - sha: "e391c02"
+      branch: "main"
+      relation: |
+        The earlier merge that put the predicating credential upsert and the partial unique index
+        into main. Still cited, but superseded in strength by 08c7590.
+    - sha: "0bf2fa0"
+      branch: "main"
+      relation: |
+        Restored AGENTS.md sections 13 / 13a / 13b. Re-verified still present AND at the same line
+        numbers (65, 72, 78, 91) at main c6f301d - V-26.
+
+risk_level: 3
+
+risk_rationale: |
+  Level 3 (Major Workflow / Architecture Change) per DESIGN_GOVERNANCE.md, unchanged from revisions 1-3
+  and unchanged from the independent review's own assessment (INDEPENDENT_RISK_LEVEL: 3,
+  RISK_LEVEL_AGREEMENT: YES).
+
+  The level describes THE CHANGE BEING RECORDED, not the accuracy of the prose, not how carefully it is
+  worded, and not whether a human blessed it. Acceptance did not lower it in revision 2; a precision
+  correction does not lower it here.
+
+  1. AMENDS RECORDED ARCHITECTURE ON A SECURITY BOUNDARY. It governs where a private key capable of
+     authorising repository WRITE access is held, and what "revoked" means. No such secret exists in the
+     repository today.
+  2. CHANGES A CORE WORKFLOW. Revocation acquires a ShipIt-side action where ADR 0018 said none was
+     required, plus a runtime dependency (the secret manager) that can block the credential path.
+  3. DEPENDS ON ENFORCEMENT THAT LIVES ELSEWHERE AND IS STILL PARTLY ABSENT. At 289f1d3: no transport
+     host-key enforcer, no secret-manager adapter, no manager-handle destruction, registration not wired
+     to a connectivity check, and the UI's deploy key still a client-side mock (F-9). ADR section
+     Decision status records all of this per clause - eleven rows, three of them partly built.
+  4. CARRIES FOUR ACCEPTED RISKS ON A SECURITY BOUNDARY, recorded with their consequences at ADR section
+     Accepted risks A1-A4. The owner accepted them on 2026-10-06 (876c6b97). REVISION 4 DOES NOT CLOSE
+     ANY OF THEM, DOES NOT ADD A FIFTH, AND DOES NOT RE-COUNT THEM. It records that A1's exposure no
+     longer reproduces on main and ROUTES the retirement rather than taking it.
+  5. ~~This revision newly discloses a security consequence, which is why the risk level does not
+     fall.~~ REMOVED AS A RATIONALE, per finding L-2. A disclosure NEITHER RAISES NOR HOLDS a risk
+     level: the level is set by the change being recorded, and that change is the same one items 1-4
+     already describe. Holding Level 3 on "we were honest this time" would make the scale mean something
+     it does not. The level rests on items 1-4, which are causal.
+
+  Level 3's approval requirement was satisfied on 2026-10-06 by the repository owner as ADR owner
+  (876c6b97). That satisfied the HUMAN GATE. It does not satisfy INDEPENDENT REVIEW, which for
+  REVISION 4 has never happened. Revision 3 was reviewed; revision 4 is not.
+
+changelog:
+  - "Revision 4. Responds to the independent design review of revision 3 (DESIGN_REVIEW_CHANGES_REQUIRED:
+    1 BLOCKER, 3 HIGH, 4 MEDIUM, 2 LOW). THE ORGANISING CHANGE IS A SWEEP, NOT A FIX: the ADR's defect is
+    systemic stale-but-unmarked normative text, so every normative claim was swept against the amendment
+    ledger on six axes. Eleven sites found against four reported; revisions 1-3 retained unaltered as
+    history, per the ADR's own convention at :37-40."
+
+  # ---- The sweep ----
+  - "SWEEP - method stated so it can be re-run: six greps (W1 per-product scope, W2 custody, W3 rotation
+    scope, W4 revocation, W5 key-count arithmetic, W6 reference-name format), each hit adjudicated as
+    marked / quoted-history / correct-as-written / unmarked-and-normative. design-revision-4.md section
+    1.4 records what was DECLINED and why, which is what made the sweep auditable rather than a search."
+  - "SWEEP RESULT - eleven sites: B-1, H-2a, H-2b, H-1 (reported) plus S-1 public-half clause had no
+    table row and targeted 'the product's repository'; S-2 reference example was the PRE-A1 name
+    GIT_PRODUCT_<productRef>_SSH; S-3 'N products means N keypairs' contradicted a bullet four lines
+    below it; S-4 UI key state described per product; S-5 dedicated per-product page implied rotation
+    as one act; S-6 (below); S-7 six accepted-risk-A1 claims false against main (M-4)."
+
+  # ---- B-1, H-1, H-2, H-3 ----
+  - "B-1 - FIXED. The section Decision headline ('scoped per product, not per platform') is struck,
+    marked SUPERSEDED (A1), with amendment A1's own reason quoted and per-repository scope stated as
+    current. The internal contradiction with the Decision-status row 14 lines below is resolved."
+  - "H-1 - FIXED. The custody row no longer rests on the stale doc comments. It now cites the FIELD
+    DECLARATIONS (repository_credential.dart:61-122 - no private-key field, which is the whole basis of
+    the claim) and states explicitly that :14-15 and :70-71 are stale and are NOT the evidence. Verified
+    :20-27 is correctly A1-aware, so the file is right where A1 governs and stale where A2 governs. The
+    stale comments are PRODUCTION SOURCE and are filed as a section Known gaps implementation
+    follow-up (F-10), not fixed here."
+  - "H-2 - FIXED, both sites, and one needed more than a marker. ':384-385 Rotation is per product' and
+    ':401 Rotation blast radius is one product, not the fleet' are struck and marked SUPERSEDED (A1).
+    :401 sat in Consequences/Positive, so marking it would have left the document ARGUING from a premise
+    it had abandoned; its substance is now corrected - per-repository scoping moves cost rather than
+    removing it (n repositories, n rotations) - and the honest cost sits in Negative, which already
+    said it correctly. Gap G-e is CLOSED and restated as history rather than left open."
+  - "H-3 - FIXED IN PART (the in-scope half). Section Related now carries a dated, attributed SCOPE NOTE
+    tabulating ALL FOUR sites of the absolute (9417f8bf:113, :140, :210; 876c6b97:20), naming :140 as the
+    load-bearing uniqueness argument, stating the decisions are NOT re-opened, noting each object is
+    internally inconsistent because :116-119 already has the correct reasoning, and pointing at the
+    acceptance section. The ADR's own citations are UNCHANGED - nothing implies the objects say
+    otherwise. THE UPSTREAM HALF IS REPORTED, NOT WRITTEN: .decisions/** is Manager-owned, and
+    design-revision-4.md section 11 supplies the exact append-only note text for both objects, with the
+    instruction to never rewrite a resolution rationale (LEARNING_POLICY.md:261; ADR :37-40)."
+
+  # ---- M-1..M-4 ----
+  - "M-1 - FIXED by ADDING ROWS, not only by narrowing the sentence. ':281 Every clause below is
+    therefore marked' is now scoped to what the table covers, and the two missing normative clauses
+    gained rows: the public-half/UI clause and rotation. Adding the UI row SURFACED A REAL DEFECT - the
+    surface is built (add_product_page.dart:547, :1043, copy affordances :558, :1054) but the value is a
+    CLIENT-SIDE MOCK (_generateMockKeyPair, :126-138), so no server-issued public half reaches the UI
+    and an operator can install a key registered nowhere. That is the third partly-built clause; the
+    count moved two -> three and the consequence paragraph was updated. Table nine -> eleven rows."
+  - "M-2 / G-b - FIXED (surfaced AND filed). Under Accepted risks the bullet now says explicitly that it
+    is not counted there and why. A NEW section Known gaps entry carries it, states that no owner exists
+    (876c6b97:136-161 assigns gap A2 to design-agent and gaps A3/A4 to implementation/deployment
+    authority), records that the property is SUBSTRATE-INDEPENDENT, and marks it surfaced for the
+    Manager to route - NOT self-assigned. Creating a fifth accepted risk remains correctly declined."
+  - "M-3 - FIXED at both sites (section Preconditions and section Related); each now reads 'decision
+    object id, not a commit' with the type, and section Preconditions records that `git log 570bb640`
+    fails. SWEPT THE WHOLE CLASS: all NINE 8-hex tokens in the ADR are decision ids (none is a commit)
+    and all six 7-hex tokens are commits, so this was exactly one site."
+  - "M-4 - FIXED, and the sweep found SIX sites rather than the three named. Verified against main
+    c6f301d: 08c7590 made the mint insert-only and it refuses an existing credentialId 'whether the
+    supplied material differs, matches, or the existing credential is revoked', in BOTH store tiers, and
+    the store comment states 'D-4 removes the mint's ability to resurrect one'. All six stale claims are
+    corrected (including 'not merged into main' and 'a re-mint supplying identical material still
+    overwrites status', both now false). Immutability is recorded as STRONGER than the e391c02 reading.
+    THE AUTHORITY LINE: the technical closure is recorded as verified fact with citations; accepted risk
+    A1 is NOT retired and the count stays FOUR, because retiring it from the owner's register is a
+    Manager/human action and a lane taking it unilaterally would be this revision's own defect class in
+    the other direction. The A1 heading carries BOTH facts, and the Positive revocation bullet carries
+    the split (resurrection closed, handle destruction still unimplemented, so revocation is still
+    one-sided in practice) so a closed gap cannot launder an open one."
+
+  # ---- L-1, L-2 ----
+  - "L-1 - FIXED. Section 1's citations are labelled post-revision and section 2's ledger is labelled
+    pre-revision, so a reader cross-checking the two can tell why the numbers differ."
+  - "L-2 - FIXED. Risk rationale item 5 is REMOVED as a rationale and the removal is stated with its
+    reason: a disclosure neither raises nor holds a risk level. The level rests on items 1-4, which are
+    causal. Conclusion (3) unchanged - the reviewer agreed with it - but the stated reason is no longer
+    load-bearing."
+
+  # ---- New in revision 4 ----
+  - "S-6 - NEW, and the strongest evidence the sweep was necessary. Section Status claimed the design
+    revision 'has never been independently reviewed'. That is FALSE: the review of revision 3 exists on
+    main (RESULT: DESIGN_REVIEW_CHANGES_REQUIRED, REVIEWED_HEAD: 289f1d3), verified with git ls-tree.
+    It is G-17's OWN DEFECT CLASS - a fact with a shelf life written as a standing claim - reproduced by
+    the very revision that fixed G-17, and carrying a prescription ('stays null until a reviewer signs
+    it') exactly as G-17's did. The load-bearing point (acceptance is not review) is preserved and now
+    stated truthfully: reviewed_by is still null because CHANGES_REQUIRED is not a signature, revision 4
+    responds to that review and is itself unreviewed."
+  - "S-7 - NEW (this is M-4, sized properly). Six accepted-risk-A1 sites were stale-wrong against main,
+    not three. Corrected, with a dated landing note recording six verified evidence rows."
+  - "NEW ADR section Decision status LANDING NOTE - a dated, evidence-tabled statement of what 08c7590
+    changed, so the table's 289f1d3 anchor is not read as current. Records re-verification against main as
+    a STANDING obligation at commit time, because this finding exists only because main moved."
+  - "NEW section Known gaps entries - (a) the transport-time same-uid exposure, with no owner, substrate-
+    independence, and routed-not-assigned (M-2/G-b); (b) repository_credential.dart's stale custody doc
+    comments and pre-A1 reference name, as an implementation follow-up (F-10); (c) the rotation-scope
+    entry CLOSED and restated as history; (d) the re-verification obligation."
+  - "F-9 - NEW. add_product_page.dart renders a CLIENT-SIDE MOCK deploy key (_generateMockKeyPair,
+    :126-138: 32 bytes from Random.secure(), labelled ssh-ed25519, 16-byte-digest fingerprint) with a
+    'Copy public key' affordance. No server-issued public half reaches the UI. This is the
+    'non-installable mock' 73097d48 was issued to replace, still present. Persisted in ADR (owned);
+    the fix is PRODUCTION SOURCE and is reported for routing."
+
+  # ---- Corrected claims about this artifact's own history ----
+  - "C-5 - Revision 3's own metadata review_note read 'Independent design review HAS NEVER HAPPENED for
+    this artifact, at any revision', which is false (F-14). design-revision-3.md and
+    design-revision-metadata-3.yaml are RETAINED UNALTERED as history and superseded by this revision -
+    the same device revision 3 applied to revisions 1 and 2, and the same reason: revising them in place
+    would repeat the exact defect being corrected."
+  - "C-6 - The dispatch's stash@{0} reference is stale; the ADR stash is at stash@{1} (F-12). Verified by
+    LABEL, not index: sha256 9e5b4772... matches. Neither stash was dropped, popped, applied or modified."
+  - "C-7 - The dispatch's BASE_SHA 16cd497 is behind main, which was at c6f301d (verified ancestor). The
+    worktree was deliberately NOT fast-forwarded, to preserve the reviewed provenance at 289f1d3 and the
+    uncommitted amendment."
+
+  # ---- Not changed ----
+  - "N-NOT - Revisions 1, 2 and 3 untouched, per the ADR's own no-silent-rewrite convention (:37-40). The
+    four accepted risks are the same four, none closed, none added, none re-counted. The owner's answer in
+    876c6b97 is not re-opened and no clause of it was rewritten. The nine governing decisions are read and
+    cited, none edited; .decisions/** untouched (14 objects). Every other ADR, all production source, and
+    all QA artifacts are unmodified."
+
+# ---- Approval fields ----
+reviewed_by: null
+reviewed_at: null
+review_note: |
+  Independent design review of THIS artifact (revision 4) HAS NOT HAPPENED.
+
+  Correcting an earlier version of this field is part of the work: revision 3 asserted "Independent design
+  review HAS NEVER HAPPENED for this artifact, at any revision", which is false. Revision 3 WAS reviewed -
+  docs/engineering/dispatch/tasks/design-review-adr-0018-a2-rev3/report.md, RESULT:
+  DESIGN_REVIEW_CHANGES_REQUIRED, REVIEWED_HEAD: 289f1d3, REVISION_ID: ADR0018-A2-REV3 - and that report
+  exists on main. Revision 2 was reviewed too, though its report is absent from disk (this work item has
+  lost reports repeatedly; see G-d in revision 3).
+
+  The distinction that matters: a CHANGES_REQUIRED verdict is a REVIEW but not a SIGNATURE. reviewed_by and
+  reviewed_at therefore remain null, correctly - and revision 4, which responds to that review, is itself
+  unreviewed. ADR section Status carried the same false claim and now carries the corrected one in a dated
+  block; design-revision-3.md's equivalent claim is retained unaltered as history (C-5).
+
+  This lane does not approve its own work.
+
+approved_by: "repository owner (ADR owner, interactive structured question UI, session orchestrator-main)"
+approved_at: "2026-10-06"
+approval_note: |
+  UNCHANGED and not re-opened. The owner accepted amendment A2 and its four gaps on 2026-10-06
+  ("Accept A2, record the gaps as accepted"), recorded as Human Decision
+  876c6b97-3e23-459d-aa9d-3a5faeb33702 (ARCHITECTURE, OPTION_A). That acceptance covers the DESIGN.
+
+  Revision 4 changes wording, markers, evidence, citations and one verified state record inside that
+  accepted architecture. It changes no substrate, no revocation model, no accepted gap, no clause of the
+  owner's answer, and adds no requirement on any implementer beyond what A2 already specified.
+
+  ONE DELIBERATE NON-DECISION, stated so it can be challenged: revision 4 verified that accepted risk A1's
+  exposure no longer reproduces against main c6f301d (08c7590 made the mint insert-only). It did NOT retire
+  the risk from the owner's register, because that changes what the owner accepted and is theirs to change.
+  It corrected the claims that were false about main and routed the register action. A lane that closed an
+  accepted risk unilaterally would be committing this revision's own defect class in the opposite
+  direction.
+
+  No new Level 2/3 decision is required - see design-revision-4.md section 7 for why manufacturing a gate
+  here would itself be the error this revision exists to fix.
+
+accepted_decision_answer: "Accept A2, record the gaps as accepted."
+
+acceptance_provenance:
+  granted_by: "repository owner (ADR owner, interactive structured question UI, session orchestrator-main)"
+  granted_at: "2026-10-06"
+  relayed_by: "Engineering Manager, dispatch design-adr-0018-amendment"
+  corroborated_on_disk:
+    - ".decisions/876c6b97-3e23-459d-aa9d-3a5faeb33702.yaml - RESOLVED, OPTION_A, decided_at 2026-10-06T14:20:00Z, created_by orchestrator-main. THE CITABLE ID. Read in full (164 lines)."
+    - "docs/engineering/WORK_STATE.md:326-327 - 'amendment A2 is drafted and awaiting independent review, and the human has accepted it with four gaps recorded as accepted.'"
+  decision_object: "876c6b97-3e23-459d-aa9d-3a5faeb33702"
+  decision_object_scope_note: |
+    876c6b97:20 states, as a standing claim, that under A3 "SHIP IT never holds key bytes at all". That was
+    answered before ADR 0018 amendment A2 established that SHIP IT must materialise the private half in
+    process memory at transport time, so the sentence is FALSE as written and true only in the STORAGE
+    dimension. FOUR sites carry that absolute: 9417f8bf:113, :140 (the load-bearing uniqueness argument),
+    :210, and 876c6b97:20. See design-revision-4.md section 11.2 for the exact append-only note text the
+    Manager must apply - NOT written here, because .decisions/** is Manager-owned and PROHIBITED to this
+    lane. What is unchanged and explicit: the acceptance, the substrate choice, the A2 exclusion, G-7's
+    elevation to required, and the count of four accepted risks.
+
+acceptance_is_not_review: true
+acceptance_is_not_review_note: |
+  ACCEPTANCE IS NOT REVIEW, and four revisions in this artifact have made that point while getting the
+  facts around it wrong twice.
+
+  Acceptance is the ADR owner's authority over the design: they decide the amendment is right for this
+  repository. Review is an independent agent's judgement of the artifact: whether it is complete, correctly
+  sourced, internally consistent, and honest about what it does not establish. Neither substitutes for the
+  other, and an accepted design is not a reviewed artifact.
+
+  The two factual errors around this point, both the same defect class and both now corrected:
+    - G-17 - the ADR asserted a human acceptance AND the absence of any record supporting it, in the same
+      commit. An acceptance whose provenance is misstated is worse than no acceptance, because it invites
+      reliance and suppresses checking.
+    - S-6 - revision 3 then asserted "has never been independently reviewed" while the review of
+      revision 2 was already on record, and revision 3 wrote the same claim again for itself. A review
+      whose existence is misstated has the same property: it tells a reader no check exists.
+
+  The acceptance is real (876c6b97) and correctly cited. Revision 3 WAS independently reviewed, with a
+  ten-finding CHANGES_REQUIRED verdict. Revision 4 has NOT been.
+
+human_gate:
+  required: false
+  level: 3
+  question: null
+  options: []
+  blocking_items: []
+  note: |
+    Level 3 approval was granted on 2026-10-06 by the repository owner as ADR owner (876c6b97) and is
+    unchanged. Revision 4 raises NO new gate: it changes wording, markers, evidence and one verified state
+    record inside an already-accepted architecture. See design-revision-4.md section 7.
+
+    Three items are surfaced to the Manager rather than decided here, and none blocks this revision:
+    F-1/G-a - the absolute persists in 9417f8bf and 876c6b97; exact append-only note text is supplied in
+    design-revision-4.md section 11 and is not written here, because .decisions/** is Manager-owned.
+    F-11 - accepted risk A1's exposure is closed on main; retiring it from the owner's register is the
+    Manager's/human's action.
+    G-b - the transport-time same-uid exposure is now FILED in section Known gaps and still needs an
+    OWNER, which is the Manager's call.
+
+    Plus two for routing, both production source this lane may not write: F-9 (the UI's client-side mock
+    deploy key) and F-10 (repository_credential.dart's stale custody doc comments).
+
+traceability:
+  brief_requirements_covered:
+    - "Sweep the CLASS (unmarked superseded normative text), not the four reported findings. Six-axis method stated in design-revision-4.md section 1.1; eleven sites found against four reported (section 1.2); declined hits recorded with reasons (section 1.4). ADR grew 811 -> 999 lines; SUPERSEDED markers 4 -> 10."
+    - "B-1 - headline marked SUPERSEDED (A1) with current per-repository scope stated. ADR :295-302."
+    - "H-1 - no 'Built' claim resting on evidence that asserts the superseded custody model. Row re-grounded on the field declarations (repository_credential.dart:61-122) with the stale doc comments named as NOT the evidence; the stale comments filed in Known gaps (production source, not writable here)."
+    - "H-2 - both rotation clauses marked; the Positive bullet's SUBSTANCE corrected, not merely marked, because it argued in favour of the design from a premise the document had abandoned. G-e closed."
+    - "H-3 - dated, attributed scope note added to section Related, covering all FOUR sites of the absolute; the ADR's own citations left unchanged; the upstream fix reported with exact append-only text (section 11) and NOT written."
+    - "M-1 - every normative Decision-Specifics clause now has a row; table nine -> eleven; the claiming sentence narrowed as well. Adding the UI row surfaced a real defect (F-9)."
+    - "M-2 / G-b - the same-uid exposure FILED in section Known gaps with its ownerless status recorded; NOT made a fifth accepted risk; routed for an owner, not self-assigned."
+    - "M-3 - 570bb640 marked as a decision object id at both sites, with the failure mode (`git log 570bb640` fails). All nine 8-hex tokens in the ADR swept and classified."
+    - "M-4 - accepted risk A1 re-verified against CURRENT main (c6f301d), six sites corrected, verified evidence tabled, and the register action routed rather than taken."
+    - "L-1 - post-revision and pre-revision numbering bases labelled."
+    - "L-2 - non-causal risk rationale item 5 removed, with its removal reasoned."
+    - "Run NO Docker or Compose command whatsoever. None issued; not even a read-only one."
+    - "Leave the stash untouched. Neither stash dropped, popped, applied or modified - and the dispatch's stash@{0} is reported as stale, the ADR stash being at stash@{1} (verified by label, not index)."
+    - "Write no .decisions/**. Confirmed untouched (14 objects); the required edit is reported as exact text instead."
+    - "Search the domain's own vocabulary; verify paths exist before trusting an UNCHANGED result. The sweep's W6 axis found the pre-A1 reference-name form; the stash@{0}/stash@{1} slip is the same class and was caught by label-verification rather than trusted."
+    - "State decided versus planned honestly. Section Decision status: eleven rows, three partly built, with a dated landing note against current main."
+    - "Persist the full report to disk before returning. report.md written in this task directory."
+  brief_requirements_gaps:
+    - "G-a - 9417f8bf:113, :140, :210 and 876c6b97:20 still carry the absolute wording. PROHIBITED to this lane (.decisions/** is Manager-owned). Exact append-only note text for both objects is supplied in design-revision-4.md section 11 for the Manager to apply. Scope is FOUR sites, not two, and :140 is the load-bearing uniqueness argument."
+    - "G-b - the transport-time same-uid exposure is now FILED in section Known gaps (M-2 satisfied) but still has NO OWNER. 876c6b97:136-161 assigns gap A2 to design-agent and gaps A3/A4 to implementation/deployment authority; this belongs to neither. Surfaced for the Manager to route, deliberately not self-assigned. Substrate-independent, so no new human gate."
+    - "G-c - A3 reachability remains UNVERIFIED and cannot be closed by a design lane; it needs the runtime probe 876c6b97:152-156 assigns outside this scope. No Docker or Compose command was run and no probe is claimed."
+    - "G-g - F-9 (add_product_page.dart renders a client-side MOCK deploy key; no server-issued public half reaches the UI) and F-10 (repository_credential.dart's doc comments state the superseded A2 custody model and the pre-A1 reference name) are PRODUCTION SOURCE and outside this lane's write scope. Both recorded in the ADR's Known gaps and reported for routing; neither is silently absorbed."
+    - "G-i - accepted risk A1's exposure is CLOSED on main c6f301d (08c7590) but the risk is NOT retired from the owner's register, because that changes what the owner accepted. Reported for the Manager/human. The ADR records the verified technical state and keeps the count at four."
+    - "G-h - the dispatch's stash@{0} reference is stale (the ADR stash is at stash@{1}); recorded as F-12. Dispatch pre-flights should name preserved evidence by label or content hash, since any concurrent `git stash` renumbers the stack."
+    - "G-d (carried from revision 3) - the review report that created the revision-2 task is absent. Revision 3's review report IS now on disk (design-review-adr-0018-a2-rev3), so this gap is smaller than it was, but revision 2's own review remains lost."
+    - "Independent design review of REVISION 4 has not happened. This is the next step, and the reason status is DRAFT and reviewed_by is null."
+
+design_system_compliance: PASS
+design_system_compliance_note: |
+  PASS - not applicable. No UI authored by this revision: it touches ADR prose and a design artifact, and
+  adds no component, token or layout.
+
+  It does tighten the OPERATOR-FACING COPY CONSTRAINTS recorded for the mobile lane, and M-1 adds a new
+  binding one. ADR section Amendments A2 already forbids UI text claiming the key "stays in the
+  keychain"; revision 4 adds that no copy may present the screen's key as INSTALLABLE, because
+  add_product_page.dart renders a client-side mock and no server-issued public half reaches the UI
+  (F-9). A mobile lane reading only section Amendments A2 would not know this. Recorded for routing;
+  apps/control_plane/** is outside this lane's write scope, and the reviewer of revision 3 likewise did
+  not re-verify add_product_page.dart:542/:1038.
+
+ux_accessibility_score: PASS
+ux_accessibility_score_note: |
+  PASS - not applicable. No interface is added, removed or restyled.
+
+  The accessibility surface of this artifact is the ADR itself, and this revision improves it in the
+  property that matters for a document a future reader must be able to trust without the author's session:
+  EVERY superseded clause now carries a visible marker (SUPERSEDED markers 4 -> 10), the decided-vs-built
+  inventory is a table with per-row evidence and per-row "not built" citations rather than prose, the
+  same-uid exposure is reachable from section Known gaps rather than only from section Accepted risks, and
+  the two passages that actively mislead - a stale scope headline and a false review-status claim - are
+  corrected rather than left to be discovered by a reader.
+
+implementation_feasibility: MEDIUM
+implementation_feasibility_note: |
+  MEDIUM - unchanged from revisions 2 and 3, and for the same reason recorded there.
+
+  A3 depends on a substrate that is decided, already provisioned in this repository's Terraform, and NOT
+  wired to the credential path, whose reachability is UNVERIFIED - plus a transport-time window that
+  revision 3 made visible for the first time. The identity/registration split (898b07d0) and two-sided
+  revocation (79e860e2) are likewise specified and not implemented: 08c7590 closed the resurrection half
+  of the revocation gap but no code destroys a manager handle, so revocation is still one-sided in
+  practice.
+
+  Revision 4 IMPROVES what an implementer inherits without changing the estimate:
+    - Rotation is now correctly scoped (per repository) and confirmed BUILT, so an implementer no longer
+      has to infer that "per product" meant "per repository".
+    - The public-half UI is marked PARTLY BUILT with the mock named, so nobody builds on the assumption
+      that the screen offers an installable key. This is a DISCOVERED implementation prerequisite
+      (F-9), not one revision 4 created.
+    - Key-material immutability is recorded as STRONGER than the e391c02 reading, with the extra
+      predicates on scope and on durable evidence named.
+    - The pre-A1 reference-name form GIT_PRODUCT_<productRef>_SSH is now forbidden by name - using it
+      would collide two repositories of one product on one secret name.
+  Feasibility does not rise because nothing was implemented. The estimate gets sharper.
+
+created_by: design-agent
+created_at: "2026-10-07T00:00:00Z"
+updated_by: design-agent
+updated_at: "2026-10-07"
+
+correction_of_review:
+  review_of_revision: "ADR0018-A2-REV3"
+  verdict_received: "DESIGN_REVIEW_CHANGES_REQUIRED"
+  blockers_received: 1
+  high_received: 3
+  medium_received: 4
+  low_received: 2
+  review_report_present: true
+  review_report_note: |
+    PRESENT and read in full: docs/engineering/dispatch/tasks/design-review-adr-0018-a2-rev3/report.md
+    (637 lines), RESULT: DESIGN_REVIEW_CHANGES_REQUIRED, REVIEWED_HEAD: 289f1d3. This is a genuine
+    improvement on revision 3, whose review report was absent and whose finding set had to be
+    reconstructed. Its framing - that the defect is a CLASS and not G-17's tense - is adopted in full and
+    is the organising principle of revision 4.
+
+    The review's central judgement is recorded because revision 4 acts on it rather than around it: "The
+    defect is not a one-off; it is a class, and G-17 is the third instance of it. Revision 3 fixed G-17's
+    instance properly. It did not sweep the class - and adopting the lane's framing ('the defect was the
+    tense') licenses exactly the outcome the dispatch warned against: two sentences repaired, the
+    stale-and-unmarked normatives left standing."
+
+  findings_addressed:
+    - "B-1 - section Decision headline asserted the scope A1 superseded, unmarked and contradicted by the table revision 3 added. FIXED: struck, marked SUPERSEDED (A1), current per-repository scope stated."
+    - "H-1 - section Decision status marked the custody clause 'Built: yes' citing repository_credential.dart:12-18 and :70-72, BOTH of which assert the superseded A1 custody model. FIXED: cites the field declarations (:61-122) instead and names the stale comments as NOT the evidence; the comments are filed as an implementation follow-up since they are production source."
+    - "H-2 - :384 and :401 superseded by A1, unmarked, and :401 presented the superseded scope as a BENEFIT in Consequences/Positive. FIXED: both struck and marked; :401's substance corrected rather than merely marked. G-e closed."
+    - "H-3 - the ADR cited 9417f8bf and 876c6b97 as authority with no note that both carry the absolute it had just corrected. FIXED in the in-scope half: dated, attributed scope note tabulating all FOUR sites. F-1's scope confirmed as four sites, not two, with :140 named as load-bearing. The upstream half is reported with exact append-only text (section 11) and NOT written, because .decisions/** is Manager-owned - the refusal was correct; stopping there was not."
+    - "M-1 - section Decision status claimed to mark every clause while two normative bullets had no row. FIXED by adding rows (table nine -> eleven) and narrowing the claiming sentence. Adding the UI row surfaced F-9."
+    - "M-2 - the transport-time same-uid exposure sat under an ACCEPTED header and was absent from section Known gaps. FIXED: filed in Known gaps with its ownerless status and substrate-independence recorded; correctly NOT made a fifth accepted risk."
+    - "M-3 - 570bb640 was cited as if a commit and `git log` on it fails; it is a decision object id. FIXED at both sites, with the class swept (all nine 8-hex tokens in the ADR are decision ids)."
+    - "M-4 - landing hazard: accepted risk A1's fix is merged into main and the ADR would ship stale-wrong. FIXED: re-verified against main c6f301d, six sites corrected, verified evidence tabled, and the register retirement routed rather than taken."
+    - "L-1 - pre- and post-revision line numbers sat in adjacent tables with no marker. FIXED: both bases labelled."
+    - "L-2 - risk rationale leaned on the non-causal claim that a disclosure holds the risk level. FIXED: removed, with the reason stated. Conclusion (3) unchanged."
+  findings_sweep_beyond_the_finding_set:
+    - "S-1 - the public-half clause (:362-364) had no Decision-status row AND targeted 'the product's repository'."
+    - "S-2 - the reference-name example was the PRE-A1 form GIT_PRODUCT_<productRef>_SSH, which two repositories of one product would collide on."
+    - "S-3 - section Negative's 'N products means N keypairs' was superseded by A1 and contradicted a bullet four lines below it that already said so correctly."
+    - "S-4 - section Mitigation described UI key state as per product."
+    - "S-5 - section Mitigation's 'dedicated per-product page' implied rotation as a single act; rotation is per repository."
+    - "S-6 - section Status's 'has never been independently reviewed' was FALSE (the rev-3 review exists on main). G-17's own class, reproduced by the revision that fixed G-17, and carrying a prescription as G-17's did."
+    - "S-7 - M-4 was sized at six sites, not the three named."
+
+blockers: []

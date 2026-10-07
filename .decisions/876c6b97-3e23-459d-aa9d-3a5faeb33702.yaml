@@ -161,4 +161,40 @@ resolution:
       owner: none — closed
 created_by: orchestrator-main
 created_at: 2026-10-06T14:20:00Z
-updated_at: 2026-10-06T14:20:00Z
+updated_at: 2026-10-07T00:00:00Z   # scope note appended; the resolution itself is unaltered
+# ---- SCOPE NOTE appended 2026-10-07 by orchestrator-main. APPEND-ONLY: no line above this
+# comment is altered. The acceptance above stands, is NOT withdrawn, and no clause of the
+# owner's answer is re-opened. --------------------------------------------------
+#
+# The CONTEXT block at :20 states, as a standing claim, that under A3 "SHIP IT never holds key
+# bytes at all, only a reference it asks the manager to resolve at push time". That was written
+# on 2026-10-06, before ADR 0018 amendment A2 established that at transport time SHIP IT MUST
+# materialise the private half in process memory. The sentence is FALSE as written and true only
+# in the STORAGE dimension: SHIP IT never STORES the private half, and transiently HOLDS it for
+# the connection's lifetime. Requiring SHIP IT to transmit the private half is requiring it to
+# hold it.
+#
+# This is the fourth site carrying that absolute; the other three are in 9417f8bf (:113, :140,
+# :210), whose own :116-119 already contains the correct same-uid reasoning.
+#
+# WHAT IS UNCHANGED - stated explicitly, because this object is the citable id for the
+# acceptance and nothing about it is disturbed:
+#   - "Accept A2, record the gaps as accepted" (OPTION_A, decided_at 2026-10-06T14:20:00Z) STANDS.
+#   - EXACTLY FOUR accepted risks were put to the owner and exactly four are recorded. This note
+#     adds no fifth and closes none.
+#   - The four follow-up_action owners below STANDS as recorded.
+#   - Only the substrate choice, the A2 exclusion, G-7's elevation to REQUIRED, and the four-gap
+#     acceptance depend on the corrected claim, and each survives in the storage dimension.
+#
+# ONE THING A READER SHOULD NOW KNOW. Accepted risk A1 (resurrection of a revoked credential by
+# a re-mint) was verified against main c6f301d on 2026-10-07: 08c7590 merged the reviewed fix,
+# and the mint path is now insert-only - a mint refuses any existing credentialId, "whether the
+# supplied material differs, matches, or the existing credential is revoked" - so the exposure
+# this gap described no longer reproduces. The accepted-risk entry is RETAINED here deliberately:
+# it records what the owner accepted on 2026-10-06, and RETIRING IT IS THE OWNER'S CALL, not a
+# design-lane edit. See ADR section Accepted risks A1. The other half of the revocation clause -
+# no code destroys a secret-manager handle - remains unimplemented, so revocation is still
+# one-sided in practice.
+#
+# Correcting source of record: docs/adr/0018-per-product-git-credentials.md, amendment A2
+# (Design Revision 4, correcting Design Revision 3).

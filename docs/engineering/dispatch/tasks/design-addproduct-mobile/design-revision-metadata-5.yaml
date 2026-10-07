@@ -15,7 +15,9 @@ worktree: /private/tmp/shipit-correct-addproduct-mobile
 branch: design-correct-addproduct-mobile
 base_sha: 289f1d33dcf1a2f24ead765c9e573b2f1ba1f107
 head_sha: 289f1d33dcf1a2f24ead765c9e573b2f1ba1f107
-committed: NO
+committed: NO                 # superseded at revision 6: the branch has since fast-forwarded to
+                              # 16cd49721646521d13ff6d962dcf82ef4719237e and this revision is committed at it.
+                              # Every source citation below was re-read individually at 16cd497 (MR5-5).
 ```
 
 ## risk_level: 3
@@ -96,7 +98,9 @@ H-1(c): >
   REMOVED; NEW user-facing element `Trust Created` at 30,566 330×24 — "This product is already in your list.
   It cannot push or merge until you finish registering." — which is what discharges the requirement, since
   `· PROVISIONAL (G1 hostUnrecognised)` is an invisible layer-name annotation. Verified pair:
-  `REGISTERED · READY TO REGISTER`. Seventeen `· PROVISIONAL` suffixes retired. R.11g item 3's resume
+  `REGISTERED · READY TO REGISTER`. **Sixteen** `· PROVISIONAL` suffixes retired (8 `Trust *` layers on each of
+  the two Unknown boards; this cell published *Seventeen* until revision 6 — MR5-1), plus **4** `· PENDING D4`
+  suffixes, one `Art S` per board. R.11g item 3's resume
   affordance specified in §4.5 but NOT rendered (G13 — `ProductDetailPage` is not in OWNED_PATHS).
 
 M-1: >
@@ -223,12 +227,19 @@ requirements_gaps:
   to: keys lane / implementer
   item: >
     G-7 is REQUIRED: remove referenceName from RepositoryCredentialView, or replace it with a
-    non-identifying handle. This lane MEASURED 6 sites: the YAML source of truth
+    non-identifying handle. This lane MEASURED 6 sites (**7 as of revision 6, MR5-3**): the YAML source of truth
     (apps/server/lib/src/models/repository_credential_view.yaml:10-11), two generated packages, four
     projections in control_plane_repository.dart, and — the reason this is security-relevant rather than
     cosmetic — TWO UI RENDER SITES at product_detail_page.dart:471 and :676. Under A3 the reference is a
     secret path or ARN and "discloses vault topology", so SHIP IT is currently showing vault topology to
     users. The YAML's own comments also still claim the private half is "held locally" — false twice over.
+    CORRECTED AT REVISION 6 (MR5-3): the count is SEVEN — the seventh is
+    apps/server/lib/src/services/ui_view_mappers.dart:176, the SERVER-SIDE VIEW CONSTRUCTOR
+    (`referenceName: c.referenceName,` inside repositoryCredentialView()). Dropping the field from the YAML
+    regenerates both client packages without it and THAT CALL SITE WILL NOT COMPILE. It was missing from the
+    six this notification published, so an implementer working the list would ship a broken build. The
+    platform_contracts / product_credential / persistence-layer occurrences are DELIBERATELY RETAINED per
+    9417f8bf:167 ("referenceName becomes an opaque row reference") — do not strip them.
 - id: N6b
   to: MANAGER — ownership
   level: blocker
@@ -236,6 +247,9 @@ requirements_gaps:
     F6: the four desktop S boards carry footer copy and do not satisfy 27ea6536's desktop clause. Closing
     it is a board edit on four READ-ONLY boards. 27ea6536's OPTION_B anticipated this cost verbatim. No lane
     currently owns those boards. The decision's OUTCOME is not in question and is not re-opened here.
+    RE-AFFIRMED STILL OPEN AT REVISION 6: the four S boards are PROHIBITED to this lane AND to the keys
+    lane, so F6 needs an OWNERSHIP GRANT from the Manager, not a re-decision and not a lane re-task. BPM
+    (F5) carries the same false custody string and the same now-false NOT REGISTERED YET eyebrow.
 - id: N6c
   to: MANAGER — ownership
   level: blocker

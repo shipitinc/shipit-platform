@@ -15,7 +15,7 @@ risk_level: 3
 
 **Provenance.** Worktree `/private/tmp/shipit-correct-addproduct-mobile`, branch
 `design-correct-addproduct-mobile` (`git branch --show-current`), `BASE_SHA` = `HEAD_SHA` =
-`289f1d33dcf1a2f24ead765c9e573b2f1ba1f107`. Nothing committed, nothing pushed. **No Docker or Compose
+`289f1d33dcf1a2f24ead765c9e573b2f1ba1f107`. **Superseded at revision 6:** the branch has fast-forwarded to `16cd49721646521d13ff6d962dcf82ef4719237e` — the head every source citation in this file was re-verified against (§14). Nothing committed, nothing pushed. **No Docker or Compose
 command was run at any point in this pass**, including read-only ones. `flutter analyze` **NOT_RUN**; no
 Flutter widget rendered.
 
@@ -166,10 +166,10 @@ ed25519 · generated on the server · the private half stays in the secret manag
 | `Art L1` / `Art L2` `parentY` | 456 | **466** (card bottom 486 → 4px slack) |
 | `Art S` fill | `#5a5c5b` / `#a8a6a0` | **unchanged** — `inkSecondary` |
 
-The `PENDING D4` and `PROVISIONAL` marker suffixes were retired from **all sixteen** layer names. Independent
-re-read this pass: **zero** shapes on any of the four boards carry a layer name matching `PENDING D4` or
+The marker suffixes were retired in **two populations**: **4** ` · PENDING D4 (at-rest model)` — one `Art S` per board, per §3.2 — **plus 16** ` · PROVISIONAL (G1 hostUnrecognised)` — the 8 `Trust *` layers on each of the two Unknown boards — **20 in all**. Independent re-read this pass: **zero** shapes on any of the four boards carry a layer name matching `PENDING D4` or
 `PROVISIONAL`, and **zero** text layers match any of the ten forbidden strings. Counts and positions are in
-`penpot-board-evidence.md` §3 and §6.
+`penpot-board-evidence.md` §3 and §6. **CORRECTED AT REVISION 6 (MR5-1):** the former *"all sixteen layer names"*
+named only the `PROVISIONAL` population, understating the combined set by four; **no board changed**.
 
 **Because the wrap grew the line, the two rows below it moved and the card did not.** `Art Bg`
 (`16,370 358×116`) was deliberately not grown, so the card stays geometrically identical to `BPM`'s. This is
@@ -232,7 +232,7 @@ correctly and unambiguously. **No human gate is needed and `27ea6536` is not re-
 
 ### 4.2 The build change, specified to the line
 
-| What | Where — **re-read at `289f1d3`**, `git diff --name-only 43d328b 289f1d3 -- apps/control_plane packages` returns **empty** | Change |
+| What | Where — **re-read at `289f1d3`**, `git diff --name-only 43d328b 289f1d3 -- apps/control_plane packages` returned **empty**. **Basis restated at revision 6 (MR5-5):** `main` has since advanced to `16cd497`, and the same range-diff is now **4 files**, all in `packages/product_registry/` — so the empty-diff *basis* no longer holds. Every `:NNN` below was therefore **re-read individually at `16cd497`** and all hold (§14) | Change |
 |---|---|---|
 | `_buildFooter` — **definition** | `add_product_page.dart:375` (`Widget _buildFooter(BuildContext context) {`) | **delete** |
 | `_buildFooter` — **call site** | `:314` (`_buildFooter(context),`) | **delete** |
@@ -358,7 +358,7 @@ trust decision. Every element below was required by that, not chosen.
 | `Trust K` | `CONFIRM THIS HOST BEFORE CONNECTING` | **`CONFIRM THIS HOST TO FINISH REGISTERING`** | the product exists; trust **completes** a registration, it does not precede creation |
 | `Trust Body 2` | *"It pushes and merges on its own. Only promotion to production waits for you."* | **REMOVED** | **false** under `898b07d0`: a product with no committed credential **cannot push or merge** |
 | **`Trust Created`** | — | **NEW**, `30,566 330×24`, 10/400, `inkSecondary`: *"This product is already in your list. It cannot push or merge until you finish registering."* | `898b07d0`: **the user must be able to tell a product exists but is not yet usable** |
-| 7 × `Trust *` names | `… · PROVISIONAL (G1 hostUnrecognised)` | suffix stripped | `hostUnrecognised` is no longer provisional; both decisions are RESOLVED |
+| 8 × `Trust *` names | `… · PROVISIONAL (G1 hostUnrecognised)` | suffix stripped | `hostUnrecognised` is no longer provisional; both decisions are RESOLVED. **16 suffixes across the pair** — this cell published `7 ×` until revision 6 (MR5-1) |
 
 **On the Verified pair**, `Status` was also re-grounded: `NOT REGISTERED YET` → **`REGISTERED · READY TO
 REGISTER`**. `898b07d0` makes the old eyebrow false there too — on *every* one of these boards a product row
@@ -373,8 +373,8 @@ than count it. **`Trust Created` is the element that satisfies it**: it is on-ca
 held, so the trust panel's height (160px at y=502), its contents' order and the whole submit/helper/disclose
 chain (678 / 720 / 748) are **unchanged**.
 
-**Verified after the edit, all four boards:** zero intra-panel overlaps; `Trust Created` **contained** in
-`Trust Bg`; zero shapes colliding with the bottom nav.
+**Verified after the edit, all four boards:** zero intra-panel overlaps **other than the button-rect-plus-label idiom** — `Trust Btn` geometrically encloses `Trust Btn L`, and `Submit (label only — no nested subtext)` encloses `Submit L`, which is how the boards already draw a button; `Trust Created` **contained** in
+`Trust Bg`; zero shapes colliding with the bottom nav. **CORRECTED AT REVISION 6 (MR5-7):** the former wording, *"zero intra-panel overlaps"*, was not literally true of those two pairs.
 
 ### 5.3 `ae1c1f79` — refusal creates nothing, and the boards must not imply otherwise
 
@@ -421,6 +421,18 @@ before this revision.
 | 4 | **`apps/control_plane/lib/features/product_detail/product_detail_page.dart:471`** | **rendered**: `'${c.referenceName} · ${c.algorithm} ${c.fingerprint} · '` |
 | 5 | **`…product_detail_page.dart:676`** | **rendered**: `'${c.referenceName} · ${c.algorithm} '` |
 | 6 | `apps/control_plane/lib/data/control_plane_repository.dart:108, :1098, :1691, :1709` | client-side hand-rolled projection |
+| 7 | **`apps/server/lib/src/services/ui_view_mappers.dart:176`** — *(added at revision 6, MR5-3)* | **the server-side view constructor.** `static RepositoryCredentialView repositoryCredentialView(RepositoryCredential c)` builds the view: `referenceName: c.referenceName,` under the comment *"Reference name only — the private half is never in this payload."* **Dropping the field from the YAML regenerates both client packages without it and this call site WILL NOT COMPILE** — the decision's own *"two will not compile"* blast-radius statement, applied to the file that constructs the view |
+
+**7 sites, not 6 — added at revision 6 (MR5-3).** This table published six and the seventh is the **build
+break**: an implementer working the published list edits the YAML, regenerates, fixes the two render sites,
+and is left with `apps/server` failing to compile. Re-read at `16cd497`, the line is exactly
+`referenceName: c.referenceName,`. **The 6-site *scope* is otherwise unchanged, and that matters:** the ~30
+other `referenceName` occurrences repo-wide are the **domain and storage** layers —
+`packages/platform_contracts/lib/src/**/repository_credential.dart`, `product_credential.dart` (the DB row),
+`postgres_product_registry_store.dart`, `schema_bootstrap.dart` — plus `generated/protocol.dart:3841`, which
+is the **`product_credential` DB table** (table named at `:3810`), not the client view. `9417f8bf:167`
+deliberately keeps `referenceName` there (*"`referenceName` becomes an opaque row reference"*), so **a future
+lane must not "helpfully" strip those too.**
 
 **The finding that raises this from a contract tidy-up to a security defect: sites 4 and 5 render the field
 in the user interface.** Under A3 the reference is *"a secret path or ARN"*, and the decision states an ARN
@@ -640,7 +652,7 @@ correction* are re-measured too.
 |---|---|---|---|
 | **N4** | design-system owner | 1 | no disabled-primary token (G9) |
 | **N6** | design-system owner | **1** | **`TechnicalDetails` must be able to suppress its `ContentRule` and align its disclosure start-aligned** (D-2, G4). The human has decided the outcome; only the mechanism is open. **NOT a human gate** |
-| **N6a** | keys lane / implementer | — | **G-7 is REQUIRED**: remove `referenceName` from `RepositoryCredentialView` (2 generated packages + YAML) and fix the two UI render sites (`product_detail_page.dart:471`, `:676`). The decision's own blast-radius statement ("nine/twelve… two will not compile") is the sibling's; **this lane measured 6 sites incl. 2 render sites** |
+| **N6a** | keys lane / implementer | — | **G-7 is REQUIRED**: remove `referenceName` from `RepositoryCredentialView` (2 generated packages + YAML), fix the two UI render sites (`product_detail_page.dart:471`, `:676`) **and the server-side view constructor `apps/server/lib/src/services/ui_view_mappers.dart:176`, which WILL NOT COMPILE once the field is dropped (MR5-3 — `apps/server` was missing from the list this notification published)**, while leaving the `platform_contracts` / `product_credential` / persistence-layer occurrences intact per `9417f8bf:167`. The decision's own blast-radius statement ("nine/twelve… two will not compile") is the sibling's; **this lane measured 7 sites incl. 2 render sites** |
 | **N6b** | **Manager — ownership** | **blocker** | **F6**: the four `S` desktop boards carry footer copy and do not satisfy `27ea6536`. Closing it is a board edit on four read-only boards. **Needs an owner**; the decision itself anticipated this cost |
 | **N6c** | **Manager — ownership** | **blocker** | **G14**: two boards needed for the A3 refused-mint surface (§ 6.2), which R.11g item 5 forbids folding onto the Unknown-host board |
 | **N6d** | keys lane | — | **D-3**: "no footer copy" is two `note:` sites (`:317-319`, `:926-928`) plus `_buildFooter` (`:375`). The sibling's own revision 5 has since corrected this (its L8); recorded so the two lanes agree |
@@ -657,7 +669,7 @@ correction* are re-measured too.
 |---|---|---|
 | `design_system_compliance` | **PARTIAL** | Every board element maps to a named token or production primitive, re-read and token-matched live: board fill `#f7f7f5`/`#1f2120` = `canvas`, `Trust Bg`/`Art Bg` `#ffffff`/`#262827` = `card`, `Art S` `#5a5c5b`/`#a8a6a0` = `inkSecondary`, `Status` `#6e706e`/`#8a8983` = `inkTertiary`. **Not PASS** because D-2 is an unsatisfied compliance requirement: the mobile footer cannot be expressed by the primitive it uses, and F6 is an unsatisfied conformance requirement on four boards. Both are named, not rounded. |
 | `ux_accessibility_score` | **PASS, measured on the surfaces this pass touched** | Contrast recomputed from `design_tokens.dart` at `289f1d3`, sanity-checked (black/white 21.00, white/white 1.00). The layers this pass added or moved: `Art S` `inkSecondary` on `card` **6.74 light / 6.10 dark**; `Trust Created` `inkSecondary` on `card` **6.74 / 6.10**; `Status` `inkTertiary` on `canvas` **4.65 / 4.62**; `Trust Btn L` `#ffffff` on `#1668d6` **5.27** and `#06121f` on `#4496fc` **6.30**. All ≥ 4.5:1, both themes. **The known `inkTertiary`-on-`card` FAIL at 4.99/4.23 is real and unchanged** — it is N10, design-system-owned, and is **not** on any layer this pass touched. |
-| `implementation_feasibility` | **MEDIUM** | Not HIGH, and the reason is stated rather than hedged: **`flutter analyze` was NOT_RUN** — it requires `flutter pub get`, which writes outside this lane's read-only scope, and `apps/control_plane/.dart_tool/` does not exist at this HEAD. A prior revision of this lane claimed HIGH without the analyzer ever resolving packages; that is not repeated. **But** every line number this revision cites was re-read at `289f1d3`, and `git diff --name-only 43d328b 289f1d3 -- apps/control_plane packages` returns **empty**, so all of them hold. MEDIUM, not LOW, because the change is small and local: three edits in one file plus one shared-primitive change. |
+| `implementation_feasibility` | **MEDIUM** | Not HIGH, and the reason is stated rather than hedged: **`flutter analyze` was NOT_RUN** — it requires `flutter pub get`, which writes outside this lane's read-only scope, and `apps/control_plane/.dart_tool/` does not exist at this HEAD. A prior revision of this lane claimed HIGH without the analyzer ever resolving packages; that is not repeated. **But** every line number this revision cites was re-read at `289f1d3`, and `git diff --name-only 43d328b 289f1d3 -- apps/control_plane packages` returned **empty**, so all of them held. **CORRECTED AT REVISION 6 (MR5-5):** that empty-diff basis is **stale at `16cd497`** — the range now spans 4 files, all in `packages/product_registry/**`, which this revision cites nothing in. The basis is therefore restated in a form that still holds: **every `:NNN` cited into `apps/control_plane/**` and `apps/server/**` was re-read individually at `16cd497`, and all hold.** MEDIUM, not LOW, because the change is small and local: three edits in one file plus one shared-primitive change. |
 
 ---
 
@@ -668,7 +680,7 @@ correction* are re-measured too.
 | `git branch --show-current` | `design-correct-addproduct-mobile` ✓ |
 | `git rev-parse HEAD` | `289f1d33dcf1a2f24ead765c9e573b2f1ba1f107` ✓ |
 | `git rev-parse main` | identical to HEAD ✓ |
-| `git diff --name-only 43d328b 289f1d3 -- apps/control_plane packages` | **empty** — every `:NNN` cited into `apps/control_plane/**` holds at the new base ✓ |
+| `git diff --name-only 43d328b 289f1d3 -- apps/control_plane packages` | **empty at `289f1d3`** ✓ — but **NOT empty at `16cd497`**: the range now spans **4 files**, all `packages/product_registry/{engine,store,in_memory_store}.dart` + `credential_test.dart`. **CORRECTED AT REVISION 6 (MR5-5):** the stated basis is stale at the head this revision is reviewed against, so it is **replaced** by per-citation re-reads — every `:NNN` cited into `apps/control_plane/**` and `apps/server/**` was read individually at `16cd497` and **all hold** ✓. The advance touches `packages/product_registry/**` only, which this revision cites **nothing** in |
 | `penpotUtils.getPages()` | `["Page 1"]`, id `d8ac01df-6646-81d2-8008-a366c09aa9d3` ✓ |
 | Board list before edits (160 boards, 164 root children) and after | **identical** — 160 / 164, verified after the last write ✓ |
 | All four `SM` boards: custody string | the `N-9` string, **80 chars, all four**, re-read ✓ |
