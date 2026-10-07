@@ -313,20 +313,87 @@ SELF_EDITS: >-
 
 ## WORK_ITEM: Add Product rebuild — IN DESIGN (supersedes the parked register-button round)
 STATE: DESIGN + ADR IN CORRECTION, FEATURE IMPLEMENTATION NOT YET UNBLOCKED
-BASE_SHA: `main` = `origin/main` = `289f1d3`
+BASE_SHA: `main` = `origin/main` = **`16cd497`**
+
+### MERGED 2026-10-07 — `08c7590`, human-authorized ("Yes merge and continue")
+
+`fix/credential-identity-invariants` is **on `main`**. The revocation hole is closed. Merged by
+fast-forwarding `main` onto the integrator's rehearsed merge commit `08c7590` — the exact commit whose
+gates it ran — so no re-verification was needed and `main` never fast-forwarded onto an unverified
+tree. `origin/main` verified 0/0 by `git ls-remote`. The staged `WORK_STATE.md` and the human's dirty
+scratch files were left intact.
+
+Verified again by the Manager on the merged tree: format **631/0** · analyze **exit 0** (2 pre-existing
+infos in the untouched `workflow_engine`) · unit **+148** · schema guard **20 OK / 0 FAIL** · negative
+controls **12/0** · `make test-integration` **`+172`, ALL PASSED**.
+
+**`+172` is the first fully green integration run on `main`.** The branch read `+171 -1`; the extra test
+passes here because `dogfood_shipit_postgres_test.dart:87` asserts a git working tree and the canonical
+checkout is one — **independently confirming the linked-worktree diagnosis from `e391c02`.**
+`main` = `16cd497`, `main`…`origin/main` 0/0.
 
 ### SESSION 2026-10-07 (orchestrator-main) — what changed
 
 **PENPOT IS REACHABLE.** The two-session `SESSION_LIMITED` blocker is cleared: `penpotUtils.getPages()`
 returns `["Page 1"]` and all four `SM - Add Product` boards resolve. **The mobile lane was dispatched
-immediately** and is the only design lane that required it. `main` unmoved at `289f1d3` throughout.
+immediately** and is the only design lane that required it.
 
 | lane | result | disposition |
 |---|---|---|
-| mobile Design Revision 5 | `DESIGN_REVISION_COMPLETE`, `RISK_LEVEL: 3`, a11y **PASS** | **ready for independent review**; never reviewed |
-| keys Revision 5 review | `DESIGN_REVIEW_CHANGES_REQUIRED` — 1 BLOCKER, 0 HIGH, 4 MEDIUM, 3 LOW | correction lane needed |
-| ADR 0018 A2 | `DESIGN_REVISION_COMPLETE`, `RISK_LEVEL: 3` | ready for independent review; never reviewed |
-| credential-identity integration | `APPROVE_CORRECTIONS` → `READY_FOR_INTEGRATION` | **awaiting human merge authority** |
+| mobile Design Revision 5 | `DESIGN_REVISION_COMPLETE`, `RISK_LEVEL: 3`, a11y **PASS** | — |
+| **mobile Rev 5 review** | `DESIGN_REVIEW_CHANGES_REQUIRED` — **0 BLOCKERS**, 3 MEDIUM, 4 LOW | correction lane; **verified every board claim live** |
+| ADR 0018 A2 | `DESIGN_REVISION_COMPLETE`, `RISK_LEVEL: 3` | — |
+| **ADR A2 Rev 3 review** | `DESIGN_REVIEW_CHANGES_REQUIRED` — **1 BLOCKER, 3 HIGH**, 3 MEDIUM, 2 LOW | correction lane; **found a landing hazard** |
+| credential-identity | **`APPROVE_CORRECTIONS` → `READY_FOR_INTEGRATION`** | **MERGED as `08c7590`**, human-authorized |
+
+### All three independent reviews are now in, and none is clean
+
+| review | verdict | weight |
+|---|---|---|
+| mobile Rev 5 | `CHANGES_REQUIRED` — **0 BLOCKERS**, 3 MEDIUM, 4 LOW | three record corrections, **no design change** |
+| keys Rev 5 | `CHANGES_REQUIRED` — 1 BLOCKER (F6), 4 MEDIUM, 3 LOW | needs an ownership grant first |
+| ADR A2 Rev 3 | `CHANGES_REQUIRED` — **1 BLOCKER, 3 HIGH**, 3 MEDIUM, 2 LOW | the most substantive findings of the three |
+
+**The mobile reviewer verified every board claim against the live Penpot file** — something no prior pass
+on this artifact set could do. All of it reproduces: the custody string, the layer renames, the 436→446
+and 456→466 moves, the two-line wrap inferred from layer height, the `Disclose` left-aligned at 16 with
+zero dividers, layer counts 44/44/36/36, all 13 M-1 numbers, all three L-1 pointers, every source
+citation, and all ten contrast figures to 0.00. **The 214.53px withdrawal is honest** — the reviewer
+re-derived the 2× scale on three samples. **Both of the cancelled lane's errors were real** (F6, F7) and
+the resumed lane's correction is sound.
+
+**⚠ LANDING HAZARD — accepted risk A1 is now substantively CLOSED by `08c7590`.**
+`recordGeneratedCredential` now refuses any mint onto an existing `credentialId`, so the ADR's §A1 is
+correct at `289f1d3` but **stale-wrong inside the same merge**. **The ADR must be re-verified at commit
+time**, not written and forgotten. Nobody flagged this before the merge landed.
+
+### The ADR reviewer's judgement on G-17 — and why it matters beyond the ADR
+
+It accepted G-17's factual conclusion and proved the git argument itself, but **rejected the producing
+lane's framing**: *"the defect was the tense"* licenses exactly the two-sentence fix that was warned
+against. The claim was **prescriptive**, not merely time-indexed — `:20-21` told a future actor to create
+a decision object that already existed.
+
+**The generalisation is the finding.** The defect is a **class** — stale normative text with no
+`SUPERSEDED` marker — and it recurs **four times** in this one ADR:
+
+- **B-1** the §Decision **headline** at `:272-273` still reads *"scoped per product, not per platform"* —
+  **the exact scope A1 superseded** — unmarked, contrary to the ADR's own convention at `:37-40` that four
+  other clauses honour, absent from §Known gaps, and **contradicted 14 lines later** by the very row
+  revision 3 added.
+- **H-1** §Decision status `:287` marks the custody clause **"Built: yes"** citing two ranges that **both
+  assert the superseded A1 model**.
+- **H-2** `:384` and `:401` are superseded by A1, unmarked — and `:401` presents the **superseded scope
+  as a BENEFIT** in §Positive. The producing lane declined these as "out of scope"; **wrong — they sit
+  inside its `OWNED_PATHS`, and the ADR supplies the device to correct them.**
+- **H-3** F-1's scope is **understated: four sites, not two** — `9417f8bf:113`, **`:140`** (the
+  load-bearing uniqueness argument), `:210`, plus `876c6b97:20`. The ADR cites both decisions **with no
+  note that they carry the absolute it just corrected.** Correct fix: a **dated scope note appended** to
+  each object — **never rewrite the rationale**, per `LEARNING_POLICY.md:261`.
+
+**Two more of its calls worth keeping:** G-b's same-uid exposure should have gone into the ADR's own
+**§Known gaps** — "not an accepted risk, needs follow-up" — which needs no owner authority; and refusing
+to write Manager-owned `.decisions/**` was **right**, while stopping there was not.
 
 **The merge is the one thing that changes a live security posture.** `fix/credential-identity-invariants`
 is approved at `a4c211c` and verified merge-ready; **until it lands, a revoked credential can be

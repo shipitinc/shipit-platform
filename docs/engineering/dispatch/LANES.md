@@ -472,3 +472,41 @@ raised this session** — every lane resolved on the recorded resolutions alone.
   **absent** and reconstructed the finding set from the ADR text, saying so. The keys rev-5 review report
   and three of four credential reports are **still untracked**. A verdict with no provenance is this work
   item's repeating failure.
+
+## Merged 2026-10-07 — `08c7590` (human-authorized)
+
+`fix/credential-identity-invariants` is **on `main`**. Merged by fast-forwarding onto the integrator's
+rehearsed commit `08c7590` — the exact tree its gates ran on — so nothing was re-verified and `main`
+never landed an unverified merge. `origin/main` verified 0/0 by `git ls-remote`.
+
+**The revocation hole is closed.** Manager re-verification on the merged tree: format 631/0 · analyze
+exit 0 · unit `+148` · schema guard **20 OK / 0 FAIL** · negative controls 12/0 · `make test-integration`
+**`+172`, ALL PASSED** — the first fully green integration run on `main`. The branch read `+171 -1`; the
+extra test passes in a real checkout because `dogfood_shipit_postgres_test.dart:87` asserts a git working
+tree, **independently confirming the linked-worktree diagnosis from `e391c02`.**
+
+## Review wave — all three in, none clean
+
+| task_id | result | note |
+|---|---|---|
+| design-review-addproduct-mobile-rev5 | `DESIGN_REVIEW_CHANGES_REQUIRED` | **0 BLOCKERS**, 3 MEDIUM, 4 LOW. **Verified every board claim live on Penpot** — all reproduces. Three record corrections, no design change |
+| design-review-adr-0018-a2-rev3 | `DESIGN_REVIEW_CHANGES_REQUIRED` | **1 BLOCKER, 3 HIGH**, 3 MEDIUM, 2 LOW. Rejected G-17's framing; generalised it to a **class** |
+| (integration) | `READY_FOR_INTEGRATION` → **MERGED `08c7590`** | human-authorized |
+
+**Three things a fresh session must not re-derive:**
+
+1. **Penpot is reachable**, and the mobile reviewer used it. Every board claim on the mobile artifact
+   set is now **independently verified against the live file** — the first time that has been possible.
+   Do not re-review those claims; read the rev-5 report.
+2. **The stale-normative-text defect is a CLASS, not G-17.** G-17 (an ADR denying its own acceptance) is
+   one instance; **B-1, H-1 and H-2 are three more in the same ADR.** The producing lane fixed two
+   sentences and framed the lesson as "the defect was the tense" — the reviewer rejected that framing
+   precisely because it licenses a two-sentence fix. **Sweep for unmarked superseded clauses rather than
+   fixing the reported ones.**
+3. **⚠ A1 is substantively closed by `08c7590`.** `recordGeneratedCredential` now refuses any mint onto
+   an existing `credentialId`. **ADR 0018's §A1 is correct at `289f1d3` and stale-wrong inside the same
+   merge.** It must be re-verified at commit time.
+
+**Bookkeeping now on `main` at `16cd497`** — 37 files, **zero production source**. This includes both
+design revisions, all three review verdicts, the credential correction and both re-reviews, the
+integrator's report, and attempt 1's full mobile report that had existed only in a worktree.
