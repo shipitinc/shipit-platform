@@ -9,11 +9,11 @@ revision_id: CB4BEECA-CA9D-4F26-9464-E1B6F7C9BDCB   # carried from revision 5 �
 brief_id: 52CB4098-FF87-4B78-81DA-1104269551A1
 revision_number: 6
 supersedes_revision_id: CB4BEECA-CA9D-4F26-9464-E1B6F7C9BDCB
-status: UNDER_REVIEW            # the Design Agent never approves its own work
+status: APPROVED                # independent design review returned DESIGN_REVIEW_APPROVED
 created_by: design-agent
 created_at: 2026-10-07T12:33:42Z
-reviewed_by: null               # awaiting Independent Design Review
-reviewed_at: null
+reviewed_by: "docs/engineering/dispatch/tasks/design-approve-mobile-rev6/report.md"
+reviewed_at: "2026-10-07T12:58:00Z"
 approved_by: null               # no human gate required or requested
 approved_at: null
 worktree: /private/tmp/shipit-correct-addproduct-mobile
@@ -360,3 +360,27 @@ production_source_edits: NONE   # G-7's seventh site was RECORDED and ROUTED, no
 decision_file_edits: NONE   # .decisions/** was read; all nine named decisions are RESOLVED
 read_only_board_edits: NONE   # no BPM or S board was edited, renamed, moved or deleted
 ```
+# ---- APPROVAL RECORD appended 2026-10-07 by orchestrator-main, human-authorized. -------------
+# The Design Agent never approves its own work, and it did not: the verdict below was returned by an
+# independent design-reviewer lane against this exact revision, with both Manager-closed findings
+# (MR6-1, MR6-2) verified as correctly closed and the corrections shown to have introduced no new
+# error. The lane left status UNDER_REVIEW because only a reviewer or the Manager may advance it,
+# and nothing had yet written the verdict back into the artifact it belongs to — the same class of
+# failure as this work item's three lost reports: a verdict with no provenance where it will be read.
+#
+# RESULT: DESIGN_REVIEW_APPROVED        BLOCKERS: 0   HIGH: 0   MEDIUM: 0   LOW: 0
+# CORRECTION_REQUIRED: NO              HUMAN_DECISION_REQUIRED: NO
+# INDEPENDENT_RISK_LEVEL: 3            RISK_LEVEL_AGREEMENT: YES
+#
+# WHAT THIS APPROVAL DOES NOT MEAN. Design Contract FREEZE is separately withheld. Gate D5 triggers
+# on all applicable gates and a frozen contract is immutable, while N6b (the G-18 desktop board
+# edit) and N6c still require work. G-18's desktop deletion is since DISCHARGED and verified; N6c
+# and the remaining F5 items do not. Freezing now would make the edits that clear this revision's
+# own gaps a change to an immutable artifact.
+#
+# Scope of the approval: this revision needs NO board change. That is a verified finding, not an
+# absence of checking — the reviewer accepted the prior reviewer's live Penpot evidence (inventory
+# 160/164, SM layer counts 44/44/36/36, exactly 8 unsuffixed `Trust *` layers on each Unknown
+# board and 0 on Verified, S footer band byte-identical) rather than re-deriving it.
+#
+# Owner of record for the verdict: the independent reviewer, not the Manager and not the producer.
