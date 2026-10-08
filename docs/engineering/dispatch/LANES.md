@@ -567,3 +567,75 @@ own gaps a change to an immutable artifact. **Approval is real; the freeze is wi
   on the ADR lane, nineteen on the keys lane. **All were byte-identical.** A lane obeying that pre-flight
   blindly would have had to choose between refusing to start and deleting unchecked files. Compare by
   blob hash, back up outside the repo, move rather than delete.
+
+## Round 4 — build side merged; Penpot transport exhausted
+
+| task_id | result | note |
+|---|---|---|
+| implement-add-product-custody-and-footer | `IMPLEMENTED` → `DO_NOT_MERGE` (1 string) → `CORRECTION_COMPLETE` → **`APPROVE_CORRECTIONS`** | **MERGED as `c32f4f4`**, human-authorized |
+| design-apply-f5-copy (r1→r4) | `DESIGN_REVISION_BLOCKED` ×4 | **0 of 76 mutations applied.** All four stopped correctly |
+
+### The build-side merge — and the error behind it
+
+`37aadc5` merged as `c32f4f4`, remote 0/0, **190/190 on the merged tree.** It closes four false
+key-custody sites under `9417f8bf` (A3), deletes `_buildFooter` plus both `TechnicalDetails` notes under
+`27ea6536`, and adds `showRule`/`disclosureAlignment` to the shared primitive so mobile's footer spec
+becomes expressible.
+
+**The engineering review returned `DO_NOT_MERGE` on exactly one string, and found the DISPATCH at fault
+rather than the implementer.** My dispatch gave the eyebrow replacement as the 80-char
+`ed25519 · generated on the server · …` and then forbade "the 80-char string" — conflating it with a
+**different layer on a different board** (`BP · Rotate Key`'s `Art Sub`, 380px box). The approved value
+was directly discoverable at `design-draft-f5-copy/report.md` **§7:299**, which even notes it is
+**already correct on all 12 boards**. Three artifacts agreed; mine was the odd one out.
+
+**Six of seven verify-items PASSED** and are worth recording because these are the checks that keep
+mattering: the `:409-411` mid-page prose trap survived with all three proofs re-derived; the shared
+primitive has **17 callers with 2 passing the new args and no regression**, `Expanded` kept on the
+trailing-edge branch because dropping it would move the disclosure left on all 17; the gate failure the
+implementer introduced was fixed at the delimiter with the rendered string byte-identical; the 69-file
+phantom format failure was the pub-workspace hazard and `apps/server` is untouched; `_buildStatusRow` is
+intact after its mid-course brace correction.
+
+**Two corrections the review made to the implementer, both mine by proxy:** "`ed25519` appears nowhere
+else on the page" is **false** — it renders at `:135`, displays at `:526`/`:1021` — so the divergence was
+prose-only and less severe than reported; and "instructions cannot both be satisfied" mischaracterised a
+self-inflicted dispatch error as an inherent conflict.
+
+**Still unverified: the gates cover none of the visual outcome.** Zero of 26 test files import
+`add_product_page.dart`; none reference `TechnicalDetails`. The `Expanded` invariant is asserted nowhere.
+A follow-up, not coverage.
+
+### Penpot — the board work is transport-blocked, and the session has now lost the MCP entirely
+
+Four apply rounds, **0 of 76 mutations applied**, no unknown-state writes at any point. Each round stopped
+rather than half-applying against a live shared file with **no version history** — the correct outcome
+each time.
+
+**The diagnosis moved twice and neither reading survived:**
+
+1. **r1, r2** — tab dormancy, no cause identified.
+2. **r3** — blamed **its own** heavy read (24 `findShapes` subtree traversals in one call). The next round
+   was engineered around it: single-shape `findShapeById`, one shape per call, 76 calls inside one focus
+   window.
+3. **r4** — **falsified that.** The tab was dead before its first call, and
+   `getPages().length` is a single scalar read that cannot starve a heartbeat. **Call weight was never the
+   cause.** One-shape-per-call remains correct discipline; it is simply not sufficient.
+
+**And now the constraint has moved again: the Penpot MCP server has disconnected from this session
+entirely.** `penpot_execute_code` is no longer in the toolset, and `list_mcp_resources` /
+`list_mcp_resource_templates` both return empty — where the pre-Gate-D4 baseline recorded `figma-desktop`
+and `postgresql` as available. **No lane can be dispatched with those tools, and neither can the
+Manager.** This is a session-level disconnection, not tab focus, and it is not recoverable from inside
+the session.
+
+**Everything the next round needs is already recorded, so nothing needs re-deciding or re-deriving:**
+
+- 24 copy proposals, **human-approved**, with measured fit per layer
+- the 52-layer footer census verified **twice**, naming-independent, at y = 862×48 + 910×2 + 926×2
+- the `Disclose` baseline as a **pair** — 116 exact + 4 `Disclose · single footer row` = 120. **A
+  strict-equality count reads 116 and would falsely report four missing layers.**
+- exact layer ids, boxes, fonts and positions for all 24 copy targets
+- three pre-write safety facts no earlier lane checked: **no flex/grid on any target board**, all targets
+  `growType: fixed`, every prefix resolving to exactly one candidate
+- the human's `R Submit Sub` ruling: option (a), apply as drafted, **do not resize**
