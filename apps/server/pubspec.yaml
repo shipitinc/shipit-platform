@@ -11,8 +11,16 @@ resolution: workspace
 dependencies:
   agent_runtime:
     path: ../../packages/agent_runtime
+  # SHA-256 over the SSH wire-format public blob, for the `SHA256:…` fingerprint
+  # GitHub/GitLab render next to a deploy key. Already resolved into this app's
+  # graph as a transitive dependency, so promoting it to direct adds no package.
+  crypto: ^3.0.7
   design_governance:
     path: ../../packages/design_governance
+  # ed25519 key generation for repository deploy keys (ADR 0018 A3). A port of
+  # Go's crypto/ed25519, RFC 8032 compatible, pure Dart — no FFI, no C ABI on a
+  # path that mints production credentials.
+  ed25519_edwards: ^0.3.2
   execution_coordinator:
     path: ../../packages/execution_coordinator
   platform_contracts:
