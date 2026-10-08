@@ -13,6 +13,32 @@ const String kSshEd25519 = 'ssh-ed25519';
 /// Value recorded in `RepositoryCredential.algorithm`.
 const String kAlgorithmEd25519 = 'ed25519';
 
+/// OpenSSH's private-key armour header, as bytes.
+const List<int> _kOpensshPemHeader = [
+  45, 45, 45, 45, 45, // -----
+  66, 69, 71, 73, 78, // BEGIN
+  32, // space
+  79, 80, 69, 78, 83, 83, 72, // OPENSSH
+  32, // space
+  80, 82, 73, 86, 65, 84, 69, // PRIVATE
+  32, // space
+  75, 69, 89, // KEY
+  45, 45, 45, 45, 45, // -----
+];
+
+/// OpenSSH's private-key armour footer, as bytes.
+const List<int> _kOpensshPemFooter = [
+  45, 45, 45, 45, 45, // -----
+  69, 78, 68, // END
+  32, // space
+  79, 80, 69, 78, 83, 83, 72, // OPENSSH
+  32, // space
+  80, 82, 73, 86, 65, 84, 69, // PRIVATE
+  32, // space
+  75, 69, 89, // KEY
+  45, 45, 45, 45, 45, // -----
+];
+
 /// Magic prefix of the `openssh-key-v1` private key container
 /// (`PROTOCOL.key` in the OpenSSH source tree), including its NUL terminator.
 const List<int> _kOpensshKeyV1Magic = [
@@ -40,22 +66,43 @@ const int _kNoneCipherBlockSize = 8;
 /// One repository deploy keypair, generated server-side (ADR 0018 §A2/A3).
 ///
 /// This type exists so that no call site has to choose between "the private half"
-/// and "the public half" by discipline. [privateSeed] and [privateKeyPem] are the
-/// secret; [publicKey], [publicKeyBlob], [publicKeyAuthorizedLine] and
-/// [fingerprint] are the entire set of things that may leave the process, be
-/// logged, or be written to the durable record.
+/// and "the public half" by discipline. The private half is reachable through
+/// exactly two members, and both are confined:
 ///
-/// The type is deliberately NOT `toJson`-able and deliberately holds no
-/// `String` rendering of the secret. A credential row is built from
+///   * [privateSeed] is a [SecretBytes], whose only textual projection is a length.
+///     A `log('$pair.privateSeed')` or an `'$seed'` in an exception message
+///     therefore emits `<secret redacted, 32 bytes>`, exactly as if the raw
+///     buffer had been wrapped at construction. There is **no** public accessor
+///     that returns the seed as a `Uint8List` or a `String`.
+///   * [privateKeyPemBytes] is the OpenSSH container, as bytes. There is
+///     **no** `String` rendering of the private half on this type at all — see
+///     [encodeOpensshPrivateKeyPemBytes] for why one is no longer needed, and
+///     note that the previous implementation's `String get privateKeyPem` was the
+///     exact hole this doc used to deny existed.
+///
+/// [publicKey], [publicKeyBlob], [publicKeyAuthorizedLine] and [fingerprint] are
+/// the entire set of things that may leave the process, be logged, or be written
+/// to the durable record.
+///
+/// The type is deliberately NOT `toJson`-able. A credential row is built from
 /// [publicKeyAuthorizedLine] and [fingerprint] only — there is no accessor that
-/// yields a private half as text, so there is nothing to paste into a column by
-/// accident.
+/// yields a private half as text, so there is nothing to paste into a column, a
+/// log field or an exception message by accident.
 class SshKeyPair {
-  SshKeyPair._({
-    required this.privateSeed,
-    required this.publicKeyBytes,
-    required this.comment,
-  });
+  // Split into a factory plus a generative constructor so the seed can be a
+  // *private* initializing formal (`this._privateSeed`) while the call sites read
+  // `privateSeed:`. Writing `required this.privateSeed` instead would publish the
+  // seed as public API, which is the B-2 defect, and `prefer_initializing_formals`
+  // is right to complain — hence the two-step rather than an ignore.
+  factory SshKeyPair._({
+    required SecretBytes privateSeed,
+    required Uint8List publicKeyBytes,
+    required String comment,
+  }) => SshKeyPair._custody(privateSeed, publicKeyBytes, comment);
+
+  // Positional because a *named* parameter cannot be `_privateSeed`: Dart takes
+  // the public part of the name, so naming it would publish the field.
+  SshKeyPair._custody(this._privateSeed, this.publicKeyBytes, this.comment);
 
   /// Generates a fresh ed25519 keypair from the platform CSPRNG.
   ///
@@ -68,7 +115,7 @@ class SshKeyPair {
     final pair = ed.generateKey();
     return SshKeyPair._(
       // `ed.seed` narrows the 64-byte private key to the 32-byte RFC 8032 seed.
-      privateSeed: ed.seed(pair.privateKey),
+      privateSeed: SecretBytes(ed.seed(pair.privateKey)),
       publicKeyBytes: Uint8List.fromList(pair.publicKey.bytes),
       comment: comment,
     );
@@ -97,14 +144,29 @@ class SshKeyPair {
     }
     final privateKey = ed.newKeyFromSeed(seed.bytes);
     return SshKeyPair._(
-      privateSeed: Uint8List.fromList(seed.bytes),
+      // A fresh wrapper, so wiping or mutating the caller's `SecretBytes` after
+      // this call cannot reach into the pair.
+      privateSeed: SecretBytes(seed.bytes),
       publicKeyBytes: Uint8List.fromList(privateKey.bytes.sublist(32, 64)),
       comment: comment,
     );
   }
 
-  /// The 32-byte RFC 8032 seed. Secret.
-  final Uint8List privateSeed;
+  /// The seed, wrapped. Secret.
+  ///
+  /// A [SecretBytes] rather than a bare `Uint8List` because the wrapping is the
+  /// whole point: a public `Uint8List` is one `log('$pair')`-adjacent mistake, or
+  /// one `jsonEncode` of the pair, away from being in a session log that Postgres
+  /// persists. Handing callers the wrapper keeps the guarantee at the type level
+  /// rather than the review level, and makes reaching the raw bytes an explicit,
+  /// greppable `.bytes` at the three sites that genuinely need them (the codec,
+  /// the identity-file writer, and a test asserting the container round-trips).
+  ///
+  /// The wrapper **copies** its input, so the seed this pair was built from is
+  /// not aliased by a caller who keeps it.
+  SecretBytes get privateSeed => _privateSeed;
+
+  final SecretBytes _privateSeed;
 
   /// The 32-byte ed25519 public key. Not secret.
   final Uint8List publicKeyBytes;
@@ -144,37 +206,46 @@ class SshKeyPair {
   String get publicKeyAuthorizedLine =>
       '$kSshEd25519 ${base64.encode(publicKeyBlob)} $comment';
 
-  /// The private half as an OpenSSH `openssh-key-v1` private key, PEM-armoured.
+  /// The private half as an OpenSSH `openssh-key-v1` private key, PEM-armoured,
+  /// AS BYTES. Secret.
   ///
   /// Why a container at all, rather than handing a raw seed to the identity
   /// file: OpenSSH does not read raw seeds. Its loader requires the
   /// `openssh-key-v1` structure (`PROTOCOL.key`), so this is the only shape
-  /// `IdentityFile` accepts. See [encodeOpensshPrivateKeyPem].
-  String get privateKeyPem =>
-      encodeOpensshPrivateKeyPem(privateSeed, comment: comment);
-
-  /// [privateKeyPem] as bytes, for handing straight to a secret provider or an
-  /// identity-file writer.
+  /// `IdentityFile` accepts. See [encodeOpensshPrivateKeyPemBytes].
   ///
-  /// Preferred over `SecretBytes(utf8.encode(pair.privateKeyPem))` at call
-  /// sites because it keeps the PEM text in one frame that is discarded on
-  /// return. The encoding itself is unavoidably textual — PEM is base64 — so
-  /// one short-lived `String` of key material exists per call regardless; this
-  /// only makes sure it is as short-lived as it can be.
-  Uint8List get privateKeyPemBytes => Uint8List.fromList(
-    encodeOpensshPrivateKeyPem(privateSeed, comment: comment).codeUnits,
-  );
+  /// WHY THIS IS THE ONLY ACCESSOR, AND WHY IT IS BYTES. The previous
+  /// implementation also exposed `String get privateKeyPem`, while this class's
+  /// own documentation claimed the type "deliberately holds no `String`
+  /// rendering of the secret" — a doc asserting the negation of the code, which
+  /// is worse than no doc because a future reader trusts it. The `String` is now
+  /// gone at the root rather than confined at the call site: PEM is
+  /// base64-armoured, and base64 of arbitrary bytes is ASCII, so the whole
+  /// armouring can be produced directly as bytes and no `String` of key material
+  /// is ever constructed — not here, not in the test that hands the file to
+  /// `ssh-keygen`, and not in the intermediate frame.
+  Uint8List get privateKeyPemBytes =>
+      encodeOpensshPrivateKeyPemBytes(_privateSeed.bytes, comment: comment);
 
   /// Wipes the seed. See [SecretBytes.wipe] for what this does and does not
   /// promise.
-  void wipeSeed() => privateSeed.fillRange(0, privateSeed.length, 0);
+  void wipeSeed() => _privateSeed.wipe();
 
   @override
   String toString() =>
       'SshKeyPair(ed25519, fingerprint: $fingerprint, comment: $comment)';
 }
 
-/// Serialises an ed25519 seed as an unencrypted `openssh-key-v1` private key.
+/// Serialises an ed25519 seed as an unencrypted `openssh-key-v1` private key,
+/// PEM-armoured, **as bytes**.
+///
+/// NO `String` OF KEY MATERIAL IS EVER BUILT. That is the point of the return
+/// type: PEM is base64 text, so the obvious implementation ends in a `String`,
+/// and a `String` is the one projection that is trivially loggable,
+/// interpolatable into an exception message, and passable to anything taking
+/// `Object`. Base64 of these bytes is ASCII by construction, so the armouring is
+/// emitted as bytes directly and the intermediate textual form does not exist at
+/// any point in this function.
 ///
 /// THE FORMAT, and why this is hand-written rather than pulled from a package:
 /// `openssh-key-v1` is a frozen, publicly documented container
@@ -200,7 +271,10 @@ class SshKeyPair {
 /// The plaintext-in-a-0600-file property is therefore explicit and reviewed
 /// rather than incidental: the caller owns that obligation, and
 /// [RepositoryAccessVerifier] discharges it.
-String encodeOpensshPrivateKeyPem(Uint8List seed, {required String comment}) {
+Uint8List encodeOpensshPrivateKeyPemBytes(
+  Uint8List seed, {
+  required String comment,
+}) {
   if (seed.length != ed.SeedSize) {
     throw ArgumentError.value(
       seed.length,
@@ -211,7 +285,7 @@ String encodeOpensshPrivateKeyPem(Uint8List seed, {required String comment}) {
   final privateKey = ed.newKeyFromSeed(seed);
   final publicKey = Uint8List.fromList(privateKey.bytes.sublist(32, 64));
   final publicBlob = SshKeyPair._(
-    privateSeed: seed,
+    privateSeed: SecretBytes(Uint8List.fromList(seed)),
     publicKeyBytes: publicKey,
     comment: comment,
   ).publicKeyBlob;
@@ -250,7 +324,37 @@ String encodeOpensshPrivateKeyPem(Uint8List seed, {required String comment}) {
     ..add(_sshString(publicBlob))
     ..add(_sshString(encrypted));
 
-  return _pemWrap(container.takeBytes());
+  return _pemArmour(container.takeBytes());
+}
+
+/// PEM body at the 70-column wrapping `ssh-keygen` emits, as bytes.
+///
+/// Built with `base64.encode` into a byte buffer. `base64.encode` itself
+/// returns a `String`, but the string it returns is base64 — pure ASCII that
+/// contains no byte of the key that is not already in [der] — and it is dropped
+/// on the next line. That is the distinction this function exists to preserve: a
+/// `String` of *armoured* bytes is not a `String` of the secret, whereas the
+/// previous `_pemWrap` returned the whole armoured document as a `String` and the
+/// caller's `String get privateKeyPem` handed that document to anyone who asked.
+Uint8List _pemArmour(Uint8List der) {
+  final encoded = base64.encode(der);
+  // 70 columns, exactly as `ssh-keygen` wraps; every line ends with a newline so
+  // the footer is separated by LF rather than by a CRLF this code never writes.
+  const lf = 0x0a;
+  final out = BytesBuilder(copy: false)
+    ..add(_kOpensshPemHeader)
+    ..add([lf]);
+  for (var offset = 0; offset < encoded.length; offset += 70) {
+    out
+      ..add(
+        encoded.substring(offset, min(offset + 70, encoded.length)).codeUnits,
+      )
+      ..add([lf]);
+  }
+  out
+    ..add(_kOpensshPemFooter)
+    ..add([lf]);
+  return out.takeBytes();
 }
 
 /// Padding bytes `PROTOCOL.key` defines: the integers 1, 2, 3, … appended until
@@ -276,16 +380,3 @@ Uint8List _uint32(int value) => Uint8List(4)
   ..[1] = (value >> 16) & 0xff
   ..[2] = (value >> 8) & 0xff
   ..[3] = value & 0xff;
-
-/// PEM body at the 70-column wrapping `ssh-keygen` emits.
-String _pemWrap(Uint8List der) {
-  const header = '-----BEGIN OPENSSH PRIVATE KEY-----';
-  const footer = '-----END OPENSSH PRIVATE KEY-----';
-  final encoded = base64.encode(der);
-  final lines = <String>[header];
-  for (var offset = 0; offset < encoded.length; offset += 70) {
-    lines.add(encoded.substring(offset, min(offset + 70, encoded.length)));
-  }
-  lines.add(footer);
-  return '${lines.join('\n')}\n';
-}

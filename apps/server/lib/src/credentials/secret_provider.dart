@@ -1,4 +1,5 @@
 import 'secret_material.dart';
+import 'secretless_error.dart';
 
 /// Raised when no secret provider is selected, or the selection is not one this
 /// build knows how to construct.
@@ -15,7 +16,8 @@ import 'secret_material.dart';
 /// forbids — and the QA stack would quietly run with a weaker custody guarantee
 /// than the ADR describes, with nothing in the logs to say so. So the resolver
 /// has no default branch at all: unset, blank and unrecognised all throw here.
-class SecretProviderNotConfiguredException implements Exception {
+class SecretProviderNotConfiguredException
+    implements Exception, AuditedFailure {
   SecretProviderNotConfiguredException(this.message);
 
   /// Explains what is missing and what the accepted values are.
@@ -23,10 +25,19 @@ class SecretProviderNotConfiguredException implements Exception {
   /// Names configuration variables and provider ids only. Never a secret, and
   /// never a secret's value: this string is safe to log and is expected to
   /// appear in startup failures.
+  ///
+  /// The one value interpolated into it is the operator's own
+  /// `SHIPIT_SECRET_PROVIDER` string, quoted so a typo is visible — that string
+  /// is read from the process environment and is never written by this codebase,
+  /// so nothing on a path that holds key material can put bytes in it.
   final String message;
 
   @override
-  String toString() => 'SecretProviderNotConfiguredException: $message';
+  String get secretlessDescription =>
+      'SecretProviderNotConfiguredException: $message';
+
+  @override
+  String toString() => secretlessDescription;
 }
 
 /// Raised when a provider cannot store or return material.
@@ -36,7 +47,14 @@ class SecretProviderNotConfiguredException implements Exception {
 /// messages by hand for that reason; a generic `catch (e) => SecretStoreException('$e')`
 /// over a `byte[]`-bearing exception would put key bytes in an operator-visible
 /// string, which is the durable-record prohibition by another route.
-class SecretStoreException implements Exception {
+///
+/// [reason] is therefore a **closed vocabulary**: a literal written here, or the
+/// output of [secretlessText] for a caught error. Never an interpolation. That
+/// is enforced, not merely documented — `test/secretless_error_test.dart`
+/// contains a guard test that reads this directory's source and fails if any
+/// `SecretStoreException(` argument block grows a `$`, so a future adapter that
+/// reaches for `'$error'` cannot merge.
+class SecretStoreException implements Exception, AuditedFailure {
   SecretStoreException({
     required this.referenceName,
     required this.providerId,
@@ -57,9 +75,12 @@ class SecretStoreException implements Exception {
   final String reason;
 
   @override
-  String toString() =>
+  String get secretlessDescription =>
       'SecretStoreException(provider: $providerId, operation: $operation, '
       'reference: $referenceName, reason: $reason)';
+
+  @override
+  String toString() => secretlessDescription;
 }
 
 /// Custody of the private half. SHIP IT stores a reference; the bytes live here
@@ -95,6 +116,16 @@ abstract interface class SecretProvider {
   /// traversal — because it becomes a path (local adapter) or a secret id (GCP
   /// adapter). A reference that escaped its namespace would be a reference to
   /// somebody else's secret.
+  ///
+  /// THE HANDLE CONTRACT, and why it is load-bearing. The returned handle is what
+  /// `generate` returns to the client, so it must be the **bare reference name**
+  /// the caller supplied — never a provider-specific resource path, ARN or URL.
+  /// Under ADR 0018 §A3 the reference *is* the sensitive artifact, and `9417f8bf`
+  /// records that exposing it to a client is gap G-7; returning an ARN here would
+  /// hand a client the vault's topology, which no unit test in this repository
+  /// would fail. `CredentialKeyService.generate` therefore verifies this and
+  /// fails the mint rather than return a handle it cannot prove is
+  /// non-identifying.
   ///
   /// Implementations MUST NOT log [secret] or interpolate it into [reason]
   /// fields of any exception they throw.

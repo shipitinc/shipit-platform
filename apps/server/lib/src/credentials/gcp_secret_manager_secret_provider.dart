@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'secret_material.dart';
 import 'secret_provider.dart';
+import 'secretless_error.dart';
 
 /// GCP Secret Manager custody — the ADR 0018 §A3 substrate.
 ///
@@ -37,6 +38,18 @@ import 'secret_provider.dart';
 /// GCE/GKE metadata server using the `Metadata-Flavor: Google` header. Neither
 /// path writes a token anywhere, and no credential value appears in
 /// [describe] — which is what makes this class safe to log at startup.
+///
+/// AN ACCEPTED BOUND: a re-mint ADDS A VERSION, and the previous one stays
+/// readable. `store` creates the secret tolerating a 409 and then calls
+/// `addVersion`, deliberately — destroying first would delete the private half of
+/// a credential that is live and installed on a repository. The consequence is a
+/// rotation window in which both the old and the new private half are readable
+/// from the manager, which is *not* the same as two-sided revocation being
+/// broken: [destroy] deletes the secret and therefore every version, so an actual
+/// revocation is still complete. What is accepted here is a rotation without a
+/// revocation, and it is accepted until the rotate path exists to own the
+/// `destroy`-before-re-mint decision. Recorded because it is a bound on ADR 0018
+/// §A2, not because it is comfortable.
 class GcpSecretManagerSecretProvider implements SecretProvider {
   GcpSecretManagerSecretProvider({
     required this.projectId,
@@ -146,6 +159,9 @@ class GcpSecretManagerSecretProvider implements SecretProvider {
       {
         'payload': {'data': payload},
       },
+      // The ONLY request in this adapter whose body carries key bytes. See
+      // `_send`'s `carriesSecretMaterial` for why that changes the refusal text.
+      carriesSecretMaterial: true,
     );
     return referenceName;
   }
@@ -153,23 +169,76 @@ class GcpSecretManagerSecretProvider implements SecretProvider {
   @override
   Future<SecretBytes> read({required String referenceName}) async {
     final secretId = secretIdFor(referenceName);
+
+    /// Every refusal below is a literal, and every one of them names what could
+    /// not be parsed rather than what was parsed.
+    ///
+    /// This is the method B-1 was about, so the reasoning is written down rather
+    /// than implied. The body of a `versions/latest:access` response is
+    /// `{"name":…,"payload":{"data":"<base64 PEM>"}}` — i.e. the key is a
+    /// *substring of the text being parsed*, and both `dart:convert` decoders
+    /// embed an excerpt of their input in `FormatException.toString()`. Unguarded,
+    /// a malformed 2xx body therefore turns a malformed secret **at rest** into
+    /// base64 private-key material in an exception message, which
+    /// `credential_endpoints.dart` writes to the Serverpod session log, which is
+    /// persisted to Postgres. `SecretBytes` cannot prevent that: it protects
+    /// values this code holds, and this is a value a third-party exception
+    /// captured on its behalf.
+    ///
+    /// So the three failure shapes are named explicitly and none of them is
+    /// allowed to escape:
+    Future<SecretBytes> fail(String reason) => throw SecretStoreException(
+      referenceName: referenceName,
+      providerId: providerId,
+      operation: 'read',
+      reason: reason,
+    );
+
     final response = await _send(
       'GET',
       '/v1/projects/$projectId/secrets/$secretId/versions/latest:access',
       null,
     );
-    final decoded = jsonDecode(response) as Map<String, dynamic>;
-    final payload = decoded['payload'] as Map<String, dynamic>?;
-    final data = payload?['data'];
-    if (data is! String) {
-      throw SecretStoreException(
-        referenceName: referenceName,
-        providerId: providerId,
-        operation: 'read',
-        reason: 'the access response carried no payload.data',
+
+    // Decode, not cast. `jsonDecode(response) as Map<String, dynamic>` throws two
+    // different exception types depending on what came back, and while neither
+    // carries the response body, an untyped `TypeError` in a custody path is a
+    // poor trade for one line. `is` produces a boolean and the typed failure.
+    Object? parsed;
+    try {
+      parsed = jsonDecode(response);
+    } on Object {
+      return fail(
+        'the access response was not JSON at all; $kNoMaterialEchoed',
       );
     }
-    return SecretBytes(base64.decode(data));
+    if (parsed is! Map<String, dynamic>) {
+      return fail(
+        'the access response was not a JSON object; $kNoMaterialEchoed',
+      );
+    }
+
+    // `is` rather than `as`, for the same reason: a raw cast failure is an
+    // exception whose text this method does not control.
+    final payload = parsed['payload'];
+    final data = payload is Map<String, dynamic> ? payload['data'] : null;
+    if (data is! String) {
+      return fail('the access response carried no payload.data string');
+    }
+
+    // THE site B-1 named. `data` is base64 private-key material in a `String`,
+    // and `base64.decode` puts its input in the `FormatException` it throws, so
+    // the decode is wrapped and the failure is re-typed before it can leave.
+    final List<int> material;
+    try {
+      material = base64.decode(data);
+    } on Object {
+      return fail(
+        'the access response payload was not decodable as base64; '
+        '$kNoMaterialEchoed',
+      );
+    }
+    return SecretBytes(material);
   }
 
   @override
@@ -190,12 +259,23 @@ class GcpSecretManagerSecretProvider implements SecretProvider {
   /// and Google's `error.message` — which describes the API call, never the
   /// payload — rather than interpolated wholesale, because an echoed request
   /// body would put base64 key material into a log line.
+  ///
+  /// [carriesSecretMaterial] is the rule that makes that reduction safe rather
+  /// than merely intended. Google's `error.message` is a **third party's free
+  /// text**, and on the one request that carries key material
+  /// (`addVersion`) a third party in a position to echo it could put the payload
+  /// into our exception message. So: on a request that carried material, the
+  /// message is not included at all — the HTTP status and the reason the message
+  /// was withheld are, which is what an operator actually acts on. On every other
+  /// request — nothing in it is secret — the message is included, because it is
+  /// the diagnostic that makes a GCP failure actionable.
   Future<String> _send(
     String method,
     String path,
     Map<String, dynamic>? body, {
     bool tolerateAlreadyExists = false,
     bool tolerateNotFound = false,
+    bool carriesSecretMaterial = false,
   }) async {
     final uri = Uri.parse('$apiBaseUrl$path');
     final request = await _httpClient.openUrl(method, uri);
@@ -219,7 +299,10 @@ class GcpSecretManagerSecretProvider implements SecretProvider {
       referenceName: path,
       providerId: providerId,
       operation: method,
-      reason: 'HTTP $code ${_googleMessage(text)}',
+      reason: carriesSecretMaterial
+          ? 'HTTP $code (the service message was withheld because this request '
+                'carried key material)'
+          : 'HTTP $code ${_googleMessage(text)}',
     );
   }
 

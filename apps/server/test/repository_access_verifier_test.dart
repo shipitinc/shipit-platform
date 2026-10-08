@@ -146,6 +146,7 @@ ${succeed ? '  echo "0123456789abcdef0123456789abcdef01234567"\n  exit 0' : '  e
 fi
 wrapper="\$GIT_SSH_COMMAND"
 identity=\$(sed -n "s/.*-i '\\\\(.*\\\\)'.*/\\\\1/p" "\$wrapper" | head -1)
+known_hosts=\$(sed -n "s/.*UserKnownHostsFile='\\\\(.*\\\\)'.*/\\\\1/p" "\$wrapper" | head -1)
 {
   echo "wrapper=\$wrapper"
   echo "identity=\$identity"
@@ -159,6 +160,14 @@ identity=\$(sed -n "s/.*-i '\\\\(.*\\\\)'.*/\\\\1/p" "\$wrapper" | head -1)
   echo "git_terminal_prompt=\$GIT_TERMINAL_PROMPT"
   echo "git_ssh_variant=\$GIT_SSH_VARIANT"
   echo "argv=\$*"
+  # The host keys the clone was actually allowed to trust, read from the file the
+  # wrapper points at. A host key is PUBLIC, so unlike the identity this is safe
+  # to put in a test report — and unlike a wrapper-text assertion it is what
+  # OpenSSH will read.
+  echo "known_hosts_exists=\$( [ -f "\$known_hosts" ] && echo yes || echo no )"
+  echo "known_hosts_body<<EOF"
+  cat "\$known_hosts" 2>/dev/null
+  echo "EOF"
   echo "wrapper_body<<EOF"
   cat "\$wrapper"
   echo "EOF"
@@ -354,6 +363,11 @@ exit 128
       // A second, unconfirmed key is offered by the host. It must not end up in
       // the file git trusts, or the clone could succeed against a key the
       // operator never saw.
+      //
+      // Asserted by READING the file from inside the `git` process that was
+      // supposed to use it — not by asserting the wrapper names it, which is what
+      // the earlier version of this test did and which proves only that a path was
+      // written down. L-8: this seam had a negative test, but a proxy one.
       final otherDir = Directory('${scratch.path}/other')
         ..createSync(recursive: true);
       final (otherLine, _) = _realHostKey(otherDir);
@@ -374,10 +388,115 @@ exit 128
       );
       final seen = _parseReport(report);
       expect(seen['identity_exists'], 'yes');
-      // The stub could not see known_hosts (it only reads the wrapper), so the
-      // direct assertion is on the wrapper's UserKnownHostsFile target plus the
-      // fact that the clone was still driven by the confirmed fingerprint.
+      expect(seen['known_hosts_exists'], 'yes');
+      final knownHosts = _delimited(seen, 'known_hosts_body');
+      expect(
+        knownHosts,
+        contains(hostKeyLine.split(' ')[1]),
+        reason: 'the confirmed key must be the one OpenSSH is allowed to trust',
+      );
+      expect(
+        knownHosts,
+        isNot(contains(otherLine.split(' ')[1])),
+        reason:
+            'a second, unconfirmed host key in known_hosts would let the clone '
+            'succeed against a host the operator never saw',
+      );
+      // One line, one key — not "the right one is somewhere in there".
+      expect(
+        knownHosts.trim().split('\n').where((l) => l.trim().isNotEmpty),
+        hasLength(1),
+      );
       expect(seen['wrapper_body'], contains('UserKnownHostsFile='));
+    });
+  });
+
+  group('a timeout kills the process tree, not just the wait (M-3)', () {
+    test('the clone child and its grandchild are gone, and so is the file', () async {
+      // M-3, and the path the earlier code got wrong. `Process.run(...).timeout()`
+      // stops the *Dart* side from waiting; it does not terminate the child. So a
+      // `git` and the `ssh` it forked could outlive the call — the scratch tree
+      // was deleted (the path is gone) but a live process still held the identity
+      // and could still authenticate with it.
+      //
+      // The stub below therefore forks a GRANDCHILD that opens the identity file
+      // and then sleeps far longer than the ceiling. Dart's `kill` reaches only the
+      // direct child, so the grandchild is the part that proves the tree was
+      // walked rather than just the top process signalled.
+      final report = '${scratch.path}/report.txt';
+      _writeStub(bin, 'ssh-keyscan', '#!/bin/sh\necho "$hostKeyLine"\n');
+      _writeStub(
+        bin,
+        'git',
+        hangingGitStub(
+          report: report,
+          sleepSeconds: 120,
+        ),
+      );
+      PosixFileModes.applyStrict(bin.path, '755');
+
+      Object? thrown;
+      final started = DateTime.now();
+      try {
+        await RepositoryAccessVerifier(
+          pathPrefix: bin.path,
+          cloneTimeout: const Duration(seconds: 2),
+        ).verify(
+          remote: remote(port: 2227),
+          privateKeyPem: SecretBytes(keypair.privateKeyPemBytes),
+          confirmedHostKeyFingerprint: hostKeyFingerprint,
+        );
+      } on Object catch (error) {
+        thrown = error;
+      }
+      final elapsed = DateTime.now().difference(started);
+
+      expect(
+        thrown,
+        isA<AccessVerificationTimeoutException>(),
+        reason: 'a clone that outlives its ceiling must be a typed refusal',
+      );
+      expect(elapsed, lessThan(const Duration(seconds: 30)));
+      final timeout = thrown! as AccessVerificationTimeoutException;
+      expect(timeout.helper, 'git');
+      expect(timeout.limit, const Duration(seconds: 2));
+      _expectNoMaterial(timeout.toString(), 'the timeout message');
+
+      // The stub really reached the clone with a real identity file, so this is
+      // the timeout path and not an early refusal.
+      final pids = _parseReport('$report.pids');
+      expect(File('$report.child').readAsStringSync(), contains('yes'));
+      expect(
+        int.tryParse(pids['git_pid'] ?? ''),
+        isNotNull,
+        reason: 'the stub must record the pids the verifier has to kill',
+      );
+      expect(int.tryParse(pids['child_pid'] ?? ''), isNotNull);
+
+      // THE ASSERTION. Both processes must be gone: the child Dart signalled and
+      // the grandchild only a tree walk can reach. Polled rather than asserted
+      // once, because a killed process takes a moment to be reaped.
+      for (final pid in [
+        int.parse(pids['git_pid']!),
+        int.parse(pids['child_pid']!),
+      ]) {
+        expect(
+          await _waitUntilDead(pid),
+          isTrue,
+          reason: 'pid $pid survived the clone timeout',
+        );
+      }
+
+      // And the private half is gone from disk, on this path as on the others.
+      expect(
+        Directory.systemTemp
+            .listSync()
+            .whereType<Directory>()
+            .where((d) => d.path.contains(_scratchPrefix))
+            .map((d) => d.path),
+        isEmpty,
+        reason: 'the timeout path must clean up too',
+      );
     });
   });
 
@@ -418,6 +537,62 @@ exit 128
   });
 }
 
+/// A stub `git` that never returns, and leaves a grandchild holding the identity.
+///
+/// The grandchild is the point. Dart's `Process.kill` signals only the process it
+/// started, so the only way the grandchild dies is if the verifier walks the tree
+/// — which is exactly the behaviour M-3 said was missing. The grandchild opens
+/// the identity on a file descriptor before sleeping, so "it was holding the key"
+/// is recorded rather than assumed.
+String hangingGitStub({
+  required String report,
+  required int sleepSeconds,
+}) =>
+    '''
+#!/bin/sh
+# Test stub. Records its own pid and a grandchild's, holds the identity open, and
+# then never returns.
+wrapper="\$GIT_SSH_COMMAND"
+identity=\$(sed -n "s/.*-i '\\\\(.*\\\\)'.*/\\\\1/p" "\$wrapper" | head -1)
+# A subshell, not exec: it becomes a CHILD of this stub, so it is two levels down
+# from the process the verifier starts.
+(
+  exec 9<"\$identity" || exit 3
+  echo "child_opened_identity=yes" > "$report.child"
+  sleep $sleepSeconds
+) &
+child=\$!
+echo "git_pid=\$\$" > "$report.pids"
+echo "child_pid=\$child" >> "$report.pids"
+exec 9<"\$identity"
+sleep $sleepSeconds
+''';
+
+/// Whether [pid] is no longer a live process, polled for up to ten seconds.
+///
+/// `kill -0` is the portable existence check: signal 0 performs the permission
+/// and existence checks without delivering anything. Exit 0 means the pid is
+/// still there. Polled rather than sampled once because a signalled process is
+/// reaped asynchronously, and a single sample would be a race the test could lose.
+Future<bool> _waitUntilDead(int pid) async {
+  for (var attempt = 0; attempt < 100; attempt++) {
+    final probe = Process.runSync('kill', ['-0', '$pid']);
+    if (probe.exitCode != 0) return true;
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  }
+  return false;
+}
+
+/// Fragments of key material that must not appear in [text].
+///
+/// The private half is not in this file at all — the identity is written by the
+/// verifier into its own scratch tree — so what is checked here is that the
+/// refusal the operator reads does not quote the PEM it is talking about.
+void _expectNoMaterial(String text, String label) {
+  expect(text.contains('PRIVATE KEY'), isFalse, reason: label);
+  expect(text.contains('BEGIN OPENSSH'), isFalse, reason: label);
+}
+
 /// Parses the stub's `key=value` report.
 Map<String, String> _parseReport(String path) {
   final text = File(path).readAsStringSync();
@@ -425,15 +600,27 @@ Map<String, String> _parseReport(String path) {
   final lines = text.split('\n');
   for (var i = 0; i < lines.length; i++) {
     final line = lines[i];
-    if (line == 'wrapper_body<<EOF') {
-      fields['wrapper_body'] = lines.sublist(i + 1).join('\n');
-      break;
+    for (final marker in ['wrapper_body', 'known_hosts_body']) {
+      if (line == '$marker<<EOF') {
+        final collected = <String>[];
+        for (var j = i + 1; j < lines.length && lines[j] != 'EOF'; j++) {
+          collected.add(lines[j]);
+        }
+        fields[marker] = collected.join('\n');
+        if (marker == 'wrapper_body') i = lines.length;
+        break;
+      }
     }
+    if (fields.containsKey('wrapper_body')) continue;
     final split = line.indexOf('=');
     if (split > 0) fields[line.substring(0, split)] = line.substring(split + 1);
   }
   return fields;
 }
+
+/// One `<<EOF`-delimited block from a stub report, read by its field name.
+String _delimited(Map<String, String> report, String field) =>
+    report[field] ?? '';
 
 /// Local `awk` usage above keeps the stub dependent only on POSIX tools that
 /// ship with git and OpenSSH.

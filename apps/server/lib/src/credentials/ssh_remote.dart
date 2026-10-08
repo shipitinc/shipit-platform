@@ -1,3 +1,5 @@
+import 'secretless_error.dart';
+
 /// A git remote resolved into the parts an SSH clone needs.
 ///
 /// Split out from the verifier so the URI grammar is testable without touching
@@ -39,14 +41,21 @@ class SshRemote {
 /// Raised when a repository URI cannot be reached with an SSH credential.
 ///
 /// The message names the URI's *scheme* and shape, never key material, and is
-/// safe to log.
-class UnsupportedRepositoryUriException implements Exception {
+/// safe to log. Audited because it reaches the same session log as everything
+/// else here: a URI is operator-supplied configuration, and the only parts of it
+/// this class reads are the scheme, the authority and the path — with a URL that
+/// carries a password refused outright rather than echoed.
+class UnsupportedRepositoryUriException implements Exception, AuditedFailure {
   UnsupportedRepositoryUriException(this.message);
 
   final String message;
 
   @override
-  String toString() => 'UnsupportedRepositoryUriException: $message';
+  String get secretlessDescription =>
+      'UnsupportedRepositoryUriException: $message';
+
+  @override
+  String toString() => secretlessDescription;
 }
 
 /// Default SSH port.

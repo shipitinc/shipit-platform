@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'posix_file_permissions.dart';
 import 'secret_material.dart';
+import 'secretless_error.dart';
 import 'ssh_remote.dart';
 
 /// Separator between `PATH` entries.
@@ -64,20 +66,67 @@ class AccessProbeOutcome {
 
 /// Raised when the scratch tree holding the identity file could not be removed.
 ///
-/// Never suppressed. A leftover private half is a security event, so it is an
-/// exception rather than a log line, and it carries the path an operator needs
-/// in order to remove it. It carries no key material.
-class ScratchCleanupException implements Exception {
+/// Never suppressed, and thrown on **every** path — the success path included.
+/// That consistency is the point: an earlier version returned
+/// `secretMaterialRemoved: false` on success and threw only on failure, so the
+/// class's own claim ("a leftover private half is an exception rather than a log
+/// line") was true on one path and false on the other. One rule, no branch: a
+/// private half this process could not remove is always an exception.
+///
+/// It carries the path an operator needs in order to remove it, and no key
+/// material — it is [AuditedFailure], so [secretlessText] renders its own fields.
+class ScratchCleanupException implements Exception, AuditedFailure {
   ScratchCleanupException(this.scratchPath);
 
   final String scratchPath;
 
   @override
-  String toString() =>
+  String get secretlessDescription =>
       'ScratchCleanupException: the directory holding this verification\'s '
       'private identity file could not be removed. Remove $scratchPath. This is '
       'an incident, not a warning: a repository deploy-key private half may '
       'still be readable on this host.';
+
+  @override
+  String toString() => secretlessDescription;
+}
+
+/// Raised when a helper this verifier spawned outlived its timeout.
+///
+/// M-3. `Future.timeout` stops *waiting*; it does not terminate a process. On
+/// the clone path that left a live `git` — and the `ssh` it had forked — running
+/// with the identity file open and still able to authenticate with it, after the
+/// method had already thrown. The scratch tree was deleted, so the path was gone;
+/// the *credential* was not. This is a typed, audited failure so the operator is
+/// told the process was killed rather than left guessing.
+class AccessVerificationTimeoutException implements Exception, AuditedFailure {
+  AccessVerificationTimeoutException({
+    required this.helper,
+    required this.limit,
+    required this.killedProcessIds,
+  });
+
+  /// `git`, `ssh-keyscan` or `ssh-keygen`.
+  final String helper;
+
+  /// The ceiling that was exceeded.
+  final Duration limit;
+
+  /// The process tree that was signalled before the failure was raised.
+  ///
+  /// Named, not counted, because the count alone would not let an operator check
+  /// that nothing survived. A `ProcessId` renders as a number.
+  final List<int> killedProcessIds;
+
+  @override
+  String get secretlessDescription =>
+      'AccessVerificationTimeoutException: $helper did not finish within '
+      '${limit.inSeconds}s and its process tree was killed '
+      '(pids: ${killedProcessIds.join(' ')}); the identity file was removed '
+      'afterwards and this credential was NOT marked verified';
+
+  @override
+  String toString() => secretlessDescription;
 }
 
 /// Raised when the host does not present the key the operator confirmed.
@@ -104,7 +153,7 @@ class ScratchCleanupException implements Exception {
 /// the same fact independently for the connection itself, so a connection to any
 /// *other* host — a rewritten remote, a DNS answer that changed mid-run — fails at
 /// the socket rather than being recorded afterwards.
-class HostKeyNotPresentedException implements Exception {
+class HostKeyNotPresentedException implements Exception, AuditedFailure {
   HostKeyNotPresentedException({
     required this.host,
     required this.port,
@@ -121,11 +170,17 @@ class HostKeyNotPresentedException implements Exception {
   /// What the host actually presented, so the operator can compare.
   final List<String> presentedFingerprints;
 
+  // A host key is PUBLIC — it is published in the clear by the host, and
+  // `ssh-keyscan` is how everyone collects it — so a fingerprint in this message
+  // is not key material under ADR 0018 §A2.
   @override
-  String toString() =>
+  String get secretlessDescription =>
       'HostKeyNotPresentedException($host:$port — confirmed '
       '$confirmedFingerprint, presented '
       '${presentedFingerprints.isEmpty ? '<nothing>' : presentedFingerprints.join(', ')})';
+
+  @override
+  String toString() => secretlessDescription;
 }
 
 /// Performs a real SSH clone of a repository with a generated deploy key.
@@ -212,12 +267,32 @@ class RepositoryAccessVerifier {
   /// Clones [remote] using [privateKeyPem], refusing any host that does not
   /// present [confirmedHostKeyFingerprint].
   ///
+  /// WHAT [confirmedHostKeyFingerprint] IS, PLAINLY, because it is M-5 and a
+  /// reader must not have to infer it. It is the value **the caller asserted**.
+  /// This class does obtain the host's real key independently — via
+  /// `ssh-keyscan` and `ssh-keygen -lf` — and it refuses to clone unless the
+  /// fingerprint of the key the host presented equals what the caller supplied.
+  /// What it cannot do is establish *where that value came from*: a caller that
+  /// scanned the network itself and supplied an attacker's key gets a clone
+  /// against the attacker, and this method enforces it faithfully.
+  ///
+  /// So the honest description is: this is a **transport enforcer for an
+  /// operator-asserted trust decision**. It is a real improvement on ADR 0018
+  /// §Accepted risks (A2) — the domain recorded the confirmation as data while
+  /// the connection itself was unverified — but it narrows that gap rather than
+  /// closing it, because the provenance of the confirmed value is unchanged.
+  /// `CredentialKeyService.verifyAccess` is where that provenance is labelled on
+  /// the wire; this doc is the other half of that label, for a reader of the
+  /// code rather than of a response.
+  ///
   /// Returns an outcome for a clone that ran and failed — a failed clone is a
   /// result, and the caller records it as `CredentialStatus.failing` with the
   /// reason. Throws [HostKeyNotPresentedException] for a host mismatch, because
   /// that is a refusal rather than an outcome: ADR 0018 requires the connection
-  /// not to be attempted at all. Throws [ScratchCleanupException] if the scratch
-  /// tree could not be removed, because that outranks whatever else happened.
+  /// not to be attempted at all. Throws [AccessVerificationTimeoutException] if a
+  /// helper outlives its ceiling, after its process tree has been killed. Throws
+  /// [ScratchCleanupException] on **any** path if the scratch tree could not be
+  /// removed, because that outranks whatever else happened.
   Future<AccessProbeOutcome> verify({
     required SshRemote remote,
     required SecretBytes privateKeyPem,
@@ -231,16 +306,13 @@ class RepositoryAccessVerifier {
         privateKeyPem,
         confirmedHostKeyFingerprint,
       );
-      // Success path: the verdict travels with the result rather than replacing
-      // it, because "the clone worked" is still worth telling the operator even
-      // when a file is left behind. The key service refuses to record a
-      // credential as verified while this flag is false, so a leftover cannot be
-      // laundered into a good status.
-      final removed = _destroy(scratch);
-      return outcome.copyWith(
-        secretMaterialRemoved: removed,
-        failureReason: removed ? outcome.failureReason : outcome.failureReason,
-      );
+      // Cleanup on the success path too, and the verdict is the same as on the
+      // failure path: a tree this process could not remove is an incident, not a
+      // result. Previously this returned `secretMaterialRemoved: false` and left
+      // the caller to decide, which meant the same fact was an exception on one
+      // path and a return value on the other.
+      if (!_destroy(scratch)) throw ScratchCleanupException(scratch.path);
+      return outcome.copyWith(secretMaterialRemoved: true);
     } on Object {
       // Failure path: destroy first, then decide what to throw. A cleanup
       // failure outranks the original error, because it is the one that leaves
@@ -269,9 +341,11 @@ class RepositoryAccessVerifier {
     final wrapperPath = '${scratch.path}/ssh-wrapper.sh';
     final clonePath = '${scratch.path}/clone';
 
-    // The one write of private key material to disk in the whole subsystem.
-    PosixFileModes.writeOwnerOnlyFile(identityPath, privateKeyPem.bytes);
-
+    // L-2: the host key is confirmed BEFORE the private half is written.
+    //
+    // The order used to be write-then-scan, which put key material on disk for a
+    // call that was about to refuse. Bounded (a 0700 directory removed in the same
+    // call) but pointless, and the window is free to close.
     final presented = await _scanHostKeys(remote);
     final matched = presented.entries
         .where((entry) => entry.value == confirmedHostKeyFingerprint)
@@ -285,6 +359,10 @@ class RepositoryAccessVerifier {
         presentedFingerprints: presented.values.toList(),
       );
     }
+
+    // The one write of private key material to disk in the whole subsystem.
+    PosixFileModes.writeOwnerOnlyFile(identityPath, privateKeyPem.bytes);
+
     // Only the confirmed key. The alternative — writing everything
     // `ssh-keyscan` returned — would let the clone succeed against a second key
     // the operator never saw.
@@ -354,14 +432,27 @@ class RepositoryAccessVerifier {
   Future<Map<String, String>> _scanHostKeys(SshRemote remote) async {
     final ProcessResult result;
     try {
-      result = await Process.run('ssh-keyscan', [
-        '-p',
-        '${remote.port}',
-        // No `-t` filter: narrowing the list would silently ignore a host whose
-        // key type was not anticipated, and an ignored host key is an unchecked
-        // host key. An empty result is handled as a refusal, further down.
-        remote.host,
-      ], environment: _helperEnvironment).timeout(connectTimeout);
+      // Bounded for the same reason the clone is: an `ssh-keyscan` left running
+      // after the method gave up is a process this code spawned and abandoned.
+      result = await _runBounded(
+        helper: 'ssh-keyscan',
+        executable: 'ssh-keyscan',
+        arguments: [
+          '-p',
+          '${remote.port}',
+          // No `-t` filter: narrowing the list would silently ignore a host whose
+          // key type was not anticipated, and an ignored host key is an unchecked
+          // host key. An empty result is handled as a refusal, further down.
+          remote.host,
+        ],
+        timeout: connectTimeout,
+        environment: _helperEnvironment,
+      );
+    } on AccessVerificationTimeoutException {
+      // No host key to compare a confirmation against, which is a refusal. The
+      // timeout is reported as a refusal rather than thrown because that is the
+      // contract this method already has for "ssh-keyscan gave us nothing".
+      return const {};
     } on Object {
       // Unreachable, or `ssh-keyscan` absent. Either way there is no host key to
       // compare a confirmation against, which is a refusal.
@@ -400,13 +491,34 @@ class RepositoryAccessVerifier {
     process.stdin.write('$keyLine\n');
     await process.stdin.flush();
     await process.stdin.close();
-    final stdoutText = await process.stdout.transform(utf8.decoder).join();
-    await process.stdin.done;
-    final code = await process.exitCode;
-    if (code != 0) return null;
+    final stdoutText = process.stdout.transform(utf8.decoder).join();
+    // Bounded and killed on timeout, like every other helper here. A `ssh-keygen`
+    // waiting for more stdin than this method will ever write would otherwise hang
+    // `verify` for ever — a credential service that never answers.
+    try {
+      await process.stdin.done.timeout(connectTimeout);
+      await stdoutText.timeout(connectTimeout);
+      final code = await process.exitCode.timeout(connectTimeout);
+      if (code != 0) return null;
+    } on TimeoutException {
+      _killTree(process);
+      return null;
+    }
     return RegExp(
       r'SHA256:[A-Za-z0-9+/]+=*',
-    ).firstMatch(stdoutText)?.group(0);
+    ).firstMatch(await stdoutText)?.group(0);
+  }
+
+  /// Kills [process] and every descendant it can still find.
+  ///
+  /// The counterpart of [_runBounded]'s inline tree walk, factored out for the one
+  /// call site that owns its [Process] because it writes to stdin.
+  void _killTree(Process process) {
+    final tree = _descendantPids(process.pid);
+    process.kill(ProcessSignal.sigkill);
+    for (final pid in tree.reversed) {
+      _signalPid(pid);
+    }
   }
 
   /// Environment applied to every bare-name helper this class spawns.
@@ -467,9 +579,10 @@ exec ssh \\
     required String clonePath,
     required String scratchPath,
   }) {
-    return Process.run(
-      gitExecutable,
-      [
+    return _runBounded(
+      helper: 'git',
+      executable: gitExecutable,
+      arguments: [
         '--no-pager',
         'clone',
         '--depth',
@@ -480,6 +593,7 @@ exec ssh \\
         remote.toSshUrl(),
         clonePath,
       ],
+      timeout: cloneTimeout,
       environment: {
         'GIT_SSH_COMMAND': wrapperPath,
         'GIT_SSH_VARIANT': 'ssh',
@@ -497,7 +611,139 @@ exec ssh \\
         'GIT_CONFIG_SYSTEM': '/dev/null',
         if (pathPrefix != null) 'PATH': _pinnedPath,
       },
-    ).timeout(cloneTimeout);
+    );
+  }
+
+  /// Runs a helper to completion, or kills its whole process tree and refuses.
+  ///
+  /// THE BUG THIS REPLACES. `Process.run(...).timeout(ceiling)` is a `Future`
+  /// timeout: it stops the *Dart* side from waiting, and nothing more. The child
+  /// keeps running, and for a clone that is not a leaked CPU — it is a live
+  /// `git` with a live `ssh` child, both holding the identity file, both still
+  /// able to authenticate with it, while the caller has already been told the
+  /// verification failed and has deleted the scratch tree. `Future.timeout` is
+  /// the wrong tool for a subprocess, and the honest fix is to own the
+  /// [Process].
+  ///
+  /// WHY THE WHOLE TREE AND NOT JUST THE CHILD. Dart has no API to place a child
+  /// in a new process group (and macOS has no `setsid`), so `kill` reaches only
+  /// the process this code started — for `git clone` that is the parent of the
+  /// `ssh` that actually holds the identity. The descendants are therefore
+  /// enumerated from `ps` **before** the parent is signalled, then signalled
+  /// themselves; signalling the parent first would re-parent the children to `init`
+  /// and lose them. Signalling `SIGKILL` rather than `SIGTERM` because a `git`
+  /// blocked in a network read does not install a handler and must not be given
+  /// the chance to.
+  Future<ProcessResult> _runBounded({
+    required String helper,
+    required String executable,
+    required List<String> arguments,
+    required Duration timeout,
+    Map<String, String>? environment,
+  }) async {
+    final Process process;
+    try {
+      process = await Process.start(
+        executable,
+        arguments,
+        environment: environment,
+      );
+    } on Object catch (error) {
+      // Absent binary, or a `PATH`/`PATH`-prefix problem. `Process.start` raises
+      // `ProcessException`, whose audited projection is the executable and the OS
+      // message — no key material, and `arguments` is never read.
+      throw ProcessException(
+        executable,
+        arguments,
+        secretlessText(error),
+        error is ProcessException ? error.errorCode : 0,
+      );
+    }
+
+    final stdoutText = process.stdout.transform(utf8.decoder).join();
+    final stderrText = process.stderr.transform(utf8.decoder).join();
+    final exit = process.exitCode;
+
+    try {
+      final code = await exit.timeout(timeout);
+      return ProcessResult(
+        process.pid,
+        code,
+        await stdoutText,
+        await stderrText,
+      );
+    } on TimeoutException {
+      // Enumerate first, then signal. See the method note: this order is the
+      // whole reason the children are still findable.
+      final tree = _descendantPids(process.pid);
+      final killed = <int>[process.pid, ...tree.reversed];
+      process.kill(ProcessSignal.sigkill);
+      for (final pid in tree.reversed) {
+        _signalPid(pid);
+      }
+      // Drain so the pipes do not keep the isolate alive, and bound the wait so a
+      // child that ignores the signal cannot hold the caller.
+      await exit
+          .timeout(const Duration(seconds: 5))
+          .catchError((Object _) => -1);
+      unawaited(stdoutText.catchError((Object _) => ''));
+      unawaited(stderrText.catchError((Object _) => ''));
+      throw AccessVerificationTimeoutException(
+        helper: helper,
+        limit: timeout,
+        killedProcessIds: killed,
+      );
+    }
+  }
+
+  /// Every live descendant of [rootPid], deepest last.
+  ///
+  /// Read from `ps` rather than tracked, because the processes that matter here
+  /// are created by `git`, not by this code. Empty when `ps` cannot answer — a
+  /// missing answer degrades to killing the direct child, which is the best that
+  /// can be done rather than a reason to skip the kill.
+  ///
+  /// `ps` is resolved through [pathPrefix] like every other helper, for the same
+  /// reason `git` is: this runs while the private half is on disk, so it is not
+  /// a moment to start trusting an ambient `PATH`.
+  List<int> _descendantPids(int rootPid) {
+    final result = Process.runSync(
+      'ps',
+      ['-A', '-o', 'pid=,ppid='],
+      environment: _helperEnvironment,
+    );
+    if (result.exitCode != 0) return const [];
+    final children = <int, List<int>>{};
+    for (final line in (result.stdout as String).split('\n')) {
+      final parts = line.trim().split(RegExp(r'\s+'));
+      if (parts.length != 2) continue;
+      final pid = int.tryParse(parts[0]);
+      final ppid = int.tryParse(parts[1]);
+      if (pid == null || ppid == null) continue;
+      children.putIfAbsent(ppid, () => <int>[]).add(pid);
+    }
+    final found = <int>[];
+    final queue = <int>[...?(children[rootPid])];
+    while (queue.isNotEmpty) {
+      final pid = queue.removeAt(0);
+      if (found.contains(pid)) continue;
+      found.add(pid);
+      queue.addAll(children[pid] ?? const <int>[]);
+    }
+    return found;
+  }
+
+  /// Signals one pid, ignoring the fact that it may already be gone.
+  ///
+  /// Deliberately not `Process.killPid`: that throws `ProcessException` when the
+  /// pid has already exited, and a pid that exited on its own between the `ps`
+  /// read and this call is the normal case, not an error.
+  void _signalPid(int pid) {
+    try {
+      Process.killPid(pid, ProcessSignal.sigkill);
+    } on Object {
+      // Already gone, or not ours to signal. Either way there is nothing to do.
+    }
   }
 
   String? _gitOutput(List<String> args) {

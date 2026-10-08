@@ -1,5 +1,47 @@
 import 'dart:io';
 
+import 'secretless_error.dart';
+
+/// Raised when a path holding key material did not end up owner-only.
+///
+/// A **typed** failure rather than a `StateError` for a reason that is about
+/// custody, not ergonomics: the message of an exception in this directory may
+/// reach a session log and a durable column, and this one has to be provably
+/// free of anything but a path and a mode. `secretlessDescription` composes from
+/// three closed fields and nothing else, so it is auditable by inspection rather
+/// than by trusting whoever wrote the `catch` that reports it.
+class PosixPermissionException implements Exception, AuditedFailure {
+  PosixPermissionException({
+    required this.path,
+    required this.intendedMode,
+    this.actualMode,
+    this.detail,
+  });
+
+  /// The path whose mode was wrong.
+  final String path;
+
+  /// What was asked for, e.g. `600`.
+  final String intendedMode;
+
+  /// What the path actually reads as after `chmod`, when it could be read.
+  final String? actualMode;
+
+  /// Which step failed: `chmod`, `stat`, or the post-write verification.
+  final String? detail;
+
+  @override
+  String get secretlessDescription => actualMode == null
+      ? 'PosixPermissionException: could not enforce mode $intendedMode on '
+            '$path${detail == null ? '' : ' ($detail)'}'
+      : 'PosixPermissionException: $path reads $actualMode after chmod '
+            '$intendedMode; refusing to leave key material with weaker '
+            'permissions than required';
+
+  @override
+  String toString() => secretlessDescription;
+}
+
 /// Owner-only file modes, applied by shelling out to `chmod`.
 ///
 /// WHY NOT `dart:io`. Dart's `File.writeAsBytes` and `Directory.create` create
@@ -32,21 +74,24 @@ abstract final class PosixFileModes {
 
   /// Applies [mode] to [path] and then asserts the result.
   ///
-  /// Throws [StateError] when `chmod` is unavailable, exits non-zero, or the
-  /// resulting mode is not exactly [mode]. Set-then-verify, not set-and-hope.
+  /// Throws [PosixPermissionException] when `chmod` is unavailable, exits
+  /// non-zero, or the resulting mode is not exactly [mode]. Set-then-verify, not
+  /// set-and-hope.
   static void applyStrict(String path, String mode) {
     final chmod = Process.runSync('chmod', [mode, path]);
     if (chmod.exitCode != 0) {
-      throw StateError(
-        'could not set mode $mode on $path: chmod exited '
-        '${chmod.exitCode} (${chmod.stderr.toString().trim()})',
+      throw PosixPermissionException(
+        path: path,
+        intendedMode: mode,
+        detail: 'chmod exited ${chmod.exitCode}',
       );
     }
     final actual = readOctal(path);
     if (actual != mode) {
-      throw StateError(
-        'mode on $path is $actual after chmod $mode; refusing to leave key '
-        'material with weaker permissions than required',
+      throw PosixPermissionException(
+        path: path,
+        intendedMode: mode,
+        actualMode: actual,
       );
     }
   }
@@ -68,10 +113,13 @@ abstract final class PosixFileModes {
         if (RegExp(r'^[0-7]{3,4}$').hasMatch(value)) return value;
       }
     }
-    throw StateError(
-      'could not read the permission bits of $path: no usable `stat` form. '
-      'POSIX permission enforcement is mandatory on paths that hold key '
-      'material, so this is a refusal rather than a fallback.',
+    throw PosixPermissionException(
+      path: path,
+      intendedMode: '(unreadable)',
+      detail:
+          'no usable `stat` form; POSIX permission enforcement is mandatory '
+          'on paths that hold key material, so this is a refusal rather than a '
+          'fallback',
     );
   }
 

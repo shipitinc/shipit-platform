@@ -25,6 +25,9 @@ import 'package:test/test.dart';
 ///      actually loads, and it is the matching half of the public key. This is
 ///      the test that would have caught a non-installable key.
 ///   4. sign/verify round-trip — the pair is usable, not merely well-shaped.
+///   5. the public surface — that no accessor projects the private half into a
+///      `String`, a `Uint8List` or a `List<int>`, and that this file's own doc
+///      agrees with what the class does.
 const _rfc8032Vectors = <(String, String, String)>[
   // (seed hex, expected public hex, expected SHA256 fingerprint). All three
   // fingerprints were produced by `ssh-keygen -lf` on the corresponding public
@@ -55,6 +58,14 @@ List<int> _hex(String value) => [
 String _hexEncode(List<int> bytes) =>
     bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
+/// Byte equality as a BOOLEAN, so a failing assertion prints `false` and not the
+/// two operands.
+///
+/// This file is about key material, and the dispatch is explicit that a test
+/// which fails while including key material is itself a defect — the matcher
+/// prints whatever it was handed. `expect(bytes, other)` would therefore print a
+/// deploy key on failure. Comparing two buffers through this returns a bool, and
+/// the failure message names only the pair being compared.
 /// Skips a test when the OpenSSH tools are absent, rather than failing.
 ///
 /// `ssh-keygen` is what proves the key is installable, so a host without it has
@@ -71,6 +82,92 @@ bool _sshKeygenAvailable() {
 }
 
 final bool _hasSshKeygen = _sshKeygenAvailable();
+
+/// Locates a repository file from wherever `dart test` was invoked.
+///
+/// The integration runner and a bare `dart test` do not agree on the working
+/// directory (`apps/server` versus the repository root), and a source-audit test
+/// that silently found nothing would be worse than no test at all. So the lookup
+/// tries both roots, walking up, and **fails loudly** if it never gets there.
+File _locate(String relative) {
+  final candidates = <String>[
+    relative,
+    'apps/server/$relative',
+  ];
+  var directory = Directory.current;
+  for (var depth = 0; depth < 8; depth++) {
+    for (final candidate in candidates) {
+      final file = File('${directory.path}/$candidate');
+      if (file.existsSync()) return file;
+    }
+    final parent = directory.parent;
+    if (parent.path == directory.path) break;
+    directory = parent;
+  }
+  throw StateError(
+    'could not locate $relative from ${Directory.current.path}; this test '
+    'audits the source of ssh_keypair.dart and must not pass by finding nothing',
+  );
+}
+
+/// The names of the public instance members declared inside class [name].
+///
+/// Deliberately syntactic: `dart:mirrors` is not available to a test on every
+/// target, and what this needs to catch is a *declaration* that widens the
+/// surface, which is a source-level fact. The class body is sliced first so
+/// top-level functions and locals elsewhere in the file do not register; doc
+/// comments are stripped so a member named in prose does not either; and
+/// declarations starting with `_` are skipped, which is what keeps `_privateSeed`
+/// out of the audit.
+Set<String> _publicMembersOf(String classBody) {
+  // Exactly the class's own indentation, then a non-space: a member declaration,
+  // never a statement inside a method body.
+  final member = RegExp(
+    r'^  (?=\S)(?:static\s+|final\s+|const\s+|late\s+)*'
+    r'(?:[A-Za-z_][A-Za-z0-9_]*(?:<[^>]*>)?\??\s+)?'
+    r'(?:get\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[;=({]',
+  );
+  final members = <String>{};
+  for (final line in classBody.split('\n')) {
+    if (line.trimLeft().startsWith('///')) continue;
+    final match = member.firstMatch(line);
+    if (match == null) continue;
+    final name = match.group(1)!;
+    if (name.startsWith('_')) continue;
+    members.add(name);
+  }
+  return members;
+}
+
+/// The body of class [name] in [file], from its declaration to the closing brace
+/// at column zero.
+String _classBodyOf(File file, String name) {
+  final lines = file.readAsStringSync().split('\n');
+  final start = lines.indexWhere((l) => l.startsWith('class $name '));
+  if (start < 0) {
+    throw StateError('class $name not found in ${file.path}');
+  }
+  for (var i = start + 1; i < lines.length; i++) {
+    if (lines[i] == '}') return lines.sublist(start, i + 1).join('\n');
+  }
+  throw StateError('class $name in ${file.path} has no closing brace');
+}
+
+/// The `///` block immediately above `class SshKeyPair`.
+String _classDocOf(File file) {
+  final lines = file.readAsStringSync().split('\n');
+  final classIndex = lines.indexWhere((l) => l.startsWith('class SshKeyPair'));
+  if (classIndex < 0) {
+    throw StateError('class SshKeyPair not found in ${file.path}');
+  }
+  final doc = <String>[];
+  for (var i = classIndex - 1; i >= 0; i--) {
+    final line = lines[i].trim();
+    if (!line.startsWith('///')) break;
+    doc.insert(0, line);
+  }
+  return doc.join('\n');
+}
 
 void main() {
   group('ed25519 derivation', () {
@@ -124,7 +221,7 @@ void main() {
         throwsArgumentError,
       );
       expect(
-        () => encodeOpensshPrivateKeyPem(
+        () => encodeOpensshPrivateKeyPemBytes(
           Uint8List(31),
           comment: 'short',
         ),
@@ -138,7 +235,8 @@ void main() {
       for (var i = 0; i < 8; i++) {
         final pair = SshKeyPair.generate(comment: 'shipit+shape-$i');
         expect(pair.publicKeyBytes, hasLength(ed.PublicKeySize));
-        expect(pair.privateSeed, hasLength(ed.SeedSize));
+        expect(pair.privateSeed.length, ed.SeedSize);
+        expect(pair.privateSeed.toString(), '<secret redacted, 32 bytes>');
         expect(pair.algorithm, 'ed25519');
         expect(
           pair.publicKeyAuthorizedLine,
@@ -152,7 +250,7 @@ void main() {
 
         // Usable, not merely well-shaped: a pair that cannot sign cannot
         // authenticate, and the host would reject it.
-        final privateKey = ed.newKeyFromSeed(pair.privateSeed);
+        final privateKey = ed.newKeyFromSeed(pair.privateSeed.bytes);
         final message = Uint8List.fromList(utf8.encode('shipit-probe'));
         final signature = ed.sign(privateKey, message);
         expect(
@@ -185,10 +283,10 @@ void main() {
       final pair = SshKeyPair.generate(comment: 'shipit+wipe');
       final before = pair.fingerprint;
       pair.wipeSeed();
-      expect(pair.privateSeed, everyElement(0));
+      expect(pair.privateSeed.bytes, everyElement(0));
       expect(
         SshKeyPair.fromSeed(
-          seed: SecretBytes(pair.privateSeed),
+          seed: SecretBytes(pair.privateSeed.bytes),
           comment: 'shipit+wipe',
         ).fingerprint,
         isNot(before),
@@ -208,7 +306,11 @@ void main() {
         final dir = Directory.systemTemp.createTempSync('shipit_pem_probe_');
         final identity = File('${dir.path}/id_ed25519');
         try {
-          identity.writeAsStringSync(pair.privateKeyPem);
+          // BYTES, not a String. The type no longer offers a `String` rendering
+          // of the private half at all, so this test does not reintroduce one —
+          // and a `writeAsStringSync(pair.privateKeyPem)` here would have been the
+          // habit that kept the getter alive.
+          identity.writeAsBytesSync(pair.privateKeyPemBytes);
           Process.runSync('chmod', ['600', identity.path]);
 
           final derived = Process.runSync('ssh-keygen', [
@@ -251,19 +353,112 @@ void main() {
       // The container is `openssh-key-v1`; the raw seed never appears as an
       // armoured PKCS#8 blob, which is the encoding a reader would mistake for a
       // generic private key in a log review.
+      //
+      // EVERY assertion here is a BOOLEAN over a decoded string rather than a
+      // matcher handed the string itself. `expect(pem, startsWith(...))` would,
+      // on failure, print the whole deploy key into the test output — which is
+      // the same durable-record prohibition, reached through a failing assertion.
       final pair = SshKeyPair.generate(comment: 'shipit+pem');
+      final pem = utf8.decode(pair.privateKeyPemBytes);
+      expect(pem.startsWith('-----BEGIN OPENSSH PRIVATE KEY-----'), isTrue);
+      expect(pem.trim(), endsWith('-----END OPENSSH PRIVATE KEY-----'));
+      expect(pem.contains('PRIVATE KEY-----BASE64'), isFalse);
+      expect(pem.contains(base64.encode(pair.privateSeed.bytes)), isFalse);
+      // And the type offers no `String` of it at all, so the next reader cannot
+      // reach for one.
+      expect(pem.contains('\n'), isTrue, reason: 'PEM is line-wrapped');
+      expect(pem.endsWith('\n'), isTrue);
+    });
+  });
+
+  group('no public accessor projects the private half (B-2)', () {
+    test('there is no String rendering of the private half on the type', () {
+      // The doc on this class used to claim it "deliberately holds no `String`
+      // rendering of the secret" while `String get privateKeyPem` sat 100 lines
+      // below it. The getter is gone; this asserts the absence at the type level
+      // rather than at the call-site level, so a future contributor has to
+      // reintroduce the hole in the source for the type to change.
+      final pair = SshKeyPair.generate(comment: 'shipit+surface');
+      // Compile-time: naming the removed member is an analysis error, so the
+      // runtime assertions below are what actually run.
+      expect(pair.privateKeyPemBytes, isA<Uint8List>());
+      expect(pair.privateSeed, isA<SecretBytes>());
       expect(
-        pair.privateKeyPem,
-        startsWith('-----BEGIN OPENSSH PRIVATE KEY-----'),
+        '${pair.privateSeed}'.contains(pair.fingerprint.split(':').last),
+        isFalse,
+        reason: 'the seed must not be text',
+      );
+    });
+
+    test(
+      'the declared public surface is exactly the safe one',
+      () {
+        // Executable form of the `.bytes`-style audit, for the WHOLE public API
+        // rather than for one projection. Every public getter/field declared in
+        // `ssh_keypair.dart` is listed here; adding a member that yields private
+        // material — a `String`, a `Uint8List`, a `List<int>` of the seed — fails
+        // this test instead of reaching review.
+        final declared = _publicMembersOf(
+          _classBodyOf(
+            _locate('lib/src/credentials/ssh_keypair.dart'),
+            'SshKeyPair',
+          ),
+        );
+        expect(
+          declared,
+          {
+            'algorithm',
+            'comment',
+            'fingerprint',
+            'privateKeyPemBytes',
+            'privateSeed',
+            'publicKeyAuthorizedLine',
+            'publicKeyBlob',
+            'publicKeyBytes',
+            'toString',
+            'wipeSeed',
+          },
+          reason:
+              'the public surface of SshKeyPair changed; anything new must be '
+              'reviewed as a possible projection of the private half',
+        );
+        expect(
+          declared.contains('privateKeyPem'),
+          isFalse,
+          reason: 'there is no String rendering of the private half',
+        );
+        expect(declared.contains('privateSeedBytes'), isFalse);
+      },
+    );
+
+    test('the class doc no longer claims what the code denies', () {
+      // A doc that contradicts its own class is worse than no doc, because the
+      // next reader trusts it. This reads the class doc and asserts the specific
+      // claim B-2 was about is stated as true rather than as false.
+      final doc = _classDocOf(
+        _locate('lib/src/credentials/ssh_keypair.dart'),
       );
       expect(
-        pair.privateKeyPem.trim(),
-        endsWith('-----END OPENSSH PRIVATE KEY-----'),
+        doc.contains('deliberately holds no'),
+        isFalse,
+        reason:
+            'the old doc asserted the negation of the code — that the type held '
+            'no String rendering of the secret — and it must not come back',
       );
-      expect(pair.privateKeyPem, isNot(contains('PRIVATE KEY-----BASE64')));
       expect(
-        pair.privateKeyPem,
-        isNot(contains(base64.encode(pair.privateSeed))),
+        doc.contains('String') && doc.contains('rendering'),
+        isTrue,
+        reason: 'the doc must state what the String situation actually is',
+      );
+      expect(
+        doc.contains('privateKeyPem'),
+        isTrue,
+        reason: 'the doc must name the one private accessor that exists',
+      );
+      expect(
+        doc.contains('privateKeyPemBytes'),
+        isTrue,
+        reason: 'the doc must name the accessor rather than claim none exists',
       );
     });
   });

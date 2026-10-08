@@ -3,6 +3,7 @@ import 'dart:io';
 import 'posix_file_permissions.dart';
 import 'secret_material.dart';
 import 'secret_provider.dart';
+import 'secretless_error.dart';
 
 /// The ADR 0018 §A1 / §A4 fallback substrate: one owner-only file per reference
 /// under a configured directory.
@@ -76,10 +77,14 @@ class LocalFileSecretProvider implements SecretProvider {
         referenceName: referenceName,
         providerId: providerId,
         operation: 'store',
-        // `error` here is a StateError from PosixFileModes or an OS error, both
-        // of which carry a path and a mode — never key bytes. `secret` is not
-        // interpolated, and its own toString is redacted regardless.
-        reason: '$error',
+        // NOT `'$error'`. A caught error's own message is unvetted text that
+        // this layer does not control, and this `reason` reaches a session log
+        // and a durable column. `secretlessText` renders only an audited type's
+        // own fields and suppresses anything else, so the diagnostic survives
+        // (path, mode, OS message) without the message becoming a channel.
+        // `secret` is not interpolated, and its own toString is redacted
+        // regardless.
+        reason: secretlessText(error),
       );
     }
   }
@@ -105,7 +110,7 @@ class LocalFileSecretProvider implements SecretProvider {
         referenceName: referenceName,
         providerId: providerId,
         operation: 'read',
-        reason: '$error',
+        reason: secretlessText(error),
       );
     }
   }
@@ -125,7 +130,7 @@ class LocalFileSecretProvider implements SecretProvider {
         referenceName: referenceName,
         providerId: providerId,
         operation: 'destroy',
-        reason: '$error',
+        reason: secretlessText(error),
       );
     }
   }

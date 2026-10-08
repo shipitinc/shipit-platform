@@ -4,8 +4,27 @@ import 'package:product_registry/product_registry.dart'
 import 'repository_access_verifier.dart';
 import 'secret_material.dart';
 import 'secret_provider.dart';
+import 'secretless_error.dart';
 import 'ssh_keypair.dart';
 import 'ssh_remote.dart';
+
+/// What the host-key confirmation this service enforces actually IS.
+///
+/// M-5, and the honest answer is "an operator assertion the server cannot
+/// authenticate". The value arrives as an endpoint parameter; the transport then
+/// enforces exactly what the caller supplied, which is a real enforcer over an
+/// unauthenticated input. It is published in the response so a client — and a
+/// reader of a stored response — cannot mistake it for a value the server
+/// observed for itself.
+///
+/// A confirmation the server *obtained* would need a separate, out-of-band
+/// transport (an operator pasting a fingerprint from the host's own UI is exactly
+/// what ADR 0018 §Decision describes, and it is not something a request parameter
+/// can be). Binding it properly is a product decision, not this lane's.
+const String kHostKeyConfirmationProvenance =
+    'operator-asserted: the fingerprint was supplied by the caller and is not '
+    'authenticated by the server; the server independently obtained the host key '
+    'and enforced that they matched';
 
 /// What a mint produced. **The complete set of fields that may leave the
 /// process**, and every one of them is public.
@@ -43,8 +62,28 @@ class MintedCredential {
 
   final String algorithm;
 
-  /// The name under which the private half is held by the secret manager. Not
-  /// the material; §13a by name, never by value.
+  /// The name under which the private half is held by the secret manager.
+  ///
+  /// M-6, resolved as far as this lane may resolve it. An earlier version of this
+  /// comment said "Not the material; §13a by name, never by value" — which is the
+  /// exact reasoning `9417f8bf` rejects, because §13a is what makes
+  /// *credentials* safe to reference and is not an assurance that a reference is
+  /// harmless. Under ADR 0018 §A3 the reference **is** the sensitive artifact and
+  /// `9417f8bf` records exposing it to a client as gap **G-7**, upgradeable to
+  /// "required rather than optional". That contradiction is real and is not
+  /// settled here: choosing an opaque handle instead of the raw reference is a
+  /// product/architecture decision (owner `design-agent`).
+  ///
+  /// What this lane *can* make structural is the part that was previously only a
+  /// property of the two adapters that happen to exist: `generate` verifies that
+  /// the handle a provider returned is byte-identical to the reference it asked
+  /// it to store, and fails the mint otherwise. So this field is not "whatever
+  /// the provider felt like returning" — it is provably
+  /// `GIT_REPOSITORY_<sanitised repositoryId>_SSH`, derived from an input the
+  /// caller supplied. A provider that returned an ARN or a vault path — which
+  /// would hand a client the secret manager's topology — now breaks loudly
+  /// instead of leaking quietly. Replacing the value with a non-identifying
+  /// handle remains `9417f8bf` G-7's open decision; see `WORK_STATE.md`.
   final String referenceName;
 
   /// `generated` at mint. Never `verified` — access has not been proved yet.
@@ -78,6 +117,7 @@ class AccessVerification {
     required this.status,
     required this.canReachRepository,
     required this.secretMaterialRemoved,
+    required this.hostKeyConfirmationProvenance,
     this.failureReason,
     this.lastVerifiedAt,
     this.observedHostKeyFingerprint,
@@ -96,6 +136,10 @@ class AccessVerification {
   /// Whether the private half was destroyed with the clone's scratch tree.
   final bool secretMaterialRemoved;
 
+  /// Always [kHostKeyConfirmationProvenance]. Present so that a client cannot
+  /// read this response as "the server verified the host".
+  final String hostKeyConfirmationProvenance;
+
   final String? failureReason;
   final DateTime? lastVerifiedAt;
   final String? observedHostKeyFingerprint;
@@ -105,6 +149,7 @@ class AccessVerification {
     'status': status,
     'canReachRepository': canReachRepository,
     'secretMaterialRemoved': secretMaterialRemoved,
+    'hostKeyConfirmationProvenance': hostKeyConfirmationProvenance,
     if (failureReason != null) 'failureReason': failureReason,
     if (lastVerifiedAt != null)
       'lastVerifiedAt': lastVerifiedAt!.toIso8601String(),
@@ -129,6 +174,10 @@ class AccessVerification {
 ///     lane replaces.
 ///   * **A row is never written before the manager has the bytes.** Same
 ///     ordering, same reason.
+///   * **A handle the provider invented never reaches a client.** See
+///     [MintedCredential.referenceName] — this layer re-derives the reference and
+///     refuses a store whose return value is not it, which is what turns "our two
+///     adapters happen to return a bare name" into a property of the system.
 class CredentialKeyService {
   CredentialKeyService({
     required this.engine,
@@ -180,6 +229,24 @@ class CredentialKeyService {
         referenceName: referenceName,
         secret: custody,
       );
+      // M-6, enforced. The handle is what `generate` returns to the client, so
+      // it must be the bare reference we asked for — never a provider-specific
+      // ARN, path or URL, which would hand a client the secret manager's
+      // topology. Checking it here is the difference between a property of the
+      // code and a property of whichever adapters happen to exist; a future
+      // adapter that returned an ARN now fails the mint instead of leaking.
+      if (storedHandle != referenceName) {
+        throw SecretStoreException(
+          referenceName: referenceName,
+          providerId: secretProvider.providerId,
+          operation: 'store',
+          reason:
+              'the provider returned a handle that is not the reference it was '
+              'given. Under ADR 0018 A3 the reference is the sensitive artifact '
+              '(9417f8bf gap G-7), so a handle that discloses vault topology must '
+              'never reach a client. The mint is refused.',
+        );
+      }
       custody.wipe();
 
       final credential = await engine.recordGeneratedCredential(
@@ -228,6 +295,18 @@ class CredentialKeyService {
   /// the host, key type and fingerprint and must confirm it." It is required,
   /// not optional — there is no path that clones against an unconfirmed host,
   /// which is the transport gap ADR 0018 §Accepted risks (A2) records.
+  ///
+  /// WHAT IT IS NOT, per M-5. The value is **client-supplied and
+  /// unauthenticated**. The verifier independently obtains the host's key and
+  /// refuses to clone unless the fingerprint it computes equals this value, so
+  /// the transport enforces it; but a caller that scanned the network itself and
+  /// supplied an attacker's key gets a clone against the attacker, faithfully
+  /// enforced. [kHostKeyConfirmationProvenance] is therefore returned in the
+  /// response, so the gap A2 records is **narrowed, not closed**: the provenance
+  /// of the confirmed value is unchanged by anything in this method.
+  /// [confirmedBy] is likewise caller free text with no identity behind it; it is
+  /// validated for shape (see [_validatedConfirmer]) because it is persisted to
+  /// `hostConfirmedBy` / `lastVerifiedBy`, but it attests to nothing.
   Future<AccessVerification> verifyAccess({
     required String productId,
     required String repositoryId,
@@ -254,7 +333,7 @@ class CredentialKeyService {
       productId: productId,
       credentialId: credential.credentialId,
       hostKeyFingerprint: hostKeyFingerprint,
-      confirmedBy: confirmedBy,
+      confirmedBy: _validatedConfirmer(confirmedBy, 'confirmedBy'),
       now: _clock(),
     );
 
@@ -284,7 +363,7 @@ class CredentialKeyService {
         productId: productId,
         credentialId: credential.credentialId,
         succeeded: succeeded,
-        checkedBy: checkedBy ?? confirmedBy,
+        checkedBy: _validatedConfirmer(checkedBy ?? confirmedBy, 'checkedBy'),
         failureReason: failureReason,
         now: _clock(),
       );
@@ -294,6 +373,7 @@ class CredentialKeyService {
         status: updated.status.wire,
         canReachRepository: updated.canReachRepository,
         secretMaterialRemoved: outcome.secretMaterialRemoved,
+        hostKeyConfirmationProvenance: kHostKeyConfirmationProvenance,
         failureReason: updated.lastFailureReason,
         lastVerifiedAt: updated.lastVerifiedAt,
         observedHostKeyFingerprint: outcome.observedHostKeyFingerprint,
@@ -301,6 +381,41 @@ class CredentialKeyService {
     } finally {
       material.wipe();
     }
+  }
+
+  /// Bounds and sanitises a caller-supplied attribution before it is persisted.
+  ///
+  /// It attests to nothing — see [verifyAccess] — but it is written to
+  /// `hostConfirmedBy` and `lastVerifiedBy`, which an operator reads as an audit
+  /// trail. Three things are therefore refused rather than stored: an empty value
+  /// (the domain already checks this, and a second opinion is cheaper than a
+  /// blank audit field), a control character (which in a log line is a
+  /// forge-the-previous-entry primitive), and anything long enough to be a paste
+  /// of something else. The value itself is reported back in the refusal, since
+  /// it is the operator's own text and they need to see what was rejected.
+  static String _validatedConfirmer(String value, String field) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      throw CredentialScopeException(
+        '$field is empty. It is recorded against the credential as the '
+        'operator who confirmed this host key, and a blank audit field records '
+        'nothing.',
+      );
+    }
+    if (trimmed.length > 128) {
+      throw CredentialScopeException(
+        '$field is ${trimmed.length} characters; at most 128 are accepted. It '
+        'is recorded against the credential, not interpreted.',
+      );
+    }
+    if (RegExp(r'[\x00-\x1f\x7f]').hasMatch(trimmed)) {
+      throw CredentialScopeException(
+        '$field contains a control character. It is recorded against the '
+        'credential as a single audit field and must not be able to forge a log '
+        'line.',
+      );
+    }
+    return trimmed;
   }
 
   /// Destroys a manager handle left behind by a mint that failed mid-flight.
@@ -322,12 +437,20 @@ class CredentialKeyService {
 }
 
 /// Raised when a credential operation names a repository the product does not
-/// own, or a repository that does not exist.
-class CredentialScopeException implements Exception {
+/// own, or a repository that does not exist, or carries an attribution that
+/// cannot be recorded.
+///
+/// Audited, like every other failure in this directory, because this service's
+/// failures reach the Serverpod session log and therefore Postgres. Each message
+/// is a literal plus a field name; none touches key material.
+class CredentialScopeException implements Exception, AuditedFailure {
   CredentialScopeException(this.message);
 
   final String message;
 
   @override
-  String toString() => 'CredentialScopeException: $message';
+  String get secretlessDescription => 'CredentialScopeException: $message';
+
+  @override
+  String toString() => secretlessDescription;
 }

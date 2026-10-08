@@ -1,13 +1,18 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:control_plane_server/src/credentials/credential_key_service.dart';
+import 'package:control_plane_server/src/credentials/gcp_secret_manager_secret_provider.dart';
 import 'package:control_plane_server/src/credentials/local_file_secret_provider.dart';
 import 'package:control_plane_server/src/credentials/posix_file_permissions.dart';
 import 'package:control_plane_server/src/credentials/repository_access_verifier.dart';
 import 'package:control_plane_server/src/credentials/secret_material.dart';
 import 'package:control_plane_server/src/credentials/secret_provider.dart';
 import 'package:control_plane_server/src/credentials/secret_provider_resolver.dart';
+import 'package:control_plane_server/src/credentials/secretless_error.dart';
+import 'package:control_plane_server/src/credentials/ssh_keypair.dart';
 import 'package:control_plane_server/src/credentials/ssh_remote.dart';
 import 'package:control_plane_server/src/endpoints/credential_endpoints.dart';
 import 'package:control_plane_server/src/persistence/persistence_database.dart';
@@ -234,13 +239,17 @@ void main() {
       ///
       /// The generated `endpoints.credentialEndpoints` wrapper cannot be used
       /// here: `serverpod generate` emits only the endpoint's public *methods* on
-      /// it, so an instance field is not reachable through it. Constructing the
+      /// it, so the override is not reachable through it. Constructing the
       /// endpoint directly is equivalent for everything under test — the wrapper
       /// is a pass-through that forwards to the same instance methods — and it is
       /// the only way to reach the selection seam, because Dart cannot mutate
       /// `Platform.environment` at runtime.
+      ///
+      /// `forTesting` rather than a public mutable field: a field can be
+      /// reassigned by anything holding the endpoint, a named constructor fixes
+      /// it once, on an object nobody else can reach.
       CredentialEndpoints endpointWith(Map<String, String> environment) =>
-          CredentialEndpoints()..environmentOverride = environment;
+          CredentialEndpoints.forTesting(environment: environment);
 
       setUp(() async {
         await _purgeSuiteRows();
@@ -666,6 +675,333 @@ void main() {
           expect(derivedFingerprint, contains(minted.fingerprint));
         });
       });
+      group('the custody precondition can be recorded (M-4)', () {
+        test(
+          'recordCustodyPrecondition resolves and records the selection',
+          () async {
+            // M-4. The selection is already recorded before any key can be
+            // minted; what it could not do is be recorded at process start, because
+            // the destination is a session log and a session does not exist yet.
+            // `recordCustodyPrecondition` is the seam `apps/server/lib/server.dart`
+            // wiring would call — that file is outside this lane's OWNED_PATHS, so
+            // this lane may not make the call itself.
+            final endpoint = endpointWith({
+              kSecretProviderEnv: kLocalFileProviderId,
+              kLocalSecretDirectoryEnv: custodyDir,
+              'HOME': custody.path,
+            });
+            final provider = endpoint.recordCustodyPrecondition(session);
+            expect(provider.providerId, kLocalFileProviderId);
+            expect(provider.isDocumentedFallback, isTrue);
+            expect(
+              provider.describe().values.join(' '),
+              isNot(contains('PRIVATE KEY')),
+            );
+          },
+        );
+
+        test('an unset substrate records a marker, never a default', () async {
+          // The refusal must not be papered over with a substrate. ADR 0018: a
+          // fallback selection may not be silent, and it may not be implicit.
+          final provider = CredentialEndpoints.forTesting(
+            environment: const {},
+          ).recordCustodyPrecondition(session);
+          expect(
+            provider.describe()['resolved'],
+            contains('false'),
+          );
+          await expectLater(
+            provider.store(
+              referenceName: 'GIT_REPOSITORY_repo-1_SSH',
+              secret: SecretBytes(Uint8List(8)),
+            ),
+            throwsA(isA<SecretStoreException>()),
+          );
+        });
+      });
+
+      group('a handle the provider invented never reaches a client (M-6)', () {
+        test(
+          'a provider returning an ARN fails the mint and writes no row',
+          () async {
+            // G-7, enforced. Under ADR 0018 A3 the reference IS the sensitive
+            // artifact, so a handle that discloses vault topology must not be
+            // returned. This was previously a property of whichever adapters
+            // happened to return a bare name; now it is a property of the system,
+            // and a future adapter that returns an ARN fails loudly.
+            await seedProduct();
+            final provider = _RenamingSecretProvider(
+              SecretBytes(_privatePemBytes()),
+            );
+            await expectLater(
+              serviceWith(provider).generate(
+                productId: _product,
+                repositoryId: _repo,
+              ),
+              throwsA(
+                isA<SecretStoreException>()
+                    .having(
+                      (e) => e.reason,
+                      'reason',
+                      contains('not the reference it was given'),
+                    )
+                    .having(
+                      (e) => e.toString(),
+                      'toString',
+                      isNot(
+                        contains('projects/p/secrets'),
+                      ),
+                    ),
+              ),
+            );
+            final db = await _newDb();
+            expect(await _credentialRows(db, _repo), isEmpty);
+          },
+        );
+
+        test(
+          'the returned reference is the derived one, never the handle',
+          () async {
+            await seedProduct();
+            final minted = await serviceWith(
+              _InMemorySecretProvider(),
+            ).generate(productId: _product, repositoryId: _repo);
+            expect(minted.referenceName, 'GIT_REPOSITORY_${_repo}_SSH');
+            // Which is a pure function of an input the caller just supplied — the
+            // property 9417f8bf G-7 needs decided by someone with the authority to
+            // decide it.
+            expect(minted.referenceName, credentialReferenceName(_repo));
+          },
+        );
+      });
+
+      group('the host-key confirmation is labelled as operator-asserted (M-5)', () {
+        test('the response says the fingerprint was not authenticated', () async {
+          await seedProduct();
+          final service = serviceWith(_InMemorySecretProvider());
+          final minted = await service.generate(
+            productId: _product,
+            repositoryId: _repo,
+          );
+          // A real refusal from the real verifier, so the provenance string is on
+          // a response that actually describes an attempted verification.
+          await expectLater(
+            service.verifyAccess(
+              productId: _product,
+              repositoryId: _repo,
+              hostKeyFingerprint: _wrongFingerprint,
+              confirmedBy: 'operator@example',
+            ),
+            throwsA(isA<HostKeyNotPresentedException>()),
+          );
+          final verification = AccessVerification(
+            credentialId: minted.credentialId,
+            status: 'failing',
+            canReachRepository: false,
+            secretMaterialRemoved: true,
+            hostKeyConfirmationProvenance: kHostKeyConfirmationProvenance,
+          );
+          final wire = jsonEncode(verification.toJson());
+          expect(
+            wire,
+            contains('operator-asserted'),
+            reason:
+                'a reader of this response must not conclude the server '
+                'authenticated the host key',
+          );
+          expect(wire, contains('not authenticated by the server'));
+          expect(
+            kHostKeyConfirmationProvenance,
+            isNot(contains('PRIVATE KEY')),
+          );
+        });
+
+        test('an attribution that cannot be recorded is refused', () async {
+          // `confirmedBy` is caller free text with nothing behind it, but it is
+          // persisted as an audit field. Bounded so it cannot be a paste of
+          // something else or a log-forging control character.
+          await seedProduct();
+          final service = serviceWith(_InMemorySecretProvider());
+          await service.generate(productId: _product, repositoryId: _repo);
+          for (final hostile in <String>[
+            '   ',
+            'x' * 200,
+            'operator\n[credentials] credential.verify_access.completed ok',
+          ]) {
+            await expectLater(
+              service.verifyAccess(
+                productId: _product,
+                repositoryId: _repo,
+                hostKeyFingerprint: _wrongFingerprint,
+                confirmedBy: hostile,
+              ),
+              throwsA(
+                isA<CredentialScopeException>().having(
+                  (e) => e.toString(),
+                  'toString',
+                  allOf(contains('confirmedBy'), isNot(contains('\n'))),
+                ),
+              ),
+              reason: 'attribution "$hostile" must be refused',
+            );
+          }
+        });
+      });
+
+      group('a malformed secret cannot reach the durable record (B-1)', () {
+        test(
+          'a corrupt access body fails the mint with nothing in the failure',
+          () async {
+            // The end-to-end shape of B-1, through the real service against a real
+            // loopback Secret Manager that returns a 2xx body cut mid-string. The
+            // base64 private-key payload is a SUBSTRING of what the adapter parses,
+            // which is the whole mechanism.
+            await seedProduct(repositoryId: _repo2);
+            final stub = await _StubSecretManager.start(
+              (request) async {
+                request.response
+                  ..statusCode = 200
+                  ..headers.contentType = ContentType.json
+                  ..write(_truncatedAccessBody);
+              },
+            );
+            addTearDown(stub.close);
+            final provider = GcpSecretManagerSecretProvider(
+              projectId: 'shipit-platform',
+              apiBaseUrl: 'http://127.0.0.1:${stub.port}',
+              metadataHost: '127.0.0.1:${stub.port}',
+            );
+
+            Object? thrown;
+            try {
+              await provider
+                  .read(referenceName: 'GIT_REPOSITORY_${_repo2}_SSH')
+                  .then((_) => null)
+                  .catchError((Object e) => throw e);
+            } on Object catch (error) {
+              thrown = error;
+            }
+            expect(thrown, isA<SecretStoreException>());
+
+            // Both shapes that reach a durable record: the exception's own message
+            // (Serverpod logs an unhandled endpoint error) and the log field the
+            // endpoint writes.
+            final rendered = [
+              '$thrown',
+              secretlessText(thrown!),
+              credentialFailureLogFields(
+                event: 'credential.generate.failed',
+                productId: _product,
+                repositoryId: _repo2,
+                error: thrown,
+              ).values.join(' '),
+            ].join('\n');
+            for (final fragment in _forbiddenMaterialFragments) {
+              expect(
+                rendered.contains(fragment),
+                isFalse,
+                reason:
+                    'a corrupt secret at rest put base64 key material into text '
+                    'that reaches the session log and therefore Postgres',
+              );
+            }
+
+            // And nothing was recorded against the repository.
+            final db = await _newDb();
+            expect(await _credentialRows(db, _repo2), isEmpty);
+          },
+        );
+      });
     },
   );
+}
+
+/// A provider that stores the bytes but hands back a resource path instead of the
+/// reference — the mistake `generate` now refuses.
+class _RenamingSecretProvider implements SecretProvider {
+  _RenamingSecretProvider(this._secret);
+
+  final SecretBytes _secret;
+
+  @override
+  String get providerId => 'renaming-fixture';
+
+  @override
+  bool get isDocumentedFallback => false;
+
+  @override
+  Map<String, String> describe() => {'provider': providerId};
+
+  @override
+  Future<String> store({
+    required String referenceName,
+    required SecretBytes secret,
+  }) async => 'projects/p/secrets/$referenceName/versions/1';
+
+  @override
+  Future<SecretBytes> read({required String referenceName}) async => _secret;
+
+  @override
+  Future<void> destroy({required String referenceName}) async {}
+}
+
+/// The material a round trip must preserve, as bytes.
+Uint8List _privatePemBytes() =>
+    SshKeyPair.generate(comment: 'shipit+postgres').privateKeyPemBytes;
+
+/// A real access body, cut mid-string so a `jsonDecode` `FormatException` embeds
+/// an excerpt of it.
+const String _truncatedAccessBody =
+    '{"name":"projects/p/secrets/GIT_REPOSITORY_x_SSH/versions/1",'
+    '"payload":{"data":"AAAAB3NzaC1lZDI1NTE5AAAAIEXAMPLESECRETHALFBASE64'
+    'MATERIALHERE';
+
+/// Fragments of the malformed payload that must never appear in durable text.
+const List<String> _forbiddenMaterialFragments = [
+  'AAAAB3NzaC1lZDI1NTE5AAAAIEXAMPLESECRETHALFBASE64',
+  'EXAMPLESECRETHALFBASE64',
+  'SECRETHALF',
+  'BASE64MATERIALHERE',
+  'PRIVATE KEY',
+];
+
+/// A loopback HTTP server standing in for both the Secret Manager data plane and
+/// the workload-identity metadata server.
+class _StubSecretManager {
+  _StubSecretManager._(this._server);
+
+  final HttpServer _server;
+
+  int get port => _server.port;
+
+  static Future<_StubSecretManager> start(
+    Future<void> Function(HttpRequest request) handler,
+  ) async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final stub = _StubSecretManager._(server);
+    unawaited(
+      server.forEach((request) async {
+        try {
+          if (request.uri.path.contains('/computeMetadata/')) {
+            request.response
+              ..statusCode = 200
+              ..headers.contentType = ContentType.json
+              ..write(
+                jsonEncode({
+                  'access_token': 'stub-workload-identity-token',
+                  'expires_in': 3600,
+                }),
+              );
+          } else {
+            await handler(request);
+          }
+        } finally {
+          await request.response.close();
+        }
+      }),
+    );
+    return stub;
+  }
+
+  Future<void> close() => _server.close(force: true);
 }
