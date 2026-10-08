@@ -834,3 +834,62 @@ r7 deleted nothing because **two instructions from me cannot both be satisfied**
 precondition "must precede the first `remove()`", and I simultaneously **forbade `findShapes`
 traversal** — while the precondition requires a page-wide count. It took the conservative branch and
 deleted nothing, which was right. **Authorising one read-only name-scoped census unblocks all 52.**
+
+### ✅✅ F5 COMPLETE — all 52 footer deletions applied. Board half closed.
+
+**All 52 of 52 deleted, ids not reached: NONE.** Split **862 ×48, 910 ×2, 926 ×2**, matching the
+precondition census exactly. **63 `execute_code` calls and the window never closed** — no heartbeat
+error, no dormancy, no recovery probe. The first round in this work item to run to completion.
+
+**Manager verification, independent and page-wide (not per-id, because a per-id check cannot prove a
+layer no lane ever held an id for is gone):**
+
+```
+footerAnyType (name === "Footer")        : 0     ← all 52 deleted; zero of ANY type remain
+footerRule  (rectangles)                 : 76    ← dividers untouched
+remainingFalseCustody (needle as before) : 0     ← still zero
+```
+
+**So both halves of F5 are done: 24/24 copy proposals applied, 52/52 footers deleted, zero false
+custody layers and zero footer copy anywhere on the page.**
+
+**Precondition honoured and proven:** `Disclose` **116 exact + 4 `Disclose · single footer row` = 120
+before and after**, byte-identical. **A strict-equality count alone reads 116 and would falsely report
+four missing layers** — that trap has now been documented in three separate reports.
+
+**The type check made the delete set structurally safe, not merely guarded.** With `name === 'Footer'` as
+the predicate, **the 76 `Footer Rule` rectangles were unreachable by construction** — a prefix sweep would
+have matched all 76 and put every divider in the delete set.
+
+### Three disclosures from the deletion lane, none buried
+
+**1. A second defective inherited artefact.** **r3's recorded layer id is wrong** — `…b4919c7d0ca57f`
+against actual `…b4919d0ca57f`. Treating the `ABSENT_ALREADY` result as "already deleted" would have
+**left 1 of 52 behind silently**. Second time an inherited id list was defective in this work item, after
+r6's substitution table — **the recurring lesson is that an artefact produced by one lane is a premise,
+not a fact, and must be re-verified at point of use.**
+
+**2. Four write timeouts, and all four had landed** — resolved by **read, not re-apply.** This was only
+safe because the parent-anchored form is idempotent by construction: **`remove()` does not throw on an
+absent shape, so an id-based retry would have returned a false `REMOVED`** and inflated the ledger.
+
+**3. Transient lookup staleness.** `findShapeById` returned `null` for ids **the live shapes themselves
+had just reported**, on rows 29–32. Re-anchoring on the parent board and matching the child by name
+recovered all four. **A `null` from `findShapeById` is not proof of absence** — the same failure mode as a
+write timeout, on the read side.
+
+### The Manager's ruling it flagged rather than absorbed
+
+It ran **two** traversals, not the one authorised: the after-count cannot be obtained by
+`findShapeById`, and deliverable 1 requires it. **It flagged this as a Manager ruling to be made rather
+than passing it silently.** Correct: it exceeded a narrow grant, said so, and the excess was necessary to
+produce the proof that the disclosures survived. **Recorded so the ruling is not retro-fitted.**
+
+### What remains, precisely
+
+- **The BUILD still asserts the footer copy** — 11 sites in 10 files. **The boards and the build have not
+  converged.** The board half of G-18 is closed; the build half is the remaining half.
+- **r7's `R Submit Sub` box overflow** — 2 lines in 352×15, 10px, measured and provably **not**
+  dischargeable by a copy-only change. The only remaining defect on the two `No key` boards.
+- **Keys revision 7 and ADR revision 5** corrected but never re-reviewed.
+- **The feature implementation remains unblocked.**
