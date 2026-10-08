@@ -976,3 +976,82 @@ Still live in the built bundle. This is the **`H-R2` finding the mobile design r
 as production source, outside its `OWNED_PATHS`** — so it was never in the correction's scope, and the
 correction correctly did not touch it. It is false under `9417f8bf`'s A3 on the same axis as the four sites
 that were fixed. **It needs its own implementation lane.**
+
+## H-R2 closed — the last false key-custody claim is gone (main `a7b58b1`, 0/0)
+
+The QA sweep surfaced `product_detail_page.dart:614` still asserting *"The private half never leaves this
+device."* — the `H-R2` finding the mobile design review raised and routed as production source outside its
+own `OWNED_PATHS`, so the four-site fix in `c32f4f4` correctly never touched it. It was the **last** one:
+the four other `this device` strings (`sidebar.dart`, `decision_detail_page.dart` ×2,
+`defect_detail_page.dart`) describe session/decision authorship, not key custody, and are correct.
+
+Two corrections, each independently reviewed, integrated as a fast-forward (no squash — both commits were
+reviewed at their exact SHAs, so collapsing them would have destroyed that provenance):
+
+| SHA | Change | Review |
+|---|---|---|
+| `878c3327` | `:614` — one line of Dart | `APPROVE_CORRECTIONS` (string approved, merge withheld on R1) |
+| `a7b58b1e` | 2 regenerated golden PNGs | `APPROVE_CORRECTIONS`, `READY_FOR_MERGE: YES` |
+
+**The replacement is a composition, and that was deliberate.** Approved key B is *"One key, for this
+product only. The private half stays in the secret manager."* — copying it verbatim would have replaced
+one false claim with a different one, because `_AccessBlock` iterates `detail.repositories` and pairs each
+row with its own credential: the truth is one key **per repository**, not per product. That is the exact
+G6 error class the mobile review caught. So the true first sentence was preserved byte-for-byte and only
+the false custody clause swapped for the board-approved one. The implementer independently re-derived that
+`productId` is ownership-only under ADR 0018 A1 rather than taking the dispatch's word for it.
+
+### R1 — a green golden test did not mean a current golden
+
+The correction shipped and `flutter test` still passed, because
+`golden_tolerance.dart:43`'s `threshold = 0.005` absorbs the re-wrapped line: the old baseline sat
+**0.3172%** of pixels from the current render — inside tolerance, and therefore invisible. So the only
+visual guard on Product Detail mobile **no longer constrained this copy**, and a human golden reviewer
+would have been shown a **false security guarantee**. The first review caught this as HIGH regression and
+routed it rather than fixing it, `test/**` being PROHIBITED to that lane.
+
+**Regenerating the baseline was the fix. Widening or bypassing the comparator was not**, and it was not
+touched — blob-identical across all three revisions. What makes this worth recording: **a passing golden
+test is not evidence of a current baseline**, and the tolerance that makes golden tests tolerable is the
+same tolerance that hides a stale one.
+
+The regeneration changed **more than the string**, which the implementer's report attributed entirely to
+the re-wrap. Independently re-checked by pixel-diffing the nav band: old baseline has **0** badge pixels,
+new has **200** — the orange Needs-you `2` the old baselines never captured. Verified this is correct
+rather than damage: `200` is the corpus norm (10 goldens sit at `196`/`200`), the count is deterministic
+fixture data (`waitingOnYou: 2`), and the badge geometry matches all ten other AppShell baselines. The
+old pair was the outlier. Regeneration moved it onto the norm.
+
+### Manager integration note — the integrator lane returned a malformed result
+
+`integrate-fix-product-detail-custody` merged and pushed correctly (`main == origin/main == a7b58b1`, 0/0,
+fast-forward, no squash, nothing else swept in) but **emitted a truncated result and never wrote its
+report**, so per `aef-orchestrator` §16 it is **not counted as a valid integration result**. The gate
+evidence was therefore produced by the Manager directly, in the clean lane worktree at the same SHA, so
+the canonical checkout's long-standing dirty `test/failures/` artifacts were not risked:
+
+```
+format   Formatted 631 files (0 changed)      analyze  No issues found!
+tests    +190: All tests passed!              guard    all OK
+golden   product_detail_mobile_golden_test.dart  +2: All tests passed!
+```
+
+The canonical checkout's 49 modified tracked files (48 under `test/failures/` + `melos_shipit_platform.iml`)
+are dated **Oct 1–2**, predate this work, and were **not** touched — verified by mtime, not assumed.
+
+### Open follow-ups — neither blocks the merge
+
+- **F1 (MEDIUM, design-authority gap).** No board scopes copy to `:614`; the F5 registry's only read of
+  `product_detail_page.dart` is `:442-444`, a different string. What shipped is a **composition** — the
+  untouched true first sentence plus approved key B's clause — safe because it removes a false guarantee
+  and both halves are correct, but the string as a whole is unboarded and 3 chars longer with no board
+  sizing at this slot. Key A's `— never shown, logged or stored` was deliberately **not** extended here:
+  it exceeds the `L Sub` layer's verified 596×30 geometry and no board sized it for this slot, so adding
+  it would be design work smuggled into a correction.
+- **N2 (systemic, wider than first reported).** The first review scoped this to sixteen
+  `defect_*_mobile*.png` baselines that render through `AppShell` yet carry zero badge pixels. A wider
+  sweep of all 54 goldens finds **44** without the badge against **10** with it — so the stale-frame class
+  is systemic, not confined to the two files fixed here, and every one passes only because its pixel
+  delta sits under `0.005`. No CI check detects a tolerance-dominated golden. This is the same
+  `AUTOMATION_OPPORTUNITY` the correction lane reported, now with evidence, and it belongs to a lane
+  allowed to write `test/**` and CI.
