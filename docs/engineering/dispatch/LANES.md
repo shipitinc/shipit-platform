@@ -674,3 +674,50 @@ ids, with **no re-derivation at all**:
 - After each write, one `findShapeById` read-back. **A write timeout still does not mean the write
   failed** — read that shape before deciding, which is cheap with `findShapeById`.
 - Check `Disclose` (116 + 4) **before the first `remove()` and once at the end.**
+
+### ⚠ CORRECTION — "zero mutations" was wrong, and the Manager's own verification missed it
+
+`design-apply-f5-copy` r5 found, and the Manager has now **confirmed directly**, that **at least 3 of the
+24 approved copy proposals were already applied** — with no report claiming them.
+
+Confirmed by the Manager, reading the live file:
+
+| layer | live text | status |
+|---|---|---|
+| `BP · Rotate Key · Dark` `Art Sub` | `Generated on the server · the private half stays in the secret manager` | **string H — applied** |
+| `BP · Rotate Key · Dark` `Tech 0` | `GIT_PRODUCT_PR_SHIP_SSH · ed25519 · private half in the secret manager, never shown` | **applied** |
+| `BP · Rotate Key · Dark` `L Sub` | `A new keypair is generated on the server. You install the public half, then work resumes.` | **string F — applied** |
+| `BP · Rotate Key · Light` — all three | **identical to Dark** | **applied** |
+
+**So ≥6 of the 24 are done, and 18 remain unexamined.**
+
+**How this survived four rounds of "0 applied" plus an independent verification.** The Manager's
+connectivity check re-verified **52 footer layers, the y-distribution, and root children 164** — all
+**footer and page-level** figures. **The 24 copy layers were never among them.** A careful verification of
+the wrong quantity is not a verification; this is the same failure class as the ADR's §Status claiming
+review had not happened, and as `9417f8bf:116-119` being 43 lines off: **a check that confirms a
+neighbouring fact is not a check of the one at issue.**
+
+**Attribution is not established and is not guessed here.** Five reports and the git history record zero
+mutations; the file records six. No lane is accused. Note that the drafting lane had **no write grant**
+and reported zero mutations, and the strings match its proposals verbatim — which is suggestive of
+something, and Penpot has no version history, so it is not provable from inside.
+
+**What r5 did that was right, and is the reusable part:** its writes were placed behind a **pre-write
+guard asserting the recorded pre-state AND the absence of the post-state**, so all three writes
+**declined at the guard before the assignment statement**. There is therefore **no unknown-state write**,
+provable from the guard code. That guard fired with **no timeout to trigger it**, which is the whole point:
+it catches a silent concurrent edit that a timeout check cannot.
+
+**Also established this round:** **24 × O(1) `findShapeById` timed out too**, so r3's prescription was
+necessary but not sufficient — the safe batch is below 24, traversal or not.
+
+### State the next lane must read before writing
+
+- **≥6 of 24 copy layers already applied** (the `BP · Rotate Key` pair, all three layers each).
+- **18 copy layers unexamined** — not "unapplied", *unexamined*.
+- **52 footer deletions outstanding.** `Disclose` untouched at its recorded **116 + 4 = 120**.
+- **Build is merged** (`c32f4f4`), which **inverts the divergence**: the boards are now the *sole*
+  remaining surface asserting the false claim. That raises the cost of writing, not lowers it.
+- **Guard every write on pre-state AND absence-of-post-state**, and report any layer found already
+  correct as a finding rather than as a no-op.
