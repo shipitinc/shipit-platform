@@ -73,6 +73,116 @@ jobs:
       - name: Test packages
         run: melos run test --no-select
 
+  # The golden suite had no CI job at all until now. `test` above excludes
+  # control_plane because `dart test` cannot run a Flutter widget suite, and
+  # nothing else in .github/workflows rendered a single golden — so a stale
+  # baseline could not fail the build because nothing in the build looked at
+  # one. That is how the Product Detail baseline kept painting a retired
+  # security guarantee while the suite went green.
+  #
+  # The tolerant comparator is not the problem and is unchanged: it has to
+  # exist, because text rasterisation is not bit-stable across platforms. The
+  # problem is that "under tolerance" is reported as plain PASS, with no
+  # number, so nothing downstream can tell a re-wrapped line of text from a
+  # baseline that has drifted by 0.49% of its pixels.
+  #
+  # This job therefore does two things. It runs the suite through the real
+  # comparator (the pixel comparison is unchanged and still authoritative),
+  # and it then grades every committed baseline against a fresh render with
+  # test/tools/check_golden_domination.dart, which reports the delta as a
+  # number and fails when a baseline passes ONLY because the tolerance
+  # swallowed its drift.
+  #
+  # Two renders are taken because the discriminator between "changed a little,
+  # legitimately" and "stale and silent" is this machine's own noise floor: the
+  # largest delta between two independent renders of the same source. A single
+  # render cannot be trusted to define its own expected output.
+  #
+  # ## This job is pinned to the environment that rendered the baselines
+  #
+  # A golden baseline is pixel data. Its meaning includes the OS, the
+  # architecture and the Flutter SDK that rasterised it, so grading it against a
+  # render from a different machine does not give a weak answer — it gives a
+  # CONFIDENT WRONG one. The noise-floor guard cannot catch that: it compares
+  # two renders against each other, so on a mismatched runner they agree, the
+  # floor measures ~0, the guard passes, and the check reports 54 verdicts
+  # describing the runner rather than the baselines. That is the exact failure
+  # the check exists to eliminate, so the environment is a checked precondition
+  # instead of a comment.
+  #
+  #   runs-on: macos-26  actions/runner-images maps that label to macOS 26 on
+  #                     arm64. The baselines were rendered on macOS 26.6.2 /
+  #                     arm64. The previous macos-14 matched neither the OS
+  #                     nor the arch, and is marked deprecated upstream.
+  #
+  #   flutter-version  3.44.7  the SDK that produced the baselines. This
+  #                     deliberately differs from the repository-wide .fvmrc
+  #                     pin (3.44.0), which governs every other package and
+  #                     every developer's machine; changing that to satisfy this
+  #                     one job would move the SDK under the rest of the
+  #                     repository. The divergence is scoped to this job and is
+  #                     policed by the precondition below rather than by a
+  #                     comment: if this pin drifts off 3.44.7, the job refuses
+  #                     to grade instead of quietly describing another SDK.
+  #
+  # Authority: Human Decision 3e9dfb75-7bdf-4a8c-89dd-c76779a65371, RESOLVED /
+  # OPTION_C. The contract it pins is test/tools/golden_render_environment.json.
+  #
+  # Accepted commitment: this is a maintenance obligation. If 3.44.7 ever stops
+  # being installable here, the correct outcome is a job that REFUSES TO GRADE
+  # with a message saying so — not a relaxed threshold and not a red build
+  # blaming the baselines.
+  golden-integrity:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.7
+          channel: stable
+      - name: Disable Flutter analytics
+        run: flutter config --no-analytics
+      # Workspace resolution: the app is a member of the root melos workspace,
+      # so the root resolves every package including the Flutter SDK ones.
+      - name: Bootstrap
+        run: flutter pub get
+      # Before any render. A runner that cannot attest to the rendering
+      # environment must not spend three suite runs producing verdicts that
+      # describe it. Exits 3 and refuses; the grading step re-checks the same
+      # contract so the guarantee travels with the check itself.
+      - name: Refuse to grade unless this is the rendering environment
+        working-directory: apps/control_plane
+        run: dart run test/tools/check_render_environment.dart
+      - name: Snapshot the committed baselines
+        run: cp -R apps/control_plane/test/goldens "$RUNNER_TEMP/baseline"
+      # The real comparator, unchanged: this is where a genuine visual
+      # regression still fails on pixels alone.
+      - name: Run the control plane suite
+        working-directory: apps/control_plane
+        run: flutter test
+      - name: Render pass 1
+        working-directory: apps/control_plane
+        run: flutter test --update-goldens
+      - name: Keep render pass 1
+        run: cp -R apps/control_plane/test/goldens "$RUNNER_TEMP/pass1"
+      - name: Render pass 2
+        working-directory: apps/control_plane
+        run: flutter test --update-goldens
+      - name: Keep render pass 2
+        run: cp -R apps/control_plane/test/goldens "$RUNNER_TEMP/pass2"
+      # Grades the snapshot, not the working tree, so this step can never
+      # commit or bless a render. It fails with the file name and the measured
+      # delta for every baseline that is not current, and refuses (exit 3)
+      # before emitting a single verdict if the environment is not the one the
+      # baselines were rendered on.
+      - name: Fail on a tolerance-dominated golden
+        working-directory: apps/control_plane
+        run: |
+          dart run test/tools/check_golden_domination.dart \
+            --baseline="$RUNNER_TEMP/baseline" \
+            --current="$RUNNER_TEMP/pass1" \
+            --repeat="$RUNNER_TEMP/pass2"
+
   server-build:
     runs-on: ubuntu-latest
     steps:

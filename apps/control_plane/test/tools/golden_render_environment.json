@@ -1,0 +1,24 @@
+{
+  "_what_this_is": "The rendering environment that owns apps/control_plane/test/goldens/**. A baseline is pixel data: it is evidence about the current render only on the platform and Flutter SDK that produced it. test/tools/golden_render_environment.dart reads this file and REFUSES to grade anywhere else.",
+
+  "_authority": "Human Decision 3e9dfb75-7bdf-4a8c-89dd-c76779a65371, RESOLVED / OPTION_C, 2026-10-08: 'Pin CI to the exact rendering environment', and make that environment a checked precondition the check enforces before it grades anything.",
+
+  "_what_is_enforced": [
+    "osFamily, osMajor, architecture, flutterVersion - all four must match or the check refuses.",
+    "maxNoiseFloorRatio - two renders of the same source on the pinned environment must agree byte-for-byte. A non-zero floor here means the pinned environment has stopped reproducing the baselines, which is drift, not noise."
+  ],
+
+  "_what_is_recorded_but_not_enforced": "renderedOsVersion / renderedOsBuild are the exact OS patch level of the rendering machine. GitHub updates the macos-26 image weekly, so the patch level cannot be pinned by any workflow and pinning it in the precondition would make the gate refuse to grade on every image rollout. It is recorded so drift is visible in the log instead of hidden.",
+
+  "osFamily": "macos",
+  "osMajor": 26,
+  "architecture": "arm64",
+  "flutterVersion": "3.44.7",
+  "maxNoiseFloorRatio": 0.0,
+
+  "renderedOsVersion": "26.6.2",
+  "renderedOsBuild": "25G83",
+  "renderedFlutterDartSdk": "3.12.2",
+
+  "_runner_note": ".github/workflows/ci.yaml runs this job on runs-on: macos-26, which actions/runner-images maps to macOS 26 on arm64, and pins that job's Flutter to 3.44.7. That job-level pin deliberately differs from the repository-wide .fvmrc pin (3.44.0), which governs every other package and every developer. The two must not be conflated; the divergence is deliberate and is policed by this precondition rather than by a comment."
+}
