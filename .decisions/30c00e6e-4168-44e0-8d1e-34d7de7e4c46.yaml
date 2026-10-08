@@ -1,0 +1,152 @@
+# human-decision.yaml
+decision_id: 30c00e6e-4168-44e0-8d1e-34d7de7e4c46
+type: INFRASTRUCTURE
+status: PENDING
+question: >-
+  Design Revision F38E4B34 is RISK_LEVEL 3 and requires Gate D4 approval. Its re-sequencing
+  means the analyzer stops gating QA server boot — model-derived schema drift would then
+  surface only as a log warning. Is that trade accepted?
+context:
+  summary: >-
+    This is the Gate D4 approval for the startup restructure authorised by 6d2bfffe
+    (OPTION_B). The design agent read Serverpod 3.4.13 source and found the dispatch's
+    ordering premise does not survive contact with the code: verifyDatabaseIntegrity is called
+    OUTSIDE the if (applyMigrations) guard — which is why omitting the flag produced an
+    identical failure — and the only fatal branch is runMode == 'development'. The bootstrap
+    tool already runs Serverpod(['-m','test']), so it has always tolerated the analyzer
+    mismatch. The consequence: on a chain-migrated database the analyzer never passes, so the
+    literal reading "run the bootstrap after the analyzer passes" is unsatisfiable. The design
+    re-sequences to: run the bootstrap as its own stage before the server, in a run mode where
+    the analyzer does not gate, then start the server normally.
+
+    That is the cost, stated plainly rather than buried: in QA the analyzer stops being a
+    boot gate. Model-derived drift — a table or column the server expects but the database
+    lacks — would be caught by the analyzer today and would instead surface only as a log
+    warning. This is the price of OPTION_B, and the design agent explicitly recommends it be
+    put to the human as a cost rather than a detail.
+
+    Two further items ride with the design and need their own authorisation:
+      - DL-2, a separately discovered defect: docker/compose.qa.yaml applies NO bootstrap at
+        all. A fresh QA database is therefore silently unenforced — analyzer-clean but missing
+        all six hand-maintained objects. The analyzer passing is currently evidence of an
+        un-enforced schema, not a correct one.
+      - G3: adding a top-level name: to the compose file would silently re-home the live QA
+        stack, leaving data on disk as docker_postgres_data_qa while compose looks for a new
+        project name. The design deliberately REJECTED this and put explicit -p on the qa-*
+        targets instead, leaving re-homing as a human-authorised operation.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: design-qa-startup-restructure
+    item_ref: >-
+      Design Revision F38E4B34-5619-403D-B480-9F4D89AE8D1E, revision 1, branch
+      design/qa-startup-restructure — awaiting Gate D4.
+  evidence:
+    documents:
+      - type: OTHER
+        id: revision
+        url: docs/engineering/dispatch/tasks/design-qa-startup-restructure/DESIGN_REVISION.md
+      - type: OTHER
+        id: metadata
+        url: docs/engineering/dispatch/tasks/design-qa-startup-restructure/design-revision-metadata.yaml
+      - type: OTHER
+        id: authority
+        url: .decisions/6d2bfffe-1631-498a-b053-4edaf8bd3048.yaml
+    quantitative_data:
+      - metric: RISK_LEVEL assigned by the design agent
+        value: "3 — mapped from a UI-oriented scale; the decision assigned MEDIUM"
+        source: design-revision-metadata.yaml RISK_RATIONALE
+      - metric: Hand-maintained objects silently absent from compose.qa.yaml
+        value: "6 — zero schema_bootstrap references under docker/"
+        source: design agent DL-2
+      - metric: Serverpod fatal branch
+        value: "config.runMode == 'development' (serverpod.dart:894); verifyDatabaseIntegrity unconditional (:881)"
+        source: Serverpod 3.4.13 source read by the design agent
+      - metric: runMode consumers
+        value: "every consumer is an equality test against 'development'; no exhaustive switch"
+        source: design agent DL-3, version-pinned
+      - metric: Indexes per migration file
+        value: "2, but in DIFFERENT migrations (20260920232118956, 20261006150645000) — corrects the dispatch's '2 in migration.sql'"
+        source: design agent DL-7
+    qualitative_tradeoffs:
+      - dimension: Safety property traded
+        option_a: Accept analyzer-stops-gating
+        option_b: Require the analyzer to keep gating
+        assessment: >-
+          Option A removes the boot failure entirely and is the point of OPTION_B, at the
+          cost of losing drift detection at boot in QA. Option B keeps that safety property,
+          which means the analyzer must be taught to know the hand-maintained objects — the
+          6d2bfffe OPTION_C the human did not choose, and the highest-risk change of all since
+          it alters migration tooling every environment depends on.
+      - dimension: Unenforced-schema defect
+        option_a: Fix DL-2 as part of this work
+        option_b: Track DL-2 separately
+        assessment: >-
+          DL-2 means a fresh QA database is currently unenforced and looks correct. That is
+          the more urgent of the two problems: it is a live false-assurance in QA today,
+          independent of the analyzer trade. Bundling it fixes the false assurance now;
+          separating it keeps this change smaller and reviewable.
+      - dimension: Re-homing the live stack
+        option_a: Authorise re-homing as a human operation
+        option_b: Keep explicit -p only
+        assessment: >-
+          Re-homing gives the QA stack a name that is not the live stack's project, removing
+          a standing footgun where an unguarded compose command reaches QA data. It must be a
+          human-authorised operation because it moves data-bearing volumes, and this
+          repository has already lost a QA database to a compose command.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Accept the trade and approve the design, and fix DL-2 within the same work item. The
+      analyzer-stops-gating cost is bounded to QA and is preferable to a boot mode whose only
+      recovery destroys data, which is the failure OPTION_B was chosen to remove. DL-2 is
+      included rather than deferred because a QA database that reports clean while missing all
+      six hand-maintained objects is a false assurance operating right now, and the change
+      that adds the bootstrap stage is exactly where it gets fixed. Re-homing stays a separate
+      human-authorised operation, which the design already respects.
+    confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Approve RISK 3, fix DL-2 in the same lane
+    description: >-
+      Approve the design including the analyzer-stops-gating trade, and require the
+      compose.qa.yaml bootstrap omission (DL-2) to be fixed within this work item.
+    implications: >-
+      Chain-migrated databases boot without data loss, and QA stops reporting false assurance
+      about an unenforced schema. In QA the analyzer no longer gates boot, so model-derived
+      drift surfaces as a log warning. Re-homing remains separately human-authorised.
+    estimated_effort: "design approved; implementation plus review still to come"
+    risk_level: MEDIUM
+  - option_id: OPTION_B
+    label: Approve RISK 3, track DL-2 separately
+    description: >-
+      Approve the design as designed and record the missing bootstrap in compose.qa.yaml as
+      its own work item.
+    implications: >-
+      Keeps this change smaller and independently reviewable, but leaves QA currently able to
+      report a clean analyzer over an unenforced schema until the separate item is picked up.
+    estimated_effort: "design approved; DL-2 becomes new work"
+    risk_level: MEDIUM
+  - option_id: OPTION_C
+    label: Reject the re-sequencing; keep the analyzer gating
+    description: >-
+      Reject the run-mode reading and require a design where the analyzer still gates, which
+      means teaching the generator about the hand-maintained objects (6d2bfffe OPTION_C).
+    implications: >-
+      Preserves boot-time drift detection, but reverses the human's earlier choice and lands
+      the most invasive change in the option set: migration tooling every environment depends
+      on. Reopens 6d2bfffe OPTION_B.
+    estimated_effort: "new design from scratch plus generator change"
+    risk_level: HIGH
+  - option_id: OPTION_D
+    label: Defer the startup restructure
+    description: >-
+      Leave the design unapproved and the QA boot fault unfixed; keep the documented invariant
+      and recovery instruction as the mitigation.
+    implications: >-
+      No change now. Any future migration touching the hand-maintained objects leaves QA with a
+      server that will not boot and a single documented recovery that destroys data.
+    estimated_effort: "none"
+    risk_level: MEDIUM
+created_by: orchestrator-main
+created_at: 2026-10-08T05:05:00Z
+updated_at: 2026-10-08T05:05:00Z

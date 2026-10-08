@@ -147,3 +147,38 @@ consequences are accepted explicitly rather than discovered late:
 
 All three tamper-checks pass: each `selected_option` is one of the option_ids as originally presented, and
 no question or option was altered after presentation.
+
+## Two more decisions filed 2026-10-08 — both PENDING
+
+Raised by continuing after the first round, not by the first round itself.
+
+| decision_id | type | question (one line) | source |
+|---|---|---|---|
+| `30c00e6e-4168-44e0-8d1e-34d7de7e4c46` | INFRASTRUCTURE | Design Revision F38E4B34 is RISK_LEVEL 3 and needs Gate D4 — accept that the analyzer stops gating QA boot? | `design-qa-startup-restructure` |
+| `3e9dfb75-7bdf-4a8c-89dd-c76779a65371` | INFRASTRUCTURE | Golden gate needs a rendering environment CI does not provide — land the 40 baselines now and hold the wiring, or ship the gate anyway? | `review-fix-golden-domination-n2` (`DO_NOT_MERGE`, `HUMAN_DECISION_REQUIRED: YES`) |
+
+**Manager self-correction, recorded.** Both worktrees were dispatched at `1657082`, which predates
+the resolution commit `a8a990b`, so each lane's worktree showed its decision as `PENDING`. **Both
+agents detected this independently and worked against the resolved object rather than the stale copy**
+— one recorded it as `DL-4`, the other verified against `main`. The dispatch base was wrong; the lanes
+were right. Both branches were rebased onto `a8a990b` and the rebase verified content-neutral
+(all 45 changed files byte-identical blobs), so their reported provenance is now sound.
+
+**What the two lanes found that the Manager's own framing had wrong**, recorded because each refuted a
+premise the dispatch asserted:
+
+- The golden staleness count is **40, not 44** — four of the 44 were byte-identical to a fresh render.
+  Absence-of-badge is not a staleness test. Nor is presence-of-badge a coverage count: **26** goldens
+  carry a badge, not 54, because 26 desktop frames render the count as text in the sidebar rail rather
+  than as an 18x18 disc.
+- **The golden suite was never run by any CI job** — 0 of 5 workflows, and `pubspec.yaml:87-98` already
+  documented it as unreachable from melos. The tolerance was not merely hiding drift; nothing was
+  checking. That is a pre-existing gap now re-activated, not a surprise.
+- The startup fault's **ordering premise does not survive Serverpod's source**: `verifyDatabaseIntegrity`
+  is called outside the `applyMigrations` guard, and the only fatal branch is `runMode == 'development'`.
+  The bootstrap already runs in `test` mode and has always tolerated the mismatch. On a chain-migrated
+  database the analyzer never passes, so "run the bootstrap after the analyzer" is unsatisfiable as
+  literally written.
+- **`docker/compose.qa.yaml` applies no bootstrap at all** (0 references under `docker/`). A fresh QA
+  database is silently unenforced — analyzer-clean while missing all six hand-maintained objects. The
+  analyzer passing is currently evidence of an un-enforced schema, not a correct one.

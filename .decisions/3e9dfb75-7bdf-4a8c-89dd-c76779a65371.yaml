@@ -1,0 +1,154 @@
+# human-decision.yaml
+decision_id: 3e9dfb75-7bdf-4a8c-89dd-c76779a65371
+type: INFRASTRUCTURE
+status: PENDING
+question: >-
+  The new golden-domination gate must render goldens in CI, but the baselines were rendered on
+  a different OS, architecture and Flutter version than a GitHub runner provides. Should the
+  40 verified-current baselines land now with the gate held back, or should the gate ship
+  anyway with a calibrated runner?
+context:
+  summary: >-
+    The cff0e948 implementation added a tolerance-domination check and regenerated 40 stale
+    goldens. Independent review returned DO_NOT_MERGE on ONE axis and carved out the rest: the
+    40 baselines are independently verified current — the reviewer graded the whole corpus
+    (40 TOLERANCE-DOMINATED / 14 CURRENT) and confirmed all 40 are byte-identical to a fresh
+    render of current source, twice, independently. The blocker is the CI wiring.
+
+    Three environment axes are unmatched. The baselines were rendered on macOS 26.6.2 / arm64 /
+    Flutter 3.44.7. The proposed job uses macOS 14 / Flutter 3.44.0, on an image
+    actions/runner-images marks deprecated. The implementer had raised only the Flutter
+    version axis and treated macOS as sufficient; the reviewer showed it is not.
+
+    The dangerous half is not that the job would go red. It is that it would go red in a way
+    that produces false assurance if it does not. The check's noise-floor guard renders twice
+    and compares the two renders against each other. On a different platform those two renders
+    AGREE WITH EACH OTHER, so the guard passes and the check confidently reports 54 verdicts
+    describing the runner rather than the baselines — which is precisely the failure the check
+    exists to prevent. Shipping it silently inverts its own purpose.
+
+    Two further findings from the same review, recorded because they change the shape of the
+    fix: the implementer's claim that this knowledge was persisted is FALSE — the noise-floor
+    tests compare a directory with itself and can never fail, so the learning is documented but
+    not executable; and report provenance names dead pre-rebase SHAs.
+  blocking_work_item:
+    item_type: FEATURE
+    item_id: cff0e948-80a5-48ab-9a7b-f2a99be6f870
+    item_ref: >-
+      Golden-baseline integrity — commit c68016a (check + CI) is blocked; commit f68a27a (the
+      40 regenerated baselines) is independently approvable and should not be held hostage.
+  evidence:
+    documents:
+      - type: OTHER
+        id: review
+        url: docs/engineering/dispatch/tasks/review-fix-golden-domination-n2/report.md
+      - type: OTHER
+        id: impl-report
+        url: docs/engineering/dispatch/tasks/fix-golden-domination-n2/report.md
+      - type: OTHER
+        id: pubspec-gap
+        url: apps/control_plane/pubspec.yaml
+    quantitative_data:
+      - metric: Baselines rendered on
+        value: "macOS 26.6.2 / arm64 / Flutter 3.44.7"
+        source: review-fix-golden-domination-n2
+      - metric: Proposed CI job on
+        value: "macOS 14 / Flutter 3.44.0, on a deprecated actions/runner-images entry"
+        source: review-fix-golden-domination-n2
+      - metric: Unmatched environment axes
+        value: "3 — OS, architecture, Flutter version"
+        source: review-fix-golden-domination-n2
+      - metric: Corpus grading at BASE
+        value: "40 tolerance-dominated / 14 current"
+        source: reviewer, full-corpus grade against fresh renders
+      - metric: Reproduced check behaviour
+        value: "stale golden reverted -> flutter test exit 0 (+207); check exit 1 naming defect_list_empty_mobile.png 0.0851%; restore -> 54/54 PASS"
+        source: reviewer, independently reproduced
+      - metric: Badge arithmetic
+        value: "26 @1280x900 + 26 @390x844 + 2 @390x1080 = 54; badge 171 px on 26"
+        source: reviewer; the dispatch's 196/200 px figure did not reproduce
+      - metric: Golden suite in CI before this change
+        value: "0 of 5 workflows ran it; pubspec.yaml:87-98 already documented it as unreachable from melos"
+        source: reviewer across all five workflows at BASE
+    qualitative_tradeoffs:
+      - dimension: Splitting the commits
+        option_a: Land the 40 baselines now, hold the gate
+        option_b: Ship both together once the runner is calibrated
+        assessment: >-
+          The 40 baselines are verified current and strictly better than what they replace —
+          they replace baselines that were silently stale. Holding them delays that improvement
+          for a problem that lives entirely in the wiring commit. Holding both means shipping a
+          known-bad state of the visual baselines for longer than necessary.
+      - dimension: False assurance risk
+        option_a: Make the environment a checked precondition
+        option_b: Ship the gate and let the first run go red
+        assessment: >-
+          A gate that confidently describes the wrong platform is worse than no gate, because
+          it converts an unknown into a false assurance. If the job cannot attest to the
+      environment the baselines were rendered in, it should refuse to grade rather than grade
+      something else. Letting it run red is at least honest, but leaves a permanently red
+      required gate whose owner nobody has named.
+      - dimension: Fixing the noise-floor tests
+        option_a: Rewrite them in the same lane
+        option_b: Separate follow-up
+        assessment: >-
+          The tests as written compare a directory with itself and can never fail, so they
+          attest to nothing. Rewriting them is small and belongs with the gate they support.
+          Deferring leaves executable-looking knowledge that proves nothing, which is the same
+          failure this whole work item exists to remove.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Split the commits. Land the 40 regenerated baselines now — they are independently verified
+      current and are a strict improvement over silently-stale baselines — and hold the CI
+      wiring until the job can attest to the environment the baselines were rendered in. On the
+      held gate, make the environment a checked precondition rather than a comment, so an
+      uncalibrated runner refuses to grade instead of confidently describing itself.
+    confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Split: land baselines now, gate after calibration
+    description: >-
+      Integrate the 40 regenerated baselines as a verified improvement. Hold the CI wiring
+      commit until the job can attest to the rendering environment, at which point the check
+      refuses to grade on an uncalibrated runner rather than describing the runner.
+    implications: >-
+      Closes the silent-staleness debt in the baselines now without shipping a gate that can
+      produce false assurance. Requires a follow-up for the wiring, and the noise-floor tests
+      should be rewritten with it since they currently attest to nothing.
+    estimated_effort: "integration now; wiring held for a calibration lane"
+    risk_level: LOW
+  - option_id: OPTION_B
+    label: Ship both, gate runs red first
+    description: >-
+      Integrate both commits and accept that the required job is predicted-red on first run
+      until the runner is corrected.
+    implications: >-
+      Complete in one step and no follow-up is forgotten, but ships a red required gate with
+      no named owner, and leaves the false-assurance path open in the meantime.
+    estimated_effort: "integration plus CI correction"
+    risk_level: MEDIUM
+  - option_id: OPTION_C
+    label: Pin CI to the exact rendering environment
+    description: >-
+      Configure the job to match the baselines exactly — macOS arm64 and Flutter 3.44.7 — and
+      add an explicit environment precondition the check enforces before grading.
+    implications: >-
+      Makes the gate trustworthy rather than merely present, and the precondition prevents the
+      self-describing-renderer failure. Constrains CI to a specific runner image, which is a
+      maintenance commitment, and 3.44.7 may not be available on the runner.
+    estimated_effort: "CI configuration plus a precondition in the check"
+    risk_level: LOW
+  - option_id: OPTION_D
+    label: Hold everything until the runner is settled
+    description: >-
+      Integrate neither commit; settle the runner environment first and land both together.
+    implications: >-
+      One coherent change with no split, but the 40 known-stale baselines stay in the
+      repository for longer, which is the condition that let a retired security claim reach a
+      human golden reviewer.
+    estimated_effort: "nothing now; full integration later"
+    risk_level: MEDIUM
+created_by: orchestrator-main
+created_at: 2026-10-08T05:05:00Z
+updated_at: 2026-10-08T05:05:00Z
