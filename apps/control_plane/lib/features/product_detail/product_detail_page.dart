@@ -611,7 +611,7 @@ class _AccessBlock extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          'One key per repository. The private half never leaves this device.',
+          'One key per repository. The private half stays in the secret manager.',
           style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
         ),
         const SizedBox(height: 12),
