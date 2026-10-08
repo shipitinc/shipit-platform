@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 6d2bfffe-1631-498a-b053-4edaf8bd3048
 type: INFRASTRUCTURE
-status: PENDING
+status: RESOLVED
 question: >-
   Any QA or staging database that carries the hand-maintained schema objects makes the
   Serverpod server refuse to boot, because the generated definition.sql structurally cannot
@@ -136,6 +136,53 @@ options:
       migration, so it is unusable for staging and must never reach production.
     estimated_effort: "small"
     risk_level: HIGH
+resolution:
+  selected_option: OPTION_B
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-08T04:26:00Z
+  rationale: >-
+    Restructure server startup so the schema bootstrap runs after the analyzer, letting a
+    chain-migrated database boot without data loss. The human chose this over the Manager's
+    recommended OPTION_A (document plus preflight check) — recorded plainly because it departs
+    from the recommendation and is the more invasive option.
+
+    The reasoning is sound on its own terms: OPTION_A makes a confusing failure actionable but
+    leaves the failure in place, whereas this removes the condition entirely. A chain-migrated
+    database then boots like any other, and no operator is ever placed in the position where
+    the only recovery destroys data.
+
+    Consequences accepted by this choice, recorded so they are not discovered late:
+
+      - It touches docker entrypoint and compose ordering. Compose files are read by EVERY
+        command that touches them, and `AGENTS.md` § Shared Docker state records that a
+        compose file without an explicit project name resolves to project `docker`, which is
+        the live QA stack's project. Any edit here is production-promotion-affecting.
+      - Therefore it does NOT proceed as a direct implementation lane. Per this decision's own
+        implications it warrants its own design and review cycle first, and that is the
+        sequenced next step rather than an assumption.
+      - The failing behaviour being fixed must remain reproducible until the change is verified,
+        so the pre-change analyzer failure needs capturing as evidence BEFORE the startup
+        sequence is modified. Verification must prove a chain-migrated database boots, which
+        cannot be shown on the current fresh QA database.
+      - `make clean`, `qa-down`, and any bare `docker compose … down -v` remain unsafe
+        regardless of this outcome; nothing here changes the volumes.
+  follow_up_actions:
+    - action: >-
+        Capture the current analyzer failure against a chain-migrated database as reproducible
+        evidence BEFORE any startup change, so the fix can be shown to address an observed
+        failure rather than an assumed one. This needs a disposable environment, never the live
+        QA stack.
+      owner: orchestrator-main
+    - action: >-
+        Dispatch a design lane for the startup restructure covering entrypoint ordering,
+        compose project naming, and the interaction with CI's already-correct bootstrap step.
+        Production-promotion-affecting, so design and independent review precede implementation.
+      owner: orchestrator-main
+    - action: >-
+        Keep the documented invariant and a recovery instruction in the QA runbook REGARDLESS
+        of the outcome of this restructure. A compose file alone does not make the constraint
+        discoverable to an operator, and the runbook cost is negligible.
+      owner: orchestrator-main
 created_by: orchestrator-main
 created_at: 2026-10-08T04:20:00Z
-updated_at: 2026-10-08T04:20:00Z
+updated_at: 2026-10-08T04:26:00Z

@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 1ed57d5d-b1d4-4956-a428-0cf4df98bc6b
 type: DESIGN
-status: PENDING
+status: RESOLVED
 question: >-
   Product Detail's Access block ships the string "One key per repository. The private half
   stays in the secret manager." at product_detail_page.dart:614, but no Penpot board
@@ -127,6 +127,43 @@ options:
       an inconsistency in reassurance copy across the product.
     estimated_effort: "one-line deletion plus golden refresh and review"
     risk_level: MEDIUM
+resolution:
+  selected_option: OPTION_A
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-08T04:26:00Z
+  rationale: >-
+    Ratified as an accepted deviation. The human selected the Manager's recommendation:
+    accept "One key per repository. The private half stays in the secret manager." as correct
+    and record it explicitly as a deviation from board-backed copy, leaving the boards
+    untouched.
+
+    ACCEPTED DEVIATION, recorded so it is auditable rather than routine: the shipped string at
+    product_detail_page.dart:614 has NO board copy scoped to its slot. It is a composition of
+    (a) the pre-existing first sentence, retained because it is factually true for this block
+    — _AccessBlock pairs each detail.repositories row with its own credential, so the truth is
+    one key per repository — and (b) the custody clause from approved F5 registry key B, which
+    is byte-exact and already ships board-confirmed on four boards.
+
+    The deviation is bounded and its terms are fixed: it applies to this one slot; it does not
+    license composing shipped copy from approved fragments elsewhere; and it does not close the
+    question of whether Product Detail's Access block is a designed surface at all. Should a
+    board later be given that block, board copy supersedes this string.
+
+    Both independent reviews approved the composition on the merits and both recorded that the
+    absence of board coverage is a design-authority gap rather than a code defect. This
+    resolution supplies the design authority they could not.
+  follow_up_actions:
+    - action: >-
+        Record the deviation in the Add Product work item's ledger entry for the H-R2
+        correction, stating that :614 is a composed value with no board counterpart, so a later
+        board pass supersedes it rather than merely aligning with it.
+      owner: orchestrator-main
+    - action: >-
+        Do not extend key A's "— never shown, logged or stored" clause to this slot without a
+        board pass. It exceeds the 596x30 geometry the analogous L Sub layer is sized for, and
+        no board sized it here; adding it during a correction is how unapproved copy reaches
+        production.
+      owner: orchestrator-main
 created_by: orchestrator-main
 created_at: 2026-10-08T04:20:00Z
-updated_at: 2026-10-08T04:20:00Z
+updated_at: 2026-10-08T04:26:00Z

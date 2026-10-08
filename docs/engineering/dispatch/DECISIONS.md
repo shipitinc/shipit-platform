@@ -123,3 +123,27 @@ records a choice the Manager may not make unilaterally.
 
 None of the three is a `G1`–`G5` gate violation or a stop condition for the Add Product
 orchestration: safe lanes continue while they are pending.
+
+## Resolved 2026-10-08 — all three, via the structured question UI
+
+| decision_id | selected | one-line effect |
+|---|---|---|
+| `1ed57d5d-b1d4-4956-a428-0cf4df98bc6b` | **OPTION_A** | `:614` **ratified as an accepted deviation**. Bounded: applies to this slot only, does not license composing shipped copy elsewhere, and a future board pass **supersedes** rather than merely aligns with it. Key A's `— never shown, logged or stored` explicitly NOT extended without a board pass. |
+| `cff0e948-80a5-48ab-9a7b-f2a99be6f870` | **OPTION_A** | Add a tolerance-domination CI check **and** regenerate the 44 stale goldens. Comparator itself untouched — it classifies, it does not weaken. |
+| `6d2bfffe-1631-498a-b053-4edaf8bd3048` | **OPTION_B** | **Restructure server startup** so the bootstrap runs after the analyzer — **the human's choice, not the Manager's recommendation**, and the more invasive option. |
+
+**On `6d2bfffe`, recorded because it departs from the recommendation.** The human chose to remove the
+failure entirely rather than make it actionable. That is sound reasoning and it is honoured. Two
+consequences are accepted explicitly rather than discovered late:
+
+- Compose and entrypoint ordering are **production-promotion-affecting**. `AGENTS.md` § Shared Docker
+  state records that a compose file with no explicit project name resolves to project `docker`, which is
+  the **live QA stack's project** — so a careless edit here reaches the stack this repository has already
+  lost a database to. **Design and independent review precede implementation**; this does not run as a
+  direct implementation lane.
+- Verification cannot be done on the current fresh QA database, because a fresh database has none of the
+  hand-maintained objects and therefore does not exhibit the fault. The failing behaviour must be
+  reproduced in a **disposable** environment first — never the live QA stack.
+
+All three tamper-checks pass: each `selected_option` is one of the option_ids as originally presented, and
+no question or option was altered after presentation.

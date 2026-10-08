@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: cff0e948-80a5-48ab-9a7b-f2a99be6f870
 type: OTHER_CONSEQUENTIAL
-status: PENDING
+status: RESOLVED
 question: >-
   44 of the repository's 54 golden baselines pass only because their pixel delta sits
   inside the 0.005 tolerance, so a stale baseline is indistinguishable from a current one.
@@ -114,6 +114,40 @@ options:
       human reviewer.
     estimated_effort: "none"
     risk_level: MEDIUM
+resolution:
+  selected_option: OPTION_A
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-08T04:26:00Z
+  rationale: >-
+    Adopt the durable fix and clear today's debt: implement a CI check that fails when a golden's
+    pixel delta is dominated by the tolerance, and regenerate the 44 stale baselines so no
+    baseline in the repository is knowingly out of step with its source.
+
+    The human accepted the Manager's recommendation over the cheaper "check only" option,
+    choosing to leave no known-stale artifact behind. That matters because the whole failure
+    mode here is a stale artifact reading as a passing one — leaving 44 of them, now labelled,
+    would preserve the exact condition that let a retired security guarantee reach a human
+    golden reviewer.
+
+    Scope discipline recorded for the implementing lane: the comparator itself is NOT the
+    defect and is not to be widened, tightened, or bypassed. threshold 0.005 exists because
+    platform font rasterisation makes byte equality impractical. The check must classify, not
+    weaken.
+  follow_up_actions:
+    - action: >-
+        Dispatch one lane owning apps/control_plane/test/** and the CI workflow to implement
+        the tolerance-domination check and regenerate the 44 baselines. Report the regenerated
+        file list explicitly so the 44-binary diff is reviewable by name rather than content.
+      owner: orchestrator-main
+    - action: >-
+        Require the lane to assert that golden_tolerance.dart is unchanged and that the golden
+        suite still runs a real byte comparison — the same two prohibitions that held during
+        the H-R2 golden refresh.
+      owner: orchestrator-main
+    - action: >-
+        Independent-review the result before integration, since the lane writes CI gates that
+        every future build depends on.
+      owner: orchestrator-main
 created_by: orchestrator-main
 created_at: 2026-10-08T04:20:00Z
-updated_at: 2026-10-08T04:20:00Z
+updated_at: 2026-10-08T04:26:00Z
