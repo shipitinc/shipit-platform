@@ -307,3 +307,22 @@ byte-identical by putting the run-mode override in compose rather than the Docke
 production's run mode stays whatever its CMD says, which is nothing. Production needs its own decision,
 and it is filed as SECURITY because the unenforced state permits a data-integrity violation rather than
 merely a risk of one.
+
+## Resolved 2026-10-08 (fourth round) — production deferred, not fixed
+
+`f691aeb5-caa9-4019-942f-5fb9a5e6cdd1` → **OPTION_D**: record and defer past this work item.
+
+Recorded as a **first-class tracked item** in `docs/engineering/WORK_STATE.md` with a named owner,
+`RISK: HIGH (accepted knowingly)`, and `DETECTED BY: nothing in this repository`, because a gap nobody
+can detect is not mitigated by existing in a decision file. Accepted by the deferral, stated plainly:
+
+- Production continues to boot **unenforced** — `product_credential_active_repository_unique` does not
+  exist there, so **one active credential per repository is not enforced in production**.
+- The latent boot failure remains: applying the bootstrap takes the service down.
+- Nothing detects either state, and `docs/deployment/local-qa.md` now carries an explicit warning against
+  applying the bootstrap to production, since that is the change most likely to be attempted by someone
+  trying to fix the gap.
+
+Promotion carries a precondition: the Add Product work item must not be promoted with this invariant
+unenforced without explicit human re-authorisation, and the decision re-opens immediately if production
+has already been deployed.

@@ -874,3 +874,56 @@ never applied**. That is a genuine, consequential gap — worse than the false o
 - **OWNED_PATHS must widen**: no longer control-plane-only. Needs `apps/server/**` and possibly a new package
   for the key service. A server-side secret-storage decision (at-rest protection, host permissions) must be
   designed explicitly, not defaulted.
+
+---
+
+## 🔴 OPEN — PRODUCTION runs unenforced. Deferred by human decision, NOT mitigated.
+
+`f691aeb5-caa9-4019-942f-5fb9a5e6cdd1` **RESOLVED / OPTION_D** — record and defer past the Add Product
+work item. This is the single most consequential open item in the repository.
+
+```
+STATE:          OPEN — production change deferred, defect live
+OWNER:          engineering-manager
+RISK:           HIGH (accepted knowingly)
+DETECTED BY:    nothing in this repository — see below
+```
+
+**The gap.** Production's server image is built by `.github/workflows/release.yaml:18-26` from
+`docker/Dockerfile.server` (the `-f` path resolves against the CWD after `cd docker`), whose
+`CMD ["dart","bin/main.dart","--apply-migrations"]` carries **no `--mode`**. The Cloud Run server
+container (`infrastructure/modules/cloudrun/main.tf:60-90`) sets **no `args` and no `command`**, and its
+env is `SERVERPOD_DATABASE_{HOST,NAME,USER,PASSWORD}` only. `SERVERPOD_RUN_MODE` appears **nowhere** in
+any config, workflow, Dockerfile or Terraform file. With no `--mode`, config is null via the 3-argument
+constructor, so `serverpod.dart:967` returns `development` — where the analyzer is **fatal**
+(`serverpod.dart:894`).
+
+**Consequence 1 — production boots unenforced.** It applies migrations but never the bootstrap, so the
+six hand-maintained objects are absent. The analyzer is one-directional: objects missing from *both* the
+live database and the model are never reported, so it **passes**. The partial unique index
+`product_credential_active_repository_unique` therefore does not exist in production, and **one active
+credential per repository is not enforced there** — the invariant `898b07d0` and ADR 0018 A1 exist to
+protect.
+
+**Consequence 2 — the fix is the trap.** If anyone applies the bootstrap to production, the live database
+will carry indexes the model does not declare, `liveTable.like(target)` reports `Missing Index`, the
+analyzer returns false, and **production fails to boot**. The single action that closes the gap is the
+single action that takes the service down.
+
+**Why nothing detects it.** CI's integration job runs a fresh database **with** the bootstrap — the one
+combination production does not have. No check in this repository notices production drifting unenforced,
+and none notices the day someone applies the bootstrap.
+
+### ⚠ Do NOT apply the schema bootstrap to production
+
+Run mode is unset. Applying the bootstrap takes the service down. This is the change most likely to be
+attempted by someone who believes they are fixing the gap, and it fails at boot rather than at the point
+of application. Recorded in `docs/deployment/local-qa.md` as well.
+
+### Preconditions on production promotion
+
+The Add Product work item must **not** be promoted to production with this invariant unenforced unless
+the human explicitly re-authorises it. Re-open `f691aeb5` before any promotion that involves a real
+deploy, and re-open it immediately if production has already been deployed — the unenforced index means
+the database may already hold a second active credential for some repository, and **no query in this
+repository checks for that**.

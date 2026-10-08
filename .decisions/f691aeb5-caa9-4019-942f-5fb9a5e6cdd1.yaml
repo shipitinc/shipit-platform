@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: f691aeb5-caa9-4019-942f-5fb9a5e6cdd1
 type: SECURITY
-status: PENDING
+status: RESOLVED
 question: >-
   The production server image runs in development mode, and production applies migrations but no
   schema bootstrap — so production currently boots without the partial unique index that
@@ -177,6 +177,59 @@ options:
       no detection in this repository for either.
     estimated_effort: "ledger entry only"
     risk_level: HIGH
+resolution:
+  selected_option: OPTION_D
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-08T06:22:00Z
+  rationale: >-
+    Record and defer past this work item. Production is not to be changed as part of the Add Product
+    work. The human chose to keep production out of this item's blast radius, which is a
+    deliberate scope judgement: the QA fix is already designed, independently reviewed once, and
+    touching the production artifact or Terraform alongside it would widen the change precisely
+    where the framework reserves human authority.
+
+    **What is accepted by this deferral, stated plainly so it is not softened by the passage of
+    time:**
+
+      - Production continues to boot **unenforced**. The partial unique index enforcing one active
+        credential per repository does not exist in production, so a second active credential for
+        one repository is currently accepted. That is the invariant `898b07d0` and ADR 0018 A1
+        exist to protect, and it is unenforced rather than merely at risk.
+      - The latent boot failure remains. If anyone applies the bootstrap to production — a natural
+        thing for an engineer to try, since it is the documented fix — production will fail its
+        analyzer check in development mode and **will not start**.
+      - **Nothing in this repository detects either state.** CI's integration job uses a fresh
+        database with the bootstrap, which is the one combination production does not have. There
+        is no check that would notice production drifting unenforced, or that would notice the day
+        someone applies the bootstrap and takes the service down.
+
+    Because no detection exists, this deferral is only safe if the record is durable and prominent.
+    A gap nobody can detect is not mitigated by being written down in a decision file that no one
+    reads; it is mitigated by being a first-class tracked item with a named owner and a trigger
+    condition. That is what the follow-up actions below establish.
+  follow_up_actions:
+    - action: >-
+        Record this as a first-class tracked item in docs/engineering/WORK_STATE.md and
+        docs/engineering/dispatch/LANES.md with a named owner and the verified evidence chain, not as
+        a passing mention in a decision file. Nothing detects this gap, so the record is the only
+        mitigation the deferral has.
+      owner: engineering-manager
+    - action: >-
+        Attach an explicit warning to docs/deployment/local-qa.md and the production deployment
+        documentation: DO NOT apply the schema bootstrap to production while its run mode remains
+        unset. Doing so takes the service down. This is the one action most likely to be attempted
+        by someone who believes they are fixing the gap.
+      owner: engineering-manager
+    - action: >-
+        Revisit at the next production promotion, as a precondition rather than a follow-up. The
+        Add Product work item must not be promoted to production with the one-active-credential-
+        per-repository invariant unenforced unless the human re-authorises that explicitly.
+      owner: engineering-manager
+    - action: >-
+        Re-open this decision if production has already been deployed and is carrying a second
+        active credential for any repository, since the unenforced index means the database may
+        already violate the invariant and no query in this repository checks for it.
+      owner: engineering-manager
 created_by: orchestrator-main
 created_at: 2026-10-08T06:10:00Z
-updated_at: 2026-10-08T06:10:00Z
+updated_at: 2026-10-08T06:22:00Z
