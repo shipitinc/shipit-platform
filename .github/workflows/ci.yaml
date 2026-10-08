@@ -73,6 +73,82 @@ jobs:
       - name: Test packages
         run: melos run test --no-select
 
+  # The golden suite had no CI job at all until now. `test` above excludes
+  # control_plane because `dart test` cannot run a Flutter widget suite, and
+  # nothing else in .github/workflows rendered a single golden — so a stale
+  # baseline could not fail the build because nothing in the build looked at
+  # one. That is how the Product Detail baseline kept painting a retired
+  # security guarantee while the suite went green.
+  #
+  # The tolerant comparator is not the problem and is unchanged: it has to
+  # exist, because text rasterisation is not bit-stable across platforms. The
+  # problem is that "under tolerance" is reported as plain PASS, with no
+  # number, so nothing downstream can tell a re-wrapped line of text from a
+  # baseline that has drifted by 0.49% of its pixels.
+  #
+  # This job therefore does two things. It runs the suite through the real
+  # comparator (the pixel comparison is unchanged and still authoritative),
+  # and it then grades every committed baseline against a fresh render with
+  # test/tools/check_golden_domination.dart, which reports the delta as a
+  # number and fails when a baseline passes ONLY because the tolerance
+  # swallowed its drift.
+  #
+  # Two renders are taken because the discriminator between "changed a little,
+  # legitimately" and "stale and silent" is this machine's own noise floor: the
+  # largest delta between two independent renders of the same source. A single
+  # render cannot be trusted to define its own expected output.
+  #
+  # runs-on is pinned to macOS deliberately. The baselines are platform-specific
+  # pixel data, and on a platform whose text rasterisation differs the check
+  # would report 54 confident verdicts describing the runner. The check refuses
+  # to grade when the two renders disagree by more than the tolerance, and says
+  # so, rather than inventing a result.
+  golden-integrity:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          # .fvmrc is this repository's declared SDK pin, and
+          # subosito/flutter-action reads it through yq. Overriding the version
+          # here instead would fork the pin: the goldens are pixel data and the
+          # Flutter version that rasterises them is part of what they mean.
+          flutter-version-file: .fvmrc
+          channel: stable
+      - name: Disable Flutter analytics
+        run: flutter config --no-analytics
+      # Workspace resolution: the app is a member of the root melos workspace,
+      # so the root resolves every package including the Flutter SDK ones.
+      - name: Bootstrap
+        run: flutter pub get
+      - name: Snapshot the committed baselines
+        run: cp -R apps/control_plane/test/goldens "$RUNNER_TEMP/baseline"
+      # The real comparator, unchanged: this is where a genuine visual
+      # regression still fails on pixels alone.
+      - name: Run the control plane suite
+        working-directory: apps/control_plane
+        run: flutter test
+      - name: Render pass 1
+        working-directory: apps/control_plane
+        run: flutter test --update-goldens
+      - name: Keep render pass 1
+        run: cp -R apps/control_plane/test/goldens "$RUNNER_TEMP/pass1"
+      - name: Render pass 2
+        working-directory: apps/control_plane
+        run: flutter test --update-goldens
+      - name: Keep render pass 2
+        run: cp -R apps/control_plane/test/goldens "$RUNNER_TEMP/pass2"
+      # Grades the snapshot, not the working tree, so this step can never
+      # commit or bless a render. It fails with the file name and the measured
+      # delta for every baseline that is not current.
+      - name: Fail on a tolerance-dominated golden
+        working-directory: apps/control_plane
+        run: |
+          dart run test/tools/check_golden_domination.dart \
+            --baseline="$RUNNER_TEMP/baseline" \
+            --current="$RUNNER_TEMP/pass1" \
+            --repeat="$RUNNER_TEMP/pass2"
+
   server-build:
     runs-on: ubuntu-latest
     steps:
