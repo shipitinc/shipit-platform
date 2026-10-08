@@ -766,3 +766,71 @@ and it is **labelled inference, not measurement.**
   report. The other **18 have never been examined by anyone.**
 - **52 footer deletions outstanding.** `Disclose` untouched at **116 + 4 = 120**.
 - **Build merged at `c32f4f4`** — the boards are the **sole** remaining surface asserting the false claim.
+
+### ✅ r7 — the copy half is COMPLETE. Zero false custody layers remain on the page.
+
+**17 of 24 written and confirmed by settled read-back**, 1 found already correct (its write **declined**
+by the guard), 6 Manager-verified and untouched. **19 assignments, 0 failed, 0 UNKNOWN** — the **first
+provably clean ledger in this work item**, achieved by ordering fit read-backs last so every write had
+already returned before the window closed.
+
+**Manager verification, independent and direct:**
+
+```
+secretManagerLayers          : 28    (24 applied + 4 pre-existing on the SM boards)
+remainingFalseCustodyLayers  : 0     needle: keychain | created on this device |
+                                      generated here | never leaves the
+```
+
+**So all 24 approved copy proposals are now applied. The security-relevant half of F5 is DONE.**
+
+⚠ **My first verification needle was too broad** — `/this device/i` returned **114** "hits" that were
+mostly **`Rail Identity` / "Signed in on this device"**, which is authentication, not key custody. A
+caller who had taken the 114 at face value would have concluded almost nothing had been fixed. **The
+narrowed needle returns 0.** Recorded because a too-broad needle reads as a near-complete failure and
+would have sent the next lane chasing the wrong 114 layers.
+
+**The footer half is the only thing left, and it is intact:**
+
+```
+footerText (type text, name "Footer") : 52     ← all 52 outstanding, zero deleted
+footerRule (rectangles)                : 76     ← dividers, NOT in scope
+discloseExact                          : 116
+discloseSuffixed ("Disclose · …")      :   4
+                                       ────
+Disclose total                         : 120    ← precondition intact, undisturbed
+```
+
+### r7's findings worth keeping
+
+**r6's inherited substitution table was defective and r7 caught it in-window.** Rows 7–8 replace
+`this device's keychain` with `secret manager` — **dropping the article "the"**, giving 93 chars where
+approved string **A** is 97. **It applied it verbatim, the read-back showed it, and it corrected on the
+next call.** Blast radius had the read-back not existed: **4 layers of non-approved copy**.
+
+**Generalisable, and it corrects r6's own framing:** *derivation-by-substitution guarantees you land on
+a **deterministic** string, not an **approved** one. The replacement column must be validated against the
+draft and its length asserted.* The same lane found r6's row 15/16 would have **typed an em dash** into
+`R Submit Sub`, which it measured as pure ASCII — and derived it by code point with a numeric assertion.
+
+**The unowned partial application is LAYER-scoped and Dark-side-first, not board-scoped.** That Dark
+board's `L Sub` was already correct while its **Light twin was still false**, and the **same Dark board's**
+`F V 0` and `Act What 0` were **both still false**. **No automated lane leaves a board 50% done and its
+progress unreported** — which weakens the "a lane wrote these and misreported" reading and leaves the
+attribution genuinely open.
+
+**My "~20 windows" estimate was falsified.** r7 landed **17 mutations in 46 calls** — the longest window
+yet, and the one-shape-per-call bracket r6 reported was **looser than stated**: what actually held was
+**no traversal, `findShapeById` only, and verify-then-write.** A larger batch is not claimed; the
+discipline is sufficient and the batch limit is looser than believed.
+
+**`R Submit Sub` measured for the first time: 2 lines, 10 px overflow, identical before and after** — so
+the box defect is **provably not dischargeable by a copy-only change**, which settles the option (a)/(b)
+question on evidence.
+
+### ⚠ The blocker on the remaining 52 is MINE, and it is one word
+
+r7 deleted nothing because **two instructions from me cannot both be satisfied**: the `Disclose` 120
+precondition "must precede the first `remove()`", and I simultaneously **forbade `findShapes`
+traversal** — while the precondition requires a page-wide count. It took the conservative branch and
+deleted nothing, which was right. **Authorising one read-only name-scoped census unblocks all 52.**
