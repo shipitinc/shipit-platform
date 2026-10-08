@@ -354,18 +354,39 @@ class DesignPanel extends StatelessWidget {
   }
 }
 
+/// Which edge of the footer row the disclosure sits on.
+enum DisclosureAlignment { start, end }
+
 /// The collapsed "Show technical details" disclosure that every screen carries
 /// in its footer.
 ///
 /// This is the only place the design permits raw system vocabulary to surface.
 class TechnicalDetails extends StatefulWidget {
-  const TechnicalDetails({super.key, required this.lines, this.note});
+  const TechnicalDetails({
+    super.key,
+    required this.lines,
+    this.note,
+    this.showRule = true,
+    this.disclosureAlignment = DisclosureAlignment.end,
+  });
 
   /// Raw, verbatim system facts (state wire values, ids, counts).
   final List<String> lines;
 
   /// Optional provenance note shown beside the toggle.
   final String? note;
+
+  /// Whether the [ContentRule] divider is painted above the disclosure row.
+  ///
+  /// Defaults to `true`, which is the treatment on every screen that carries a
+  /// disclosure today. `false` is the mobile Add Product footer, whose board
+  /// (`BPM - Add Product`) shows a left-aligned disclosure with no divider.
+  final bool showRule;
+
+  /// Which edge the disclosure sits on. Defaults to [DisclosureAlignment.end],
+  /// which is what a `null` [note] produces today: the note slot expands to fill
+  /// the row and pushes the disclosure to the trailing edge.
+  final DisclosureAlignment disclosureAlignment;
 
   @override
   State<TechnicalDetails> createState() => _TechnicalDetailsState();
@@ -377,6 +398,7 @@ class _TechnicalDetailsState extends State<TechnicalDetails> {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
+    final noteStyle = ShipItType.monoMeta.copyWith(color: palette.inkTertiary);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -393,21 +415,21 @@ class _TechnicalDetailsState extends State<TechnicalDetails> {
             ),
           const SizedBox(height: 12),
         ],
-        const ContentRule(),
+        if (widget.showRule) const ContentRule(),
         const SizedBox(height: 13),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: widget.note == null
-                  ? const SizedBox.shrink()
-                  : Text(
-                      widget.note!,
-                      style: ShipItType.monoMeta.copyWith(
-                        color: palette.inkTertiary,
-                      ),
-                    ),
-            ),
+            // The trailing-edge case keeps the expanding note slot exactly as it
+            // was, so a null note still pushes the disclosure to the far edge.
+            if (widget.disclosureAlignment == DisclosureAlignment.end)
+              Expanded(
+                child: widget.note == null
+                    ? const SizedBox.shrink()
+                    : Text(widget.note!, style: noteStyle),
+              )
+            else if (widget.note != null)
+              Flexible(child: Text(widget.note!, style: noteStyle)),
             InlineLink(
               micro: true,
               label: _expanded

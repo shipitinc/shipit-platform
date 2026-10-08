@@ -311,12 +311,7 @@ class _DesktopAddProduct extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 24),
-            _buildFooter(context),
-            const SizedBox(height: 12),
             TechnicalDetails(
-              note:
-                  'Registering records the product. Nothing is governed until '
-                  'you approve a baseline.',
               lines: [
                 'productName=${state.productName.isEmpty ? '—' : state.productName}',
                 'repository=${state.repository.isEmpty ? '—' : state.repository}',
@@ -367,22 +362,6 @@ class _DesktopAddProduct extends StatelessWidget {
         Text(
           'NOT REGISTERED YET',
           style: ShipItType.microLabel.copyWith(color: palette.inkTertiary),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildFooter(BuildContext context) {
-    final palette = context.palette;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const ContentRule(),
-        const SizedBox(height: 13),
-        Text(
-          'Your decision is recorded permanently. The same piece of '
-          'work then continues \u2014 nothing is restarted.',
-          style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
         ),
       ],
     );
@@ -477,8 +456,8 @@ class _LeftColumn extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            "It clones over SSH. The private half stays in this device's "
-            'keychain \u2014 never shown, logged or stored.',
+            'It clones over SSH. The private half stays in the secret manager '
+            '\u2014 never shown, logged or stored.',
             style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary),
           ),
           const SizedBox(height: 6),
@@ -539,7 +518,7 @@ class _LeftColumn extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                'ed25519 \u00b7 created on this device \u00b7 the private half stays in the keychain',
+                'ed25519 \u00b7 generated on the server \u00b7 the private half stays in the secret manager',
                 style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
               ),
               const SizedBox(height: 10),
@@ -923,9 +902,8 @@ class _MobileAddProduct extends StatelessWidget {
                   ),
                   const SizedBox(height: 20),
                   TechnicalDetails(
-                    note:
-                        'Registering records the product. Nothing is governed until '
-                        'you approve a baseline.',
+                    showRule: false,
+                    disclosureAlignment: DisclosureAlignment.start,
                     lines: [
                       'productName=${state.productName.isEmpty ? '—' : state.productName}',
                       'repository=${state.repository.isEmpty ? '—' : state.repository}',
@@ -976,8 +954,8 @@ class _MobileAddProduct extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            "It clones over SSH. The private half stays in this device's "
-            'keychain \u2014 never shown, logged or stored.',
+            'It clones over SSH. The private half stays in the secret manager '
+            '\u2014 never shown, logged or stored.',
             style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary),
           ),
           const SizedBox(height: 6),
@@ -1035,7 +1013,7 @@ class _MobileAddProduct extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                'ed25519 \u00b7 created on this device \u00b7 the private half stays in the keychain',
+                'ed25519 \u00b7 generated on the server \u00b7 the private half stays in the secret manager',
                 style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
               ),
               const SizedBox(height: 10),
