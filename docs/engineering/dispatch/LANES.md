@@ -639,3 +639,38 @@ the session.
 - three pre-write safety facts no earlier lane checked: **no flex/grid on any target board**, all targets
   `growType: fixed`, every prefix resolving to exactly one candidate
 - the human's `R Submit Sub` ruling: option (a), apply as drafted, **do not resize**
+
+### Penpot connectivity check — 2026-10-07, late session
+
+**Penpot reconnected and responded, then died again inside the same check.** Sequence as observed:
+
+1. `penpot_high_level_overview` — returned its full document. **This proves nothing**: two lanes
+   independently established it is not a health check.
+2. `execute_code` → `getPages().length` → **`1`**. **Liveness confirmed by the correct probe.**
+3. `execute_code` → naming-independent footer sweep → **`52` layers, y = 862×48 + 910×2 + 926×2,
+   root children `164`** — byte-identical to the recorded census.
+4. `execute_code` → `Disclose` count → **timed out** (`-32001`).
+5. Retry → **`no heartbeat for 69s`**.
+
+**What this establishes, and what it does not.**
+
+- **No partial state exists from the four blocked rounds.** The footer census is unchanged at 52 and
+  root children at 164, confirming what the rounds each reported: 0 mutations applied, no unknown-state
+  writes to reconcile.
+- **The recorded `Disclose` baseline of 116 + 4 = 120 stands unverified by this check**, but nothing was
+  deleted in any round, so no damage is possible.
+- **Liveness is intermittent, not restored.** A window of roughly 2–3 calls opened and closed. That is
+  the behaviour r4 diagnosed: the tab dies between windows rather than staying dead, which is why three
+  rounds each reported a *new* first-call failure.
+
+**The operational lesson for the next dispatch** — one probe, then act immediately on already-recorded
+ids, with **no re-derivation at all**:
+
+- `findShapeById` on the ids already in `design-apply-f5-copy/report-r3.md`. **No `findShapes` traversal,
+  ever** — a traversal is what plausibly stalled the heartbeat in r3, and there is no reason to spend the
+  window rediscovering what is recorded.
+- Apply the **24 copy proposals first** (they are the security-relevant ones), then the **52 footer
+  deletions**.
+- After each write, one `findShapeById` read-back. **A write timeout still does not mean the write
+  failed** — read that shape before deciding, which is cheap with `findShapeById`.
+- Check `Disclose` (116 + 4) **before the first `remove()` and once at the end.**
