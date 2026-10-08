@@ -1,0 +1,141 @@
+# human-decision.yaml
+decision_id: 6d2bfffe-1631-498a-b053-4edaf8bd3048
+type: INFRASTRUCTURE
+status: PENDING
+question: >-
+  Any QA or staging database that carries the hand-maintained schema objects makes the
+  Serverpod server refuse to boot, because the generated definition.sql structurally cannot
+  contain them. How should server boot behave against such a database?
+context:
+  summary: >-
+    Bringing QA up required recreating the database inside the running container. The cause
+    is structural, not a stale image: design_revision_approved_unique_per_work_item and
+    product_credential_active_repository_unique are hand-maintained objects the model-driven
+    generator cannot render, so they live in schema_bootstrap.sql and migration.sql and can
+    never appear in definition.sql. Serverpod compares the live database against the latest
+    definition.sql and exits 1 on mismatch, so a chain-migrated database — one carrying the
+    hand-maintained objects — can never satisfy it. Running the server without
+    --apply-migrations produced an identical failure, so there is no non-destructive
+    workaround on the current code path. A fresh database has none of those objects and boots
+    clean, which is the shape CI and make test-integration produce. The operational
+    consequence is the point needing a decision: on QA today, applying a future migration
+    that touches these objects means the next server start fails, and the only demonstrated
+    recovery is recreating the database — which destroys data. QA currently holds no
+    application rows, so nothing was lost this time; that is not a property to rely on later.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: 6d2bfffe-1631-498a-b053-4edaf8bd3048
+    item_ref: >-
+      QA and staging database lifecycle — affects any future migration on any long-lived
+      environment.
+  evidence:
+    documents:
+      - type: OTHER
+        id: bootstrap
+        url: apps/server/tool/schema_bootstrap.dart
+      - type: OTHER
+        id: guard
+        url: apps/server/tool/verify_schema_bootstrap.sh
+      - type: OTHER
+        id: migration
+        url: apps/server/migrations/20261006150645000/migration.sql
+      - type: OTHER
+        id: qa-state
+        url: docs/engineering/dispatch/LANES.md
+    quantitative_data:
+      - metric: Missing indexes reported by the analyzer
+        value: "2 — design_revision_approved_unique_per_work_item, product_credential_active_repository_unique"
+        source: server boot failure log, 2026-10-07
+      - metric: Both indexes present in the live database
+        value: "2 of 2, with correct definitions, verified directly in pg_indexes"
+        source: Manager verification
+      - metric: Occurrences in generated definition.sql
+        value: "0 of 2 — structurally cannot be rendered by the model-driven generator"
+        source: grep over definition.sql; corroborated by schema_bootstrap.dart header
+      - metric: Occurrences in migration.sql
+        value: "2 of 2"
+        source: grep over migration.sql
+      - metric: Boot without --apply-migrations
+        value: "identical failure — so the flag is not the cause"
+        source: Manager, 2026-10-07
+      - metric: Data at risk during the recreate
+        value: "0 application rows; 512 rows of Serverpod's own health telemetry only"
+        source: Manager, verified before recreating
+      - metric: Volumes preserved
+        value: "docker_postgres_data_qa, docker_triage_repo_qa, docker_triage_workspaces_qa"
+        source: Manager; no down -v was used
+    qualitative_tradeoffs:
+      - dimension: Data safety
+        option_a: Document and add a preflight check
+        option_b: Restructure startup ordering
+        option_c: Recreate on every migration
+        assessment: >-
+          A preflight check costs a script and fails loudly with the recovery instruction,
+          preserving all data. Startup restructuring would remove the failure entirely but
+          requires the bootstrap to run after the analyzer, which is an entrypoint and
+          compose change with its own ordering hazards. Recreating per migration is simple
+          and predictable but destroys data on every migration, which is unacceptable for
+          staging and unacceptable for production.
+      - dimension: Surprise
+        option_a: Document and add a preflight check
+        option_b: Restructure startup ordering
+        assessment: >-
+          Today the failure appears as an opaque analyzer mismatch naming an index that
+          demonstrably exists, which is the most confusing possible symptom. A preflight
+          check converts it into an actionable message naming the cause and the recovery.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Document the invariant and add a preflight check that fails with the cause and the
+      recovery command. This is the cheapest change that removes the confusion and prevents
+      someone reaching for down -v, which this repository has already done once and lost a
+      database to. It does not remove the underlying constraint, so startup restructuring
+      remains the right long-term answer and should be recorded as such.
+    confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Document it and add a preflight check
+    description: >-
+      Record the invariant in the QA runbook and add a preflight script that detects a
+      database carrying hand-maintained objects before server start, failing with the cause
+      and the safe recovery command.
+    implications: >-
+      No behaviour change and no data risk. Converts an opaque analyzer failure into an
+      actionable message and prevents a destructive reaction. Leaves the underlying
+      constraint in place for the long term.
+    estimated_effort: "one lane owning docs and a tool script"
+    risk_level: LOW
+  - option_id: OPTION_B
+    label: Restructure server startup
+    description: >-
+      Change the compose entrypoint so the schema bootstrap runs after the analyzer passes,
+      letting a chain-migrated database boot without data loss.
+    implications: >-
+      Removes the failure mode rather than documenting it, which is the correct long-term
+      answer. Touches docker entrypoint and compose ordering, both of which affect production
+      promotion, so it warrants its own design and review cycle.
+    estimated_effort: "compose and entrypoint change plus a fresh QA verification"
+    risk_level: MEDIUM
+  - option_id: OPTION_C
+    label: Teach the analyzer about them
+    description: >-
+      Extend the migration tooling so the generated definition.sql accounts for the
+      hand-maintained objects and the analyzer stops treating them as drift.
+    implications: >-
+      Addresses the root cause in the generator rather than around it. Most invasive: it
+      changes migration tooling whose correctness every environment depends on.
+    estimated_effort: "generator change plus full migration verification"
+    risk_level: HIGH
+  - option_id: OPTION_D
+    label: Recreate on every migration
+    description: >-
+      Make QA and staging recreate the database on each migration so the server always sees
+      a definition.sql-exact shape.
+    implications: >-
+      Simple and predictable, and matches what CI already does. Destroys all data on every
+      migration, so it is unusable for staging and must never reach production.
+    estimated_effort: "small"
+    risk_level: HIGH
+created_by: orchestrator-main
+created_at: 2026-10-08T04:20:00Z
+updated_at: 2026-10-08T04:20:00Z

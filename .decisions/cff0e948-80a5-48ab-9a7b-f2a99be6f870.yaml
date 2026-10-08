@@ -1,0 +1,119 @@
+# human-decision.yaml
+decision_id: cff0e948-80a5-48ab-9a7b-f2a99be6f870
+type: OTHER_CONSEQUENTIAL
+status: PENDING
+question: >-
+  44 of the repository's 54 golden baselines pass only because their pixel delta sits
+  inside the 0.005 tolerance, so a stale baseline is indistinguishable from a current one.
+  What enforcement should be adopted?
+context:
+  summary: >-
+    A green golden test was found not to mean a current golden. useTolerantGoldens()
+    installs a comparator at threshold 0.005; the Product Detail mobile baseline sat
+    0.3172% of pixels from the current render and still reported PASS, while painting a
+    retired security guarantee to any human golden reviewer. Two correction lanes
+    independently reported that no gate detects this, and a sweep of all 54 goldens found
+    44 carrying no Needs-you nav badge against 10 that do — the same stale-frame class,
+    every one passing only because its delta is under tolerance. No CI check detects a
+    tolerance-dominated golden. The tolerance is not the defect: it exists because
+    font-rendering differences between platforms make byte equality impractical. Widening
+    or bypassing it was explicitly forbidden and the comparator is byte-identical across
+    all three revisions of the custody fix.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: cff0e948-80a5-48ab-9a7b-f2a99be6f870
+    item_ref: >-
+      Golden-baseline integrity across apps/control_plane/test/goldens — affects every
+      future visual change in this repository.
+  evidence:
+    documents:
+      - type: OTHER
+        id: tolerance
+        url: apps/control_plane/test/helpers/golden_tolerance.dart
+      - type: OTHER
+        id: golden-review
+        url: docs/engineering/dispatch/tasks/review-fix-product-detail-goldens-r1/report.md
+      - type: OTHER
+        id: golden-correction
+        url: docs/engineering/dispatch/tasks/fix-product-detail-goldens-r1/report.md
+    quantitative_data:
+      - metric: Goldens carrying no nav badge (stale frame)
+        value: "44 of 54"
+        source: Manager pixel sweep over apps/control_plane/test/goldens, 2026-10-08
+      - metric: Goldens carrying the badge (corpus norm)
+        value: "10 of 54, at 196 and 200 orange pixels"
+        source: same sweep
+      - metric: Pixel delta that still reported PASS
+        value: "0.3172% of 329160 px; peak channel delta 212/255"
+        source: fix-product-detail-goldens-r1/report.md
+      - metric: Comparator threshold
+        value: "0.005, unchanged and blob-identical across 43ede2e, 878c332 and a7b58b1"
+        source: review-fix-product-detail-goldens-r1, verified by git blob hash
+    qualitative_tradeoffs:
+      - dimension: Signal quality
+        option_a: Add a tolerance-domination check
+        option_b: Tighten the global tolerance
+        assessment: >-
+          A dedicated check distinguishes "changed a little, legitimately" from "stale and
+          silent" without weakening byte comparison. Tightening the global threshold
+          couples the fix to a platform-dependent value and will make every golden fail on
+          some machine, trading a silent failure for a loud, noisy one.
+      - dimension: Cost
+        option_a: Regenerate the 44 now
+        option_b: Leave them stale, add the check only
+        assessment: >-
+          Regenerating 44 binaries is mechanical but produces a large binary diff that
+          obscures which changes were intended. Deferring keeps the diff reviewable and
+          still prevents the next occurrence, at the cost of leaving today's baselines
+          known-stale for a human reviewer.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Add the check and regenerate the 44. The check is the durable fix — it converts a
+      class of silent visual regression into a build failure — and regenerating now removes
+      the known-stale artifacts rather than leaving a documented lie in the repository. The
+      binary diff is the honest cost of that cleanup and is reviewable by file list.
+    confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Add the check and regenerate all 44
+    description: >-
+      Implement a CI check that fails when a golden's pixel delta is dominated by the
+      tolerance, and regenerate the 44 stale baselines so no baseline is knowingly stale.
+    implications: >-
+      Closes the class of regression durably and clears today's debt. Produces a 44-binary
+      diff that should be reviewed by file list rather than content.
+    estimated_effort: "one lane owning apps/control_plane/test/** and CI"
+    risk_level: LOW
+  - option_id: OPTION_B
+    label: Add the check only
+    description: >-
+      Implement the CI check and defer baseline regeneration as tracked follow-up work.
+    implications: >-
+      Prevents future silent staleness at the lowest cost and keeps the next diff small,
+      but leaves 44 known-stale baselines that a human golden reviewer may still misread.
+    estimated_effort: "one lane, smaller diff"
+    risk_level: LOW
+  - option_id: OPTION_C
+    label: Tighten the global tolerance
+    description: >-
+      Lower threshold 0.005 substantially so stale baselines fail loudly without a new check.
+    implications: >-
+      No new tooling, but couples correctness to a platform-dependent constant and will
+      likely require regenerating all 54 and may surface genuine visual regressions that
+      were previously masked.
+    estimated_effort: "threshold change plus likely full regeneration"
+    risk_level: MEDIUM
+  - option_id: OPTION_D
+    label: Defer entirely
+    description: >-
+      Leave goldens, tolerance and CI exactly as they are; record N2 as a tracked follow-up.
+    implications: >-
+      No effort now. The silent-staleness class stays open, and the tolerance continues to
+      mask exactly the kind of drift that produced a false security claim reaching a
+      human reviewer.
+    estimated_effort: "none"
+    risk_level: MEDIUM
+created_by: orchestrator-main
+created_at: 2026-10-08T04:20:00Z
+updated_at: 2026-10-08T04:20:00Z

@@ -101,3 +101,25 @@ early leaves a **visible product with no usable credential**, accepted because s
 satisfiable and so honours human point 2b. If the substrate fails instead, that same bad state appears with
 **none of the benefit that made it acceptable** — an infrastructure outage leaves a persistent, visible
 artefact the user cannot complete. That is the dead end human point 2d rejected, reached by a different route.
+
+## Index correction — `70b47372` is RESOLVED, not PENDING
+
+The table row above still read `PENDING (premise refuted by review; recommendation superseded
+to OPTION_C)`. The **object** at `.decisions/70b47372-8814-4098-81b2-6614497bad12.yaml` reads
+`status: RESOLVED`, `selected_option: OPTION_B`, decided `2026-10-05T10:30:58Z`. The index was
+stale; the object is authoritative. **No decision was actually pending** — corrected here so the
+next session does not re-present a settled question.
+
+## Three decisions filed 2026-10-08 — all PENDING, created by `orchestrator-main` per `aef-orchestrator` §13 Phase 1
+
+Raised by the QA bring-up and the H-R2 custody close. None blocks safe dispatchable work; each
+records a choice the Manager may not make unilaterally.
+
+| decision_id | type | question (one line) | source |
+|---|---|---|---|
+| `1ed57d5d-b1d4-4956-a428-0cf4df98bc6b` | DESIGN | Product Detail `:614` ships a string no board scopes to that slot — ratify, commission board copy, or drop the subtitle? | H-R2 close, open finding **F1** |
+| `cff0e948-80a5-48ab-9a7b-f2a99be6f870` | OTHER_CONSEQUENTIAL | 44 of 54 goldens pass only because their delta is inside the 0.005 tolerance — add a domination check and regenerate, or defer? | golden refresh, open finding **N2** |
+| `6d2bfffe-1631-498a-b053-4edaf8bd3048` | INFRASTRUCTURE | A database carrying the hand-maintained objects cannot satisfy the analyzer, so boot fails — document plus preflight, restructure startup, fix the generator, or recreate per migration? | QA bring-up, two-fault diagnosis |
+
+None of the three is a `G1`–`G5` gate violation or a stop condition for the Add Product
+orchestration: safe lanes continue while they are pending.

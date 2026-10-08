@@ -1,0 +1,132 @@
+# human-decision.yaml
+decision_id: 1ed57d5d-b1d4-4956-a428-0cf4df98bc6b
+type: DESIGN
+status: PENDING
+question: >-
+  Product Detail's Access block ships the string "One key per repository. The private half
+  stays in the secret manager." at product_detail_page.dart:614, but no Penpot board
+  scopes copy to that slot. How should this shipped string be ratified?
+context:
+  summary: >-
+    Closing the last false key-custody claim (H-R2) required a value that no board backs.
+    The F5 approved string registry's only read of product_detail_page.dart is :442-444, a
+    different string (a footer note). No board designs Product Detail's Access block at all,
+    and no credentials screen exists in code, so the Product Credentials boards' approved
+    key B is not this slot's counterpart. Rather than leave the false claim live, the
+    Manager composed a value: the untouched true first sentence plus key B's board-approved
+    custody clause. Two independent reviewers approved it as safe, because it removes a
+    false security guarantee and both halves are independently true. What is missing is
+    design authority over the composed whole, which neither reviewer nor the Manager may
+    self-certify. The shipped string is 3 characters longer than what boards size for the
+    analogous L Sub layer, and no board sized it here.
+  blocking_work_item:
+    item_type: FEATURE
+    item_id: c46b6807-a15c-4c3c-911b-cd34f6b21195
+    item_ref: >-
+      Add Product rebuild — H-R2 custody-claim correction (product_detail_page.dart:614),
+      shipped and merged as 878c332 + a7b58b1.
+  evidence:
+    documents:
+      - type: OTHER
+        id: F5-registry
+        url: docs/engineering/dispatch/tasks/design-apply-f5-copy/report-r3.md
+      - type: OTHER
+        id: H-R2
+        url: docs/engineering/dispatch/tasks/design-addproduct-mobile/design-revision-2.md
+      - type: OTHER
+        id: review1
+        url: docs/engineering/dispatch/tasks/review-fix-product-detail-custody-claim/report.md
+      - type: OTHER
+        id: review2
+        url: docs/engineering/dispatch/tasks/review-fix-product-detail-goldens-r1/report.md
+      - type: OTHER
+        id: A3
+        url: .decisions/9417f8bf-73b8-4827-9515-bdfe92e5a9d5.yaml
+    quantitative_data:
+      - metric: False claim occurrences in client source
+        value: "1 remaining before this change, 0 after"
+        source: grep -rniE "never leaves this device" apps/control_plane/lib
+      - metric: Approved strings scoped to :614
+        value: "0 — no board copy exists for this slot"
+        source: Penpot probe of BP/BPM Product Detail + Product Credentials boards
+      - metric: Registry key B custody clause
+        value: "The private half stays in the secret manager. — byte-exact match at :614"
+        source: report-r3.md:294, verified programmatically by the focused reviewer
+      - metric: Boards sizing the analogous L Sub layer
+        value: "596x30 (desktop BP/BPM Product Credentials)"
+        source: report-r3.md 5.3 key B, Ev Body key A
+      - metric: Independent review outcome
+        value: "APPROVE_CORRECTIONS twice; F1 recorded as open MEDIUM, not converted to a blocker"
+        source: review-fix-product-detail-custody-claim, review-fix-product-detail-goldens-r1
+    qualitative_tradeoffs:
+      - dimension: Truthfulness
+        option_a: Ratify the composed string
+        option_b: Commission a board-backed string
+        assessment: >-
+          Both remove the false guarantee. Ratifying keeps a string that is true on both
+          halves but has no design provenance; commissioning buys provenance at the cost of
+          a design round trip plus a further correction and review cycle.
+      - dimension: Precedent
+        option_a: Ratify the composed string
+        option_b: Commission a board-backed string
+        assessment: >-
+          A composed value accepted without board coverage weakens the rule that shipped
+          copy traces to approved design. Recorded as an explicit accepted deviation it is
+          auditable; repeated informally it becomes the norm and the F5 registry stops
+          meaning anything.
+      - dimension: Layout safety
+        option_a: Ratify the composed string
+        option_b: Commission a board-backed string
+        assessment: >-
+          The composed string is 3 chars longer than the analogous board layer sizes for,
+          and no board sized it here. It renders correctly at 390px in both regenerated
+          goldens, so this is a documented risk rather than an observed defect.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      The shipped string is safe on the merits: the first sentence is factually true for
+      this block (one credential per repository, which is exactly what _AccessBlock renders)
+      and the second sentence is byte-exact to a board-approved clause already shipping on
+      four boards. Ratifying it as an explicitly recorded deviation preserves the false-claim
+      fix without a design round trip, and the deviation itself is the auditable artifact.
+      Commissioning board copy is the more principled route and is the right answer if the
+      human intends Product Detail's Access block to be a designed surface at all — which is
+      the real question underneath.
+    confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Ratify the composed string
+    description: >-
+      Accept "One key per repository. The private half stays in the secret manager." as
+      correct, record it as an explicit accepted deviation from board-backed copy, and leave
+      the boards untouched.
+    implications: >-
+      Unblocks design freeze now. Creates a documented precedent that a composed value may
+      ship when both halves are independently true; the deviation must be recorded, not
+      treated as routine.
+    estimated_effort: "record the deviation; minutes"
+    risk_level: LOW
+  - option_id: OPTION_B
+    label: Commission board-backed copy
+    description: >-
+      Dispatch a design lane to add Product Detail's Access block to the boards, derive the
+      string from board copy at a sized slot, then correct the source and re-review.
+    implications: >-
+      Highest fidelity and restores the traceability rule. Costs a design round trip plus a
+      correction and a fresh focused review, and reopens the already-reviewed :614 change.
+    estimated_effort: "design lane + correction + focused re-review"
+    risk_level: LOW
+  - option_id: OPTION_C
+    label: Remove the subtitle
+    description: >-
+      Delete the custody sentence and the subtitle entirely; the Access heading and the
+      per-repository credential rows carry the meaning without a prose guarantee.
+    implications: >-
+      Smallest possible surface and removes the unbacked string rather than ratifying it.
+      Loses the plain-language custody reassurance that the other screens carry, creating
+      an inconsistency in reassurance copy across the product.
+    estimated_effort: "one-line deletion plus golden refresh and review"
+    risk_level: MEDIUM
+created_by: orchestrator-main
+created_at: 2026-10-08T04:20:00Z
+updated_at: 2026-10-08T04:20:00Z
