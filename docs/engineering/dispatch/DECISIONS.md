@@ -240,3 +240,34 @@ The human's chosen intent survives and is achieved by a **materially smaller and
 that was priced** — no generator change, no blast radius, no HIGH risk. What does not survive is the
 secondary benefit the Manager promised. The empty generator-change surface and the one-directional
 comparison were both found by the lane, not by the Manager.
+
+## Resolved 2026-10-08 (third round) — and the fault returns to OPTION_B
+
+| decision_id | selected | effect |
+|---|---|---|
+| `02a99cb6-b9c3-40b7-976d-227afce23ff0` | **OPTION_C** | Return to the startup restructure. `30c00e6e` **SUPERSEDED and dropped** — the Protocol override is dropped, not deferred. |
+| `4078cd9d-5c5d-430b-b83c-64133e20b0f1` | **OPTION_B** | **Make the bootstrap a compose service** — fix the cause. Makes DL-2 mandatory rather than merely desirable. |
+
+**The two answers are one system.** A compose service applying the bootstrap *before* the server makes the
+presence of the six hand-maintained objects **deterministic rather than advisory**. Enforcement stops
+depending on an operator, a run mode, or a comparison that is one-directional by construction. With the
+objects guaranteed present, whether the analyzer is fatal in QA stops being load-bearing — which is what
+makes returning to the startup restructure workable.
+
+The endpoint is the **simplest of the three positions this fault has taken**, and it is simplest because
+each reversal followed evidence rather than indecision:
+
+| decision | choice | what was known at the time |
+|---|---|---|
+| `6d2bfffe` | OPTION_B | cost described, not measured |
+| `30c00e6e` | OPTION_C | rested on the **false** `definition.sql` premise |
+| `02a99cb6` | OPTION_C → OPTION_B | premise found false; the analyzer's real capability known |
+
+**Accepted consequence, recorded rather than buried:** in QA the analyzer stops gating boot, so
+model-derived drift surfaces as a log warning rather than a failed start. The human has now priced that
+twice — once against it, once accepting it — and the relevant difference is that the objects they care
+most about are now guaranteed present by construction rather than hoped for.
+
+**Also still open, and promotion-blocking:** production run mode is not establishable from this
+repository. If production ran in `development` mode, the analyzer would become a live boot gate there for
+the first time. Not decided here.

@@ -199,3 +199,27 @@ object had itself offered as OPTION_C: teach the migration tooling about the han
 Recorded explicitly so the audit trail shows a reversal rather than two apparently current answers to
 the same question. The resolution below remains the historical record of the authority under which the
 QA environment was brought up; it is not current authorisation for the startup change.
+
+## REINSTATED — 2026-10-08 (second supersession note)
+
+This object's **OPTION_B is reinstated** by `02a99cb6-b9c3-40b7-976d-227afce23ff0` (OPTION_C) together
+with `4078cd9d-5c5d-430b-b83c-64133e20b0f1` (OPTION_B).
+
+**Design Revision F38E4B34 remains rejected and is NOT revived as-is.** A fresh consolidated design is
+required, carrying F38E4B34's verified root-cause analysis forward — `verifyDatabaseIntegrity` is
+unconditional at `serverpod.dart:881`, the sole fatal branch is `runMode == 'development'` at `:894`, and
+the bootstrap already runs in `-m test` and has always tolerated the mismatch — and additionally treating
+the bootstrap compose service as mandatory in-scope content.
+
+### Why this fault has now changed hands three times
+
+| decision | choice | what was known then |
+|---|---|---|
+| `6d2bfffe` | OPTION_B — restructure startup | cost described, not measured |
+| `30c00e6e` | OPTION_C — keep analyzer gating | rested on a **false** premise (`definition.sql`) |
+| `02a99cb6` | OPTION_C — return to OPTION_B | the premise was found false; the analyzer's actual one-directional capability was known |
+
+Each move followed new evidence rather than indecision, and the endpoint is the **simplest** of the three:
+enforcement becomes deterministic (a compose service guarantees the objects) instead of analytical (an
+analyzer that cannot detect their absence hopes they are present). Three answers now exist in this audit
+trail for one question; this note exists so they do not read as three current positions.

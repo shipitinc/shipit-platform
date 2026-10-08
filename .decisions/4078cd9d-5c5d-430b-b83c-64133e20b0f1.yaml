@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 4078cd9d-5c5d-430b-b83c-64133e20b0f1
 type: INFRASTRUCTURE
-status: PENDING
+status: RESOLVED
 question: >-
   docker/compose.qa.yaml applies no schema bootstrap at all, so a fresh QA database is
   silently missing all six hand-maintained objects while reporting a clean analyzer. The
@@ -118,6 +118,50 @@ options:
       a manual step that no `qa-up` reproduces.
     estimated_effort: "runbook note only"
     risk_level: MEDIUM
+resolution:
+  selected_option: OPTION_B
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-08T05:52:00Z
+  rationale: >-
+    Make the bootstrap a compose service, fixing the cause rather than detecting it. The human
+    declined the cheaper verifier wiring, and the reason is coherent with the paired answer to
+    02a99cb6: if a compose service applies the bootstrap BEFORE the server starts, the presence of
+    the six hand-maintained objects becomes deterministic rather than advisory.
+
+    That is the substantive improvement over the recommended option. Wiring the read-only verifier
+    into QA would only make the false assurance LOUD; it would still leave QA depending on someone
+    applying the bootstrap. A compose service removes the dependency entirely, and it closes the
+    boot-ordering question in the same change rather than requiring a second pass over the same
+    compose files.
+
+    Note this makes DL-2 mandatory rather than merely desirable — which is what 30c00e6e had already
+    reasoned and the false premise had obscured. With enforcement now structural, the analyzer's
+    one-directional inability to report a missing modelled object stops being a live gap: the
+    objects are guaranteed to be there, so there is nothing for the analyzer to fail to notice.
+    This is the state that makes 02a99cb6's OPTION_C choice to return to the startup restructure
+    workable.
+
+    Accepted consequence, recorded so it is not discovered late: a compose service that applies
+    schema objects mutates QA state as part of an ordinary stack start. That is a change to how the
+    live QA stack behaves, so it inherits the standing AGENTS.md constraints — explicit project
+    naming with -p, never make clean or a bare down -v, and no reliance on the default project name,
+    which resolves to the live QA stack's own project.
+  follow_up_actions:
+    - action: >-
+        Include the bootstrap compose service as in-scope, mandatory content of the single
+        consolidated startup design dispatched under 02a99cb6, rather than dispatching it
+        separately. Two lanes editing the same compose files would collide, and the human paired
+        the two answers deliberately.
+      owner: orchestrator-main
+    - action: >-
+        Ensure the design states that a stack start now applies schema objects, and that this is a
+        deliberate change to live-stack behaviour requiring explicit project naming and no reliance
+        on the default compose project.
+      owner: orchestrator-main
+    - action: >-
+        Keep the runbook invariant and recovery instruction regardless of outcome; a compose file
+        alone does not make the constraint discoverable to an operator.
+      owner: orchestrator-main
 created_by: orchestrator-main
 created_at: 2026-10-08T05:40:00Z
-updated_at: 2026-10-08T05:40:00Z
+updated_at: 2026-10-08T05:52:00Z

@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 02a99cb6-b9c3-40b7-976d-227afce23ff0
 type: ARCHITECTURE
-status: PENDING
+status: RESOLVED
 question: >-
   Verification showed the analyzer never reads definition.sql — it compares the live database
   against the generated Dart protocol via getTargetTableDefinitions(). The premise in both
@@ -137,6 +137,64 @@ options:
       which this option gives up.
     estimated_effort: "new design plus a third reversal"
     risk_level: MEDIUM
+resolution:
+  selected_option: OPTION_C
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-08T05:52:00Z
+  rationale: >-
+    Return to the startup-restructure option. The human's reasoning, on the evidence: the analyzer
+    can never report a modelled object missing from the live database, so its value as a gate is
+    lower than 30c00e6e assumed when it was chosen. Having now seen the actual capability rather
+    than a described one, keeping the analyzer gating is worth less than guaranteeing the objects
+    are present — which the paired answer in 4078cd9d delivers directly, by making the bootstrap a
+    compose service.
+
+    Those two answers are coherent rather than contradictory, and together they are a better system
+    than either alone. A compose service that applies the bootstrap BEFORE the server makes the
+    presence of the six hand-maintained objects DETERMINISTIC rather than advisory. Enforcement
+    stops depending on an operator, a run mode, or an analyzer comparison that is one-directional
+    by construction. With the objects guaranteed present, whether the analyzer is fatal in QA stops
+    being the load-bearing question, and the Protocol-override mechanism becomes unnecessary work.
+
+    Consequences recorded so the churn is not mistaken for inconsistency:
+
+      - 30c00e6e (the Protocol-override / generator path) is SUPERSEDED. The Protocol override is
+        dropped, not deferred: with a compose service guaranteeing the objects, it would add a
+        maintenance surface with no remaining benefit.
+      - 6d2bfffe OPTION_B is REINSTATED. Design Revision F38E4B34 was rejected at Gate D4, so it
+        cannot simply be revived as-is; a fresh design is required that carries its verified
+        root-cause analysis forward and additionally treats the compose service as in scope.
+      - This is the third position on this fault, each reached after seeing the real cost rather
+        than a described one: OPTION_B, then reversed to OPTION_C, now back to OPTION_B with DL-2
+        fixed at the cause. The movement is a response to new evidence — the one-directional
+        comparison — and the endpoint is the simplest of the three, because enforcement is now
+        deterministic instead of analytical.
+
+    What is given up, stated plainly: in QA the analyzer stops gating boot, so model-derived drift
+    surfaces as a log warning rather than a failed start. The human has now priced that twice —
+    once against it, once accepting it — with the relevant difference being that the objects the
+    human most cares about are now guaranteed present by construction rather than hoped for.
+  follow_up_actions:
+    - action: >-
+        Dispatch ONE consolidated design lane covering the startup restructure AND the bootstrap
+        compose service as a single in-scope outcome. Carry F38E4B34's verified root-cause analysis
+        forward: verifyDatabaseIntegrity is unconditional at serverpod.dart:881, the sole fatal
+        branch is runMode == 'development' at :894, and the bootstrap already runs in -m test and
+        has always tolerated the mismatch.
+      owner: orchestrator-main
+    - action: >-
+        Drop the Protocol-override mechanism entirely. It is superseded, not deferred, and must not
+        be carried into the new design.
+      owner: orchestrator-main
+    - action: >-
+        Record on 30c00e6e and 6d2bfffe that the path has returned to OPTION_B with DL-2 fixed at
+        the cause, so three current-looking answers do not sit in the audit trail for one question.
+      owner: orchestrator-main
+    - action: >-
+        Resolve the promotion-blocking question the design agent raised: production run mode is not
+        establishable from this repository, and if production ran in development the analyzer would
+        become a live boot gate there for the first time.
+      owner: orchestrator-main
 created_by: orchestrator-main
 created_at: 2026-10-08T05:40:00Z
-updated_at: 2026-10-08T05:40:00Z
+updated_at: 2026-10-08T05:52:00Z

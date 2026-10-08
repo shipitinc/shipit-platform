@@ -201,3 +201,16 @@ resolution:
 created_by: orchestrator-main
 created_at: 2026-10-08T05:05:00Z
 updated_at: 2026-10-08T05:14:00Z
+## SUPERSEDED — 2026-10-08
+
+Decision `02a99cb6-b9c3-40b7-976d-227afce23ff0` resolved **OPTION_C**, returning the startup fault to
+the `6d2bfffe` OPTION_B path. This object's OPTION_C — the Protocol-override / generator change — is
+**SUPERSEDED and DROPPED, not deferred**.
+
+With `4078cd9d` making the bootstrap a compose service, the presence of the six hand-maintained objects
+becomes deterministic rather than advisory, so the Protocol override has no remaining benefit and would
+add a maintenance surface for nothing.
+
+Retained from this object, because it is correct and load-bearing: the reasoning that **DL-2 must be fixed
+at the cause**, not merely detected. That reasoning was reached before the false `definition.sql` premise
+was found and survives it intact.
