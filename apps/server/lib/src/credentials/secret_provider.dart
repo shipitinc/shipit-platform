@@ -50,10 +50,24 @@ class SecretProviderNotConfiguredException
 ///
 /// [reason] is therefore a **closed vocabulary**: a literal written here, or the
 /// output of [secretlessText] for a caught error. Never an interpolation. That
-/// is enforced, not merely documented — `test/secretless_error_test.dart`
-/// contains a guard test that reads this directory's source and fails if any
-/// `SecretStoreException(` argument block grows a `$`, so a future adapter that
-/// reaches for `'$error'` cannot merge.
+/// is enforced, not merely documented — `test/secretless_error_test.dart` reads
+/// the source of every [SecretProvider] implementation in this directory plus
+/// `credential_endpoints.dart`, and fails if any `SecretStoreException(` call
+/// site's `reason:` argument names a `catch (…)` binding other than as the
+/// argument of `secretlessText(…)`. A future adapter that reaches for
+/// `'$error'` cannot merge.
+///
+/// WHAT THAT GUARD ACTUALLY COVERS, stated precisely because F-2 was a doc that
+/// overstated it. It audits every `SecretStoreException(` call site, single-line
+/// or multi-line, and rejects `reason:` arguments of the shapes
+/// `'$error'`, `'${error.message}'` and `_leak(error)` — anything that hands a
+/// caught object to something which could stringify it. What it cannot do is
+/// follow a value: a reason aliased through a local (`final m = '$error'; …`
+/// `reason: m`) or built by a helper in another file that catches for itself is
+/// invisible to it, because a source audit sees names, not data flow. That
+/// residual is covered instead by a test that drives the real
+/// `LocalFileSecretProvider` through a real failure and asserts on the string
+/// that came out, which does not care how it was produced.
 class SecretStoreException implements Exception, AuditedFailure {
   SecretStoreException({
     required this.referenceName,

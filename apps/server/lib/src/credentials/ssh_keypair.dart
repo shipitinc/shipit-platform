@@ -72,8 +72,15 @@ const int _kNoneCipherBlockSize = 8;
 ///   * [privateSeed] is a [SecretBytes], whose only textual projection is a length.
 ///     A `log('$pair.privateSeed')` or an `'$seed'` in an exception message
 ///     therefore emits `<secret redacted, 32 bytes>`, exactly as if the raw
-///     buffer had been wrapped at construction. There is **no** public accessor
-///     that returns the seed as a `Uint8List` or a `String`.
+///     buffer had been wrapped at construction. Reaching the raw seed at all is
+///     an **explicit** act: [SecretBytes.bytes]. There is no implicit projection
+///     — no `toString`, no `toJson`, no operator — so nothing reaches a log line
+///     or a durable column by accident, which is the guarantee that actually
+///     matters here. (An earlier version of this sentence claimed there was "no
+///     public accessor that returns the seed as a `Uint8List` or a `String`".
+///     That was false — `privateSeed.bytes` is exactly that — in the same way
+///     the previous `String get privateKeyPem` contradicted the line above it,
+///     and it is corrected here rather than papered over.)
 ///   * [privateKeyPemBytes] is the OpenSSH container, as bytes. There is
 ///     **no** `String` rendering of the private half on this type at all — see
 ///     [encodeOpensshPrivateKeyPemBytes] for why one is no longer needed, and
@@ -159,8 +166,13 @@ class SshKeyPair {
   /// one `jsonEncode` of the pair, away from being in a session log that Postgres
   /// persists. Handing callers the wrapper keeps the guarantee at the type level
   /// rather than the review level, and makes reaching the raw bytes an explicit,
-  /// greppable `.bytes` at the three sites that genuinely need them (the codec,
-  /// the identity-file writer, and a test asserting the container round-trips).
+  /// greppable `.bytes`. There are six such sites in this directory — three that
+  /// genuinely must produce material (the GCP request body, the local store
+  /// write, the identity-file writer) and three inside the crypto codec
+  /// ([fromSeed] reading a recovered seed, wrapping a fresh copy of it, and
+  /// [privateKeyPemBytes] handing it to the encoder). None is a logging path;
+  /// `rg '\.bytes' apps/server/lib/src/credentials` is the audit that keeps it
+  /// true.
   ///
   /// The wrapper **copies** its input, so the seed this pair was built from is
   /// not aliased by a caller who keeps it.

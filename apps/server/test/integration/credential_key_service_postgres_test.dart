@@ -846,6 +846,101 @@ void main() {
             );
           }
         });
+
+        test(
+          'a fingerprint carrying a forged log boundary never reaches the '
+          'exception (F-1)',
+          () async {
+            // The reviewer's exact demonstration, inverted into an assertion.
+            //
+            // `hostKeyFingerprint` is caller text, and it does not stay in the
+            // column it is compared against: it is interpolated verbatim into
+            // `HostKeyNotPresentedException.secretlessDescription`, that type is
+            // an `AuditedFailure` so `secretlessText` FORWARDS it rather than
+            // suppressing it, and `credentialFailureLogFields` writes it to the
+            // session log that `config/test.yaml` persists to Postgres. At
+            // da68b5f the review drove the real verifier with exactly the value
+            // below and measured `DESCRIPTION_CONTAINS_NEWLINE=true` and
+            // `DESCRIPTION_CONTAINS_FORGED_MARKER=true`.
+            //
+            // The forged marker is this file's own success line, so a passing
+            // forgery would not merely look wrong — it would be a plausible
+            // record of an event that did not happen.
+            const forged =
+                '$_wrongFingerprint\n'
+                '[credentials] credential.verify_access.completed ok';
+            await seedProduct();
+            final service = serviceWith(_InMemorySecretProvider());
+            await service.generate(productId: _product, repositoryId: _repo);
+
+            // Proof 1 — the refusal names the field and the value is not in it.
+            Object? refusal;
+            try {
+              await service.verifyAccess(
+                productId: _product,
+                repositoryId: _repo,
+                hostKeyFingerprint: forged,
+                confirmedBy: 'operator@example',
+              );
+            } on Object catch (caught) {
+              refusal = caught;
+            }
+            expect(
+              refusal,
+              isA<CredentialScopeException>().having(
+                (e) => e.toString(),
+                'toString',
+                allOf(
+                  contains('hostKeyFingerprint'),
+                  isNot(contains('\n')),
+                  isNot(contains('credential.verify_access.completed')),
+                ),
+              ),
+              reason:
+                  'a fingerprint with a line boundary must be refused before it '
+                  'can reach an audited description',
+            );
+
+            // Proof 2 — and it never becomes a HostKeyNotPresentedException,
+            // which is the audited type whose description interpolates it. If it
+            // threw that instead, the type gate would forward the forgery.
+            expect(refusal, isNot(isA<HostKeyNotPresentedException>()));
+
+            // Proof 3 — the same guarantee at the sink the review named, so this
+            // does not depend on the exception's own rendering: whatever is
+            // logged for this failure carries neither the newline nor the marker.
+            final fields = credentialFailureLogFields(
+              event: 'credential.verify_access.failed',
+              productId: _product,
+              repositoryId: _repo,
+              error: refusal!,
+            );
+            final logged = fields.values.map((v) => '$v').join(' ');
+            expect(logged, isNot(contains('\n')));
+            expect(
+              logged,
+              isNot(contains('credential.verify_access.completed')),
+            );
+            expect(
+              logged,
+              contains('hostKeyFingerprint'),
+              reason: 'the refusal must still name the field it rejected',
+            );
+
+            // Proof 4 — the legitimate value beside it is untouched, so this is a
+            // bound and not a ban: an operator's real fingerprint still reaches
+            // the verifier, which refuses it on its merits.
+            await expectLater(
+              service.verifyAccess(
+                productId: _product,
+                repositoryId: _repo,
+                hostKeyFingerprint: _wrongFingerprint,
+                confirmedBy: 'operator@example',
+              ),
+              throwsA(isA<HostKeyNotPresentedException>()),
+            );
+          },
+        );
       });
 
       group('a malformed secret cannot reach the durable record (B-1)', () {

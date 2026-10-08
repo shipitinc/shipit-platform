@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:control_plane_server/src/credentials/local_file_secret_provider.dart';
 import 'package:control_plane_server/src/credentials/posix_file_permissions.dart';
+import 'package:control_plane_server/src/credentials/secret_material.dart';
 import 'package:control_plane_server/src/credentials/secret_provider.dart';
 import 'package:control_plane_server/src/credentials/secretless_error.dart';
 import 'package:control_plane_server/src/credentials/ssh_keypair.dart';
@@ -27,10 +29,13 @@ import 'package:test/test.dart';
 ///      [redactUnauditedFailure] substitutes a stand-in so nothing downstream can
 ///      reach the original either. A new failing path is therefore silent by
 ///      default rather than leaky by default.
-///   3. **The sources.** No adapter in `lib/src/credentials/**` may build a
-///      `SecretStoreException` argument block containing a string interpolation,
-///      which is what `reason: '$error'` was. That is a source audit, run as a
-///      test, so it fails the build rather than relying on the next reader.
+///   3. **The sources.** No [SecretProvider] implementation in
+///      `lib/src/credentials/**` or `credential_endpoints.dart` may build a
+///      `SecretStoreException` whose `reason` hands a `catch`-clause binding to
+///      anything other than `secretlessText(…)`. That is a source audit, run as a
+///      test, so it fails the build rather than relying on the next reader — and
+///      F-2's residual, a reason assembled outside the audited call site, is
+///      covered by driving the real adapter and inspecting what came out.
 const _truncatedAccessBody =
     '{"name":"projects/p/secrets/GIT_REPOSITORY_repo-1_SSH/versions/1",'
     '"payload":{"data":"AAAAB3NzaC1lZDI1NTE5AAAAIEXAMPLESECRETHALFBASE64'
@@ -243,42 +248,66 @@ void main() {
     );
   });
 
-  group('no adapter interpolates a caught error into a reason', () {
-    test('no reason interpolates a catch-clause binding', () {
-      // The `reason: '$error'` shape, in any adapter, in any file, fails here.
-      // A `SecretStoreException`'s reason reaches the session log and therefore
-      // Postgres, so it may interpolate string literals and package constants
-      // (`$kNoMaterialEchoed`, `$code`, an env-var name) — but never an object
-      // this code caught, whose message is unvetted text.
+  group('no adapter forwards a caught error into a reason', () {
+    test('no reason names a catch-clause binding outside secretlessText', () {
+      // The rule, as a CLOSED VOCABULARY. A `SecretStoreException`'s reason
+      // reaches the session log and therefore Postgres, so it may be: a literal
+      // written in the file (which may interpolate this code's own constants,
+      // field names and environment-variable names), or `secretlessText(<caught
+      // error>)`. The one thing it may never do is hand a caught object to
+      // anything that could stringify it — a caught error's own message is
+      // unvetted text this layer does not control.
       //
-      // Comments are stripped first, and only multi-line call sites are matched,
-      // so the audit reads code rather than the prose that describes the rule.
+      // F-2. This was narrower than the rule it was written to enforce, and
+      // narrower than `secret_provider.dart` claimed. It matched only a
+      // MULTI-LINE call site and only a `$name` INTERPOLATION, so
+      // `reason: _leak(error)` — one top-level helper, one argument — passed
+      // while the caught message flowed into a durable record verbatim. Both
+      // shapes are rejected below.
+      //
+      // The residual is named rather than papered over: a source audit cannot
+      // follow a value through a local variable (`final message = '$error'; …
+      // reason: message`) or into a helper defined in another file that catches
+      // for itself. The next test covers that residual end to end for the
+      // adapter that actually handles key material, because it does not care how
+      // the string was produced — only what came out.
       final offenders = <String>[];
-      final directory = _locateDirectory('lib/src/credentials');
-      for (final entry in directory.listSync()) {
-        if (entry is! File || !entry.path.endsWith('.dart')) continue;
-        final source = _withoutComments(entry.readAsStringSync());
+      final sources = _auditedSources();
+      expect(
+        sources.length,
+        greaterThan(10),
+        reason:
+            'the audit found suspiciously few sources; a guard that audits '
+            'nothing must fail rather than pass',
+      );
+      for (final file in sources) {
+        final source = _withoutComments(file.readAsStringSync());
         final caught = RegExp(
           r'catch\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)',
         ).allMatches(source).map((m) => m.group(1)!).toSet();
         if (caught.isEmpty) continue;
-        // `(` followed by a newline: an argument list, never prose or a
-        // `secretlessDescription` string that merely names the type.
+        // `(`, then anything at all. F-2 found that restricting this to `\(\n`
+        // let a single-line call site through, which is the second bypass.
         for (final match in RegExp(
-          r'SecretStoreException\(\n',
+          r'SecretStoreException\(\s*',
         ).allMatches(source)) {
           final block = _balancedCall(source, match.start);
           final reason = _argumentOf(block, 'reason');
           if (reason == null) continue;
           for (final name in caught) {
-            if (RegExp(
-              r'\$\{?'
-              '$name'
-              r'\b',
-            ).hasMatch(reason)) {
+            // `secretlessText(error)` is the sanctioned shape, so it is removed
+            // before the search. Anything that still names the binding —
+            // `'$error'`, `${error.message}`, and the demonstrated `_leak(error)`
+            // — is an offender. The old check searched for `\$\{?error\b` only,
+            // which is why the last of those three passed.
+            final unsanctioned = reason.replaceAll(
+              RegExp('secretlessText\\(\\s*$name\\s*\\)'),
+              '',
+            );
+            if (RegExp('\\b$name\\b').hasMatch(unsanctioned)) {
               offenders.add(
-                '${entry.path.split('/').last}: '
-                'reason interpolates the caught `$name`',
+                '${file.path.split('/').last}: reason hands the caught `$name` '
+                'to something other than secretlessText(...)',
               );
             }
           }
@@ -292,6 +321,73 @@ void main() {
             'constant, or secretlessText(...): $offenders',
       );
     });
+
+    test(
+      'the real adapter reason carries no material, however it was produced',
+      () async {
+        // The positive side, and the half a source audit cannot do. Drive the
+        // REAL [LocalFileSecretProvider] through a REAL failure while handing it
+        // a real ed25519 private key, and assert on what came out. This does not
+        // care whether the reason was a literal, a `secretlessText` call, a value
+        // aliased through a local, or a helper in another file — so it is the
+        // backstop for exactly the residual the source guard cannot follow.
+        final pem = utf8.decode(
+          SshKeyPair.generate(
+            comment: 'shipit+reason-probe',
+          ).privateKeyPemBytes,
+        );
+        expect(
+          _forbiddenFragments.any(pem.contains),
+          isTrue,
+          reason:
+              'the fixture must be a real private key, or this proves '
+              'nothing: a redacted string contains none of it',
+        );
+
+        final scratch = Directory.systemTemp.createTempSync(
+          'shipit_reason_guard_',
+        );
+        addTearDown(() => scratch.deleteSync(recursive: true));
+        // A regular file where the store's directory should be: the directory
+        // creation fails for real, inside the adapter's own
+        // `on Object catch (error)` block.
+        final blocker = File('${scratch.path}/blocked')
+          ..writeAsStringSync('not a directory');
+        final provider = LocalFileSecretProvider(directoryPath: blocker.path);
+
+        SecretStoreException? caught;
+        try {
+          await provider.store(
+            referenceName: 'GIT_REPOSITORY_reason-probe_SSH',
+            secret: SecretBytes(
+              SshKeyPair.generate(comment: 'shipit+store').privateKeyPemBytes,
+            ),
+          );
+        } on SecretStoreException catch (error) {
+          caught = error;
+        }
+        expect(
+          caught,
+          isNotNull,
+          reason:
+              'a store into a path that is a regular file must fail, and it '
+              'must fail typed rather than with a raw dart:io error',
+        );
+        final reason = caught!.reason;
+        expect(
+          reason,
+          isNotEmpty,
+          reason:
+              'the rule must not be silence; the reason is what an operator '
+              'reads',
+        );
+        _expectNoMaterial(reason, 'LocalFileSecretProvider.store reason');
+        _expectNoMaterial(
+          caught.secretlessDescription,
+          'SecretStoreException.secretlessDescription',
+        );
+      },
+    );
 
     test('the reason of an adapter failure is still useful to an operator', () {
       // The other side of the guard: a rule that forced silence would be a bad
@@ -308,6 +404,31 @@ void main() {
       );
     });
   });
+}
+
+/// Every production source the reason rule applies to.
+///
+/// F-2, second half: the guard scanned `lib/src/credentials/**` while its doc
+/// spoke of "any adapter", and `credential_endpoints.dart` holds a fourth
+/// [SecretProvider] implementation. A net has to cover the surface it is
+/// described as covering, so both are listed here.
+List<File> _auditedSources() => [
+  ..._locateDirectory('lib/src/credentials').listSync().whereType<File>(),
+  _locateFile('lib/src/endpoints/credential_endpoints.dart'),
+].where((file) => file.path.endsWith('.dart')).toList();
+
+/// The file at [relative], from wherever `dart test` was invoked.
+///
+/// The same rule as [_locateDirectory]: an audit that silently found nothing
+/// would be worse than no audit at all.
+File _locateFile(String relative) {
+  for (final candidate in _candidates(relative)) {
+    if (candidate is File) return candidate;
+  }
+  throw StateError(
+    'could not locate the file $relative from ${Directory.current.path}; this '
+    'file audits sources and must not pass by finding nothing',
+  );
 }
 
 /// The source with every `//` and `///` line removed.

@@ -158,6 +158,31 @@ class AccessVerification {
   };
 }
 
+/// A control character in caller-supplied text that is interpolated into a
+/// message which reaches a durable record. An unescaped line boundary is a
+/// forge-the-previous-entry primitive, which is the reason both attribution
+/// validators refuse one.
+///
+/// A **space** is deliberately not in this class: `confirmedBy` is a person's
+/// name and must accept "Dana Okafor". [_kNonTokenCharacter] is the wider class
+/// used where the value is not free text.
+final RegExp _kControlCharacter = RegExp(r'[\x00-\x1f\x7f]');
+
+/// A control character **or a space** — anything that is not part of a single
+/// opaque token.
+///
+/// Used only for [CredentialKeyService._validatedFingerprint], where the value is
+/// a host-key fingerprint: a fixed-shape token (`SHA256:` and 43 base64
+/// characters, or the `MD5:aa:bb:…` form) that no `ssh-keygen -l` output can
+/// contain a space in. Applying this class to a free-text attribution would
+/// refuse an ordinary operator's name.
+final RegExp _kNonTokenCharacter = RegExp(r'[\x00-\x20\x7f]');
+
+/// Ceiling on caller-supplied text this layer bounds before it is persisted,
+/// logged, or compared. Well above any operator's name or any fingerprint, and
+/// well below a paste of something else.
+const int _kMaxCallerTextLength = 128;
+
 /// Generates repository deploy keys and proves they can reach the repository.
 ///
 /// This is the layer ADR 0018 §A3 describes — the one that holds a reference and
@@ -307,6 +332,9 @@ class CredentialKeyService {
   /// [confirmedBy] is likewise caller free text with no identity behind it; it is
   /// validated for shape (see [_validatedConfirmer]) because it is persisted to
   /// `hostConfirmedBy` / `lastVerifiedBy`, but it attests to nothing.
+  /// [hostKeyFingerprint] is caller text too, and is validated by the same kind of
+  /// check (see [_validatedFingerprint]) — it reads as a computed value, which is
+  /// precisely why it needed one.
   Future<AccessVerification> verifyAccess({
     required String productId,
     required String repositoryId,
@@ -329,10 +357,20 @@ class CredentialKeyService {
     // changed fingerprint. The verifier then enforces the same fact at the
     // socket. Both, deliberately: one records the decision and one cannot be
     // lied to by a rewritten remote.
+    //
+    // Bounded here, BEFORE either of them sees the value, so it is bounded on
+    // every leg it takes — the column `confirmHostKey` writes, the audited
+    // exception description the verifier interpolates it into, and from there
+    // the session log. See [_validatedFingerprint] for why that last leg is a
+    // log-forgery vector and not merely untidy.
+    final fingerprint = _validatedFingerprint(
+      hostKeyFingerprint,
+      'hostKeyFingerprint',
+    );
     await engine.confirmHostKey(
       productId: productId,
       credentialId: credential.credentialId,
-      hostKeyFingerprint: hostKeyFingerprint,
+      hostKeyFingerprint: fingerprint,
       confirmedBy: _validatedConfirmer(confirmedBy, 'confirmedBy'),
       now: _clock(),
     );
@@ -345,7 +383,7 @@ class CredentialKeyService {
       final outcome = await verifier.verify(
         remote: remote,
         privateKeyPem: material,
-        confirmedHostKeyFingerprint: hostKeyFingerprint,
+        confirmedHostKeyFingerprint: fingerprint,
       );
 
       // A clone that worked while the private half could not be destroyed is NOT
@@ -391,8 +429,13 @@ class CredentialKeyService {
   /// (the domain already checks this, and a second opinion is cheaper than a
   /// blank audit field), a control character (which in a log line is a
   /// forge-the-previous-entry primitive), and anything long enough to be a paste
-  /// of something else. The value itself is reported back in the refusal, since
-  /// it is the operator's own text and they need to see what was rejected.
+  /// of something else.
+  ///
+  /// NO REFUSAL QUOTES THE VALUE. The refusals name the field and, for the
+  /// length refusal, report the length; they do not report the text back. The
+  /// value is caller-supplied and these messages reach a durable record, so
+  /// echoing it would make the refusal the forgeable surface instead of the
+  /// field it is bounding.
   static String _validatedConfirmer(String value, String field) {
     final trimmed = value.trim();
     if (trimmed.isEmpty) {
@@ -402,17 +445,77 @@ class CredentialKeyService {
         'nothing.',
       );
     }
-    if (trimmed.length > 128) {
+    if (trimmed.length > _kMaxCallerTextLength) {
       throw CredentialScopeException(
-        '$field is ${trimmed.length} characters; at most 128 are accepted. It '
-        'is recorded against the credential, not interpreted.',
+        '$field is ${trimmed.length} characters; at most $_kMaxCallerTextLength '
+        'are accepted. It is recorded against the credential, not interpreted.',
       );
     }
-    if (RegExp(r'[\x00-\x1f\x7f]').hasMatch(trimmed)) {
+    if (_kControlCharacter.hasMatch(trimmed)) {
       throw CredentialScopeException(
         '$field contains a control character. It is recorded against the '
         'credential as a single audit field and must not be able to forge a log '
         'line.',
+      );
+    }
+    return trimmed;
+  }
+
+  /// Bounds and sanitises the caller-supplied host-key fingerprint. F-1.
+  ///
+  /// The same class of check as [_validatedConfirmer], for the same reason, and
+  /// deliberately a sibling rather than a reuse: the messages are about a value
+  /// compared byte-for-byte against one the transport computes, not about an
+  /// audit field, and a shared message would misdescribe one of them.
+  ///
+  /// WHY IT NEEDED ITS OWN CALL, because the M-5 correction bounded
+  /// `confirmedBy` and `checkedBy` and left this untouched. The reason it was
+  /// easy to leave is that it reads as a *computed* value — `SHA256:` followed
+  /// by 43 base64 characters — and a computed value looks safe to forward
+  /// unchanged. It is caller-supplied text, and it does not stay in the column:
+  ///
+  ///   * [HostKeyNotPresentedException.secretlessDescription] interpolates
+  ///     `confirmedFingerprint` verbatim;
+  ///   * that type is an [AuditedFailure], so [secretlessText] **forwards** it
+  ///     rather than suppressing it the way it suppresses an unvetted message;
+  ///   * `credentialFailureLogFields` writes it to the Serverpod session log,
+  ///     which `config/test.yaml` persists to Postgres.
+  ///
+  /// So an unescaped newline in this field is a forge-the-previous-entry
+  /// primitive on exactly the boundary `confirmedBy` was bounded for. The
+  /// asymmetry is the whole finding: `confirmedBy` reaches only a column, and
+  /// this reached an exception description and therefore a durable log row.
+  ///
+  /// It carries no key material and violates no ADR 0018 clause, which is why
+  /// the focused review rated it MEDIUM rather than HIGH — but shipping a
+  /// log-forgery vector knowingly inside a security boundary is not a trade
+  /// worth making for a saved bound, and the M-5 hardening must not be described
+  /// as complete until this is closed.
+  ///
+  /// NO REFUSAL QUOTES THE VALUE, for the same reason as [_validatedConfirmer]:
+  /// these messages reach a durable record, so a refusal that echoed the
+  /// attacker-supplied text would carry the forge into the path that rejects it.
+  static String _validatedFingerprint(String value, String field) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      throw CredentialScopeException(
+        '$field is empty. It is compared against the fingerprint the transport '
+        'computes from the host key the server actually obtained, so an empty '
+        'value cannot match one.',
+      );
+    }
+    if (trimmed.length > _kMaxCallerTextLength) {
+      throw CredentialScopeException(
+        '$field is ${trimmed.length} characters; at most '
+        '$_kMaxCallerTextLength are accepted. A host-key fingerprint is a short '
+        'fixed-shape token.',
+      );
+    }
+    if (_kNonTokenCharacter.hasMatch(trimmed)) {
+      throw CredentialScopeException(
+        '$field contains whitespace or a control character. It is interpolated '
+        'into an audited failure description that reaches the session log and '
+        'therefore Postgres, so it must not be able to forge a log line.',
       );
     }
     return trimmed;

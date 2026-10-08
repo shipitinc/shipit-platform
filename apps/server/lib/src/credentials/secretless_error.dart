@@ -30,9 +30,11 @@ abstract interface class AuditedFailure {
   ///
   /// MUST be composed from this implementation's own closed set of fields. It
   /// MUST NOT interpolate `toString()` of a caught error, and MUST NOT touch
-  /// bytes. `audit/secretless_error_test.dart` holds a guard test that fails if a
-  /// `SecretStoreException` argument block grows a string interpolation, and a
-  /// second that feeds real material-bearing failures through this function.
+  /// bytes. `test/secretless_error_test.dart` holds a guard test that reads the
+  /// adapter sources and fails if a `SecretStoreException` `reason:` argument
+  /// names a caught binding other than inside `secretlessText(...)`, and a
+  /// second that drives the real local adapter and feeds real material-bearing
+  /// failures through this function.
   String get secretlessDescription;
 }
 
