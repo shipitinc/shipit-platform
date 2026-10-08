@@ -271,3 +271,39 @@ most about are now guaranteed present by construction rather than hoped for.
 **Also still open, and promotion-blocking:** production run mode is not establishable from this
 repository. If production ran in `development` mode, the analyzer would become a live boot gate there for
 the first time. Not decided here.
+
+## 🔴 One more decision filed 2026-10-08 — PRODUCTION, not QA
+
+| decision_id | type | question |
+|---|---|---|
+| `f691aeb5-caa9-4019-942f-5fb9a5e6cdd1` | **SECURITY** | Production runs in development mode and applies no bootstrap — it boots **unenforced**, and would fail to boot if anyone applied the bootstrap. How is production handled? |
+
+Raised as blocker **B-1** by the startup design agent, then verified **end to end by the Manager from
+source**. Every link checked:
+
+| # | Link | Finding |
+|---|---|---|
+| 1 | `.github/workflows/release.yaml:18-26` — `cd docker` then `docker build -f Dockerfile.server ../apps/server` | `-f` resolves against the CWD, so production builds **`docker/Dockerfile.server`** |
+| 2 | `docker/Dockerfile.server:53` | `CMD ["dart","bin/main.dart","--apply-migrations"]` — **no `--mode`** (`apps/server/Dockerfile` sets `--mode=$runmode` but is on no build path) |
+| 3 | `infrastructure/modules/cloudrun/main.tf:60-90` | server container sets **no `args`, no `command`**; env is `SERVERPOD_DATABASE_{HOST,NAME,USER,PASSWORD}` only. `SERVERPOD_RUN_MODE` appears **nowhere** in config, workflow, Dockerfile or Terraform — both repo-wide hits are inside `.dart_tool` caches |
+| 4 | No `--mode` ⇒ config null ⇒ `serverpod.dart:967` | run mode resolves to **`development`** |
+| 5 | `serverpod.dart:894` | in `development` the analyzer is **fatal** |
+
+**Both branches of the resulting fork are bad, and neither is detected anywhere in this repository:**
+
+- Production applies `--apply-migrations` and never the bootstrap, so the six hand-maintained objects are
+  absent. The analyzer is one-directional — objects missing from **both** sides are never reported — so it
+  **passes**, and production **boots unenforced**, with no partial unique index enforcing one active
+  credential per repository. That is the invariant `898b07d0` and ADR 0018 A1 exist to protect.
+- If anyone applied the bootstrap to production, the live DB would carry indexes the model does not
+  declare, `liveTable.like(target)` would report `Missing Index`, and production would **fail to boot**.
+  So the one action that fixes the gap is the one action that breaks the service.
+
+CI never reproduces it: the integration job uses a fresh database **with** the bootstrap, which is the
+one combination production does not have.
+
+**The QA fix does not reach production.** The design deliberately keeps the production artifact
+byte-identical by putting the run-mode override in compose rather than the Dockerfile — which means
+production's run mode stays whatever its CMD says, which is nothing. Production needs its own decision,
+and it is filed as SECURITY because the unenforced state permits a data-integrity violation rather than
+merely a risk of one.

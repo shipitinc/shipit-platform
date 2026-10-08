@@ -1,0 +1,182 @@
+# human-decision.yaml
+decision_id: f691aeb5-caa9-4019-942f-5fb9a5e6cdd1
+type: SECURITY
+status: PENDING
+question: >-
+  The production server image runs in development mode, and production applies migrations but no
+  schema bootstrap — so production currently boots without the partial unique index that
+  enforces one active credential per repository, and would fail to boot entirely if anyone
+  applied the bootstrap. How is production handled?
+context:
+  summary: >-
+    Raised as promotion blocker B-1 by the startup design agent, then verified independently by
+    the Manager end to end from source. This is not a QA concern: it is a production data-integrity
+    invariant, and it is currently unenforced rather than merely at risk.
+
+    The chain, each link verified:
+
+      1. `.github/workflows/release.yaml:18-26` builds the production server image with
+         `cd docker` then `docker build -f Dockerfile.server ../apps/server`. The `-f` path
+         resolves against the CWD, so the production Dockerfile is **`docker/Dockerfile.server`**.
+      2. `docker/Dockerfile.server:53` — `CMD ["dart", "bin/main.dart", "--apply-migrations"]`.
+         **No `--mode` argument.** (`apps/server/Dockerfile` sets `--mode=$runmode`, but it is on
+         no build path and is not what release builds.)
+      3. `infrastructure/modules/cloudrun/main.tf:60-90` — the server container sets **no `args`,
+         no `command`**, and an env block containing only `SERVERPOD_DATABASE_HOST`, `_NAME`,
+         `_USER` and `_PASSWORD`. **`SERVERPOD_RUN_MODE` appears nowhere in any config, workflow,
+         Dockerfile or Terraform file** — the only two hits repo-wide are inside `.dart_tool`
+         build caches.
+      4. With no `--mode`, Serverpod's config is null (3-argument constructor), so
+         `serverpod.dart:967` returns `development`.
+      5. In `development`, the analyzer is fatal: `serverpod.dart:894`.
+
+    The consequence is a fork, and BOTH branches are bad:
+
+      - Production applies `--apply-migrations` but never the bootstrap, so the six hand-maintained
+        objects are absent. The analyzer is one-directional (it iterates live objects and looks
+        them up in the model), so objects missing from BOTH sides are never reported. **The analyzer
+        passes. Production boots unenforced** — with no partial unique index enforcing one active
+        credential per repository, which is the invariant that decision 898b07d0 and ADR 0018 A1
+        exist to protect.
+      - If anyone ever applied the bootstrap to production, the live database would then carry
+        indexes the model does not declare. `liveTable.like(target)` reports `Missing Index`, the
+        analyzer returns false, and **production fails to boot**. So the one action that would fix
+        the gap is the one action that breaks the service.
+
+    Nothing in this repository currently detects either state. CI's integration job uses a fresh
+    database and the bootstrap, so it never reproduces production's combination.
+
+    Note the interaction with the work in progress: the QA fix (a bootstrap compose service plus a
+    non-fatal run mode) does NOT reach production. Production needs its own answer, and the design
+    deliberately keeps the production artifact byte-identical by putting the run-mode override in
+    compose rather than the Dockerfile — which means production's run mode remains whatever its CMD
+    says, which is nothing.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: f691aeb5-caa9-4019-942f-5fb9a5e6cdd1
+    item_ref: >-
+      Production promotion of the Add Product work item — blocker B-1 of Design Revision
+      7ee20856-c0ac-4950-a312-4215904cf8d1.
+  evidence:
+    documents:
+      - type: OTHER
+        id: release
+        url: .github/workflows/release.yaml
+      - type: OTHER
+        id: dockerfile
+        url: docker/Dockerfile.server
+      - type: OTHER
+        id: cloudrun
+        url: infrastructure/modules/cloudrun/main.tf
+      - type: OTHER
+        id: revision
+        url: docs/engineering/dispatch/tasks/design-startup-consolidated/DESIGN_REVISION.md
+      - type: OTHER
+        id: A1
+        url: .decisions/898b07d0-e848-4774-8007-f4dacbd89c78.yaml
+    quantitative_data:
+      - metric: Production server Dockerfile
+        value: "docker/Dockerfile.server — `-f` resolves against the CWD after `cd docker`"
+        source: release.yaml:18-24
+      - metric: Production CMD
+        value: 'CMD ["dart", "bin/main.dart", "--apply-migrations"] — no --mode'
+        source: docker/Dockerfile.server:53
+      - metric: Cloud Run args / command / run-mode env
+        value: "none / none / none — env block is DATABASE_HOST, _NAME, _USER, _PASSWORD only"
+        source: infrastructure/modules/cloudrun/main.tf:60-90
+      - metric: SERVERPOD_RUN_MODE occurrences in repo config
+        value: "0 — both repo-wide hits are inside .dart_tool caches"
+        source: Manager grep, 2026-10-08
+      - metric: Resolved production run mode
+        value: development — config is null via the 3-arg constructor, so serverpod.dart:967 returns it
+        source: design agent DL-6 / D-3, Manager-confirmed chain
+      - metric: Hand-maintained objects production lacks
+        value: 6 — including product_credential_active_repository_unique
+        source: tool/schema_bootstrap.sql
+      - metric: Invariant unenforced in production
+        value: one active credential per repository (partial unique index)
+        source: ADR 0018 A1, decision 898b07d0
+    qualitative_tradeoffs:
+      - dimension: Which gap is worse
+        option_a: Fix the enforcement gap
+        option_b: Fix the boot gap first
+        assessment: >-
+          Today the enforced gap is the live one: production accepts a second active credential
+          for a repository because the index that prevents it is absent. The boot failure is
+          latent and only triggers once someone applies the bootstrap. Fixing enforcement without
+          fixing boot would take production from unenforced to unable-to-start.
+      - dimension: Run mode as the lever
+        option_a: Set an explicit production run mode
+        option_b: Leave production in development
+        assessment: >-
+          An explicit non-development run mode makes the analyzer non-fatal, which is what lets
+          production apply the bootstrap and boot. It also stops development conveniences in
+          production that were never intended there. Leaving it alone preserves the unenforced
+          state and the latent boot failure together.
+      - dimension: Sequencing against QA
+        option_a: Fix production now
+        option_b: Land QA first, production after
+        assessment: >-
+          Landing QA first is smaller and already designed, but it does not touch production, and
+          the production gap is a live data-integrity defect rather than a planned-work item. The
+          two can proceed in parallel because they touch different artifacts — the QA run-mode
+          override lives in compose, production's would live in the Terraform or the image CMD.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Fix both production gaps together: give production an explicit non-development run mode AND
+      apply the bootstrap there. Either alone leaves a defect — enforcement without a run-mode fix
+      takes production from unenforced to unbootable, and a run-mode fix without the bootstrap
+      leaves the invariant unenforced. The pair is the smallest configuration in which production
+      is both correct and startable, and it is the configuration the QA work converges on anyway,
+      so the two agree rather than diverge.
+
+    This is a production change and therefore human authority, not an implementation detail. It is
+    filed as SECURITY because the unenforced state permits a data-integrity violation that
+    decisions 898b07d0 and ADR 0018 A1 exist to prevent.
+    confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Fix both — run mode and bootstrap in production
+    description: >-
+      Give the production service an explicit non-development run mode and apply the schema
+      bootstrap on its migration path, so the one-active-credential-per-repository index exists and
+      the service still starts.
+    implications: >-
+      Closes a live data-integrity gap and removes the latent boot failure together. Touches the
+      production artifact or Terraform, so it needs its own design, review and human promotion
+      authorisation, and cannot ride along with the QA work.
+    estimated_effort: "production design plus review plus promotion authorisation"
+    risk_level: MEDIUM
+  - option_id: OPTION_B
+    label: Set the run mode only, defer the bootstrap
+    description: >-
+      Make the production analyzer non-fatal now and apply the bootstrap in a later step.
+    implications: >-
+      Removes the latent boot failure so the bootstrap becomes safe to apply later, but leaves
+      production unenforced in the meantime — the invariant stays unprotected across the gap.
+    estimated_effort: "Terraform or image CMD change plus review"
+    risk_level: LOW
+  - option_id: OPTION_C
+    label: Apply the bootstrap only
+    description: >-
+      Add the bootstrap to the production migration path and leave the run mode alone.
+    implications: >-
+      Closes the data-integrity gap but, on the verified chain, production would then fail its
+      analyzer check in development mode and be unable to start. Not recommended as a standalone.
+    estimated_effort: "migration path change plus review"
+    risk_level: HIGH
+  - option_id: OPTION_D
+    label: Record and defer past this work item
+    description: >-
+      File production's run mode and bootstrap as tracked follow-up and do not change production
+      in this work item.
+    implications: >-
+      Keeps production untouched and out of the QA change's blast radius. Leaves the
+      one-active-credential-per-repository invariant unenforced and the boot failure latent, with
+      no detection in this repository for either.
+    estimated_effort: "ledger entry only"
+    risk_level: HIGH
+created_by: orchestrator-main
+created_at: 2026-10-08T06:10:00Z
+updated_at: 2026-10-08T06:10:00Z
