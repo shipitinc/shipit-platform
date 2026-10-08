@@ -1,0 +1,131 @@
+# human-decision.yaml
+decision_id: 6bd29306-efe0-4335-9c31-d14bb4957523
+type: SECURITY
+status: PENDING
+question: >-
+  The reviewed golden-CI work is merged locally but cannot be pushed: the OAuth credential
+  lacks workflow scope, so GitHub refuses any update to .github/workflows/ci.yaml. Which push
+  path should publish it?
+context:
+  summary: >-
+    Integration of fix/golden-domination-n2 completed locally as merge commit 34f60a2 with all
+    four reviewed SHAs preserved byte-for-byte, and every post-merge gate green (638 files
+    (0 changed), No issues found!, +246: All tests passed!). The remote is unchanged at 068f952,
+    so the reviewed work is not published.
+
+    The push was rejected atomically:
+
+        ! [remote rejected] main -> main (refusing to allow an OAuth App to create or
+          update workflow `.github/workflows/ci.yaml` without `workflow` scope)
+
+    ci.yaml arrives from reviewed commit c68016a and is load-bearing — it wires the new
+    golden-domination gate into CI, which is the entire enforcement mechanism for
+    decision cff0e948. The rejection is not incidental to this work; it is caused by it.
+
+    Every escape hatch available to a lane destroys what the merge route exists to protect.
+    Force-push is forbidden and irrelevant. Amending to drop ci.yaml would rewrite reviewed SHAs
+    and publish CI wiring that was never reviewed. Touching credentials exceeds lane authority
+    under AGENTS.md 13a/13b. So this is human authority by design.
+
+    Checked before escalating: there is no SSH push path to fall back on. origin is HTTPS
+    (github.com/shipitinc/shipit-platform.git), no SSH remote is configured, and the SSH agent
+    holds no identities. Unblocking therefore requires either a credential-scope change or a
+    configured deploy-key path — both human actions.
+  blocking_work_item:
+    item_type: FEATURE
+    item_id: cff0e948-80a5-48ab-9a7b-f2a99be6f870
+    item_ref: >
+      Golden-baseline integrity — merged locally at 34f60a2, unpublished.
+  evidence:
+    documents:
+      - type: OTHER
+        id: integrate-report
+        url: docs/engineering/dispatch/tasks/integrate-fix-golden-domination/report.md
+      - type: OTHER
+        id: review
+        url: docs/engineering/dispatch/tasks/review-fix-golden-ci-environment/report.md
+      - type: OTHER
+        id: ADR0018
+        url: docs/adr/0018-per-product-git-credentials.md
+    quantitative_data:
+      - metric: Local main
+        value: "34f60a2 (merge of 068f952 + b7db6ef, ort strategy, 0 conflicts)"
+        source: integrator
+      - metric: Remote main
+        value: "068f952 — rejection was atomic, nothing pushed"
+        source: integrator
+      - metric: Reviewed SHAs preserved
+        value: 4 — all byte-for-byte ancestors of the merge
+        source: integrator
+      - metric: Post-merge gates
+        value: "638 files (0 changed) / No issues found! / +246: All tests passed!"
+        source: integrator, verbatim
+      - metric: Files changed by the branch that trip the restriction
+        value: 1 — .github/workflows/ci.yaml, from reviewed commit c68016a
+        source: release of the push rejection
+      - metric: SSH push path available
+        value: "0 — origin is HTTPS, no SSH remote configured, agent holds no identities"
+        source: Manager, 2026-10-08
+    qualitative_tradeoffs:
+      - dimension: Which mechanism
+        option_a: Grant OAuth workflow scope
+        option_b: Use the ADR 0018 per-repo deploy key
+        assessment: >-
+          Granting scope is one settings change and keeps the current transport, but it widens a
+          shared credential's authority to rewrite CI — and OAuth scope grants are exactly the
+          standing grant AGENTS.md 13b argues against. The per-repo deploy key is the mechanism
+          ADR 0018 already decided for git precisely because provider-native scoping is
+          per-repository; using it resolves this without widening any credential.
+      - dimension: Blast radius if mishandled
+        option_a: Grant OAuth workflow scope
+        option_b: Use the ADR 0018 per-repo deploy key
+        assessment: >-
+          A workflow-scoped OAuth token can rewrite CI for every repository that token can reach,
+          which is a fleet-wide authority for a single-repository problem. A deploy key is scoped
+          to one repository by construction.
+  recommendation:
+    recommended_option: OPTION_B
+    rationale: >
+      Publish over the per-repository SSH deploy key that ADR 0018 and AGENTS.md 13b already
+      designate for git. It is not an OAuth App, so the scope restriction does not apply; it is
+      scoped to this repository by construction rather than by permission grant; and it removes the
+      standing write-grant-across-all-products problem 13b exists to avoid. Granting OAuth workflow
+      scope is the faster unblock but resolves a one-repository need by widening a fleet-wide
+      credential.
+    confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Grant the OAuth credential workflow scope
+    description: >
+      Human grants the existing OAuth credential workflow scope in GitHub, then a plain push
+      publishes 34f60a2 unchanged.
+    implications: >
+      Smallest change and no transport change. Grants a token standing authority to rewrite CI,
+      fleet-wide, to solve a single-repository problem. AGENTS.md 13b argues against exactly this
+      shape.
+    estimated_effort: "one credential settings change, then push"
+    risk_level: MEDIUM
+  - option_id: OPTION_B
+    label: Publish over the per-repo SSH deploy key
+    description: >
+      Configure origin's push path to the ADR 0018 per-repository SSH deploy key, then push 34f60a2
+      over SSH. Not an OAuth App, so the scope restriction does not apply.
+    implications: >
+      Uses the mechanism already decided for git credentials, scoped to one repository by
+      construction. Requires the deploy key to exist and be configured for write access, which is
+      a setup step rather than a permission widening.
+    estimated_effort: "deploy key configuration, then push"
+    risk_level: LOW
+  - option_id: OPTION_C
+    label: Hold until the credential path is settled
+    description: >
+      Leave 34f60a2 local and unpublished until a git credential path is decided deliberately.
+    implications: >
+      Nothing is published under a contested credential. The work is safe locally and the gates are
+      already green, so the only cost is that main and origin/main stay divergent while every other
+      lane continues to build on a main the remote has not seen.
+    estimated_effort: "none now"
+    risk_level: LOW
+created_by: orchestrator-main
+created_at: 2026-10-08T06:40:00Z
+updated_at: 2026-10-08T06:40:00Z

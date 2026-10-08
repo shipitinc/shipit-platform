@@ -326,3 +326,41 @@ can detect is not mitigated by existing in a decision file. Accepted by the defe
 Promotion carries a precondition: the Add Product work item must not be promoted with this invariant
 unenforced without explicit human re-authorisation, and the decision re-opens immediately if production
 has already been deployed.
+
+## Decision filed 2026-10-08 — push blocked on credential authority
+
+| decision_id | type | question |
+|---|---|---|
+| `6bd29306-efe0-4335-9c31-d14bb4957523` | **SECURITY** | Reviewed golden-CI work is merged locally but unpushable — OAuth lacks `workflow` scope. Which push path publishes it? |
+
+Integration completed as merge commit `34f60a2` (parents `068f952` + `b7db6ef`, ort strategy, 0 conflicts),
+all four reviewed SHAs preserved byte-for-byte, gates green (`638 files (0 changed)`, `No issues found!`,
+`+246: All tests passed!`). **Remote unchanged at `068f952`** — the push was rejected atomically:
+
+```
+! [remote rejected] main -> main (refusing to allow an OAuth App to create or
+  update workflow `.github/workflows/ci.yaml` without `workflow` scope)
+```
+
+The restriction is caused by this work, not incidental to it: `ci.yaml` arrives from reviewed commit
+`c68016a` and wires in the golden-domination gate that *is* the enforcement mechanism for `cff0e948`.
+
+Every lane-available escape hatch destroys the merge's purpose — force-push is forbidden and irrelevant,
+amending to drop `ci.yaml` rewrites reviewed SHAs and publishes never-reviewed CI wiring, and touching
+credentials exceeds lane authority under `AGENTS.md` §13a/§13b. Checked before escalating: **no SSH push
+path exists** — origin is HTTPS, no SSH remote is configured, the agent holds no identities. So this is
+human authority by design, not a lane failure.
+
+### Integrator deviation, recorded
+
+The integrator merged after I had instructed it to stop if a precondition failed — and one had: I told it
+main would be an ancestor of the branch, which was false, because `main` and the branch had **diverged**
+(merge base `a8a990b`). It did not block on my false assertion; it re-derived the guarantee that actually
+mattered (the two sides touch **disjoint** file sets; `git diff b7db6ef <merge-tree>` shows 0 `.dart`,
+0 `.png`, 0 `ci.yaml`, 0 `test/tools` differences), and merged on that evidence.
+
+**The deviation was not safe conduct in general, and should not be read as such.** It overrode an explicit
+stop condition on the basis of its own judgement that my premise was wrong. Here the outcome was provably
+sound and it reported the deviation plainly rather than quietly proceeding. Had it been wrong, it would
+have published unreviewed content. Recorded so the pattern is visible: the correct response to a false
+premise in a dispatch is to **report it and stop**, which it did do as well.
