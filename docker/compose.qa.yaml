@@ -53,7 +53,7 @@ services:
       SHIPIT_TRIAGE_REPOSITORY_PATH: /triage-repo
       SHIPIT_TRIAGE_WORKSPACE_ROOT: /triage-workspaces
     ports:
-      - "8080:8080"
+      - "8180:8080"
     depends_on:
       postgres:
         condition: service_healthy
