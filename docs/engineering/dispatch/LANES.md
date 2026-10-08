@@ -721,3 +721,48 @@ necessary but not sufficient — the safe batch is below 24, traversal or not.
   remaining surface asserting the false claim. That raises the cost of writing, not lowers it.
 - **Guard every write on pre-state AND absence-of-post-state**, and report any layer found already
   correct as a finding rather than as a no-op.
+
+### ⚠ r6 — the arithmetic, not the discipline, is now the problem
+
+r6 got past the probe **for the first time in six rounds**, started a 6-shape guarded batch on
+`BP · Rotate Key`, and it **timed out**. Because that call contained writes, those 6 layers are
+**UNKNOWN, not clean.** Its read-only recovery call then timed out identically, and the probe reported
+72s dormancy. **0 of the 24 copy layers were read.**
+
+**The Manager verified the in-doubt layers directly:** `BP · Rotate Key · Dark` still reads 114 children
+with `Art Sub` = `Generated on the server · the private half stays in the secret manager`. **So the 6
+in-doubt layers carry the approved strings either way** — the guarded writes declined or landed
+identically, and neither is harmful.
+
+### Two findings that change the next lane's design
+
+**1. The safe batch is now bracketed on both sides.**
+
+| batch | result |
+|---|---|
+| 12 × O(1) reads (r3) | passed |
+| 24 × O(1) reads (r5) | **timed out** |
+| 6 × O(1) **read+write** (r6) | **timed out** |
+
+**The unit is one shape per call.** At roughly **4 productive calls per window**, 76 mutations need
+**~20 windows.** That is arithmetic, not a discipline problem, and continuing to dispatch one round per
+window will consume the session without finishing.
+
+**2. A read-only recovery call is NOT cheaper than the write call it follows.** r6's recovery read did
+strictly less work and timed out identically. That **upgrades a write-timeout from "slow" to "unknown and
+not cheaply recoverable"** — and it **inverts the copies-first priority order: verify-then-write beats
+write-then-reconcile here.**
+
+### What is durable work product from r6, despite the blocked result
+
+The complete **18-needle substitution table** and the **6-clause guard**, with the
+**derivation-by-substitution rule** — which is why the damaging branch of the guard would still land on an
+approved string rather than a corrupt one. That inference is what makes the 6 in-doubt layers low-risk,
+and it is **labelled inference, not measurement.**
+
+### Standing state, unchanged and now precisely known
+
+- **≥6 of 24 copy layers already correct** (`BP · Rotate Key` pair, all three layers each) — owned by no
+  report. The other **18 have never been examined by anyone.**
+- **52 footer deletions outstanding.** `Disclose` untouched at **116 + 4 = 120**.
+- **Build merged at `c32f4f4`** — the boards are the **sole** remaining surface asserting the false claim.
