@@ -927,3 +927,91 @@ the human explicitly re-authorises it. Re-open `f691aeb5` before any promotion t
 deploy, and re-open it immediately if production has already been deployed — the unenforced index means
 the database may already hold a second active credential for some repository, and **no query in this
 repository checks for that**.
+
+---
+
+## ✅ QA RESTORED — but on a STOPGAP, and the durable fix is still owed
+
+```
+STATE:          QA UP (stopgap) — durable startup fix NOT implemented
+OWNER:          engineering-manager
+SERVER PORT:    8180 (was 8080; 8080 is held by Penpot)
+RUN MODE:       staging, set operationally — NOT yet in compose.qa.yaml
+```
+
+### 🔴 Manager verification failure — a health check that could not fail correctly
+
+For hours the Manager reported `200 http://localhost:8080/` as proof the QA server was healthy. **It was
+Penpot answering.** Port 8080 belongs to a Penpot java process serving `TaggerWeb`; the ShipIt server had
+already exited (`SIGTERM`, clean, exit 0) roughly five hours earlier.
+
+```
+$ curl -s http://localhost:8080/ | grep -o '<title>[^<]*</title>'
+<title>TaggerWeb</title>          ← Penpot, not ShipIt
+$ docker ps -a --filter label=com.docker.compose.project=docker
+docker-server-1   Exited (0) 5 hours ago
+```
+
+A bare status code cannot distinguish two applications sharing a port. The tell that was available and
+unused: **`8081/api/` returned `502` the whole time** — the client proxy could not reach a dead server —
+and that was read as noise rather than as the primary signal.
+
+**Rule adopted: verify by identity, never by status.** Assert `runMode`, the composition line, or a
+ShipIt-specific endpoint — not `curl -o /dev/null -w %{http_code}`.
+
+### What was wrong, in order
+
+1. **Port conflict.** Penpot holds 8080, so `docker compose … up -d server` failed with
+   `address already in use`. QA could not start at all.
+2. **A second, deeper fault surfaced on restart.** With the port fixed, the server still exited 1:
+
+   ```
+   runMode: development
+   WARNING: The database does not match the target database:
+    - Missing Index "design_revision_approved_unique_per_work_item".
+    - Missing Index "product_credential_active_repository_unique".
+   ```
+
+   This is the documented boot fault, live. The QA database carries the hand-maintained objects (the
+   bootstrap was applied by hand), the model does not declare them, the analyzer is one-directional and so
+   reports them as `Missing Index`, and in `development` mode that warning is **fatal**.
+
+### The stopgap — operational, zero file change
+
+Serverpod reads `SERVERPOD_RUN_MODE` **before** defaulting to development, so the run-mode half of the fix
+needs no config edit:
+
+```
+docker compose -f docker/compose.qa.yaml run -d --service-ports --name docker-server-1 \
+  -e SERVERPOD_RUN_MODE=staging -e SERVERPOD_DATABASE_REQUIRE_SSL=false server
+```
+
+`staging.yaml` sets `requireSsl: true` and QA Postgres has no SSL, hence the second variable — exactly as
+the consolidated design prescribed.
+
+**This is a stopgap and it will not survive `make qa-up`.** The durable fix is the bootstrap compose
+service plus the run-mode override in `compose.qa.yaml`, designed under `design-startup-consolidated`
+(`READY_FOR_INDEPENDENT_DESIGN_REVIEW: YES`) and **not yet implemented or independently reviewed**.
+
+### Verified — by identity
+
+```
+runMode: staging
+[server.composition] {schedulerId: sched-triage, runtimeTypeId: opencode, …,
+                      startingRevision: 9b1ae85…, workspaceRoot: /triage-workspaces}
+8180 -> 200          8081/api/ -> 200   (was 502)      postgres healthy
+Browser: title "ShipIt Control Plane", Add a product form renders, 0 console errors,
+         "It clones over SSH. The private half stays in the secret manager — never shown, logged or stored."
+```
+
+### ⚠ Owed, and none of it is fixed by the stopgap
+
+| Item | Problem |
+|---|---|
+| `Makefile:83` | prints `Server: http://localhost:8080` — a live instruction a human will copy, now wrong |
+| `docs/deployment/local-qa.md:281` | wrong port **and** wrong method — a bare `curl` for 200 is exactly the check that masked the dead server. Ten stale port references in that file. |
+| `docker/compose.yaml:71` | also publishes `8080:8080`, so the **local dev** stack is equally unstartable while Penpot holds 8080 |
+| `PORT_OFFSET` | documented in four places, implemented in **no** compose file — the documented escape hatch from this exact bug is inert |
+| stale port tables | `e2e-integration.md:77`, `learning/local-deployment-systematization.md:57` |
+| **`AGENTS.md:118` contradiction** | names `docker compose config` as **not granted** to a lane, while a Manager dispatch listed it in `VALIDATION_COMMANDS`. A lane refused it on those grounds and was right to. The dispatch, not the rule, was wrong. |
+| **merge hazard** | three branches (`design/port-and-cleanup`, `qa-contract/port-cleanup`, `design/qa-startup-restructure`) still carry `8080:8080` and will merge **without textual conflict**, silently reverting 8180 |
