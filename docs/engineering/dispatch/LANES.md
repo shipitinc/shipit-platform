@@ -1055,3 +1055,36 @@ are dated **Oct 1–2**, predate this work, and were **not** touched — verifie
   delta sits under `0.005`. No CI check detects a tolerance-dominated golden. This is the same
   `AUTOMATION_OPPORTUNITY` the correction lane reported, now with evidence, and it belongs to a lane
   allowed to write `test/**` and CI.
+
+### QA client refreshed to current `main` (`cc47048`)
+
+The QA stack was left running a client built at `43ede2e`, which predates the `:614` fix — and that bundle
+still served the retired claim (`grep -c "never leaves this device"` → **1**). Since the human's ask was a
+QA environment that reflects the product, the client was rebuilt and the container recreated
+(`--no-deps`, client only; the server was untouched because no server source changed, and the volumes were
+untouched). Bundle check on the served bytes:
+
+```
+never leaves this device     0        (was 1)
+stays in the secret manager  2
+keychain                     0
+```
+
+Re-verified live in the browser with the browser cache cleared (the disk-cache trap from the earlier QA
+session applies again — **served bytes are the discriminator, not what the page appears to show**):
+
+- `#/products/new` renders the full Add a product form — three fields, correctly disabled
+  `Register product` with *"Product name is required"*, and
+  *"It clones over SSH. The private half stays in the secret manager — never shown, logged or stored."*
+- Zero keychain copy, zero footer copy, 0 console errors.
+- Note for the next lane: reading `innerText` right after a bare hash navigation returns an empty body —
+  the route does not re-render without a `reload()`. That reads as a broken page and is not one.
+
+**Honest limit:** the corrected `:614` string could **not** be verified as *rendered*. The QA database has
+**0 products**, so the Product Detail screen and its Access block have nothing to render, and creating one
+requires the substrate that is not implemented yet (`SecretProvider` and the three endpoints are absent).
+The fix is verified at source, at bundle level (0 occurrences), and at golden level (both PNGs regenerated
+and visually confirmed). **Rendered verification is still owed**, and it is owed the moment a product can
+exist.
+
+All three endpoints still `200`; `docker-postgres-1` healthy, `docker-server-1` and `docker-client-1` up.
