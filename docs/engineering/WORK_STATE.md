@@ -1015,3 +1015,59 @@ Browser: title "ShipIt Control Plane", Add a product form renders, 0 console err
 | stale port tables | `e2e-integration.md:77`, `learning/local-deployment-systematization.md:57` |
 | **`AGENTS.md:118` contradiction** | names `docker compose config` as **not granted** to a lane, while a Manager dispatch listed it in `VALIDATION_COMMANDS`. A lane refused it on those grounds and was right to. The dispatch, not the rule, was wrong. |
 | **merge hazard** | three branches (`design/port-and-cleanup`, `qa-contract/port-cleanup`, `design/qa-startup-restructure`) still carry `8080:8080` and will merge **without textual conflict**, silently reverting 8180 |
+
+---
+
+## 🎯 SCOPE NARROWED by human 2026-10-08 — one blocker only
+
+Human instruction: get the Add Product page working for SHIP IT Platform. **Everything that does not block
+that is deferred.** One issue to work: the Register button cannot be pressed because the key cannot be
+generated.
+
+### Deferred by instruction — not blocked, just parked
+
+| Item | Status |
+|---|---|
+| 🔴 Production unenforced (no bootstrap, `development` run mode) | **DEFERRED** — still HIGH, still undetected |
+| `Makefile:83` / `local-qa.md:281` stale ports, wrong health-check method | deferred |
+| `docker/compose.yaml:71` local dev also on 8080 | deferred |
+| `PORT_OFFSET` documented in 4 places, implemented in none | deferred |
+| `AGENTS.md:118` vs Manager dispatch contradiction | deferred |
+| F-1 design-authority gap at `product_detail_page.dart:614` | deferred (ratified as accepted deviation) |
+| N2 golden domination follow-ups / owed contract placement | done in `34f60a2` |
+| keys Rev 7 / ADR Rev 5 re-reviews | **deferred** — blocks nothing now |
+| 3 stale branches carrying `8080:8080` | deferred (merge hazard, noted) |
+| SSH deploy key provisioning (§13b) | deferred |
+
+### The actual blocker — four distinct gaps, not one
+
+**1. The Register button can never be enabled. This is a plain client bug.**
+`add_product_page.dart:233-236`:
+
+```dart
+bool get canRegister =>
+    deployKey != null &&
+    accessStatus == AccessStatus.verified &&
+    !isRegistering;
+```
+
+**`AccessStatus.verified` is read in 9 places and written in ZERO.** Every occurrence is a comparison
+(`==`, `!=`, `case`, `isDone:`); no code path ever assigns it. `_onCheckAccessRequested` (`:105-122`)
+emits `accessStatus: AccessStatus.notChecked`. So `canRegister` is **permanently false** and the button is
+permanently disabled. No server work is needed to fix this.
+
+**2. Key generation is a client-side MOCK.** `_generateMockKeyPair` (`:126-138`) makes 32 random bytes and
+formats them `ssh-ed25519 <base64> shipit+<productName>`. That is not an ed25519 key — it is not
+Base64-of-32-bytes, so SSH would reject it. It exists only to satisfy the non-null `deployKey` check.
+
+**3. Custody substrate does not exist.** `SecretProvider` — **0 files** repo-wide. Decision `9417f8bf`
+(A3, external secret manager) and `b869ec24` (OPTION_A, server-side key service) are both `RESOLVED` but
+**neither is built**.
+
+**4. No server endpoint for credentials.** The server's endpoints are Defect, Execution, Health, Home,
+HumanDirection, Intake, ProductRegistry, ProviderHealth, Scheduler, Worker, Workflow. **No credential or
+key endpoint exists**, so there is nowhere for real generation to live.
+
+**5. Register never persists a credential.** `_onRegisterProductRequested` (`:143-180`) calls
+`createProduct` then `addRepositoryReference` — and stops. The generated key is discarded. This is the
+**F-9** finding, confirmed in code rather than by report.
