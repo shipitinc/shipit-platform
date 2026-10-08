@@ -155,6 +155,8 @@ void withServerpod(
 }
 
 class TestEndpoints {
+  late final _CredentialEndpoints credentialEndpoints;
+
   late final _DefectEndpoints defectEndpoints;
 
   late final _ExecutionEndpoints executionEndpoints;
@@ -185,6 +187,10 @@ class _InternalTestEndpoints extends TestEndpoints
     _i2.SerializationManager serializationManager,
     _i2.EndpointDispatch endpoints,
   ) {
+    credentialEndpoints = _CredentialEndpoints(
+      endpoints,
+      serializationManager,
+    );
     defectEndpoints = _DefectEndpoints(
       endpoints,
       serializationManager,
@@ -229,6 +235,95 @@ class _InternalTestEndpoints extends TestEndpoints
       endpoints,
       serializationManager,
     );
+  }
+}
+
+class _CredentialEndpoints {
+  _CredentialEndpoints(
+    this._endpointDispatch,
+    this._serializationManager,
+  );
+
+  final _i2.EndpointDispatch _endpointDispatch;
+
+  final _i2.SerializationManager _serializationManager;
+
+  _i3.Future<Map<String, dynamic>> generate(
+    _i1.TestSessionBuilder sessionBuilder, {
+    required String productId,
+    required String repositoryId,
+    String? credentialId,
+  }) async {
+    return _i1.callAwaitableFunctionAndHandleExceptions(() async {
+      var _localUniqueSession =
+          (sessionBuilder as _i1.InternalTestSessionBuilder).internalBuild(
+            endpoint: 'credentialEndpoints',
+            method: 'generate',
+          );
+      try {
+        var _localCallContext = await _endpointDispatch.getMethodCallContext(
+          createSessionCallback: (_) => _localUniqueSession,
+          endpointPath: 'credentialEndpoints',
+          methodName: 'generate',
+          parameters: _i1.testObjectToJson({
+            'productId': productId,
+            'repositoryId': repositoryId,
+            'credentialId': credentialId,
+          }),
+          serializationManager: _serializationManager,
+        );
+        var _localReturnValue =
+            await (_localCallContext.method.call(
+                  _localUniqueSession,
+                  _localCallContext.arguments,
+                )
+                as _i3.Future<Map<String, dynamic>>);
+        return _localReturnValue;
+      } finally {
+        await _localUniqueSession.close();
+      }
+    });
+  }
+
+  _i3.Future<Map<String, dynamic>> verifyAccess(
+    _i1.TestSessionBuilder sessionBuilder, {
+    required String productId,
+    required String repositoryId,
+    required String hostKeyFingerprint,
+    required String confirmedBy,
+    String? checkedBy,
+  }) async {
+    return _i1.callAwaitableFunctionAndHandleExceptions(() async {
+      var _localUniqueSession =
+          (sessionBuilder as _i1.InternalTestSessionBuilder).internalBuild(
+            endpoint: 'credentialEndpoints',
+            method: 'verifyAccess',
+          );
+      try {
+        var _localCallContext = await _endpointDispatch.getMethodCallContext(
+          createSessionCallback: (_) => _localUniqueSession,
+          endpointPath: 'credentialEndpoints',
+          methodName: 'verifyAccess',
+          parameters: _i1.testObjectToJson({
+            'productId': productId,
+            'repositoryId': repositoryId,
+            'hostKeyFingerprint': hostKeyFingerprint,
+            'confirmedBy': confirmedBy,
+            'checkedBy': checkedBy,
+          }),
+          serializationManager: _serializationManager,
+        );
+        var _localReturnValue =
+            await (_localCallContext.method.call(
+                  _localUniqueSession,
+                  _localCallContext.arguments,
+                )
+                as _i3.Future<Map<String, dynamic>>);
+        return _localReturnValue;
+      } finally {
+        await _localUniqueSession.close();
+      }
+    });
   }
 }
 
@@ -1766,7 +1861,7 @@ class _ProductRegistryEndpoints {
     required String productId,
     required String name,
     String? description,
-    required String manifestJson,
+    String? manifestJson,
     String? manifestVersion,
   }) async {
     return _i1.callAwaitableFunctionAndHandleExceptions(() async {
