@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 3e9dfb75-7bdf-4a8c-89dd-c76779a65371
 type: INFRASTRUCTURE
-status: PENDING
+status: RESOLVED
 question: >-
   The new golden-domination gate must render goldens in CI, but the baselines were rendered on
   a different OS, architecture and Flutter version than a GitHub runner provides. Should the
@@ -149,6 +149,54 @@ options:
       human golden reviewer.
     estimated_effort: "nothing now; full integration later"
     risk_level: MEDIUM
+resolution:
+  selected_option: OPTION_C
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-08T05:14:00Z
+  rationale: >-
+    Pin CI to the exact rendering environment, and make that environment a CHECKED PRECONDITION the
+    check enforces before it grades anything. The human declined both the split and the
+    predicted-red option, choosing instead to make the gate trustworthy rather than merely present
+    or merely deferred.
+
+    The reasoning this accepts is that the dangerous failure is not a red job. It is a green job
+    describing the wrong machine. The noise-floor guard renders twice and compares those two
+    renders against each other, so on a mismatched platform they agree with each other, the guard
+    passes, and the check emits 54 confident verdicts about the runner instead of about the
+    baselines — silently converting the exact unknown it was built to expose into false assurance.
+    A precondition that refuses to grade on an uncalibrated runner is what makes the gate's output
+    mean anything, and pinning the runner to the environment that produced the baselines is what
+    makes the precondition satisfiable.
+
+    Accepted commitment, stated so it is not discovered later: CI is now coupled to macOS arm64 and
+    Flutter 3.44.7. That is a maintenance obligation, and 3.44.7 may not be available on the chosen
+    runner image. If it is not, the honest outcome is a job that REFUSES TO GRADE with a clear
+    message, not a tolerance change and not a red build.
+
+    The two findings the review raised alongside this are in scope for the same correction, because
+    both currently attest to nothing: the noise-floor tests compare a directory with itself and can
+    never fail, and the implementer's claim that this knowledge was persisted as executable knowledge
+    is false.
+  follow_up_actions:
+    - action: >-
+        Correction lane on fix/golden-domination-n2: pin the CI job to the exact rendering
+        environment (macOS arm64, Flutter 3.44.7), and add an environment precondition the check
+        enforces BEFORE grading, so an uncalibrated runner refuses to grade.
+      owner: orchestrator-main
+    - action: >-
+        In the same lane, rewrite the noise-floor tests, which compare a directory with itself and
+        can never fail. Executable knowledge that proves nothing is the same failure class this work
+        item exists to remove.
+      owner: orchestrator-main
+    - action: >-
+        Correct the implementer's false claim that the finding was persisted as executable knowledge,
+        and fix the report provenance that names dead pre-rebase SHAs.
+      owner: orchestrator-main
+    - action: >-
+        After correction, focused re-review, then integrate both commits together — the baselines
+        commit is no longer being split off, since the human chose to fix the wiring rather than
+        defer it.
+      owner: orchestrator-main
 created_by: orchestrator-main
 created_at: 2026-10-08T05:05:00Z
-updated_at: 2026-10-08T05:05:00Z
+updated_at: 2026-10-08T05:14:00Z

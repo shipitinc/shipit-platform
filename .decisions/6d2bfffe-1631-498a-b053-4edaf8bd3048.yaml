@@ -186,3 +186,16 @@ resolution:
 created_by: orchestrator-main
 created_at: 2026-10-08T04:20:00Z
 updated_at: 2026-10-08T04:26:00Z
+## SUPERSEDED IN PART — 2026-10-08
+
+Decision `30c00e6e-4168-44e0-8d1e-34d7de7e4c46` resolved **OPTION_C** at Gate D4 and therefore
+**reverses this object's OPTION_B**. The startup restructure authorised below is NOT to be built.
+
+The human saw the real cost of OPTION_B — in QA the analyzer would stop gating boot, so model-derived
+schema drift would surface only as a log warning — and declined it. The path forward is what this
+object had itself offered as OPTION_C: teach the migration tooling about the hand-maintained objects so
+`definition.sql` includes them and the analyzer keeps gating.
+
+Recorded explicitly so the audit trail shows a reversal rather than two apparently current answers to
+the same question. The resolution below remains the historical record of the authority under which the
+QA environment was brought up; it is not current authorisation for the startup change.

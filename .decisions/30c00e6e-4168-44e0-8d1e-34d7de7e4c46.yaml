@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 30c00e6e-4168-44e0-8d1e-34d7de7e4c46
 type: INFRASTRUCTURE
-status: PENDING
+status: RESOLVED
 question: >-
   Design Revision F38E4B34 is RISK_LEVEL 3 and requires Gate D4 approval. Its re-sequencing
   means the analyzer stops gating QA server boot — model-derived schema drift would then
@@ -147,6 +147,57 @@ options:
       server that will not boot and a single documented recovery that destroys data.
     estimated_effort: "none"
     risk_level: MEDIUM
+resolution:
+  selected_option: OPTION_C
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-08T05:14:00Z
+  rationale: >-
+    REJECTED the run-mode re-sequencing. Design Revision F38E4B34 is NOT approved at Gate D4, and
+    the human chose to keep the analyzer as a boot gate. This REVERSES 6d2bfffe's OPTION_B and
+    lands on what 6d2bfffe had offered as OPTION_C — teaching the migration tooling about the
+    hand-maintained objects — which that decision had classified HIGH risk and the human had
+    then declined. The reversal is deliberate and it happened once the real cost of OPTION_B was
+    visible rather than described: in QA the analyzer would stop gating boot, so model-derived
+    schema drift would surface only as a log warning. Losing a safety property to gain
+    bootability is the wrong trade, and the human has now seen the price rather than the pitch.
+
+    Two consequences of this reversal are recorded so they are not rediscovered late:
+
+      1. If the generator is taught to emit the hand-maintained objects into definition.sql, then a
+         database MISSING them fails the analyzer instead of passing it. That converts DL-2 — a fresh
+         QA database is silently unenforced because compose.qa.yaml applies no bootstrap — from a
+         FALSE ASSURANCE into a LOUD FAILURE. That is a strict improvement and it is a real
+         side-effect benefit of this choice. It does not remove DL-2: compose.qa.yaml must still be
+         made to apply the bootstrap, or every fresh QA boot will now fail loudly instead of
+         silently starting unenforced. Loud failure is better; it is still a failure.
+
+      2. The compose-project re-homing question (G3) is left untouched and remains separately
+         human-authorised. The design had deliberately declined to add a top-level name: to the
+         compose file; that judgement stands even though the design it belonged to is rejected.
+
+    F38E4B34 is not discarded. Its root-cause analysis — verifyDatabaseIntegrity is unconditional,
+    runMode == 'development' is the sole fatal branch, the bootstrap already tolerates the
+    mismatch in test mode — is the evidence that made this question answerable, and it carries
+    forward as input to the replacement design.
+  follow_up_actions:
+    - action: >-
+        Dispatch a replacement design lane for the startup fault on the OPTION_C path: make the
+        migration tooling account for the hand-maintained objects so definition.sql includes them
+        and the analyzer keeps gating. Carry F38E4B34's root-cause findings forward as input.
+      owner: orchestrator-main
+    - action: >-
+        Ensure the replacement design keeps DL-2 in scope. Under this choice a fresh QA database
+        without the bootstrap will fail loudly, so compose.qa.yaml applying the bootstrap becomes
+        mandatory for QA to boot at all, not merely desirable.
+      owner: orchestrator-main
+    - action: >-
+        Record on 6d2bfffe that its OPTION_B is superseded by this decision, so the audit trail
+        shows the reversal rather than two apparently current answers to the same question.
+      owner: orchestrator-main
+    - action: >-
+        Leave the compose-project re-homing question (G3) open and human-authorised. No automatic
+        action.
+      owner: orchestrator-main
 created_by: orchestrator-main
 created_at: 2026-10-08T05:05:00Z
-updated_at: 2026-10-08T05:05:00Z
+updated_at: 2026-10-08T05:14:00Z

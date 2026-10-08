@@ -182,3 +182,24 @@ premise the dispatch asserted:
 - **`docker/compose.qa.yaml` applies no bootstrap at all** (0 references under `docker/`). A fresh QA
   database is silently unenforced — analyzer-clean while missing all six hand-maintained objects. The
   analyzer passing is currently evidence of an un-enforced schema, not a correct one.
+
+## Resolved 2026-10-08 (second round) — via the structured question UI
+
+| decision_id | selected | effect |
+|---|---|---|
+| `30c00e6e-4168-44e0-8d1e-34d7de7e4c46` | **OPTION_C** | Design Revision F38E4B34 **rejected at Gate D4**. Re-sequencing refused; the analyzer keeps gating. **This reverses `6d2bfffe` OPTION_B** — marked SUPERSEDED IN PART in that object. |
+| `3e9dfb75-7bdf-4a8c-89dd-c76779a65371` | **OPTION_C** | Pin CI to the exact rendering environment (**macOS arm64 + Flutter 3.44.7**) and make it a **checked precondition** the check enforces before grading. Neither split nor predicted-red. |
+
+**The reversal is the substantive event.** On the first pass the human chose OPTION_B — restructure
+startup so the bootstrap runs in a mode where the analyzer does not gate — on a described cost. On the
+second pass, with the cost visible as a fact (in QA the analyzer stops gating boot, so model-derived
+drift surfaces only as a log warning), the human reversed it and kept the safety property, landing on
+the generator change this repository had classified HIGH risk and originally declined. That is a
+considered change of position, not an inconsistency, and both states are recorded.
+
+One benefit of the reversal, recorded because it is not obvious: teaching the generator to emit the
+hand-maintained objects into `definition.sql` means a database **missing** them fails the analyzer
+instead of passing it. That turns DL-2 — compose.qa.yaml applies no bootstrap, so a fresh QA database is
+silently unenforced and looks correct — from a false assurance into a loud failure. DL-2 is not thereby
+fixed: `compose.qa.yaml` must still be made to apply the bootstrap, or every fresh QA boot fails loudly
+instead of silently starting unenforced. Loud failure is better; it is still a failure.
