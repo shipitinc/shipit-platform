@@ -1,0 +1,142 @@
+# human-decision.yaml
+decision_id: 02a99cb6-b9c3-40b7-976d-227afce23ff0
+type: ARCHITECTURE
+status: PENDING
+question: >-
+  Verification showed the analyzer never reads definition.sql — it compares the live database
+  against the generated Dart protocol via getTargetTableDefinitions(). The premise in both
+  6d2bfffe and 30c00e6e is therefore false, and one benefit attributed to your OPTION_C choice
+  (an unenforced database becoming a loud failure) is impossible. Does your intent survive?
+context:
+  summary: >-
+    The design agent for the OPTION_C path verified the dispatch's central premise against
+    Serverpod 3.4.13 and refuted it. verifyDatabaseIntegrity (migration_manager.dart:311-312)
+    compares the live database against session.db.serializationManager.getTargetTableDefinitions()
+    — the generated Dart protocol. definition.sql appears nowhere in that path; it is read only
+    when applying migrations to a fresh database (migration_manager.dart:198). The MANAGER has
+    independently re-verified this against the pinned Serverpod source.
+
+    The Manager further verified the semantics behind the "reports indexes that demonstrably
+    exist" paradox. like() is invoked as liveTable.like(target) and iterates the LIVE table's
+    indexes, looking each up in the target. A null lookup emits found: null, rendering as
+    "Missing Index". So the message means the index is missing FROM THE MODEL, not from the
+    database. The agent's D3 is correct.
+
+    Two consequences the human must weigh, because the Manager asserted the opposite:
+
+      1. GOOD, AND BETTER THAN FRAMED: the change point is not the SQL migration generator at all.
+         It is a Protocol subclass overriding getTargetTableDefinitions(), and Serverpod's second
+         positional parameter already accepts a serialization manager (serverpod.dart:405-408).
+         So there is no migration, no DDL, no generated file, and no edit to any generated
+         artifact — it is regeneration-proof by construction and rolls back as a revert. The
+         generator-change surface and blast radius this decision asked the design to enumerate
+         are empty. RISK is materially LOWER than the HIGH rating 6d2bfffe assigned.
+
+      2. BAD, AND IMPOSSIBLE: the comparison is ONE-DIRECTIONAL. The loop iterates target tables
+         and, within a visited table, iterates LIVE indexes looking them up in the target. A
+         database MISSING a modelled object is never reported — there is no reverse loop. So the
+         analyzer can never reject an unenforced database, and the Manager's claim in 30c00e6e
+         that DL-2 would convert from a false assurance into a loud failure is FALSE. It cannot
+         be delivered by the analyzer in 3.4.13. The design does not claim it, and instead names
+         the bootstrap verifier as the actual guarantee.
+
+    Net: the human's chosen intent — keep the analyzer as a boot gate rather than relaxing it —
+    SURVIVES, and is achieved by a smaller and safer change than the one that was priced. What
+    does not survive is the secondary benefit the Manager promised when the decision was taken.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: design-generator-hand-maintained
+    item_ref: >-
+      Design Revision FE5199DD-BACF-4637-9FDD-78EB4BA673CF, RISK_LEVEL 3, awaiting confirmation
+      before independent design review.
+  evidence:
+    documents:
+      - type: OTHER
+        id: revision
+        url: docs/engineering/dispatch/tasks/design-generator-hand-maintained/DESIGN_REVISION.md
+      - type: OTHER
+        id: serverpod-source
+        url: /Users/alkebut/.pub-cache/hosted/pub.dev/serverpod-3.4.13
+      - type: OTHER
+        id: manager-verification
+        url: docs/engineering/dispatch/LANES.md
+    quantitative_data:
+      - metric: Analyzer target source
+        value: "session.db.serializationManager.getTargetTableDefinitions() — generated Dart protocol"
+        source: migration_manager.dart:311-312, re-verified by the Manager
+      - metric: definition.sql use in the integrity path
+        value: "0 occurrences — read only at migration_manager.dart:198 for a fresh-DB apply"
+        source: Manager grep over serverpod-3.4.13/lib/src/database/
+      - metric: Like() direction
+        value: "liveTable.like(target), iterating LIVE indexes and looking up in target"
+        source: extensions.dart:120-135, re-verified by the Manager
+      - metric: Reverse loop present
+        value: "0 — one-directional; a database missing a modelled object is never reported"
+        source: migration_manager.dart:313-329
+      - metric: Serverpod constructor
+        value: "Serverpod(List<String> args, this.serializationManager, this.endpoints, ...) — 2nd positional accepts a manager"
+        source: serverpod.dart:405-408
+      - metric: Migration / DDL / generated-file changes required
+        value: "0 — rollback is a revert"
+        source: design revision; generator-change surface is empty
+    qualitative_tradeoffs:
+      - dimension: Whether the intent survives
+        option_a: Proceed on the Protocol override
+        option_b: Re-price the decision
+        assessment: >-
+          Proceeding keeps the safety property the human chose to keep, at materially lower risk
+          than priced. Re-pricing is defensible only if the human's objection was to the
+          generator-change blast radius, which turns out not to exist.
+      - dimension: The impossible benefit
+        option_a: Accept that DL-2 needs its own fix
+        option_b: Withdraw the analyzer-gating rationale
+        assessment: >-
+          The analyzer never could reject an unenforced database, so the guarantee the human
+          was implicitly buying does not exist in this Serverpod version at any configuration.
+          Accepting that DL-2 needs its own enforcement is honest; withdrawing the rationale
+          would discard a real benefit — the analyzer genuinely does gate model-derived drift.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Proceed. The human chose to keep the analyzer gating and that intent is achievable by a
+      change with no migration, no DDL, and no generated-file edit — smaller, safer and more
+      reversible than the one that was priced against them. The correction does not undermine
+      the decision, it improves it. The one thing the human must now accept separately is that
+      the unenforced-schema false assurance is NOT fixed by this work and needs its own
+      enforcement, which is filed separately.
+    confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Proceed — intent survives
+    description: >-
+      Confirm the OPTION_C intent holds on the Protocol-override mechanism and let the design
+      proceed to independent design review at the re-priced risk.
+    implications: >-
+      Keeps boot-time drift detection via a regeneration-proof, revert-only change. Accepts
+      explicitly that DL-2 is not fixed here and needs separate enforcement.
+    estimated_effort: "independent design review, then implementation"
+    risk_level: LOW
+  - option_id: OPTION_B
+    label: Re-price before proceeding
+    description: >-
+      Treat the corrected mechanism as a materially different proposal and re-run the decision
+      with accurate risk and scope rather than carrying forward the HIGH rating.
+    implications: >-
+      Costs another round trip for a decision whose outcome is very likely unchanged, since the
+      corrected change is strictly smaller than the one already chosen.
+    estimated_effort: "one further decision round"
+    risk_level: LOW
+  - option_id: OPTION_C
+    label: Return to OPTION_B
+    description: >-
+      Revisit the startup restructure, since the analyzer was never able to reject an unenforced
+      database and its value as a gate may be lower than assumed.
+    implications: >-
+      Reverses two human decisions in a row to solve a problem the discovery has shown the
+      analyzer cannot solve either way. The analyzer's real value is gating model-derived drift,
+      which this option gives up.
+    estimated_effort: "new design plus a third reversal"
+    risk_level: MEDIUM
+created_by: orchestrator-main
+created_at: 2026-10-08T05:40:00Z
+updated_at: 2026-10-08T05:40:00Z

@@ -1,0 +1,123 @@
+# human-decision.yaml
+decision_id: 4078cd9d-5c5d-430b-b83c-64133e20b0f1
+type: INFRASTRUCTURE
+status: PENDING
+question: >-
+  docker/compose.qa.yaml applies no schema bootstrap at all, so a fresh QA database is
+  silently missing all six hand-maintained objects while reporting a clean analyzer. The
+  analyzer can never catch this. What enforces it?
+context:
+  summary: >-
+    A live false assurance in QA, discovered by the startup-restructure design agent and
+    independently consistent with the verification in 02a99cb6: Serverpod's analyzer compares
+    one-directionally and can never report a modelled object missing from the live database.
+    docker/compose.qa.yaml contains zero references to schema_bootstrap, so a fresh QA stack
+    starts a server against a database that is missing all six hand-maintained objects —
+    including the partial unique index that enforces one active credential per repository —
+    and the analyzer passes. The analyzer passing is therefore evidence of an un-enforced
+    schema, not of a correct one.
+
+    This is currently masked in QA only by accident: the Manager manually ran the bootstrap
+    inside the container when bringing the stack up, so today's QA database happens to carry
+    the objects. Any fresh `qa-up` reproduces the false assurance. The same class exists in
+    production promotion, where nothing in this repository establishes the run mode.
+
+    The bootstrap verifier (apps/server/tool/verify_schema_bootstrap.sh) is the actual
+    guarantee and is correct, but it is wired into the Makefile and the integration workflow
+    only. Nothing wires it to the QA stack.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: 4078cd9d-5c5d-430b-b83c-64133e20b0f1
+    item_ref: >-
+      QA stack schema enforcement — independent of the startup fault and of the generator
+      decision, and not fixed by either.
+  evidence:
+    documents:
+      - type: OTHER
+        id: revision
+        url: docs/engineering/dispatch/tasks/design-generator-hand-maintained/DESIGN_REVISION.md
+      - type: OTHER
+        id: guard
+        url: apps/server/tool/verify_schema_bootstrap.sh
+      - type: OTHER
+        id: compose
+        url: docker/compose.qa.yaml
+      - type: OTHER
+        id: runbook
+        url: docs/deployment/local-qa.md
+    quantitative_data:
+      - metric: schema_bootstrap references under docker/
+        value: 0
+        source: design agent DL-2, Manager-confirmed
+      - metric: Hand-maintained objects absent from a fresh QA database
+        value: 6
+        source: tool/schema_bootstrap.sql
+      - metric: Enforcement sites wired today
+        value: "2 — Makefile and .github/workflows/integration.yaml. No QA path."
+        source: verify_schema_bootstrap.sh self-report
+      - metric: Enforced invariant at risk
+        value: "one active credential per repository (partial unique index)"
+        source: product_credential_active_repository_unique
+      - metric: Reverse loop in the analyzer
+        value: "0 — cannot detect a missing modelled object"
+        source: migration_manager.dart:313-329
+    qualitative_tradeoffs:
+      - dimension: Where enforcement lives
+        option_a: Wire the verifier into the QA stack
+        option_b: Make the bootstrap a compose service
+        assessment: >-
+          The verifier is read-only text verification and already asserts the wiring sites, so
+          wiring it to QA extends an existing guarantee with no new mechanism. A compose
+          service that applies the bootstrap also fixes boot ordering, but overlaps the startup
+          work and enlarges a change whose scope has already been decided twice.
+      - dimension: Cost of being wrong
+        option_a: Enforce now
+        option_b: Accept and document
+        assessment: >-
+          A clean analyzer on an unenforced schema is the worst kind of signal, because it is
+          actively misleading rather than merely absent. Today it is masked only by a manual
+          step performed once, which is not a property any future `qa-up` will reproduce.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Wire the existing verifier into the QA path. It is read-only, already correct, already
+      asserts its own wiring sites, and needs no new mechanism — the smallest change that
+      converts an actively misleading signal into a loud one. A compose service is the more
+      complete answer but overlaps the startup decision that has already been reversed twice,
+      and should not be smuggled in through a defect fix.
+    confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Wire the verifier into QA now
+    description: >-
+      Make the QA path run the existing bootstrap verifier so a database missing the six
+      hand-maintained objects fails loudly instead of reporting a clean analyzer.
+    implications: >-
+      Smallest change that removes a false assurance, reusing an existing correct guard. Does
+      not alter boot ordering, so the startup question stays where the human put it.
+    estimated_effort: "one lane owning docker/** and Makefile"
+    risk_level: LOW
+  - option_id: OPTION_B
+    label: Make the bootstrap a compose service
+    description: >-
+      Add a compose service that applies the bootstrap before the server starts, so QA boots
+      correctly rather than merely detecting that it did not.
+    implications: >-
+      Fixes the cause instead of detecting it, and closes the boot-ordering question too. Larger
+      and overlapping the startup work, so it needs its own design pass given that area has
+      already been reversed twice.
+    estimated_effort: "design plus implementation plus QA verification"
+    risk_level: MEDIUM
+  - option_id: OPTION_C
+    label: Accept and document
+    description: >-
+      Record the false assurance in the QA runbook and rely on operators running the bootstrap,
+      as happened by hand this time.
+    implications: >-
+      No effort. Leaves QA able to report a clean analyzer over an unenforced schema, relying on
+      a manual step that no `qa-up` reproduces.
+    estimated_effort: "runbook note only"
+    risk_level: MEDIUM
+created_by: orchestrator-main
+created_at: 2026-10-08T05:40:00Z
+updated_at: 2026-10-08T05:40:00Z

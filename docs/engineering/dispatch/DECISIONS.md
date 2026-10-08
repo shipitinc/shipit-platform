@@ -203,3 +203,40 @@ instead of passing it. That turns DL-2 — compose.qa.yaml applies no bootstrap,
 silently unenforced and looks correct — from a false assurance into a loud failure. DL-2 is not thereby
 fixed: `compose.qa.yaml` must still be made to apply the bootstrap, or every fresh QA boot fails loudly
 instead of silently starting unenforced. Loud failure is better; it is still a failure.
+
+## Two more decisions filed 2026-10-08 — PENDING, and one records a Manager error
+
+| decision_id | type | question (one line) |
+|---|---|---|
+| `02a99cb6-b9c3-40b7-976d-227afce23ff0` | ARCHITECTURE | The premise in **both** `6d2bfffe` and `30c00e6e` is false and a promised benefit is impossible — does your OPTION_C intent survive? |
+| `4078cd9d-5c5d-430b-b83c-64133e20b0f1` | INFRASTRUCTURE | `compose.qa.yaml` applies no bootstrap, so fresh QA is silently unenforced while the analyzer reports clean — what enforces it? |
+
+### ⚠ Manager error, verified and corrected
+
+The Manager asserted, in `30c00e6e`, that teaching the generator to emit the hand-maintained objects
+into `definition.sql` would cause a database **missing** them to fail the analyzer — turning DL-2 from a
+false assurance into a loud failure. **That claim is false**, and it was load-bearing in the reasoning the
+human was given.
+
+Verified directly against pinned Serverpod 3.4.13:
+
+- `verifyDatabaseIntegrity` (`migration_manager.dart:311-312`) compares the live database against
+  `session.db.serializationManager.getTargetTableDefinitions()` — **the generated Dart protocol**.
+  `definition.sql` appears **nowhere** in that path; it is read only at `:198` when applying migrations
+  to a fresh database. **The SQL migration generator is not the change point at all.**
+- `like()` is invoked as `liveTable.like(target)` and iterates the **live** table's indexes, looking each
+  up in the target (`extensions.dart:120-135`). A null lookup renders as `Missing Index`, so the message
+  means *missing from the model*, not from the database. This resolves the "reports indexes that
+  demonstrably exist" paradox rather than leaving it a mystery.
+- The loop is **one-directional**. There is no reverse loop, so a database missing a modelled object is
+  **never** reported. The analyzer can never reject an unenforced database in this Serverpod version at
+  any configuration.
+- The mechanism is therefore a `Protocol` subclass overriding `getTargetTableDefinitions()`, and
+  `Serverpod`'s second positional parameter already accepts a serialization manager
+  (`serverpod.dart:405-408`) — so the change is **regeneration-proof, needs no migration, no DDL and no
+  generated-file edit, and rolls back as a revert**.
+
+The human's chosen intent survives and is achieved by a **materially smaller and safer change than the one
+that was priced** — no generator change, no blast radius, no HIGH risk. What does not survive is the
+secondary benefit the Manager promised. The empty generator-change surface and the one-directional
+comparison were both found by the lane, not by the Manager.
