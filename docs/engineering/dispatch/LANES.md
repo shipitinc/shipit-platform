@@ -893,3 +893,86 @@ produce the proof that the disclosures survived. **Recorded so the ruling is not
   dischargeable by a copy-only change. The only remaining defect on the two `No key` boards.
 - **Keys revision 7 and ADR revision 5** corrected but never re-reviewed.
 - **The feature implementation remains unblocked.**
+
+## QA environment — UP AND ONBOARDING-READY (human-authorised infrastructure work)
+
+The Manager ran Docker commands, which `AGENTS.md` § Shared Docker state reserves for lanes with
+deployment or infrastructure authority. The human asked for this directly. Every mutating command is
+named below.
+
+### Two independent faults, neither of them obvious from the symptom
+
+**1. The server image was stale.** `docker-server:latest` was 2 days old and its `migrations/` ended at
+`20261001205247600` — it **predated `20261006150645000`**, which the database had already applied.
+Rebuilt from current `main`.
+
+**2. A chain-migrated database structurally cannot satisfy Serverpod's analyzer.** After the rebuild the
+server still exited 1 with:
+
+```
+Table "design_revision" is not like the target database:
+ - Missing Index "design_revision_approved_unique_per_work_item".
+Table "product_credential" is not like the target database:
+ - Missing Index "product_credential_active_repository_unique".
+```
+
+**Both indexes exist**, verified directly in `pg_indexes` with correct definitions. The cause is the
+class `tool/schema_bootstrap.dart` documents in its own header: these are **hand-maintained objects the
+model-driven generator cannot render**, so they live in `tool/schema_bootstrap.sql` and `migration.sql`
+and **structurally cannot appear in `definition.sql`** — verified: `definition.sql` contains **0**
+occurrences of either, `migration.sql` contains both.
+
+Serverpod compares the live database against the **latest `definition.sql`** target and refuses to boot
+on a mismatch. **So a chain-migrated database — one carrying the hand-maintained objects — can never
+satisfy it, and `--apply-migrations` is not the cause.** Confirmed by running the server with the flag
+omitted: **identical failure**, so there is no non-destructive route. A fresh database has **none** of
+the hand-maintained objects, which is the intended shape and the shape CI and `make test-integration`
+produce.
+
+### What was done, and what it cost
+
+- Recreated the **`shipit` database inside the running container** — **not** `down -v`. Volumes
+  `docker_postgres_data_qa`, `docker_triage_repo_qa` and `docker_triage_workspaces_qa` were **preserved**.
+- **Data at risk: none.** The database held **0 application rows** — only `serverpod_health_metric` (384)
+  and `serverpod_health_connection_info` (128), Serverpod's own auto-generated telemetry.
+- Server booted clean: `[server.composition] {schedulerId: sched-triage, runtimeTypeId: opencode,
+  providers: [opencode], workerIds: [w-triage-local], repositoryPath: /triage-repo, startingRevision:
+  9b1ae85…, workspaceRoot: /triage-workspaces}`.
+- **Applied `tool/schema_bootstrap.dart`** — 6 objects present, 5 enforcement probes behaved as required
+  (4 refusals + 1 legitimate acceptance, the rotation case). `verify_schema_bootstrap.sh` **PASS**.
+- **Rebuilt the client image** and retagged it `docker-client:latest` so compose uses it.
+
+### Verified working, in a browser
+
+```
+200  http://localhost:8080/          200  http://localhost:8081/          200  http://localhost:8081/api/
+docker-postgres-1  Up (healthy)   docker-server-1  Up   docker-client-1  Up   52 tables   guard PASS
+```
+
+Overview renders with live data · Products renders the empty state with **"+ Add a product"** ·
+**`#/products/new` renders the Add a product form** — three fields, `NOT REGISTERED YET` eyebrow, the
+key panel, and `Register product` correctly disabled on *"Product name is required"*. **The onboarding
+path works end to end.**
+
+### The browser-cache trap, and the false conclusion it invited
+
+After the client rebuild the page **still showed the old copy**, while the served bundle provably
+contained `keychain` **0** times. **Service workers: 0. Caches: 0.** `browser_close` did not help — the
+profile's **disk cache** survives it, and `Network.setCacheDisabled` on the page session did not clear it.
+Only `Network.clearBrowserCache` did.
+
+**A cache-busted `fetch()` of the same URL returned the NEW content while the page rendered the OLD** —
+so a plausible conclusion was "the deploy didn't take". It had. **The right discriminator was to grep the
+served bytes for the string, which is what settled it** — and to read `document.body.innerText` rather
+than trust a screenshot, since three screenshots agreed with the stale render.
+
+### ⚠ One false-custody string remains, and it is NOT this session's fix
+
+`apps/control_plane/lib/features/product_detail/product_detail_page.dart:614`:
+
+> `'One key per repository. The private half never leaves this device.'`
+
+Still live in the built bundle. This is the **`H-R2` finding the mobile design review raised and routed
+as production source, outside its `OWNED_PATHS`** — so it was never in the correction's scope, and the
+correction correctly did not touch it. It is false under `9417f8bf`'s A3 on the same axis as the four sites
+that were fixed. **It needs its own implementation lane.**
