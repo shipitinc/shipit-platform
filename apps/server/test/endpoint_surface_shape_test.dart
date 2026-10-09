@@ -19,10 +19,40 @@ import 'package:test/test.dart';
 /// generator uses.
 ///
 /// THE PREDICATE, from `serverpod_cli`'s `EndpointMethodAnalyzer.isEndpointMethod`
-/// (read from the 3.4.13 this server pins): a method is an endpoint method when
-/// it is public, not `static`, not `@doNotGenerate`, not one of Serverpod's own
-/// excluded names, and its FIRST required positional parameter is a `Session`.
-/// Such a method must then return `Future` or `Stream`.
+/// (read from the 3.4.13 this server pins, verbatim):
+///
+/// ```dart
+/// static bool isEndpointMethod(MethodElement method) {
+///   if (method.isPrivate) return false;
+///   if (method.markedAsIgnored) return false;      // @doNotGenerate
+///   if (_excludedMethodNameSet.contains(method.name)) return false;
+///   return method.formalParameters.isFirstRequiredParameterSession;
+/// }
+/// ```
+///
+/// So a method is an endpoint method when it is NOT private, NOT
+/// `@doNotGenerate`, NOT one of Serverpod's own excluded names, and its FIRST
+/// required positional parameter is a `Session`.
+///
+/// **There is no `isStatic` check in 3.4.13.** A `static` method with `Session`
+/// first is still discovered and still validated, so `static` is *not* a way
+/// out of this — it is worse than doing nothing, because it also reads like one.
+/// (4.0.3 added `if (method.isStatic) return false;` and dropped
+/// `_excludedMethodNameSet` altogether. Assume neither when the pin moves.)
+///
+/// Such a method must then return `Future` or `Stream` — but the generator's
+/// rule for that is stricter than the name, and the interesting half of this
+/// guard is in [_returnTypeRejection].
+///
+/// WHAT THIS IS NOT. It is a backstop, not *the* backstop. It encodes the
+/// endpoint-method predicate and the return-type rule, and each rule here was
+/// checked against `serverpod generate` itself rather than assumed — but it
+/// does not run the generator, and as of this writing no CI job runs it either:
+/// `integration.yaml` invokes only `dart test test/integration/`, and `ci.yaml`
+/// excludes `apps/server` from its pure-Dart job. So this file's value today is
+/// manual (`dart test test/endpoint_surface_shape_test.dart` from
+/// `apps/server`), and a CI gate on generate's exit status remains the only
+/// complete check. Do not read a green run here as "generate passes".
 ///
 /// WHY THIS IS SYNTACTIC RATHER THAN USED `dart:mirrors`. Same reason as
 /// [credential_keypair_test.dart] gives for its own surface audit: what needs
@@ -47,10 +77,10 @@ void main() {
           final returnType = declaration.returnType;
           if (returnType == null) continue;
 
-          if (!_isFutureOrStream(returnType)) {
+          final rejection = _returnTypeRejection(returnType);
+          if (rejection != null) {
             offenders.add(
-              '$className.${declaration.name} returns '
-              '$returnType, not Future or Stream',
+              '$className.${declaration.name} returns $returnType — $rejection',
             );
           }
         }
@@ -155,6 +185,12 @@ String _classNameForEndpointFile(File file) {
 
 /// Serverpod's own excluded method names
 /// (`EndpointMethodAnalyzer._excludedMethodNameSet`).
+///
+/// **The 3.4.13 shape**, copied from that version. 4.0.3 deleted
+/// `_excludedMethodNameSet` entirely, so when the server's pin moves this list
+/// must be re-read, not carried over. Today it can only ever *skip* a
+/// declaration, so a stale name here is a missed check rather than a false
+/// alarm — the list is documented rather than treated as authoritative.
 const _serverpodExcludedMethodNames = {
   'streamOpened',
   'streamClosed',
@@ -164,19 +200,100 @@ const _serverpodExcludedMethodNames = {
   'getUserObject',
 };
 
-/// Serverpod requires an endpoint method to return `Future` or `Stream`,
-/// optionally with a type argument (`Future<Map<String, dynamic>>`,
-/// `Stream<int>?`). So the name must be followed by a type-argument boundary
-/// rather than compared for exact equality.
-bool _isFutureOrStream(String returnType) => RegExp(
-  r'^(?:Future|Stream)\b',
-).hasMatch(returnType);
+/// Serverpod's `EndpointMethodAnalyzer._validateReturnType` in 3.4.13,
+/// reproduced against the declaration text.
+///
+/// Returns **null** when `serverpod generate` accepts the return type, and
+/// otherwise a short reason it rejects it.
+///
+/// The generator is stricter than "the name is `Future` or `Stream`". It also
+/// requires:
+///
+/// - exactly one type argument (`typeArguments.length != 1` → `Return generic
+///   must be type defined.`), so a bare `Future`/`Stream` is rejected — to the
+///   analyzer a bare `Future` *is* `Future<dynamic>`;
+/// - `Future<void>` and `Stream<void>` are treated **differently**: the first
+///   is accepted (`_validateReturnType` returns null for it), the second is
+///   rejected with `The type "void" is not supported for streams.`
+/// - `Future<dynamic>` and `Stream<dynamic>` are treated **differently**, and
+///   this is the subtlest rule in the function. The rejection reads
+///   `innerType is DynamicType && !dartType.isDartAsyncStream`, so it catches
+///   the `Future` and lets the `Stream` through. The `Stream` then survives
+///   `TypeDefinition.fromDartType` too, because `DynamicTypeImpl.element` is
+///   `DynamicElementImpl.instance` and its `displayName` is `dynamic` — not
+///   null — so no `FromDartTypeClassNameException` is thrown.
+///
+/// That last point is verified, not inferred: `Stream<dynamic> probe(Session)`
+/// on an Endpoint **generates successfully and emits a real client streaming
+/// method**. Rejecting it here would be a false alarm on legal code, which is
+/// the same defect as a false pass in the other direction — a guard that
+/// contradicts the generator teaches the next reader that the guard is wrong.
+///
+/// Only a type argument that IS `dynamic` or `void` is rejected, never one that
+/// merely mentions it, which is why `Future<Map<String, dynamic>>` — the shape
+/// most endpoints in this repository return — stays a legal endpoint.
+String? _returnTypeRejection(String returnType) {
+  final shape = _returnTypeShape.firstMatch(returnType.trim());
+  if (shape == null) {
+    return 'it is not Future or Stream at all.';
+  }
+
+  final container = shape.namedGroup('container')!;
+  final arguments = _splitTopLevel(shape.namedGroup('argument') ?? '');
+  if (arguments.length != 1) {
+    return 'it carries ${arguments.length} type arguments, and serverpod '
+        'requires exactly one.';
+  }
+
+  // `dynamic?` is `dynamic` to the analyzer; `void` is matched on its own.
+  var inner = arguments.single.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (inner.endsWith('?')) inner = inner.substring(0, inner.length - 1).trim();
+  if (inner.isEmpty) {
+    return 'serverpod requires exactly one type argument.';
+  }
+
+  if (inner == 'dynamic' && container == 'Future') {
+    return 'serverpod rejects a bare `dynamic` type argument on a `Future`; '
+        'use a concrete type, e.g. Future<Map<String, Object?>>. '
+        '`Stream<dynamic>` is allowed, so this is about the Future, not '
+        '`dynamic` itself.';
+  }
+
+  if (inner == 'void' && container == 'Stream') {
+    return 'serverpod rejects `Stream<void>`; use `Future<void>` instead.';
+  }
+
+  return null;
+}
+
+/// The outer `Future`/`Stream` of a return type and its single type argument.
+///
+/// The argument is captured greedily up to the LAST `>` so nested generics
+/// survive intact (`Future<List<Map<String, int>>>` yields
+/// `List<Map<String, int>>`), and the outer type may be nullable
+/// (`Stream<int>?`). An absent type argument is captured as null, which
+/// [_returnTypeRejection] rejects — a bare `Future` is `Future<dynamic>` to the
+/// analyzer.
+///
+/// `FutureOr<void>` deliberately does not match: `\b` will not break between
+/// `Future` and `Or`, and the generator rejects `FutureOr` regardless.
+final _returnTypeShape = RegExp(
+  r'^(?<container>Future|Stream)\b\s*(?:<(?<argument>.*)>)?\s*\??$',
+);
 
 bool _isExcludedByServerpod(String name) =>
     _serverpodExcludedMethodNames.contains(name);
 
-/// Every public, non-`static` method declaration in [file] whose first required
-/// positional parameter is a `Session`.
+/// Every public method declaration in [file] whose first required positional
+/// parameter is a `Session`.
+///
+/// **`static` declarations are included, deliberately.** 3.4.13's
+/// `isEndpointMethod` has no `isStatic` check, so a `static` method with
+/// `Session` first is still an endpoint method and still has to satisfy the
+/// return-type rule. An earlier version of this guard skipped `static` on the
+/// assumption that it did not — an assumption that is true of 4.x and false of
+/// the pinned version, which made the guard pass a declaration that fails
+/// `serverpod generate`.
 List<_Declaration> _publicSessionFirstMethods(File file) {
   final lines = _stripComments(file.readAsStringSync()).split('\n');
   final found = <_Declaration>[];
@@ -184,9 +301,6 @@ List<_Declaration> _publicSessionFirstMethods(File file) {
   for (var i = 0; i < lines.length; i++) {
     final match = _memberPattern.firstMatch(lines[i]);
     if (match == null) continue;
-
-    // `static` members are not endpoint methods.
-    if (match.namedGroup('mods')!.contains('static')) continue;
 
     final name = match.namedGroup('name')!;
     if (name.startsWith('_')) continue;
@@ -213,7 +327,9 @@ List<_Declaration> _publicSessionFirstMethods(File file) {
 /// [pre] is everything between the modifiers and the method name, which is the
 /// return type for a method and empty for a constructor. It is captured
 /// loosely rather than as a Dart type so that nested generics
-/// (`Future<Map<String, dynamic>>`) survive intact.
+/// (`Future<Map<String, dynamic>>`) survive intact. [mods] exists only to
+/// strip `static`/`final`/`const`/… so that [pre] is the return type even for a
+/// `static` method — which is now audited, so [mods] must still match them.
 final _memberPattern = RegExp(
   r'^ {2}(?<mods>(?:static\s+|final\s+|const\s+|late\s+|external\s+)*)'
   r'(?<pre>[^;]*?)\s*(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(',
