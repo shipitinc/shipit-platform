@@ -1,0 +1,8 @@
+### One diagnostic an agent run emitted.
+class: DiagnosticEntryView
+fields:
+  code: String
+  message: String
+  severity: String
+  location: String?
+  suggestion: String?

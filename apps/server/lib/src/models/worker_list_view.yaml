@@ -1,0 +1,4 @@
+### `workerEndpoints.listWorkers` returned a raw map. Typed.
+class: WorkerListView
+fields:
+  workers: List<WorkerRegistrationView>

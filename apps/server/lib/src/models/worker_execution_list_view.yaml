@@ -1,0 +1,4 @@
+### `workerEndpoints.listExecutions` returned a raw map. Typed.
+class: WorkerExecutionListView
+fields:
+  executions: List<WorkerExecutionView>

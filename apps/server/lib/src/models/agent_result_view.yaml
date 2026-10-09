@@ -1,0 +1,23 @@
+### What an agent run produced.
+class: AgentResultView
+fields:
+  resultId: String
+  sessionId: String
+  workItemId: String
+  ### Durable `AgentResultStatus` wire value.
+  status: String
+  artifacts: List<AgentArtifactView>
+  diagnostics: AgentDiagnosticsView
+  ### The run's structured output, carried as JSON TEXT. See
+  ### `DefectDetailView.clientContextJson` for why Serverpod 3.4.13 has no field
+  ### type that could hold arbitrary JSON. `jsonDecode` recovers it exactly.
+  structuredResultJson: String
+  executionId: String?
+  ### Durable `AgentRole` wire value.
+  role: String?
+  changedFiles: List<ChangedFileView>?
+  claimedChecks: List<AgentClaimedCheckView>?
+  summary: String?
+  completedAt: DateTime
+  ### Free-form result metadata, carried as JSON TEXT. See above.
+  metadataJson: String?

@@ -14,33 +14,78 @@
 import 'package:serverpod_test/serverpod_test.dart' as _i1;
 import 'package:serverpod/serverpod.dart' as _i2;
 import 'dart:async' as _i3;
-import 'package:control_plane_server/src/generated/overview.dart' as _i4;
-import 'package:control_plane_server/src/generated/work_item_view.dart' as _i5;
-import 'package:control_plane_server/src/generated/decision_view.dart' as _i6;
-import 'package:control_plane_server/src/generated/human_direction_view.dart'
+import 'package:control_plane_server/src/generated/minted_credential_view.dart'
+    as _i4;
+import 'package:control_plane_server/src/generated/credential_access_verification_view.dart'
+    as _i5;
+import 'package:control_plane_server/src/generated/defect_created_view.dart'
+    as _i6;
+import 'package:control_plane_server/src/generated/defect_list_view.dart'
     as _i7;
-import 'package:control_plane_server/src/generated/human_direction_attachment_view.dart'
+import 'package:control_plane_server/src/generated/defect_inspection_view.dart'
     as _i8;
-import 'package:control_plane_server/src/generated/feature_request_summary_view.dart'
+import 'package:control_plane_server/src/generated/defect_evidence_view.dart'
     as _i9;
-import 'package:control_plane_server/src/generated/product_view.dart' as _i10;
-import 'package:control_plane_server/src/generated/product_summary_view.dart'
+import 'package:control_plane_server/src/generated/defect_clarification_view.dart'
+    as _i10;
+import 'package:control_plane_server/src/generated/fix_verification_view.dart'
     as _i11;
-import 'package:control_plane_server/src/generated/product_detail_view.dart'
+import 'package:control_plane_server/src/generated/agent_execution_list_view.dart'
     as _i12;
-import 'package:control_plane_server/src/generated/product_context_view.dart'
+import 'package:control_plane_server/src/generated/agent_execution_inspection_view.dart'
     as _i13;
-import 'package:platform_contracts/src/types/baseline_fact.dart' as _i14;
-import 'package:control_plane_server/src/generated/standing_policy_view.dart'
-    as _i15;
-import 'package:control_plane_server/src/generated/clarification_view.dart'
-    as _i16;
-import 'package:control_plane_server/src/generated/job_summary_view.dart'
-    as _i17;
-import 'package:control_plane_server/src/generated/work_item_detail_view.dart'
+import 'package:control_plane_server/src/generated/health_status_view.dart'
+    as _i14;
+import 'package:control_plane_server/src/generated/overview.dart' as _i15;
+import 'package:control_plane_server/src/generated/work_item_view.dart' as _i16;
+import 'package:control_plane_server/src/generated/decision_view.dart' as _i17;
+import 'package:control_plane_server/src/generated/human_direction_view.dart'
     as _i18;
-import 'package:control_plane_server/src/generated/resolve_decision_view.dart'
+import 'package:control_plane_server/src/generated/human_direction_attachment_view.dart'
     as _i19;
+import 'package:control_plane_server/src/generated/feature_request_created_view.dart'
+    as _i20;
+import 'package:control_plane_server/src/generated/feature_request_summary_view.dart'
+    as _i21;
+import 'package:control_plane_server/src/generated/product_view.dart' as _i22;
+import 'package:control_plane_server/src/generated/product_summary_view.dart'
+    as _i23;
+import 'package:control_plane_server/src/generated/product_detail_view.dart'
+    as _i24;
+import 'package:control_plane_server/src/generated/product_context_view.dart'
+    as _i25;
+import 'package:platform_contracts/src/types/baseline_fact.dart' as _i26;
+import 'package:control_plane_server/src/generated/standing_policy_view.dart'
+    as _i27;
+import 'package:control_plane_server/src/generated/clarification_view.dart'
+    as _i28;
+import 'package:control_plane_server/src/generated/repository_reference_added_view.dart'
+    as _i29;
+import 'package:control_plane_server/src/generated/provider_health_view.dart'
+    as _i30;
+import 'package:control_plane_server/src/generated/model_policy_list_view.dart'
+    as _i31;
+import 'package:control_plane_server/src/generated/model_policy_view.dart'
+    as _i32;
+import 'package:control_plane_server/src/generated/model_execution_list_view.dart'
+    as _i33;
+import 'package:control_plane_server/src/generated/model_stats_view.dart'
+    as _i34;
+import 'package:control_plane_server/src/generated/job_list_view.dart' as _i35;
+import 'package:control_plane_server/src/generated/job_inspection_view.dart'
+    as _i36;
+import 'package:control_plane_server/src/generated/worker_list_view.dart'
+    as _i37;
+import 'package:control_plane_server/src/generated/worker_execution_list_view.dart'
+    as _i38;
+import 'package:control_plane_server/src/generated/worker_execution_inspection_view.dart'
+    as _i39;
+import 'package:control_plane_server/src/generated/job_summary_view.dart'
+    as _i40;
+import 'package:control_plane_server/src/generated/work_item_detail_view.dart'
+    as _i41;
+import 'package:control_plane_server/src/generated/resolve_decision_view.dart'
+    as _i42;
 import 'package:control_plane_server/src/generated/protocol.dart';
 import 'package:control_plane_server/src/generated/endpoints.dart';
 export 'package:serverpod_test/serverpod_test_public_exports.dart';
@@ -248,7 +293,7 @@ class _CredentialEndpoints {
 
   final _i2.SerializationManager _serializationManager;
 
-  _i3.Future<Map<String, dynamic>> generate(
+  _i3.Future<_i4.MintedCredentialView> generate(
     _i1.TestSessionBuilder sessionBuilder, {
     required String productId,
     required String repositoryId,
@@ -277,7 +322,7 @@ class _CredentialEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i4.MintedCredentialView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -285,7 +330,7 @@ class _CredentialEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> verifyAccess(
+  _i3.Future<_i5.CredentialAccessVerificationView> verifyAccess(
     _i1.TestSessionBuilder sessionBuilder, {
     required String productId,
     required String repositoryId,
@@ -318,7 +363,7 @@ class _CredentialEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i5.CredentialAccessVerificationView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -337,7 +382,7 @@ class _DefectEndpoints {
 
   final _i2.SerializationManager _serializationManager;
 
-  _i3.Future<Map<String, dynamic>> create(
+  _i3.Future<_i6.DefectCreatedView> create(
     _i1.TestSessionBuilder sessionBuilder, {
     required String title,
     required String description,
@@ -382,7 +427,7 @@ class _DefectEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i6.DefectCreatedView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -390,7 +435,7 @@ class _DefectEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> list(
+  _i3.Future<_i7.DefectListView> list(
     _i1.TestSessionBuilder sessionBuilder, {
     String? productId,
     String? status,
@@ -423,7 +468,7 @@ class _DefectEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i7.DefectListView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -431,7 +476,7 @@ class _DefectEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> inspect(
+  _i3.Future<_i8.DefectInspectionView> inspect(
     _i1.TestSessionBuilder sessionBuilder, {
     required String defectId,
   }) async {
@@ -454,7 +499,7 @@ class _DefectEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i8.DefectInspectionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -462,7 +507,7 @@ class _DefectEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> addEvidence(
+  _i3.Future<_i9.DefectEvidenceView> addEvidence(
     _i1.TestSessionBuilder sessionBuilder, {
     required String defectId,
     required String kind,
@@ -497,7 +542,7 @@ class _DefectEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i9.DefectEvidenceView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -505,7 +550,7 @@ class _DefectEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> requestClarification(
+  _i3.Future<_i10.DefectClarificationView> requestClarification(
     _i1.TestSessionBuilder sessionBuilder, {
     required String defectId,
     required String question,
@@ -536,7 +581,7 @@ class _DefectEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i10.DefectClarificationView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -544,7 +589,7 @@ class _DefectEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> answerClarification(
+  _i3.Future<_i10.DefectClarificationView> answerClarification(
     _i1.TestSessionBuilder sessionBuilder, {
     required String clarificationId,
     required String answer,
@@ -573,7 +618,7 @@ class _DefectEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i10.DefectClarificationView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -581,7 +626,7 @@ class _DefectEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> verifyFix(
+  _i3.Future<_i11.FixVerificationView> verifyFix(
     _i1.TestSessionBuilder sessionBuilder, {
     required String defectId,
     required String choice,
@@ -620,7 +665,7 @@ class _DefectEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i11.FixVerificationView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -639,7 +684,7 @@ class _ExecutionEndpoints {
 
   final _i2.SerializationManager _serializationManager;
 
-  _i3.Future<Map<String, dynamic>> list(
+  _i3.Future<_i12.AgentExecutionListView> list(
     _i1.TestSessionBuilder sessionBuilder, {
     String? workItemId,
   }) async {
@@ -662,7 +707,7 @@ class _ExecutionEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i12.AgentExecutionListView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -670,7 +715,7 @@ class _ExecutionEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> inspect(
+  _i3.Future<_i13.AgentExecutionInspectionView> inspect(
     _i1.TestSessionBuilder sessionBuilder, {
     required String executionId,
   }) async {
@@ -693,7 +738,7 @@ class _ExecutionEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i13.AgentExecutionInspectionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -712,7 +757,7 @@ class _HealthEndpoints {
 
   final _i2.SerializationManager _serializationManager;
 
-  _i3.Future<Map<String, dynamic>> health(
+  _i3.Future<_i14.HealthStatusView> health(
     _i1.TestSessionBuilder sessionBuilder,
   ) async {
     return _i1.callAwaitableFunctionAndHandleExceptions(() async {
@@ -734,7 +779,7 @@ class _HealthEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i14.HealthStatusView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -753,7 +798,7 @@ class _HomeEndpoints {
 
   final _i2.SerializationManager _serializationManager;
 
-  _i3.Future<_i4.Overview> overview(
+  _i3.Future<_i15.Overview> overview(
     _i1.TestSessionBuilder sessionBuilder,
   ) async {
     return _i1.callAwaitableFunctionAndHandleExceptions(() async {
@@ -775,7 +820,7 @@ class _HomeEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i4.Overview>);
+                as _i3.Future<_i15.Overview>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -783,7 +828,7 @@ class _HomeEndpoints {
     });
   }
 
-  _i3.Future<List<_i5.WorkItemView>> listWorkItems(
+  _i3.Future<List<_i16.WorkItemView>> listWorkItems(
     _i1.TestSessionBuilder sessionBuilder, {
     String? state,
     String? productId,
@@ -812,7 +857,7 @@ class _HomeEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<List<_i5.WorkItemView>>);
+                as _i3.Future<List<_i16.WorkItemView>>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -820,7 +865,7 @@ class _HomeEndpoints {
     });
   }
 
-  _i3.Future<List<_i6.DecisionView>> recentDecisions(
+  _i3.Future<List<_i17.DecisionView>> recentDecisions(
     _i1.TestSessionBuilder sessionBuilder, {
     int? limit,
     int? offset,
@@ -847,7 +892,7 @@ class _HomeEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<List<_i6.DecisionView>>);
+                as _i3.Future<List<_i17.DecisionView>>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -855,7 +900,7 @@ class _HomeEndpoints {
     });
   }
 
-  _i3.Future<List<_i6.DecisionView>> pendingDecisions(
+  _i3.Future<List<_i17.DecisionView>> pendingDecisions(
     _i1.TestSessionBuilder sessionBuilder, {
     int? limit,
   }) async {
@@ -878,7 +923,7 @@ class _HomeEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<List<_i6.DecisionView>>);
+                as _i3.Future<List<_i17.DecisionView>>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -897,7 +942,7 @@ class _HumanDirectionEndpoints {
 
   final _i2.SerializationManager _serializationManager;
 
-  _i3.Future<_i7.HumanDirectionView> createDirection(
+  _i3.Future<_i18.HumanDirectionView> createDirection(
     _i1.TestSessionBuilder sessionBuilder, {
     required String directionType,
     required String targetType,
@@ -905,7 +950,7 @@ class _HumanDirectionEndpoints {
     required String title,
     required String description,
     String? contextJson,
-    List<_i8.HumanDirectionAttachmentView>? attachments,
+    List<_i19.HumanDirectionAttachmentView>? attachments,
     String? createdBy,
     String? assignedTo,
   }) async {
@@ -938,7 +983,7 @@ class _HumanDirectionEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i7.HumanDirectionView>);
+                as _i3.Future<_i18.HumanDirectionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -946,7 +991,7 @@ class _HumanDirectionEndpoints {
     });
   }
 
-  _i3.Future<List<_i7.HumanDirectionView>> listDirectionsForTarget(
+  _i3.Future<List<_i18.HumanDirectionView>> listDirectionsForTarget(
     _i1.TestSessionBuilder sessionBuilder, {
     required String targetType,
     required String targetId,
@@ -979,7 +1024,7 @@ class _HumanDirectionEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<List<_i7.HumanDirectionView>>);
+                as _i3.Future<List<_i18.HumanDirectionView>>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -987,7 +1032,7 @@ class _HumanDirectionEndpoints {
     });
   }
 
-  _i3.Future<List<_i7.HumanDirectionView>> listDirectionsByStatus(
+  _i3.Future<List<_i18.HumanDirectionView>> listDirectionsByStatus(
     _i1.TestSessionBuilder sessionBuilder, {
     required String status,
     String? directionType,
@@ -1020,7 +1065,7 @@ class _HumanDirectionEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<List<_i7.HumanDirectionView>>);
+                as _i3.Future<List<_i18.HumanDirectionView>>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1028,7 +1073,7 @@ class _HumanDirectionEndpoints {
     });
   }
 
-  _i3.Future<_i7.HumanDirectionView> readDirection(
+  _i3.Future<_i18.HumanDirectionView> readDirection(
     _i1.TestSessionBuilder sessionBuilder, {
     required String directionId,
   }) async {
@@ -1051,7 +1096,7 @@ class _HumanDirectionEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i7.HumanDirectionView>);
+                as _i3.Future<_i18.HumanDirectionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1059,7 +1104,7 @@ class _HumanDirectionEndpoints {
     });
   }
 
-  _i3.Future<_i7.HumanDirectionView> acknowledgeDirection(
+  _i3.Future<_i18.HumanDirectionView> acknowledgeDirection(
     _i1.TestSessionBuilder sessionBuilder, {
     required String directionId,
     required String acknowledgedBy,
@@ -1086,7 +1131,7 @@ class _HumanDirectionEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i7.HumanDirectionView>);
+                as _i3.Future<_i18.HumanDirectionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1094,7 +1139,7 @@ class _HumanDirectionEndpoints {
     });
   }
 
-  _i3.Future<_i7.HumanDirectionView> startWorkingDirection(
+  _i3.Future<_i18.HumanDirectionView> startWorkingDirection(
     _i1.TestSessionBuilder sessionBuilder, {
     required String directionId,
     required String startedBy,
@@ -1121,7 +1166,7 @@ class _HumanDirectionEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i7.HumanDirectionView>);
+                as _i3.Future<_i18.HumanDirectionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1129,7 +1174,7 @@ class _HumanDirectionEndpoints {
     });
   }
 
-  _i3.Future<_i7.HumanDirectionView> completeDirection(
+  _i3.Future<_i18.HumanDirectionView> completeDirection(
     _i1.TestSessionBuilder sessionBuilder, {
     required String directionId,
     required String completedBy,
@@ -1158,7 +1203,7 @@ class _HumanDirectionEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i7.HumanDirectionView>);
+                as _i3.Future<_i18.HumanDirectionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1166,7 +1211,7 @@ class _HumanDirectionEndpoints {
     });
   }
 
-  _i3.Future<_i7.HumanDirectionView> rejectDirection(
+  _i3.Future<_i18.HumanDirectionView> rejectDirection(
     _i1.TestSessionBuilder sessionBuilder, {
     required String directionId,
     required String rejectedBy,
@@ -1195,7 +1240,7 @@ class _HumanDirectionEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i7.HumanDirectionView>);
+                as _i3.Future<_i18.HumanDirectionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1203,7 +1248,7 @@ class _HumanDirectionEndpoints {
     });
   }
 
-  _i3.Future<_i7.HumanDirectionView> supersedeDirection(
+  _i3.Future<_i18.HumanDirectionView> supersedeDirection(
     _i1.TestSessionBuilder sessionBuilder, {
     required String directionId,
     required String supersededByDirectionId,
@@ -1232,7 +1277,7 @@ class _HumanDirectionEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i7.HumanDirectionView>);
+                as _i3.Future<_i18.HumanDirectionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1251,7 +1296,7 @@ class _IntakeEndpoints {
 
   final _i2.SerializationManager _serializationManager;
 
-  _i3.Future<Map<String, dynamic>> createFeatureRequest(
+  _i3.Future<_i20.FeatureRequestCreatedView> createFeatureRequest(
     _i1.TestSessionBuilder sessionBuilder, {
     required String title,
     required String description,
@@ -1282,7 +1327,7 @@ class _IntakeEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i20.FeatureRequestCreatedView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1290,7 +1335,7 @@ class _IntakeEndpoints {
     });
   }
 
-  _i3.Future<List<_i9.FeatureRequestSummaryView>> listFeatureRequests(
+  _i3.Future<List<_i21.FeatureRequestSummaryView>> listFeatureRequests(
     _i1.TestSessionBuilder sessionBuilder, {
     String? productId,
     String? state,
@@ -1319,7 +1364,7 @@ class _IntakeEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<List<_i9.FeatureRequestSummaryView>>);
+                as _i3.Future<List<_i21.FeatureRequestSummaryView>>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1338,7 +1383,7 @@ class _ProductRegistryEndpoints {
 
   final _i2.SerializationManager _serializationManager;
 
-  _i3.Future<List<_i10.ProductView>> listProducts(
+  _i3.Future<List<_i22.ProductView>> listProducts(
     _i1.TestSessionBuilder sessionBuilder,
   ) async {
     return _i1.callAwaitableFunctionAndHandleExceptions(() async {
@@ -1360,7 +1405,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<List<_i10.ProductView>>);
+                as _i3.Future<List<_i22.ProductView>>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1368,7 +1413,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<List<_i11.ProductSummaryView>> listProductSummaries(
+  _i3.Future<List<_i23.ProductSummaryView>> listProductSummaries(
     _i1.TestSessionBuilder sessionBuilder,
   ) async {
     return _i1.callAwaitableFunctionAndHandleExceptions(() async {
@@ -1390,7 +1435,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<List<_i11.ProductSummaryView>>);
+                as _i3.Future<List<_i23.ProductSummaryView>>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1398,7 +1443,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i12.ProductDetailView> productDetail(
+  _i3.Future<_i24.ProductDetailView> productDetail(
     _i1.TestSessionBuilder sessionBuilder, {
     required String productId,
   }) async {
@@ -1421,7 +1466,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i12.ProductDetailView>);
+                as _i3.Future<_i24.ProductDetailView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1429,7 +1474,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i13.ProductContextView> productContext(
+  _i3.Future<_i25.ProductContextView> productContext(
     _i1.TestSessionBuilder sessionBuilder, {
     required String productId,
   }) async {
@@ -1452,7 +1497,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i13.ProductContextView>);
+                as _i3.Future<_i25.ProductContextView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1460,10 +1505,10 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i6.DecisionView> proposeBaseline(
+  _i3.Future<_i17.DecisionView> proposeBaseline(
     _i1.TestSessionBuilder sessionBuilder, {
     required String productId,
-    required List<_i14.BaselineFact> facts,
+    required List<_i26.BaselineFact> facts,
   }) async {
     return _i1.callAwaitableFunctionAndHandleExceptions(() async {
       var _localUniqueSession =
@@ -1487,7 +1532,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i6.DecisionView>);
+                as _i3.Future<_i17.DecisionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1495,7 +1540,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i6.DecisionView> requestBaselineApproval(
+  _i3.Future<_i17.DecisionView> requestBaselineApproval(
     _i1.TestSessionBuilder sessionBuilder, {
     required String productId,
     required String baselineId,
@@ -1524,7 +1569,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i6.DecisionView>);
+                as _i3.Future<_i17.DecisionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1532,7 +1577,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i6.DecisionView> requestLifecycleDecision(
+  _i3.Future<_i17.DecisionView> requestLifecycleDecision(
     _i1.TestSessionBuilder sessionBuilder, {
     required String productId,
     required String action,
@@ -1561,7 +1606,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i6.DecisionView>);
+                as _i3.Future<_i17.DecisionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1569,7 +1614,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i6.DecisionView> resolveLifecycleDecision(
+  _i3.Future<_i17.DecisionView> resolveLifecycleDecision(
     _i1.TestSessionBuilder sessionBuilder, {
     required String decisionId,
     required String choice,
@@ -1610,7 +1655,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i6.DecisionView>);
+                as _i3.Future<_i17.DecisionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1618,7 +1663,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i6.DecisionView> requestPolicyAuthorisation(
+  _i3.Future<_i17.DecisionView> requestPolicyAuthorisation(
     _i1.TestSessionBuilder sessionBuilder, {
     required String productId,
     required List<String> actions,
@@ -1645,7 +1690,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i6.DecisionView>);
+                as _i3.Future<_i17.DecisionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1653,7 +1698,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i15.StandingPolicyView?> resolvePolicyAuthorisation(
+  _i3.Future<_i27.StandingPolicyView?> resolvePolicyAuthorisation(
     _i1.TestSessionBuilder sessionBuilder, {
     required String decisionId,
     required String choice,
@@ -1692,7 +1737,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i15.StandingPolicyView?>);
+                as _i3.Future<_i27.StandingPolicyView?>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1700,7 +1745,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i15.StandingPolicyView> revokeStandingPolicy(
+  _i3.Future<_i27.StandingPolicyView> revokeStandingPolicy(
     _i1.TestSessionBuilder sessionBuilder, {
     required String productId,
     required String policyId,
@@ -1729,7 +1774,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i15.StandingPolicyView>);
+                as _i3.Future<_i27.StandingPolicyView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1737,7 +1782,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i6.DecisionView> resolveBaselineApproval(
+  _i3.Future<_i17.DecisionView> resolveBaselineApproval(
     _i1.TestSessionBuilder sessionBuilder, {
     required String decisionId,
     required String choice,
@@ -1776,7 +1821,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i6.DecisionView>);
+                as _i3.Future<_i17.DecisionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1784,7 +1829,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i6.DecisionView> baselineApproval(
+  _i3.Future<_i17.DecisionView> baselineApproval(
     _i1.TestSessionBuilder sessionBuilder, {
     required String productId,
     required String baselineId,
@@ -1811,7 +1856,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i6.DecisionView>);
+                as _i3.Future<_i17.DecisionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1819,7 +1864,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i16.ClarificationView> answerClarification(
+  _i3.Future<_i28.ClarificationView> answerClarification(
     _i1.TestSessionBuilder sessionBuilder, {
     required String clarificationId,
     required String answer,
@@ -1848,7 +1893,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i16.ClarificationView>);
+                as _i3.Future<_i28.ClarificationView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1856,7 +1901,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i12.ProductDetailView> createProduct(
+  _i3.Future<_i24.ProductDetailView> createProduct(
     _i1.TestSessionBuilder sessionBuilder, {
     required String productId,
     required String name,
@@ -1889,7 +1934,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i12.ProductDetailView>);
+                as _i3.Future<_i24.ProductDetailView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1897,7 +1942,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> addRepositoryReference(
+  _i3.Future<_i29.RepositoryReferenceAddedView> addRepositoryReference(
     _i1.TestSessionBuilder sessionBuilder, {
     required String productId,
     required String repositoryId,
@@ -1930,7 +1975,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i29.RepositoryReferenceAddedView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1938,7 +1983,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i12.ProductDetailView> verifyBaseline(
+  _i3.Future<_i24.ProductDetailView> verifyBaseline(
     _i1.TestSessionBuilder sessionBuilder, {
     required String productId,
     required String baselineId,
@@ -1969,7 +2014,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i12.ProductDetailView>);
+                as _i3.Future<_i24.ProductDetailView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1977,7 +2022,7 @@ class _ProductRegistryEndpoints {
     });
   }
 
-  _i3.Future<_i12.ProductDetailView> addHumanBaselineClaim(
+  _i3.Future<_i24.ProductDetailView> addHumanBaselineClaim(
     _i1.TestSessionBuilder sessionBuilder, {
     required String productId,
     required String baselineId,
@@ -2014,7 +2059,7 @@ class _ProductRegistryEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i12.ProductDetailView>);
+                as _i3.Future<_i24.ProductDetailView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2033,7 +2078,7 @@ class _ProviderHealthEndpoints {
 
   final _i2.SerializationManager _serializationManager;
 
-  _i3.Future<Map<String, dynamic>> getProviderHealth(
+  _i3.Future<_i30.ProviderHealthView> getProviderHealth(
     _i1.TestSessionBuilder sessionBuilder,
   ) async {
     return _i1.callAwaitableFunctionAndHandleExceptions(() async {
@@ -2055,7 +2100,7 @@ class _ProviderHealthEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i30.ProviderHealthView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2063,7 +2108,7 @@ class _ProviderHealthEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> listModelPolicies(
+  _i3.Future<_i31.ModelPolicyListView> listModelPolicies(
     _i1.TestSessionBuilder sessionBuilder,
   ) async {
     return _i1.callAwaitableFunctionAndHandleExceptions(() async {
@@ -2085,7 +2130,7 @@ class _ProviderHealthEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i31.ModelPolicyListView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2093,7 +2138,7 @@ class _ProviderHealthEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> updateModelPolicy(
+  _i3.Future<_i32.ModelPolicyView> updateModelPolicy(
     _i1.TestSessionBuilder sessionBuilder, {
     required String role,
     required String chainJson,
@@ -2124,7 +2169,7 @@ class _ProviderHealthEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i32.ModelPolicyView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2132,7 +2177,7 @@ class _ProviderHealthEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> listModelExecutions(
+  _i3.Future<_i33.ModelExecutionListView> listModelExecutions(
     _i1.TestSessionBuilder sessionBuilder, {
     String? workItemId,
     String? provider,
@@ -2169,7 +2214,7 @@ class _ProviderHealthEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i33.ModelExecutionListView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2177,7 +2222,7 @@ class _ProviderHealthEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> getModelStats(
+  _i3.Future<_i34.ModelStatsView> getModelStats(
     _i1.TestSessionBuilder sessionBuilder, {
     DateTime? from,
     DateTime? to,
@@ -2206,7 +2251,7 @@ class _ProviderHealthEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i34.ModelStatsView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2225,7 +2270,7 @@ class _SchedulerEndpoints {
 
   final _i2.SerializationManager _serializationManager;
 
-  _i3.Future<Map<String, dynamic>> listJobs(
+  _i3.Future<_i35.JobListView> listJobs(
     _i1.TestSessionBuilder sessionBuilder, {
     String? workItemId,
   }) async {
@@ -2248,7 +2293,7 @@ class _SchedulerEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i35.JobListView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2256,7 +2301,7 @@ class _SchedulerEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> inspect(
+  _i3.Future<_i36.JobInspectionView> inspect(
     _i1.TestSessionBuilder sessionBuilder, {
     required String jobId,
   }) async {
@@ -2279,7 +2324,7 @@ class _SchedulerEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i36.JobInspectionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2298,7 +2343,7 @@ class _WorkerEndpoints {
 
   final _i2.SerializationManager _serializationManager;
 
-  _i3.Future<Map<String, dynamic>> listWorkers(
+  _i3.Future<_i37.WorkerListView> listWorkers(
     _i1.TestSessionBuilder sessionBuilder,
   ) async {
     return _i1.callAwaitableFunctionAndHandleExceptions(() async {
@@ -2320,7 +2365,7 @@ class _WorkerEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i37.WorkerListView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2328,7 +2373,7 @@ class _WorkerEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> listExecutions(
+  _i3.Future<_i38.WorkerExecutionListView> listExecutions(
     _i1.TestSessionBuilder sessionBuilder, {
     String? workItemId,
   }) async {
@@ -2351,7 +2396,7 @@ class _WorkerEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i38.WorkerExecutionListView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2359,7 +2404,7 @@ class _WorkerEndpoints {
     });
   }
 
-  _i3.Future<Map<String, dynamic>> inspect(
+  _i3.Future<_i39.WorkerExecutionInspectionView> inspect(
     _i1.TestSessionBuilder sessionBuilder, {
     required String workerExecutionId,
   }) async {
@@ -2384,7 +2429,7 @@ class _WorkerEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<Map<String, dynamic>>);
+                as _i3.Future<_i39.WorkerExecutionInspectionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2403,7 +2448,7 @@ class _WorkflowEndpoints {
 
   final _i2.SerializationManager _serializationManager;
 
-  _i3.Future<List<_i17.JobSummaryView>> jobsForWorkItem(
+  _i3.Future<List<_i40.JobSummaryView>> jobsForWorkItem(
     _i1.TestSessionBuilder sessionBuilder, {
     required String workItemId,
   }) async {
@@ -2426,7 +2471,7 @@ class _WorkflowEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<List<_i17.JobSummaryView>>);
+                as _i3.Future<List<_i40.JobSummaryView>>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2434,7 +2479,7 @@ class _WorkflowEndpoints {
     });
   }
 
-  _i3.Future<_i18.WorkItemDetailView> inspect(
+  _i3.Future<_i41.WorkItemDetailView> inspect(
     _i1.TestSessionBuilder sessionBuilder, {
     required String workItemId,
   }) async {
@@ -2457,7 +2502,7 @@ class _WorkflowEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i18.WorkItemDetailView>);
+                as _i3.Future<_i41.WorkItemDetailView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2465,7 +2510,7 @@ class _WorkflowEndpoints {
     });
   }
 
-  _i3.Future<List<_i6.DecisionView>> listDecisions(
+  _i3.Future<List<_i17.DecisionView>> listDecisions(
     _i1.TestSessionBuilder sessionBuilder, {
     required String workItemId,
   }) async {
@@ -2488,7 +2533,7 @@ class _WorkflowEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<List<_i6.DecisionView>>);
+                as _i3.Future<List<_i17.DecisionView>>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2496,7 +2541,7 @@ class _WorkflowEndpoints {
     });
   }
 
-  _i3.Future<_i19.ResolveDecisionView> resolveDecision(
+  _i3.Future<_i42.ResolveDecisionView> resolveDecision(
     _i1.TestSessionBuilder sessionBuilder, {
     required String decisionId,
     required String choice,
@@ -2535,7 +2580,7 @@ class _WorkflowEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i19.ResolveDecisionView>);
+                as _i3.Future<_i42.ResolveDecisionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();

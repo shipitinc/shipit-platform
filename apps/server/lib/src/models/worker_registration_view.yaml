@@ -1,0 +1,17 @@
+### One registered worker.
+class: WorkerRegistrationView
+fields:
+  workerId: String
+  poolId: String
+  ### Capability name -> the spec it advertises. A `Map<String, …>` keyed by the
+  ### capability's wire name, because the domain type keys it by the enum and
+  ### JSON object keys are strings.
+  capabilities: Map<String, CapabilitySpecView>
+  ### Durable `WorkerStatus` name.
+  status: String
+  currentLoad: int
+  maxConcurrency: int
+  lastHeartbeat: DateTime
+  ### Artifact hash -> the cached entry.
+  artifactCache: Map<String, ArtifactCacheEntryView>?
+  platform: String?

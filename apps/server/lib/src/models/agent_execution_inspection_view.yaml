@@ -1,0 +1,7 @@
+### `executionEndpoints.inspect` returned a raw map. Typed.
+class: AgentExecutionInspectionView
+fields:
+  execution: AgentExecutionRecordView
+  events: List<AgentEventView>
+  result: AgentResultView?
+  verifications: List<PlatformVerificationView>

@@ -26,15 +26,23 @@ const String kHostKeyConfirmationProvenance =
     'authenticated by the server; the server independently obtained the host key '
     'and enforced that they matched';
 
-/// What a mint produced. **The complete set of fields that may leave the
-/// process**, and every one of them is public.
+/// What a mint produced. **Every field here is public**, and there is no field
+/// for the private half and no way to derive one from this object.
 ///
-/// There is no field for the private half and no way to derive one from this
-/// object: it holds the public authorized-keys line, the fingerprint, the
-/// algorithm, the reference name and the credential's status. That is the
-/// point of the type — the endpoint serialises exactly this, so the shape of
-/// the leak is decided by the return type rather than by what the caller
-/// remembered to omit.
+/// THIS IS NOT THE WIRE TYPE, and used to be. It carried a `toJson()` that its
+/// doc called "the wire projection … an explicit whitelist", and the endpoint
+/// returned that map — which is the blocker this correction fixes: a
+/// `Map<String, dynamic>` return type generates
+/// `callServerEndpoint<Map<String, dynamic>>`, whose
+/// `Protocol.deserialize` recurses into `deserialize<dynamic>(v)`, for which
+/// Serverpod has no entry, so the browser threw `No deserialization found for
+/// type dynamic` after the server had already minted the key.
+///
+/// The wire type is now the generated `MintedCredentialView`, projected field
+/// by field by `_mintedCredentialView` in `credential_endpoints.dart`. Keeping
+/// a second, hand-maintained projection here is what made the old shape
+/// survivable in the first place — it looked like the contract, so it was
+/// reviewed as one, and nothing checked that the client could read it.
 class MintedCredential {
   MintedCredential({
     required this.credentialId,
@@ -94,20 +102,6 @@ class MintedCredential {
   final String hostKeyStatus;
 
   final String? host;
-
-  /// The wire projection. Deliberately an explicit whitelist.
-  Map<String, dynamic> toJson() => {
-    'credentialId': credentialId,
-    'productId': productId,
-    'repositoryId': repositoryId,
-    'publicKey': publicKey,
-    'fingerprint': fingerprint,
-    'algorithm': algorithm,
-    'referenceName': referenceName,
-    'status': status,
-    'hostKeyStatus': hostKeyStatus,
-    if (host != null) 'host': host,
-  };
 }
 
 /// What an access verification concluded.
@@ -144,6 +138,15 @@ class AccessVerification {
   final DateTime? lastVerifiedAt;
   final String? observedHostKeyFingerprint;
 
+  /// A JSON projection for tests and inspection. **NOT the wire type** — see
+  /// [MintedCredential] for why that distinction is load-bearing, and for the
+  /// `Map<String, dynamic>` deserialization failure a map return type causes.
+  /// The endpoint returns the generated `CredentialAccessVerificationView`.
+  ///
+  /// Retained rather than deleted because
+  /// `credential_key_service_postgres_test.dart` asserts on this projection's
+  /// shape independently of the generated model — which is a real second
+  /// opinion, not redundancy, as long as it is not mistaken for the contract.
   Map<String, dynamic> toJson() => {
     'credentialId': credentialId,
     'status': status,

@@ -397,27 +397,80 @@ void main() {
           final pem = File(
             '$custodyDir/GIT_REPOSITORY_${_repo}_SSH',
           ).readAsStringSync().trim();
+
+          // THE ENDPOINT NOW RETURNS A TYPED MODEL (`MintedCredentialView`), and
+          // this test is NOT weakened for it.
+          //
+          // `response.toJson()` is the generated model's own wire projection —
+          // the same field-by-field map the server serialises — so every
+          // assertion below still runs over the complete key/value set exactly
+          // as it did when the endpoint returned that map directly. What
+          // changed is WHERE the map comes from: it is now produced by the
+          // generated class, so a field added to the response without a
+          // matching key here shows up in this sweep rather than past it.
+          //
+          // The typed fields are asserted separately below, from the typed
+          // object, because that is the shape the browser actually receives.
+          final wireMap = response.toJson();
           final wire = jsonEncode(response);
 
-          expect(response.keys, isNot(contains('privateKey')));
-          expect(response.keys, isNot(contains('private')));
+          expect(wireMap.keys, isNot(contains('privateKey')));
+          expect(wireMap.keys, isNot(contains('private')));
           expect(wire, isNot(contains('PRIVATE KEY')));
           expect(wire, isNot(contains(pem)));
           expect(wire, isNot(contains(base64.encode(utf8.encode(pem)))));
           // Per value as well: a substring test over the joined map can miss a
           // value whose key material straddles a JSON escape.
-          for (final value in response.values) {
+          for (final value in wireMap.values) {
             expect('$value', isNot(contains('PRIVATE KEY')));
             expect('$value', isNot(contains(pem)));
           }
 
           // The public half IS present, because ADR 0018 surfaces it on purpose.
-          expect(response['publicKey'], startsWith('ssh-ed25519 '));
-          expect(response['referenceName'], 'GIT_REPOSITORY_${_repo}_SSH');
+          // Read from the TYPED object, which is what the client deserialises.
+          expect(response.publicKey, startsWith('ssh-ed25519 '));
+          expect(response.referenceName, 'GIT_REPOSITORY_${_repo}_SSH');
           expect('$response', contains('SHA256:'));
-          expect(response['algorithm'], 'ed25519');
-          expect(response['status'], 'generated');
-          expect(response['hostKeyStatus'], 'unknown');
+          expect(response.algorithm, 'ed25519');
+          expect(response.status, 'generated');
+          expect(response.hostKeyStatus, 'unknown');
+          expect(response.fingerprint, startsWith('SHA256:'));
+
+          // And the key set is asserted against the typed object too, so a
+          // response that grew a field is caught even if `toJson()` were ever
+          // widened to include something the typed getters do not expose.
+          //
+          // `'__className__'` IS EXPECTED HERE, and deliberately. Serverpod's
+          // generated `toJson()` always emits it as the framing tag that lets a
+          // client dispatch on the concrete type; it is not a field anybody
+          // reviewed, so leaving it out of this set would fail the whole test —
+          // which is exactly what happened the first time this assertion was
+          // written. Listing it states both things at once: the tag is present
+          // because the model is generated, and it is the ONE key in this map
+          // that is framing rather than payload. A genuinely new payload field
+          // still fails, because it will arrive without being listed here.
+          //
+          // Corrected after review: the first version of this assertion omitted
+          // `__className__` and was RED — measured by `make test-integration`,
+          // `Which: larger than expected`. `dart analyze` cannot see the
+          // mismatch, so the assertion is only trustworthy because the suite is
+          // executed; see the run in this correction's report.
+          expect(
+            wireMap.keys.toSet(),
+            {
+              '__className__',
+              'credentialId',
+              'productId',
+              'repositoryId',
+              'publicKey',
+              'fingerprint',
+              'algorithm',
+              'referenceName',
+              'status',
+              'hostKeyStatus',
+              if (response.host != null) 'host',
+            },
+          );
         });
 
         test(

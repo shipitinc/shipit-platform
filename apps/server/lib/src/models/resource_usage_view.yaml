@@ -1,0 +1,6 @@
+### Resource consumption measured for an agent run.
+class: ResourceUsageView
+fields:
+  peakMemoryMb: int?
+  cpuSeconds: double?
+  networkBytes: int?

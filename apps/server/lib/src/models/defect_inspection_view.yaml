@@ -1,0 +1,11 @@
+### `defectEndpoints.inspect` returned a raw map. Typed.
+class: DefectInspectionView
+fields:
+  defect: DefectDetailView
+  evidence: List<DefectEvidenceView>
+  clarifications: List<DefectClarificationView>
+  events: List<DefectEventView>
+  triageResult: TriageResultView?
+  ### The remediation work item once one is linked. Null until then — the
+  ### endpoint has never emitted one.
+  remediationWorkItem: WorkItemView?

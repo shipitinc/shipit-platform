@@ -1311,9 +1311,9 @@ void main() {
             sessionBuilder,
             defectId: _defectId,
           );
-          expect(inspected['defect']!['status'], DefectStatus.reported.wire);
-          expect(inspected['triageResult']!['resultId'], viaJob.resultId);
-          expect(inspected['evidence'], hasLength(1));
+          expect(inspected.defect.status, DefectStatus.reported.wire);
+          expect(inspected.triageResult!.resultId, viaJob.resultId);
+          expect(inspected.evidence, hasLength(1));
         },
         // The default 30s is not enough for a real git worktree plus a real
         // platform-runner verification when every other integration file is

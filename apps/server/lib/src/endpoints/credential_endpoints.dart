@@ -3,6 +3,8 @@ import 'package:control_plane_server/src/credentials/secret_material.dart';
 import 'package:control_plane_server/src/credentials/secret_provider.dart';
 import 'package:control_plane_server/src/credentials/secret_provider_resolver.dart';
 import 'package:control_plane_server/src/credentials/secretless_error.dart';
+import 'package:control_plane_server/src/generated/credential_access_verification_view.dart';
+import 'package:control_plane_server/src/generated/minted_credential_view.dart';
 import 'package:control_plane_server/src/persistence/persistence_database.dart';
 import 'package:control_plane_server/src/persistence/postgres_human_decision_store.dart';
 import 'package:control_plane_server/src/persistence/postgres_product_registry_store.dart';
@@ -24,8 +26,26 @@ import '../services/structured_logger.dart';
 /// endpoint. `ProductRegistryEndpoints` keeps the product, baseline and
 /// repository-reference surface, none of which touches a key.
 ///
-/// Both methods return a `Map<String, dynamic>` whose keys are an explicit
-/// whitelist in [MintedCredential.toJson] / [AccessVerification.toJson].
+/// Both methods return a TYPED Serverpod model — [MintedCredentialView] and
+/// [CredentialAccessVerificationView] — rather than a `Map<String, dynamic>`.
+/// That is a wire-contract requirement, not a style choice, and the reason is
+/// worth stating because it cost two review cycles to find: the generated
+/// client mirrors the declared return type, so a map return type generates
+/// `callServerEndpoint<Map<String, dynamic>>`, whose
+/// `Protocol.deserialize<Map<String, dynamic>>` recurses into
+/// `deserialize<dynamic>(v)`. The framework has no deserializer registered for
+/// `dynamic`, so the client threw `DeserializationTypeNotFoundException: No
+/// deserialization found for type dynamic` before it read a single field — the
+/// mint succeeded on the server and the browser showed a failure. Every gate
+/// passed, because a map IS valid Dart and DOES generate cleanly; nothing
+/// exercised the browser→server hop.
+///
+/// The typed return type also keeps the leak whitelist structural. The key set
+/// is now the FIELD LIST of a generated serialisable class, so a field that
+/// could carry the private half cannot be added without the generator, the
+/// client's deserializer, and this file's review all seeing it — `SecretBytes`
+/// has no serialisable representation and cannot become a field here by
+/// accident.
 ///
 /// Both delegate: the durable engine owns credential identity, scope and status;
 /// this endpoint only wires the request to it and shapes the response.
@@ -161,7 +181,7 @@ class CredentialEndpoints extends Endpoint {
   ///
   /// Returns `status: "generated"`, never `verified` — access is not proved
   /// until [verifyAccess] runs a real clone.
-  Future<Map<String, dynamic>> generate(
+  Future<MintedCredentialView> generate(
     Session session, {
     required String productId,
     required String repositoryId,
@@ -185,7 +205,7 @@ class CredentialEndpoints extends Endpoint {
         'status': credential.status,
         'custodyProvider': provider.providerId,
       });
-      return credential.toJson();
+      return _mintedCredentialView(credential);
     } catch (error, stackTrace) {
       logger.error(
         'credential.generate.failed',
@@ -220,7 +240,7 @@ class CredentialEndpoints extends Endpoint {
   ///
   /// This is the call that lets the client set `accessStatus = verified`, and it
   /// sets `status: "verified"` only when `git clone` actually completed.
-  Future<Map<String, dynamic>> verifyAccess(
+  Future<CredentialAccessVerificationView> verifyAccess(
     Session session, {
     required String productId,
     required String repositoryId,
@@ -249,7 +269,7 @@ class CredentialEndpoints extends Endpoint {
         if (verification.failureReason != null)
           'failureReason': verification.failureReason,
       });
-      return verification.toJson();
+      return _accessVerificationView(verification);
     } catch (error, stackTrace) {
       logger.error(
         'credential.verify_access.failed',
@@ -301,6 +321,51 @@ class CredentialEndpoints extends Endpoint {
     );
   }
 }
+
+/// Projects a mint onto the wire type.
+///
+/// A FIELD-BY-FIELD NAMED COPY, and the explicitness is the point rather than
+/// the verbosity: [MintedCredential] is the domain object and
+/// [MintedCredentialView] is the contract, and this function is the single
+/// place the two are related. If the domain grows a field — or grows the kind
+/// of field this work item exists to prevent — this function does not compile
+/// until someone has decided whether it may leave the process, which is the
+/// decision the return type is supposed to force. A `toJson()` on the domain
+/// object, by contrast, would have made the same change silently.
+///
+/// [MintedCredential] has no private-half field and no accessor that can
+/// produce one; this projection names every field it does have, so nothing can
+/// be added to the response without appearing here first.
+MintedCredentialView _mintedCredentialView(MintedCredential credential) =>
+    MintedCredentialView(
+      credentialId: credential.credentialId,
+      productId: credential.productId,
+      repositoryId: credential.repositoryId,
+      // Public by definition, and the reason the operator makes this call at
+      // all. Kept.
+      publicKey: credential.publicKey,
+      fingerprint: credential.fingerprint,
+      algorithm: credential.algorithm,
+      referenceName: credential.referenceName,
+      status: credential.status,
+      hostKeyStatus: credential.hostKeyStatus,
+      host: credential.host,
+    );
+
+/// Projects a verification onto the wire type. Same reasoning as
+/// [_mintedCredentialView]; see there for why this is a named copy.
+CredentialAccessVerificationView _accessVerificationView(
+  AccessVerification verification,
+) => CredentialAccessVerificationView(
+  credentialId: verification.credentialId,
+  status: verification.status,
+  canReachRepository: verification.canReachRepository,
+  secretMaterialRemoved: verification.secretMaterialRemoved,
+  hostKeyConfirmationProvenance: verification.hostKeyConfirmationProvenance,
+  failureReason: verification.failureReason,
+  lastVerifiedAt: verification.lastVerifiedAt,
+  observedHostKeyFingerprint: verification.observedHostKeyFingerprint,
+);
 
 /// The fields both `catch` blocks log.
 ///

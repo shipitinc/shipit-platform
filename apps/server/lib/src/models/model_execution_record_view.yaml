@@ -1,0 +1,22 @@
+### `ModelExecutionRecord` as it travels.
+class: ModelExecutionRecordView
+fields:
+  workItemId: String
+  jobId: String
+  agentExecutionId: String
+  ### Durable `AgentRole` wire value.
+  role: String
+  modelId: String
+  provider: String
+  inputTokens: int
+  outputTokens: int
+  totalTokens: int
+  cachedReadTokens: int
+  costUsd: double
+  currency: String
+  startedAt: DateTime
+  finishedAt: DateTime
+  success: bool
+  error: String?
+  escalationIndex: int
+  taskType: String

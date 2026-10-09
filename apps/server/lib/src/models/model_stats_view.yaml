@@ -1,0 +1,13 @@
+### `providerHealthEndpoints.getModelStats` returned a raw map. Typed.
+class: ModelStatsView
+fields:
+  count: int
+  totalInputTokens: int
+  totalOutputTokens: int
+  totalTokens: int
+  totalCachedReadTokens: int
+  totalCostUsd: double
+  avgCostUsd: double
+  successCount: int
+  failureCount: int
+  byGroup: List<ModelStatsGroupView>

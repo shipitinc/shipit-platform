@@ -27,6 +27,7 @@ import '../generated/decision_option_view.dart';
 import '../generated/decision_view.dart';
 import '../generated/product_context_view.dart';
 import '../generated/product_detail_view.dart';
+import '../generated/repository_reference_added_view.dart';
 import '../generated/standing_policy_view.dart';
 import '../generated/product_summary_view.dart';
 import '../generated/product_view.dart';
@@ -504,7 +505,24 @@ class ProductRegistryEndpoints extends Endpoint {
   }
 
   /// Adds a repository reference to a product.
-  Future<Map<String, dynamic>> addRepositoryReference(
+  ///
+  /// THIS RETURN TYPE IS LOAD-BEARING, and it used to be
+  /// `Future<Map<String, dynamic>>`.
+  ///
+  /// The Add Product flow calls this through
+  /// `AddProductBloc._ensureProductAndRepository` immediately BEFORE
+  /// `credentialEndpoints.generate`, in the same press of the same control
+  /// (`add_product_page.dart:143` then `:147`). The old body was the NON-EMPTY
+  /// map `{'success': true, 'repositoryId': …}`, and the generated client's
+  /// `Protocol.deserialize<Map<String, dynamic>>` reads every value with
+  /// `deserialize<dynamic>`, for which Serverpod registers nothing. So the
+  /// request went out, the server answered 200, and the browser died in
+  /// `parseData` at THIS call — the deploy key was never minted.
+  ///
+  /// An EMPTY map deserialises fine, which is the whole reason this defect class
+  /// presents as intermittent and gets blamed on whichever endpoint happened to
+  /// be nearest the symptom.
+  Future<RepositoryReferenceAddedView> addRepositoryReference(
     Session session, {
     required String productId,
     required String repositoryId,
@@ -521,7 +539,10 @@ class ProductRegistryEndpoints extends Endpoint {
         kind: RepositoryKind.fromWire(kind),
         provider: RepositoryProvider.fromWire(provider),
       );
-      return {'success': true, 'repositoryId': ref.repositoryId};
+      return RepositoryReferenceAddedView(
+        success: true,
+        repositoryId: ref.repositoryId,
+      );
     } catch (error, stackTrace) {
       service.logger.error('product_registry.add_repo_ref.failed', {
         'productId': productId,

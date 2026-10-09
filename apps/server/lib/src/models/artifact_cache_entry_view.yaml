@@ -1,0 +1,7 @@
+### One cached artifact on a registered worker.
+class: ArtifactCacheEntryView
+fields:
+  artifactHash: String
+  localPath: String
+  cachedAt: DateTime
+  sizeBytes: int?

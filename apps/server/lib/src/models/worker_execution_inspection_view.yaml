@@ -1,0 +1,6 @@
+### `workerEndpoints.inspect` returned a raw map. Typed.
+class: WorkerExecutionInspectionView
+fields:
+  execution: WorkerExecutionView
+  events: List<WorkerEventView>
+  result: WorkerExecutionResultView?

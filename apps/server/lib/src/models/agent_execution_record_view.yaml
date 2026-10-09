@@ -1,0 +1,21 @@
+### One durable agent execution.
+class: AgentExecutionRecordView
+fields:
+  executionId: String
+  workItemId: String
+  requestId: String
+  runtimeTypeId: String
+  ### Durable `AgentRole` wire value.
+  role: String
+  ### Durable `AgentSessionStatus` wire value.
+  status: String
+  workspace: AgentWorkspaceView
+  sessionId: String?
+  resultId: String?
+  startedAt: DateTime?
+  completedAt: DateTime?
+  reason: String?
+  ### Free-form execution metadata, carried as JSON TEXT. See
+  ### `DefectDetailView.clientContextJson` for why.
+  metadataJson: String?
+  version: int

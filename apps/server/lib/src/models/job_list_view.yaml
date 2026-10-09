@@ -1,0 +1,4 @@
+### `schedulerEndpoints.listJobs` returned a raw map. Typed.
+class: JobListView
+fields:
+  jobs: List<JobRecordView>

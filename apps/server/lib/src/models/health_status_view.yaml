@@ -1,0 +1,8 @@
+### `healthEndpoints.health` returned a raw map. Typed so the generated client
+### can read it at all.
+class: HealthStatusView
+fields:
+  ### `ok`.
+  status: String
+  ### Server clock, UTC.
+  timestamp: DateTime

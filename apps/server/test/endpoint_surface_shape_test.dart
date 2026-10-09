@@ -230,8 +230,54 @@ const _serverpodExcludedMethodNames = {
 /// contradicts the generator teaches the next reader that the guard is wrong.
 ///
 /// Only a type argument that IS `dynamic` or `void` is rejected, never one that
-/// merely mentions it, which is why `Future<Map<String, dynamic>>` — the shape
-/// most endpoints in this repository return — stays a legal endpoint.
+/// merely mentions it. That makes `Future<Map<String, dynamic>>` — the shape
+/// twenty-two endpoints in this repository returned until 2026-10-09 — a LEGAL
+/// ENDPOINT. Every sentence above is still true.
+///
+/// GENERATOR-LEGAL IS NOT WIRE-LEGAL. Read the rest of this before concluding
+/// that a return type this file accepts will work.
+///
+/// This guard answers "will `serverpod generate` accept this declaration?". The
+/// answer is yes for `Future<Map<String, dynamic>>`. The answer to "will the
+/// browser be able to read the response?" is **no**, always:
+///
+/// ```dart
+/// // Protocol.deserialize, emitted BY THE GENERATOR for that return type:
+/// if (t == Map<String, dynamic>) {
+///   return (data as Map).map(
+///         (k, v) => MapEntry(deserialize<String>(k), deserialize<dynamic>(v)),
+///       ) as T;
+/// }
+/// ```
+///
+/// `SerializationManager.deserialize` has entries for `int`, `double`,
+/// `String`, `bool`, `DateTime`, `ByteData`, `Duration`, `UuidValue`, `Uri`,
+/// `BigInt` and the vector types. It has **none** for `dynamic`, so
+/// `deserialize<dynamic>(v)` throws
+/// `DeserializationTypeNotFoundException: No deserialization found for type
+/// dynamic` on the first value of the body.
+///
+/// THE COUNTER-EXAMPLES, both of which cost this repository two review cycles:
+/// `credentialEndpoints.generate` and
+/// `productRegistryEndpoints.addRepositoryReference`. The second is the one
+/// that matters: `AddProductBloc` calls it immediately BEFORE the mint
+/// (`add_product_page.dart:143` -> `_ensureProductAndRepository:281`, then
+/// `:147`), so while it declared a map the browser died there and no deploy key
+/// was ever minted. `dart analyze`, `serverpod generate`, this file, and the
+/// entire unit suite were all green at that revision, because none of them
+/// crosses the wire.
+///
+/// AND THE ASYMMETRY THAT HIDES IT: the branch above never calls
+/// `deserialize<dynamic>` for an EMPTY map, so an endpoint returning `{}`
+/// deserialises successfully while any NON-EMPTY map throws. That is why this
+/// defect class presents as intermittent and gets blamed on whichever endpoint
+/// is nearest the symptom.
+///
+/// The guard for this lives in `credential_wire_return_type_test.dart`, which
+/// scans the generated client and fails on ANY map-returning endpoint method.
+/// Do not widen this function's remit to cover it: this one tests the
+/// generator, that one tests the wire, and folding them together would make
+/// this file's answer depend on a property the generator does not have.
 String? _returnTypeRejection(String returnType) {
   final shape = _returnTypeShape.firstMatch(returnType.trim());
   if (shape == null) {

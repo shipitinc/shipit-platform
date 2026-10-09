@@ -1,0 +1,10 @@
+### One artifact an agent produced.
+class: AgentArtifactView
+fields:
+  artifactId: String
+  type: String
+  path: String
+  sha256: String
+  sizeBytes: int
+  mediaType: String
+  description: String?

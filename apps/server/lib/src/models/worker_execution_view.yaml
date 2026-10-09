@@ -1,0 +1,27 @@
+### One durable worker execution.
+class: WorkerExecutionView
+fields:
+  workerExecutionId: String
+  workItemId: String
+  repositoryPath: String
+  requestedStartingRevision: String
+  ### Durable `WorkerCapability` wire values.
+  requiredCapabilities: List<String>
+  ### Durable `WorkerExecutionStatus` wire value.
+  status: String
+  ### Durable `WorkerCleanupPolicy` wire value.
+  cleanupPolicy: String
+  workerId: String?
+  workspaceId: String?
+  agentExecutionId: String?
+  resultId: String?
+  endingRevision: String?
+  ### Durable `WorkerCleanupStatus` wire value.
+  cleanupStatus: String?
+  ### Durable `WorkerFailureCode` wire value.
+  failureCode: String?
+  createdAt: DateTime?
+  startedAt: DateTime?
+  endedAt: DateTime?
+  reason: String?
+  version: int

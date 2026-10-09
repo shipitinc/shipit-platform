@@ -1,0 +1,8 @@
+### `defectEndpoints.list` returned a raw map. Typed. The envelope mirrors
+### `intakeEndpoints.listFeatureRequests` so a client can read both report tabs
+### with one shape.
+class: DefectListView
+fields:
+  defects: List<DefectSummaryView>
+  ### Rows matching the filters before `limit`/`offset` were applied.
+  totalCount: int

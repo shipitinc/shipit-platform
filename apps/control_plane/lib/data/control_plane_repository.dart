@@ -480,7 +480,7 @@ class ControlPlaneRepository {
       clientContextJson: clientContextJson,
       reporter: reporter,
     );
-    return CreateDefectResponse.fromJson(result);
+    return CreateDefectResponse.fromJson(result.toJson());
   }
 
   Future<ListDefectsResponse> listDefects({
@@ -497,12 +497,12 @@ class ControlPlaneRepository {
       limit: limit,
       offset: offset,
     );
-    return ListDefectsResponse.fromJson(result);
+    return ListDefectsResponse.fromJson(result.toJson());
   }
 
   Future<InspectDefectResponse> inspectDefect(String defectId) async {
     final result = await _client.defectEndpoints.inspect(defectId: defectId);
-    return InspectDefectResponse.fromJson(result);
+    return InspectDefectResponse.fromJson(result.toJson());
   }
 
   // ------------------------------------------------- Reports · feature tab
@@ -524,10 +524,10 @@ class ControlPlaneRepository {
     );
     revision.value++;
     return CreateFeatureRequestResponse(
-      workItemId: result['workItemId'] as String,
-      title: result['title'] as String,
-      state: result['state'] as String,
-      createdAt: DateTime.parse(result['createdAt'] as String),
+      workItemId: result.workItemId,
+      title: result.title,
+      state: result.state,
+      createdAt: result.createdAt,
     );
   }
 
@@ -574,7 +574,7 @@ class ControlPlaneRepository {
       contentHash: contentHash,
       sourceRef: sourceRef,
     );
-    return DefectEvidenceResponse.fromJson(result);
+    return DefectEvidenceResponse.fromJson(result.toJson());
   }
 
   Future<void> answerClarification({
@@ -611,7 +611,7 @@ class ControlPlaneRepository {
       signedAt: signedAt,
     );
     revision.value++;
-    return VerifyFixResponse.fromJson(result);
+    return VerifyFixResponse.fromJson(result.toJson());
   }
 
   // Human Direction Inbox methods
@@ -1160,14 +1160,22 @@ class ControlPlaneRepository {
   ///
   /// The private half is written straight to the configured secret provider and
   /// is not in the response, so there is nothing for this client to leak: the
-  /// endpoint's return type is an explicit whitelist
-  /// (`MintedCredential.toJson`) and [MintedDeployKey] narrows that further. See
-  /// [MintedDeployKey] for why `referenceName` is not among the fields kept.
+  /// endpoint's return type is a generated model whose field list IS the
+  /// whitelist (`MintedCredentialView`) and [MintedDeployKey] narrows that
+  /// further. See [MintedDeployKey] for why `referenceName` is not among the
+  /// fields kept.
   ///
   /// Server-side this **writes the durable credential row** — the product
   /// registry engine's `recordGeneratedCredential`, at status `generated`. The
   /// private half is stored before the row is written, so a returned key always
   /// has somewhere to live.
+  ///
+  /// [result] is a `MintedCredentialView` rather than a `Map<String, dynamic>`,
+  /// so these are field reads that the generated client's deserializer has
+  /// already resolved. That matters beyond tidiness: the map form is what threw
+  /// `No deserialization found for type dynamic` in the browser, so the reads
+  /// below could not be reached at all. See `credential_endpoint_wire_test.dart`
+  /// on the server for the wire-boundary proof.
   Future<MintedDeployKey> generateDeployKey({
     required String productId,
     required String repositoryId,
@@ -1178,12 +1186,12 @@ class ControlPlaneRepository {
     );
     revision.value++;
     return MintedDeployKey(
-      credentialId: _requiredResponseString(result, 'credentialId'),
-      publicKey: _requiredResponseString(result, 'publicKey'),
-      fingerprint: _requiredResponseString(result, 'fingerprint'),
-      algorithm: result['algorithm'] as String? ?? 'ed25519',
-      status: result['status'] as String? ?? 'generated',
-      hostKeyStatus: result['hostKeyStatus'] as String? ?? 'unknown',
+      credentialId: result.credentialId,
+      publicKey: result.publicKey,
+      fingerprint: result.fingerprint,
+      algorithm: result.algorithm,
+      status: result.status,
+      hostKeyStatus: result.hostKeyStatus,
     );
   }
 
@@ -1208,34 +1216,13 @@ class ControlPlaneRepository {
     );
     revision.value++;
     return DeployKeyAccessVerification(
-      credentialId: _requiredResponseString(result, 'credentialId'),
-      status: result['status'] as String? ?? 'unknown',
-      canReachRepository: result['canReachRepository'] == true,
-      secretMaterialRemoved: result['secretMaterialRemoved'] == true,
-      hostKeyConfirmationProvenance:
-          result['hostKeyConfirmationProvenance'] as String?,
-      failureReason: result['failureReason'] as String?,
+      credentialId: result.credentialId,
+      status: result.status,
+      canReachRepository: result.canReachRepository,
+      secretMaterialRemoved: result.secretMaterialRemoved,
+      hostKeyConfirmationProvenance: result.hostKeyConfirmationProvenance,
+      failureReason: result.failureReason,
     );
-  }
-
-  /// A field the rest of this client cannot work without, or the response is not
-  /// the shape it claims to be.
-  ///
-  /// Named rather than written as five inline `as String` casts so that "the
-  /// endpoint contract is read, not assumed" has one implementation. A cast
-  /// would throw a `TypeError` naming a runtime type instead of the field.
-  static String _requiredResponseString(
-    Map<String, dynamic> response,
-    String field,
-  ) {
-    final value = response[field];
-    if (value is! String || value.isEmpty) {
-      throw StateError(
-        'the credential endpoint returned no "$field" value; keys present: '
-        '${response.keys.toList()..sort()}',
-      );
-    }
-    return value;
   }
 
   ArtifactRefResponse _artifactRefResponse(ArtifactReferenceView a) {
@@ -1253,15 +1240,14 @@ class ControlPlaneRepository {
   // Model Policy methods
   Future<List<ModelPolicyResponse>> listModelPolicies() async {
     final result = await _client.providerHealthEndpoints.listModelPolicies();
-    final policiesJson = result['policies'] as List<dynamic>? ?? [];
-    return policiesJson
-        .map((p) => ModelPolicyResponse.fromJson(p as Map<String, dynamic>))
+    return result.policies
+        .map((p) => ModelPolicyResponse.fromJson(p.toJson()))
         .toList();
   }
 
   Future<ProviderHealthResponse> getProviderHealth() async {
     final result = await _client.providerHealthEndpoints.getProviderHealth();
-    return ProviderHealthResponse.fromJson(result);
+    return ProviderHealthResponse.fromJson(result.toJson());
   }
 
   Future<ModelPolicyResponse> updateModelPolicy({
@@ -1277,7 +1263,7 @@ class ControlPlaneRepository {
       updatedByDecisionId: updatedByDecisionId,
     );
     revision.value++;
-    return ModelPolicyResponse.fromJson(result);
+    return ModelPolicyResponse.fromJson(result.toJson());
   }
 
   // Model Executions methods
@@ -1301,7 +1287,7 @@ class ControlPlaneRepository {
       limit: limit,
       offset: offset,
     );
-    return ModelExecutionsPageResponse.fromJson(result);
+    return ModelExecutionsPageResponse.fromJson(result.toJson());
   }
 
   // Model Stats methods
@@ -1315,7 +1301,7 @@ class ControlPlaneRepository {
       to: to,
       groupBy: groupBy,
     );
-    return ModelStatsResponse.fromJson(result);
+    return ModelStatsResponse.fromJson(result.toJson());
   }
 }
 
@@ -1809,10 +1795,10 @@ class CredentialResponse {
 
 /// What the server minted for one repository. Every field here is public.
 ///
-/// The shape is the leak policy. The endpoint serialises an explicit whitelist
-/// (`MintedCredential.toJson`) and this class narrows it to the six fields the
-/// Add Product flow actually shows or keys off, so a field added to the wire
-/// projection later cannot reach the UI by accident.
+/// The shape is the leak policy. The endpoint returns a generated model whose
+/// field list is the whitelist (`MintedCredentialView`) and this class narrows
+/// it to the six fields the Add Product flow actually shows or keys off, so a
+/// field added to the wire projection later cannot reach the UI by accident.
 ///
 /// **`referenceName` is deliberately absent.** The server returns it and it is
 /// still returned — removing that is decision `9417f8bf` gap **G-7**, which

@@ -1987,7 +1987,7 @@ void main() {
 
             // The claim is stored verbatim, in the durable row and in the
             // typed read. `TriageProcessor._parseTriageResult` does
-            // `(structured['evidenceUsed'] as List?)?.cast<String>()` and
+            // `(structured.evidenceUsed as List?)?.cast<String>()` and
             // nothing downstream intersects it with the defect's evidence, so
             // an agent that invents a citation is indistinguishable from one
             // that read the evidence.
@@ -2109,41 +2109,48 @@ void main() {
             final result = (await run.process())!;
             expect(result, isNotNull);
 
-            // `DefectEndpoints.inspect` returns an untyped
-            // `Future<Map<String, dynamic>>` — the endpoint is deliberately not
-            // a generated protocol class — so the contract under test is the
-            // map it actually builds, asserted on its real keys.
+            // `DefectEndpoints.inspect` returns `DefectInspectionView`, a
+            // generated protocol class, so the contract under test is the
+            // model's own field list rather than a hand-built map's keys. The
+            // set assertion is kept because it is the thing that catches a
+            // field being ADDED: `toJson()` is the complete wire projection.
             final inspected = await endpoints.defectEndpoints.inspect(
               sessionBuilder,
               defectId: run.defectId,
             );
+            //
+            // `'remediationWorkItem'` IS NOT IN THIS SET, and its absence is
+            // asserted deliberately below rather than papered over: the field
+            // is null (the endpoint has never linked one — see the TODO), and
+            // Serverpod's generated `toJson()` omits a null field entirely,
+            // exactly as `MintedCredentialView.toJson()` omits `host`. Listing
+            // it here would be asserting a key the wire does not carry.
+            // `'__className__'` IS present and IS listed: it is the framing tag
+            // the model is dispatched on, not payload.
             expect(
-              inspected.keys.toSet(),
+              inspected.toJson().keys.toSet(),
               {
+                '__className__',
                 'defect',
                 'evidence',
                 'clarifications',
                 'events',
                 'triageResult',
-                'remediationWorkItem',
               },
             );
 
             // The defect body is the human report, plus the triage reference
             // the processor merged in.
-            final defect = Map<String, dynamic>.from(
-              inspected['defect']! as Map,
-            );
-            expect(defect['defectId'], run.defectId);
-            expect(defect['title'], _defectTitle);
-            expect(defect['status'], DefectStatus.reported.wire);
-            expect(defect['severity'], 'high');
-            expect(defect['reporter'], 'reporter@example.com');
-            expect(defect['classification'], isNull);
-            expect(defect['version'], 2, reason: 'intake write, then triage');
+            final defect = inspected.defect;
+            expect(defect.defectId, run.defectId);
+            expect(defect.title, _defectTitle);
+            expect(defect.status, DefectStatus.reported.wire);
+            expect(defect.severity, 'high');
+            expect(defect.reporter, 'reporter@example.com');
+            expect(defect.classification, isNull);
+            expect(defect.version, 2, reason: 'intake write, then triage');
             final metadata =
-                jsonDecode(defect['metadataJson']! as String)
-                    as Map<String, dynamic>;
+                jsonDecode(defect.metadataJson!) as Map<String, dynamic>;
             expect(metadata['triageResultId'], result.resultId);
             expect(
               metadata['triageClassification'],
@@ -2152,64 +2159,52 @@ void main() {
 
             // Every child collection is present and non-empty, so a reader
             // cannot be handed a silently empty list.
-            final evidence = (inspected['evidence']! as List)
-                .cast<Map<String, dynamic>>();
+            final evidence = inspected.evidence;
             expect(evidence, hasLength(1));
-            expect(evidence.single['evidenceId'], run.evidenceIds.single);
+            expect(evidence.single.evidenceId, run.evidenceIds.single);
             expect(
-              evidence.single['kind'],
+              evidence.single.kind,
               EvidenceIntakeKind.textDescription.wire,
             );
 
-            final clarifications = (inspected['clarifications']! as List)
-                .cast<Map<String, dynamic>>();
+            final clarifications = inspected.clarifications;
             expect(clarifications, hasLength(1));
-            expect(clarifications.single['question'], question);
-            expect(clarifications.single['reason'], reason);
+            expect(clarifications.single.question, question);
+            expect(clarifications.single.reason, reason);
             expect(
-              clarifications.single['status'],
+              clarifications.single.status,
               ClarificationStatus.needsAnswer.wire,
             );
             expect(
-              clarifications.single['requestedByTriageJobId'],
+              clarifications.single.requestedByTriageJobId,
               run.job.jobId,
             );
 
-            final events = (inspected['events']! as List)
-                .cast<Map<String, dynamic>>();
+            final events = inspected.events;
             expect(events, hasLength(1));
-            expect(events.single['type'], DefectEventType.created.wire);
-            expect(events.single['actorType'], ActorType.human.wire);
+            expect(events.single.type, DefectEventType.created.wire);
+            expect(events.single.actorType, ActorType.human.wire);
 
-            // The triage result is serialised through the same
-            // `clarificationRequired` -> json shape the store decodes, so the
-            // endpoint proves the round trip a control-plane client depends on.
-            final triageMap = Map<String, dynamic>.from(
-              inspected['triageResult']! as Map,
-            );
-            expect(triageMap['resultId'], result.resultId);
-            expect(triageMap['jobId'], run.job.jobId);
+            // The triage result publishes its `clarificationRequired` as typed
+            // `DefectClarificationRequestView`s, which is the same
+            // `{'question', 'reason'}` shape the store decodes — so the endpoint
+            // still proves the round trip a control-plane client depends on.
+            final triage = inspected.triageResult!;
+            expect(triage.resultId, result.resultId);
+            expect(triage.jobId, run.job.jobId);
             expect(
-              triageMap['recommendedClassification'],
+              triage.recommendedClassification,
               DefectClassification.requirementGap.wire,
             );
-            expect(
-              triageMap['recommendedStatus'],
-              DefectStatus.triaging.wire,
-            );
-            expect(triageMap['confidence'], result.confidence);
-            expect(triageMap['evidenceUsed'], run.evidenceIds);
-            expect(
-              (triageMap['clarificationRequired']! as List)
-                  .cast<Map<String, dynamic>>()
-                  .single['question'],
-              question,
-            );
+            expect(triage.recommendedStatus, DefectStatus.triaging.wire);
+            expect(triage.confidence, result.confidence);
+            expect(triage.evidenceUsed, run.evidenceIds);
+            expect(triage.clarificationRequired.single.question, question);
 
             // The endpoint does not link the remediation work item yet; it is
             // a hard-coded null with a TODO, so assert that rather than
             // pretending the link exists.
-            expect(inspected['remediationWorkItem'], isNull);
+            expect(inspected.remediationWorkItem, isNull);
           },
         );
       });

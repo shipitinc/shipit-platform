@@ -1,0 +1,8 @@
+### The lease a worker holds on a job.
+class: JobClaimView
+fields:
+  claimId: String
+  jobId: String
+  ownerId: String
+  leasedUntil: DateTime
+  createdAt: DateTime

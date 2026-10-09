@@ -116,13 +116,13 @@ void main() {
           reporter: 'reporter@example.com',
         );
 
-        expect(result['workItemId'], matches(_workItemId));
-        expect(result['title'], 'Dark mode');
-        expect(result['state'], WorkItemState.draft.wire);
+        expect(result.workItemId, matches(_workItemId));
+        expect(result.title, 'Dark mode');
+        expect(result.state, WorkItemState.draft.wire);
 
         final workItem = await storeInTestTransaction(
           sessionBuilder,
-        ).readWorkItem(result['workItemId'] as String);
+        ).readWorkItem(result.workItemId);
         expect(workItem.category, WorkItemCategory.feature);
         expect(workItem.productId, _suiteProductId);
         expect(workItem.state, WorkItemState.draft);
@@ -139,7 +139,7 @@ void main() {
             description: 'Let a human export a run to CSV.',
             reporter: 'reporter@example.com',
           );
-          final workItemId = result['workItemId'] as String;
+          final workItemId = result.workItemId;
 
           final directions = await directionsInTestTransaction(sessionBuilder)
               .listDirectionsForTarget(

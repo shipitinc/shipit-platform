@@ -1,0 +1,6 @@
+### `schedulerEndpoints.inspect` returned a raw map. Typed.
+class: JobInspectionView
+fields:
+  job: JobRecordView
+  events: List<SchedulerEventView>
+  claim: JobClaimView?
