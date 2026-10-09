@@ -455,6 +455,13 @@ class _DesktopAddProduct extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Read once and guard both lines with it. The previous code guarded the
+    // fingerprint line and then dereferenced `state.deployKey!` again in the
+    // CONDITION of the next line, so the page threw
+    // "Null check operator used on a null value" on exactly the empty state the
+    // form starts in — the state in which the operator has to be told what to do
+    // next. A cold render crashed before it could render anything.
+    final deployKey = state.deployKey;
     return SingleChildScrollView(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
@@ -491,10 +498,11 @@ class _DesktopAddProduct extends StatelessWidget {
                 'productName=${state.productName.isEmpty ? '—' : state.productName}',
                 'repository=${state.repository.isEmpty ? '—' : state.repository}',
                 'revision=${state.revision}',
-                if (state.deployKey != null)
-                  'deployKeyFingerprint=${state.deployKey!.fingerprint}',
-                if (state.deployKey!.credentialId.isNotEmpty)
-                  'credentialId=${state.deployKey!.credentialId}',
+                if (deployKey != null) ...[
+                  'deployKeyFingerprint=${deployKey.fingerprint}',
+                  if (deployKey.credentialId.isNotEmpty)
+                    'credentialId=${deployKey.credentialId}',
+                ],
                 'accessStatus=${state.accessStatus.name}',
               ],
             ),
@@ -597,7 +605,10 @@ class _LeftColumn extends StatelessWidget {
         const SizedBox(height: 18),
         _buildInfoPanel(context),
         const SizedBox(height: 16),
-        if (state.deployKey != null) _buildKeyBox(context, state),
+        if (state.deployKey != null)
+          _buildKeyBox(context, state)
+        else
+          _GenerateDeployKeyPanel(state: state),
       ],
     );
   }
@@ -901,6 +912,111 @@ String _registerButtonSubtext(AddProductState state) {
   return 'Access verified \u2014 this product can be registered';
 }
 
+/// The slot step 1 occupies before there is a key: the control that mints one.
+///
+/// WHY THIS EXISTS. At `2f6b78d` the deploy-key flow was unreachable, not merely
+/// disabled, and the mechanism was circular. `AddProductState.deployKey` was
+/// written in exactly one place — inside `_onCheckAccessRequested`. That handler
+/// ran only for `CheckAccessRequested`, which was dispatched from exactly one
+/// place: `_buildKeyBox`. And `_buildKeyBox` rendered only under
+/// `if (state.deployKey != null)`. So a null key meant no key box, so nothing
+/// dispatched the event, so the key could never become non-null. The Register
+/// button's own subtext promised "Generate a deploy key first" and no control
+/// anywhere said "Generate a deploy key" — the giveaway that the promise had
+/// nothing behind it.
+///
+/// Dispatching [CheckAccessRequested] rather than inventing an event is the
+/// point: that handler already mints through `_repository.generateDeployKey` and
+/// already calls `_ensureProductAndRepository` first, so the mint can only happen
+/// once the product and its repository reference exist, exactly as the server
+/// requires. A separate "mint" event would have been a second path to the same
+/// key with none of that ordering.
+///
+/// ONE WIDGET, BOTH LAYOUTS. The mobile twin of this affordance is the one that
+/// was missed historically, so it is declared once and rendered from both the
+/// desktop and the mobile composition rather than copied into each. There is no
+/// second copy that can be forgotten.
+///
+/// GATED, NOT DISABLED. Rendered only while [AddProductState.canGenerateKey]
+/// holds, because minting resolves the repository reference server-side and
+/// cannot succeed without both inputs. An action that cannot succeed is not
+/// offered; while it is unavailable this states which input is missing, rather
+/// than presenting a control that would fail.
+class _GenerateDeployKeyPanel extends StatelessWidget {
+  const _GenerateDeployKeyPanel({required this.state});
+
+  final AddProductState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final ready = state.canGenerateKey;
+    return DesignPanel(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          MicroLabel(
+            'DEPLOY KEY  \u00b7  THIS PRODUCT ONLY',
+            color: palette.inkTertiary,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            state.isCheckingAccess
+                ? 'Generating a deploy key\u2026'
+                : 'No deploy key for this product yet',
+            style: ShipItType.bodySmall.copyWith(color: palette.inkPrimary),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'ed25519 \u00b7 generated on the server \u00b7 the private half stays in the secret manager',
+            style: ShipItType.monoMeta.copyWith(color: palette.inkTertiary),
+          ),
+          const SizedBox(height: 12),
+          if (ready)
+            FilledButton(
+              onPressed: () => context.read<AddProductBloc>().add(
+                const CheckAccessRequested(),
+              ),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 11),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(ShipItMetrics.radius),
+                ),
+                minimumSize: const Size(0, 36),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(
+                'Generate a deploy key',
+                style: ShipItType.monoMeta.copyWith(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 1.1,
+                  color: palette.inkPrimary,
+                ),
+              ),
+            )
+          else
+            Text(
+              _generateBlockedReason(state),
+              style: ShipItType.bodySmall.copyWith(color: palette.attention),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Why there is nothing to press, in the same voice as
+  /// [_registerButtonSubtext] and for the same reason: an operator who is told
+  /// only that a control is missing has no way to know which field to fill.
+  static String _generateBlockedReason(AddProductState state) {
+    if (state.isCheckingAccess) return 'Generating the key\u2026';
+    if (state.productName.isEmpty) return 'A product name is required first';
+    if (state.repository.isEmpty) return 'A repository URL is required first';
+    return 'The key is being generated';
+  }
+}
+
 /// The host-key confirmation the access check will send, and what it is.
 ///
 /// SURFACED, NOT COLLECTED, AND SAYS SO. `verifyAccess` requires a
@@ -1013,6 +1129,9 @@ class _MobileAddProduct extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
+    // As on desktop: one guarded local, not a `deployKey!` dereference inside the
+    // condition of the credentialId line. See [_DesktopAddProduct.build].
+    final deployKey = state.deployKey;
     return Column(
       children: [
         MobileBackBar(label: 'Products', onTap: () => context.go('/products')),
@@ -1082,7 +1201,10 @@ class _MobileAddProduct extends StatelessWidget {
                   const SizedBox(height: 18),
                   _buildInfoPanel(context),
                   const SizedBox(height: 16),
-                  if (state.deployKey != null) _buildKeyBox(context, state),
+                  if (state.deployKey != null)
+                    _buildKeyBox(context, state)
+                  else
+                    _GenerateDeployKeyPanel(state: state),
                   const SizedBox(height: 20),
                   DesignPanel(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
@@ -1163,10 +1285,11 @@ class _MobileAddProduct extends StatelessWidget {
                       'productName=${state.productName.isEmpty ? '—' : state.productName}',
                       'repository=${state.repository.isEmpty ? '—' : state.repository}',
                       'revision=${state.revision}',
-                      if (state.deployKey != null)
-                        'deployKeyFingerprint=${state.deployKey!.fingerprint}',
-                      if (state.deployKey!.credentialId.isNotEmpty)
-                        'credentialId=${state.deployKey!.credentialId}',
+                      if (deployKey != null) ...[
+                        'deployKeyFingerprint=${deployKey.fingerprint}',
+                        if (deployKey.credentialId.isNotEmpty)
+                          'credentialId=${deployKey.credentialId}',
+                      ],
                       'accessStatus=${state.accessStatus.name}',
                     ],
                   ),
