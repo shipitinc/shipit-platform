@@ -42,6 +42,102 @@ import 'package:control_plane_client/src/protocol/resolve_decision_view.dart'
     as _i18;
 import 'protocol.dart' as _i19;
 
+/// Server half of Add Product: mints repository deploy keys and proves they can
+/// reach the repository (ADR 0018 §A2 / §A3).
+///
+/// WHY A SEPARATE ENDPOINT rather than more methods on `ProductRegistryEndpoints`.
+/// Custody is a security boundary and it should be auditable as one. The methods
+/// here are the only ones in the server that can cause a private key to be
+/// fetched, written to disk, or offered to a transport, and keeping them in a
+/// single small file means a reviewer checking "can key material leave the
+/// process?" reads one file rather than hunting through a 600-line product
+/// endpoint. `ProductRegistryEndpoints` keeps the product, baseline and
+/// repository-reference surface, none of which touches a key.
+///
+/// Both methods return a `Map<String, dynamic>` whose keys are an explicit
+/// whitelist in [MintedCredential.toJson] / [AccessVerification.toJson].
+///
+/// Both delegate: the durable engine owns credential identity, scope and status;
+/// this endpoint only wires the request to it and shapes the response.
+///
+/// THE FAILURE PATH IS THE ONE THAT MATTERS, and it is built so that no exception
+/// message can reach a durable record. `StructuredLogger` writes to the Serverpod
+/// session log, and `apps/server/config/test.yaml` sets
+/// `sessionLogs.persistentEnabled: true` — so a line logged here is a row in
+/// Postgres. This class therefore never formats `error.toString()`; it formats
+/// [secretlessText], which renders only the fields of an explicitly audited
+/// failure type and **suppresses the message of anything else**. See
+/// `credentials/secretless_error.dart` for why `SecretBytes` was not enough on
+/// its own.
+/// {@category Endpoint}
+class EndpointCredentialEndpoints extends _i1.EndpointRef {
+  EndpointCredentialEndpoints(_i1.EndpointCaller caller) : super(caller);
+
+  @override
+  String get name => 'credentialEndpoints';
+
+  /// Generates a real ed25519 deploy keypair for one repository.
+  ///
+  /// The private half is handed to the configured [SecretProvider] and is never
+  /// returned, logged, or written to a column. The response carries the public
+  /// authorized-keys line for the operator to install, the fingerprint, the
+  /// algorithm, and the reference the private half is held under.
+  ///
+  /// Returns `status: "generated"`, never `verified` — access is not proved
+  /// until [verifyAccess] runs a real clone.
+  _i2.Future<Map<String, dynamic>> generate({
+    required String productId,
+    required String repositoryId,
+    String? credentialId,
+  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+    'credentialEndpoints',
+    'generate',
+    {
+      'productId': productId,
+      'repositoryId': repositoryId,
+      'credentialId': credentialId,
+    },
+  );
+
+  /// Proves the credential reaches the repository, with a real SSH clone.
+  ///
+  /// [hostKeyFingerprint] is REQUIRED and is the human trust-on-first-use
+  /// confirmation ADR 0018 §Decision demands: "ShipIt refuses to connect to an
+  /// unrecognised host. The operator is shown the host, key type and fingerprint
+  /// and must confirm it." There is deliberately no optional form — an endpoint
+  /// that could clone against an unconfirmed host is the transport gap ADR 0018
+  /// §Accepted risks (A2) records.
+  ///
+  /// IT IS ALSO, PLAINLY, CLIENT-SUPPLIED AND UNAUTHENTICATED (M-5). The server
+  /// independently obtains the host key and refuses to clone unless the
+  /// fingerprint it computes equals the value supplied here — a real enforcer over
+  /// an input the server did not produce. [confirmedBy] is free text from the same
+  /// unauthenticated caller. The response carries
+  /// [kHostKeyConfirmationProvenance] so no consumer of it can mistake either for
+  /// something the server verified. Binding the confirmation to something the
+  /// server obtained is a product decision and is not made here.
+  ///
+  /// This is the call that lets the client set `accessStatus = verified`, and it
+  /// sets `status: "verified"` only when `git clone` actually completed.
+  _i2.Future<Map<String, dynamic>> verifyAccess({
+    required String productId,
+    required String repositoryId,
+    required String hostKeyFingerprint,
+    required String confirmedBy,
+    String? checkedBy,
+  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+    'credentialEndpoints',
+    'verifyAccess',
+    {
+      'productId': productId,
+      'repositoryId': repositoryId,
+      'hostKeyFingerprint': hostKeyFingerprint,
+      'confirmedBy': confirmedBy,
+      'checkedBy': checkedBy,
+    },
+  );
+}
+
 /// Endpoints for durable Human Bug Reporting (S-2).
 ///
 /// Every defect-scoped read takes an explicit `defectId` or `productId`.
@@ -766,7 +862,7 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
     required String productId,
     required String name,
     String? description,
-    required String manifestJson,
+    String? manifestJson,
     String? manifestVersion,
   }) => caller.callServerEndpoint<_i11.ProductDetailView>(
     'productRegistryEndpoints',
@@ -1081,6 +1177,7 @@ class Client extends _i1.ServerpodClientShared {
          disconnectStreamsOnLostInternetConnection:
              disconnectStreamsOnLostInternetConnection,
        ) {
+    credentialEndpoints = EndpointCredentialEndpoints(this);
     defectEndpoints = EndpointDefectEndpoints(this);
     executionEndpoints = EndpointExecutionEndpoints(this);
     healthEndpoints = EndpointHealthEndpoints(this);
@@ -1093,6 +1190,8 @@ class Client extends _i1.ServerpodClientShared {
     workerEndpoints = EndpointWorkerEndpoints(this);
     workflowEndpoints = EndpointWorkflowEndpoints(this);
   }
+
+  late final EndpointCredentialEndpoints credentialEndpoints;
 
   late final EndpointDefectEndpoints defectEndpoints;
 
@@ -1118,6 +1217,7 @@ class Client extends _i1.ServerpodClientShared {
 
   @override
   Map<String, _i1.EndpointRef> get endpointRefLookup => {
+    'credentialEndpoints': credentialEndpoints,
     'defectEndpoints': defectEndpoints,
     'executionEndpoints': executionEndpoints,
     'healthEndpoints': healthEndpoints,
