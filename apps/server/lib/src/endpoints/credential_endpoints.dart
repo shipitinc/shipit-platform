@@ -102,6 +102,45 @@ class CredentialEndpoints extends Endpoint {
   ///
   /// Returns the substrate so a caller can also read what was selected, and so a
   /// test can assert on it without a session.
+  ///
+  /// WHY `@doNotGenerate` AND NOT SOMETHING ELSE (a deliberate choice, recorded so
+  /// the next reader does not "simplify" it away). Serverpod discovers endpoints by
+  /// the *shape* of a public method on an `Endpoint` subclass — in
+  /// `serverpod_cli`'s `EndpointMethodAnalyzer.isEndpointMethod`, a method is an
+  /// endpoint when it is public, not `@doNotGenerate`, not one of the framework's
+  /// own excluded names, and its first required parameter is a `Session`. This
+  /// method matches that shape and is not an endpoint, so without the annotation
+  /// `serverpod generate` fails outright: `Return type must be a Future or a
+  /// Stream.` The annotation is the framework's own first-class mechanism for a
+  /// public method that is deliberately not on the wire — serverpod documents it
+  /// as "Single method: `@doNotGenerate` on the method" and uses it itself in
+  /// `package:serverpod`'s own `CloudStoragePublicEndpoint`.
+  ///
+  /// The alternatives were rejected for concrete reasons, not taste:
+  ///
+  /// - **`private`** (`_recordCustodyPrecondition`) would satisfy the analyzer,
+  ///   because `isEndpointMethod` returns `false` for a private method — but it
+  ///   deletes the seam. This method must stay publicly callable from *outside
+  ///   this library*: the integration test calls it from
+  ///   `credential_key_service_postgres_test.dart`, and the whole point of it is
+  ///   that the `server.dart` owner will call it from `run()`. Making it private
+  ///   turns both into unreachable code and quietly reopens M-4.
+  /// - **`static`** does not work at all. In `serverpod_cli` 3.4.13 — the version
+  ///   this server pins — `isEndpointMethod` has no `isStatic` check (4.x added
+  ///   one), so a static method with `Session` first is still discovered and still
+  ///   fails. It would also lose the per-process `_secretProvider` cache and the
+  ///   `_record` logger this method exists to prime.
+  /// - **moving it to a non-endpoint collaborator** would duplicate the
+  ///   process-singleton `_secretProvider` cache into a second home, while its
+  ///   only intended caller (`run()`) holds no endpoint instance to reach a
+  ///   collaborator through. That is a larger design change than this blocker
+  ///   warrants.
+  ///
+  /// WHAT IT DELIBERATELY DOES NOT DO: change the return type. `SecretProvider` is
+  /// what this actually is — a synchronous, process-scope fact. `Future` would be
+  /// a lie about asynchrony, and `void` would break the documented contract that
+  /// a caller can read what was selected and a test can assert on it.
+  @doNotGenerate
   SecretProvider recordCustodyPrecondition(Session session) {
     try {
       return _provider(session);
