@@ -1,7 +1,20 @@
 // Runtime configuration for SHIP IT Control Plane
 // This file is generated at container startup by envsubst from config.js.template
 // Do not edit directly - set CONTROL_PLANE_API environment variable instead
+//
+// HOST_KEY_FINGERPRINT and OPERATOR_NAME are OPERATOR-ASSERTED values, not
+// server-verified ones (open finding M-5): their provenance is this deployment's
+// configuration, never the server. Nothing here defaults them - an unset variable
+// substitutes to the empty string, which the client reads back as "unconfigured".
+// Never hardcode a fingerprint here: a literal would be presented to the operator
+// as one they are meant to have read off the provider's published list.
+//
+// The key names below are the contract the client looks up on window.SHIPIT_CONFIG.
+// The placeholders inside them are environment variable names, and every one of
+// them must also appear in the envsubst allowlist in docker/entrypoint.client.sh.
 
 window.SHIPIT_CONFIG = {
-  CONTROL_PLANE_API: "${CONTROL_PLANE_API}"
+  CONTROL_PLANE_API: "${CONTROL_PLANE_API}",
+  HOST_KEY_FINGERPRINT: "${SHIPIT_HOST_KEY_FINGERPRINT}",
+  OPERATOR_NAME: "${SHIPIT_OPERATOR_NAME}"
 };
