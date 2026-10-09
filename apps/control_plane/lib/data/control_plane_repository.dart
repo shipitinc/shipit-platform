@@ -1154,6 +1154,90 @@ class ControlPlaneRepository {
     revision.value++;
   }
 
+  // ------------------------------------------------- Credentials · Add Product
+
+  /// Mints a real ed25519 deploy key for one repository, on the server.
+  ///
+  /// The private half is written straight to the configured secret provider and
+  /// is not in the response, so there is nothing for this client to leak: the
+  /// endpoint's return type is an explicit whitelist
+  /// (`MintedCredential.toJson`) and [MintedDeployKey] narrows that further. See
+  /// [MintedDeployKey] for why `referenceName` is not among the fields kept.
+  ///
+  /// Server-side this **writes the durable credential row** — the product
+  /// registry engine's `recordGeneratedCredential`, at status `generated`. The
+  /// private half is stored before the row is written, so a returned key always
+  /// has somewhere to live.
+  Future<MintedDeployKey> generateDeployKey({
+    required String productId,
+    required String repositoryId,
+  }) async {
+    final result = await _client.credentialEndpoints.generate(
+      productId: productId,
+      repositoryId: repositoryId,
+    );
+    revision.value++;
+    return MintedDeployKey(
+      credentialId: _requiredResponseString(result, 'credentialId'),
+      publicKey: _requiredResponseString(result, 'publicKey'),
+      fingerprint: _requiredResponseString(result, 'fingerprint'),
+      algorithm: result['algorithm'] as String? ?? 'ed25519',
+      status: result['status'] as String? ?? 'generated',
+      hostKeyStatus: result['hostKeyStatus'] as String? ?? 'unknown',
+    );
+  }
+
+  /// Proves the minted credential reaches the repository, with a real clone.
+  ///
+  /// [hostKeyFingerprint] and [confirmedBy] are **operator assertions the server
+  /// cannot authenticate** — see `OperatorAttestation`. They are passed through
+  /// verbatim and this client adds no meaning to them.
+  Future<DeployKeyAccessVerification> verifyDeployKeyAccess({
+    required String productId,
+    required String repositoryId,
+    required String hostKeyFingerprint,
+    required String confirmedBy,
+    String? checkedBy,
+  }) async {
+    final result = await _client.credentialEndpoints.verifyAccess(
+      productId: productId,
+      repositoryId: repositoryId,
+      hostKeyFingerprint: hostKeyFingerprint,
+      confirmedBy: confirmedBy,
+      checkedBy: checkedBy,
+    );
+    revision.value++;
+    return DeployKeyAccessVerification(
+      credentialId: _requiredResponseString(result, 'credentialId'),
+      status: result['status'] as String? ?? 'unknown',
+      canReachRepository: result['canReachRepository'] == true,
+      secretMaterialRemoved: result['secretMaterialRemoved'] == true,
+      hostKeyConfirmationProvenance:
+          result['hostKeyConfirmationProvenance'] as String?,
+      failureReason: result['failureReason'] as String?,
+    );
+  }
+
+  /// A field the rest of this client cannot work without, or the response is not
+  /// the shape it claims to be.
+  ///
+  /// Named rather than written as five inline `as String` casts so that "the
+  /// endpoint contract is read, not assumed" has one implementation. A cast
+  /// would throw a `TypeError` naming a runtime type instead of the field.
+  static String _requiredResponseString(
+    Map<String, dynamic> response,
+    String field,
+  ) {
+    final value = response[field];
+    if (value is! String || value.isEmpty) {
+      throw StateError(
+        'the credential endpoint returned no "$field" value; keys present: '
+        '${response.keys.toList()..sort()}',
+      );
+    }
+    return value;
+  }
+
   ArtifactRefResponse _artifactRefResponse(ArtifactReferenceView a) {
     return ArtifactRefResponse(
       artifactId: a.artifactId,
@@ -1721,6 +1805,105 @@ class CredentialResponse {
   final String? lastFailureReason;
   final DateTime? hostConfirmedAt;
   final String? hostConfirmedBy;
+}
+
+/// What the server minted for one repository. Every field here is public.
+///
+/// The shape is the leak policy. The endpoint serialises an explicit whitelist
+/// (`MintedCredential.toJson`) and this class narrows it to the six fields the
+/// Add Product flow actually shows or keys off, so a field added to the wire
+/// projection later cannot reach the UI by accident.
+///
+/// **`referenceName` is deliberately absent.** The server returns it and it is
+/// still returned — removing that is decision `9417f8bf` gap **G-7**, which
+/// records that the secret-manager reference is itself the sensitive artifact
+/// under ADR 0018 §A3 and should not be exposed to a client. G-7 is open and
+/// this lane does not decide it. What this lane does is not *add* a client-side
+/// use of it: this class never reads the key, so the Add Product flow neither
+/// displays it nor stores it. `CredentialResponse` above still carries it,
+/// because the product detail screen already read it before this lane existed;
+/// that pre-existing use is left exactly where it was.
+class MintedDeployKey {
+  const MintedDeployKey({
+    required this.credentialId,
+    required this.publicKey,
+    required this.fingerprint,
+    required this.algorithm,
+    required this.status,
+    required this.hostKeyStatus,
+  });
+
+  /// Durable identity of the credential row the server wrote.
+  final String credentialId;
+
+  /// The `ssh-ed25519 AAAA… shipit+<repositoryId>` line the operator installs
+  /// as a deploy key.
+  final String publicKey;
+
+  /// `SHA256:…` of the public blob.
+  final String fingerprint;
+
+  final String algorithm;
+
+  /// `CredentialStatus` wire value. Always `generated` at mint — never
+  /// `verified`; access is not proved until [verifyDeployKeyAccess] runs.
+  final String status;
+
+  /// `unknown` at mint: a new credential cannot reach anything until a human
+  /// confirms the host key.
+  final String hostKeyStatus;
+}
+
+/// What a real clone concluded.
+///
+/// [isVerified] is the single value the Add Product state machine keys its
+/// Register button off, and it is deliberately conjunctive: `canReachRepository`
+/// alone would not say whether the credential is *currently* verified, and
+/// `status` alone would be a string comparison a caller could get backwards.
+class DeployKeyAccessVerification {
+  const DeployKeyAccessVerification({
+    required this.credentialId,
+    required this.status,
+    required this.canReachRepository,
+    required this.secretMaterialRemoved,
+    required this.hostKeyConfirmationProvenance,
+    this.failureReason,
+  });
+
+  final String credentialId;
+
+  /// `CredentialStatus` wire value — `verified`, `failing`, or unchanged
+  /// (`generated`) when the check never completed.
+  final String status;
+
+  /// A confirmed host AND a proven connection.
+  final bool canReachRepository;
+
+  /// Whether the private half was destroyed with the clone's scratch tree.
+  ///
+  /// The server does not mark a credential verified when this is false — the
+  /// connection worked, but a private identity file is still on disk — and this
+  /// client inherits that: [isVerified] does not consult it separately because
+  /// `status` is already `failing` in that case.
+  final bool secretMaterialRemoved;
+
+  /// Always a sentence saying the fingerprint was caller-supplied and is not
+  /// authenticated by the server. Present so no consumer of this object can
+  /// mistake the verification for proof of host identity.
+  final String? hostKeyConfirmationProvenance;
+
+  /// Why the clone failed. Documented server-side as safe to show an operator:
+  /// git/ssh's own diagnostic with the scratch path replaced and truncated.
+  final String? failureReason;
+
+  /// The one predicate the UI keys off.
+  ///
+  /// `status == 'verified'` is the load-bearing half — it is what
+  /// `recordCredentialCheck` writes only when a clone actually succeeded. The
+  /// `canReachRepository` half is carried because a response claiming
+  /// `verified` while reporting no reachability is inconsistent, and a client
+  /// that ignores that would light a button on a contradictory record.
+  bool get isVerified => status == 'verified' && canReachRepository;
 }
 
 class ClarificationSummary {

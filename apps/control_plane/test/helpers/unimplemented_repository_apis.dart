@@ -185,4 +185,23 @@ mixin UnimplementedRepositoryApis {
     DateTime? to,
     String? groupBy,
   }) async => throw UnimplementedError();
+
+  // Credentials · Add Product
+  //
+  // Deliberately `UnimplementedError` rather than a benign empty result: a fake
+  // that quietly returned "no credential" would let the Add Product flow look
+  // like it had run against a server and minted nothing, which is the exact
+  // shape of the bug the Add Product tests now guard.
+  Future<MintedDeployKey> generateDeployKey({
+    required String productId,
+    required String repositoryId,
+  }) async => throw UnimplementedError();
+
+  Future<DeployKeyAccessVerification> verifyDeployKeyAccess({
+    required String productId,
+    required String repositoryId,
+    required String hostKeyFingerprint,
+    required String confirmedBy,
+    String? checkedBy,
+  }) async => throw UnimplementedError();
 }
