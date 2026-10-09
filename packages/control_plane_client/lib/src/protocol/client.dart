@@ -13,34 +13,38 @@
 
 import 'package:serverpod_client/serverpod_client.dart' as _i1;
 import 'dart:async' as _i2;
-import 'package:control_plane_client/src/protocol/overview.dart' as _i3;
-import 'package:control_plane_client/src/protocol/work_item_view.dart' as _i4;
-import 'package:control_plane_client/src/protocol/decision_view.dart' as _i5;
+import 'package:control_plane_client/src/protocol/minted_credential_view.dart'
+    as _i3;
+import 'package:control_plane_client/src/protocol/credential_access_verification_view.dart'
+    as _i4;
+import 'package:control_plane_client/src/protocol/overview.dart' as _i5;
+import 'package:control_plane_client/src/protocol/work_item_view.dart' as _i6;
+import 'package:control_plane_client/src/protocol/decision_view.dart' as _i7;
 import 'package:control_plane_client/src/protocol/human_direction_view.dart'
-    as _i6;
-import 'package:control_plane_client/src/protocol/human_direction_attachment_view.dart'
-    as _i7;
-import 'package:control_plane_client/src/protocol/feature_request_summary_view.dart'
     as _i8;
-import 'package:control_plane_client/src/protocol/product_view.dart' as _i9;
-import 'package:control_plane_client/src/protocol/product_summary_view.dart'
+import 'package:control_plane_client/src/protocol/human_direction_attachment_view.dart'
+    as _i9;
+import 'package:control_plane_client/src/protocol/feature_request_summary_view.dart'
     as _i10;
-import 'package:control_plane_client/src/protocol/product_detail_view.dart'
-    as _i11;
-import 'package:control_plane_client/src/protocol/product_context_view.dart'
+import 'package:control_plane_client/src/protocol/product_view.dart' as _i11;
+import 'package:control_plane_client/src/protocol/product_summary_view.dart'
     as _i12;
-import 'package:platform_contracts/src/types/baseline_fact.dart' as _i13;
-import 'package:control_plane_client/src/protocol/standing_policy_view.dart'
+import 'package:control_plane_client/src/protocol/product_detail_view.dart'
+    as _i13;
+import 'package:control_plane_client/src/protocol/product_context_view.dart'
     as _i14;
-import 'package:control_plane_client/src/protocol/clarification_view.dart'
-    as _i15;
-import 'package:control_plane_client/src/protocol/job_summary_view.dart'
+import 'package:platform_contracts/src/types/baseline_fact.dart' as _i15;
+import 'package:control_plane_client/src/protocol/standing_policy_view.dart'
     as _i16;
-import 'package:control_plane_client/src/protocol/work_item_detail_view.dart'
+import 'package:control_plane_client/src/protocol/clarification_view.dart'
     as _i17;
-import 'package:control_plane_client/src/protocol/resolve_decision_view.dart'
+import 'package:control_plane_client/src/protocol/job_summary_view.dart'
     as _i18;
-import 'protocol.dart' as _i19;
+import 'package:control_plane_client/src/protocol/work_item_detail_view.dart'
+    as _i19;
+import 'package:control_plane_client/src/protocol/resolve_decision_view.dart'
+    as _i20;
+import 'protocol.dart' as _i21;
 
 /// Server half of Add Product: mints repository deploy keys and proves they can
 /// reach the repository (ADR 0018 §A2 / §A3).
@@ -54,8 +58,26 @@ import 'protocol.dart' as _i19;
 /// endpoint. `ProductRegistryEndpoints` keeps the product, baseline and
 /// repository-reference surface, none of which touches a key.
 ///
-/// Both methods return a `Map<String, dynamic>` whose keys are an explicit
-/// whitelist in [MintedCredential.toJson] / [AccessVerification.toJson].
+/// Both methods return a TYPED Serverpod model — [MintedCredentialView] and
+/// [CredentialAccessVerificationView] — rather than a `Map<String, dynamic>`.
+/// That is a wire-contract requirement, not a style choice, and the reason is
+/// worth stating because it cost two review cycles to find: the generated
+/// client mirrors the declared return type, so a map return type generates
+/// `callServerEndpoint<Map<String, dynamic>>`, whose
+/// `Protocol.deserialize<Map<String, dynamic>>` recurses into
+/// `deserialize<dynamic>(v)`. The framework has no deserializer registered for
+/// `dynamic`, so the client threw `DeserializationTypeNotFoundException: No
+/// deserialization found for type dynamic` before it read a single field — the
+/// mint succeeded on the server and the browser showed a failure. Every gate
+/// passed, because a map IS valid Dart and DOES generate cleanly; nothing
+/// exercised the browser→server hop.
+///
+/// The typed return type also keeps the leak whitelist structural. The key set
+/// is now the FIELD LIST of a generated serialisable class, so a field that
+/// could carry the private half cannot be added without the generator, the
+/// client's deserializer, and this file's review all seeing it — `SecretBytes`
+/// has no serialisable representation and cannot become a field here by
+/// accident.
 ///
 /// Both delegate: the durable engine owns credential identity, scope and status;
 /// this endpoint only wires the request to it and shapes the response.
@@ -85,11 +107,11 @@ class EndpointCredentialEndpoints extends _i1.EndpointRef {
   ///
   /// Returns `status: "generated"`, never `verified` — access is not proved
   /// until [verifyAccess] runs a real clone.
-  _i2.Future<Map<String, dynamic>> generate({
+  _i2.Future<_i3.MintedCredentialView> generate({
     required String productId,
     required String repositoryId,
     String? credentialId,
-  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+  }) => caller.callServerEndpoint<_i3.MintedCredentialView>(
     'credentialEndpoints',
     'generate',
     {
@@ -119,13 +141,13 @@ class EndpointCredentialEndpoints extends _i1.EndpointRef {
   ///
   /// This is the call that lets the client set `accessStatus = verified`, and it
   /// sets `status: "verified"` only when `git clone` actually completed.
-  _i2.Future<Map<String, dynamic>> verifyAccess({
+  _i2.Future<_i4.CredentialAccessVerificationView> verifyAccess({
     required String productId,
     required String repositoryId,
     required String hostKeyFingerprint,
     required String confirmedBy,
     String? checkedBy,
-  }) => caller.callServerEndpoint<Map<String, dynamic>>(
+  }) => caller.callServerEndpoint<_i4.CredentialAccessVerificationView>(
     'credentialEndpoints',
     'verifyAccess',
     {
@@ -350,8 +372,8 @@ class EndpointHomeEndpoints extends _i1.EndpointRef {
   /// screen states "Every number on this page comes straight from the system's
   /// own records", so a value that cannot be read is reported as zero/absent
   /// rather than inferred.
-  _i2.Future<_i3.Overview> overview() =>
-      caller.callServerEndpoint<_i3.Overview>(
+  _i2.Future<_i5.Overview> overview() =>
+      caller.callServerEndpoint<_i5.Overview>(
         'homeEndpoints',
         'overview',
         {},
@@ -362,11 +384,11 @@ class EndpointHomeEndpoints extends _i1.EndpointRef {
   /// [productId] narrows the list to one product's work, which is how the
   /// report-a-bug form keeps "affected work item" short enough to pick from
   /// once a product has been chosen.
-  _i2.Future<List<_i4.WorkItemView>> listWorkItems({
+  _i2.Future<List<_i6.WorkItemView>> listWorkItems({
     String? state,
     String? productId,
     int? limit,
-  }) => caller.callServerEndpoint<List<_i4.WorkItemView>>(
+  }) => caller.callServerEndpoint<List<_i6.WorkItemView>>(
     'homeEndpoints',
     'listWorkItems',
     {
@@ -384,10 +406,10 @@ class EndpointHomeEndpoints extends _i1.EndpointRef {
   /// [offset] skips the newest N, so the caller can page as it scrolls. The
   /// ordering is stable (resolution time, newest first) which is what makes
   /// offset paging safe to use here.
-  _i2.Future<List<_i5.DecisionView>> recentDecisions({
+  _i2.Future<List<_i7.DecisionView>> recentDecisions({
     int? limit,
     int? offset,
-  }) => caller.callServerEndpoint<List<_i5.DecisionView>>(
+  }) => caller.callServerEndpoint<List<_i7.DecisionView>>(
     'homeEndpoints',
     'recentDecisions',
     {
@@ -397,8 +419,8 @@ class EndpointHomeEndpoints extends _i1.EndpointRef {
   );
 
   /// Lists pending blocking human decisions.
-  _i2.Future<List<_i5.DecisionView>> pendingDecisions({int? limit}) =>
-      caller.callServerEndpoint<List<_i5.DecisionView>>(
+  _i2.Future<List<_i7.DecisionView>> pendingDecisions({int? limit}) =>
+      caller.callServerEndpoint<List<_i7.DecisionView>>(
         'homeEndpoints',
         'pendingDecisions',
         {'limit': limit},
@@ -418,17 +440,17 @@ class EndpointHumanDirectionEndpoints extends _i1.EndpointRef {
   String get name => 'humanDirectionEndpoints';
 
   /// Creates a new direction.
-  _i2.Future<_i6.HumanDirectionView> createDirection({
+  _i2.Future<_i8.HumanDirectionView> createDirection({
     required String directionType,
     required String targetType,
     String? targetId,
     required String title,
     required String description,
     String? contextJson,
-    List<_i7.HumanDirectionAttachmentView>? attachments,
+    List<_i9.HumanDirectionAttachmentView>? attachments,
     String? createdBy,
     String? assignedTo,
-  }) => caller.callServerEndpoint<_i6.HumanDirectionView>(
+  }) => caller.callServerEndpoint<_i8.HumanDirectionView>(
     'humanDirectionEndpoints',
     'createDirection',
     {
@@ -445,13 +467,13 @@ class EndpointHumanDirectionEndpoints extends _i1.EndpointRef {
   );
 
   /// Lists directions for a specific target.
-  _i2.Future<List<_i6.HumanDirectionView>> listDirectionsForTarget({
+  _i2.Future<List<_i8.HumanDirectionView>> listDirectionsForTarget({
     required String targetType,
     required String targetId,
     String? status,
     int? limit,
     int? offset,
-  }) => caller.callServerEndpoint<List<_i6.HumanDirectionView>>(
+  }) => caller.callServerEndpoint<List<_i8.HumanDirectionView>>(
     'humanDirectionEndpoints',
     'listDirectionsForTarget',
     {
@@ -464,13 +486,13 @@ class EndpointHumanDirectionEndpoints extends _i1.EndpointRef {
   );
 
   /// Lists directions filtered by status.
-  _i2.Future<List<_i6.HumanDirectionView>> listDirectionsByStatus({
+  _i2.Future<List<_i8.HumanDirectionView>> listDirectionsByStatus({
     required String status,
     String? directionType,
     String? targetType,
     int? limit,
     int? offset,
-  }) => caller.callServerEndpoint<List<_i6.HumanDirectionView>>(
+  }) => caller.callServerEndpoint<List<_i8.HumanDirectionView>>(
     'humanDirectionEndpoints',
     'listDirectionsByStatus',
     {
@@ -483,19 +505,19 @@ class EndpointHumanDirectionEndpoints extends _i1.EndpointRef {
   );
 
   /// Reads a single direction by ID.
-  _i2.Future<_i6.HumanDirectionView> readDirection({
+  _i2.Future<_i8.HumanDirectionView> readDirection({
     required String directionId,
-  }) => caller.callServerEndpoint<_i6.HumanDirectionView>(
+  }) => caller.callServerEndpoint<_i8.HumanDirectionView>(
     'humanDirectionEndpoints',
     'readDirection',
     {'directionId': directionId},
   );
 
   /// Acknowledges a direction (created → acked).
-  _i2.Future<_i6.HumanDirectionView> acknowledgeDirection({
+  _i2.Future<_i8.HumanDirectionView> acknowledgeDirection({
     required String directionId,
     required String acknowledgedBy,
-  }) => caller.callServerEndpoint<_i6.HumanDirectionView>(
+  }) => caller.callServerEndpoint<_i8.HumanDirectionView>(
     'humanDirectionEndpoints',
     'acknowledgeDirection',
     {
@@ -505,10 +527,10 @@ class EndpointHumanDirectionEndpoints extends _i1.EndpointRef {
   );
 
   /// Starts working on a direction (acked → working).
-  _i2.Future<_i6.HumanDirectionView> startWorkingDirection({
+  _i2.Future<_i8.HumanDirectionView> startWorkingDirection({
     required String directionId,
     required String startedBy,
-  }) => caller.callServerEndpoint<_i6.HumanDirectionView>(
+  }) => caller.callServerEndpoint<_i8.HumanDirectionView>(
     'humanDirectionEndpoints',
     'startWorkingDirection',
     {
@@ -518,11 +540,11 @@ class EndpointHumanDirectionEndpoints extends _i1.EndpointRef {
   );
 
   /// Completes a direction (working → completed).
-  _i2.Future<_i6.HumanDirectionView> completeDirection({
+  _i2.Future<_i8.HumanDirectionView> completeDirection({
     required String directionId,
     required String completedBy,
     required String completionSummary,
-  }) => caller.callServerEndpoint<_i6.HumanDirectionView>(
+  }) => caller.callServerEndpoint<_i8.HumanDirectionView>(
     'humanDirectionEndpoints',
     'completeDirection',
     {
@@ -533,11 +555,11 @@ class EndpointHumanDirectionEndpoints extends _i1.EndpointRef {
   );
 
   /// Rejects a direction (working → rejected).
-  _i2.Future<_i6.HumanDirectionView> rejectDirection({
+  _i2.Future<_i8.HumanDirectionView> rejectDirection({
     required String directionId,
     required String rejectedBy,
     required String rejectionReason,
-  }) => caller.callServerEndpoint<_i6.HumanDirectionView>(
+  }) => caller.callServerEndpoint<_i8.HumanDirectionView>(
     'humanDirectionEndpoints',
     'rejectDirection',
     {
@@ -548,11 +570,11 @@ class EndpointHumanDirectionEndpoints extends _i1.EndpointRef {
   );
 
   /// Supersedes a direction (any active → superseded).
-  _i2.Future<_i6.HumanDirectionView> supersedeDirection({
+  _i2.Future<_i8.HumanDirectionView> supersedeDirection({
     required String directionId,
     required String supersededByDirectionId,
     required String supersededBy,
-  }) => caller.callServerEndpoint<_i6.HumanDirectionView>(
+  }) => caller.callServerEndpoint<_i8.HumanDirectionView>(
     'humanDirectionEndpoints',
     'supersedeDirection',
     {
@@ -598,11 +620,11 @@ class EndpointIntakeEndpoints extends _i1.EndpointRef {
   /// names an unregistered product gets nothing rather than a fabricated row.
   /// The envelope mirrors `defectEndpoints.list` so the client can read both
   /// tabs with the same shape.
-  _i2.Future<List<_i8.FeatureRequestSummaryView>> listFeatureRequests({
+  _i2.Future<List<_i10.FeatureRequestSummaryView>> listFeatureRequests({
     String? productId,
     String? state,
     int? limit,
-  }) => caller.callServerEndpoint<List<_i8.FeatureRequestSummaryView>>(
+  }) => caller.callServerEndpoint<List<_i10.FeatureRequestSummaryView>>(
     'intakeEndpoints',
     'listFeatureRequests',
     {
@@ -630,8 +652,8 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
   String get name => 'productRegistryEndpoints';
 
   /// Lists every registered Product (global registry read).
-  _i2.Future<List<_i9.ProductView>> listProducts() =>
-      caller.callServerEndpoint<List<_i9.ProductView>>(
+  _i2.Future<List<_i11.ProductView>> listProducts() =>
+      caller.callServerEndpoint<List<_i11.ProductView>>(
         'productRegistryEndpoints',
         'listProducts',
         {},
@@ -639,17 +661,17 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
 
   /// One row per product for the Products list, with the baseline,
   /// clarification and credential-reachability counts already resolved.
-  _i2.Future<List<_i10.ProductSummaryView>> listProductSummaries() =>
-      caller.callServerEndpoint<List<_i10.ProductSummaryView>>(
+  _i2.Future<List<_i12.ProductSummaryView>> listProductSummaries() =>
+      caller.callServerEndpoint<List<_i12.ProductSummaryView>>(
         'productRegistryEndpoints',
         'listProductSummaries',
         {},
       );
 
   /// Everything the Product Detail screen reads, in one call.
-  _i2.Future<_i11.ProductDetailView> productDetail({
+  _i2.Future<_i13.ProductDetailView> productDetail({
     required String productId,
-  }) => caller.callServerEndpoint<_i11.ProductDetailView>(
+  }) => caller.callServerEndpoint<_i13.ProductDetailView>(
     'productRegistryEndpoints',
     'productDetail',
     {'productId': productId},
@@ -657,9 +679,9 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
 
   /// Loads the bounded `ProductContext(productId)`: exactly that Product and
   /// everything scoped to it. A scope mismatch is a fault, not a filter.
-  _i2.Future<_i12.ProductContextView> productContext({
+  _i2.Future<_i14.ProductContextView> productContext({
     required String productId,
-  }) => caller.callServerEndpoint<_i12.ProductContextView>(
+  }) => caller.callServerEndpoint<_i14.ProductContextView>(
     'productRegistryEndpoints',
     'productContext',
     {'productId': productId},
@@ -668,10 +690,10 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
   /// Creates a durable baseline-approval decision bound to the exact current
   /// revision + contentHash. Returns the decision for the client to present to
   /// the human approver.
-  _i2.Future<_i5.DecisionView> proposeBaseline({
+  _i2.Future<_i7.DecisionView> proposeBaseline({
     required String productId,
-    required List<_i13.BaselineFact> facts,
-  }) => caller.callServerEndpoint<_i5.DecisionView>(
+    required List<_i15.BaselineFact> facts,
+  }) => caller.callServerEndpoint<_i7.DecisionView>(
     'productRegistryEndpoints',
     'proposeBaseline',
     {
@@ -683,11 +705,11 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
   /// Creates a durable baseline-approval decision bound to the exact current
   /// revision + contentHash. Returns the decision for the client to present to
   /// the human approver.
-  _i2.Future<_i5.DecisionView> requestBaselineApproval({
+  _i2.Future<_i7.DecisionView> requestBaselineApproval({
     required String productId,
     required String baselineId,
     String? decisionId,
-  }) => caller.callServerEndpoint<_i5.DecisionView>(
+  }) => caller.callServerEndpoint<_i7.DecisionView>(
     'productRegistryEndpoints',
     'requestBaselineApproval',
     {
@@ -702,11 +724,11 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
   /// `action` is one of pause | resume | offboard | reinstate. The engine
   /// refuses up front if the transition could never be resolved, so a gate is
   /// never created that nobody can action.
-  _i2.Future<_i5.DecisionView> requestLifecycleDecision({
+  _i2.Future<_i7.DecisionView> requestLifecycleDecision({
     required String productId,
     required String action,
     required bool drainInFlight,
-  }) => caller.callServerEndpoint<_i5.DecisionView>(
+  }) => caller.callServerEndpoint<_i7.DecisionView>(
     'productRegistryEndpoints',
     'requestLifecycleDecision',
     {
@@ -719,7 +741,7 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
   /// Resolves a lifecycle gate. On approve the engine performs the
   /// transition, and refuses if a required guard was never established —
   /// offboarding with work still in flight, for example.
-  _i2.Future<_i5.DecisionView> resolveLifecycleDecision({
+  _i2.Future<_i7.DecisionView> resolveLifecycleDecision({
     required String decisionId,
     required String choice,
     required String decider,
@@ -729,7 +751,7 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
     required String algorithm,
     required DateTime signedAt,
     required bool noWorkInFlight,
-  }) => caller.callServerEndpoint<_i5.DecisionView>(
+  }) => caller.callServerEndpoint<_i7.DecisionView>(
     'productRegistryEndpoints',
     'resolveLifecycleDecision',
     {
@@ -749,10 +771,10 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
   ///
   /// `actions` may only contain push | merge. Production promotion, baseline
   /// approval and offboarding are non-delegable and are not expressible.
-  _i2.Future<_i5.DecisionView> requestPolicyAuthorisation({
+  _i2.Future<_i7.DecisionView> requestPolicyAuthorisation({
     required String productId,
     required List<String> actions,
-  }) => caller.callServerEndpoint<_i5.DecisionView>(
+  }) => caller.callServerEndpoint<_i7.DecisionView>(
     'productRegistryEndpoints',
     'requestPolicyAuthorisation',
     {
@@ -763,7 +785,7 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
 
   /// Resolves a policy gate. On approve a [StandingPolicy] is created citing
   /// this decision; any policy already live over the same scope is superseded.
-  _i2.Future<_i14.StandingPolicyView?> resolvePolicyAuthorisation({
+  _i2.Future<_i16.StandingPolicyView?> resolvePolicyAuthorisation({
     required String decisionId,
     required String choice,
     required String decider,
@@ -772,7 +794,7 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
     required String publicKey,
     required String algorithm,
     required DateTime signedAt,
-  }) => caller.callServerEndpoint<_i14.StandingPolicyView?>(
+  }) => caller.callServerEndpoint<_i16.StandingPolicyView?>(
     'productRegistryEndpoints',
     'resolvePolicyAuthorisation',
     {
@@ -788,11 +810,11 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
   );
 
   /// Withdraws a standing policy. Revocation is itself recorded.
-  _i2.Future<_i14.StandingPolicyView> revokeStandingPolicy({
+  _i2.Future<_i16.StandingPolicyView> revokeStandingPolicy({
     required String productId,
     required String policyId,
     required String revokedBy,
-  }) => caller.callServerEndpoint<_i14.StandingPolicyView>(
+  }) => caller.callServerEndpoint<_i16.StandingPolicyView>(
     'productRegistryEndpoints',
     'revokeStandingPolicy',
     {
@@ -804,7 +826,7 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
 
   /// Resolves a baseline-approval decision. On approve, accepts the bound
   /// baseline; other choices record the resolution without acceptance.
-  _i2.Future<_i5.DecisionView> resolveBaselineApproval({
+  _i2.Future<_i7.DecisionView> resolveBaselineApproval({
     required String decisionId,
     required String choice,
     required String decider,
@@ -813,7 +835,7 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
     required String publicKey,
     required String algorithm,
     required DateTime signedAt,
-  }) => caller.callServerEndpoint<_i5.DecisionView>(
+  }) => caller.callServerEndpoint<_i7.DecisionView>(
     'productRegistryEndpoints',
     'resolveBaselineApproval',
     {
@@ -830,10 +852,10 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
 
   /// Reads the durable approval decision governing a baseline's exact current
   /// candidate, or 404 when none has been requested.
-  _i2.Future<_i5.DecisionView> baselineApproval({
+  _i2.Future<_i7.DecisionView> baselineApproval({
     required String productId,
     required String baselineId,
-  }) => caller.callServerEndpoint<_i5.DecisionView>(
+  }) => caller.callServerEndpoint<_i7.DecisionView>(
     'productRegistryEndpoints',
     'baselineApproval',
     {
@@ -843,11 +865,11 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
   );
 
   /// Answers a durable clarification, resuming the same onboarding lineage.
-  _i2.Future<_i15.ClarificationView> answerClarification({
+  _i2.Future<_i17.ClarificationView> answerClarification({
     required String clarificationId,
     required String answer,
     required String answeredBy,
-  }) => caller.callServerEndpoint<_i15.ClarificationView>(
+  }) => caller.callServerEndpoint<_i17.ClarificationView>(
     'productRegistryEndpoints',
     'answerClarification',
     {
@@ -858,13 +880,13 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
   );
 
   /// Creates a new product with its manifest.
-  _i2.Future<_i11.ProductDetailView> createProduct({
+  _i2.Future<_i13.ProductDetailView> createProduct({
     required String productId,
     required String name,
     String? description,
     String? manifestJson,
     String? manifestVersion,
-  }) => caller.callServerEndpoint<_i11.ProductDetailView>(
+  }) => caller.callServerEndpoint<_i13.ProductDetailView>(
     'productRegistryEndpoints',
     'createProduct',
     {
@@ -896,12 +918,12 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
   );
 
   /// Records platform-verified evidence against a proposed baseline.
-  _i2.Future<_i11.ProductDetailView> verifyBaseline({
+  _i2.Future<_i13.ProductDetailView> verifyBaseline({
     required String productId,
     required String baselineId,
     required String verifiedBy,
     required String kind,
-  }) => caller.callServerEndpoint<_i11.ProductDetailView>(
+  }) => caller.callServerEndpoint<_i13.ProductDetailView>(
     'productRegistryEndpoints',
     'verifyBaseline',
     {
@@ -915,7 +937,7 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
   /// Adds an operator-authored claim to a **proposed** baseline. Amending a
   /// baseline cancels any unresolved approval decision (new hash binding), so
   /// the client must request approval again against the new revision.
-  _i2.Future<_i11.ProductDetailView> addHumanBaselineClaim({
+  _i2.Future<_i13.ProductDetailView> addHumanBaselineClaim({
     required String productId,
     required String baselineId,
     required String section,
@@ -923,7 +945,7 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
     required String author,
     List<String>? evidenceRefs,
     String? maturity,
-  }) => caller.callServerEndpoint<_i11.ProductDetailView>(
+  }) => caller.callServerEndpoint<_i13.ProductDetailView>(
     'productRegistryEndpoints',
     'addHumanBaselineClaim',
     {
@@ -1091,9 +1113,9 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
   /// Read-only: the operator surface reports what the scheduler has committed
   /// and never enqueues, claims or cancels. Feeds the Run detail line that
   /// explains what is held up behind a pending decision.
-  _i2.Future<List<_i16.JobSummaryView>> jobsForWorkItem({
+  _i2.Future<List<_i18.JobSummaryView>> jobsForWorkItem({
     required String workItemId,
-  }) => caller.callServerEndpoint<List<_i16.JobSummaryView>>(
+  }) => caller.callServerEndpoint<List<_i18.JobSummaryView>>(
     'workflowEndpoints',
     'jobsForWorkItem',
     {'workItemId': workItemId},
@@ -1101,17 +1123,17 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
 
   /// Returns the current work item and its transition history. Never mutates
   /// state; `WorkItem.state` on the wire is always reported, never written.
-  _i2.Future<_i17.WorkItemDetailView> inspect({required String workItemId}) =>
-      caller.callServerEndpoint<_i17.WorkItemDetailView>(
+  _i2.Future<_i19.WorkItemDetailView> inspect({required String workItemId}) =>
+      caller.callServerEndpoint<_i19.WorkItemDetailView>(
         'workflowEndpoints',
         'inspect',
         {'workItemId': workItemId},
       );
 
   /// Lists every decision attached to a work item, most recent first.
-  _i2.Future<List<_i5.DecisionView>> listDecisions({
+  _i2.Future<List<_i7.DecisionView>> listDecisions({
     required String workItemId,
-  }) => caller.callServerEndpoint<List<_i5.DecisionView>>(
+  }) => caller.callServerEndpoint<List<_i7.DecisionView>>(
     'workflowEndpoints',
     'listDecisions',
     {'workItemId': workItemId},
@@ -1123,7 +1145,7 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
   /// its resolution, and the resulting work item move are persisted
   /// transactionally; a repeated call is an idempotent replay, so retries
   /// after a network failure never double-apply the transition.
-  _i2.Future<_i18.ResolveDecisionView> resolveDecision({
+  _i2.Future<_i20.ResolveDecisionView> resolveDecision({
     required String decisionId,
     required String choice,
     required String decider,
@@ -1132,7 +1154,7 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
     required String publicKey,
     required String signature,
     required DateTime signedAt,
-  }) => caller.callServerEndpoint<_i18.ResolveDecisionView>(
+  }) => caller.callServerEndpoint<_i20.ResolveDecisionView>(
     'workflowEndpoints',
     'resolveDecision',
     {
@@ -1168,7 +1190,7 @@ class Client extends _i1.ServerpodClientShared {
     bool? disconnectStreamsOnLostInternetConnection,
   }) : super(
          host,
-         _i19.Protocol(),
+         _i21.Protocol(),
          securityContext: securityContext,
          streamingConnectionTimeout: streamingConnectionTimeout,
          connectionTimeout: connectionTimeout,
