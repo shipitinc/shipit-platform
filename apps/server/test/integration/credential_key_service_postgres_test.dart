@@ -439,9 +439,26 @@ void main() {
           // And the key set is asserted against the typed object too, so a
           // response that grew a field is caught even if `toJson()` were ever
           // widened to include something the typed getters do not expose.
+          //
+          // `'__className__'` IS EXPECTED HERE, and deliberately. Serverpod's
+          // generated `toJson()` always emits it as the framing tag that lets a
+          // client dispatch on the concrete type; it is not a field anybody
+          // reviewed, so leaving it out of this set would fail the whole test —
+          // which is exactly what happened the first time this assertion was
+          // written. Listing it states both things at once: the tag is present
+          // because the model is generated, and it is the ONE key in this map
+          // that is framing rather than payload. A genuinely new payload field
+          // still fails, because it will arrive without being listed here.
+          //
+          // Corrected after review: the first version of this assertion omitted
+          // `__className__` and was RED — measured by `make test-integration`,
+          // `Which: larger than expected`. `dart analyze` cannot see the
+          // mismatch, so the assertion is only trustworthy because the suite is
+          // executed; see the run in this correction's report.
           expect(
             wireMap.keys.toSet(),
             {
+              '__className__',
               'credentialId',
               'productId',
               'repositoryId',
