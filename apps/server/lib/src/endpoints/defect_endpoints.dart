@@ -1,6 +1,17 @@
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:serverpod/serverpod.dart';
 
+import '../generated/defect_clarification_request_view.dart';
+import '../generated/defect_clarification_view.dart';
+import '../generated/defect_created_view.dart';
+import '../generated/defect_detail_view.dart';
+import '../generated/defect_evidence_view.dart';
+import '../generated/defect_event_view.dart';
+import '../generated/defect_inspection_view.dart';
+import '../generated/defect_list_view.dart';
+import '../generated/defect_summary_view.dart';
+import '../generated/fix_verification_view.dart';
+import '../generated/triage_result_view.dart';
 import '../persistence/persistence_database.dart';
 import '../persistence/postgres_defect_store.dart';
 import '../services/control_plane_service.dart';
@@ -18,7 +29,7 @@ class DefectEndpoints extends Endpoint {
   ///
   /// Creates the Defect, initial evidence (text + diagnostic bundle),
   /// and the initial 'created' event. Enqueues a triage job.
-  Future<Map<String, dynamic>> create(
+  Future<DefectCreatedView> create(
     Session session, {
     required String title,
     required String description,
@@ -47,12 +58,12 @@ class DefectEndpoints extends Endpoint {
         clientContextJson: clientContextJson,
         reporter: reporter,
       );
-      return {
-        'defectId': defect.defectId,
-        'title': defect.title,
-        'status': defect.status.wire,
-        'createdAt': defect.createdAt.toIso8601String(),
-      };
+      return DefectCreatedView(
+        defectId: defect.defectId,
+        title: defect.title,
+        status: defect.status.wire,
+        createdAt: defect.createdAt,
+      );
     } catch (error, stackTrace) {
       service.logger.error('defect.create.failed', {
         'error': error.toString(),
@@ -62,7 +73,7 @@ class DefectEndpoints extends Endpoint {
   }
 
   /// Lists defects with optional filters.
-  Future<Map<String, dynamic>> list(
+  Future<DefectListView> list(
     Session session, {
     String? productId,
     String? status,
@@ -88,10 +99,10 @@ class DefectEndpoints extends Endpoint {
             ? DefectClassification.fromWire(classification)
             : null,
       );
-      return {
-        'defects': defects.map(_defectSummaryMap).toList(),
-        'totalCount': totalCount,
-      };
+      return DefectListView(
+        defects: defects.map(_defectSummary).toList(growable: false),
+        totalCount: totalCount,
+      );
     } catch (error, stackTrace) {
       service.logger.error('defect.list.failed', {
         'error': error.toString(),
@@ -102,7 +113,7 @@ class DefectEndpoints extends Endpoint {
 
   /// Reads full defect detail including evidence, clarifications, events,
   /// triage result, and remediation work item.
-  Future<Map<String, dynamic>> inspect(
+  Future<DefectInspectionView> inspect(
     Session session, {
     required String defectId,
   }) async {
@@ -113,16 +124,20 @@ class DefectEndpoints extends Endpoint {
       final clarifications = await service.readDefectClarifications(defectId);
       final events = await service.readDefectEvents(defectId);
 
-      return {
-        'defect': _defectDetailMap(defect),
-        'evidence': evidence.map(_evidenceMap).toList(),
-        'clarifications': clarifications.map(_clarificationMap).toList(),
-        'events': events.map(_eventMap).toList(),
-        'triageResult': _triageResultMap(
+      return DefectInspectionView(
+        defect: _defectDetail(defect),
+        evidence: evidence.map(_evidenceView).toList(growable: false),
+        clarifications: clarifications
+            .map(_clarificationView)
+            .toList(growable: false),
+        events: events.map(_eventView).toList(growable: false),
+        triageResult: _triageResultView(
           await _readCurrentTriageResult(session, defect),
         ),
-        'remediationWorkItem': null, // TODO: wire up when remediation is linked
-      };
+        // TODO: wire up when remediation is linked. The field is declared
+        // nullable so that linking one is a server-side change only.
+        remediationWorkItem: null,
+      );
     } catch (error, stackTrace) {
       service.logger.error('defect.inspect.failed', {
         'defectId': defectId,
@@ -133,7 +148,7 @@ class DefectEndpoints extends Endpoint {
   }
 
   /// Adds evidence to an existing defect.
-  Future<Map<String, dynamic>> addEvidence(
+  Future<DefectEvidenceView> addEvidence(
     Session session, {
     required String defectId,
     required String kind,
@@ -152,7 +167,7 @@ class DefectEndpoints extends Endpoint {
         contentHash: contentHash,
         sourceRef: sourceRef,
       );
-      return _evidenceMap(evidence);
+      return _evidenceView(evidence);
     } catch (error, stackTrace) {
       service.logger.error('defect.add_evidence.failed', {
         'defectId': defectId,
@@ -163,7 +178,7 @@ class DefectEndpoints extends Endpoint {
   }
 
   /// AI requests clarification (internal use — typically called by triage agent).
-  Future<Map<String, dynamic>> requestClarification(
+  Future<DefectClarificationView> requestClarification(
     Session session, {
     required String defectId,
     required String question,
@@ -178,7 +193,7 @@ class DefectEndpoints extends Endpoint {
         reason: reason,
         triageJobId: triageJobId,
       );
-      return _clarificationMap(clarification);
+      return _clarificationView(clarification);
     } catch (error, stackTrace) {
       service.logger.error('defect.request_clarification.failed', {
         'defectId': defectId,
@@ -189,7 +204,7 @@ class DefectEndpoints extends Endpoint {
   }
 
   /// Human answers a clarification.
-  Future<Map<String, dynamic>> answerClarification(
+  Future<DefectClarificationView> answerClarification(
     Session session, {
     required String clarificationId,
     required String answer,
@@ -202,7 +217,7 @@ class DefectEndpoints extends Endpoint {
         answer: answer,
         answeredBy: answeredBy,
       );
-      return _clarificationMap(clarification);
+      return _clarificationView(clarification);
     } catch (error, stackTrace) {
       service.logger.error('defect.answer_clarification.failed', {
         'clarificationId': clarificationId,
@@ -213,7 +228,7 @@ class DefectEndpoints extends Endpoint {
   }
 
   /// Human verifies a fix for a defect.
-  Future<Map<String, dynamic>> verifyFix(
+  Future<FixVerificationView> verifyFix(
     Session session, {
     required String defectId,
     required String choice,
@@ -238,11 +253,11 @@ class DefectEndpoints extends Endpoint {
           signedAt: signedAt,
         ),
       );
-      return {
-        'success': true,
-        'newStatus': defect.status.wire,
-        'message': 'Verification recorded',
-      };
+      return FixVerificationView(
+        success: true,
+        newStatus: defect.status.wire,
+        message: 'Verification recorded',
+      );
     } catch (error, stackTrace) {
       service.logger.error('defect.verify_fix.failed', {
         'defectId': defectId,
@@ -291,100 +306,131 @@ class DefectEndpoints extends Endpoint {
   }
 
   // ---------------------------------------------------------------------
-  // Map helpers
+  // Projections
+  //
+  // NAMED COPIES, not `toJson()`, and the difference is the point. Every field
+  // the endpoint publishes is named here, so a field added to a domain type
+  // breaks the build at this line instead of silently widening a wire contract
+  // that a client would then have to guess at. That is the same reasoning as
+  // `_mintedCredentialView` in `credential_endpoints.dart`.
+  //
+  // THE FREE-FORM BLOBS TRAVEL AS JSON TEXT. `Defect.clientContextJson`,
+  // `Defect.metadataJson` and `DefectEvent.payloadJson` are stored as JSON text
+  // already; Serverpod 3.4.13 refuses `dynamic` in a model schema outright, so
+  // there is no field type that could hold parsed JSON, and a `Map<String,
+  // dynamic>` field would reintroduce the very defect this file is fixing one
+  // level down.
   // ---------------------------------------------------------------------
 
-  Map<String, dynamic> _defectSummaryMap(Defect d) => {
-    'defectId': d.defectId,
-    'title': d.title,
-    'severity': d.severity,
-    'status': d.status.wire,
-    'classification': d.classification?.wire,
-    'reporter': d.reporter,
-    'productId': d.productId,
-    'productName': d.productName,
-    'createdAt': d.createdAt.toIso8601String(),
-    'updatedAt': d.updatedAt.toIso8601String(),
-    'affectedWorkItemId': d.affectedWorkItemId,
-    'affectedRunId': d.affectedRunId,
-    'remediationWorkItemId': d.remediationWorkItemId,
-  };
+  DefectSummaryView _defectSummary(Defect d) => DefectSummaryView(
+    defectId: d.defectId,
+    title: d.title,
+    severity: d.severity,
+    status: d.status.wire,
+    classification: d.classification?.wire,
+    reporter: d.reporter,
+    productId: d.productId,
+    productName: d.productName,
+    createdAt: d.createdAt,
+    updatedAt: d.updatedAt,
+    affectedWorkItemId: d.affectedWorkItemId,
+    affectedRunId: d.affectedRunId,
+    remediationWorkItemId: d.remediationWorkItemId,
+  );
 
-  Map<String, dynamic> _defectDetailMap(Defect d) => {
-    ..._defectSummaryMap(d),
-    'description': d.description,
-    'expectedBehavior': d.expectedBehavior,
-    'reproductionSteps': d.reproductionSteps,
-    'clientContextJson': d.clientContextJson,
-    'metadataJson': d.metadataJson,
-    'resolvedAt': d.resolvedAt?.toIso8601String(),
-    'closedAt': d.closedAt?.toIso8601String(),
-    'version': d.version,
-  };
+  DefectDetailView _defectDetail(Defect d) => DefectDetailView(
+    defectId: d.defectId,
+    title: d.title,
+    severity: d.severity,
+    status: d.status.wire,
+    classification: d.classification?.wire,
+    reporter: d.reporter,
+    productId: d.productId,
+    productName: d.productName,
+    createdAt: d.createdAt,
+    updatedAt: d.updatedAt,
+    affectedWorkItemId: d.affectedWorkItemId,
+    affectedRunId: d.affectedRunId,
+    remediationWorkItemId: d.remediationWorkItemId,
+    description: d.description,
+    expectedBehavior: d.expectedBehavior,
+    reproductionSteps: d.reproductionSteps,
+    clientContextJson: d.clientContextJson,
+    metadataJson: d.metadataJson,
+    resolvedAt: d.resolvedAt,
+    closedAt: d.closedAt,
+    version: d.version,
+  );
 
-  Map<String, dynamic> _evidenceMap(DefectEvidence e) => {
-    'evidenceId': e.evidenceId,
-    'defectId': e.defectId,
-    'kind': e.kind.wire,
-    'artifactId': e.artifactId,
-    'contentHash': e.contentHash,
-    'description': e.description,
-    'sourceRef': e.sourceRef,
-    'capturedAt': e.capturedAt.toIso8601String(),
-    'createdAt': e.createdAt.toIso8601String(),
-  };
+  DefectEvidenceView _evidenceView(DefectEvidence e) => DefectEvidenceView(
+    evidenceId: e.evidenceId,
+    defectId: e.defectId,
+    kind: e.kind.wire,
+    artifactId: e.artifactId,
+    contentHash: e.contentHash,
+    description: e.description,
+    sourceRef: e.sourceRef,
+    capturedAt: e.capturedAt,
+    createdAt: e.createdAt,
+  );
 
-  Map<String, dynamic> _clarificationMap(DefectClarification c) => {
-    'clarificationId': c.clarificationId,
-    'defectId': c.defectId,
-    'question': c.question,
-    'reason': c.reason,
-    'status': c.status.wire,
-    'answer': c.answer,
-    'humanDecisionId': c.humanDecisionId,
-    'requestedByTriageJobId': c.requestedByTriageJobId,
-    'requestedAt': c.requestedAt.toIso8601String(),
-    'answeredAt': c.answeredAt?.toIso8601String(),
-    'createdAt': c.createdAt.toIso8601String(),
-  };
+  DefectClarificationView _clarificationView(DefectClarification c) =>
+      DefectClarificationView(
+        clarificationId: c.clarificationId,
+        defectId: c.defectId,
+        question: c.question,
+        reason: c.reason,
+        status: c.status.wire,
+        answer: c.answer,
+        humanDecisionId: c.humanDecisionId,
+        requestedByTriageJobId: c.requestedByTriageJobId,
+        requestedAt: c.requestedAt,
+        answeredAt: c.answeredAt,
+        createdAt: c.createdAt,
+      );
 
-  Map<String, dynamic> _eventMap(DefectEvent e) => {
-    'eventId': e.eventId,
-    'defectId': e.defectId,
-    'sequence': e.sequence,
-    'type': e.type.wire,
-    'fromStatus': e.fromStatus?.wire,
-    'toStatus': e.toStatus?.wire,
-    'actorType': e.actorType.wire,
-    'actorId': e.actorId,
-    'payloadJson': e.payloadJson,
-    'occurredAt': e.occurredAt.toIso8601String(),
-  };
+  DefectEventView _eventView(DefectEvent e) => DefectEventView(
+    eventId: e.eventId,
+    defectId: e.defectId,
+    sequence: e.sequence,
+    type: e.type.wire,
+    fromStatus: e.fromStatus?.wire,
+    toStatus: e.toStatus?.wire,
+    actorType: e.actorType.wire,
+    actorId: e.actorId,
+    payloadJson: e.payloadJson,
+    occurredAt: e.occurredAt,
+  );
 
-  Map<String, dynamic>? _triageResultMap(TriageResult? t) {
+  TriageResultView? _triageResultView(TriageResult? t) {
     if (t == null) return null;
-    return {
-      'resultId': t.resultId,
-      'defectId': t.defectId,
-      'recommendedStatus': t.recommendedStatus.wire,
-      'recommendedClassification': t.recommendedClassification.wire,
-      'confidence': t.confidence,
-      'suspectedCategory': t.suspectedCategory,
-      'suspectedComponents': t.suspectedComponents,
-      'reproductionSupported': t.reproductionSupported,
-      'evidenceUsed': t.evidenceUsed,
-      'clarificationRequired': t.clarificationRequired
-          .map((c) => c.toJson())
+    return TriageResultView(
+      resultId: t.resultId,
+      defectId: t.defectId,
+      recommendedStatus: t.recommendedStatus.wire,
+      recommendedClassification: t.recommendedClassification.wire,
+      confidence: t.confidence,
+      suspectedCategory: t.suspectedCategory,
+      suspectedComponents: t.suspectedComponents,
+      reproductionSupported: t.reproductionSupported,
+      evidenceUsed: t.evidenceUsed,
+      clarificationRequired: t.clarificationRequired
+          .map(
+            (c) => DefectClarificationRequestView(
+              question: c.question,
+              reason: c.reason,
+            ),
+          )
           .toList(growable: false),
-      'recommendedNextAction': t.recommendedNextAction,
-      'possibleDuplicateDefectId': t.possibleDuplicateDefectId,
-      'recommendedWorkItemCategory': t.recommendedWorkItemCategory,
-      'summary': t.summary,
-      'jobId': t.jobId,
-      'executionId': t.executionId,
-      'createdAt': t.createdAt.toIso8601String(),
-      'completedAt': t.completedAt?.toIso8601String(),
-      'version': t.version,
-    };
+      recommendedNextAction: t.recommendedNextAction,
+      possibleDuplicateDefectId: t.possibleDuplicateDefectId,
+      recommendedWorkItemCategory: t.recommendedWorkItemCategory,
+      summary: t.summary,
+      jobId: t.jobId,
+      executionId: t.executionId,
+      createdAt: t.createdAt,
+      completedAt: t.completedAt,
+      version: t.version,
+    );
   }
 }

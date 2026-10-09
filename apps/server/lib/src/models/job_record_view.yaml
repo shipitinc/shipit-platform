@@ -1,0 +1,22 @@
+### One durable job, as the scheduler publishes it. Every enum travels as its
+### wire text, matching every other view in this directory; `requiredCapabilities`
+### is a `Set` on the domain type and a `List` on the wire, which JSON has no
+### other way to express.
+class: JobRecordView
+fields:
+  jobId: String
+  workItemId: String
+  ### Durable `JobType` wire value.
+  jobType: String
+  ### Durable `AgentRole` wire value.
+  requiredRole: String
+  ### Durable `WorkerCapability` wire values.
+  requiredCapabilities: List<String>
+  ### Durable `JobPriority` wire value.
+  priority: String
+  ### Durable `JobState` wire value.
+  state: String
+  dedupeKey: String
+  createdAt: DateTime
+  availableAt: DateTime?
+  instruction: String

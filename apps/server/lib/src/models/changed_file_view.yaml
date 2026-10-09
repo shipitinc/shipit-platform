@@ -1,0 +1,8 @@
+### One file an agent changed. Shared by the agent result and the worker result.
+class: ChangedFileView
+fields:
+  path: String
+  ### Durable `ChangedFileOperation` wire value.
+  operation: String
+  beforeSha: String?
+  afterSha: String?

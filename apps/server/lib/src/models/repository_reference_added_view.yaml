@@ -1,0 +1,20 @@
+### WHY THIS MODEL EXISTS — and why it is the FIRST one.
+###
+### `productRegistryEndpoints.addRepositoryReference` returned
+### `Future<Map<String, dynamic>>` carrying the non-empty body
+### `{'success': true, 'repositoryId': …}` and the Add Product flow calls it
+### immediately BEFORE `credentialEndpoints.generate`
+### (`add_product_page.dart:143 -> _ensureProductAndRepository:281`, then `:147`).
+### A non-empty map response makes the generated client's
+### `Protocol.deserialize<Map<String, dynamic>>` call `deserialize<dynamic>` on
+### each value, for which Serverpod registers nothing, so the browser dies with
+### `No deserialization found for type dynamic` at THAT call and the deploy key
+### is never minted. An EMPTY map deserialises fine — which is why the defect
+### presents as intermittent and gets blamed on the wrong endpoint.
+class: RepositoryReferenceAddedView
+fields:
+  ### Always true. The endpoint either returns this view or rethrows.
+  success: bool
+  ### The repository reference that was written. `repositoryId`, not the URI:
+  ### the durable identifier the mint is later scoped by.
+  repositoryId: String

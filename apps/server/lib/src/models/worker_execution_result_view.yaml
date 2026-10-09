@@ -1,0 +1,26 @@
+### What one worker execution produced.
+class: WorkerExecutionResultView
+fields:
+  workerExecutionId: String
+  workItemId: String
+  ### Durable `WorkerExecutionStatus` wire value.
+  status: String
+  workerId: String
+  workspaceId: String
+  startingRevision: String
+  endingRevision: String?
+  agentExecutionId: String?
+  ### Durable `AgentResultStatus` wire value.
+  agentResultStatus: String?
+  verificationId: String?
+  verificationPassed: bool?
+  changedFiles: List<ChangedFileView>
+  diffSummary: String?
+  diffRef: String?
+  ### Durable `WorkerCleanupStatus` wire value.
+  cleanupStatus: String
+  ### Durable `WorkerFailureCode` wire value.
+  failureCode: String
+  failureDetail: String?
+  startedAt: DateTime
+  endedAt: DateTime

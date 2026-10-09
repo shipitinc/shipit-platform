@@ -1,0 +1,17 @@
+### One entry of a defect's lifecycle history.
+class: DefectEventView
+fields:
+  eventId: String
+  defectId: String
+  sequence: int
+  ### Durable `DefectEvent` type wire value.
+  type: String
+  fromStatus: String?
+  toStatus: String?
+  ### Durable actor-type wire value.
+  actorType: String
+  actorId: String?
+  ### Free-form event payload, carried as JSON TEXT. See
+  ### `DefectDetailView.clientContextJson` for why.
+  payloadJson: String?
+  occurredAt: DateTime

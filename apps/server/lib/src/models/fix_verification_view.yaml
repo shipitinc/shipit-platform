@@ -1,0 +1,7 @@
+### `defectEndpoints.verifyFix` returned a raw map. Typed.
+class: FixVerificationView
+fields:
+  success: bool
+  ### The defect's status after the decision was recorded.
+  newStatus: String
+  message: String

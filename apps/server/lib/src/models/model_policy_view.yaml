@@ -1,0 +1,10 @@
+### `ModelPolicy` as it travels. `role` and every enum on the chain travel as
+### their wire text, matching every other view in this directory.
+class: ModelPolicyView
+fields:
+  ### Durable `AgentRole` wire value.
+  role: String
+  chain: List<ModelStepView>
+  version: int
+  updatedAt: DateTime
+  updatedByDecisionId: String

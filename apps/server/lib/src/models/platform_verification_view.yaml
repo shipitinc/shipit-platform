@@ -1,0 +1,17 @@
+### One verification recorded against an agent execution.
+class: PlatformVerificationView
+fields:
+  verificationId: String
+  executionId: String
+  workItemId: String
+  checkName: String
+  ### Durable `AgentClaimStatus` wire value.
+  status: String
+  mechanism: String
+  command: String
+  capturedAt: DateTime
+  ### Durable `EvidenceKind` wire value.
+  evidenceKind: String
+  outputRef: String?
+  detail: String?
+  resultPath: String?

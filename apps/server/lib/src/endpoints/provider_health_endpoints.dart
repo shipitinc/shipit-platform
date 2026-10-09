@@ -3,6 +3,15 @@ import 'dart:convert';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:serverpod/serverpod.dart';
 
+import '../generated/model_execution_list_view.dart';
+import '../generated/model_execution_record_view.dart';
+import '../generated/model_policy_list_view.dart';
+import '../generated/model_policy_view.dart';
+import '../generated/model_stats_group_view.dart';
+import '../generated/model_stats_view.dart';
+import '../generated/model_step_view.dart';
+import '../generated/provider_health_view.dart';
+import '../generated/provider_status_view.dart';
 import '../services/control_plane_service.dart';
 
 /// Provider health and model policy management endpoints.
@@ -11,7 +20,11 @@ class ProviderHealthEndpoints extends Endpoint {
   bool get logSessions => true;
 
   /// Returns the health status of all known providers.
-  Future<Map<String, dynamic>> getProviderHealth(Session session) async {
+  ///
+  /// Was `Future<Map<String, dynamic>>`. Every method on this endpoint class was
+  /// reachable from the live Flutter client and every one of them threw
+  /// `No deserialization found for type dynamic` on first use.
+  Future<ProviderHealthView> getProviderHealth(Session session) async {
     final service = ControlPlaneService(session);
     try {
       final policies = await service.modelPolicyStore.getAllPolicies();
@@ -24,12 +37,12 @@ class ProviderHealthEndpoints extends Endpoint {
 
       // In a full implementation, this would query the health monitor state
       // For now, return the list of known providers from policies
-      return {
-        'providers': providers
-            .map((p) => {'provider': p, 'healthy': null})
-            .toList(),
-        'allProvidersDown': <Map<String, dynamic>>[],
-      };
+      return ProviderHealthView(
+        providers: providers
+            .map((p) => ProviderStatusView(provider: p, healthy: null))
+            .toList(growable: false),
+        allProvidersDown: const [],
+      );
     } catch (error, stackTrace) {
       service.logger.error('provider_health.get.failed', {
         'error': error.toString(),
@@ -39,11 +52,13 @@ class ProviderHealthEndpoints extends Endpoint {
   }
 
   /// Lists all model policies.
-  Future<Map<String, dynamic>> listModelPolicies(Session session) async {
+  Future<ModelPolicyListView> listModelPolicies(Session session) async {
     final service = ControlPlaneService(session);
     try {
       final policies = await service.modelPolicyStore.getAllPolicies();
-      return {'policies': policies.map((p) => p.toJson()).toList()};
+      return ModelPolicyListView(
+        policies: policies.map(_modelPolicyView).toList(growable: false),
+      );
     } catch (error, stackTrace) {
       service.logger.error('model_policies.list.failed', {
         'error': error.toString(),
@@ -53,7 +68,13 @@ class ProviderHealthEndpoints extends Endpoint {
   }
 
   /// Updates a model policy chain (requires admin).
-  Future<Map<String, dynamic>> updateModelPolicy(
+  ///
+  /// Returns the policy as written, not `{'success': true}`. The old
+  /// acknowledgement could not satisfy this client method's declared return
+  /// type — `ModelPolicyResponse.fromJson` read a `role` that was never sent —
+  /// so the pair only worked because the one caller discarded the result. The
+  /// endpoint now publishes the thing it just persisted.
+  Future<ModelPolicyView> updateModelPolicy(
     Session session, {
     required String role,
     required String chainJson,
@@ -72,7 +93,7 @@ class ProviderHealthEndpoints extends Endpoint {
         updatedByDecisionId: updatedByDecisionId,
       );
       await service.modelPolicyStore.upsertPolicy(policy);
-      return {'success': true};
+      return _modelPolicyView(policy);
     } catch (error, stackTrace) {
       service.logger.error('model_policies.update.failed', {
         'role': role,
@@ -83,7 +104,7 @@ class ProviderHealthEndpoints extends Endpoint {
   }
 
   /// Returns paginated model execution records with filters.
-  Future<Map<String, dynamic>> listModelExecutions(
+  Future<ModelExecutionListView> listModelExecutions(
     Session session, {
     String? workItemId,
     String? provider,
@@ -125,12 +146,12 @@ class ProviderHealthEndpoints extends Endpoint {
       final total = records.length;
       final paginated = records.skip(offset).take(limit).toList();
 
-      return {
-        'executions': paginated.map((r) => r.toJson()).toList(),
-        'total': total,
-        'limit': limit,
-        'offset': offset,
-      };
+      return ModelExecutionListView(
+        executions: paginated.map(_modelExecutionView).toList(growable: false),
+        total: total,
+        limit: limit,
+        offset: offset,
+      );
     } catch (error, stackTrace) {
       service.logger.error('model_executions.list.failed', {
         'error': error.toString(),
@@ -140,7 +161,7 @@ class ProviderHealthEndpoints extends Endpoint {
   }
 
   /// Returns aggregated model execution statistics.
-  Future<Map<String, dynamic>> getModelStats(
+  Future<ModelStatsView> getModelStats(
     Session session, {
     DateTime? from,
     DateTime? to,
@@ -153,33 +174,33 @@ class ProviderHealthEndpoints extends Endpoint {
         to: to,
         groupBy: groupBy,
       );
-      return {
-        'count': stats.count,
-        'totalInputTokens': stats.totalInputTokens,
-        'totalOutputTokens': stats.totalOutputTokens,
-        'totalTokens': stats.totalTokens,
-        'totalCachedReadTokens': stats.totalCachedReadTokens,
-        'totalCostUsd': stats.totalCostUsd,
-        'avgCostUsd': stats.avgCostUsd,
-        'successCount': stats.successCount,
-        'failureCount': stats.failureCount,
-        'byGroup': stats.byGroup
+      return ModelStatsView(
+        count: stats.count,
+        totalInputTokens: stats.totalInputTokens,
+        totalOutputTokens: stats.totalOutputTokens,
+        totalTokens: stats.totalTokens,
+        totalCachedReadTokens: stats.totalCachedReadTokens,
+        totalCostUsd: stats.totalCostUsd,
+        avgCostUsd: stats.avgCostUsd,
+        successCount: stats.successCount,
+        failureCount: stats.failureCount,
+        byGroup: stats.byGroup
             .map(
-              (g) => {
-                'groupKey': g.groupKey,
-                'count': g.count,
-                'totalInputTokens': g.totalInputTokens,
-                'totalOutputTokens': g.totalOutputTokens,
-                'totalTokens': g.totalTokens,
-                'totalCachedReadTokens': g.totalCachedReadTokens,
-                'totalCostUsd': g.totalCostUsd,
-                'avgCostUsd': g.avgCostUsd,
-                'successCount': g.successCount,
-                'failureCount': g.failureCount,
-              },
+              (g) => ModelStatsGroupView(
+                groupKey: g.groupKey,
+                count: g.count,
+                totalInputTokens: g.totalInputTokens,
+                totalOutputTokens: g.totalOutputTokens,
+                totalTokens: g.totalTokens,
+                totalCachedReadTokens: g.totalCachedReadTokens,
+                totalCostUsd: g.totalCostUsd,
+                avgCostUsd: g.avgCostUsd,
+                successCount: g.successCount,
+                failureCount: g.failureCount,
+              ),
             )
-            .toList(),
-      };
+            .toList(growable: false),
+      );
     } catch (error, stackTrace) {
       service.logger.error('model_stats.get.failed', {
         'error': error.toString(),
@@ -187,4 +208,47 @@ class ProviderHealthEndpoints extends Endpoint {
       Error.throwWithStackTrace(error, stackTrace);
     }
   }
+
+  // ---------------------------------------------------------------------
+  // Projections
+  //
+  // Named copies rather than `ModelPolicy.toJson()` / `ModelExecutionRecord
+  // .toJson()`, so a field added to a domain type breaks this build instead of
+  // silently widening a wire contract. Enums travel as their wire text, as
+  // everywhere else in `lib/src/models/`.
+  // ---------------------------------------------------------------------
+
+  ModelPolicyView _modelPolicyView(ModelPolicy p) => ModelPolicyView(
+    role: p.role.wire,
+    chain: p.chain
+        .map(
+          (s) => ModelStepView(modelId: s.modelId, provider: s.provider),
+        )
+        .toList(growable: false),
+    version: p.version,
+    updatedAt: p.updatedAt,
+    updatedByDecisionId: p.updatedByDecisionId,
+  );
+
+  ModelExecutionRecordView _modelExecutionView(ModelExecutionRecord r) =>
+      ModelExecutionRecordView(
+        workItemId: r.workItemId,
+        jobId: r.jobId,
+        agentExecutionId: r.agentExecutionId,
+        role: r.role.wire,
+        modelId: r.modelId,
+        provider: r.provider,
+        inputTokens: r.inputTokens,
+        outputTokens: r.outputTokens,
+        totalTokens: r.totalTokens,
+        cachedReadTokens: r.cachedReadTokens,
+        costUsd: r.costUsd,
+        currency: r.currency,
+        startedAt: r.startedAt,
+        finishedAt: r.finishedAt,
+        success: r.success,
+        error: r.error,
+        escalationIndex: r.escalationIndex,
+        taskType: r.taskType,
+      );
 }

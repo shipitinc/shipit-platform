@@ -1,0 +1,37 @@
+### The defect register row plus the human report body. Serverpod models do not
+### inherit, so the summary fields are repeated here deliberately rather than
+### flattened away.
+class: DefectDetailView
+fields:
+  defectId: String
+  title: String
+  severity: String
+  ### Durable `DefectStatus` wire value.
+  status: String
+  classification: String?
+  reporter: String
+  ### Nullable on the domain type. See `DefectSummaryView`.
+  productId: String?
+  productName: String?
+  createdAt: DateTime
+  updatedAt: DateTime
+  affectedWorkItemId: String?
+  affectedRunId: String?
+  remediationWorkItemId: String?
+  description: String
+  expectedBehavior: String?
+  reproductionSteps: String?
+  ### Free-form operator context, carried as JSON TEXT.
+  ###
+  ### This is the house convention for an open-ended blob on this wire and not a
+  ### new one: `DefectDetailView.metadataJson` and `DefectEventView.payloadJson`
+  ### below already do it, because Serverpod 3.4.13 refuses `dynamic` in a model
+  ### schema outright ("The datatype \"dynamic\" is not supported in models")
+  ### and so has no type that can hold arbitrary JSON. `jsonDecode` recovers the
+  ### original value exactly.
+  clientContextJson: String?
+  ### Free-form durable metadata, carried as JSON TEXT. See `clientContextJson`.
+  metadataJson: String?
+  resolvedAt: DateTime?
+  closedAt: DateTime?
+  version: int

@@ -480,7 +480,7 @@ class ControlPlaneRepository {
       clientContextJson: clientContextJson,
       reporter: reporter,
     );
-    return CreateDefectResponse.fromJson(result);
+    return CreateDefectResponse.fromJson(result.toJson());
   }
 
   Future<ListDefectsResponse> listDefects({
@@ -497,12 +497,12 @@ class ControlPlaneRepository {
       limit: limit,
       offset: offset,
     );
-    return ListDefectsResponse.fromJson(result);
+    return ListDefectsResponse.fromJson(result.toJson());
   }
 
   Future<InspectDefectResponse> inspectDefect(String defectId) async {
     final result = await _client.defectEndpoints.inspect(defectId: defectId);
-    return InspectDefectResponse.fromJson(result);
+    return InspectDefectResponse.fromJson(result.toJson());
   }
 
   // ------------------------------------------------- Reports · feature tab
@@ -524,10 +524,10 @@ class ControlPlaneRepository {
     );
     revision.value++;
     return CreateFeatureRequestResponse(
-      workItemId: result['workItemId'] as String,
-      title: result['title'] as String,
-      state: result['state'] as String,
-      createdAt: DateTime.parse(result['createdAt'] as String),
+      workItemId: result.workItemId,
+      title: result.title,
+      state: result.state,
+      createdAt: result.createdAt,
     );
   }
 
@@ -574,7 +574,7 @@ class ControlPlaneRepository {
       contentHash: contentHash,
       sourceRef: sourceRef,
     );
-    return DefectEvidenceResponse.fromJson(result);
+    return DefectEvidenceResponse.fromJson(result.toJson());
   }
 
   Future<void> answerClarification({
@@ -611,7 +611,7 @@ class ControlPlaneRepository {
       signedAt: signedAt,
     );
     revision.value++;
-    return VerifyFixResponse.fromJson(result);
+    return VerifyFixResponse.fromJson(result.toJson());
   }
 
   // Human Direction Inbox methods
@@ -1240,15 +1240,14 @@ class ControlPlaneRepository {
   // Model Policy methods
   Future<List<ModelPolicyResponse>> listModelPolicies() async {
     final result = await _client.providerHealthEndpoints.listModelPolicies();
-    final policiesJson = result['policies'] as List<dynamic>? ?? [];
-    return policiesJson
-        .map((p) => ModelPolicyResponse.fromJson(p as Map<String, dynamic>))
+    return result.policies
+        .map((p) => ModelPolicyResponse.fromJson(p.toJson()))
         .toList();
   }
 
   Future<ProviderHealthResponse> getProviderHealth() async {
     final result = await _client.providerHealthEndpoints.getProviderHealth();
-    return ProviderHealthResponse.fromJson(result);
+    return ProviderHealthResponse.fromJson(result.toJson());
   }
 
   Future<ModelPolicyResponse> updateModelPolicy({
@@ -1264,7 +1263,7 @@ class ControlPlaneRepository {
       updatedByDecisionId: updatedByDecisionId,
     );
     revision.value++;
-    return ModelPolicyResponse.fromJson(result);
+    return ModelPolicyResponse.fromJson(result.toJson());
   }
 
   // Model Executions methods
@@ -1288,7 +1287,7 @@ class ControlPlaneRepository {
       limit: limit,
       offset: offset,
     );
-    return ModelExecutionsPageResponse.fromJson(result);
+    return ModelExecutionsPageResponse.fromJson(result.toJson());
   }
 
   // Model Stats methods
@@ -1302,7 +1301,7 @@ class ControlPlaneRepository {
       to: to,
       groupBy: groupBy,
     );
-    return ModelStatsResponse.fromJson(result);
+    return ModelStatsResponse.fromJson(result.toJson());
   }
 }
 

@@ -1,0 +1,6 @@
+### One provider's health row. `healthy` is null until a health monitor exists —
+### the endpoint has always reported "known", not "checked".
+class: ProviderStatusView
+fields:
+  provider: String
+  healthy: bool?

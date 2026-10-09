@@ -1,0 +1,5 @@
+### One step of a model policy chain (`ModelStep`).
+class: ModelStepView
+fields:
+  modelId: String
+  provider: String

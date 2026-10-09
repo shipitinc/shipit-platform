@@ -1,0 +1,4 @@
+### `executionEndpoints.list` returned a raw map. Typed.
+class: AgentExecutionListView
+fields:
+  executions: List<AgentExecutionRecordView>

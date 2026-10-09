@@ -1,0 +1,8 @@
+### `defectEndpoints.create` returned a raw map. Typed.
+class: DefectCreatedView
+fields:
+  defectId: String
+  title: String
+  ### Durable `DefectStatus` wire value.
+  status: String
+  createdAt: DateTime

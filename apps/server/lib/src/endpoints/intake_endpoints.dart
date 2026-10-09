@@ -1,5 +1,6 @@
 import 'package:serverpod/serverpod.dart';
 
+import '../generated/feature_request_created_view.dart';
 import '../generated/feature_request_summary_view.dart';
 import '../services/control_plane_service.dart';
 
@@ -12,7 +13,11 @@ class IntakeEndpoints extends Endpoint {
   ///
   /// Instantiates a WorkItem with category: feature, and a corresponding
   /// HumanDirection to surface it in the inbox.
-  Future<Map<String, dynamic>> createFeatureRequest(
+  ///
+  /// Was `Future<Map<String, dynamic>>`. The Reports screen's Feature tab calls
+  /// it, so it threw `No deserialization found for type dynamic` the first time
+  /// anybody filed a request.
+  Future<FeatureRequestCreatedView> createFeatureRequest(
     Session session, {
     required String title,
     required String description,
@@ -28,12 +33,12 @@ class IntakeEndpoints extends Endpoint {
         reporter: reporter,
       );
 
-      return {
-        'workItemId': workItem.workItemId,
-        'title': workItem.title,
-        'state': workItem.state.wire,
-        'createdAt': workItem.createdAt.toIso8601String(),
-      };
+      return FeatureRequestCreatedView(
+        workItemId: workItem.workItemId,
+        title: workItem.title,
+        state: workItem.state.wire,
+        createdAt: workItem.createdAt,
+      );
     } catch (error, stackTrace) {
       service.logger.error('intake.create_feature.failed', {
         'error': error.toString(),

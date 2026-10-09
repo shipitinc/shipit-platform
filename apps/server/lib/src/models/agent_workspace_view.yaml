@@ -1,0 +1,7 @@
+### The checkout an agent execution was given.
+class: AgentWorkspaceView
+fields:
+  workspaceId: String
+  path: String
+  startingRevision: String?
+  allowedPaths: List<String>?

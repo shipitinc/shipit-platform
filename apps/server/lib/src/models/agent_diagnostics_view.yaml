@@ -1,0 +1,9 @@
+### The diagnostics block of an agent result.
+class: AgentDiagnosticsView
+fields:
+  exitCode: int
+  durationMs: int
+  toolCalls: int
+  errors: List<DiagnosticEntryView>
+  warnings: List<DiagnosticEntryView>
+  resourceUsage: ResourceUsageView?

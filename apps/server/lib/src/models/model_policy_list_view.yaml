@@ -1,0 +1,4 @@
+### `providerHealthEndpoints.listModelPolicies` returned a raw map. Typed.
+class: ModelPolicyListView
+fields:
+  policies: List<ModelPolicyView>

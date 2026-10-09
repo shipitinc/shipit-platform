@@ -1,0 +1,10 @@
+### One check the agent claimed it ran.
+class: AgentClaimedCheckView
+fields:
+  checkName: String
+  ### Durable `AgentClaimStatus` wire value.
+  status: String
+  ### Durable `EvidenceKind` wire value.
+  evidenceKind: String
+  command: String?
+  detail: String?

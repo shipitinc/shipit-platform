@@ -1,0 +1,15 @@
+### One clarification an agent raised and a human may answer.
+class: DefectClarificationView
+fields:
+  clarificationId: String
+  defectId: String
+  question: String
+  reason: String
+  ### Durable clarification status wire value.
+  status: String
+  answer: String?
+  humanDecisionId: String?
+  requestedByTriageJobId: String?
+  requestedAt: DateTime
+  answeredAt: DateTime?
+  createdAt: DateTime

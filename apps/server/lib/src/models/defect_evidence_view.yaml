@@ -1,0 +1,13 @@
+### One piece of evidence attached to a defect.
+class: DefectEvidenceView
+fields:
+  evidenceId: String
+  defectId: String
+  ### Durable `EvidenceIntakeKind` wire value.
+  kind: String
+  artifactId: String?
+  contentHash: String?
+  description: String?
+  sourceRef: String?
+  capturedAt: DateTime
+  createdAt: DateTime

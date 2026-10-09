@@ -1,0 +1,8 @@
+### `providerHealthEndpoints.listModelExecutions` returned a raw map. Typed.
+class: ModelExecutionListView
+fields:
+  executions: List<ModelExecutionRecordView>
+  ### Rows matching the filters BEFORE `limit`/`offset` were applied.
+  total: int
+  limit: int
+  offset: int

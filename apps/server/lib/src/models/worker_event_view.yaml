@@ -1,0 +1,13 @@
+### One entry of a worker execution's event history.
+class: WorkerEventView
+fields:
+  eventId: String
+  workerExecutionId: String
+  workItemId: String
+  sequence: int
+  ### Durable `WorkerEventType` wire value.
+  type: String
+  occurredAt: DateTime
+  ### Free-form event payload, carried as JSON TEXT. See
+  ### `DefectDetailView.clientContextJson` for why.
+  payloadJson: String?

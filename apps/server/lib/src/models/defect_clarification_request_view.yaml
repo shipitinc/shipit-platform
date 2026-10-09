@@ -1,0 +1,6 @@
+### A clarification the triage result asks for, before it becomes a durable
+### `DefectClarificationView`.
+class: DefectClarificationRequestView
+fields:
+  question: String
+  reason: String

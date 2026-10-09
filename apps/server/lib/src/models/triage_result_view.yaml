@@ -1,0 +1,24 @@
+### What triage concluded about a defect.
+class: TriageResultView
+fields:
+  resultId: String
+  defectId: String
+  ### Recommended durable `DefectStatus` wire value.
+  recommendedStatus: String
+  ### Recommended durable `DefectClassification` wire value.
+  recommendedClassification: String
+  confidence: double
+  suspectedCategory: String
+  suspectedComponents: List<String>
+  reproductionSupported: bool
+  evidenceUsed: List<String>
+  clarificationRequired: List<DefectClarificationRequestView>
+  recommendedNextAction: String
+  possibleDuplicateDefectId: String?
+  recommendedWorkItemCategory: String?
+  summary: String
+  jobId: String?
+  executionId: String?
+  createdAt: DateTime
+  completedAt: DateTime?
+  version: int

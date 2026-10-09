@@ -1,0 +1,20 @@
+### One row of the defect register list. The list shape, without the
+### human-report body — `DefectDetailView` adds that.
+class: DefectSummaryView
+fields:
+  defectId: String
+  title: String
+  severity: String
+  ### Durable `DefectStatus` wire value.
+  status: String
+  classification: String?
+  reporter: String
+  ### Nullable on the domain type: a defect can be filed before its product
+  ### row exists.
+  productId: String?
+  productName: String?
+  createdAt: DateTime
+  updatedAt: DateTime
+  affectedWorkItemId: String?
+  affectedRunId: String?
+  remediationWorkItemId: String?

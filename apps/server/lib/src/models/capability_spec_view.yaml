@@ -1,0 +1,8 @@
+### One capability a registered worker advertises.
+class: CapabilitySpecView
+fields:
+  ### Durable `WorkerCapability` name — also the key it is filed under.
+  capability: String
+  version: String
+  metadata: Map<String, String>?
+  providedTools: List<String>?

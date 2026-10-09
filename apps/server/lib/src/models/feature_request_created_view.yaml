@@ -1,0 +1,8 @@
+### `intakeEndpoints.createFeatureRequest` returned a raw map. Typed.
+class: FeatureRequestCreatedView
+fields:
+  workItemId: String
+  title: String
+  ### Durable work-item wire state.
+  state: String
+  createdAt: DateTime

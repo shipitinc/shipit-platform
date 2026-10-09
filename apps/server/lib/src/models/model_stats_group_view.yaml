@@ -1,0 +1,13 @@
+### One `groupBy` bucket of `getModelStats`.
+class: ModelStatsGroupView
+fields:
+  groupKey: String
+  count: int
+  totalInputTokens: int
+  totalOutputTokens: int
+  totalTokens: int
+  totalCachedReadTokens: int
+  totalCostUsd: double
+  avgCostUsd: double
+  successCount: int
+  failureCount: int
