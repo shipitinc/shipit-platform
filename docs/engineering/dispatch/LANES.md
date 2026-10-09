@@ -1269,3 +1269,80 @@ The real rule is non-dynamic **on a `Future`**. Eight probes now agree with the 
 4. Supply `SHIPIT_HOST_KEY_FINGERPRINT` (GitHub publishes these) and `SHIPIT_OPERATOR_NAME`.
 5. Register becomes pressable once `verifyAccess` succeeds.
 6. `docs/deployment/local-qa.md:96-99` is stale — its client env table predates these variables.
+
+## ⚠ CRITICAL — the Add Product flow was UNREACHABLE, not merely disabled
+
+Found by driving the live QA UI, not by any gate. Recorded because **integrating the client branch alone
+would NOT have unblocked onboarding**, and because the bug survived the client lane's own green suite.
+
+### What the live UI showed
+
+With product name and repository filled, Register reads:
+
+> **Generate a deploy key first**
+
+…and there is **no control anywhere that says "Generate a deploy key"**. Not a disabled button — an
+unreachable feature.
+
+### The circular dependency, verified mechanically
+
+In `apps/control_plane/lib/features/products/add_product_page.dart`:
+
+| Fact | Lines |
+|---|---|
+| `deployKey` is SET in exactly one place — inside `_onCheckAccessRequested`'s emit | `:159` (plus the `copyWith` default at `:359`) |
+| `_buildKeyBox` is called ONLY under `if (state.deployKey != null)` | `:600`, `:1085` |
+| `CheckAccessRequested` is dispatched ONLY from inside `_buildKeyBox` | `:723`, `:1300` |
+
+So `deployKey` starts `null` → the key box never renders → nothing can dispatch the handler → `deployKey` can
+never become non-null. **Circular.** `_registerButtonSubtext` returns `"Generate a deploy key first"` at
+`:897`, naming a control that does not exist.
+
+### Why a 266-test green suite missed it
+
+The client lane's tests drove the **bloc directly**. `canRegister` transitions were exercised and passed —
+but nothing ever rendered the page and tried to **reach** the handler through the widget tree. The suite
+proved the state machine works while the UI cannot enter it.
+
+Recorded as a reusable lesson: **a state-machine test proves transitions, not reachability.** Any flow
+gated behind a widget that only renders once the state is set has a hole the bloc-level suite cannot see.
+
+### Second defect found during the fix
+
+`state.deployKey!` was dereferenced in the **condition** of the `credentialId` line of `TechnicalDetails`
+(`:496` desktop, `:1168` mobile). The cold render did not merely lack a control — it **threw
+`Null check operator used on a null value`** before rendering anything. Fixed on the same cold path,
+because the affordance is untestable until it is.
+
+### Fixed at `3f28059` (client branch, awaiting focused re-review)
+
+`_GenerateDeployKeyPanel` is **declared once and rendered from both compositions** — so there is no second
+copy that can be forgotten, and the mobile twin is asserted rather than assumed. Gated on `canGenerateKey`
+so an action that cannot succeed is not offered, and while unavailable it names the missing input.
+`canRegister` was **not** weakened.
+
+**Proof the tests are load-bearing:** isolated with `git stash push` on only the production file, all 5 new
+tests **fail at `2f6b78d`** (`+0 -5`, `Null check operator used on a null value` at `:496:36`, desktop and
+mobile separately) and **all 5 pass at `3f28059`**.
+
+### Answering the two questions asked
+
+**Is the UI ready in QA?** **No.** The QA client is still the **old mock build** — the served bundle contains
+`shipit+`, the mock generator's fingerprint. Register is unreachable. Three branches must be reviewed and
+integrated (client **first**, then generate fix, then hostkey config) and the client image **rebuilt** before
+QA runs the real flow.
+
+**Can the public half be copied from the UI?** **Yes, once reachable — and copying the public half is exactly
+the right action.** `Copy public key` exists on both layouts and is wired to the clipboard. Per ADR 0018 §A2
+only the **public** half ever reaches the UI; the private half never does. Today the control would copy a
+**fake** key, which is worse than no control.
+
+### Remaining before a human can onboard SHIP IT Platform
+
+1. Focused re-review of `3f28059`, then integrate client → `4f96c78` → `437cdb6`.
+2. **Rebuild the QA client image** and recreate the container — the stopgap server override means
+   `make qa-up` is not a substitute.
+3. Human adds the generated public half as a write-enabled deploy key on
+   `github.com/shipitinc/shipit-platform`.
+4. Supply `SHIPIT_HOST_KEY_FINGERPRINT` (GitHub publishes these) and `SHIPIT_OPERATOR_NAME`.
+5. Tap Generate deploy key → Copy public key → install → Check access → **Register product** enables.
