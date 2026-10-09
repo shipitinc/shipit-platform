@@ -1071,3 +1071,80 @@ key endpoint exists**, so there is nowhere for real generation to live.
 **5. Register never persists a credential.** `_onRegisterProductRequested` (`:143-180`) calls
 `createProduct` then `addRepositoryReference` — and stops. The generated key is discarded. This is the
 **F-9** finding, confirmed in code rather than by report.
+
+---
+
+## ✅ THE ADD PRODUCT FLOW WORKS — the only remaining step is the human's
+
+Verified live in the browser at `http://localhost:8081/#/products/new`, driving merged `main` (`a5c46e9`):
+
+```
+credentialEndpoints -> 200        ← the mint, real ED25519, real custody
+credentialEndpoints -> 200        ← the access check, a REAL clone
+Register product   Access must be verified before a product can be registered
+Key box            Generated for this product
+                   Copy public key · Check access
+                   git@github.com: Permission denied (publickey).
+```
+
+That last line is the **correct result**, not a failure: the clone ran and GitHub rejected the key
+because the deploy key is not yet installed. That is precisely the step reserved for the human.
+
+### What it took to get here — four defects, none of which any gate had caught
+
+1. **`AccessStatus.verified` was read 9 times and written zero.** `canRegister` was permanently false.
+2. **The flow was unreachable, not merely disabled.** `deployKey` set in exactly one place, inside the
+   check-access handler; `_buildKeyBox` rendered only under `if (state.deployKey != null)`; and
+   `CheckAccessRequested` was dispatched only from inside that box. A 266-test green suite missed it
+   because the tests drove the bloc, never rendering the page to try to *reach* the handler. A second
+   defect hid behind it: `state.deployKey!` dereferenced in a **condition**, so the cold render threw
+   `Null check operator used on a null value`.
+3. **`Map<String, dynamic>` is not a wire type Serverpod's client can read.** `deserialize<dynamic>` is
+   absent from the primitive table, so **every** value in a correct response body was unreadable. Two
+   review cycles approved it: the map is valid Dart, generates cleanly, and no test crossed the real
+   browser→server hop. Fixed across **22 endpoints**, with a scan-based canary (not a hand-kept list)
+   that was proven to fail when an endpoint regresses.
+4. **The host-key attestation values never reached the client.** `entrypoint.client.sh` uses envsubst's
+   *allowlist* form, so placeholders were emitted as literal strings — and the client treats any non-blank
+   value as configured, so a literal `${SHIPIT_HOST_KEY_FINGERPRINT}` would have been **presented to the
+   operator as a host key fingerprint**. The first lane to attempt this refused to finish, correctly.
+
+### The invariant held, twice, visibly
+
+- A second mint for the same repository was refused with `CredentialNotUsableException` — *"repository
+  already has an active credential; rotate it instead of issuing a second one"*. That is ADR 0018 A1
+  working. Both probe credentials have been **revoked**, not deleted, so nothing is active now.
+- The private half never reached the client, the database, or any log. Only the public half and
+  fingerprint appear in the response.
+
+### ⚠ OPEN — the private half does not survive a container recreate
+
+`docker/.env` sets `SHIPIT_LOCAL_SECRET_DIR=/Users/alkebut/.config/shipit/platform`, but **nothing mounts
+that path into the server container**, so the private half lands in the container's writable layer at
+`/Users/alkebut/.config/shipit/platform/GIT_REPOSITORY_shipit-platform_SSH` (mode 0600, correct). The
+database row persists across container recreation; the secret behind its reference does not.
+
+The provider's own documentation says the file must outlive the process "for the QA stack to keep a usable
+credential between restarts", so this is a real durability gap, not a stylistic one. Mounting the path
+is the obvious fix and **was attempted** — a host bind mount and a named volume at that path both produced
+a container that never logged and never bound. Recorded as unresolved rather than worked around. It does
+not block onboarding: the key and its row are consistent for the life of one container.
+
+### ⚠ Host is at load ~70–80 on 8 CPUs
+
+The server takes **~6 minutes** to become reachable after a restart under this load; earlier lanes saw
+`dart analyze` and `make test-integration` runs fail or cascade for the same reason. The load is from
+**other applications on this machine** (Devin, IntelliJ, WindowServer, Docker Desktop), not from this
+work. Several container recreations looked like configuration failures and were not — the container was
+simply still JIT-compiling. Worth knowing before diagnosing a stall as a defect.
+
+### Human action required to finish onboarding
+
+1. Open `http://localhost:8081/#/products/new`, fill Product name `ShipIt Platform`, repository
+   `git@github.com:shipitinc/shipit-platform.git`, revision `main`.
+2. Press **Generate a deploy key** → press **Copy public key**.
+3. Add the pasted public half as a **write-enabled deploy key** at
+   `github.com/shipitinc/shipit-platform` → Settings → Deploy keys.
+4. Back in ShipIt, press **Check access**. On success the subtext changes to
+   *"Access verified — this product can be registered"* and **Register product** becomes pressable.
+5. Press **Register product**.
