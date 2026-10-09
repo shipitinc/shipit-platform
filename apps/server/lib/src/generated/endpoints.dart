@@ -12,92 +12,181 @@
 // ignore_for_file: no_leading_underscores_for_library_prefixes
 
 import 'package:serverpod/serverpod.dart' as _i1;
-import '../endpoints/defect_endpoints.dart' as _i2;
-import '../endpoints/execution_endpoints.dart' as _i3;
-import '../endpoints/health_endpoints.dart' as _i4;
-import '../endpoints/home_endpoints.dart' as _i5;
-import '../endpoints/human_direction_endpoints.dart' as _i6;
-import '../endpoints/intake_endpoints.dart' as _i7;
-import '../endpoints/product_registry_endpoints.dart' as _i8;
-import '../endpoints/provider_health_endpoints.dart' as _i9;
-import '../endpoints/scheduler_endpoints.dart' as _i10;
-import '../endpoints/worker_endpoints.dart' as _i11;
-import '../endpoints/workflow_endpoints.dart' as _i12;
+import '../endpoints/credential_endpoints.dart' as _i2;
+import '../endpoints/defect_endpoints.dart' as _i3;
+import '../endpoints/execution_endpoints.dart' as _i4;
+import '../endpoints/health_endpoints.dart' as _i5;
+import '../endpoints/home_endpoints.dart' as _i6;
+import '../endpoints/human_direction_endpoints.dart' as _i7;
+import '../endpoints/intake_endpoints.dart' as _i8;
+import '../endpoints/product_registry_endpoints.dart' as _i9;
+import '../endpoints/provider_health_endpoints.dart' as _i10;
+import '../endpoints/scheduler_endpoints.dart' as _i11;
+import '../endpoints/worker_endpoints.dart' as _i12;
+import '../endpoints/workflow_endpoints.dart' as _i13;
 import 'package:control_plane_server/src/generated/human_direction_attachment_view.dart'
-    as _i13;
-import 'package:platform_contracts/src/types/baseline_fact.dart' as _i14;
+    as _i14;
+import 'package:platform_contracts/src/types/baseline_fact.dart' as _i15;
 
 class Endpoints extends _i1.EndpointDispatch {
   @override
   void initializeEndpoints(_i1.Server server) {
     var endpoints = <String, _i1.Endpoint>{
-      'defectEndpoints': _i2.DefectEndpoints()
+      'credentialEndpoints': _i2.CredentialEndpoints()
+        ..initialize(
+          server,
+          'credentialEndpoints',
+          null,
+        ),
+      'defectEndpoints': _i3.DefectEndpoints()
         ..initialize(
           server,
           'defectEndpoints',
           null,
         ),
-      'executionEndpoints': _i3.ExecutionEndpoints()
+      'executionEndpoints': _i4.ExecutionEndpoints()
         ..initialize(
           server,
           'executionEndpoints',
           null,
         ),
-      'healthEndpoints': _i4.HealthEndpoints()
+      'healthEndpoints': _i5.HealthEndpoints()
         ..initialize(
           server,
           'healthEndpoints',
           null,
         ),
-      'homeEndpoints': _i5.HomeEndpoints()
+      'homeEndpoints': _i6.HomeEndpoints()
         ..initialize(
           server,
           'homeEndpoints',
           null,
         ),
-      'humanDirectionEndpoints': _i6.HumanDirectionEndpoints()
+      'humanDirectionEndpoints': _i7.HumanDirectionEndpoints()
         ..initialize(
           server,
           'humanDirectionEndpoints',
           null,
         ),
-      'intakeEndpoints': _i7.IntakeEndpoints()
+      'intakeEndpoints': _i8.IntakeEndpoints()
         ..initialize(
           server,
           'intakeEndpoints',
           null,
         ),
-      'productRegistryEndpoints': _i8.ProductRegistryEndpoints()
+      'productRegistryEndpoints': _i9.ProductRegistryEndpoints()
         ..initialize(
           server,
           'productRegistryEndpoints',
           null,
         ),
-      'providerHealthEndpoints': _i9.ProviderHealthEndpoints()
+      'providerHealthEndpoints': _i10.ProviderHealthEndpoints()
         ..initialize(
           server,
           'providerHealthEndpoints',
           null,
         ),
-      'schedulerEndpoints': _i10.SchedulerEndpoints()
+      'schedulerEndpoints': _i11.SchedulerEndpoints()
         ..initialize(
           server,
           'schedulerEndpoints',
           null,
         ),
-      'workerEndpoints': _i11.WorkerEndpoints()
+      'workerEndpoints': _i12.WorkerEndpoints()
         ..initialize(
           server,
           'workerEndpoints',
           null,
         ),
-      'workflowEndpoints': _i12.WorkflowEndpoints()
+      'workflowEndpoints': _i13.WorkflowEndpoints()
         ..initialize(
           server,
           'workflowEndpoints',
           null,
         ),
     };
+    connectors['credentialEndpoints'] = _i1.EndpointConnector(
+      name: 'credentialEndpoints',
+      endpoint: endpoints['credentialEndpoints']!,
+      methodConnectors: {
+        'generate': _i1.MethodConnector(
+          name: 'generate',
+          params: {
+            'productId': _i1.ParameterDescription(
+              name: 'productId',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'repositoryId': _i1.ParameterDescription(
+              name: 'repositoryId',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'credentialId': _i1.ParameterDescription(
+              name: 'credentialId',
+              type: _i1.getType<String?>(),
+              nullable: true,
+            ),
+          },
+          call:
+              (
+                _i1.Session session,
+                Map<String, dynamic> params,
+              ) async =>
+                  (endpoints['credentialEndpoints'] as _i2.CredentialEndpoints)
+                      .generate(
+                        session,
+                        productId: params['productId'],
+                        repositoryId: params['repositoryId'],
+                        credentialId: params['credentialId'],
+                      ),
+        ),
+        'verifyAccess': _i1.MethodConnector(
+          name: 'verifyAccess',
+          params: {
+            'productId': _i1.ParameterDescription(
+              name: 'productId',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'repositoryId': _i1.ParameterDescription(
+              name: 'repositoryId',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'hostKeyFingerprint': _i1.ParameterDescription(
+              name: 'hostKeyFingerprint',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'confirmedBy': _i1.ParameterDescription(
+              name: 'confirmedBy',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'checkedBy': _i1.ParameterDescription(
+              name: 'checkedBy',
+              type: _i1.getType<String?>(),
+              nullable: true,
+            ),
+          },
+          call:
+              (
+                _i1.Session session,
+                Map<String, dynamic> params,
+              ) async =>
+                  (endpoints['credentialEndpoints'] as _i2.CredentialEndpoints)
+                      .verifyAccess(
+                        session,
+                        productId: params['productId'],
+                        repositoryId: params['repositoryId'],
+                        hostKeyFingerprint: params['hostKeyFingerprint'],
+                        confirmedBy: params['confirmedBy'],
+                        checkedBy: params['checkedBy'],
+                      ),
+        ),
+      },
+    );
     connectors['defectEndpoints'] = _i1.EndpointConnector(
       name: 'defectEndpoints',
       endpoint: endpoints['defectEndpoints']!,
@@ -166,7 +255,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['defectEndpoints'] as _i2.DefectEndpoints).create(
+                  (endpoints['defectEndpoints'] as _i3.DefectEndpoints).create(
                     session,
                     title: params['title'],
                     description: params['description'],
@@ -215,7 +304,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['defectEndpoints'] as _i2.DefectEndpoints).list(
+                  (endpoints['defectEndpoints'] as _i3.DefectEndpoints).list(
                     session,
                     productId: params['productId'],
                     status: params['status'],
@@ -238,7 +327,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['defectEndpoints'] as _i2.DefectEndpoints).inspect(
+                  (endpoints['defectEndpoints'] as _i3.DefectEndpoints).inspect(
                     session,
                     defectId: params['defectId'],
                   ),
@@ -281,7 +370,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['defectEndpoints'] as _i2.DefectEndpoints)
+              ) async => (endpoints['defectEndpoints'] as _i3.DefectEndpoints)
                   .addEvidence(
                     session,
                     defectId: params['defectId'],
@@ -320,7 +409,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['defectEndpoints'] as _i2.DefectEndpoints)
+              ) async => (endpoints['defectEndpoints'] as _i3.DefectEndpoints)
                   .requestClarification(
                     session,
                     defectId: params['defectId'],
@@ -352,7 +441,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['defectEndpoints'] as _i2.DefectEndpoints)
+              ) async => (endpoints['defectEndpoints'] as _i3.DefectEndpoints)
                   .answerClarification(
                     session,
                     clarificationId: params['clarificationId'],
@@ -408,7 +497,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['defectEndpoints'] as _i2.DefectEndpoints)
+              ) async => (endpoints['defectEndpoints'] as _i3.DefectEndpoints)
                   .verifyFix(
                     session,
                     defectId: params['defectId'],
@@ -441,7 +530,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['executionEndpoints'] as _i3.ExecutionEndpoints)
+                  (endpoints['executionEndpoints'] as _i4.ExecutionEndpoints)
                       .list(
                         session,
                         workItemId: params['workItemId'],
@@ -461,7 +550,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['executionEndpoints'] as _i3.ExecutionEndpoints)
+                  (endpoints['executionEndpoints'] as _i4.ExecutionEndpoints)
                       .inspect(
                         session,
                         executionId: params['executionId'],
@@ -480,7 +569,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['healthEndpoints'] as _i4.HealthEndpoints)
+              ) async => (endpoints['healthEndpoints'] as _i5.HealthEndpoints)
                   .health(session),
         ),
       },
@@ -496,7 +585,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['homeEndpoints'] as _i5.HomeEndpoints)
+              ) async => (endpoints['homeEndpoints'] as _i6.HomeEndpoints)
                   .overview(session),
         ),
         'listWorkItems': _i1.MethodConnector(
@@ -522,7 +611,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['homeEndpoints'] as _i5.HomeEndpoints)
+              ) async => (endpoints['homeEndpoints'] as _i6.HomeEndpoints)
                   .listWorkItems(
                     session,
                     state: params['state'],
@@ -548,7 +637,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['homeEndpoints'] as _i5.HomeEndpoints)
+              ) async => (endpoints['homeEndpoints'] as _i6.HomeEndpoints)
                   .recentDecisions(
                     session,
                     limit: params['limit'],
@@ -568,7 +657,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['homeEndpoints'] as _i5.HomeEndpoints)
+              ) async => (endpoints['homeEndpoints'] as _i6.HomeEndpoints)
                   .pendingDecisions(
                     session,
                     limit: params['limit'],
@@ -615,7 +704,7 @@ class Endpoints extends _i1.EndpointDispatch {
             ),
             'attachments': _i1.ParameterDescription(
               name: 'attachments',
-              type: _i1.getType<List<_i13.HumanDirectionAttachmentView>?>(),
+              type: _i1.getType<List<_i14.HumanDirectionAttachmentView>?>(),
               nullable: true,
             ),
             'createdBy': _i1.ParameterDescription(
@@ -635,7 +724,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['humanDirectionEndpoints']
-                          as _i6.HumanDirectionEndpoints)
+                          as _i7.HumanDirectionEndpoints)
                       .createDirection(
                         session,
                         directionType: params['directionType'],
@@ -684,7 +773,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['humanDirectionEndpoints']
-                          as _i6.HumanDirectionEndpoints)
+                          as _i7.HumanDirectionEndpoints)
                       .listDirectionsForTarget(
                         session,
                         targetType: params['targetType'],
@@ -729,7 +818,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['humanDirectionEndpoints']
-                          as _i6.HumanDirectionEndpoints)
+                          as _i7.HumanDirectionEndpoints)
                       .listDirectionsByStatus(
                         session,
                         status: params['status'],
@@ -754,7 +843,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['humanDirectionEndpoints']
-                          as _i6.HumanDirectionEndpoints)
+                          as _i7.HumanDirectionEndpoints)
                       .readDirection(
                         session,
                         directionId: params['directionId'],
@@ -780,7 +869,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['humanDirectionEndpoints']
-                          as _i6.HumanDirectionEndpoints)
+                          as _i7.HumanDirectionEndpoints)
                       .acknowledgeDirection(
                         session,
                         directionId: params['directionId'],
@@ -807,7 +896,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['humanDirectionEndpoints']
-                          as _i6.HumanDirectionEndpoints)
+                          as _i7.HumanDirectionEndpoints)
                       .startWorkingDirection(
                         session,
                         directionId: params['directionId'],
@@ -839,7 +928,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['humanDirectionEndpoints']
-                          as _i6.HumanDirectionEndpoints)
+                          as _i7.HumanDirectionEndpoints)
                       .completeDirection(
                         session,
                         directionId: params['directionId'],
@@ -872,7 +961,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['humanDirectionEndpoints']
-                          as _i6.HumanDirectionEndpoints)
+                          as _i7.HumanDirectionEndpoints)
                       .rejectDirection(
                         session,
                         directionId: params['directionId'],
@@ -905,7 +994,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['humanDirectionEndpoints']
-                          as _i6.HumanDirectionEndpoints)
+                          as _i7.HumanDirectionEndpoints)
                       .supersedeDirection(
                         session,
                         directionId: params['directionId'],
@@ -948,7 +1037,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['intakeEndpoints'] as _i7.IntakeEndpoints)
+              ) async => (endpoints['intakeEndpoints'] as _i8.IntakeEndpoints)
                   .createFeatureRequest(
                     session,
                     title: params['title'],
@@ -980,7 +1069,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['intakeEndpoints'] as _i7.IntakeEndpoints)
+              ) async => (endpoints['intakeEndpoints'] as _i8.IntakeEndpoints)
                   .listFeatureRequests(
                     session,
                     productId: params['productId'],
@@ -1003,7 +1092,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .listProducts(session),
         ),
         'listProductSummaries': _i1.MethodConnector(
@@ -1015,7 +1104,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .listProductSummaries(session),
         ),
         'productDetail': _i1.MethodConnector(
@@ -1033,7 +1122,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .productDetail(
                         session,
                         productId: params['productId'],
@@ -1054,7 +1143,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .productContext(
                         session,
                         productId: params['productId'],
@@ -1070,7 +1159,7 @@ class Endpoints extends _i1.EndpointDispatch {
             ),
             'facts': _i1.ParameterDescription(
               name: 'facts',
-              type: _i1.getType<List<_i14.BaselineFact>>(),
+              type: _i1.getType<List<_i15.BaselineFact>>(),
               nullable: false,
             ),
           },
@@ -1080,7 +1169,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .proposeBaseline(
                         session,
                         productId: params['productId'],
@@ -1112,7 +1201,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .requestBaselineApproval(
                         session,
                         productId: params['productId'],
@@ -1145,7 +1234,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .requestLifecycleDecision(
                         session,
                         productId: params['productId'],
@@ -1208,7 +1297,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .resolveLifecycleDecision(
                         session,
                         decisionId: params['decisionId'],
@@ -1242,7 +1331,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .requestPolicyAuthorisation(
                         session,
                         productId: params['productId'],
@@ -1299,7 +1388,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .resolvePolicyAuthorisation(
                         session,
                         decisionId: params['decisionId'],
@@ -1337,7 +1426,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .revokeStandingPolicy(
                         session,
                         productId: params['productId'],
@@ -1395,7 +1484,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .resolveBaselineApproval(
                         session,
                         decisionId: params['decisionId'],
@@ -1428,7 +1517,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .baselineApproval(
                         session,
                         productId: params['productId'],
@@ -1460,7 +1549,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .answerClarification(
                         session,
                         clarificationId: params['clarificationId'],
@@ -1488,8 +1577,8 @@ class Endpoints extends _i1.EndpointDispatch {
             ),
             'manifestJson': _i1.ParameterDescription(
               name: 'manifestJson',
-              type: _i1.getType<String>(),
-              nullable: false,
+              type: _i1.getType<String?>(),
+              nullable: true,
             ),
             'manifestVersion': _i1.ParameterDescription(
               name: 'manifestVersion',
@@ -1503,7 +1592,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .createProduct(
                         session,
                         productId: params['productId'],
@@ -1548,7 +1637,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .addRepositoryReference(
                         session,
                         productId: params['productId'],
@@ -1588,7 +1677,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .verifyBaseline(
                         session,
                         productId: params['productId'],
@@ -1642,7 +1731,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['productRegistryEndpoints']
-                          as _i8.ProductRegistryEndpoints)
+                          as _i9.ProductRegistryEndpoints)
                       .addHumanBaselineClaim(
                         session,
                         productId: params['productId'],
@@ -1669,7 +1758,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['providerHealthEndpoints']
-                          as _i9.ProviderHealthEndpoints)
+                          as _i10.ProviderHealthEndpoints)
                       .getProviderHealth(session),
         ),
         'listModelPolicies': _i1.MethodConnector(
@@ -1681,7 +1770,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['providerHealthEndpoints']
-                          as _i9.ProviderHealthEndpoints)
+                          as _i10.ProviderHealthEndpoints)
                       .listModelPolicies(session),
         ),
         'updateModelPolicy': _i1.MethodConnector(
@@ -1714,7 +1803,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['providerHealthEndpoints']
-                          as _i9.ProviderHealthEndpoints)
+                          as _i10.ProviderHealthEndpoints)
                       .updateModelPolicy(
                         session,
                         role: params['role'],
@@ -1768,7 +1857,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['providerHealthEndpoints']
-                          as _i9.ProviderHealthEndpoints)
+                          as _i10.ProviderHealthEndpoints)
                       .listModelExecutions(
                         session,
                         workItemId: params['workItemId'],
@@ -1805,7 +1894,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 Map<String, dynamic> params,
               ) async =>
                   (endpoints['providerHealthEndpoints']
-                          as _i9.ProviderHealthEndpoints)
+                          as _i10.ProviderHealthEndpoints)
                       .getModelStats(
                         session,
                         from: params['from'],
@@ -1833,7 +1922,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['schedulerEndpoints'] as _i10.SchedulerEndpoints)
+                  (endpoints['schedulerEndpoints'] as _i11.SchedulerEndpoints)
                       .listJobs(
                         session,
                         workItemId: params['workItemId'],
@@ -1853,7 +1942,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['schedulerEndpoints'] as _i10.SchedulerEndpoints)
+                  (endpoints['schedulerEndpoints'] as _i11.SchedulerEndpoints)
                       .inspect(
                         session,
                         jobId: params['jobId'],
@@ -1872,7 +1961,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['workerEndpoints'] as _i11.WorkerEndpoints)
+              ) async => (endpoints['workerEndpoints'] as _i12.WorkerEndpoints)
                   .listWorkers(session),
         ),
         'listExecutions': _i1.MethodConnector(
@@ -1888,7 +1977,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['workerEndpoints'] as _i11.WorkerEndpoints)
+              ) async => (endpoints['workerEndpoints'] as _i12.WorkerEndpoints)
                   .listExecutions(
                     session,
                     workItemId: params['workItemId'],
@@ -1907,7 +1996,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['workerEndpoints'] as _i11.WorkerEndpoints)
+              ) async => (endpoints['workerEndpoints'] as _i12.WorkerEndpoints)
                   .inspect(
                     session,
                     workerExecutionId: params['workerExecutionId'],
@@ -1933,7 +2022,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['workflowEndpoints'] as _i12.WorkflowEndpoints)
+                  (endpoints['workflowEndpoints'] as _i13.WorkflowEndpoints)
                       .jobsForWorkItem(
                         session,
                         workItemId: params['workItemId'],
@@ -1953,7 +2042,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['workflowEndpoints'] as _i12.WorkflowEndpoints)
+                  (endpoints['workflowEndpoints'] as _i13.WorkflowEndpoints)
                       .inspect(
                         session,
                         workItemId: params['workItemId'],
@@ -1973,7 +2062,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['workflowEndpoints'] as _i12.WorkflowEndpoints)
+                  (endpoints['workflowEndpoints'] as _i13.WorkflowEndpoints)
                       .listDecisions(
                         session,
                         workItemId: params['workItemId'],
@@ -2028,7 +2117,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['workflowEndpoints'] as _i12.WorkflowEndpoints)
+                  (endpoints['workflowEndpoints'] as _i13.WorkflowEndpoints)
                       .resolveDecision(
                         session,
                         decisionId: params['decisionId'],

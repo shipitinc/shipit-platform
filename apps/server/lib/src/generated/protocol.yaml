@@ -1,3 +1,6 @@
+credentialEndpoints:
+  - generate:
+  - verifyAccess:
 defectEndpoints:
   - create:
   - list:
