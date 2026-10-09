@@ -1346,3 +1346,57 @@ only the **public** half ever reaches the UI; the private half never does. Today
    `github.com/shipitinc/shipit-platform`.
 4. Supply `SHIPIT_HOST_KEY_FINGERPRINT` (GitHub publishes these) and `SHIPIT_OPERATOR_NAME`.
 5. Tap Generate deploy key → Copy public key → install → Check access → **Register product** enables.
+
+## Dead control found by the operator: "Offboard this product" does nothing
+
+The operator tapped **Offboard this product** on Product Detail and nothing happened. Confirmed by driving
+the live stack: the tap issues **zero API calls** and the page does not change.
+
+### Root cause — the UI offers six governance actions; the client implements two
+
+`product_detail_bloc.dart:58-95`, `_onGovernanceActionRequested`:
+
+```dart
+final decision = switch (event.action) {
+  GovernanceAction.proposeBaseline => _decisionFor(…, await _gate(proposeBaseline, …)),
+  GovernanceAction.reviewBaseline => _decisionFor(…, await _gate(reviewBaseline, …)),
+  _ => null,          // ← pause, resume, offboard, revokePolicy land here
+};
+emit(state.copyWith(isRaisingGate: false, pendingDecision: decision, …));
+```
+
+`pause`, `resume`, `offboard` and `revokePolicy` all take the `_ => null` arm, so `pendingDecision` is
+`null`, the dialog's render condition is never met, and **no error is surfaced either**. A control that
+cannot work is presented as though it can.
+
+**The server is not the problem.** `productRegistryEndpoints.requestLifecycleDecision` already supports
+`action` ∈ `pause | resume | offboard | reinstate`, and `resolveLifecycleDecision` performs the transition.
+The capability exists and is unreachable from the UI.
+
+Recorded as its own defect with its own lane. Not fixed here.
+
+### Operator state cleaned — and why deletion, not offboarding
+
+The operator asked for the keyless ShipIt Platform to be removed from `/products`.
+
+**There was only one product, not two** — the row was created by *my own* browser-automation clicks on
+**Generate a deploy key**, because the handler runs `_ensureProductAndRepository()` (createProduct +
+addRepositoryReference) **before** minting. That is decision `898b07d0` working as designed. The
+`_productId` derivation lowercases and dashes non-alphanumerics, and `createProduct` is an
+`ON CONFLICT ("productId") DO UPDATE` upsert, so **re-running the same product name updates the same row**
+rather than creating a second.
+
+Deleted `product` and `repository_reference` for `shipit-platform` so the operator's onboarding run starts
+from a genuinely clean list. **This is a raw delete, chosen deliberately and against the product's own
+durable semantics** — `ProductStatus.archived` is documented as *"Offboarded. Readable forever, never
+deleted."* Two reasons for the delete anyway:
+
+1. **Offboarding would not have achieved the ask.** `archived` maps to *"Kept for good"*, and the default
+   `ProductFilter.all` predicate is `status != ProductStatus.archived`, so an offboarded product **disappears
+   from `/products` only while the "All" filter is active** — it is not removed, and it reappears under a
+   filter that does not exclude it.
+2. **The row was my residue, not operator data.** No human ever registered this product; it exists only
+   because I clicked the button while probing the flow.
+
+The three `product_credential` rows are **retained and revoked** rather than deleted, so the A1 invariant's
+audit trail survives.
