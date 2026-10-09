@@ -1,0 +1,118 @@
+# human-decision.yaml
+decision_id: f9a043ae-a2bc-41f4-bc7a-46ca88103123
+type: DESIGN
+status: RESOLVED
+question: >-
+  Offboarding a GOVERNED product is irreversible without a fresh baseline review, while a
+  REGISTERED product (no baseline, no key) offboards trivially. Should the governed case
+  require a typed confirmation?
+context:
+  summary: >-
+    Raised by the design assessment of the dead governance panel
+    (docs/engineering/dispatch/tasks/research-dead-governance-actions/report.md), escalated rather
+    than settled because it is a product-UX judgement, not an implementation detail.
+
+    The assessment found the panel is non-functional rather than merely having one dead button:
+    the UI offers six governance actions, the client implements two, and the decision dialog that
+    would display a raised gate is mounted only when a bloc is injected — i.e. only in test
+    builds. Production builds a bare BlocProvider. So proposeBaseline and reviewBaseline are ALSO
+    broken: they raise a real gate server-side that nothing ever displays. The resolve half does
+    not exist in the client either (resolveLifecycleDecision has zero callers), and the needs-you
+    route cannot render a lifecycle decision because readWorkItem throws for the synthetic scope
+    product-lifecycle:<id>.
+
+    Against that background, the open question is narrow: how much friction belongs on the one
+    action that cannot be undone.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: research-dead-governance-actions
+    item_ref: >-
+      Governance panel remediation — in-place lifecycle gate, error surface, accessibility.
+  evidence:
+    documents:
+      - type: OTHER
+        id: assessment
+        url: docs/engineering/dispatch/tasks/research-dead-governance-actions/report.md
+    qualitative_tradeoffs:
+      - dimension: Irreversibility
+        option_a: Typed confirmation when governed
+        option_b: No typed confirmation
+        option_c: Drain in-flight work
+        assessment: >-
+          Offboarding a governed product discards an accepted baseline and cannot be undone
+          without a fresh baseline review, so it earns more friction than the reversible actions
+          beside it. A registered product has nothing to lose, so gating it identically would tax
+          the common, safe case to protect the rare, costly one.
+      - dimension: Safety of the common case
+        option_a: Typed confirmation when governed
+        option_b: No typed confirmation
+        assessment: >-
+          The operator's current case — registered, no baseline, no key — must stay one tap, or the
+          remediation makes an already-frictionless path worse to fix an unrelated defect.
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Match the friction to the consequence. Typed confirmation for governed products only, which
+      also matches the design's own established pattern of requiring a typed value when a decision
+      is irreversible. Registered products keep the single-tap path.
+    confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Typed confirmation only when governed
+    description: >-
+      Offboarding a governed product requires typing the product id; a registered product offboards
+      in one tap.
+    implications: >-
+      The irreversible action is fenced; the common safe path is unchanged. Requires a typed-input
+      confirmation surface that does not exist today.
+    risk_level: LOW
+  - option_id: OPTION_B
+    label: No typed confirmation
+    description: >-
+      Every offboard takes one tap and the standard decision card.
+    implications: >-
+      Simplest and most consistent, but the cheapest irreversible action gets the weakest gate.
+    risk_level: MEDIUM
+  - option_id: OPTION_C
+    label: Drain in-flight work
+    description: >-
+      Offboard drains in-flight work before completing instead of refusing when work is running.
+    implications: >-
+      Safer for live work, more surface to build, and it does not address the irreversibility of
+      discarding an accepted baseline.
+    risk_level: MEDIUM
+resolution:
+  selected_option: OPTION_A
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-09T16:40:00Z
+  rationale: >-
+    Typed confirmation ONLY when the product is governed. Offboarding a governed product discards
+    an accepted baseline and cannot be reversed without a fresh baseline review, so it earns a real
+    gate. A registered product has nothing to lose and must stay a one-tap action — the operator's
+    own case is registered with no baseline and no key, and taxing that path to fix an unrelated
+    defect would make the common case worse.
+
+    This also matches the design system's own established pattern of requiring a typed value where
+    a decision is irreversible, so it introduces no new convention.
+  follow_up_actions:
+    - action: >-
+        Implementation lane: build the in-place lifecycle gate on Product Detail, wire the three
+        lifecycle actions to the existing _gate arms, honour the drain choice, and surface an
+        action-scoped error inside the Governance panel instead of the whole-page takeover.
+      owner: orchestrator-main
+    - action: >-
+        Add the typed-confirmation requirement for the governed offboard case only; a registered
+        product keeps the single-tap path.
+      owner: orchestrator-main
+    - action: >-
+        Fix the inert catch (clearError: true discards every governance error), wire isRaisingGate,
+        and give the action links a real button role and disabled state.
+      owner: orchestrator-main
+    - action: >-
+        Decide separately whether revokePolicy should be implemented now — it throws
+        UnimplementedError today despite complete server support, and it is an attributed write
+        rather than a decision gate, so it does not belong in the decision switch.
+      owner: orchestrator-main
+created_by: orchestrator-main
+created_at: 2026-10-09T16:30:00Z
+updated_at: 2026-10-09T16:40:00Z

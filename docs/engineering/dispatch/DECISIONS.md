@@ -364,3 +364,7 @@ stop condition on the basis of its own judgement that my premise was wrong. Here
 sound and it reported the deviation plainly rather than quietly proceeding. Had it been wrong, it would
 have published unreviewed content. Recorded so the pattern is visible: the correct response to a false
 premise in a dispatch is to **report it and stop**, which it did do as well.
+
+## Decision f9a043ae-a2bc-41f4-bc7a-46ca88103123 — typed confirmation only when governed (2026-10-09)
+
+Offboarding a **governed** product requires typing the product id; a **registered** product offboards in one tap. Offboarding a governed product discards an accepted baseline and cannot be reversed without a fresh baseline review, so it earns a real gate — while the operator's own case (registered, no baseline, no key) has nothing to lose and stays frictionless. Also matches the design system's existing pattern for irreversible decisions.

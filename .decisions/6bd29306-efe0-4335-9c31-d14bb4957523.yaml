@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 6bd29306-efe0-4335-9c31-d14bb4957523
 type: SECURITY
-status: PENDING
+status: RESOLVED
 question: >-
   The reviewed golden-CI work is merged locally but cannot be pushed: the OAuth credential
   lacks workflow scope, so GitHub refuses any update to .github/workflows/ci.yaml. Which push
@@ -126,6 +126,39 @@ options:
       lane continues to build on a main the remote has not seen.
     estimated_effort: "none now"
     risk_level: LOW
+resolution:
+  selected_option: OPTION_B
+  decided_by: "repository owner (interactive structured question UI, session orchestrator-main)"
+  decided_at: 2026-10-08T06:48:00Z
+  rationale: >-
+    Publish over the per-repository SSH deploy key that ADR 0018 and AGENTS.md §13b already
+    designate for git credentials. The human chose this over granting the OAuth credential
+    `workflow` scope.
+
+    The reasoning is the one §13b is built around. Git hosting does not offer workspace-membership
+    indirection, so the provider-native way to scope write access to a single repository IS a
+    per-repository key — which is exactly why §13b exists as a scoped deviation. Resolving a
+    one-repository problem by widening a shared credential to rewrite CI fleet-wide would
+    reintroduce the standing-grant problem §13b was written to avoid, and would do so to satisfy a
+    restriction that a repository-scoped key does not face at all: a deploy key is not an OAuth App.
+
+    Recorded consequence: the divergence is now 6 commits, not 4, because this decision's own commit
+    is equally unpushable — `main` carries `ci.yaml` in its history, so nothing publishes until a
+    working push path exists. The local merge is intact and one authorized push away.
+  follow_up_actions:
+    - action: >-
+        Configure the push path as an SSH remote pointing at the per-repository deploy key for
+        this repository, referenced by NAME only per AGENTS.md §13a. The private half must never be
+        displayed, logged, written to a repository, a record, or a message.
+      owner: engineering-manager
+    - action: >-
+        Push 34f60a2 and the decision commits over SSH, then verify main...origin/main is 0 0.
+      owner: engineering-manager
+    - action: >-
+        Record the deploy key's NAME as the git push credential of record so future pushes do not
+        rediscover this by hitting the same rejection, and so the standing write grant across
+        products is not reintroduced via OAuth scope.
+      owner: engineering-manager
 created_by: orchestrator-main
 created_at: 2026-10-08T06:40:00Z
-updated_at: 2026-10-08T06:40:00Z
+updated_at: 2026-10-08T06:48:00Z
