@@ -1,7 +1,3 @@
-import 'dart:convert';
-import 'dart:math';
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -10,6 +6,7 @@ import '../../core/design_tokens.dart';
 import '../../core/theme.dart';
 import '../../data/client_provider.dart';
 import '../../data/control_plane_repository.dart';
+import '../../data/operator_attestation.dart';
 import '../../shared/design_primitives.dart';
 import '../../shared/form_primitives.dart';
 import '../../shared/mobile_chrome.dart';
@@ -71,7 +68,12 @@ class RegisterProductRequested extends AddProductEvent {
 }
 
 class AddProductBloc extends Bloc<AddProductEvent, AddProductState> {
-  AddProductBloc({required this._repository}) : super(const AddProductState()) {
+  AddProductBloc({required this._repository, OperatorAttestation? attestation})
+    : super(
+        AddProductState(
+          attestation: attestation ?? OperatorAttestation.fromRuntime(),
+        ),
+      ) {
     on<ProductNameChanged>(_onProductNameChanged);
     on<RepositoryChanged>(_onRepositoryChanged);
     on<RevisionChanged>(_onRevisionChanged);
@@ -102,82 +104,199 @@ class AddProductBloc extends Bloc<AddProductEvent, AddProductState> {
     emit(state.copyWith(revision: event.value));
   }
 
+  /// Mints the deploy key on the server, then — when the operator has supplied
+  /// a host-key confirmation — proves it can reach the repository.
+  ///
+  /// WHY MINTING AND VERIFYING LIVE TOGETHER, in one press of one control. The
+  /// approved sequence needs the public key on screen *before* Register is
+  /// pressable, and Register needs `accessStatus == verified`. A verification
+  /// can therefore only happen after a mint, so splitting them across two
+  /// controls would either hide the key or add a step the design does not have.
+  /// Re-pressing is safe and is the "Check again" path: [AddProductState.deployKey]
+  /// being set skips the mint — the engine's `recordGeneratedCredential` is
+  /// insert-only and refuses a second active credential — and goes straight to
+  /// the verification.
   Future<void> _onCheckAccessRequested(
     CheckAccessRequested event,
     Emitter<AddProductState> emit,
   ) async {
-    if (state.productName.isEmpty || state.repository.isEmpty) return;
+    if (!state.canGenerateKey) return;
 
-    emit(state.copyWith(isCheckingAccess: true, clearError: true));
+    emit(
+      state.copyWith(
+        isCheckingAccess: true,
+        accessStatus: AccessStatus.checking,
+        clearError: true,
+        clearAccessFailure: true,
+      ),
+    );
     try {
-      final keyPair = _generateMockKeyPair(state.productName);
+      final productId = _productId(state.productName);
+
+      // The credential can only be minted against a repository this product
+      // owns: `CredentialKeyService.generate` resolves the repository reference
+      // first and refuses anything else. So the durable product and its
+      // repository reference have to exist before the mint, which means before
+      // the human can ever see the public key. Both calls are upserts
+      // (`ON CONFLICT DO UPDATE`), so re-running is a no-op rather than a
+      // duplicate.
+      await _ensureProductAndRepository(productId);
+
+      var deployKey = state.deployKey;
+      if (deployKey == null) {
+        final minted = await _repository.generateDeployKey(
+          productId: productId,
+          repositoryId: productId,
+        );
+        deployKey = DeployKeyPair(
+          credentialId: minted.credentialId,
+          publicKey: minted.publicKey,
+          fingerprint: minted.fingerprint,
+          algorithm: minted.algorithm,
+        );
+        emit(
+          state.copyWith(
+            deployKey: deployKey,
+            accessStatus: AccessStatus.notChecked,
+          ),
+        );
+      }
+
+      final attestation = state.attestation;
+      if (!attestation.isComplete) {
+        // The key is minted and installable, but nothing has been proved. This
+        // is not an error: the operator still has to install the deploy key, and
+        // a deployment that has not configured a host-key confirmation cannot
+        // honestly run the check. Inventing a fingerprint to get past it would
+        // be the silent default ADR 0018 refuses.
+        emit(state.copyWith(isCheckingAccess: false));
+        return;
+      }
+
+      final verification = await _repository.verifyDeployKeyAccess(
+        productId: productId,
+        repositoryId: productId,
+        hostKeyFingerprint: attestation.hostKeyFingerprint!,
+        confirmedBy: attestation.confirmedBy!,
+        checkedBy: attestation.confirmedBy,
+      );
+
+      // THE WRITE THAT WAS MISSING. `AccessStatus.verified` was read in nine
+      // places and written in none, so `canRegister` — which requires it — was
+      // permanently false and the Register button was permanently disabled.
       emit(
         state.copyWith(
           isCheckingAccess: false,
-          deployKey: keyPair,
-          accessStatus: AccessStatus.notChecked,
+          accessStatus: verification.isVerified
+              ? AccessStatus.verified
+              : AccessStatus.failed,
+          accessFailureReason: verification.isVerified
+              ? null
+              : verification.failureReason,
         ),
       );
     } catch (e) {
-      emit(state.copyWith(isCheckingAccess: false, errorMessage: e.toString()));
+      // A failure with no key yet is a failure the operator cannot see from the
+      // key box (there is no key box), so it takes the page-level error surface
+      // this form already uses. A failure with a key is shown in the key box,
+      // beside the key it is about.
+      final hasKey = state.deployKey != null;
+      emit(
+        state.copyWith(
+          isCheckingAccess: false,
+          accessStatus: AccessStatus.failed,
+          errorMessage: hasKey ? null : _describe(e),
+          accessFailureReason: hasKey ? _describe(e) : null,
+        ),
+      );
     }
-  }
-
-  DeployKeyPair _generateMockKeyPair(String productName) {
-    final random = Random.secure();
-    final keyBytes = Uint8List.fromList(
-      List.generate(32, (_) => random.nextInt(256)),
-    );
-    final base64Key = base64Encode(keyBytes);
-    final fingerprint = _computeFingerprint(keyBytes);
-
-    return DeployKeyPair(
-      publicKey: 'ssh-ed25519 $base64Key shipit+$productName',
-      fingerprint: fingerprint,
-    );
-  }
-
-  String _computeFingerprint(Uint8List publicKeyBytes) {
-    final hash = publicKeyBytes.take(16).toList();
-    return 'SHA256:${base64Encode(Uint8List.fromList(hash))}';
   }
 
   Future<void> _onRegisterProductRequested(
     RegisterProductRequested event,
     Emitter<AddProductState> emit,
   ) async {
-    if (state.productName.isEmpty ||
-        state.repository.isEmpty ||
-        state.deployKey == null) {
-      return;
-    }
+    // `canRegister` is the whole gate: it already requires a deploy key, a
+    // verified access check and no in-flight registration. Repeating those tests
+    // here would give two answers to one question.
+    if (!state.canRegister) return;
 
     emit(state.copyWith(isRegistering: true, clearError: true));
     try {
-      final productId = state.productName.toLowerCase().replaceAll(
-        RegExp(r'[^a-z0-9]'),
-        '-',
-      );
-      final product = await _repository.createProduct(
-        productId: productId,
-        name: state.productName,
-        description: '',
-        manifestJson: '{}',
-      );
+      final productId = _productId(state.productName);
 
-      // Add repository reference
-      await _repository.addRepositoryReference(
-        productId: productId,
-        repositoryId: productId, // Use productId as repositoryId for simplicity
-        uri: state.repository,
-        kind: 'monorepo',
-        provider: 'github', // Could be parsed from URI in the future
-      );
+      await _ensureProductAndRepository(productId);
 
-      emit(state.copyWith(isRegistering: false, productCreated: product));
+      // CONFIRM THE CREDENTIAL IS ACTUALLY THERE rather than assuming it.
+      // Register used to stop at `addRepositoryReference` and discard the key,
+      // which left a product that could never reach its repository. Reading the
+      // detail back and matching on `credentialId` is what turns "a key was
+      // shown at some point" into "this product has this credential attached".
+      final detail = await _repository.getProductDetail(productId);
+      final expected = state.deployKey!.credentialId;
+      final attached = detail.credentials
+          .where((c) => c.credentialId == expected)
+          .toList(growable: false);
+      if (attached.isEmpty) {
+        throw StateError(
+          'the credential proved for this product is not attached to it; '
+          'nothing was registered. Run the access check again.',
+        );
+      }
+      if (attached.single.status != 'verified') {
+        throw StateError(
+          'the attached credential is "${attached.single.status}", not '
+          '"verified"; nothing was registered.',
+        );
+      }
+
+      emit(
+        state.copyWith(
+          isRegistering: false,
+          // The detail read back, not the one from the upsert: this one shows
+          // the credential that was just confirmed attached, so navigating to
+          // the product detail screen lands on a screen that agrees with what
+          // the flow just proved.
+          productCreated: detail,
+        ),
+      );
     } catch (e) {
-      emit(state.copyWith(isRegistering: false, errorMessage: e.toString()));
+      emit(state.copyWith(isRegistering: false, errorMessage: _describe(e)));
     }
+  }
+
+  /// Creates the product and its repository reference if they are not there.
+  ///
+  /// Both writes are upserts server-side (`ON CONFLICT DO UPDATE`), so calling
+  /// this on every check and every register is idempotent. It is the one thing
+  /// that has to happen before a deploy key can exist, and it lives here rather
+  /// than in a separate step because the approved sequence has no step for it.
+  Future<void> _ensureProductAndRepository(String productId) async {
+    await _repository.createProduct(
+      productId: productId,
+      name: state.productName,
+      description: '',
+      manifestJson: '{}',
+    );
+    await _repository.addRepositoryReference(
+      productId: productId,
+      repositoryId: productId, // Use productId as repositoryId for simplicity
+      uri: state.repository,
+      kind: 'monorepo',
+      provider: 'github', // Could be parsed from URI in the future
+    );
+  }
+
+  static String _productId(String productName) =>
+      productName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '-');
+
+  /// Serverpod surfaces a transport or endpoint failure as an exception. Render
+  /// it as text rather than as a type name — an operator cannot act on
+  /// "Exception: bad state: ...".
+  static String _describe(Object error) {
+    final text = error.toString().trim();
+    if (text.isEmpty) return 'The server refused the request.';
+    return text;
   }
 }
 
@@ -192,17 +311,32 @@ class AddProductState {
     this.isRegistering = false,
     this.errorMessage,
     this.productCreated,
+    this.accessFailureReason,
+    this.attestation = const OperatorAttestation(),
   });
 
   final String productName;
   final String repository;
   final String revision;
+
+  /// The server-minted deploy key, or null before one has been minted.
+  ///
+  /// Never a locally generated one: there is no client-side key generation in
+  /// this app, and a key the client made would be a key no secret manager holds.
   final DeployKeyPair? deployKey;
   final AccessStatus accessStatus;
   final bool isCheckingAccess;
   final bool isRegistering;
   final String? errorMessage;
   final ProductDetailResponse? productCreated;
+
+  /// Why the last access check did not verify. Shown in the deploy-key box,
+  /// beside the key it is about, rather than on the page-level error surface that
+  /// replaces the form.
+  final String? accessFailureReason;
+
+  /// The operator's host-key confirmation, from deployment configuration.
+  final OperatorAttestation attestation;
 
   AddProductState copyWith({
     String? productName,
@@ -214,7 +348,10 @@ class AddProductState {
     bool? isRegistering,
     String? errorMessage,
     ProductDetailResponse? productCreated,
+    String? accessFailureReason,
+    OperatorAttestation? attestation,
     bool clearError = false,
+    bool clearAccessFailure = false,
   }) => AddProductState(
     productName: productName ?? this.productName,
     repository: repository ?? this.repository,
@@ -225,24 +362,62 @@ class AddProductState {
     isRegistering: isRegistering ?? this.isRegistering,
     errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
     productCreated: productCreated ?? this.productCreated,
+    accessFailureReason: clearAccessFailure
+        ? null
+        : (accessFailureReason ?? this.accessFailureReason),
+    attestation: attestation ?? this.attestation,
   );
 
   bool get canGenerateKey =>
       productName.isNotEmpty && repository.isNotEmpty && !isCheckingAccess;
 
+  /// Whether the verification step can actually run.
+  ///
+  /// Minting does not need a host-key confirmation, so [canGenerateKey] does not
+  /// require one: an operator whose deployment has not configured a fingerprint
+  /// can still get an installable public key. They just cannot prove access yet.
+  bool get canCheckAccess => canGenerateKey && attestation.isComplete;
+
+  /// The Register gate.
+  ///
+  /// Unchanged, and deliberately not weakened: a product may not be registered
+  /// without a deploy key whose access the server proved with a real clone. This
+  /// is now reachable because `AccessStatus.verified` is written when
+  /// `verifyAccess` succeeds — not because the gate was relaxed.
   bool get canRegister =>
       deployKey != null &&
       accessStatus == AccessStatus.verified &&
       !isRegistering;
 }
 
+/// The five states of "does this product's key actually reach its repository".
+///
+/// Every case is written by [_CheckAccessRequested]'s handler; `verified` is the
+/// one that was previously unreachable, which is why the Register button could
+/// never be pressed.
 enum AccessStatus { notGenerated, notChecked, checking, verified, failed }
 
+/// The public half of a deploy key the server minted, and its durable identity.
+///
+/// There is no private half here, and no field that could hold one. The key is
+/// generated by the server, handed straight to the secret manager, and only
+/// [publicKey] and [fingerprint] — both derivable from public material — come
+/// back.
 class DeployKeyPair {
-  const DeployKeyPair({required this.publicKey, required this.fingerprint});
+  const DeployKeyPair({
+    required this.credentialId,
+    required this.publicKey,
+    required this.fingerprint,
+    required this.algorithm,
+  });
+
+  /// Durable identity of the credential row the server wrote. Register matches
+  /// on this so the product it creates is provably attached to this key.
+  final String credentialId;
 
   final String publicKey;
   final String fingerprint;
+  final String algorithm;
 }
 
 class _AddProductView extends StatelessWidget {
@@ -318,6 +493,8 @@ class _DesktopAddProduct extends StatelessWidget {
                 'revision=${state.revision}',
                 if (state.deployKey != null)
                   'deployKeyFingerprint=${state.deployKey!.fingerprint}',
+                if (state.deployKey!.credentialId.isNotEmpty)
+                  'credentialId=${state.deployKey!.credentialId}',
                 'accessStatus=${state.accessStatus.name}',
               ],
             ),
@@ -571,6 +748,17 @@ class _LeftColumn extends StatelessWidget {
                   color: palette.inkTertiary,
                 ),
               ),
+              if (state.accessFailureReason != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  state.accessFailureReason!,
+                  style: ShipItType.monoMeta.copyWith(color: palette.negative),
+                ),
+              ],
+              const SizedBox(height: 14),
+              const ContentRule(),
+              const SizedBox(height: 12),
+              _HostKeyAttestation(state: state),
             ],
           ),
         ],
@@ -711,6 +899,73 @@ String _registerButtonSubtext(AddProductState state) {
     return 'Access must be verified before a product can be registered';
   }
   return 'Access verified \u2014 this product can be registered';
+}
+
+/// The host-key confirmation the access check will send, and what it is.
+///
+/// SURFACED, NOT COLLECTED, AND SAYS SO. `verifyAccess` requires a
+/// `hostKeyFingerprint` and a `confirmedBy` that the server cannot produce for
+/// itself — ADR 0018 §Decision's trust-on-first-use — and both are operator
+/// assertions the server does not authenticate (finding M-5, open). They come
+/// from deployment configuration ([OperatorAttestation]), never from this screen
+/// and never from a constant in this file: a fingerprint written into the client
+/// would be a value the operator never checked, presented as if they had.
+///
+/// The panel states the limitation in the product's own voice rather than
+/// burying it, because the alternative — a green "Verified" that an operator
+/// reads as the platform having checked GitHub's identity — is the
+/// misunderstanding M-5 describes.
+class _HostKeyAttestation extends StatelessWidget {
+  const _HostKeyAttestation({required this.state});
+
+  final AddProductState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final attestation = state.attestation;
+    final complete = attestation.isComplete;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        MicroLabel(
+          'HOST KEY  \u00b7  YOU CONFIRM THIS',
+          color: palette.inkTertiary,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Compare this against the fingerprints your git host publishes, then '
+          'install the key. ShipIt checks that the host presents the same key '
+          'and refuses to clone when it does not \u2014 but it asks you for it, '
+          'it does not look it up.',
+          style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'fingerprint  ${attestation.hostKeyFingerprint ?? 'not configured'}',
+          style: ShipItType.monoMeta.copyWith(
+            color: complete ? palette.inkSecondary : palette.attention,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          'confirmed by  ${attestation.confirmedBy ?? 'not configured'}',
+          style: ShipItType.monoMeta.copyWith(
+            color: complete ? palette.inkSecondary : palette.attention,
+          ),
+        ),
+        if (!complete) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Access cannot be proven until this deployment supplies both. Set '
+            'SHIPIT_HOST_KEY_FINGERPRINT and SHIPIT_OPERATOR_NAME for the app.',
+            style: ShipItType.bodySmall.copyWith(color: palette.attention),
+          ),
+        ],
+      ],
+    );
+  }
 }
 
 /// Simple step text row matching Penbot design: "1   Text"
@@ -910,6 +1165,8 @@ class _MobileAddProduct extends StatelessWidget {
                       'revision=${state.revision}',
                       if (state.deployKey != null)
                         'deployKeyFingerprint=${state.deployKey!.fingerprint}',
+                      if (state.deployKey!.credentialId.isNotEmpty)
+                        'credentialId=${state.deployKey!.credentialId}',
                       'accessStatus=${state.accessStatus.name}',
                     ],
                   ),
@@ -1066,6 +1323,17 @@ class _MobileAddProduct extends StatelessWidget {
                   color: palette.inkTertiary,
                 ),
               ),
+              if (state.accessFailureReason != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  state.accessFailureReason!,
+                  style: ShipItType.monoMeta.copyWith(color: palette.negative),
+                ),
+              ],
+              const SizedBox(height: 14),
+              const ContentRule(),
+              const SizedBox(height: 12),
+              _HostKeyAttestation(state: state),
             ],
           ),
         ],
