@@ -251,9 +251,9 @@ void main() {
             reporter: 'test@example.com',
           );
 
-          expect(result['defectId'], isNotEmpty);
-          expect(result['title'], 'Test Defect');
-          expect(result['status'], DefectStatus.reported.wire);
+          expect(result.defectId, isNotEmpty);
+          expect(result.title, 'Test Defect');
+          expect(result.status, DefectStatus.reported.wire);
         });
 
         test('returns defect with correct wire values', () async {
@@ -267,8 +267,12 @@ void main() {
             reporter: 'wire@example.com',
           );
 
-          expect(result['status'], DefectStatus.reported.wire);
-          expect(result['createdAt'], isA<String>());
+          expect(result.status, DefectStatus.reported.wire);
+          // A REAL `DateTime`, not the ISO-8601 string the endpoint used to
+          // pre-format by hand. That is the whole reason the return type is a
+          // model: the client parses this field with Serverpod's deserializer
+          // instead of calling `DateTime.parse` on a string nobody typed.
+          expect(result.createdAt, isA<DateTime>());
         });
 
         test('rejects a product that is not registered', () async {
@@ -332,11 +336,11 @@ void main() {
             offset: 0,
           );
 
-          expect(created['defects'], hasLength(2));
-          expect(created['totalCount'], 2);
+          expect(created.defects, hasLength(2));
+          expect(created.totalCount, 2);
           expect(
-            (created['defects'] as List).map((d) => d['defectId']).toSet(),
-            {first['defectId'], second['defectId']},
+            created.defects.map((d) => d.defectId).toSet(),
+            {first.defectId, second.defectId},
           );
 
           // The status filter is real rather than a pass-through: a status no
@@ -348,8 +352,8 @@ void main() {
             limit: 10,
             offset: 0,
           );
-          expect(resolved['defects'], isEmpty);
-          expect(resolved['totalCount'], 0);
+          expect(resolved.defects, isEmpty);
+          expect(resolved.totalCount, 0);
         });
 
         test('resolves the product name server-side', () async {
@@ -374,16 +378,16 @@ void main() {
             limit: 50,
             offset: 0,
           );
-          final row = (listed['defects'] as List).firstWhere(
-            (d) => d['defectId'] == created['defectId'],
+          final row = listed.defects.firstWhere(
+            (d) => d.defectId == created.defectId,
           );
-          expect(row['productName'], expectedName);
+          expect(row.productName, expectedName);
 
           final inspected = await endpoints.defectEndpoints.inspect(
             sessionBuilder,
-            defectId: created['defectId'] as String,
+            defectId: created.defectId,
           );
-          expect(inspected['defect']['productName'], expectedName);
+          expect(inspected.defect.productName, expectedName);
         });
 
         test('paginates with limit and offset', () async {
@@ -409,14 +413,10 @@ void main() {
             limit: 2,
             offset: 2,
           );
-          expect(page1['defects'], hasLength(2));
-          expect(page2['defects'], hasLength(2));
-          final ids1 = (page1['defects'] as List)
-              .map((d) => d['defectId'])
-              .toSet();
-          final ids2 = (page2['defects'] as List)
-              .map((d) => d['defectId'])
-              .toSet();
+          expect(page1.defects, hasLength(2));
+          expect(page2.defects, hasLength(2));
+          final ids1 = page1.defects.map((d) => d.defectId).toSet();
+          final ids2 = page2.defects.map((d) => d.defectId).toSet();
           expect(ids1.intersection(ids2), isEmpty);
         });
       });
@@ -437,7 +437,7 @@ void main() {
 
             await endpoints.defectEndpoints.addEvidence(
               sessionBuilder,
-              defectId: createResult['defectId'] as String,
+              defectId: createResult.defectId,
               kind: EvidenceIntakeKind.screenshot.wire,
               description: 'Screenshot',
               artifactId: 'art-1',
@@ -447,7 +447,7 @@ void main() {
 
             await endpoints.defectEndpoints.requestClarification(
               sessionBuilder,
-              defectId: createResult['defectId'] as String,
+              defectId: createResult.defectId,
               question: 'What version?',
               reason: 'Need to know',
               triageJobId: 'triage-1',
@@ -455,31 +455,28 @@ void main() {
 
             final inspectResult = await endpoints.defectEndpoints.inspect(
               sessionBuilder,
-              defectId: createResult['defectId'] as String,
+              defectId: createResult.defectId,
             );
 
-            expect(
-              inspectResult['defect']['defectId'],
-              createResult['defectId'],
-            );
-            expect(inspectResult['defect']['title'], 'Inspect Test');
+            expect(inspectResult.defect.defectId, createResult.defectId);
+            expect(inspectResult.defect.title, 'Inspect Test');
             // 2 evidence: auto-created human report + added screenshot
-            expect(inspectResult['evidence'], hasLength(2));
-            final evidenceKinds = inspectResult['evidence']
-                .map((e) => e['kind'])
+            expect(inspectResult.evidence, hasLength(2));
+            final evidenceKinds = inspectResult.evidence
+                .map((e) => e.kind)
                 .toSet();
             expect(evidenceKinds, contains(EvidenceIntakeKind.screenshot.wire));
-            expect(inspectResult['clarifications'], hasLength(1));
+            expect(inspectResult.clarifications, hasLength(1));
             expect(
-              inspectResult['clarifications'][0]['question'],
+              inspectResult.clarifications.single.question,
               'What version?',
             );
             expect(
-              inspectResult['clarifications'][0]['status'],
+              inspectResult.clarifications.single.status,
               ClarificationStatus.needsAnswer.wire,
             );
             // 3 events: created, evidence_added, clarification_requested
-            expect(inspectResult['events'], hasLength(3));
+            expect(inspectResult.events, hasLength(3));
           },
         );
       });
@@ -498,7 +495,7 @@ void main() {
 
           final addResult = await endpoints.defectEndpoints.addEvidence(
             sessionBuilder,
-            defectId: createResult['defectId'] as String,
+            defectId: createResult.defectId,
             kind: EvidenceIntakeKind.screenshot.wire,
             description: 'UI screenshot',
             artifactId: 'art-42',
@@ -506,12 +503,12 @@ void main() {
             sourceRef: 'penpot:frame-123',
           );
 
-          expect(addResult['evidenceId'], isNotEmpty);
-          expect(addResult['defectId'], createResult['defectId']);
-          expect(addResult['kind'], EvidenceIntakeKind.screenshot.wire);
-          expect(addResult['artifactId'], 'art-42');
-          expect(addResult['contentHash'], 'sha256-deadbeef');
-          expect(addResult['sourceRef'], 'penpot:frame-123');
+          expect(addResult.evidenceId, isNotEmpty);
+          expect(addResult.defectId, createResult.defectId);
+          expect(addResult.kind, EvidenceIntakeKind.screenshot.wire);
+          expect(addResult.artifactId, 'art-42');
+          expect(addResult.contentHash, 'sha256-deadbeef');
+          expect(addResult.sourceRef, 'penpot:frame-123');
         });
       });
 
@@ -530,27 +527,27 @@ void main() {
           final requestResult = await endpoints.defectEndpoints
               .requestClarification(
                 sessionBuilder,
-                defectId: createResult['defectId'] as String,
+                defectId: createResult.defectId,
                 question: 'What is the expected behavior?',
                 reason: 'Cannot reproduce',
                 triageJobId: 'triage-42',
               );
 
-          expect(requestResult['clarificationId'], isNotEmpty);
-          expect(requestResult['status'], ClarificationStatus.needsAnswer.wire);
-          expect(requestResult['requestedByTriageJobId'], 'triage-42');
+          expect(requestResult.clarificationId, isNotEmpty);
+          expect(requestResult.status, ClarificationStatus.needsAnswer.wire);
+          expect(requestResult.requestedByTriageJobId, 'triage-42');
 
           final answerResult = await endpoints.defectEndpoints
               .answerClarification(
                 sessionBuilder,
-                clarificationId: requestResult['clarificationId'] as String,
+                clarificationId: requestResult.clarificationId,
                 answer: 'Expected X but got Y',
                 answeredBy: 'human@example.com',
               );
 
-          expect(answerResult['status'], ClarificationStatus.answered.wire);
-          expect(answerResult['answer'], 'Expected X but got Y');
-          expect(answerResult['answeredAt'], isNotNull);
+          expect(answerResult.status, ClarificationStatus.answered.wire);
+          expect(answerResult.answer, 'Expected X but got Y');
+          expect(answerResult.answeredAt, isNotNull);
         });
       });
 
@@ -568,7 +565,7 @@ void main() {
 
           final verifyResult = await endpoints.defectEndpoints.verifyFix(
             sessionBuilder,
-            defectId: createResult['defectId'] as String,
+            defectId: createResult.defectId,
             choice: HumanDecisionChoice.approve.wire,
             rationale: 'Fix works',
             decider: 'approver@example.com',
@@ -578,8 +575,8 @@ void main() {
             signedAt: DateTime.now(),
           );
 
-          expect(verifyResult['success'], isTrue);
-          expect(verifyResult['newStatus'], DefectStatus.resolved.wire);
+          expect(verifyResult.success, isTrue);
+          expect(verifyResult.newStatus, DefectStatus.resolved.wire);
         });
 
         test('rejects fix with reject choice', () async {
@@ -595,7 +592,7 @@ void main() {
 
           final verifyResult = await endpoints.defectEndpoints.verifyFix(
             sessionBuilder,
-            defectId: createResult['defectId'] as String,
+            defectId: createResult.defectId,
             choice: HumanDecisionChoice.reject.wire,
             rationale: 'Still broken',
             decider: 'approver@example.com',
@@ -605,8 +602,8 @@ void main() {
             signedAt: DateTime.now(),
           );
 
-          expect(verifyResult['success'], isTrue);
-          expect(verifyResult['newStatus'], DefectStatus.reported.wire);
+          expect(verifyResult.success, isTrue);
+          expect(verifyResult.newStatus, DefectStatus.reported.wire);
         });
       });
 
@@ -624,14 +621,14 @@ void main() {
 
           await endpoints.defectEndpoints.addEvidence(
             sessionBuilder,
-            defectId: createResult['defectId'] as String,
+            defectId: createResult.defectId,
             kind: EvidenceIntakeKind.textDescription.wire,
             description: 'Evidence 1',
           );
 
           await endpoints.defectEndpoints.requestClarification(
             sessionBuilder,
-            defectId: createResult['defectId'] as String,
+            defectId: createResult.defectId,
             question: 'Q?',
             reason: 'R',
             triageJobId: 'tj-1',
@@ -641,20 +638,19 @@ void main() {
             sessionBuilder,
             clarificationId:
                 (await endpoints.defectEndpoints.requestClarification(
-                      sessionBuilder,
-                      defectId: createResult['defectId'] as String,
-                      question: 'Q2?',
-                      reason: 'R2',
-                      triageJobId: 'tj-2',
-                    ))['clarificationId']
-                    as String,
+                  sessionBuilder,
+                  defectId: createResult.defectId,
+                  question: 'Q2?',
+                  reason: 'R2',
+                  triageJobId: 'tj-2',
+                )).clarificationId,
             answer: 'A2',
             answeredBy: 'human@example.com',
           );
 
           await endpoints.defectEndpoints.verifyFix(
             sessionBuilder,
-            defectId: createResult['defectId'] as String,
+            defectId: createResult.defectId,
             choice: HumanDecisionChoice.approve.wire,
             rationale: 'OK',
             decider: 'decider',
@@ -666,11 +662,11 @@ void main() {
 
           final inspectResult = await endpoints.defectEndpoints.inspect(
             sessionBuilder,
-            defectId: createResult['defectId'] as String,
+            defectId: createResult.defectId,
           );
 
-          final events = inspectResult['events'] as List;
-          final types = events.map((e) => e['type'] as String).toList();
+          final events = inspectResult.events as List;
+          final types = events.map((e) => e.type).toList();
           expect(
             types,
             containsAll([
@@ -709,7 +705,7 @@ void main() {
               affectedWorkItemId: scope.affectedWorkItemId,
               reporter: 'test@example.com',
             );
-            createdDefectId = createResult['defectId'] as String;
+            createdDefectId = createResult.defectId;
 
             await endpoints.defectEndpoints.addEvidence(
               sessionBuilder,
@@ -729,26 +725,26 @@ void main() {
               limit: 10,
               offset: 0,
             );
-            expect(listResult['defects'], hasLength(1));
-            expect(listResult['totalCount'], 1);
+            expect(listResult.defects, hasLength(1));
+            expect(listResult.totalCount, 1);
 
-            final defect = listResult['defects'][0];
-            expect(defect['defectId'], createdDefectId);
-            expect(defect['title'], 'Durability Test');
-            expect(defect['status'], DefectStatus.reported.wire);
+            final defect = listResult.defects[0];
+            expect(defect.defectId, createdDefectId);
+            expect(defect.title, 'Durability Test');
+            expect(defect.status, DefectStatus.reported.wire);
 
             final inspectResult = await endpoints.defectEndpoints.inspect(
               sessionBuilder,
-              defectId: defect['defectId'] as String,
+              defectId: defect.defectId,
             );
             // 2 evidence: auto-created human report + added log
-            expect(inspectResult['evidence'], hasLength(2));
-            final artifacts = inspectResult['evidence']
-                .map((e) => e['artifactId'])
+            expect(inspectResult.evidence, hasLength(2));
+            final artifacts = inspectResult.evidence
+                .map((e) => e.artifactId)
                 .toSet();
             expect(artifacts, contains('art-persist'));
             // 2 events: created (includes human report), evidence_added (log)
-            expect(inspectResult['events'], hasLength(2));
+            expect(inspectResult.events, hasLength(2));
           }
         });
       });
@@ -816,21 +812,21 @@ void main() {
             limit: 10,
             offset: 0,
           );
-          expect(allDefects['defects'], hasLength(2));
-          expect(allDefects['totalCount'], 2);
+          expect(allDefects.defects, hasLength(2));
+          expect(allDefects.totalCount, 2);
 
           // Manual filter by affectedWorkItemId (the product endpoint has no
           // affectedWorkItemId filter).
-          final aDefects = (allDefects['defects'] as List)
-              .where((d) => d['affectedWorkItemId'] == workItemIds['wi-prod-a'])
+          final aDefects = allDefects.defects
+              .where((d) => d.affectedWorkItemId == workItemIds['wi-prod-a'])
               .toList();
-          final bDefects = (allDefects['defects'] as List)
-              .where((d) => d['affectedWorkItemId'] == workItemIds['wi-prod-b'])
+          final bDefects = allDefects.defects
+              .where((d) => d.affectedWorkItemId == workItemIds['wi-prod-b'])
               .toList();
           expect(aDefects, hasLength(1));
           expect(bDefects, hasLength(1));
-          expect(aDefects.single['title'], 'Product A Defect');
-          expect(bDefects.single['title'], 'Product B Defect');
+          expect(aDefects.single.title, 'Product A Defect');
+          expect(bDefects.single.title, 'Product B Defect');
         });
       });
     },

@@ -67,8 +67,27 @@ void main() {
       // live body, not from a reimplementation of it.
       final body = _fixture('live_map_returning_body.json');
 
+      // ASSERTED AGAINST `deserialize<dynamic>`, NOT AGAINST
+      // `decode<Map<String, dynamic>>`, and the change is forced rather than
+      // cosmetic.
+      //
+      // The generator emits `if (t == Map<String, dynamic>)` into
+      // `Protocol.deserialize` ONLY WHILE SOME ENDPOINT DECLARES THAT RETURN
+      // TYPE. Once the last map-returning endpoint is typed — which is what
+      // this correction does, all twenty-two of them — the branch is gone, and
+      // `decode<Map<String, dynamic>>(body)` now throws
+      // `No deserialization found for type Map<String, dynamic>`, a different
+      // message about a different thing.
+      //
+      // `deserialize<dynamic>` is where that branch DELEGATED, so it is the
+      // actual browser failure and it is permanently assertable. Asserting it
+      // directly makes this test STRONGER than the `decode` form: it can no
+      // longer pass because a map branch exists and happens to handle the body,
+      // and it cannot be made to pass by choosing a friendlier fixture. The
+      // `decode<Map<String, dynamic>>` form is kept as a second assertion
+      // below so the disappearance of the branch is itself pinned.
       expect(
-        () => Protocol().decode<Map<String, dynamic>>(body),
+        () => Protocol().deserialize<dynamic>(jsonDecode(body)),
         throwsA(
           isA<DeserializationTypeNotFoundException>().having(
             (e) => e.message,
@@ -77,10 +96,22 @@ void main() {
           ),
         ),
         reason:
-            'A map body read as Map<String, dynamic> must fail exactly as it '
-            'did in the browser. If this stops throwing, the generated client '
-            'changed its map handling and the reproduction below is no longer '
-            'the defect that was reported.',
+            'Serverpod registers no deserializer for `dynamic`, so the '
+            'generated map branch that `Protocol.deserialize` emits for a '
+            '`Map<String, dynamic>` endpoint throws on the first value it '
+            'reads. That throw IS the browser failure reported from the QA '
+            'stack, and it is what makes an untyped endpoint unusable rather '
+            'than merely untidy.',
+      );
+
+      expect(
+        () => Protocol().decode<Map<String, dynamic>>(body),
+        throwsA(isA<DeserializationTypeNotFoundException>()),
+        reason:
+            'and the generated client no longer even HAS a '
+            '`Map<String, dynamic>` branch: the generator emits one per '
+            'map-returning endpoint, and there are none left. This assertion '
+            'fails if a map-returning endpoint is added back.',
       );
     });
 
