@@ -70,6 +70,16 @@ services:
     environment:
       CONTROL_PLANE_API: "http://localhost:8081/api/"
       API_UPSTREAM: "server:8080"
+      # Operator-asserted, not server-verified (finding M-5). Passed through with
+      # "${VAR:-}" so an unset variable reaches the container as an empty string,
+      # which the client reads back as "unconfigured" -- never as a literal
+      # "${SHIPIT_...}" placeholder and never as a default value. A required form
+      # "${VAR:?...}" is deliberately NOT used: Compose interpolates the whole file
+      # before it filters services, so one mandatory variable would break every
+      # command that reads this file, including read-only ones. Nothing is
+      # hardcoded; supply the values from the environment (or a docker/.env).
+      SHIPIT_HOST_KEY_FINGERPRINT: "${SHIPIT_HOST_KEY_FINGERPRINT:-}"
+      SHIPIT_OPERATOR_NAME: "${SHIPIT_OPERATOR_NAME:-}"
     ports:
       - "8081:8081"
     depends_on:
