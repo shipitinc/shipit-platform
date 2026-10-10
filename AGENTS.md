@@ -62,6 +62,34 @@ at runtime and is not generated content.
 - Orchestration conventions (see `aef-orchestrator` skill § 3 — override the defaults for every
   convention your project does not want defaulted): TBD
 
+### §12 Baseline independence
+
+A baseline is a product's **first claim about itself**, and it is the one artifact a human is asked to
+approve without having authored it. §12 exists so that approval rests on evidence rather than on the
+producer's say-so. It was cited eleven times — including a database schema comment — before it was
+written; the citations described an invariant the code enforced only by convention.
+
+**A producer may not attest to its own baseline.** Producing a baseline and verifying it are separate
+acts, performed by separate principals, and no identity that produced a baseline may verify it.
+
+- A producer's own claim is recorded as `EvidenceKind.agentClaimedEvidence`. It is real evidence of what
+  the producer asserted, and it is **preserved** — but it does not satisfy
+  `ProductGuard.baselineVerifiedIndependently` and never unlocks the approval gate.
+- Only `EvidenceKind.platformVerifiedEvidence` satisfies the guard, and it may be minted **only** by an
+  independent **re-derivation**: a verifier that recomputes the baseline from the same source and compares
+  the result against what was proposed. Independence is therefore structural — a producer that
+  fabricates is caught by **divergence**, not by policy.
+- **The guard fails closed.** There is no permissive default, no caller-selectable kind, and no wire
+  parameter a client can omit or set. A caller that supplies only an identity cannot unlock the gate.
+
+**Stated residual hole.** Re-derivation assumes the verifier acquires the source independently of the
+producer. A single compromised process controlling both acquisitions defeats it. This is a known limit,
+recorded here deliberately rather than left implied — it is why the human approval gate in §12's own
+lifecycle remains the final authority and is never automated away.
+
+Automation stops at *verified and awaiting approval*. The transition to `governed` requires
+`decisionActorIsHuman` and no automation may satisfy it.
+
 ### §13 Credentials
 
 One **role-scoped service-profile token** covers all shipit-platform products; never a token per
