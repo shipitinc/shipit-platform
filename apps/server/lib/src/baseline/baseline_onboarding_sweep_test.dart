@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 
@@ -5,6 +6,8 @@ import 'package:control_plane_server/src/baseline/baseline_onboarding_sweep.dart
 import 'package:control_plane_server/src/credentials/credential_key_service.dart';
 import 'package:control_plane_server/src/credentials/repository_snapshot_acquirer.dart';
 import 'package:platform_contracts/platform_contracts.dart';
+import 'package:product_registry/product_registry.dart'
+    show ConcurrentModificationException;
 import 'package:scheduler/scheduler.dart';
 import 'package:workflow_engine/workflow_engine.dart' show ProductGuard;
 // `test` is a dev_dependency of `control_plane_server`; it is unresolved as a
@@ -17,12 +20,30 @@ import 'baseline_test_fixtures.dart';
 /// A resolver that answers from a script, so the sweep's decision is what is
 /// under test rather than a network round trip.
 class _ScriptedResolver implements PinnedRevisionResolver {
-  _ScriptedResolver(this.revisions);
+  _ScriptedResolver(this.revisions, {Map<String, Object>? failures})
+    : failures = failures ?? const {};
 
   /// repositoryId -> revision, or absent to mean "unresolvable".
   final Map<String, String> revisions;
 
+  /// repositoryId -> something to RAISE instead of answering, for a product
+  /// whose evaluation genuinely fails.
+  ///
+  /// The live failure this whole file exists for was a
+  /// `ConcurrentModificationException` raised out of the acquisition, so a test
+  /// that drove the incident path with a different exception would be testing a
+  /// shape production has never produced.
+  final Map<String, Object> failures;
+
+  /// Every repository this resolver was asked about, in order.
+  ///
+  /// [asked] is the ACQUISITION COUNT. One entry is one `resolve()` call, and in
+  /// production one `resolve()` call is a real SSH clone plus two credential
+  /// writes — so "the second pass asked for nothing" is the fact that has to be
+  /// asserted, not merely "the second pass enqueued nothing".
   final List<String> asked = [];
+
+  int get acquisitions => asked.length;
 
   @override
   Future<String?> resolve({
@@ -30,7 +51,44 @@ class _ScriptedResolver implements PinnedRevisionResolver {
     required String repositoryId,
   }) async {
     asked.add(repositoryId);
+    final failure = failures[repositoryId];
+    if (failure != null) throw failure;
     return revisions[repositoryId];
+  }
+}
+
+/// A resolver that parks inside [resolve] until the test releases it.
+///
+/// So a pass can be held OPEN — the production shape, where a real clone takes
+/// about a minute against a thirty-second tick — and a second pass started
+/// against it deterministically, rather than by racing two futures and hoping.
+class _ParkingResolver implements PinnedRevisionResolver {
+  _ParkingResolver(this.revision);
+
+  final String revision;
+
+  /// Completes once this resolver has been ENTERED.
+  ///
+  /// Awaiting this, rather than the pass itself, is what proves the first pass
+  /// is mid-acquisition and not merely started — which is the only state in
+  /// which an overlapping pass is the interesting one.
+  final Completer<void> entered = Completer<void>();
+
+  /// The test's release.
+  final Completer<void> release = Completer<void>();
+
+  /// Every acquisition. See [_ScriptedResolver.asked].
+  int acquisitions = 0;
+
+  @override
+  Future<String?> resolve({
+    required String productId,
+    required String repositoryId,
+  }) async {
+    acquisitions++;
+    if (!entered.isCompleted) entered.complete();
+    await release.future;
+    return revision;
   }
 }
 
@@ -455,11 +513,29 @@ void main() {
       final second = await sweep.run();
 
       expect(second.enqueued, isEmpty);
+      // THE ONE SKIP CODE THIS CHANGE MOVES, and why.
+      //
+      // It used to be `DEDUPE_KEY_ALREADY_ACTIVE`. That code was honest when
+      // the sweep reached the dedupe-key lookup, because it HAD resolved a
+      // revision and built the key that was already taken. It no longer is: the
+      // sweep now decides there is nothing to enqueue from the durable job set,
+      // BEFORE resolving a revision, so it never held a dedupe key to compare.
+      // Reporting the key-scoped code for a decision that never had one would
+      // tell an operator the revision was read — and reading it is the ~60s
+      // clone and the two credential writes this change exists to avoid.
+      //
+      // `DEDUPE_KEY_ALREADY_ACTIVE` is still reachable, on the two paths where a
+      // key really is built: a concurrent enqueue that races the store's
+      // active-state constraint, and the exact-key guard that runs after the
+      // acquisition.
       expect(
         second.skipped.single.code,
-        BaselineSweepSkipped.alreadyQueuedCode,
+        BaselineSweepSkipped.activeJobForProductCode,
       );
       expect(await jobStore.listJobs(), hasLength(1));
+      // And the reason names the job an operator would go and look at, rather
+      // than a key that was never built.
+      expect(second.skipped.single.reason, contains('jb-baseline-product-a-'));
     });
 
     test('does not enqueue without a credential', () async {
@@ -711,5 +787,356 @@ void main() {
         expect(await jobStore.listJobs(), hasLength(2));
       },
     );
+  });
+
+  // The tests below are the livelock. The lane was deployed to QA and ran
+  // 41 passes: 22 incidents, 19 skips, zero enqueued, zero baselines, and a
+  // credential that climbed from version 1 to 59 without the product state ever
+  // moving. Nearly every pass failed with `Concurrent modification of cred-…`
+  // raised out of the acquisition — the pass conflicting with the pass before
+  // it, over a credential it had written itself.
+  group('the sweep cannot livelock against itself', () {
+    /// Every event the sweeps under test emit, in order, so "visible" is
+    /// asserted on the log an operator greps rather than on a return value a
+    /// caller may never print.
+    final logger = <(String, Map<String, dynamic>)>[];
+
+    setUp(() => logger.clear());
+
+    BaselineOnboardingSweep sweepOver(PinnedRevisionResolver resolver) =>
+        BaselineOnboardingSweep(
+          engine: registry.engine,
+          jobStore: jobStore,
+          revisionResolver: resolver,
+          clock: () => DateTime.utc(2026, 3, 1),
+          log: (event, data) => logger.add((event, data)),
+        );
+
+    test('an overlapping pass does not run, and says so', () async {
+      // CAUSE 1. `Timer.periodic` does not await its callback, so pass N+1
+      // started while pass N was still inside its ~60s clone. Held open here
+      // rather than raced, so the overlap is a fact rather than a hope.
+      await registry.registerProduct(productId: 'product-a');
+      await seedCredential(
+        registry.engine,
+        productId: 'product-a',
+        repositoryId: 'repo',
+      );
+      final parking = _ParkingResolver(kTestRevision);
+      final subject = sweepOver(parking);
+
+      final first = subject.run();
+      await parking.entered.future;
+
+      final dropped = await subject.run();
+
+      expect(parking.acquisitions, 1, reason: 'the dropped pass must not acquire');
+      expect(dropped.overlappedPasses, 1);
+      expect(dropped.considered, 0);
+      expect(dropped.enqueued, isEmpty);
+      expect(dropped.skipped, isEmpty);
+      expect(
+        dropped.incidents,
+        isEmpty,
+        reason:
+            'a dropped tick is not a product failure. Filing it as one would '
+            'invent an incident about a product nobody looked at.',
+      );
+
+      // VISIBLE, in the event an operator actually greps.
+      final completed = logger
+          .where((e) => e.$1 == 'baseline.sweep.completed')
+          .toList();
+      expect(completed, hasLength(1));
+      expect(completed.single.$2['overlappedPasses'], 1);
+      expect(completed.single.$2['code'], 'SWEEP_PASS_OVERLAPPED');
+      expect(
+        completed.single.$2['action'],
+        contains('already in flight'),
+        reason:
+            'a dropped tick that only says "considered 0" is indistinguishable '
+            'from a tick that found nothing to do — which is the shape of "the '
+            'sweep is not running"',
+      );
+
+      parking.release.complete();
+      final completedPass = await first;
+
+      expect(completedPass.enqueued, hasLength(1));
+      expect(completedPass.overlappedPasses, 0);
+      expect(await jobStore.listJobs(), hasLength(1));
+
+      // The guard is RELEASED. A guard taken and not given back would wedge the
+      // sweep shut after the first pass, and every later tick would be
+      // "overlapping" against a pass that ended long ago.
+      final after = await subject.run();
+      expect(
+        after.overlappedPasses,
+        0,
+        reason: 'the guard is released when the pass ends',
+      );
+      expect(
+        after.skipped.single.code,
+        BaselineSweepSkipped.activeJobForProductCode,
+      );
+    },
+      // A SHORT timeout, and deliberately so. Without the re-entrancy guard the
+      // second `run()` above would enter the pass, reach the parking resolver and
+      // await a release this test never completes — so the failure mode of a
+      // missing guard is a deadlock, and this is what turns that back into a
+      // reported failure in ten seconds rather than the default thirty. The body
+      // is pure in-memory async with no I/O, so ten seconds is a margin and not
+      // a deadline.
+      timeout: Timeout(Duration(seconds: 10)),
+    );
+
+    test('a pass acquires NOTHING when the product is already queued', () async {
+      // CAUSE 2. `resolve()` runs before the dedupe-key lookup, so every pass
+      // paid a full clone for a product that already had a job — and paid it
+      // through `verifyAccess`, which WRITES the credential row twice and bumps
+      // its version, which is what made the next pass's CAS fail.
+      await registry.registerProduct(productId: 'product-a');
+      await seedCredential(
+        registry.engine,
+        productId: 'product-a',
+        repositoryId: 'repo',
+      );
+
+      expect((await sweep.run()).enqueued, hasLength(1));
+      expect(
+        resolver.acquisitions,
+        1,
+        reason: 'the first pass is the one that had to acquire',
+      );
+
+      final second = await sweep.run();
+
+      expect(
+        resolver.acquisitions,
+        1,
+        reason:
+            'ZERO acquisitions on the second pass. Not "no new job" — the '
+            'acquisition count itself, because the acquisition is what costs a '
+            'clone, what writes the credential, and what made the next pass '
+            'conflict with this one.',
+      );
+      expect(second.enqueued, isEmpty);
+      expect(
+        second.skipped.single.code,
+        BaselineSweepSkipped.activeJobForProductCode,
+      );
+
+      // And a third, and a fourth: the skip is a steady state, not a race that
+      // happened to resolve favourably once.
+      await sweep.run();
+      expect(resolver.acquisitions, 1);
+      expect(await jobStore.listJobs(), hasLength(1));
+    });
+
+    test(
+      'the credential row does not move on a pass that has nothing to acquire',
+      () async {
+        // THE OBSERVED SYMPTOM, asserted directly on the thing that moved.
+        // Over the 41 live passes the credential went from version 1 to 59
+        // while the product state never advanced — every bump caused by the
+        // sweep writing to a row purely to learn a revision string. Driven here
+        // through the REAL acquirer, so this is the credential row the
+        // acquisition would actually have written, and the clone count is the
+        // real materializer's.
+        await registry.registerProduct(productId: 'product-a');
+        await seedCredential(
+          registry.engine,
+          productId: 'product-a',
+          repositoryId: 'repo',
+        );
+        final materializer = ScriptedSnapshotMaterializer();
+        final subject = BaselineOnboardingSweep(
+          engine: registry.engine,
+          jobStore: jobStore,
+          revisionResolver: SnapshotPinnedRevisionResolver(
+            RepositorySnapshotAcquirer(
+              engine: registry.engine,
+              credentialKeyService: CredentialKeyService(
+                engine: registry.engine,
+                secretProvider: RecordingSecretProvider(),
+                verifier: ScriptedAccessVerifier(
+                  committedRevision: kTestRevision,
+                ),
+              ),
+              materializer: materializer,
+            ),
+          ),
+          clock: () => DateTime.utc(2026, 3, 1),
+        );
+
+        await subject.run();
+        final afterFirst =
+            await registry.engine.readActiveCredential('product-a', 'repo');
+        expect(materializer.materializations, greaterThan(0));
+
+        for (var pass = 0; pass < 3; pass++) {
+          await subject.run();
+        }
+
+        final afterRest =
+            await registry.engine.readActiveCredential('product-a', 'repo');
+        expect(
+          afterRest!.version,
+          afterFirst!.version,
+          reason:
+              'a pass with nothing to acquire must not write to the credential. '
+              'Every version bump here is one a later pass reads as stale and '
+              'fails its compare-and-swap on.',
+        );
+        expect(
+          materializer.materializations,
+          1,
+          reason: 'the clone happens when a job would actually be enqueued',
+        );
+        expect(await jobStore.listJobs(), hasLength(1));
+      },
+    );
+
+    test(
+      'the invariant holds: a revision is resolved, a stable key is enqueued, '
+      'and unchanged HEAD does not mint a second job',
+      () async {
+        // The half that must NOT regress. Skipping cheaply is only correct if
+        // the first pass still does the work, and still does it under the same
+        // key — a key rebuilt from whatever HEAD is now would be a new job on
+        // every pass, which is what the PINNED_REVISION_UNRESOLVABLE reason
+        // exists to prevent.
+        await registry.registerProduct(productId: 'product-a');
+        await seedCredential(
+          registry.engine,
+          productId: 'product-a',
+          repositoryId: 'repo',
+        );
+
+        final first = await sweep.run();
+
+        expect(first.enqueued, hasLength(1));
+        final enqueued = first.enqueued.single;
+        expect(
+          enqueued.dedupeKey,
+          onboardingDedupeKey(
+            productId: 'product-a',
+            repositoryId: 'repo',
+            startingRevision: kTestRevision,
+          ),
+          reason: 'the key is built by the one shared builder, not spelled here',
+        );
+        expect(enqueued.dedupeKey, 'onboarding:product-a:repo:$kTestRevision');
+
+        // HEAD has not moved. Several passes, none of them enqueues, and only
+        // the FIRST one ever resolved a revision.
+        final second = await sweep.run();
+        final third = await sweep.run();
+
+        expect(second.enqueued, isEmpty);
+        expect(third.enqueued, isEmpty);
+        expect(resolver.acquisitions, 1);
+        expect(await jobStore.listJobs(), hasLength(1));
+        expect(
+          second.skipped.single.reason,
+          contains('jb-baseline-product-a-'),
+          reason: 'the reason names the job an operator would go and look at',
+        );
+        expect(
+          second.skipped.single.reason,
+          isNot(contains(kTestRevision)),
+          reason:
+              'and quotes no revision at all: this pass did not resolve one, so '
+              'it cannot have one to put in a key',
+        );
+      },
+    );
+
+    test('incidents stay LOUD — one failing product does not quiet the pass', () async {
+      // The guard that is working as designed, pinned. The live sweep produced
+      // 22 incidents that were correct: a product the pass could not decide
+      // about was recorded, named and logged, and the pass carried on. A fix
+      // that made these quiet would be worse than the livelock, so the
+      // accounting identity and the log line are both asserted here.
+      await registry.registerProduct(
+        productId: 'product-a',
+        repositoryId: 'repo-a',
+      );
+      await registry.registerProduct(
+        productId: 'product-b',
+        repositoryId: 'repo-b',
+      );
+      await seedCredential(
+        registry.engine,
+        productId: 'product-a',
+        repositoryId: 'repo-a',
+      );
+      await seedCredential(
+        registry.engine,
+        productId: 'product-b',
+        repositoryId: 'repo-b',
+      );
+
+      final failing = _ScriptedResolver(
+        {'repo-b': kTestRevision},
+        // The exception production actually raised, from the acquisition, on a
+        // credential the sweep had written itself.
+        failures: {
+          'repo-a': ConcurrentModificationException(
+            entityId: 'cred-some-credential',
+            expectedVersion: 41,
+            actualVersion: 42,
+          ),
+        },
+      );
+      final subject = sweepOver(failing);
+
+      final result = await subject.run();
+
+      expect(result.considered, 2);
+      expect(
+        result.incidents,
+        hasLength(1),
+        reason: 'a genuine failure is an incident, not a skip',
+      );
+      expect(result.incidents.single.productId, 'product-a');
+      expect(
+        result.incidents.single.code,
+        BaselineSweepIncidentCodes.evaluationFailed,
+      );
+      expect(
+        result.incidents.single.reason,
+        contains('expected version 41, actual 42'),
+        reason: 'the record says what actually happened',
+      );
+      expect(
+        result.skipped.where((s) => s.productId == 'product-a'),
+        isEmpty,
+        reason: 'an incident must not be laundered into a routine skip',
+      );
+      expect(
+        result.accountedFor,
+        result.considered,
+        reason: 'every product the pass looked at is accounted for',
+      );
+
+      // ...and the rest of the pass carried on.
+      expect(result.enqueued, hasLength(1));
+      expect(result.enqueued.single.productId, 'product-b');
+      expect(await jobStore.listJobs(), hasLength(1));
+
+      // ...and it was said out loud, with the action an operator needs.
+      final incidents = logger
+          .where((e) => e.$1 == 'baseline.sweep.product_incident')
+          .toList();
+      expect(incidents, hasLength(1));
+      expect(incidents.single.$2['productId'], 'product-a');
+      expect(incidents.single.$2['code'], 'SWEEP_PRODUCT_EVALUATION_FAILED');
+      expect(
+        incidents.single.$2['action'],
+        contains('the rest of the pass continued'),
+      );
+      expect(incidents.single.$2['stack'], isNotNull);
+    });
   });
 }
