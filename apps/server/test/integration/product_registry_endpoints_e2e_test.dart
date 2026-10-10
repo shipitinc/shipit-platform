@@ -89,6 +89,36 @@ Future<ProductRegistryEngine> _engine() async {
   );
 }
 
+/// Drives [productId] all the way to `governed` through the real engine.
+///
+/// A lifecycle gate is only raisable from a governed or paused product, so the
+/// tests below have to earn that state the way the app does: a proposed
+/// baseline, a worker attestation on it, and a human approving it.
+Future<void> _governed(String productId) async {
+  final e = await _engine();
+  await e.createProduct(productId: productId, name: 'Endpoint $productId');
+  final proposed = await e.proposeBaseline(
+    productId: productId,
+    facts: _facts(productId),
+  );
+  await e.verifyBaseline(
+    productId: productId,
+    baselineId: proposed.baselineId,
+    verifiedBy: 'worker-e2e-verifier',
+  );
+  final approval = await e.requestBaselineApproval(
+    productId: productId,
+    baselineId: proposed.baselineId,
+  );
+  await e.resolveBaselineApproval(
+    decisionId: approval.decisionId,
+    choice: HumanDecisionChoice.approve,
+    decider: 'operator',
+    rationale: 'Baseline reviewed and approved',
+    signature: _testSignature(),
+  );
+}
+
 void main() {
   withServerpod(
     'S-1 registry typed Serverpod endpoints (Postgres)',
@@ -452,6 +482,141 @@ void main() {
         expect(found.decisionId, request.decisionId);
         expect(found.status, 'pending');
       });
+
+      // B1: a raised lifecycle gate must be discoverable from durable state, or
+      // a client that forgets it on navigation strands a `blocking: true`
+      // decision that nothing can raise, list or resolve again. This is the
+      // server half of the guarantee the Product Detail screen now relies on.
+      test(
+        'productDetail surfaces the open lifecycle gate, and only while it is open',
+        () async {
+          await _governed(a);
+
+          // Before anything is raised there is no gate.
+          var detail = await endpoints.productRegistryEndpoints.productDetail(
+            sessionBuilder,
+            productId: a,
+          );
+          expect(detail.pendingLifecycleGate, isNull);
+
+          final raised = await endpoints.productRegistryEndpoints
+              .requestLifecycleDecision(
+                sessionBuilder,
+                productId: a,
+                action: 'pause',
+                drainInFlight: true,
+              );
+          expect(raised.blocking, isTrue);
+
+          // The gate is re-derivable: a fresh read, with no connection to the
+          // call that raised it, carries the whole decision.
+          detail = await endpoints.productRegistryEndpoints.productDetail(
+            sessionBuilder,
+            productId: a,
+          );
+          final gate = detail.pendingLifecycleGate;
+          expect(gate, isNotNull);
+          expect(gate!.decisionId, raised.decisionId);
+          expect(gate.action, 'pause');
+          expect(gate.status, 'pending');
+          expect(gate.blocking, isTrue);
+          expect(gate.question, isNotNull);
+          // The engine's own outcomes, not a client reconstruction.
+          expect(
+            gate.options!.map((o) => o.optionId),
+            containsAll(<String>['proceed', 'decline']),
+          );
+
+          await endpoints.productRegistryEndpoints.resolveLifecycleDecision(
+            sessionBuilder,
+            decisionId: raised.decisionId,
+            choice: 'approve',
+            decider: 'operator',
+            rationale: 'Paused on purpose',
+            signature: _testSignature().signature,
+            publicKey: _testSignature().publicKey,
+            algorithm: _testSignature().algorithm,
+            signedAt: _testSignature().signedAt,
+            noWorkInFlight: true,
+          );
+
+          detail = await endpoints.productRegistryEndpoints.productDetail(
+            sessionBuilder,
+            productId: a,
+          );
+          expect(detail.pendingLifecycleGate, isNull);
+          // And the transition really happened.
+          expect(detail.product.state, 'paused');
+        },
+      );
+
+      test(
+        'a product already carrying two open gates is drainable, oldest first',
+        () async {
+          // The strand this field exists to make recoverable. Two `blocking:
+          // true` gates coexist because they were raised through the engine
+          // without the client withholding the second; nothing else can list a
+          // synthetic scope, so this read is the only way back to them.
+          await _governed(a);
+          final e = await _engine();
+          await e.requestLifecycleDecision(
+            productId: a,
+            action: ProductLifecycleAction.pause,
+          );
+          await e.requestLifecycleDecision(
+            productId: a,
+            action: ProductLifecycleAction.offboard,
+          );
+
+          var gate = (await endpoints.productRegistryEndpoints.productDetail(
+            sessionBuilder,
+            productId: a,
+          )).pendingLifecycleGate;
+          expect(gate!.action, 'pause');
+
+          await endpoints.productRegistryEndpoints.resolveLifecycleDecision(
+            sessionBuilder,
+            decisionId: gate.decisionId,
+            choice: 'reject',
+            decider: 'operator',
+            rationale: 'Not after all',
+            signature: _testSignature().signature,
+            publicKey: _testSignature().publicKey,
+            algorithm: _testSignature().algorithm,
+            signedAt: _testSignature().signedAt,
+            noWorkInFlight: true,
+          );
+
+          // Resolving the first exposes the second rather than hiding both.
+          gate = (await endpoints.productRegistryEndpoints.productDetail(
+            sessionBuilder,
+            productId: a,
+          )).pendingLifecycleGate;
+          expect(gate!.action, 'offboard');
+        },
+      );
+
+      test(
+        'a gate is never surfaced for a different product',
+        () async {
+          await _governed(a);
+          await _governed(b);
+          await endpoints.productRegistryEndpoints.requestLifecycleDecision(
+            sessionBuilder,
+            productId: a,
+            action: 'pause',
+            drainInFlight: true,
+          );
+
+          expect(
+            (await endpoints.productRegistryEndpoints.productDetail(
+              sessionBuilder,
+              productId: b,
+            )).pendingLifecycleGate,
+            isNull,
+          );
+        },
+      );
     },
     rollbackDatabase: RollbackDatabase.disabled,
   );
