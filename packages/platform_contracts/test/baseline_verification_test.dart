@@ -140,6 +140,151 @@ void main() {
     });
   });
 
+  group('identity comparison is normalization-insensitive', () {
+    // The defect this covers: `isSelfAttested` compared the RAW, caller-supplied
+    // strings, so `'agent-x'` and `'agent-x '` were two principals. The
+    // producer re-derived its own work, agreement was trivially satisfied, and
+    // the separation of principals that AGENTS.md §12 mandates was defeated by
+    // one trailing space. The same held for leading whitespace, casing, and
+    // zero-width characters. Normalization happens ONCE, at construction, and
+    // the SAME function is applied to both sides — an asymmetric comparison
+    // would be the bypass rather than the fix.
+
+    test(
+      'the same principal is still self-attested with trailing whitespace',
+      () {
+        expect(build(verifiedBy: 'producer\u00A0').isSelfAttested, isTrue);
+        expect(build(verifiedBy: 'producer\t').isSelfAttested, isTrue);
+        expect(build(verifiedBy: 'producer\n').isSelfAttested, isTrue);
+      },
+    );
+
+    test(
+      'the same principal is still self-attested with leading whitespace',
+      () {
+        expect(build(verifiedBy: ' producer').isSelfAttested, isTrue);
+        expect(build(verifiedBy: '\tproducer').isSelfAttested, isTrue);
+      },
+    );
+
+    test('the same principal is still self-attested with different casing', () {
+      expect(build(verifiedBy: 'PRODUCER').isSelfAttested, isTrue);
+      expect(build(verifiedBy: 'Producer').isSelfAttested, isTrue);
+      // Case folding is Unicode-aware, not ASCII-only: the KELVIN SIGN (U+212A)
+      // lowercases to ASCII 'k', so even a cross-script spelling of one letter
+      // cannot stand in for a second principal.
+      expect(
+        build(
+          producedBy: 'producer-k',
+          verifiedBy: 'producer-\u212A',
+        ).isSelfAttested,
+        isTrue,
+      );
+    });
+
+    test('interior whitespace repetition is one principal, and an inserted '
+        'space is a different one', () {
+      // Collapsing a RUN to a single space is normalization; turning no space
+      // into one would be conflating two identities, which is the over-block
+      // this fix must not introduce. The boundary is drawn here, on purpose.
+      expect(
+        build(producedBy: 'worker a', verifiedBy: 'worker   a').isSelfAttested,
+        isTrue,
+      );
+      expect(
+        build(producedBy: 'worker a', verifiedBy: 'workera').isSelfAttested,
+        isFalse,
+      );
+      expect(
+        build(producedBy: 'worker a', verifiedBy: 'worker  a').isSelfAttested,
+        isTrue,
+      );
+    });
+
+    test(
+      'the same principal is self-attested behind every cosmetic disguise',
+      () {
+        // One test for the whole class: normalization is applied to both sides,
+        // so no cosmetic spelling of one principal can pass as two. Every entry
+        // here differs from `'producer'` ONLY in characters this normalization
+        // folds away — surrounding whitespace, casing, or invisible
+        // zero-width/format characters. Interior whitespace is covered by its own
+        // test above, which draws the boundary explicitly.
+        for (final disguise in [
+          '  producer  ',
+          'Producer',
+          '\tPRODUCER\n',
+          '\u200Bproducer',
+          'producer\u200B',
+          'pro\u200Cducer',
+          'pr\uFEFFoducer', // BOM mid-string
+          'pr\u00ADoducer', // soft hyphen
+          'producer\u00A0', // non-breaking space at the end
+        ]) {
+          expect(
+            build(verifiedBy: disguise).isSelfAttested,
+            isTrue,
+            reason: '"$disguise" must not read as a second principal',
+          );
+        }
+      },
+    );
+
+    test('a genuinely distinct verifier is NOT self-attested', () {
+      // The control. Normalization must not become a denial of service: a real
+      // second principal is still accepted, however it is spelled, as long as
+      // the underlying identity differs.
+      expect(build(verifiedBy: 'verifier').isSelfAttested, isFalse);
+      expect(build(verifiedBy: 'VERIFIER').isSelfAttested, isFalse);
+      expect(build(verifiedBy: '  verifier  ').isSelfAttested, isFalse);
+      expect(build(verifiedBy: 'producer-2').isSelfAttested, isFalse);
+    });
+
+    test('both sides are normalized, symmetrically', () {
+      // The comparison is symmetric, so disguising the PRODUCER is caught just
+      // as disguising the verifier is. Normalizing only one side would make the
+      // check trivially bypassable in the direction left un-normalized.
+      expect(
+        build(producedBy: ' producer ', verifiedBy: 'producer').isSelfAttested,
+        isTrue,
+      );
+      expect(
+        build(producedBy: '  PRODUCER', verifiedBy: 'producer').isSelfAttested,
+        isTrue,
+      );
+    });
+
+    test('the recorded identity is the normalized one, and the raw input is '
+        'kept for audit', () {
+      final proof = build(producedBy: '  Producer ', verifiedBy: 'Verifier\t');
+      // Attribution and the comparison read the SAME value, so what is recorded
+      // is exactly what the independence check compared.
+      expect(proof.producedBy, 'producer');
+      expect(proof.verifiedBy, 'verifier');
+      // The raw caller input survives for an auditor who needs to see how the
+      // identity was actually spelled on the wire.
+      expect(proof.producedByRaw, '  Producer ');
+      expect(proof.verifiedByRaw, 'Verifier\t');
+    });
+
+    test(
+      'an identity that normalizes to nothing is refused at construction',
+      () {
+        // `'   '` was already refused; a string made only of zero-width
+        // characters normalizes to nothing and must be refused too, or it would
+        // be recorded as a principal named by no one.
+        expect(() => build(producedBy: '\u200B'), throwsArgumentError);
+        expect(() => build(verifiedBy: '\u200B\u200B'), throwsArgumentError);
+        // A word joiner, a non-breaking space and a zero-width space together:
+        // three characters that each look like nothing at all.
+        expect(
+          () => build(verifiedBy: '\u2060\u00A0\u200B'),
+          throwsArgumentError,
+        );
+      },
+    );
+  });
+
   group('both principals are legible to an auditor', () {
     test('a rendered proof names the producer AND the verifier', () {
       // A self-attested proof is detectable by reading it, not only by

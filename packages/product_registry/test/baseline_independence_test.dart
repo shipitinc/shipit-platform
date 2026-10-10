@@ -199,6 +199,161 @@ void main() {
       },
     );
 
+    test('a self-re-derivation disguised by whitespace, casing or an invisible '
+        'character is refused end to end', () async {
+      // The reviewer's traced failure, run through the real engine rather than
+      // through the type alone. Before normalization, `producedBy: 'agent-x'`
+      // and `verifiedBy: 'agent-x '` were two principals: the producer held
+      // the re-derived hash trivially, `matchesBaseline` passed, and
+      // `verifyBaseline` wrote platformVerifiedEvidence and let
+      // requestBaselineApproval through — §12 defeated by one space.
+      for (final disguise in [
+        'agent-x ', // trailing space
+        ' agent-x', // leading space
+        'AGENT-X', // casing
+        '\u200Bagent-x', // leading zero-width space
+        'agent-x\u200B', // trailing zero-width space
+        'agent-x\u00A0', // trailing non-breaking space
+        'agent-\u200Cx', // embedded zero-width non-joiner
+      ]) {
+        engine = ProductRegistryEngine(
+          store: InMemoryProductRegistryStore(),
+          humanDecisionStore: InMemoryHumanDecisionStore(),
+        );
+        final b = await proposeFor('p1');
+
+        await expectLater(
+          engine.verifyBaseline(
+            productId: 'p1',
+            baselineId: b.baselineId,
+            reDerivation: PlatformReDerivationProof.fromReDerivation(
+              baselineId: b.baselineId,
+              baselineRevision: b.revision,
+              reDerivedContentHash: b.contentHash,
+              reDerivedContentHashVersion: b.contentHashVersion,
+              producedBy: 'agent-x',
+              verifiedBy: disguise,
+              sourceRef: 'local-directory/onboard_shipit_dev',
+            ),
+          ),
+          throwsA(isA<BaselineSelfVerificationException>()),
+          reason: '"$disguise" is the same principal and must be refused',
+        );
+
+        // Requirement 5: a refusal leaves nothing behind that a later read
+        // could mistake for a pass — on ANY path, not just the happy one.
+        final after = await engine.readBaselineRevision('p1', b.revision);
+        expect(after.verificationKind, isNull);
+        expect(after.isIndependentlyVerified, isFalse);
+        await expectLater(
+          engine.requestBaselineApproval(
+            productId: 'p1',
+            baselineId: b.baselineId,
+          ),
+          throwsA(isA<BaselineNotVerifiedException>()),
+          reason: 'the human gate must stay shut after "$disguise"',
+        );
+        expect(
+          (await engine.readProduct('p1')).state,
+          ProductState.baselinePending,
+        );
+      }
+    });
+
+    test(
+      'a genuinely distinct verifier is still accepted, however it is spelled',
+      () async {
+        // Requirement 4 — the control that keeps normalization from becoming a
+        // denial of service. Both identities carry mixed case and stray
+        // whitespace, and the verification still goes through: normalization
+        // folds cosmetics, it does not refuse messy-but-distinct principals.
+        final b = await proposeFor('p1');
+        final v = await engine.verifyBaseline(
+          productId: 'p1',
+          baselineId: b.baselineId,
+          reDerivation: PlatformReDerivationProof.fromReDerivation(
+            baselineId: b.baselineId,
+            baselineRevision: b.revision,
+            reDerivedContentHash: b.contentHash,
+            reDerivedContentHashVersion: b.contentHashVersion,
+            producedBy: '  Worker:Baseline-Producer/Onboard  ',
+            verifiedBy: '\u200BWORKER:BASELINE-VERIFIER/INDEPENDENT\u200B',
+            sourceRef: 'local-directory/onboard_shipit_dev',
+          ),
+        );
+        expect(v.isIndependentlyVerified, isTrue);
+        expect(v.verificationKind, EvidenceKind.platformVerifiedEvidence);
+        // The recorded identity is the canonical one — the same value the
+        // independence check compared, so attribution cannot describe a
+        // principal the guard never saw.
+        expect(v.verifiedBy, 'worker:baseline-verifier/independent');
+        // And the gate the bypass used to unlock really is unlocked.
+        final request = await engine.requestBaselineApproval(
+          productId: 'p1',
+          baselineId: b.baselineId,
+        );
+        expect(request.decisionId, isNotNull);
+      },
+    );
+
+    test(
+      'the claim path and the proof path record an identity the same way',
+      () async {
+        // The LOW finding on the same root cause: the claim path trimmed while
+        // the proof path stored the raw string, so the record showed an identity
+        // spelling that no comparison ever evaluated. Both must record the
+        // canonical form.
+        engine = ProductRegistryEngine(
+          store: InMemoryProductRegistryStore(),
+          humanDecisionStore: InMemoryHumanDecisionStore(),
+        );
+        final b = await proposeFor('p1');
+        final claimed = await engine.verifyBaseline(
+          productId: 'p1',
+          baselineId: b.baselineId,
+          verifiedBy: '  Worker:Claimer/One  ',
+        );
+        expect(claimed.verifiedBy, 'worker:claimer/one');
+
+        engine = ProductRegistryEngine(
+          store: InMemoryProductRegistryStore(),
+          humanDecisionStore: InMemoryHumanDecisionStore(),
+        );
+        final b2 = await proposeFor('p1');
+        final proven = await engine.verifyBaseline(
+          productId: 'p1',
+          baselineId: b2.baselineId,
+          reDerivation: agreeingProof(
+            b2,
+            producedBy: 'Worker:Producer/One',
+            verifiedBy: '  Worker:Claimer/One  ',
+          ),
+        );
+        // Same input, same spelling on the record — whichever path recorded it.
+        expect(proven.verifiedBy, claimed.verifiedBy);
+      },
+    );
+
+    test(
+      'a caller identity that only differs cosmetically from the proof is not '
+      'two identities',
+      () async {
+        // The engine's own two-identity check must normalize both sides too.
+        // Comparing a raw caller string against the proof's canonical value
+        // would be the asymmetric comparison the whole fix exists to remove —
+        // and it would refuse an honest caller for a trailing space.
+        final b = await proposeFor('p1');
+        final v = await engine.verifyBaseline(
+          productId: 'p1',
+          baselineId: b.baselineId,
+          verifiedBy: '  WORKER-TEST-VERIFIER ',
+          reDerivation: agreeingProof(b, verifiedBy: 'worker-test-verifier'),
+        );
+        expect(v.isIndependentlyVerified, isTrue);
+        expect(v.verifiedBy, 'worker-test-verifier');
+      },
+    );
+
     test('divergence outranks self-attestation', () async {
       // A fabricator who also signs its own work has produced the most
       // indefensible claim there is. It is refused as divergence, because the

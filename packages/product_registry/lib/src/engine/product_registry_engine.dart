@@ -292,7 +292,15 @@ class ProductRegistryEngine {
 
     // ---- Claim path: recorded, attributed, and never unlocking the gate. ----
     if (reDerivation == null) {
-      final identity = verifiedBy?.trim() ?? '';
+      // The SAME canonicalization the proof path uses, so an identity is
+      // recorded in one spelling whichever path recorded it. These two paths
+      // previously disagreed — this one trimmed, the proof path stored the raw
+      // string — so the record showed an identity that no comparison ever saw.
+      // Attribution has to be the value the check compares, or the audit trail
+      // describes a principal that never existed.
+      final identity = verifiedBy == null
+          ? ''
+          : normalizeBaselineIdentity(verifiedBy);
       if (identity.isEmpty) {
         throw BaselineApprovalRequiredException(
           'verifyBaseline requires a non-empty verifier identity',
@@ -317,10 +325,16 @@ class ProductRegistryEngine {
     // One identity, one authority. Accepting a caller-supplied `verifiedBy`
     // alongside a proof that names a different verifier would reintroduce
     // exactly the ambiguity this signature exists to remove.
-    if (verifiedBy != null && verifiedBy.trim() != reDerivation.verifiedBy) {
+    // Canonicalized on BOTH sides. Comparing a caller string against the
+    // proof's canonical value would be the asymmetric comparison this guard
+    // must never make: the same identity written with different case or an extra
+    // space would read as two principals here while reading as one everywhere
+    // else.
+    if (verifiedBy != null &&
+        normalizeBaselineIdentity(verifiedBy) != reDerivation.verifiedBy) {
       throw BaselineIndependenceRefusedException(
         'baseline $baselineId was verified with two identities — '
-        '"${verifiedBy.trim()}" and re-derivation proof '
+        '"${normalizeBaselineIdentity(verifiedBy)}" and re-derivation proof '
         '"${reDerivation.verifiedBy}" — so neither can be trusted; supply the '
         'proof alone',
       );
@@ -359,6 +373,10 @@ class ProductRegistryEngine {
     final verifiedAt = now ?? reDerivation.reDerivedAt;
     final verified = baseline.copyWith(
       verifiedAt: verifiedAt,
+      // The proof's canonical verifier identity — the same value
+      // `isSelfAttested` compared, so what is recorded here is precisely the
+      // principal the independence check cleared. Raw caller spelling is not
+      // what the record should carry.
       verifiedBy: reDerivation.verifiedBy,
       verificationKind: EvidenceKind.platformVerifiedEvidence,
       updatedAt: verifiedAt,
