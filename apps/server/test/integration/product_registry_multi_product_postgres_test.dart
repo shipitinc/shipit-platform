@@ -8,6 +8,7 @@ import 'package:serverpod/serverpod.dart';
 import 'package:test/test.dart';
 
 import 'test_tools/serverpod_test_tools.dart';
+import '../support/baseline_proof.dart';
 
 /// Deterministic multi-product proof (checkpoint 006 §14.1 n°1–9, §15
 /// MP-AC-1..8, §16 DATABASE + SECURITY). Two fixture Products exercise the
@@ -113,12 +114,17 @@ Future<void> _approveBaseline(
   ProductBaseline baseline, {
   String decider = 'reviewer',
 }) async {
-  // A worker attests to the baseline before any human is asked (AGENTS.md
-  // §12); the gate fails closed without it.
+  // A worker INDEPENDENTLY RE-DERIVES the baseline before any human is asked
+  // (AGENTS.md §12); the gate fails closed without it. An identity alone would
+  // now be recorded as agentClaimedEvidence and
+  // requestBaselineApproval would refuse, so this passes a real proof.
   await engine.verifyBaseline(
     productId: productId,
     baselineId: baseline.baselineId,
-    verifiedBy: 'worker-multi-verifier',
+    reDerivation: agreeingProof(
+      baseline,
+      verifiedBy: 'worker-multi-verifier',
+    ),
   );
   final request = await engine.requestBaselineApproval(
     productId: productId,

@@ -622,28 +622,53 @@ class ControlPlaneService {
     return updated;
   }
 
-  /// Records platform-verified evidence against a proposed baseline.
+  /// Records what is known about a baseline's verification.
   ///
-  /// [ProductRegistryEngine.verifyBaseline] refuses any baseline that has not
-  /// been independently verified, so this must run before
-  /// [requestBaselineApproval].
+  /// **This is a SERVER-SIDE method, deliberately not reachable over RPC.**
+  ///
+  /// [ProductRegistryEngine.verifyBaseline] has two paths, and only one of them
+  /// reaches `platformVerifiedEvidence`:
+  ///
+  ///  * no [reDerivation] — an identity alone is recorded as
+  ///    [EvidenceKind.agentClaimedEvidence], which is real evidence of what was
+  ///    asserted and never opens the human approval gate;
+  ///  * a [reDerivation] proof that reproduces the stored hash — a platform
+  ///    verification. The proof cannot be constructed without a recomputed
+  ///    content hash, so there is nothing for a caller to assert instead.
+  ///
+  /// The `kind` parameter this used to take defaulted to
+  /// [EvidenceKind.platformVerifiedEvidence], which made every caller that
+  /// omitted it self-certify — and the same permissive value was hardcoded on
+  /// the wire. There is no evidence kind here now: the KIND is a consequence of
+  /// which path was taken, decided by the engine, not chosen by a caller.
+  ///
+  /// `verifiedBy` is deliberately NOT a required parameter. On the proof path it
+  /// would be a second name for [PlatformReDerivationProof.verifiedBy], and
+  /// accepting both is how one verification ends up attributed to two
+  /// principals; the engine refuses that combination outright. The returned
+  /// baseline carries the recorded `verifiedBy`, which is the only identity
+  /// this record should quote.
   Future<ProductBaseline> verifyBaseline({
     required String productId,
     required String baselineId,
-    required String verifiedBy,
-    EvidenceKind kind = EvidenceKind.platformVerifiedEvidence,
+    PlatformReDerivationProof? reDerivation,
+    String? verifiedBy,
   }) async {
     final verified = await productRegistryEngine.verifyBaseline(
       productId: productId,
       baselineId: baselineId,
       verifiedBy: verifiedBy,
-      kind: kind,
+      reDerivation: reDerivation,
     );
     logger.info('product_registry.baseline_verified', {
       'productId': productId,
       'baselineId': baselineId,
-      'verifiedBy': verifiedBy,
-      'verificationKind': kind.wire,
+      // Quoted from the RETURNED baseline, not from the request, so the log
+      // describes the principal that was actually recorded.
+      'verifiedBy': verified.verifiedBy,
+      'verificationKind': verified.verificationKind?.wire,
+      // Stated rather than implied: whether this crossed a gate.
+      'independentReDerivation': verified.isIndependentlyVerified,
     });
     return verified;
   }

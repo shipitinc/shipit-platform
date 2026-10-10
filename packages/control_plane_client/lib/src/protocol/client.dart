@@ -985,23 +985,6 @@ class EndpointProductRegistryEndpoints extends _i1.EndpointRef {
     },
   );
 
-  /// Records platform-verified evidence against a proposed baseline.
-  _i2.Future<_i23.ProductDetailView> verifyBaseline({
-    required String productId,
-    required String baselineId,
-    required String verifiedBy,
-    required String kind,
-  }) => caller.callServerEndpoint<_i23.ProductDetailView>(
-    'productRegistryEndpoints',
-    'verifyBaseline',
-    {
-      'productId': productId,
-      'baselineId': baselineId,
-      'verifiedBy': verifiedBy,
-      'kind': kind,
-    },
-  );
-
   /// Adds an operator-authored claim to a **proposed** baseline. Amending a
   /// baseline cancels any unresolved approval decision (new hash binding), so
   /// the client must request approval again against the new revision.

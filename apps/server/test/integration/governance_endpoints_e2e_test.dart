@@ -8,6 +8,7 @@ import 'package:serverpod/serverpod.dart';
 import 'package:test/test.dart';
 
 import 'test_tools/serverpod_test_tools.dart';
+import '../support/baseline_proof.dart';
 
 const governanceA = 'governance-ep-a';
 
@@ -98,10 +99,16 @@ Future<ProductRegistryEngine> _governedEngine({
     productId: productId,
     facts: _facts('$productId-baseline'),
   );
+  // AGENTS.md §12: the human gate below refuses anything less than an
+  // independent re-derivation, so this supplies a proof rather than an
+  // identity — an identity alone is recorded as a claim and never opens it.
   await engine.verifyBaseline(
     productId: productId,
     baselineId: proposed.baselineId,
-    verifiedBy: 'worker-governance-verifier',
+    reDerivation: agreeingProof(
+      proposed,
+      verifiedBy: 'worker-governance-verifier',
+    ),
   );
 
   final request = await engine.requestBaselineApproval(

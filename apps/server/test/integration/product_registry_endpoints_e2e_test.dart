@@ -8,6 +8,7 @@ import 'package:serverpod/serverpod.dart';
 import 'package:test/test.dart';
 
 import 'test_tools/serverpod_test_tools.dart';
+import '../support/baseline_proof.dart';
 
 /// E2E proof that the S-1 registry is served through the *typed* Serverpod
 /// protocol: the generated client endpoints return protocol models (field
@@ -104,7 +105,13 @@ Future<void> _governed(String productId) async {
   await e.verifyBaseline(
     productId: productId,
     baselineId: proposed.baselineId,
-    verifiedBy: 'worker-e2e-verifier',
+    // AGENTS.md §12: an independent re-derivation, not an
+    // identity. An identity alone is recorded as an agent claim
+    // and never opens the approval gate.
+    reDerivation: agreeingProof(
+      proposed,
+      verifiedBy: 'worker-e2e-verifier',
+    ),
   );
   final approval = await e.requestBaselineApproval(
     productId: productId,
@@ -143,7 +150,13 @@ void main() {
           await e.verifyBaseline(
             productId: a,
             baselineId: proposed.baselineId,
-            verifiedBy: 'worker-e2e-verifier',
+            // AGENTS.md §12: an independent re-derivation, not an
+            // identity. An identity alone is recorded as an agent claim
+            // and never opens the approval gate.
+            reDerivation: agreeingProof(
+              proposed,
+              verifiedBy: 'worker-e2e-verifier',
+            ),
           );
 
           final products = await endpoints.productRegistryEndpoints
@@ -184,7 +197,13 @@ void main() {
           await e.verifyBaseline(
             productId: a,
             baselineId: proposed.baselineId,
-            verifiedBy: 'worker-e2e-verifier',
+            // AGENTS.md §12: an independent re-derivation, not an
+            // identity. An identity alone is recorded as an agent claim
+            // and never opens the approval gate.
+            reDerivation: agreeingProof(
+              proposed,
+              verifiedBy: 'worker-e2e-verifier',
+            ),
           );
 
           // Request approval — returns a durable pending decision
@@ -251,7 +270,13 @@ void main() {
           await e.verifyBaseline(
             productId: b,
             baselineId: bBaseline.baselineId,
-            verifiedBy: 'worker-e2e-verifier',
+            // AGENTS.md §12: an independent re-derivation, not an
+            // identity. An identity alone is recorded as an agent claim
+            // and never opens the approval gate.
+            reDerivation: agreeingProof(
+              bBaseline,
+              verifiedBy: 'worker-e2e-verifier',
+            ),
           );
 
           // Requesting approval for B's baseline with productId: A is refused
@@ -324,7 +349,13 @@ void main() {
         await e.verifyBaseline(
           productId: a,
           baselineId: v1.baselineId,
-          verifiedBy: 'worker-e2e-verifier',
+          // AGENTS.md §12: an independent re-derivation, not an
+          // identity. An identity alone is recorded as an agent claim
+          // and never opens the approval gate.
+          reDerivation: agreeingProof(
+            v1,
+            verifiedBy: 'worker-e2e-verifier',
+          ),
         );
 
         // Request approval for v1 (decision D1)
@@ -340,7 +371,13 @@ void main() {
         await e.verifyBaseline(
           productId: a,
           baselineId: v2.baselineId,
-          verifiedBy: 'worker-e2e-verifier',
+          // AGENTS.md §12: an independent re-derivation, not an
+          // identity. An identity alone is recorded as an agent claim
+          // and never opens the approval gate.
+          reDerivation: agreeingProof(
+            v2,
+            verifiedBy: 'worker-e2e-verifier',
+          ),
         );
         final request2 = await endpoints.productRegistryEndpoints
             .requestBaselineApproval(
@@ -396,7 +433,13 @@ void main() {
         await e.verifyBaseline(
           productId: a,
           baselineId: proposed.baselineId,
-          verifiedBy: 'worker-e2e-verifier',
+          // AGENTS.md §12: an independent re-derivation, not an
+          // identity. An identity alone is recorded as an agent claim
+          // and never opens the approval gate.
+          reDerivation: agreeingProof(
+            proposed,
+            verifiedBy: 'worker-e2e-verifier',
+          ),
         );
 
         final request = await endpoints.productRegistryEndpoints
@@ -453,7 +496,13 @@ void main() {
         await e.verifyBaseline(
           productId: a,
           baselineId: proposed.baselineId,
-          verifiedBy: 'worker-e2e-verifier',
+          // AGENTS.md §12: an independent re-derivation, not an
+          // identity. An identity alone is recorded as an agent claim
+          // and never opens the approval gate.
+          reDerivation: agreeingProof(
+            proposed,
+            verifiedBy: 'worker-e2e-verifier',
+          ),
         );
 
         // Before any request - throws 404 (StateError)

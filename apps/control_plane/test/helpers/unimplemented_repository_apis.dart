@@ -130,11 +130,10 @@ mixin UnimplementedRepositoryApis {
     required String rationale,
   }) async => throw UnimplementedError();
 
-  Future<void> verifyBaseline({
-    required String productId,
-    required String baselineId,
-    required String verifiedBy,
-  }) async => throw UnimplementedError();
+  // `verifyBaseline` is absent by design, not by omission: the repository no
+  // longer exposes a client-reachable baseline verification at all
+  // (AGENTS.md §12). Mirrors `ControlPlaneRepository`, which no longer declares
+  // the method, so this fake cannot drift into advertising one.
 
   Future<DecisionResponse> addHumanBaselineClaim({
     required String productId,

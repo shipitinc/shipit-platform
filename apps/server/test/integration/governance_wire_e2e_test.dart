@@ -8,6 +8,7 @@ import 'package:serverpod/serverpod.dart';
 import 'package:test/test.dart';
 
 import 'test_tools/serverpod_test_tools.dart';
+import '../support/baseline_proof.dart';
 
 const governanceA = 'governance-a';
 const governanceB = 'governance-b';
@@ -52,10 +53,15 @@ Future<ProductRegistryEngine> _engine({
     productId: productId,
     facts: _facts('$productId-baseline'),
   );
+  // AGENTS.md §12: an independent re-derivation, not an identity — an identity
+  // alone is recorded as an agent claim and does not open the approval gate.
   await engine.verifyBaseline(
     productId: productId,
     baselineId: proposed.baselineId,
-    verifiedBy: 'worker-governance-verifier',
+    reDerivation: agreeingProof(
+      proposed,
+      verifiedBy: 'worker-governance-verifier',
+    ),
   );
   // Approve the baseline to reach "governed" state
   final approvalRequest = await engine.requestBaselineApproval(

@@ -1647,45 +1647,6 @@ class Endpoints extends _i1.EndpointDispatch {
                         provider: params['provider'],
                       ),
         ),
-        'verifyBaseline': _i1.MethodConnector(
-          name: 'verifyBaseline',
-          params: {
-            'productId': _i1.ParameterDescription(
-              name: 'productId',
-              type: _i1.getType<String>(),
-              nullable: false,
-            ),
-            'baselineId': _i1.ParameterDescription(
-              name: 'baselineId',
-              type: _i1.getType<String>(),
-              nullable: false,
-            ),
-            'verifiedBy': _i1.ParameterDescription(
-              name: 'verifiedBy',
-              type: _i1.getType<String>(),
-              nullable: false,
-            ),
-            'kind': _i1.ParameterDescription(
-              name: 'kind',
-              type: _i1.getType<String>(),
-              nullable: false,
-            ),
-          },
-          call:
-              (
-                _i1.Session session,
-                Map<String, dynamic> params,
-              ) async =>
-                  (endpoints['productRegistryEndpoints']
-                          as _i9.ProductRegistryEndpoints)
-                      .verifyBaseline(
-                        session,
-                        productId: params['productId'],
-                        baselineId: params['baselineId'],
-                        verifiedBy: params['verifiedBy'],
-                        kind: params['kind'],
-                      ),
-        ),
         'addHumanBaselineClaim': _i1.MethodConnector(
           name: 'addHumanBaselineClaim',
           params: {

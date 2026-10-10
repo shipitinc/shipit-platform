@@ -13,7 +13,6 @@ import 'package:platform_contracts/platform_contracts.dart'
         DesignContractSpec,
         QAContractSpec,
         DeploymentContractSpec,
-        EvidenceKind,
         RepositoryKind,
         RepositoryProvider;
 import 'package:product_registry/product_registry.dart'
@@ -35,6 +34,34 @@ import '../services/control_plane_service.dart';
 import '../services/ui_view_mappers.dart';
 import 'package:platform_contracts/platform_contracts.dart'
     show BaselineSectionKey;
+
+/// Metadata key: the server-side baseline re-derivation runtime that would
+/// perform an independent verification of a baseline outside a human-driven
+/// onboarding run.
+///
+/// `unavailable` means the runtime does not exist in shipit-platform, **not**
+/// that a human declined to run it. That distinction is the whole point of
+/// writing it down: the alternative reading is that a check was skipped, and
+/// the two call for different responses.
+const String baselineReDerivationRuntimeKey = 'baselineReDerivationRuntime';
+
+/// Value recorded under [baselineReDerivationRuntimeKey].
+const String baselineReDerivationRuntimeUnavailable = 'unavailable';
+
+/// The honest terminal state of the wire-side verification path until the
+/// runtime above exists.
+///
+/// AGENTS.md §12 requires the re-derivation to be performed by the server from
+/// the source. That component is absent, so the endpoint that used to let a
+/// client supply its own verification was removed rather than replaced with one
+/// that would assert a verification it could not perform. Clients cannot verify
+/// a baseline; nothing on the record claims one was verified.
+///
+/// Same shape as `EXTERNAL_DESIGN_GOVERNANCE_DEPENDENCY` in
+/// `triage/lane_e_design_remediation_work_item.dart`, which records the same
+/// kind of missing runtime for design governance.
+const String externalBaselineReDerivationDependency =
+    'EXTERNAL_BASELINE_RE_DERIVATION_DEPENDENCY';
 
 /// Endpoints for the durable Product registry and onboarding (S-1).
 ///
@@ -553,33 +580,62 @@ class ProductRegistryEndpoints extends Endpoint {
     }
   }
 
-  /// Records platform-verified evidence against a proposed baseline.
-  Future<ProductDetailView> verifyBaseline(
-    Session session, {
-    required String productId,
-    required String baselineId,
-    required String verifiedBy,
-    String kind = 'platform_verified_evidence',
-  }) async {
-    final service = ControlPlaneService(session);
-    try {
-      await service.verifyBaseline(
-        productId: productId,
-        baselineId: baselineId,
-        verifiedBy: verifiedBy,
-        kind: EvidenceKind.fromWire(kind),
-      );
-      final detail = await service.loadProductDetail(productId);
-      return UiViewMappers.productDetailView(detail);
-    } catch (error, stackTrace) {
-      service.logger.error('product_registry.verify_baseline.failed', {
-        'productId': productId,
-        'baselineId': baselineId,
-        'error': error.toString(),
-      });
-      Error.throwWithStackTrace(error, stackTrace);
-    }
-  }
+  // ---------------------------------------------------------------------------
+  // NO `verifyBaseline` ENDPOINT — deliberately, and the absence is the fix.
+  //
+  // This used to be a public Serverpod endpoint:
+  //
+  // ```dart
+  // Future<ProductDetailView> verifyBaseline(
+  //   Session session, {
+  //   required String productId,
+  //   required String baselineId,
+  //   required String verifiedBy,
+  //   String kind = 'platform_verified_evidence',   // the permissive default
+  // });
+  // ```
+  //
+  // The wire default was the PERMISSIVE value, so any API client — including
+  // the browser, which is a claimant — could record
+  // `platformVerifiedEvidence` on any baseline with an identity of its own
+  // choosing, unlocking `ProductGuard.baselineVerifiedIndependently` for a
+  // first baseline AND for re-baselining an already-governed product.
+  // `ControlPlaneRepository.verifyBaseline` hardcoded the same value at its own
+  // call site, so there were two independent sites.
+  //
+  // WHY THE VERB WAS REMOVED RATHER THAN NARROWED. AGENTS.md §12 makes
+  // independence structural: the basis of the guard is an independent
+  // RE-DERIVATION — a verifier recomputes the baseline from the same source
+  // and the proposal is accepted only when the recomputation agrees. Any
+  // endpoint a client can reach that accepts `{verifiedBy, reDerivedHash}` is
+  // self-assertion in a new costume: a claimant that can read the source can
+  // compute the matching hash itself and attest under any name. Passing a
+  // `PlatformReDerivationProof` on the wire would not fix that either, and the
+  // type is deliberately not a Serverpod model — making it one would invent a
+  // serialisable mirror of a type whose whole point is that it cannot be
+  // conjured from outside the process that re-derived the source.
+  //
+  // The ENGINE keeps `verifyBaseline`
+  // (`ProductRegistryEngine.verifyBaseline`), and a server-side caller may use it
+  // directly, passing a proof. That is the point: verification is an in-process
+  // act over a source the server acquired itself, not a request a caller files.
+  // `apps/server/bin/onboard_shipit_dev.dart` is the one such caller today.
+  //
+  // WHAT DOES NOT EXIST YET, recorded rather than stubbed. The server-side
+  // re-derivation RUNTIME — the component that acquires a repository snapshot
+  // outside a human-driven CLI run and recomputes a baseline hash from it — is
+  // not implemented in shipit-platform. See [baselineReDerivationRuntimeKey]
+  // and [externalBaselineReDerivationDependency] below, and the reasoning in
+  // `triage/lane_e_design_remediation_work_item.dart`, which records the same
+  // shape of dependency for the design-governance runtime. An endpoint that
+  // claimed to perform that verification would be a stub that appears to verify
+  // without verifying, which is strictly worse than the honest state: no client
+  // can verify a baseline, and no record says one was verified.
+  //
+  // `baseline_verification_wire_test.dart` scans the generated dispatch table,
+  // the generated client, and this file, so re-adding a client-reachable
+  // verification verb turns it red on the next regeneration.
+  // ---------------------------------------------------------------------------
 
   /// Adds an operator-authored claim to a **proposed** baseline. Amending a
   /// baseline cancels any unresolved approval decision (new hash binding), so

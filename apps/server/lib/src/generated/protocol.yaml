@@ -49,7 +49,6 @@ productRegistryEndpoints:
   - answerClarification:
   - createProduct:
   - addRepositoryReference:
-  - verifyBaseline:
   - addHumanBaselineClaim:
 providerHealthEndpoints:
   - getProviderHealth:

@@ -1068,24 +1068,24 @@ class ControlPlaneRepository {
     return _decisionResponse(result);
   }
 
-  /// Records platform-verified evidence against a proposed baseline.
-  ///
-  /// `ProductRegistryEngine.verifyBaseline` refuses a baseline that has not
-  /// been independently verified, so this must run before approval is
-  /// requested.
-  Future<void> verifyBaseline({
-    required String productId,
-    required String baselineId,
-    required String verifiedBy,
-  }) async {
-    await _client.productRegistryEndpoints.verifyBaseline(
-      productId: productId,
-      baselineId: baselineId,
-      verifiedBy: verifiedBy,
-      kind: 'platform_verified_evidence',
-    );
-    revision.value++;
-  }
+  // NO `verifyBaseline` — deliberately, and its absence is part of the fix.
+  //
+  // This method existed and hardcoded `kind: 'platform_verified_evidence'` at
+  // its own call site, so the dashboard could record a platform verification
+  // for any baseline with an identity string of the caller's choosing. That is
+  // the second of the two independent instances of the AGENTS.md §12 bypass;
+  // the other was the server endpoint's parameter default.
+  //
+  // It is not replaced with a narrower RPC that takes a content hash. A client
+  // that can read the source can compute that hash itself, so
+  // `{verifiedBy, reDerivedHash}` over the wire is the same self-attestation in
+  // a new costume. §12's basis is an independent RE-DERIVATION performed by the
+  // server from the source it acquired — not a value a claimant supplies.
+  //
+  // Follow-up (product decision, not a wire change): if the dashboard ever
+  // needs to surface verification, it should display the verification recorded
+  // on the baseline (`productDetail` already carries it) and offer an action
+  // that TRIGGERS a server-side re-derivation, rather than one that asserts one.
 
   /// Creates a new product with its manifest.
   Future<ProductDetailResponse> createProduct({

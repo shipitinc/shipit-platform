@@ -12,6 +12,8 @@ import 'package:serverpod/serverpod.dart';
 import 'package:serverpod_test/serverpod_test.dart';
 import 'package:test/test.dart';
 
+import 'support/baseline_proof.dart';
+
 /// Test group name for the onboarding test
 const String _testGroupName = 'ShipIt Platform Onboarding (S-1)';
 
@@ -366,11 +368,17 @@ void main() {
         '\nCreating governing HumanDecision for corrected baseline (Hash V2)...',
       );
       // Review only opens for a baseline that was independently verified, so
-      // the corrected revision has to carry that verification first.
+      // the corrected revision has to carry that verification first. AGENTS.md
+      // §12: that means an independent RE-DERIVATION proof, not an identity — an
+      // identity alone is recorded as `agentClaimedEvidence` and the gate below
+      // would refuse it.
       await engine.verifyBaseline(
         productId: productId,
         baselineId: corrected.baselineId,
-        verifiedBy: 'shipit-platform-verifier',
+        reDerivation: agreeingProof(
+          corrected,
+          verifiedBy: 'shipit-platform-verifier',
+        ),
       );
       final correctedDecision = await engine.requestBaselineApproval(
         productId: productId,
