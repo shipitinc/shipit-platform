@@ -1,0 +1,88 @@
+# human-decision.yaml
+decision_id: 43d6e484-079b-46ce-850e-9f1b464b4ad0
+type: ARCHITECTURE
+status: RESOLVED
+question: >-
+  The baseline-production lane is merged and correct but 100% inert: nothing constructs the lane,
+  sweep, acquirer or materializer, and the shipped Scheduler is work-item-scoped (one JobDefinition
+  per instance; _eligibleRunnableJobs skips any job whose workItemId is not a real WorkItem) while
+  onboarding is product-scoped with a synthetic 'onboarding-$productId'. Which seam makes the worker
+  functional?
+context:
+  summary: >-
+    Raised by the independent review of the baseline lane (impl/baseline-lane, e3d5ac8, verdict
+    DO_NOT_MERGE). The reviewer identified four independent causes of inertness and explicitly
+    declined to choose among the three remediation shapes, calling it an architecture decision that
+    crosses packages/scheduler and packages/workflow_engine ownership.
+    The operator's instruction was to "get the real worker functional".
+  blocking_work_item:
+    item_type: OTHER
+    item_id: impl-baseline-lane
+    item_ref: B1 worker wiring - product-scoped dispatch for onboarding jobs.
+  evidence:
+    documents:
+      - type: OTHER
+        id: design-revision
+        url: docs/engineering/dispatch/tasks/design-baseline-production-lane/design-revision.md
+    qualitative_tradeoffs:
+      - dimension: Contamination of the shared scheduler
+        option_a: Second Scheduler instance
+        option_b: Product-scoped dispatch path
+        option_c: Product-scoped WorkItem shim
+        assessment: >-
+          A second Scheduler mutates _eligibleRunnableJobs, the evaluation path defect triage also
+          depends on. A WorkItem shim contorts the WorkItem model to fit a product-scoped concern.
+          A separate product-scoped path leaves the triage scheduler untouched.
+      - dimension: Size of change
+        option_a: Second Scheduler instance
+        option_b: Product-scoped dispatch path
+        option_c: Product-scoped WorkItem shim
+        assessment: >-
+          The product-scoped path is the largest of the three, and largest means most review. It is
+          chosen because it is the only one that does not put onboarding on the same code path as
+          defect triage.
+    recommendation:
+      recommended_option: OPTION_B
+      rationale: >-
+        Keep onboarding off the work-item-scoped scheduler that defect triage depends on. Contention
+        in a shared evaluation path is how a second silent no-op would be born.
+      confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Second Scheduler instance
+    description: One Scheduler per JobDefinition, plus synthetic-work-item accommodation in the evaluator.
+    implications: Smallest conceptual change; mutates the shared evaluation path triage also uses.
+    risk_level: MEDIUM
+  - option_id: OPTION_B
+    label: Product-scoped dispatch path
+    description: Onboarding gets a first-class product-scoped dispatch path outside the work-item-scoped Scheduler.
+    implications: >-
+      Leaves the triage scheduler untouched. Largest change and the most to review, but the only
+      option that does not put onboarding on triage's code path.
+    risk_level: LOW
+  - option_id: OPTION_C
+    label: Product-scoped WorkItem shim
+    description: Model each product as a WorkItem so the existing Scheduler path applies unchanged.
+    implications: Least new code; contorts the WorkItem model to fit a product-scoped concern.
+    risk_level: MEDIUM
+resolution:
+  outcome: OPTION_B
+  decided_by: human-operator
+  rationale: >-
+    Product-scoped dispatch path. Onboarding is product-scoped work; the WorkItem-scoped Scheduler
+    belongs to defect triage. Bridging them by mutating the shared evaluator would put onboarding on
+    triage's critical path and risk a second silent no-op in exactly the place this work item was
+    opened to end. Accept the larger reviewed change.
+  follow_up_actions:
+    - action: Implement the product-scoped dispatch path for onboarding jobs in packages/scheduler.
+      owner: orchestrator-main
+    - action: Construct the acquirer, materializer, sweep and lane in server.dart and register handlers.
+      owner: orchestrator-main
+    - action: >-
+        Prove the worker end to end on QA: a registered product with a usable, host-confirmed
+        credential gets a baseline proposed, independently verified, and left awaiting human approval
+        - and a product with no confirmed host key stops at the external-dependency state.
+      owner: orchestrator-main
+created_by: orchestrator-main
+created_at: 2026-10-10T00:00:00Z
+updated_at: 2026-10-10T00:00:00Z
