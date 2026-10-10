@@ -101,10 +101,23 @@ class ProductBaseline extends Equatable {
 
   /// Whether this revision was verified by something other than the agent that
   /// produced it — the precondition for asking a human to approve it.
+  ///
+  /// This getter **fails closed**: every clause must hold, and a missing or
+  /// blank field is a refusal rather than a pass. `verifiedBy` is trimmed, so an
+  /// identity that is only whitespace does not count as an attestation.
+  ///
+  /// AGENTS.md §12 makes the *assignment* of [verificationKind] the load-bearing
+  /// half of the guard, not this read of it. `platformVerifiedEvidence` is
+  /// reached only through `ProductRegistryEngine.verifyBaseline` when the caller
+  /// supplied a [PlatformReDerivationProof] — a proof that cannot be constructed
+  /// without the recomputed content hash — because that engine method no longer
+  /// accepts a caller-selectable kind. A call site that writes
+  /// `verificationKind` directly, or that still passes a kind over the wire,
+  /// reopens the bypass this read cannot detect on its own.
   bool get isIndependentlyVerified =>
       verificationKind == EvidenceKind.platformVerifiedEvidence &&
       verifiedBy != null &&
-      verifiedBy!.isNotEmpty &&
+      verifiedBy!.trim().isNotEmpty &&
       verifiedAt != null;
 
   List<BaselineFact> factsFor(BaselineSectionKey section) =>

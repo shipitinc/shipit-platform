@@ -87,6 +87,7 @@ export 'src/types/repository_credential.dart';
 export 'src/types/standing_policy.dart';
 export 'src/types/baseline_fact.dart';
 export 'src/types/product_baseline.dart';
+export 'src/types/baseline_verification.dart';
 export 'src/types/clarification_request.dart';
 export 'src/types/onboarding_record.dart';
 export 'src/types/product_context.dart';

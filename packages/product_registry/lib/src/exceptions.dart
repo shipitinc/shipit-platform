@@ -193,8 +193,48 @@ class BaselineNotVerifiedException implements Exception {
   @override
   String toString() =>
       'Baseline not verified: $baselineId has not been independently '
-      'verified; call verifyBaseline with platform_verified_evidence before '
-      'requesting approval';
+      'verified; call verifyBaseline with a PlatformReDerivationProof before '
+      'requesting approval (an identity alone records a claim, which never '
+      'unlocks the gate)';
+}
+
+/// AGENTS.md §12 refused an attestation to a baseline.
+///
+/// The base of the independence refusals below, so a caller can refuse
+/// verification-as-a-class without enumerating the specific reasons, while a
+/// test can still assert the precise cause. Every one of these is a refusal to
+/// let a baseline reach the human approval gate on an attestation that is not
+/// backed by an independent re-derivation.
+class BaselineIndependenceRefusedException implements Exception {
+  BaselineIndependenceRefusedException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'Baseline independence refused: $message';
+}
+
+/// An independent re-derivation did not reproduce the proposal.
+///
+/// The verifier recomputed the baseline's content hash from the source and got
+/// something other than what the producer proposed: a different digest, a
+/// different hash contract, or a proof describing a different artifact. This is
+/// how a fabricating producer is caught — by **divergence**, mechanically,
+/// rather than by a convention it could simply decline to honour.
+class BaselineReDerivationDivergenceException
+    extends BaselineIndependenceRefusedException {
+  BaselineReDerivationDivergenceException(super.message);
+}
+
+/// Verification was attributed to the identity that produced the baseline.
+///
+/// AGENTS.md §12: producing a baseline and verifying it are separate acts
+/// performed by separate principals, and no identity that produced a baseline
+/// may verify it. Re-deriving your own work reproduces your own work, so a
+/// matching hash here proves only that the producer is consistent.
+class BaselineSelfVerificationException
+    extends BaselineIndependenceRefusedException {
+  BaselineSelfVerificationException(super.message);
 }
 
 /// No credential exists with the given id.

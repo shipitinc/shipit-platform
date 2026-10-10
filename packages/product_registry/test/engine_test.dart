@@ -221,7 +221,7 @@ void main() {
         await engine.verifyBaseline(
           productId: 'shipit',
           baselineId: b.baselineId,
-          verifiedBy: 'worker-test-verifier',
+          reDerivation: agreeingProof(b),
         );
         final request = await engine.requestBaselineApproval(
           productId: 'shipit',
@@ -257,7 +257,7 @@ void main() {
         await engine.verifyBaseline(
           productId: 'shipit',
           baselineId: b.baselineId,
-          verifiedBy: 'worker-test-verifier',
+          reDerivation: agreeingProof(b),
         );
         final stale = await engine.requestBaselineApproval(
           productId: 'shipit',
@@ -309,7 +309,7 @@ void main() {
         await engine.verifyBaseline(
           productId: 'shipit',
           baselineId: b.baselineId,
-          verifiedBy: 'worker-test-verifier',
+          reDerivation: agreeingProof(b),
         );
         final first = await engine.requestBaselineApproval(
           productId: 'shipit',

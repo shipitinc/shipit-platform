@@ -250,36 +250,122 @@ class ProductRegistryEngine {
     );
   }
 
-  /// Records that [baselineId] was verified by a worker.
+  /// Records what is known about [baselineId]'s verification.
   ///
   /// AGENTS.md §12: an agent may *produce* a baseline but may never attest to
-  /// it. Only [EvidenceKind.platformVerifiedEvidence] satisfies
-  /// [ProductGuard.baselineVerifiedIndependently]; an agent's own claim is
-  /// recorded but does not unlock the approval gate.
+  /// it. Independence here is **structural** — a comparison, not an identity —
+  /// so this method offers two paths and only one of them can unlock
+  /// [ProductGuard.baselineVerifiedIndependently]:
+  ///
+  /// * **No [reDerivation]** — a *claim*. What the caller asserted is recorded
+  ///   as [EvidenceKind.agentClaimedEvidence], attributed to [verifiedBy]. This
+  ///   is preserved as real evidence of what was said, and it never unlocks the
+  ///   gate. Supplying an identity and nothing else is therefore safe: it
+  ///   cannot verify anything.
+  /// * **[reDerivation] supplied** — a platform verification. The caller must
+  ///   hand over a [PlatformReDerivationProof], which cannot be constructed
+  ///   without a recomputed content hash, and which is checked here against the
+  ///   stored baseline. Only then is [EvidenceKind.platformVerifiedEvidence]
+  ///   recorded.
+  ///
+  /// There is deliberately **no `kind` parameter** and no default. The previous
+  /// signature defaulted `kind` to [EvidenceKind.platformVerifiedEvidence],
+  /// which made every caller that omitted it self-certify, and the same
+  /// permissive value was hardcoded on the wire — so an API client could forge
+  /// `verifiedBy` and unlock the gate. Removing the parameter removes the wire
+  /// shape too; there is nothing for a client to set.
+  ///
+  /// A proof is refused when it does not reproduce the proposal
+  /// ([BaselineReDerivationDivergenceException]) or when it is an attestation by
+  /// the identity that produced the baseline
+  /// ([BaselineSelfVerificationException]). Both fail closed by throwing, so a
+  /// refused verification never leaves a passing attestation behind.
   Future<ProductBaseline> verifyBaseline({
     required String productId,
     required String baselineId,
-    required String verifiedBy,
-    EvidenceKind kind = EvidenceKind.platformVerifiedEvidence,
+    String? verifiedBy,
+    PlatformReDerivationProof? reDerivation,
     DateTime? now,
   }) async {
     final baseline = await _store.readBaseline(baselineId);
     _ensureOwned(productId, baseline.productId, 'baseline $baselineId');
-    if (verifiedBy.isEmpty) {
-      throw BaselineApprovalRequiredException(
-        'verifyBaseline requires a non-empty verifier identity',
+
+    // ---- Claim path: recorded, attributed, and never unlocking the gate. ----
+    if (reDerivation == null) {
+      final identity = verifiedBy?.trim() ?? '';
+      if (identity.isEmpty) {
+        throw BaselineApprovalRequiredException(
+          'verifyBaseline requires a non-empty verifier identity',
+        );
+      }
+      final claimedAt = now ?? DateTime.now().toUtc();
+      final claimed = baseline.copyWith(
+        verifiedAt: claimedAt,
+        verifiedBy: identity,
+        // The non-permissive kind. This is what an agent's own claim looks
+        // like on the record, and `isIndependentlyVerified` is false for it.
+        verificationKind: EvidenceKind.agentClaimedEvidence,
+        updatedAt: claimedAt,
+        version: baseline.version + 1,
+      );
+      await _store.saveBaseline(claimed, expectedVersion: baseline.version);
+      return claimed;
+    }
+
+    // ---- Re-derivation path: the only way to a platform verification. ----
+
+    // One identity, one authority. Accepting a caller-supplied `verifiedBy`
+    // alongside a proof that names a different verifier would reintroduce
+    // exactly the ambiguity this signature exists to remove.
+    if (verifiedBy != null && verifiedBy.trim() != reDerivation.verifiedBy) {
+      throw BaselineIndependenceRefusedException(
+        'baseline $baselineId was verified with two identities — '
+        '"${verifiedBy.trim()}" and re-derivation proof '
+        '"${reDerivation.verifiedBy}" — so neither can be trusted; supply the '
+        'proof alone',
       );
     }
-    final t = now ?? DateTime.now().toUtc();
-    final updated = baseline.copyWith(
-      verifiedAt: t,
-      verifiedBy: verifiedBy,
-      verificationKind: kind,
-      updatedAt: t,
+
+    // The proof must describe THIS baseline at THIS revision, and its
+    // recomputed hash must equal the one stored. A digest that disagrees with
+    // the proposal is the fabrication case: the producer asserted content the
+    // source does not support.
+    if (!reDerivation.matchesBaseline(
+      baselineId: baseline.baselineId,
+      baselineRevision: baseline.revision,
+      contentHash: baseline.contentHash,
+      contentHashVersion: baseline.contentHashVersion,
+    )) {
+      throw BaselineReDerivationDivergenceException(
+        're-derivation of $baselineId@r${baseline.revision} by '
+        '"${reDerivation.verifiedBy}" from ${reDerivation.sourceRef} produced '
+        'v${reDerivation.reDerivedContentHashVersion} '
+        '${reDerivation.reDerivedContentHash}, but the proposed baseline is '
+        'v${baseline.contentHashVersion} ${baseline.contentHash}',
+      );
+    }
+
+    // Producing and verifying are separate acts. Re-deriving your own work
+    // reproduces your own work, so agreement here proves consistency, not
+    // independence.
+    if (reDerivation.isSelfAttested) {
+      throw BaselineSelfVerificationException(
+        '"${reDerivation.verifiedBy}" both produced and re-derived '
+        '$baselineId; AGENTS.md §12 requires separate principals, so a '
+        'self-re-derivation cannot verify its own baseline',
+      );
+    }
+
+    final verifiedAt = now ?? reDerivation.reDerivedAt;
+    final verified = baseline.copyWith(
+      verifiedAt: verifiedAt,
+      verifiedBy: reDerivation.verifiedBy,
+      verificationKind: EvidenceKind.platformVerifiedEvidence,
+      updatedAt: verifiedAt,
       version: baseline.version + 1,
     );
-    await _store.saveBaseline(updated, expectedVersion: baseline.version);
-    return updated;
+    await _store.saveBaseline(verified, expectedVersion: baseline.version);
+    return verified;
   }
 
   /// Proposes the next baseline revision for [productId]. To enforce

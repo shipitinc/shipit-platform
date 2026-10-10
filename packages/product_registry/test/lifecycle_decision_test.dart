@@ -213,7 +213,7 @@ void main() {
       await engine.verifyBaseline(
         productId: 'p1',
         baselineId: b.baselineId,
-        verifiedBy: 'worker-7',
+        reDerivation: agreeingProof(b, verifiedBy: 'worker-9'),
       );
       final baselineReq = await engine.requestBaselineApproval(
         productId: 'p1',

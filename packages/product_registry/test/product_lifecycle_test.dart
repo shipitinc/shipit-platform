@@ -80,12 +80,42 @@ void main() {
 
     test("an agent's own claim is not independent verification", () async {
       final b = await proposeFor('p1');
-      await engine.verifyBaseline(
+      // No re-derivation proof: this is a CLAIM. It is recorded and attributed
+      // — as agentClaimedEvidence, because there is no proof behind it and no
+      // kind for the caller to name — and it must not open the gate.
+      final claimed = await engine.verifyBaseline(
         productId: 'p1',
         baselineId: b.baselineId,
         verifiedBy: 'agent-that-produced-it',
-        kind: EvidenceKind.agentClaimedEvidence,
       );
+      expect(claimed.verificationKind, EvidenceKind.agentClaimedEvidence);
+      expect(claimed.verifiedBy, 'agent-that-produced-it');
+      expect(claimed.isIndependentlyVerified, isFalse);
+      expect(
+        () => engine.requestBaselineApproval(
+          productId: 'p1',
+          baselineId: b.baselineId,
+        ),
+        throwsA(isA<BaselineNotVerifiedException>()),
+      );
+    });
+
+    test('an identity-only call cannot unlock the gate, even with a plausible '
+        'worker name', () async {
+      final b = await proposeFor('p1');
+      // The old signature defaulted `kind` to platformVerifiedEvidence, so
+      // this exact call — a worker-shaped identity and nothing else — used to
+      // self-certify. It must now record a claim and nothing more.
+      final claimed = await engine.verifyBaseline(
+        productId: 'p1',
+        baselineId: b.baselineId,
+        verifiedBy: 'worker:baseline-verifier/onboard_shipit_dev',
+      );
+      expect(
+        claimed.verificationKind,
+        isNot(EvidenceKind.platformVerifiedEvidence),
+      );
+      expect(claimed.isIndependentlyVerified, isFalse);
       expect(
         () => engine.requestBaselineApproval(
           productId: 'p1',
@@ -96,13 +126,13 @@ void main() {
     });
 
     test(
-      'worker verification unlocks the gate and records who attested',
+      'an independent re-derivation unlocks the gate and records who attested',
       () async {
         final b = await proposeFor('p1');
         final v = await engine.verifyBaseline(
           productId: 'p1',
           baselineId: b.baselineId,
-          verifiedBy: 'worker-7',
+          reDerivation: agreeingProof(b, verifiedBy: 'worker-7'),
         );
         expect(v.isIndependentlyVerified, isTrue);
         expect(v.verifiedBy, 'worker-7');
@@ -134,7 +164,7 @@ void main() {
       await engine.verifyBaseline(
         productId: 'p1',
         baselineId: b.baselineId,
-        verifiedBy: 'worker-7',
+        reDerivation: agreeingProof(b, verifiedBy: 'worker-7'),
       );
       final req = await engine.requestBaselineApproval(
         productId: 'p1',
@@ -306,7 +336,7 @@ void main() {
         await engine.verifyBaseline(
           productId: 'p1',
           baselineId: first.baselineId,
-          verifiedBy: 'worker-test-verifier',
+          reDerivation: agreeingProof(first),
         );
         final request = await engine.requestBaselineApproval(
           productId: 'p1',

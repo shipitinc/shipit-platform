@@ -31,7 +31,7 @@ void main() {
     await engine.verifyBaseline(
       productId: 'p1',
       baselineId: b.baselineId,
-      verifiedBy: 'worker-7',
+      reDerivation: agreeingProof(b, producedBy: 'worker-7', verifiedBy: 'w-9'),
     );
     return b;
   }
