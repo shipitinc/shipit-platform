@@ -1,0 +1,67 @@
+# human-decision.yaml
+decision_id: b366bba0-bd53-4090-932e-39e231819777
+type: ARCHITECTURE
+status: RESOLVED
+question: >-
+  A defect with no resolvable affectedWorkItemId is filed under the synthetic productId 'defects',
+  which has no registry row. The governed gate (1a8d9769) would refuse those forever, because a
+  bucket never reaches governed. How is that handled?
+context:
+  summary: >-
+    Raised by L1 of the work-entry trigger. The implementer implemented the gate and declined to
+    decide this, correctly: HD-1a said defects wait 'until it reaches governed', and a bucket has
+    no path to governed. Two carve-outs were rejected in favour of giving the bucket a lifecycle.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: impl-work-entry-trigger
+    item_ref: L1 work-entry trigger - the governed gate and the triage bucket.
+  evidence:
+    documents:
+      - type: OTHER
+        id: design-revision
+        url: docs/engineering/dispatch/tasks/design-work-entry/design-revision.md
+  recommendation:
+    recommended_option: OPTION_A
+    rationale: >-
+      Exempting the bucket is the smallest honest carve-out. It was not chosen.
+    confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Exempt the bucket from the gate
+    description: The synthetic bucket is not a product and can never be governed, so exempt it.
+    risk_level: LOW
+  - option_id: OPTION_B
+    label: Give the bucket a lifecycle
+    description: Create a registry row for the bucket and walk it through the same lifecycle.
+    implications: >-
+      Requires a real proposed baseline and a HUMAN-APPROVED baseline decision before the bucket
+      can dispatch. The baseline must honestly describe a synthetic container that holds no code
+      and has no repository.
+    risk_level: MEDIUM
+  - option_id: OPTION_C
+    label: Block the bucket entirely
+    description: Treat it as ungoverned like any other; those defects never dispatch.
+    risk_level: HIGH
+resolution:
+  outcome: OPTION_B
+  decided_by: human-operator
+  rationale: >-
+    Give the triage bucket a lifecycle rather than carving it out. A carve-out would leave a class
+    of defect permanently outside governance, which is the property this work item exists to
+    eliminate. The bucket becomes a real registered entity with its own baseline.
+  follow_up_actions:
+    - action: >-
+        Author an HONEST baseline for the bucket - one that states it is a synthetic container
+        holding no code, with no repository and no deploy key. Do NOT fabricate a technical stack.
+      owner: orchestrator-main
+    - action: >-
+        Route the bucket's baseline decision to a human like any other product; the bucket must
+        not self-approve, and decisionActorIsHuman must be genuinely required.
+      owner: orchestrator-main
+    - action: >-
+        Enforce the governed gate on the PRE-EXISTING createDefect intake path, which currently
+        walks items to designNotRequired regardless of product state (L1 discovery 2).
+      owner: orchestrator-main
+created_by: orchestrator-main
+created_at: 2026-10-10T00:00:00Z
+updated_at: 2026-10-10T00:00:00Z
