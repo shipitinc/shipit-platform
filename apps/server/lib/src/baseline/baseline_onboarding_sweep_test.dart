@@ -7,7 +7,7 @@ import 'package:control_plane_server/src/credentials/credential_key_service.dart
 import 'package:control_plane_server/src/credentials/repository_snapshot_acquirer.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:product_registry/product_registry.dart'
-    show ConcurrentModificationException;
+    show ConcurrentModificationException, ProductRegistryEngine;
 import 'package:scheduler/scheduler.dart';
 import 'package:workflow_engine/workflow_engine.dart' show ProductGuard;
 // `test` is a dev_dependency of `control_plane_server`; it is unresolved as a
@@ -89,6 +89,33 @@ class _ParkingResolver implements PinnedRevisionResolver {
     if (!entered.isCompleted) entered.complete();
     await release.future;
     return revision;
+  }
+}
+
+/// A registry engine whose product read FAILS, once, and then delegates.
+///
+/// The failure the anti-wedge test needs is one the PER-PRODUCT guard cannot
+/// absorb. That guard catches what one product's evaluation throws; the read
+/// that lists the products runs before the loop, so a failure there aborts the
+/// whole pass and propagates out of `run()`. That is the path whose release is
+/// the reason `whenComplete` was chosen over a success-only release.
+class _FailingReadEngine extends ProductRegistryEngine {
+  _FailingReadEngine({
+    required super.store,
+    required super.humanDecisionStore,
+    required this.delegate,
+  });
+
+  final ProductRegistryEngine delegate;
+
+  /// Flipped to false by the first read, so exactly one pass fails.
+  bool failNextRead = true;
+
+  @override
+  Future<List<Product>> readAllProducts() async {
+    if (!failNextRead) return delegate.readAllProducts();
+    failNextRead = false;
+    throw StateError('the product registry could not be read');
   }
 }
 
@@ -787,6 +814,109 @@ void main() {
         expect(await jobStore.listJobs(), hasLength(2));
       },
     );
+
+    test(
+      'the exact-key guard catches a non-terminal row the product-scoped scan '
+      'did not see',
+      () async {
+        // M1. `_consider` now decides "is this product already being
+        // onboarded?" from the durable job set BEFORE resolving a revision, and
+        // that scan is indexed on `onboardingWorkItemId(productId)`. The
+        // exact-key guard that runs AFTER the acquisition is the second line,
+        // and it is what still catches a non-terminal row for this exact
+        // derivation that the scan could not see — a work item written under an
+        // id this build no longer scans, or a job type the scan filters out.
+        //
+        // It had NO coverage at all. `alreadyQueuedCode` was asserted nowhere
+        // in the repository, so removing the guard left every test green while
+        // the reason string beside it kept claiming the key was "still
+        // reachable" — a comment asserting a fact nothing checked.
+        //
+        // `alreadyQueuedCode` and NOT `activeJobForProductCode` IS the proof
+        // that the product-scoped scan did not fire for these rows: the scan can
+        // only ever produce the latter, so this assertion cannot be satisfied
+        // by the cheaper path a reviewer is being asked to keep trusting.
+        await registry.registerProduct(productId: 'product-a');
+        await seedCredential(
+          registry.engine,
+          productId: 'product-a',
+          repositoryId: 'repo',
+        );
+
+        // What this build would have written, with the identity swapped for
+        // each way a row can hide from the scan.
+        final canonical = onboardingJob(
+          jobId: 'jb-not-used',
+          productId: 'product-a',
+          repositoryId: 'repo',
+          startingRevision: kTestRevision,
+          now: DateTime.utc(2026, 2, 1),
+        );
+
+        for (final hidden in <({String what, Job job})>[
+          (
+            what: 'a work item this build does not scan',
+            // The exact spelling an older build wrote is not the point; that
+            // the row is filed under an id `_activeOnboardingJob` never reads
+            // is.
+            job: canonical.copyWith(
+              jobId: 'jb-legacy-work-item',
+              workItemId: 'onboarding:product-a',
+            ),
+          ),
+          (
+            what: 'a job type the product-scoped scan filters out',
+            job: canonical.copyWith(
+              jobId: 'jb-foreign-job-type',
+              jobType: JobType.triageDefect,
+            ),
+          ),
+        ]) {
+          final store = InMemoryJobStore();
+          await store.saveJob(hidden.job);
+          final subject = BaselineOnboardingSweep(
+            engine: registry.engine,
+            jobStore: store,
+            revisionResolver: resolver,
+            clock: () => DateTime.utc(2026, 3, 1),
+          );
+
+          final result = await subject.run();
+
+          expect(
+            result.skipped.single.code,
+            BaselineSweepSkipped.alreadyQueuedCode,
+            reason:
+                '${hidden.what}: the exact guard is the only thing that can '
+                'report this, and this is the only test that can say whether it '
+                'still does',
+          );
+          expect(
+            result.enqueued,
+            isEmpty,
+            reason:
+                'that derivation is already in flight; a second job for it is '
+                'the duplicate this guard exists to prevent',
+          );
+          expect(
+            result.skipped.single.reason,
+            contains(hidden.job.jobId),
+            reason: 'and the reason names the job an operator would go and see',
+          );
+          expect(
+            result.skipped.single.reason,
+            contains(hidden.job.state.wire),
+            reason:
+                'so the operator knows whether it is queued, running or waiting',
+          );
+          expect(
+            await store.listJobs(),
+            hasLength(1),
+            reason: 'nothing was enqueued',
+          );
+        }
+      },
+    );
   });
 
   // The tests below are the livelock. The lane was deployed to QA and ran
@@ -812,74 +942,80 @@ void main() {
           log: (event, data) => logger.add((event, data)),
         );
 
-    test('an overlapping pass does not run, and says so', () async {
-      // CAUSE 1. `Timer.periodic` does not await its callback, so pass N+1
-      // started while pass N was still inside its ~60s clone. Held open here
-      // rather than raced, so the overlap is a fact rather than a hope.
-      await registry.registerProduct(productId: 'product-a');
-      await seedCredential(
-        registry.engine,
-        productId: 'product-a',
-        repositoryId: 'repo',
-      );
-      final parking = _ParkingResolver(kTestRevision);
-      final subject = sweepOver(parking);
+    test(
+      'an overlapping pass does not run, and says so',
+      () async {
+        // CAUSE 1. `Timer.periodic` does not await its callback, so pass N+1
+        // started while pass N was still inside its ~60s clone. Held open here
+        // rather than raced, so the overlap is a fact rather than a hope.
+        await registry.registerProduct(productId: 'product-a');
+        await seedCredential(
+          registry.engine,
+          productId: 'product-a',
+          repositoryId: 'repo',
+        );
+        final parking = _ParkingResolver(kTestRevision);
+        final subject = sweepOver(parking);
 
-      final first = subject.run();
-      await parking.entered.future;
+        final first = subject.run();
+        await parking.entered.future;
 
-      final dropped = await subject.run();
+        final dropped = await subject.run();
 
-      expect(parking.acquisitions, 1, reason: 'the dropped pass must not acquire');
-      expect(dropped.overlappedPasses, 1);
-      expect(dropped.considered, 0);
-      expect(dropped.enqueued, isEmpty);
-      expect(dropped.skipped, isEmpty);
-      expect(
-        dropped.incidents,
-        isEmpty,
-        reason:
-            'a dropped tick is not a product failure. Filing it as one would '
-            'invent an incident about a product nobody looked at.',
-      );
+        expect(
+          parking.acquisitions,
+          1,
+          reason: 'the dropped pass must not acquire',
+        );
+        expect(dropped.overlappedPasses, 1);
+        expect(dropped.considered, 0);
+        expect(dropped.enqueued, isEmpty);
+        expect(dropped.skipped, isEmpty);
+        expect(
+          dropped.incidents,
+          isEmpty,
+          reason:
+              'a dropped tick is not a product failure. Filing it as one would '
+              'invent an incident about a product nobody looked at.',
+        );
 
-      // VISIBLE, in the event an operator actually greps.
-      final completed = logger
-          .where((e) => e.$1 == 'baseline.sweep.completed')
-          .toList();
-      expect(completed, hasLength(1));
-      expect(completed.single.$2['overlappedPasses'], 1);
-      expect(completed.single.$2['code'], 'SWEEP_PASS_OVERLAPPED');
-      expect(
-        completed.single.$2['action'],
-        contains('already in flight'),
-        reason:
-            'a dropped tick that only says "considered 0" is indistinguishable '
-            'from a tick that found nothing to do — which is the shape of "the '
-            'sweep is not running"',
-      );
+        // VISIBLE, in the event an operator actually greps.
+        final completed = logger
+            .where((e) => e.$1 == 'baseline.sweep.completed')
+            .toList();
+        expect(completed, hasLength(1));
+        expect(completed.single.$2['overlappedPasses'], 1);
+        expect(completed.single.$2['code'], 'SWEEP_PASS_OVERLAPPED');
+        expect(
+          completed.single.$2['action'],
+          contains('already in flight'),
+          reason:
+              'a dropped tick that only says "considered 0" is indistinguishable '
+              'from a tick that found nothing to do — which is the shape of "the '
+              'sweep is not running"',
+        );
 
-      parking.release.complete();
-      final completedPass = await first;
+        parking.release.complete();
+        final completedPass = await first;
 
-      expect(completedPass.enqueued, hasLength(1));
-      expect(completedPass.overlappedPasses, 0);
-      expect(await jobStore.listJobs(), hasLength(1));
+        expect(completedPass.enqueued, hasLength(1));
+        expect(completedPass.overlappedPasses, 0);
+        expect(await jobStore.listJobs(), hasLength(1));
 
-      // The guard is RELEASED. A guard taken and not given back would wedge the
-      // sweep shut after the first pass, and every later tick would be
-      // "overlapping" against a pass that ended long ago.
-      final after = await subject.run();
-      expect(
-        after.overlappedPasses,
-        0,
-        reason: 'the guard is released when the pass ends',
-      );
-      expect(
-        after.skipped.single.code,
-        BaselineSweepSkipped.activeJobForProductCode,
-      );
-    },
+        // The guard is RELEASED. A guard taken and not given back would wedge the
+        // sweep shut after the first pass, and every later tick would be
+        // "overlapping" against a pass that ended long ago.
+        final after = await subject.run();
+        expect(
+          after.overlappedPasses,
+          0,
+          reason: 'the guard is released when the pass ends',
+        );
+        expect(
+          after.skipped.single.code,
+          BaselineSweepSkipped.activeJobForProductCode,
+        );
+      },
       // A SHORT timeout, and deliberately so. Without the re-entrancy guard the
       // second `run()` above would enter the pass, reach the parking resolver and
       // await a release this test never completes — so the failure mode of a
@@ -970,16 +1106,20 @@ void main() {
         );
 
         await subject.run();
-        final afterFirst =
-            await registry.engine.readActiveCredential('product-a', 'repo');
+        final afterFirst = await registry.engine.readActiveCredential(
+          'product-a',
+          'repo',
+        );
         expect(materializer.materializations, greaterThan(0));
 
         for (var pass = 0; pass < 3; pass++) {
           await subject.run();
         }
 
-        final afterRest =
-            await registry.engine.readActiveCredential('product-a', 'repo');
+        final afterRest = await registry.engine.readActiveCredential(
+          'product-a',
+          'repo',
+        );
         expect(
           afterRest!.version,
           afterFirst!.version,
@@ -1024,7 +1164,8 @@ void main() {
             repositoryId: 'repo',
             startingRevision: kTestRevision,
           ),
-          reason: 'the key is built by the one shared builder, not spelled here',
+          reason:
+              'the key is built by the one shared builder, not spelled here',
         );
         expect(enqueued.dedupeKey, 'onboarding:product-a:repo:$kTestRevision');
 
@@ -1052,91 +1193,163 @@ void main() {
       },
     );
 
-    test('incidents stay LOUD — one failing product does not quiet the pass', () async {
-      // The guard that is working as designed, pinned. The live sweep produced
-      // 22 incidents that were correct: a product the pass could not decide
-      // about was recorded, named and logged, and the pass carried on. A fix
-      // that made these quiet would be worse than the livelock, so the
-      // accounting identity and the log line are both asserted here.
-      await registry.registerProduct(
-        productId: 'product-a',
-        repositoryId: 'repo-a',
-      );
-      await registry.registerProduct(
-        productId: 'product-b',
-        repositoryId: 'repo-b',
-      );
-      await seedCredential(
-        registry.engine,
-        productId: 'product-a',
-        repositoryId: 'repo-a',
-      );
-      await seedCredential(
-        registry.engine,
-        productId: 'product-b',
-        repositoryId: 'repo-b',
-      );
+    test(
+      'incidents stay LOUD — one failing product does not quiet the pass',
+      () async {
+        // The guard that is working as designed, pinned. The live sweep produced
+        // 22 incidents that were correct: a product the pass could not decide
+        // about was recorded, named and logged, and the pass carried on. A fix
+        // that made these quiet would be worse than the livelock, so the
+        // accounting identity and the log line are both asserted here.
+        await registry.registerProduct(
+          productId: 'product-a',
+          repositoryId: 'repo-a',
+        );
+        await registry.registerProduct(
+          productId: 'product-b',
+          repositoryId: 'repo-b',
+        );
+        await seedCredential(
+          registry.engine,
+          productId: 'product-a',
+          repositoryId: 'repo-a',
+        );
+        await seedCredential(
+          registry.engine,
+          productId: 'product-b',
+          repositoryId: 'repo-b',
+        );
 
-      final failing = _ScriptedResolver(
-        {'repo-b': kTestRevision},
-        // The exception production actually raised, from the acquisition, on a
-        // credential the sweep had written itself.
-        failures: {
-          'repo-a': ConcurrentModificationException(
-            entityId: 'cred-some-credential',
-            expectedVersion: 41,
-            actualVersion: 42,
-          ),
-        },
-      );
-      final subject = sweepOver(failing);
+        final failing = _ScriptedResolver(
+          {'repo-b': kTestRevision},
+          // The exception production actually raised, from the acquisition, on a
+          // credential the sweep had written itself.
+          failures: {
+            'repo-a': ConcurrentModificationException(
+              entityId: 'cred-some-credential',
+              expectedVersion: 41,
+              actualVersion: 42,
+            ),
+          },
+        );
+        final subject = sweepOver(failing);
 
-      final result = await subject.run();
+        final result = await subject.run();
 
-      expect(result.considered, 2);
-      expect(
-        result.incidents,
-        hasLength(1),
-        reason: 'a genuine failure is an incident, not a skip',
-      );
-      expect(result.incidents.single.productId, 'product-a');
-      expect(
-        result.incidents.single.code,
-        BaselineSweepIncidentCodes.evaluationFailed,
-      );
-      expect(
-        result.incidents.single.reason,
-        contains('expected version 41, actual 42'),
-        reason: 'the record says what actually happened',
-      );
-      expect(
-        result.skipped.where((s) => s.productId == 'product-a'),
-        isEmpty,
-        reason: 'an incident must not be laundered into a routine skip',
-      );
-      expect(
-        result.accountedFor,
-        result.considered,
-        reason: 'every product the pass looked at is accounted for',
-      );
+        expect(result.considered, 2);
+        expect(
+          result.incidents,
+          hasLength(1),
+          reason: 'a genuine failure is an incident, not a skip',
+        );
+        expect(result.incidents.single.productId, 'product-a');
+        expect(
+          result.incidents.single.code,
+          BaselineSweepIncidentCodes.evaluationFailed,
+        );
+        expect(
+          result.incidents.single.reason,
+          contains('expected version 41, actual 42'),
+          reason: 'the record says what actually happened',
+        );
+        expect(
+          result.skipped.where((s) => s.productId == 'product-a'),
+          isEmpty,
+          reason: 'an incident must not be laundered into a routine skip',
+        );
+        expect(
+          result.accountedFor,
+          result.considered,
+          reason: 'every product the pass looked at is accounted for',
+        );
 
-      // ...and the rest of the pass carried on.
-      expect(result.enqueued, hasLength(1));
-      expect(result.enqueued.single.productId, 'product-b');
-      expect(await jobStore.listJobs(), hasLength(1));
+        // ...and the rest of the pass carried on.
+        expect(result.enqueued, hasLength(1));
+        expect(result.enqueued.single.productId, 'product-b');
+        expect(await jobStore.listJobs(), hasLength(1));
 
-      // ...and it was said out loud, with the action an operator needs.
-      final incidents = logger
-          .where((e) => e.$1 == 'baseline.sweep.product_incident')
-          .toList();
-      expect(incidents, hasLength(1));
-      expect(incidents.single.$2['productId'], 'product-a');
-      expect(incidents.single.$2['code'], 'SWEEP_PRODUCT_EVALUATION_FAILED');
-      expect(
-        incidents.single.$2['action'],
-        contains('the rest of the pass continued'),
-      );
-      expect(incidents.single.$2['stack'], isNotNull);
-    });
+        // ...and it was said out loud, with the action an operator needs.
+        final incidents = logger
+            .where((e) => e.$1 == 'baseline.sweep.product_incident')
+            .toList();
+        expect(incidents, hasLength(1));
+        expect(incidents.single.$2['productId'], 'product-a');
+        expect(incidents.single.$2['code'], 'SWEEP_PRODUCT_EVALUATION_FAILED');
+        expect(
+          incidents.single.$2['action'],
+          contains('the rest of the pass continued'),
+        );
+        expect(incidents.single.$2['stack'], isNotNull);
+      },
+    );
+
+    test(
+      'a pass that THROWS still releases the guard — the sweep is not wedged '
+      'shut',
+      () async {
+        // THE FAILURE PATH `whenComplete` WAS CHOSEN FOR. The test above
+        // covers the release after a pass that SUCCEEDED, which is the half a
+        // success-only release would also satisfy. This is the other half, and
+        // it is the half the production comment at `run()` gives as the
+        // reason: a guard released only on success wedges the sweep shut after
+        // the first failing pass, and every tick from then on reports itself as
+        // "overlapping" against a pass that ended minutes ago — the silent
+        // no-op shape this lane exists to end, arrived at from the other
+        // direction.
+        //
+        // Driven through the PRODUCT READ rather than through a per-product
+        // evaluation, because the per-product guard absorbs an evaluation that
+        // throws: it records an incident and the pass carries on. Only a
+        // failure before the loop genuinely aborts the pass, and that is the
+        // failure the caller of `run()` actually sees propagate.
+        await registry.registerProduct(productId: 'product-a');
+        await seedCredential(
+          registry.engine,
+          productId: 'product-a',
+          repositoryId: 'repo',
+        );
+        final flaky = _FailingReadEngine(
+          store: registry.store,
+          humanDecisionStore: registry.decisions,
+          delegate: registry.engine,
+        );
+        final subject = BaselineOnboardingSweep(
+          engine: flaky,
+          jobStore: jobStore,
+          revisionResolver: resolver,
+          clock: () => DateTime.utc(2026, 3, 1),
+          log: (event, data) => logger.add((event, data)),
+        );
+
+        await expectLater(
+          subject.run(),
+          throwsA(isA<StateError>()),
+          reason:
+              'the product read failed before the loop, so there is no product '
+              'to name as an incident and the pass really does abort',
+        );
+
+        final after = await subject.run();
+
+        expect(
+          after.overlappedPasses,
+          0,
+          reason:
+              'the guard was released on the FAILURE path. Had it not been, '
+              'this pass would have come back as a dropped tick — reporting '
+              'itself as overlapping against a pass that ended long ago, for '
+              'ever.',
+        );
+        expect(
+          after.considered,
+          1,
+          reason:
+              'so it genuinely RAN: the products were listed and decided, '
+              'rather than the pass being skipped before it started',
+        );
+        expect(after.enqueued, hasLength(1));
+        expect(await jobStore.listJobs(), hasLength(1));
+      },
+    );
   });
 }
