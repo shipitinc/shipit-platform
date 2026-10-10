@@ -3,7 +3,14 @@ import 'dart:convert';
 import 'package:execution_coordinator/execution_coordinator.dart'
     show ExecutionStore;
 import 'package:platform_contracts/platform_contracts.dart';
-import 'package:product_registry/product_registry.dart';
+import 'package:product_registry/product_registry.dart'
+        // `product_registry` exports its own `ConcurrentModificationException`, as
+        // does `postgres_defect_store` below and `workflow_store`. Three distinct
+        // types share one name, so the work-item compare-and-swap this file retries
+        // on is named by the single import that shows it below and hidden from the
+        // two that would otherwise make it ambiguous.
+        hide
+        ConcurrentModificationException;
 import 'package:qa_orchestration/qa_orchestration.dart' show QAContractStore;
 import 'package:workflow_engine/workflow_engine.dart' show ProductGuard;
 import 'package:scheduler/scheduler.dart'
@@ -17,14 +24,18 @@ import 'package:scheduler/scheduler.dart'
         onboardingWorkItemId;
 import 'package:serverpod/serverpod.dart';
 import 'package:workflow_store/workflow_store.dart'
-    show DurableWorkflowEngine, WorkflowStore;
+    show ConcurrentModificationException, DurableWorkflowEngine, WorkflowStore;
 import 'package:worker_runtime/worker_runtime.dart'
     show WorkerRegistrationStore, WorkerStore;
 import 'package:worker_protocol/worker_protocol.dart' show WorkerRegistration;
 
 import '../generated/feature_request_summary_view.dart';
 import '../persistence/persistence_database.dart';
-import '../persistence/postgres_defect_store.dart';
+import '../persistence/postgres_defect_store.dart'
+        // See the note on the `product_registry` import: a same-named exception
+        // lives here too, and this one is about a defect row, not a work item.
+        hide
+        ConcurrentModificationException;
 import '../persistence/postgres_execution_store.dart';
 import '../persistence/postgres_human_decision_store.dart';
 import '../persistence/postgres_human_direction_store.dart';
@@ -37,6 +48,7 @@ import '../persistence/postgres_worker_registration_store.dart';
 import '../persistence/postgres_worker_store.dart';
 import '../persistence/postgres_workflow_store.dart';
 import '../triage/lane_a_defect_triage_work_item.dart';
+import '../triage/work_entry.dart';
 import 'structured_logger.dart';
 
 /// Application services for the control plane.
@@ -98,6 +110,29 @@ class ControlPlaneService {
         qaContractStore: qaContractStore,
         log: (event, fields) => logger.info(event, fields),
       );
+
+  /// The one work-entry operation, over the same stores this service already
+  /// uses, so an item walked here resolves identically in the process that
+  /// ticks the scheduler.
+  ///
+  /// A getter rather than a field for the same reason
+  /// [_triageWorkItemProvisioner] is one: the stores are themselves views over
+  /// the single [PersistenceDatabase] this service owns, and the trigger holds
+  /// a [JobQueue] built from that store. Constructing it once and keeping it
+  /// would work today and silently detach from the transaction slot the moment
+  /// anything about how the stores are built changed.
+  ///
+  /// Both intake paths route through this rather than enqueueing themselves, so
+  /// the `governed` dispatch gate has exactly one implementation. Adding a
+  /// second check here would be the same gate decided twice, and two gates can
+  /// disagree.
+  WorkEntryTrigger get workEntryTrigger => WorkEntryTrigger(
+    workflowStore: workflowStore,
+    workflowEngine: workflowEngine,
+    productRegistryEngine: productRegistryEngine,
+    jobStore: jobStore,
+    log: (event, fields) => logger.info(event, fields),
+  );
 
   /// S-1 Product Registry store + engine (checkpoint 006).
   ProductRegistryStore get productRegistryStore =>
@@ -752,17 +787,27 @@ class ControlPlaneService {
   // Unified Intake (Feature Requests)
   // ---------------------------------------------------------------------
 
-  /// Files a human Feature Request as a `draft` work item and raises the intake
-  /// direction that surfaces it.
+  /// Files a human Feature Request, raises the intake direction that surfaces
+  /// it, and hands the new work item to the work-entry trigger.
   ///
-  /// Both writes land in one transaction. They are one fact — a request whose
-  /// work item exists but whose direction failed to enqueue is a row no inbox
-  /// can reach, and the reporter has already been told it was accepted.
+  /// The work item and the direction land in one transaction. They are one fact
+  /// — a request whose work item exists but whose direction failed to enqueue is
+  /// a row no inbox can reach, and the reporter has already been told it was
+  /// accepted. The trigger runs immediately after that transaction commits,
+  /// because it cannot share it; see the note at the call site.
   ///
   /// The work item is created through [workflowEngine] rather than a direct
   /// store write so the same durable path every other work item takes applies
-  /// here, and the item stays in `draft` — it is not runnable until a human
-  /// decides, which is what keeps this from silently starting work.
+  /// here, and the trigger then decides how far it may travel: a feature is
+  /// parked at `planned` with its reason recorded, because no consumer runtime
+  /// exists that would read a feature triage result. It is never walked to an
+  /// entry state, which is the only thing keeping the product-blind scheduler
+  /// from triaging a feature as a defect.
+  ///
+  /// Per human decision `58bad3d1` a feature against a product that is not
+  /// `governed` is ACCEPTED and PARKED, never refused. The intake direction is
+  /// the human gate; a platform-lifecycle condition is not a reason to reject a
+  /// request about it.
   Future<WorkItem> createFeatureWorkItem({
     required String title,
     required String description,
@@ -773,13 +818,21 @@ class ControlPlaneService {
     final now = DateTime.now().toUtc();
     final workItemId = 'WI-feature-${now.microsecondsSinceEpoch}';
 
-    return _db.inTransaction(() async {
-      final workItem = await workflowEngine.createWorkItem(
+    await _db.inTransaction(() async {
+      await workflowEngine.createWorkItem(
         workItemId: workItemId,
         productId: productId,
         category: WorkItemCategory.feature,
         title: title,
         description: description,
+        // The `planning -> planned` hop is guarded by `planningEvidenceProvided`
+        // (work_item_transitions.dart), which accepts `featureRef` OR
+        // `requirementRef`. A feature request is its own requirement reference
+        // and points at itself, so the reference is real rather than invented.
+        // Without it the graph refuses the hop and the trigger answers
+        // `NO_PLANNING_EVIDENCE` — the request would be accepted and then sit
+        // at `planning` with no recorded reason for having stopped.
+        featureRef: workItemId,
       );
 
       await humanDirectionStore.createDirection(
@@ -794,9 +847,152 @@ class ControlPlaneService {
         ),
         createdBy: reporter,
       );
-
-      return workItem;
     });
+
+    // The trigger runs AFTER this transaction commits, not inside it.
+    //
+    // `DurableWorkflowEngine.transition` opens its own transaction on the same
+    // [PersistenceDatabase] this service owns, and `PersistenceDatabase
+    // .inTransaction` refuses to nest — it throws `StateError` rather than
+    // silently reusing the outer transaction. `createWorkItem` above is safe to
+    // call inside only because it calls `saveWorkItem` directly and never opens
+    // one. So the trigger cannot join this transaction, and pretending otherwise
+    // would raise on every single feature request.
+    //
+    // Ordering is what keeps the guarantee this method needs: by the time the
+    // trigger runs, the work item and the intake direction are durable, so a
+    // request whose trigger does not reach a decision is still a recorded,
+    // accepted request that the periodic sweep can find again — never a row
+    // stranded mid-write.
+    final parked = await _ensureWorkEntryConverging(
+      workItemId: workItemId,
+      kind: WorkEntryKind.featureIntake,
+    );
+
+    // The item as it now IS, not the `draft` snapshot taken before the trigger
+    // ran. Returning a stale copy would tell the Reports screen the request is
+    // sitting in `draft` while the durable row says `planned` with a recorded
+    // reason — the reporting dishonesty this lane exists to close, in the one
+    // place a human is about to read it.
+    return parked;
+  }
+
+  /// How many times an intake re-reads and retries when another writer wins the
+  /// compare-and-swap on the work item.
+  ///
+  /// Three because the conflict is only ever produced by a concurrent writer
+  /// advancing the same item, and each retry continues from wherever the winner
+  /// left it — so the attempts converge rather than collide. A fourth attempt
+  /// would be waiting on a writer that is not going to stop.
+  static const int _workEntryConvergenceAttempts = 3;
+
+  /// Drives [WorkEntryTrigger.ensureWorkEntry] to convergence and returns the work
+  /// item as it stands afterwards.
+  ///
+  /// ## The contract this implements, and why retry-and-converge
+  ///
+  /// The trigger walks a work item through `DurableWorkflowEngine.transition`,
+  /// which is a compare-and-swap that **rethrows**
+  /// [ConcurrentModificationException] rather than retrying. Two callers walking
+  /// the same item therefore cannot both win, and the loser would otherwise see
+  /// that exception escape intake.
+  ///
+  /// A conflict is not a failure here, it is *another writer advancing the item
+  /// towards the same goal*, so the correct response is to re-read and continue
+  /// rather than to fail. Re-running is safe because the operation is
+  /// idempotent by construction: every hop carries a fixed per-work-item
+  /// idempotency key, and `JobQueue.enqueueIfAbsent` resolves a duplicate
+  /// dedupe key to the winning job inside one transaction instead of minting a
+  /// second one. The alternative — rethrow and let the periodic sweep retry —
+  /// was rejected because it turns a benign race into a user-visible failure:
+  /// intake has already committed the request and told the reporter it was
+  /// accepted, so surfacing a conflict as an error contradicts a fact that is
+  /// already on disk.
+  ///
+  /// Retrying is safe with respect to the store's transaction handling too, and
+  /// not by luck: `PostgresWorkflowStore.saveWorkItem` issues
+  /// `UPDATE ... WHERE "version" = @expected` and raises the conflict from the
+  /// affected-row count **in Dart**, so no statement ever fails and Postgres
+  /// never aborts a surrounding transaction. A conflict detected by a failed
+  /// SQL statement would poison the transaction it was raised in and make a
+  /// retry impossible; this one does not.
+  ///
+  /// ## The two boundaries this must not cross
+  ///
+  /// * **Only [ConcurrentModificationException] is retried.** A blanket catch
+  ///   would let a `WorkflowTransitionRejectedException`, a store failure or a
+  ///   rejected argument be retried and then reported as convergence — the
+  ///   "everything is fine, nothing happened" outcome this path exists to
+  ///   eliminate.
+  /// * **Exhaustion is reported, never thrown.** By then the work item and the
+  ///   intake direction are durable and the reporter has been told the request
+  ///   was accepted; failing here would contradict a fact already on disk and
+  ///   teach humans that our success message is unreliable. The
+  ///   non-convergence is logged under a named event and the caller returns the
+  ///   accepted item, leaving the periodic sweep as the backstop.
+  ///
+  /// Anything that is NOT a compare-and-swap conflict still propagates. A dead
+  /// database is a real failure and answering it with a cheerful "accepted"
+  /// would be its own kind of lie; the trigger's own refusals arrive as
+  /// [WorkEntrySkipped] values rather than exceptions precisely so that the
+  /// ordinary decisions never need this escape hatch.
+  ///
+  /// No new [WorkEntrySkipCodes] member is introduced for the exhausted case,
+  /// and `work_entry.dart` states why: it is the one place work-entry codes
+  /// live, and a code minted here would be a second spelling of the same
+  /// vocabulary.
+  Future<WorkItem> _ensureWorkEntryConverging({
+    required String workItemId,
+    required WorkEntryKind kind,
+  }) async {
+    for (var attempt = 1; attempt <= _workEntryConvergenceAttempts; attempt++) {
+      // Re-read on every attempt, including the first. The point is to continue
+      // from wherever the winning writer left the item, so continuing from a
+      // snapshot taken before it moved would replay the same losing write.
+      final current = await workflowStore.readWorkItem(workItemId);
+      try {
+        final decision = await workEntryTrigger.ensureWorkEntry(
+          item: current,
+          kind: kind,
+        );
+        // Re-read rather than trusting `current`: the trigger moves the item, so
+        // the state that belongs in this log line is the one it left behind.
+        final settled = await workflowStore.readWorkItem(workItemId);
+        logger.info('work_entry.intake.decided', {
+          'workItemId': workItemId,
+          'kind': kind.name,
+          'attempt': attempt,
+          'state': settled.state.wire,
+          'decision': decision.toString(),
+          'code': decision.code,
+        });
+        return settled;
+      } on ConcurrentModificationException {
+        // Someone else moved this item between the read above and the write
+        // below. Nothing rolled back and nothing failed; the next iteration
+        // continues from their result.
+        logger.info('work_entry.intake_contended', {
+          'workItemId': workItemId,
+          'kind': kind.name,
+          'attempt': attempt,
+          'maxAttempts': _workEntryConvergenceAttempts,
+          'action':
+              'another writer advanced this work item; re-reading and '
+              'continuing from where it now is',
+        });
+      }
+    }
+
+    logger.info('work_entry.intake_not_converged', {
+      'workItemId': workItemId,
+      'kind': kind.name,
+      'attempts': _workEntryConvergenceAttempts,
+      'action':
+          'this request is durable and is returned as accepted; no triage job '
+          'was enqueued by this path. The periodic work-entry sweep retries '
+          'it, so nothing is lost.',
+    });
+    return workflowStore.readWorkItem(workItemId);
   }
 
   /// Feature requests as the Reports screen's `Feature requests` tab reads them.
