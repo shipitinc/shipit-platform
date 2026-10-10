@@ -1,0 +1,50 @@
+# human-decision.yaml
+decision_id: atures
+type: ARCHITECTURE
+status: RESOLVED
+question: >-
+  HD-1(b): for features, what should happen when the product is not governed? The designer flagged plainly that parking is a worse visible outcome than today's draft.
+context:
+  summary: >-
+    Escalated by the design of the work-entry trigger
+    (docs/engineering/dispatch/tasks/design-work-entry/design-revision.md). Designing the trigger
+    surfaced that nothing enforces what ProductState's text already says, and that the designer's
+    own preferred option was a worse visible outcome than shipping behaviour. Both were escalated
+    rather than settled because they change what operators see and what may be dispatched.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: design-work-entry
+    item_ref: Work-entry trigger making defect and feature triage live.
+  evidence:
+    documents:
+      - type: OTHER
+        id: design-revision
+        url: docs/engineering/dispatch/tasks/design-work-entry/design-revision.md
+  recommendation:
+    recommended_option: >-
+      Leave defects as shipped for (a); accept and park features visibly for (b).
+    confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Leave defects as shipped / refuse features
+    description: Defects dispatch for any registered product; features refused until governed.
+    risk_level: LOW
+  - option_id: OPTION_B
+    label: Gate both on governed; park features
+    description: >-
+      Defects are accepted but not dispatched until governed; features are accepted and held at
+      planned with a visible reason until governed.
+    risk_level: MEDIUM
+resolution:
+  outcome: OPTION_B
+  decided_by: human-operator
+  rationale: >-
+    Accept and park visibly. The feature request is accepted and held at planned with a visible, honest reason until the product is governed. The designer argued this is still better than today's silent draft - which is never dispatched and never explains itself - while acknowledging it is a worse first impression in the moment. Accepted with that trade named.
+  follow_up_actions:
+    - action: Enforce the ProductState dispatch contract the state text already claims.
+      owner: orchestrator-main
+    - action: Record the parked-feature reason where an operator can see it, not only in a job row.
+      owner: orchestrator-main
+created_by: orchestrator-main
+created_at: 2026-10-10T00:00:00Z
+updated_at: 2026-10-10T00:00:00Z
