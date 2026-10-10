@@ -1,0 +1,30 @@
+### The unresolved lifecycle human gate for a product, when one is open.
+###
+### A lifecycle decision hangs off the synthetic scope
+### `product-lifecycle:<productId>` rather than a WorkItem row, so no listing
+### endpoint can discover one: `pendingDecisions()` and `recentDecisions()`
+### enumerate WorkItems, and a synthetic scope is not one. This read is
+### therefore the ONLY place the product detail screen can learn that a gate it
+### raised earlier is still open — and without it the gate is invisible the
+### moment the operator leaves the route, which strands a `blocking: true`
+### decision that nothing is then able to resolve.
+###
+### The whole decision is carried rather than just its id, so the screen can
+### re-render the full gate on return — the question, the engine-declared
+### outcomes, the blocking flag — without a second endpoint. Every field is
+### read from the durable decision record, never from the response of the call
+### that raised it.
+class: ProductLifecycleGateView
+fields:
+  decisionId: String
+  ### The `ProductLifecycleAction.wire` this decision authorises:
+  ### pause | resume | offboard | reinstate. Read from the decision's own
+  ### `LifecycleDecisionBinding` metadata, because the screen must still know
+  ### which guard the gate was raised under after the route is left and re-entered.
+  action: String
+  status: String
+  question: String?
+  context: DecisionContextView?
+  options: List<DecisionOptionView>?
+  blocking: bool
+  requestedAt: DateTime?

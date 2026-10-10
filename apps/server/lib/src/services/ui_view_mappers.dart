@@ -13,11 +13,13 @@ import '../generated/job_summary_view.dart';
 import '../generated/product_baseline_view.dart';
 import '../generated/product_context_view.dart';
 import '../generated/product_detail_view.dart';
+import '../generated/product_lifecycle_gate_view.dart';
 import '../generated/repository_credential_view.dart';
 import '../generated/standing_policy_view.dart';
 import '../generated/product_summary_view.dart';
 import '../generated/product_view.dart';
-import 'control_plane_service.dart' show ProductDetail, ProductSummary;
+import 'control_plane_service.dart'
+    show OpenLifecycleGate, ProductDetail, ProductSummary;
 import '../generated/repository_reference_view.dart';
 import '../generated/work_item_view.dart';
 
@@ -221,11 +223,50 @@ class UiViewMappers {
       pendingBaselineVerified:
           detail.pendingBaseline?.isIndependentlyVerified ?? false,
       pendingBaselineDecisionId: detail.pendingBaselineDecisionId,
+      pendingLifecycleGate: detail.pendingLifecycleGate == null
+          ? null
+          : productLifecycleGateView(detail.pendingLifecycleGate!),
       allBaselines: context.allBaselines.map(productBaselineView).toList(),
       openClarifications: context.openClarifications
           .map(clarificationView)
           .toList(),
       policies: detail.policies.map(standingPolicyView).toList(),
+    );
+  }
+
+  /// Projects an open lifecycle gate onto the wire.
+  ///
+  /// Unlike [decisionView] this takes no WorkItem: a lifecycle decision hangs
+  /// off the synthetic scope `product-lifecycle:<productId>`, which is not one,
+  /// so there is nothing to read a title from. Everything the gate panel needs
+  /// comes from the decision itself, and nothing is invented here.
+  static ProductLifecycleGateView productLifecycleGateView(
+    OpenLifecycleGate gate,
+  ) {
+    final decision = gate.decision;
+    return ProductLifecycleGateView(
+      decisionId: gate.decisionId,
+      action: gate.action.wire,
+      status: decision.status.wire,
+      question: decision.question,
+      context: decision.context == null
+          ? null
+          : DecisionContextView(
+              workflowState: decision.context!.workflowState,
+              availableOptions: decision.context!.availableOptions,
+            ),
+      options: decision.options
+          ?.map(
+            (o) => DecisionOptionView(
+              optionId: o.optionId,
+              label: o.label,
+              description: o.description,
+              recommended: o.recommended ?? false,
+            ),
+          )
+          .toList(),
+      blocking: decision.blocking ?? false,
+      requestedAt: decision.requestedAt,
     );
   }
 

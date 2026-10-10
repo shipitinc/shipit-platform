@@ -16,9 +16,10 @@ import 'product_view.dart' as _i2;
 import 'repository_reference_view.dart' as _i3;
 import 'repository_credential_view.dart' as _i4;
 import 'product_baseline_view.dart' as _i5;
-import 'clarification_view.dart' as _i6;
-import 'standing_policy_view.dart' as _i7;
-import 'package:control_plane_client/src/protocol/protocol.dart' as _i8;
+import 'product_lifecycle_gate_view.dart' as _i6;
+import 'clarification_view.dart' as _i7;
+import 'standing_policy_view.dart' as _i8;
+import 'package:control_plane_client/src/protocol/protocol.dart' as _i9;
 
 /// Everything the Product Detail screen reads, in one call.
 ///
@@ -34,6 +35,7 @@ abstract class ProductDetailView implements _i1.SerializableModel {
     this.pendingBaseline,
     required this.pendingBaselineVerified,
     this.pendingBaselineDecisionId,
+    this.pendingLifecycleGate,
     required this.allBaselines,
     required this.openClarifications,
     required this.policies,
@@ -48,35 +50,36 @@ abstract class ProductDetailView implements _i1.SerializableModel {
     _i5.ProductBaselineView? pendingBaseline,
     required bool pendingBaselineVerified,
     String? pendingBaselineDecisionId,
+    _i6.ProductLifecycleGateView? pendingLifecycleGate,
     required List<_i5.ProductBaselineView> allBaselines,
-    required List<_i6.ClarificationView> openClarifications,
-    required List<_i7.StandingPolicyView> policies,
+    required List<_i7.ClarificationView> openClarifications,
+    required List<_i8.StandingPolicyView> policies,
   }) = _ProductDetailViewImpl;
 
   factory ProductDetailView.fromJson(Map<String, dynamic> jsonSerialization) {
     return ProductDetailView(
-      product: _i8.Protocol().deserialize<_i2.ProductView>(
+      product: _i9.Protocol().deserialize<_i2.ProductView>(
         jsonSerialization['product'],
       ),
       allowsDispatch: _i1.BoolJsonExtension.fromJson(
         jsonSerialization['allowsDispatch'],
       ),
-      repositories: _i8.Protocol()
+      repositories: _i9.Protocol()
           .deserialize<List<_i3.RepositoryReferenceView>>(
             jsonSerialization['repositories'],
           ),
-      credentials: _i8.Protocol()
+      credentials: _i9.Protocol()
           .deserialize<List<_i4.RepositoryCredentialView>>(
             jsonSerialization['credentials'],
           ),
       activeBaseline: jsonSerialization['activeBaseline'] == null
           ? null
-          : _i8.Protocol().deserialize<_i5.ProductBaselineView>(
+          : _i9.Protocol().deserialize<_i5.ProductBaselineView>(
               jsonSerialization['activeBaseline'],
             ),
       pendingBaseline: jsonSerialization['pendingBaseline'] == null
           ? null
-          : _i8.Protocol().deserialize<_i5.ProductBaselineView>(
+          : _i9.Protocol().deserialize<_i5.ProductBaselineView>(
               jsonSerialization['pendingBaseline'],
             ),
       pendingBaselineVerified: _i1.BoolJsonExtension.fromJson(
@@ -84,14 +87,19 @@ abstract class ProductDetailView implements _i1.SerializableModel {
       ),
       pendingBaselineDecisionId:
           jsonSerialization['pendingBaselineDecisionId'] as String?,
-      allBaselines: _i8.Protocol().deserialize<List<_i5.ProductBaselineView>>(
+      pendingLifecycleGate: jsonSerialization['pendingLifecycleGate'] == null
+          ? null
+          : _i9.Protocol().deserialize<_i6.ProductLifecycleGateView>(
+              jsonSerialization['pendingLifecycleGate'],
+            ),
+      allBaselines: _i9.Protocol().deserialize<List<_i5.ProductBaselineView>>(
         jsonSerialization['allBaselines'],
       ),
-      openClarifications: _i8.Protocol()
-          .deserialize<List<_i6.ClarificationView>>(
+      openClarifications: _i9.Protocol()
+          .deserialize<List<_i7.ClarificationView>>(
             jsonSerialization['openClarifications'],
           ),
-      policies: _i8.Protocol().deserialize<List<_i7.StandingPolicyView>>(
+      policies: _i9.Protocol().deserialize<List<_i8.StandingPolicyView>>(
         jsonSerialization['policies'],
       ),
     );
@@ -121,12 +129,22 @@ abstract class ProductDetailView implements _i1.SerializableModel {
   /// work item's decisions. Absent when no human gate is outstanding.
   String? pendingBaselineDecisionId;
 
+  /// The unresolved lifecycle gate, when one exists. Absent when no human gate
+  /// is outstanding.
+  ///
+  /// Read from the decision store on every load, for the same reason
+  /// [pendingBaselineDecisionId] exists and for a sharper one: a lifecycle
+  /// gate is reachable from nowhere else, so a screen that remembers the raise
+  /// call instead of re-deriving this loses a `blocking: true` decision the
+  /// moment the operator navigates away.
+  _i6.ProductLifecycleGateView? pendingLifecycleGate;
+
   List<_i5.ProductBaselineView> allBaselines;
 
-  List<_i6.ClarificationView> openClarifications;
+  List<_i7.ClarificationView> openClarifications;
 
   /// Active first; revoked ones are retained and still readable.
-  List<_i7.StandingPolicyView> policies;
+  List<_i8.StandingPolicyView> policies;
 
   /// Returns a shallow copy of this [ProductDetailView]
   /// with some or all fields replaced by the given arguments.
@@ -140,9 +158,10 @@ abstract class ProductDetailView implements _i1.SerializableModel {
     _i5.ProductBaselineView? pendingBaseline,
     bool? pendingBaselineVerified,
     String? pendingBaselineDecisionId,
+    _i6.ProductLifecycleGateView? pendingLifecycleGate,
     List<_i5.ProductBaselineView>? allBaselines,
-    List<_i6.ClarificationView>? openClarifications,
-    List<_i7.StandingPolicyView>? policies,
+    List<_i7.ClarificationView>? openClarifications,
+    List<_i8.StandingPolicyView>? policies,
   });
   @override
   Map<String, dynamic> toJson() {
@@ -157,6 +176,8 @@ abstract class ProductDetailView implements _i1.SerializableModel {
       'pendingBaselineVerified': pendingBaselineVerified,
       if (pendingBaselineDecisionId != null)
         'pendingBaselineDecisionId': pendingBaselineDecisionId,
+      if (pendingLifecycleGate != null)
+        'pendingLifecycleGate': pendingLifecycleGate?.toJson(),
       'allBaselines': allBaselines.toJson(valueToJson: (v) => v.toJson()),
       'openClarifications': openClarifications.toJson(
         valueToJson: (v) => v.toJson(),
@@ -183,9 +204,10 @@ class _ProductDetailViewImpl extends ProductDetailView {
     _i5.ProductBaselineView? pendingBaseline,
     required bool pendingBaselineVerified,
     String? pendingBaselineDecisionId,
+    _i6.ProductLifecycleGateView? pendingLifecycleGate,
     required List<_i5.ProductBaselineView> allBaselines,
-    required List<_i6.ClarificationView> openClarifications,
-    required List<_i7.StandingPolicyView> policies,
+    required List<_i7.ClarificationView> openClarifications,
+    required List<_i8.StandingPolicyView> policies,
   }) : super._(
          product: product,
          allowsDispatch: allowsDispatch,
@@ -195,6 +217,7 @@ class _ProductDetailViewImpl extends ProductDetailView {
          pendingBaseline: pendingBaseline,
          pendingBaselineVerified: pendingBaselineVerified,
          pendingBaselineDecisionId: pendingBaselineDecisionId,
+         pendingLifecycleGate: pendingLifecycleGate,
          allBaselines: allBaselines,
          openClarifications: openClarifications,
          policies: policies,
@@ -213,9 +236,10 @@ class _ProductDetailViewImpl extends ProductDetailView {
     Object? pendingBaseline = _Undefined,
     bool? pendingBaselineVerified,
     Object? pendingBaselineDecisionId = _Undefined,
+    Object? pendingLifecycleGate = _Undefined,
     List<_i5.ProductBaselineView>? allBaselines,
-    List<_i6.ClarificationView>? openClarifications,
-    List<_i7.StandingPolicyView>? policies,
+    List<_i7.ClarificationView>? openClarifications,
+    List<_i8.StandingPolicyView>? policies,
   }) {
     return ProductDetailView(
       product: product ?? this.product.copyWith(),
@@ -235,6 +259,10 @@ class _ProductDetailViewImpl extends ProductDetailView {
       pendingBaselineDecisionId: pendingBaselineDecisionId is String?
           ? pendingBaselineDecisionId
           : this.pendingBaselineDecisionId,
+      pendingLifecycleGate:
+          pendingLifecycleGate is _i6.ProductLifecycleGateView?
+          ? pendingLifecycleGate
+          : this.pendingLifecycleGate?.copyWith(),
       allBaselines:
           allBaselines ?? this.allBaselines.map((e0) => e0.copyWith()).toList(),
       openClarifications:

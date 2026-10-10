@@ -397,14 +397,65 @@ class ControlPlaneService {
         }
       }
     }
-    logger.debug('product_registry.detail', {'productId': productId});
+    final lifecycleGate = await openLifecycleGate(productId);
+    logger.debug('product_registry.detail', {
+      'productId': productId,
+      'openLifecycleGateId': lifecycleGate?.decisionId,
+    });
     return ProductDetail(
       context: context,
       credentials: credentials,
       pendingBaseline: pending,
       policies: policies,
       pendingBaselineDecisionId: pendingDecisionId,
+      pendingLifecycleGate: lifecycleGate,
     );
+  }
+
+  /// The oldest unresolved lifecycle gate for [productId], or null when none is
+  /// open.
+  ///
+  /// Read from the decision store on every load rather than remembered from the
+  /// call that raised it. That is the whole difference: a lifecycle decision
+  /// hangs off the synthetic scope `product-lifecycle:<productId>`, which is
+  /// not a WorkItem row, so `pendingDecisions()` and `recentDecisions()` cannot
+  /// see it and this read is the ONLY way a client can find a gate it raised in
+  /// an earlier session. A client that holds the gate in memory forgets it the
+  /// moment the route is left, and a forgotten `blocking: true` gate cannot be
+  /// raised again (`archived -> paused` is not an edge once the product has been
+  /// offboarded) or listed or resolved by anything else.
+  ///
+  /// `readHumanDecisionsForScope` orders by `updatedAt ASC`, so the OLDEST open
+  /// gate is returned. That is what makes an already-stranded product
+  /// recoverable rather than merely detectable: resolving this one exposes the
+  /// next on the following read, so the screen drains them in the order they
+  /// were raised.
+  ///
+  /// The action comes from the decision's own `LifecycleDecisionBinding`
+  /// metadata for the same reason — a screen that re-read only the id would not
+  /// know whether the gate was raised under `no_work_in_flight`, and would
+  /// either demand an attestation it does not need or skip one that it does.
+  Future<OpenLifecycleGate?> openLifecycleGate(String productId) async {
+    final decisions = await humanDecisionStore.readHumanDecisionsForScope(
+      LifecycleDecisionBinding.scopeFor(productId),
+    );
+    for (final decision in decisions) {
+      if (decision.status.isResolved) continue;
+      final binding = LifecycleDecisionBinding.tryFromMetadata(
+        decision.metadata,
+      );
+      // A decision recorded at this scope that is not a lifecycle binding is
+      // not something this screen can action, and a binding naming another
+      // product must never be shown here: it would let one product's operator
+      // resolve another product's gate.
+      if (binding == null || binding.productId != productId) continue;
+      return OpenLifecycleGate(
+        decisionId: decision.decisionId,
+        action: binding.action,
+        decision: decision,
+      );
+    }
+    return null;
   }
 
   Future<ProductContext> loadProductContext(String productId) async {
@@ -1891,6 +1942,7 @@ class ProductDetail {
     required this.pendingBaseline,
     required this.policies,
     this.pendingBaselineDecisionId,
+    this.pendingLifecycleGate,
   });
 
   final ProductContext context;
@@ -1905,6 +1957,34 @@ class ProductDetail {
   /// rather than a WorkItem row, so the UI cannot discover the gate id by
   /// listing a work item's decisions. This carries it explicitly.
   final String? pendingBaselineDecisionId;
+
+  /// The unresolved lifecycle gate for [context]'s product, or null when none
+  /// is open. See [ControlPlaneService.openLifecycleGate] for why this has to
+  /// be re-read rather than remembered.
+  final OpenLifecycleGate? pendingLifecycleGate;
+}
+
+/// An unresolved lifecycle human gate, as read from the durable decision
+/// record.
+///
+/// The whole [decision] is carried rather than a projection of it so the wire
+/// mapper can present the engine's own wording — question, options, blocking
+/// flag — exactly as it declared it, the same way the baseline gate does.
+class OpenLifecycleGate {
+  const OpenLifecycleGate({
+    required this.decisionId,
+    required this.action,
+    required this.decision,
+  });
+
+  final String decisionId;
+
+  /// The action this gate authorises, read from the decision's own
+  /// `LifecycleDecisionBinding`. Not a parameter of the raise call: this object
+  /// exists to answer "what is outstanding" long after that call returned.
+  final ProductLifecycleAction action;
+
+  final HumanDecision decision;
 }
 
 /// Onboarding status for a Product.

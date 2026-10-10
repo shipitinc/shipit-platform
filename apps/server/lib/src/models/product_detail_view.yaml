@@ -20,6 +20,15 @@ fields:
   ### than a WorkItem row, so the screen cannot discover this id by listing a
   ### work item's decisions. Absent when no human gate is outstanding.
   pendingBaselineDecisionId: String?
+  ### The unresolved lifecycle gate, when one exists. Absent when no human gate
+  ### is outstanding.
+  ###
+  ### Read from the decision store on every load, for the same reason
+  ### [pendingBaselineDecisionId] exists and for a sharper one: a lifecycle
+  ### gate is reachable from nowhere else, so a screen that remembers the raise
+  ### call instead of re-deriving this loses a `blocking: true` decision the
+  ### moment the operator navigates away.
+  pendingLifecycleGate: ProductLifecycleGateView?
   allBaselines: List<ProductBaselineView>
   openClarifications: List<ClarificationView>
   ### Active first; revoked ones are retained and still readable.
