@@ -1,0 +1,129 @@
+# Design Revision metadata — design-revision.yaml
+# Required fields per docs/engineering/DESIGN_GOVERNANCE.md ("Design Revision",
+# "Required Metadata (design-revision-metadata.yaml)").
+#
+# Path is `design-revision-metadata.yaml` per the governance doc; the House
+# convention used across existing dispatch task directories is a trailing-slug
+# filename, so both forms are provided. The canonical content is identical.
+
+revision_id: F22EC933-E9AB-4A0B-8904-C987EE1B1951
+brief_id: 9E045515-404E-4036-864A-FBFB0B3F6B88
+revision_number: 1
+status: UNDER_REVIEW
+risk_level: 3
+risk_rationale: >
+  Core workflow AND governance-model change. This revision redefines what may
+  mint the only EvidenceKind that satisfies ProductGuard.baselineVerifiedIndependently
+  -- the gate between an agent's own assertion and a human being asked to approve
+  it. It makes isIndependentlyVerified fail closed, which flips the evaluation of
+  every pre-existing product_baseline row (they lack the new required columns and
+  therefore no longer satisfy the guard). It is a live security-boundary remediation:
+  verifyBaseline is an exposed Serverpod RPC whose wire default is the permissive
+  'platform_verified_evidence', so any API client can currently self-attest
+  platform verification for any product. Level 3 additionally requires architecture
+  approval, which is exactly what HD-1 requests. A Level 2 reading was considered
+  and rejected: no UI changes, but the risk taxonomy keys on workflow and governance
+  model, both of which change.
+
+changelog:
+  - "revision 1 (initial): ten dispatch questions answered; four premise-changing
+     findings added (F-1 RPC self-attestation, F-2 phantom AGENTS.md 12, F-3
+     verifier subset-comparison defect, F-4 unconsumed onboardProduct job type)."
+  - "Introduced three-layer fail-closed guard: proof-based engine API, fail-closed
+     isIndependentlyVerified, database trigger mirroring trigger_design_review_independence."
+  - "Introduced structural separation S1/S2/S3 (principal, input, divergence)."
+  - "Escalated item 5 as HD-1 rather than choosing; added HD-2 for the missing
+     AGENTS.md section text. Neither resolved by this lane."
+  - "Five implementation lanes with non-overlapping OWNED_PATHS; generated trees
+     assigned to exactly one lane (L5)."
+
+traceability:
+  requirements_covered:
+    - "item 1 — trigger, idempotency, restart safety (§3.1)"
+    - "item 2 — source acquisition; deploy key assessment; reuse of
+       RepositoryAccessVerifier/ssh_remote/credential_key_service (§3.2)"
+    - "item 3 — structural producer/verifier separation S1/S2/S3 (§3.3)"
+    - "item 4 — fail-closed guard; permissive default removed; migration (§3.4)"
+    - "item 6 — JobType reuse vs new; tick-hook dispatch table (§3.6)"
+    - "item 7 — human gate retained; automation stops at baselineReview (§3.7)"
+    - "item 8 — product-agnosticism, designed against Product B (§3.8)"
+    - "item 9 — migration, rollout order, EXTERNAL_* precedent (§3.9)"
+    - "item 10 — verification plan incl. negative case (§3.10)"
+    - "security-boundary framing of the lane (§1, §2, §3.4)"
+    - "design-only constraint; no production file modified (whole document)"
+    - "zero Docker/Compose commands (§8)"
+    - "verify_schema_bootstrap.sh executed and reported: exit 0, 20 OK (§8)"
+    - "no Human Decision resolved (§4)"
+    - "per-lane non-overlapping OWNED_PATHS (§6)"
+  requirements_gaps:
+    - "item 5 — what legitimately issues platformVerifiedEvidence is DESIGNED
+       (mechanism S3) but DELIBERATELY NOT DECIDED. Escalated as HD-1. This is a
+       refusal to exercise authority the design lane does not hold, not a coverage
+       gap: the mechanism is fully specified and both candidate answers are
+       implementable behind the same seam."
+    - "HD-2 (added) — AGENTS.md section 12 is cited 11 times and does not exist;
+       the human must author it. Routed, not resolved. Does not block implementation."
+
+design_system_compliance: PASS
+design_system_compliance_note: >
+  No UI surface. This revision adds no view, token, component, or rendered element.
+  Recorded as PASS by non-applicability; an independent reviewer may prefer UNKNOWN.
+
+ux_accessibility_score: PASS
+ux_accessibility_note: >
+  No user-facing surface added or changed. The operator-visible change is that a
+  previously unavailable workflow becomes reachable (register repository reference +
+  credential reference, then await the sweep). product_detail_view already renders
+  the baselineVerifiedIndependently flag; this revision changes WHEN that flag
+  becomes true, not HOW it renders, so no accessibility regression is possible and
+  no WCAG criterion is engaged.
+
+implementation_feasibility: HIGH
+implementation_feasibility_rationale: >
+  Every mechanism is either already present (ReadOnlyRepositoryReader,
+  MaturityClassifier, RepositoryAccessVerifier, CredentialKeyService,
+  triggerOnboarding, JobType.onboardProduct, the deterministic re-derivation at
+  onboard_shipit_dev.dart:288-337, trigger_design_review_independence as a proven
+  template) or is additive Dart/SQL with no new dependency. The only unresolved
+  input is HD-1, and the verification-issuer decision sits behind a single swappable
+  seam so both candidate answers are implementable without redesign.
+
+created_by: design-agent
+created_at: 2026-10-10T01:37:54Z
+reviewed_by: null
+reviewed_at: null
+approved_by: null
+approved_at: null
+
+provenance:
+  worktree: /private/tmp/shipit-design-baseline
+  branch: design/baseline-production-lane
+  base_sha: 889eee2
+  head_sha: 889eee237d5b5cf5bcd82c34b07db32f03920222
+  tree_clean_at_completion: true
+  files_modified_outside_owned_paths: 0
+  docker_or_compose_commands_issued: 0
+
+human_decisions_routed:
+  - id: HD-1
+    question: >
+      Does a deterministic platform re-derivation -- executed under a verifier
+      principal distinct from the producer's, over a source revision the verifier
+      acquired itself, compared by content hash -- constitute platformVerifiedEvidence?
+      (A) yes, distinct execution context not additionally required; (B) no,
+      verification additionally requires an execution context distinct from production.
+    recommendation: "A now, B as scoped follow-on; residual hole recorded explicitly."
+    resolved: false
+    blocks: "Gate D4 approval of this revision"
+    does_not_block: "Implementation of §3.1, §3.2, §3.6, §3.7, §3.8, §3.10"
+  - id: HD-2
+    question: >
+      Who authors AGENTS.md section 12, and what is its text? Eleven citations --
+      including a database schema comment -- point at a section that does not exist.
+      This is the same defect class AGENTS.md documents for its own section 13.
+    recommendation: >
+      Author section 12 stating the produce/verify separation and that the guard is
+      a database invariant, not a call-site convention. Requires human policy authorship.
+    resolved: false
+    blocks: "Gate D4 approval of this revision"
+    does_not_block: "Implementation"
