@@ -1148,3 +1148,86 @@ simply still JIT-compiling. Worth knowing before diagnosing a stall as a defect.
 4. Back in ShipIt, press **Check access**. On success the subtext changes to
    *"Access verified — this product can be registered"* and **Register product** becomes pressable.
 5. Press **Register product**.
+
+---
+
+## ✅ Governance panel is OPERATIONAL — merged `889eee2`, deployed and verified
+
+`fix/governance-panel` merged and pushed; images rebuilt; QA redeployed. Verified in the live browser:
+**"Offboard this product" is now a real `button` node** (`ref=f1e27`), where before it was an inert
+generic with no reachable handler.
+
+### What was actually wrong — the panel was entirely non-functional, not one dead button
+
+1. **`pendingDecision` had no consumer in production.** The `BlocListener` that navigated to
+   `/needs-you/<id>` was mounted **only when `widget.bloc` was injected** — a test-only seam. Production
+   builds a bare `BlocProvider`. So a raised gate was **write-only**: `Propose a baseline` and
+   `Review and approve the baseline` raised real server gates that **nothing ever displayed**.
+2. **`_onGovernanceActionRequested` handled 2 of 6 actions.** pause, resume, offboard, revokePolicy all
+   took `_ => null`.
+3. **The resolve half did not exist.** `resolveLifecycleDecision` had **zero callers** — raising a gate
+   without a resolve path creates a `blocking: true` gate nobody can action, exactly what
+   `product_registry_endpoints.dart:164-165` promises never happens.
+4. **The needs-you route cannot render a lifecycle decision** — `readWorkItem` throws for the synthetic
+   scope `product-lifecycle:<id>`. So lifecycle gates render **in place**, not via needs-you.
+5. **The catch was inert.** `clearError: true` won inside `copyWith`, discarding every governance error —
+   which is why the operator's refusal was invisible.
+
+### Three further dead controls found during the fix
+
+- **`offboard` was offered from `baselinePending` and `baselineReview`** — both are **illegal edges**
+  (`no legal transition from baseline_pending to archived`). Two more no-ops; now withheld.
+- **The baseline gate's "Request correction" sent `request_correction`**, which is **not a valid
+  `HumanDecisionChoice` wire value** — `fromWire` throws, so it was a guaranteed 500. Correct value is
+  `rework`.
+- **`noWorkInFlight` was hardcoded `false`**, making a governed offboard **permanently unapprovable**.
+  The engine is *handed* that guard and never verifies it, so it is now an explicit operator statement with
+  copy saying so — the lane refused to pass a blind `true`, which would archive a product with work in
+  flight.
+
+### B1 — a raised gate can no longer be stranded (the blocker review caught it)
+
+The first attempt fixed the surface but left `pendingLifecycleDecision` in **client memory**: leaving the
+route lost the gate, a second could be raised, and the first was left **permanently `blocking: true`** with
+no surface able to resolve it. Reproduced against the real engine:
+
+```
+gates raised = [pause, offboard]        # after leaving and returning
+after offboard approve, product state: archived
+pause gate status: pending  blocking=true
+re-raise REFUSED: no legal transition from archived to paused
+```
+
+This is new behaviour the correction itself created — the actions had been unreachable before. It was also
+**undisclosed by the lane**, which is what decided it: the same standard had been applied to two comparable
+limits and passed over a third of the same species.
+
+Fixed at the root: `ProductDetailView.pendingLifecycleGate` is durable server state computed in
+`loadProductDetail`, returning the **oldest** unresolved decision — so an already-stranded product is
+**drainable, not merely detectable**. The client derives `openLifecycleGate` from durable state and
+**discards the raise response**. Verified: the reviewer's exact Probe C now resolves, with 0 still-pending
+decisions afterwards. Recovery routes through "Leave as is" rather than "proceed", because approving a pause
+on an archived product is *correctly* refused by the staleness guard.
+
+### Human path grant was required
+
+The fix could not be built inside the dispatched paths: two reverted `serverpod generate` probes showed
+**every** shape rewrites `packages/control_plane_client/**`, including a new endpoint adding no model field.
+The lane returned `CORRECTION_BLOCKED` on a path question rather than half-fixing it. The human granted
+`packages/control_plane_client/lib/src/protocol/**`, `apps/server/lib/src/{models,services}/**`, and moved
+`control_plane_repository.dart` from read-only to owned. `client.dart` was deliberately **not** touched — the
+decision rides the existing `productDetail` read.
+
+### Gates on merged main
+
+format 768 files/0 changed · both analyzers clean · client tests **+309** · `serverpod generate` exit 0 and
+**idempotent** · schema guard **20 OK / 0 FAIL** · `make test-integration` **+194 −1**.
+
+⚠ **Two corrections to figures I had recorded earlier.** `make test-integration`'s sole failure is
+`dogfood_shipit_postgres_test.dart`, but **not** for the reason recorded in this file previously. It is
+**not** the linked-worktree `.git`-is-a-file artefact in a primary clone — it **exceeds the 30 s per-test
+timeout** in `ReadOnlyRepositoryReader._walk` (the `PathNotFoundException` is teardown deleting the snapshot
+mid-walk). So the earlier "`+192 All tests passed!` in a primary clone" is **not** reproducible, and the
+43 098 ms figure was a symptom of the same timeout under load. One integration run was `+79 −9` from 379
+connection-pool-lock timeouts; the second was `+194 −1`. **Recorded as observed, not fixed** — fixing it
+means touching a test outside this lane's authority.
