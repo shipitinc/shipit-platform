@@ -253,6 +253,46 @@ abstract interface class RepositorySnapshotMaterializer {
   });
 }
 
+/// The one revision an onboarding PIN must never be, and the only ref a
+/// resolution may legitimately ask for.
+///
+/// ## Why this carve-out exists, and why it is this narrow
+///
+/// `SnapshotPinnedRevisionResolver` — the sweep's periodic trigger — needs to
+/// know what a product's repository is at *now* so it can pin a job to it. It
+/// asks for `HEAD`, reads the committed revision off the tree, and releases it.
+///
+/// That path could not work as written. The acquirer refuses any tree whose
+/// revision is not the one it asked for, and a real `git rev-parse HEAD`
+/// returns a commit id, not the four letters `HEAD` — so the resolver's own
+/// acquisition raised [PinnedRevisionNotAcquiredException], caught it as "the
+/// host is unreachable", returned `null`, and the sweep skipped every product
+/// on every pass with `PINNED_REVISION_UNRESOLVABLE`. A whole trigger that
+/// looks correct, reads correct, and can never fire.
+///
+/// So `HEAD` is honoured as exactly one thing: "resolve the remote's current
+/// head and report the commit you got". It bypasses the equality check and
+/// nothing else. Every other half of the trust chain still runs — the confirmed
+/// host key is still enforced at the socket, the credential is still read by
+/// reference name, the private half is still wiped — because the thing this
+/// bypasses is a comparison, not a gate.
+///
+/// ## Why it must never reach the lane
+///
+/// A baseline derived from `HEAD` is a baseline of whatever the remote said
+/// during a window of seconds, and it cannot be re-derived later, because
+/// "later" is a different tree. That is precisely what
+/// [PinnedRevisionNotAcquiredException] exists to prevent, and the moment `HEAD`
+/// could be a value in a job's dedupe key the guarantee would be gone: the key
+/// would no longer pin a source state, so the same key would name different
+/// content on different days.
+///
+/// Every other caller of [RepositorySnapshotAcquirer.acquire] — the lane, and
+/// nothing else — passes a committed revision and is unaffected. This constant
+/// exists so the two halves of the trust path say the same thing rather than
+/// each carrying its own private understanding of what `HEAD` means.
+const String kRepositoryHeadRef = 'HEAD';
+
 /// Acquires a pinned, read-only snapshot of a product's repository, using only
 /// the credentials the product already has.
 ///
@@ -317,6 +357,10 @@ class RepositorySnapshotAcquirer {
             '"whatever HEAD is now" and cannot be re-derived later',
       );
     }
+    // The ONE revision for which "is the tree at this revision" is not asked.
+    // See [kRepositoryHeadRef] for what that is and why it exists; it is a
+    // resolution the sweep performs, never a pin the lane accepts.
+    final resolvesHead = pinnedRevision.trim() == kRepositoryHeadRef;
 
     final credential = await engine.readActiveCredential(
       productId,
@@ -431,7 +475,7 @@ class RepositorySnapshotAcquirer {
         confirmedHostKeyFingerprint: hostKeyFingerprint,
         pinnedRevision: pinnedRevision,
       );
-      if (snapshot.revision.trim() != pinnedRevision.trim()) {
+      if (!resolvesHead && snapshot.revision.trim() != pinnedRevision.trim()) {
         snapshot.release();
         throw PinnedRevisionNotAcquiredException(
           productId: productId,
@@ -560,7 +604,13 @@ class SshPinnedSnapshotMaterializer implements RepositorySnapshotMaterializer {
       ]);
 
       final observed = await _gitOutput(clonePath, ['rev-parse', 'HEAD']);
-      if (observed == null || observed.trim() != pinnedRevision.trim()) {
+      // `HEAD` resolves rather than pins; see [kRepositoryHeadRef]. For every
+      // other revision the tree must BE that revision, and a mismatch here is
+      // reported rather than papered over — a clone that landed somewhere else
+      // is drift, and a baseline derived from drift describes nothing.
+      final resolvesHead = pinnedRevision.trim() == kRepositoryHeadRef;
+      final atThePin = observed?.trim() == pinnedRevision.trim();
+      if (observed == null || (!resolvesHead && !atThePin)) {
         _destroy(scratch);
         throw PinnedRevisionNotAcquiredException(
           productId: productId,

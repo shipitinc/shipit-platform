@@ -87,6 +87,16 @@ Future<List<File>> _laneSources() async {
     File('${root.path}/lib/src/baseline/baseline_derivation.dart'),
     File('${root.path}/lib/src/baseline/baseline_production_lane.dart'),
     File('${root.path}/lib/src/baseline/baseline_onboarding_sweep.dart'),
+    // The bridge between the product-scoped dispatcher's runner PORT and the
+    // lane, including the mapping from every acquisition refusal onto a named
+    // outcome. It decides what a job's terminal record says, so it is exactly
+    // as able to name a product as the three above.
+    File('${root.path}/lib/src/baseline/baseline_lane_runner.dart'),
+    // The composition: what builds the acquirer, the lane, the sweep and the
+    // dispatcher, and what it records when it cannot. It names the product
+    // registry engine and the job store, so it could name a product just as
+    // easily as any of the above.
+    File('${root.path}/lib/src/baseline/baseline_runtime.dart'),
     // Compiled into the package like any other `lib/` source and able to name a
     // product or a host just as easily — so it is covered by this gate on the
     // same terms as the three above, not exempted as "only a test".
@@ -95,6 +105,9 @@ Future<List<File>> _laneSources() async {
     File('${root.path}/lib/src/triage/lane_i_tick_hook.dart'),
     File(
       '${root.parent.parent.path}/packages/scheduler/lib/src/baseline_product.dart',
+    ),
+    File(
+      '${root.parent.parent.path}/packages/scheduler/lib/src/baseline_dispatch.dart',
     ),
   ];
 }
@@ -130,6 +143,10 @@ final List<({String label, String path})> kGateFilesOutsideLaneDirectory = [
   (
     label: 'the scheduler definition for onboardProduct',
     path: 'packages/scheduler/lib/src/baseline_product.dart',
+  ),
+  (
+    label: 'the product-scoped dispatcher that claims and runs the lane',
+    path: 'packages/scheduler/lib/src/baseline_dispatch.dart',
   ),
 ];
 

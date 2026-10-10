@@ -102,8 +102,82 @@ String onboardingDedupeKey({
           'revision would silently mean "whatever HEAD is now"',
     );
   }
-  return 'onboarding:$productId:$repositoryId:$startingRevision';
+  return '$_onboardingDedupeKeyPrefix$productId:$repositoryId:$startingRevision';
 }
+
+/// What an onboarding dedupe key names, recovered from the key itself.
+///
+/// The three components are carried together because they are only ever
+/// meaningful together: a product, the one repository of it the derivation
+/// reads, and the exact committed revision it is pinned at. [pinnedRevision] is
+/// named explicitly rather than `revision` because "the revision this
+/// derivation is pinned to" and "the revision the baseline's facts came from"
+/// are the same string here only by construction, and a reader should have to
+/// decide that rather than infer it.
+class OnboardingTarget {
+  const OnboardingTarget({
+    required this.productId,
+    required this.repositoryId,
+    required this.pinnedRevision,
+  });
+
+  final String productId;
+  final String repositoryId;
+  final String pinnedRevision;
+
+  /// The synthetic work-item id this target's jobs are filed under.
+  String get workItemId => onboardingWorkItemId(productId);
+
+  @override
+  String toString() =>
+      'OnboardingTarget($productId, $repositoryId@$pinnedRevision)';
+}
+
+/// Recovers the [OnboardingTarget] an onboarding dedupe key names, or `null`.
+///
+/// ## Why decoding is necessary rather than convenient
+///
+/// An onboarding job is product-scoped: its `workItemId` is the synthetic
+/// `onboarding-<productId>` and nothing else about the durable record names a
+/// repository or a revision. The dedupe key is the ONLY place either is
+/// recorded, so a dispatcher that has to run the lane has to read them from
+/// there. An alternative — carrying them in the job instruction — would make the
+/// record's meaning depend on parsing English prose written for an operator,
+/// which is how the two triggers' single-sourced key would stop mattering.
+///
+/// ## Why a key that does not decode is refused rather than repaired
+///
+/// A key with the wrong prefix, the wrong arity, or an empty component cannot
+/// be split into a target without guessing which field the extra colon belongs
+/// to. Guessing would clone the wrong repository, or the wrong revision of the
+/// right one, and produce a baseline whose facts do not correspond to the job
+/// that claims to have produced them — a divergence that is *supposed* to be
+/// caught downstream by re-derivation, and would instead be manufactured here.
+///
+/// So this returns `null` and the caller records the job as a terminal
+/// undecodable target. That is a loud, durable refusal rather than a
+/// plausible-looking wrong answer, and it is the same shape as every other
+/// refusal in this lane: say what could not be done and why.
+OnboardingTarget? tryDecodeOnboardingDedupeKey(String key) {
+  if (!key.startsWith(_onboardingDedupeKeyPrefix)) return null;
+  final parts = key.substring(_onboardingDedupeKeyPrefix.length).split(':');
+  if (parts.length != 3) return null;
+  final productId = parts[0];
+  final repositoryId = parts[1];
+  final pinnedRevision = parts[2];
+  if (productId.trim().isEmpty ||
+      repositoryId.trim().isEmpty ||
+      pinnedRevision.trim().isEmpty) {
+    return null;
+  }
+  return OnboardingTarget(
+    productId: productId,
+    repositoryId: repositoryId,
+    pinnedRevision: pinnedRevision,
+  );
+}
+
+const String _onboardingDedupeKeyPrefix = 'onboarding:';
 
 /// Builds the instruction an onboarding job carries.
 ///

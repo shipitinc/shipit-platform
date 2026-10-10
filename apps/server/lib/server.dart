@@ -7,6 +7,9 @@ import 'package:agent_runtime/agent_runtime.dart'
 import 'package:execution_coordinator/execution_coordinator.dart'
     show ExecutionCoordinator, FileJsonExecutionStore, VerificationPlan;
 import 'package:workflow_store/workflow_store.dart' show DurableWorkflowEngine;
+import 'package:platform_contracts/platform_contracts.dart' show JobType;
+import 'package:product_registry/product_registry.dart'
+    show ProductRegistryEngine;
 import 'package:scheduler/scheduler.dart'
     show
         Scheduler,
@@ -38,6 +41,10 @@ import 'src/persistence/postgres_triage_store.dart';
 import 'src/persistence/postgres_model_execution_record_store.dart';
 import 'src/persistence/postgres_model_policy_store.dart';
 import 'src/persistence/postgres_human_decision_store.dart';
+import 'src/persistence/postgres_product_registry_store.dart';
+import 'src/baseline/baseline_lane_runner.dart'
+    show observeCompletedOnboardingJob;
+import 'src/baseline/baseline_runtime.dart' show BaselineProductionRuntime;
 import 'src/triage/lane_i_tick_hook.dart' show drainTriageOutcomesFromTick;
 import 'src/triage/triage_processor.dart';
 
@@ -195,6 +202,40 @@ void run(List<String> args) async {
     logger: _log,
   );
 
+  // ---- Baseline production: a PRODUCT-SCOPED path, not a second triage loop. ----
+  //
+  // `JobType.onboardProduct` jobs were enqueued, stored, displayed by
+  // `getOnboardingStatus` and never run, because nothing here constructed the
+  // lane and nothing consumed those jobs. The wiring below closes that.
+  //
+  // It is deliberately NOT a second `Scheduler` over the same work items.
+  // `Scheduler` decides what may run by asking the workflow policy about a
+  // `WorkItem`; an onboarding job is filed under the synthetic
+  // `onboarding-<productId>` and has none, so it is skipped by eligibility
+  // before anything else is considered. Onboarding is product-scoped work and
+  // belongs to a product-scoped dispatcher (`BaselineProductDispatcher`), which
+  // claims those jobs with a lease, runs the lane, and records the outcome. The
+  // WorkItem-scoped triage scheduler above is untouched.
+  //
+  // Its OWN database session, deliberately. Acquiring a pinned snapshot is a
+  // real `git clone` over SSH bounded at five minutes, and a baseline pass runs
+  // it for every eligible product. On the one session this process shares with
+  // every API request, that would pin a connection for the duration and starve
+  // request handling for as long as a slow remote takes — a failure the
+  // scheduler tick did not have, because a tick only reads and writes rows.
+  final baselineSession = await pod.createSession(enableLogging: false);
+  final baselineDb = PersistenceDatabase(baselineSession.db);
+  final baselineRegistryStore = PostgresProductRegistryStore(baselineDb);
+  final baselineRuntime = BaselineProductionRuntime.resolve(
+    engine: ProductRegistryEngine(
+      store: baselineRegistryStore,
+      humanDecisionStore: PostgresHumanDecisionStore(workflowStore),
+    ),
+    baselineStore: baselineRegistryStore,
+    jobStore: jobStore,
+    log: _log,
+  );
+
   // One line that states the whole composition as it actually is, so an
   // operator (or the next reader) can see what this process can do without
   // reading the rest of the file.
@@ -208,6 +249,7 @@ void run(List<String> args) async {
     'workspaceRoot': workspaceRoot,
     'providerHealthMonitor': true,
     'providerHealthCheckIntervalMinutes': 5,
+    'baseline': baselineRuntime.describe(),
   });
 
   // Run the scheduler every 30 seconds.
@@ -226,6 +268,19 @@ void run(List<String> args) async {
         tickResult: tickResult,
         jobStore: jobStore,
         triageProcessor: triageProcessor,
+        // `onboardProduct` is registered so the dispatch table is COMPLETE.
+        // Onboarding jobs are product-scoped and are claimed and run by
+        // `BaselineProductDispatcher` below, so they never appear in a triage
+        // `SchedulerTickResult` and this handler does not fire in this
+        // composition. It is registered because the alternative is an
+        // `UnhandledJobTypeException` — a job type no handler was written for —
+        // the moment any future composition lets one scheduler serve both.
+        handlers: {
+          JobType.onboardProduct: (job) => observeCompletedOnboardingJob(
+            job: job,
+            logger: _log,
+          ),
+        },
         logger: _log,
       );
       if (drain.handedOff > 0) {
@@ -240,6 +295,25 @@ void run(List<String> args) async {
     } catch (e, st) {
       // Log but don't crash the server
       _log('scheduler.tick.failed', {'error': '$e', 'stack': st.toString()});
+    }
+
+    // The product-scoped half of the tick, in its own try: a triage tick that
+    // fails must not prevent onboarding from running, and vice versa. They read
+    // the same job store but answer different questions, and one of them
+    // throwing says nothing about the other.
+    try {
+      final baselinePass = await baselineRuntime.runOnce();
+      _log('baseline.tick.completed', {
+        'sweep': baselinePass.sweep?.toString(),
+        'dispatch': baselinePass.dispatch.toString(),
+      });
+    } catch (e, st) {
+      _log('baseline.tick.failed', {
+        'error': '$e',
+        'stack': st.toString(),
+        'action':
+            'baseline dispatch is retried on the next tick; triage is unaffected',
+      });
     }
   });
 }

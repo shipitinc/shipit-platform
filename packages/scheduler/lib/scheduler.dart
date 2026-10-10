@@ -4,6 +4,7 @@
 /// runtimes.
 library;
 
+export 'src/baseline_dispatch.dart';
 export 'src/baseline_product.dart';
 export 'src/dispatch/worker_dispatch.dart';
 export 'src/policy/retry_policy.dart';

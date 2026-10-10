@@ -13,7 +13,8 @@ import 'package:scheduler/scheduler.dart'
         triageDefectDefinition,
         triageDefectDedupeKey,
         triageDefectInstruction,
-        onboardingDedupeKey;
+        onboardingJob,
+        onboardingWorkItemId;
 import 'package:serverpod/serverpod.dart';
 import 'package:workflow_store/workflow_store.dart'
     show DurableWorkflowEngine, WorkflowStore;
@@ -1858,43 +1859,31 @@ class ControlPlaneService {
       // The engine will create one when needed
     }
 
-    // Create a synthetic work item ID for onboarding (not a real WorkItem)
-    // Onboarding jobs are product-scoped, not work-item-scoped
-    final syntheticWorkItemId = 'onboarding-$productId';
-
-    // Use the job queue directly to enqueue the onboarding job
-    // We need a JobQueue instance - let's use the job store directly
+    // Ids are the store's to allocate in principle; it takes what it is given.
     final jobId = 'jb-$productId-${t.millisecondsSinceEpoch}';
-    // Built by the ONE function both onboarding triggers use. This used to
-    // interpolate the same string a second time, and two spellings of one key is
-    // how the operator request and the periodic sweep each enqueue a
-    // derivation the dedupe key exists to make unique — the store would see two
-    // distinct keys, admit both, and run the lane twice for one source state.
-    // It also refuses a blank product, repository or revision, where the
-    // interpolation silently accepted all three and produced a key that could
-    // never be rebuilt from its own inputs.
-    final dedupeKey = onboardingDedupeKey(
+
+    // The job SHAPE is now built by the same factory the sweep uses, not just
+    // its dedupe key. The key was single-sourced first and the shape was left
+    // behind, which is how two triggers under one dedupe key ended up writing
+    // two different jobs — and dedupe is by key, not by shape, so both were
+    // admitted as distinct work.
+    //
+    // The differences that mattered: `maxAttempts: 1` here against the
+    // definition's `2`, which silently denied an operator-triggered onboarding
+    // the one bounded retry a sweep-triggered one got; and an instruction that
+    // stopped at "run baseline build and test" without stating the boundary the
+    // canonical one states — that this produces a baseline and asks a human to
+    // approve it, and that the gate is human-only.
+    //
+    // `onboardingJob` also owns the synthetic work-item id, so
+    // `getOnboardingStatus` keeps finding these jobs by the shape it has always
+    // searched for.
+    final job = onboardingJob(
+      jobId: jobId,
       productId: productId,
       repositoryId: repositoryId,
       startingRevision: startingRevision,
-    );
-
-    final job = Job(
-      jobId: jobId,
-      workItemId: syntheticWorkItemId,
-      jobType: JobType.onboardProduct,
-      requiredRole: AgentRole.implementer,
-      requiredCapabilities: {WorkerCapability.git, WorkerCapability.linux},
-      priority: JobPriority.high,
-      state: JobState.queued,
-      dedupeKey: dedupeKey,
-      createdAt: t,
-      instruction:
-          'Onboard product $productId: clone repository $repositoryId at '
-          'revision $startingRevision, run baseline build and test.',
-      attempt: 1,
-      maxAttempts: 1,
-      version: 1,
+      now: t,
     );
 
     await jobStore.saveJob(job);
@@ -1918,8 +1907,13 @@ class ControlPlaneService {
       productId,
     );
     final jobs = await jobStore.listJobs();
+    // Read through the ONE function that mints that id. It used to be
+    // interpolated here a second time, and two spellings of one id is how
+    // `triggerOnboarding`'s jobs became invisible to the status lookup written
+    // for them.
+    final onboardingWorkItemIdForProduct = onboardingWorkItemId(productId);
     final onboardingJobs = jobs
-        .where((j) => j.workItemId == 'onboarding-$productId')
+        .where((j) => j.workItemId == onboardingWorkItemIdForProduct)
         .toList();
     onboardingJobs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 

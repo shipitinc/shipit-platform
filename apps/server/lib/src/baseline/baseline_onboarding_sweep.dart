@@ -47,15 +47,18 @@ class SnapshotPinnedRevisionResolver implements PinnedRevisionResolver {
     required String productId,
     required String repositoryId,
   }) async {
-    // `HEAD` is what git resolves when a clone has no explicit revision; it is
-    // a fetch target, not a pin, and the acquirer is what turns it into an
-    // actual committed revision to compare against.
+    // `HEAD` is what git resolves when a clone has no explicit revision. It is
+    // a fetch target, not a pin — and it is the ONE ref the acquirer will
+    // resolve rather than enforce, so this call returns the committed
+    // revision the remote actually pointed at instead of raising "not the
+    // revision you asked for". See `kRepositoryHeadRef` for why that carve-out
+    // exists and why the lane must never take it.
     RepositorySnapshot snapshot;
     try {
       snapshot = await acquirer.acquire(
         productId: productId,
         repositoryId: repositoryId,
-        pinnedRevision: _headRef,
+        pinnedRevision: kRepositoryHeadRef,
       );
     } on BaselineSourceUnavailableException {
       // Unresolvable is a legitimate answer, not a crash: no credential, no
@@ -87,8 +90,6 @@ class SnapshotPinnedRevisionResolver implements PinnedRevisionResolver {
       snapshot.release();
     }
   }
-
-  static const String _headRef = 'HEAD';
 }
 
 /// One product the sweep decided about.
@@ -163,6 +164,7 @@ class BaselineSweepResult {
     required this.considered,
     required this.enqueued,
     required this.skipped,
+    this.incidents = const [],
   });
 
   /// Products whose state was in scope.
@@ -171,10 +173,62 @@ class BaselineSweepResult {
   final List<BaselineSweepEnqueued> enqueued;
   final List<BaselineSweepSkipped> skipped;
 
+  /// Products whose evaluation **threw**.
+  ///
+  /// Deliberately not a [BaselineSweepSkipped]. "Looked and deliberately did
+  /// nothing" and "crashed before deciding" are different facts, and folding
+  /// them together is how one product's failure becomes invisible behind a
+  /// count of quiet skips — which is the failure class this lane exists to
+  /// close, one level up.
+  final List<BaselineSweepIncident> incidents;
+
+  /// `considered` accounted for: everything the pass decided, plus everything
+  /// it failed to decide.
+  int get accountedFor => enqueued.length + skipped.length + incidents.length;
+
   @override
   String toString() =>
       'BaselineSweepResult(considered: $considered, enqueued: '
-      '${enqueued.length}, skipped: ${skipped.length})';
+      '${enqueued.length}, skipped: ${skipped.length}, incidents: '
+      '${incidents.length})';
+}
+
+/// A product the sweep could not decide about.
+final class BaselineSweepIncident {
+  const BaselineSweepIncident({
+    required this.productId,
+    required this.code,
+    required this.reason,
+  });
+
+  final String productId;
+
+  /// Stable, greppable. See [BaselineSweepIncidentCodes].
+  final String code;
+  final String reason;
+
+  @override
+  String toString() => 'incident $productId ($code): $reason';
+}
+
+/// Incident codes a sweep pass records when a product's evaluation threw.
+abstract final class BaselineSweepIncidentCodes {
+  /// A snapshot scratch tree this process could not remove.
+  ///
+  /// Named separately from [BaselineSweepIncidentCodes.evaluationFailed]
+  /// because it is the one that carries a deploy key's identity file, and
+  /// because `SnapshotPinnedRevisionResolver` deliberately lets it propagate
+  /// for exactly that reason. It is an incident and not a routine skip — see
+  /// that method for why it is caught here rather than there.
+  static const String snapshotCleanupFailed = 'SNAPSHOT_CLEANUP_FAILED';
+
+  /// Anything else the evaluation raised.
+  ///
+  /// Recorded, logged and stepped over. A store read that failed for one
+  /// product says nothing about the next one, and a pass that aborted on it
+  /// would leave every product after it un-enqueued with nothing on the record
+  /// to explain why.
+  static const String evaluationFailed = 'SWEEP_PRODUCT_EVALUATION_FAILED';
 }
 
 /// Enqueues onboarding for products that have a repository nobody has built a
@@ -257,15 +311,63 @@ class BaselineOnboardingSweep {
   /// Idempotent: a second pass over unchanged state enqueues nothing, because
   /// the job it would enqueue is found by [JobStore.findLatestByDedupeKey] and
   /// is already non-terminal.
+  ///
+  /// ## PER-PRODUCT ISOLATION
+  ///
+  /// One product's evaluation throwing does not abort the pass. Without the
+  /// guard below, a single repository whose snapshot scratch tree could not be
+  /// removed would abandon every product after it in the list — none enqueued,
+  /// nothing logged about them, and the next pass to hit the same failure
+  /// abandoning the same set again. A failure that silently deletes the rest of
+  /// the work is the same defect class as the silent no-op this lane was opened
+  /// to end, so the failing product is recorded as an incident, the pass
+  /// continues, and the count reconciles.
+  ///
+  /// The incident is NOT a skip, and `BaselineSweepIncidentCodes` gives the
+  /// cleanup failure its own code rather than folding it into a generic one:
+  /// [SnapshotPinnedRevisionResolver] lets
+  /// [BaselineSnapshotCleanupException] propagate precisely because the tree it
+  /// could not delete may hold a deploy key, and laundering it into a quiet
+  /// `PINNED_REVISION_UNRESOLVABLE` would make a leaked private key unfindable.
+  /// Catching it here does not make it quiet — it is in `incidents`, it is
+  /// logged, and it is not a code any skip can carry.
   Future<BaselineSweepResult> run() async {
     final enqueued = <BaselineSweepEnqueued>[];
     final skipped = <BaselineSweepSkipped>[];
+    final incidents = <BaselineSweepIncident>[];
     var considered = 0;
 
     for (final product in await engine.readAllProducts()) {
       if (!sweepStates.contains(product.state.canonical)) continue;
       considered++;
-      final decision = await _consider(product);
+      final BaselineSweepDecision decision;
+      try {
+        decision = await _consider(product);
+      } on BaselineSnapshotCleanupException catch (error) {
+        incidents.add(
+          _incident(
+            product,
+            BaselineSweepIncidentCodes.snapshotCleanupFailed,
+            error.toString(),
+            action:
+                'a scratch tree this process could not remove still exists and '
+                'may contain a deploy key identity file; remove it manually',
+            severity: 'incident',
+          ),
+        );
+        continue;
+      } on Object catch (error, stackTrace) {
+        incidents.add(
+          _incident(
+            product,
+            BaselineSweepIncidentCodes.evaluationFailed,
+            error.toString(),
+            action: 'this product is untouched; the rest of the pass continued',
+            stack: stackTrace.toString(),
+          ),
+        );
+        continue;
+      }
       switch (decision) {
         case BaselineSweepEnqueued():
           enqueued.add(decision);
@@ -278,11 +380,41 @@ class BaselineOnboardingSweep {
       'considered': considered,
       'enqueued': enqueued.length,
       'skipped': skipped.length,
+      'incidents': incidents.length,
     });
     return BaselineSweepResult(
       considered: considered,
       enqueued: List.unmodifiable(enqueued),
       skipped: List.unmodifiable(skipped),
+      incidents: List.unmodifiable(incidents),
+    );
+  }
+
+  /// Records a product the pass failed to decide about, and says so loudly.
+  ///
+  /// The log line is the point of the method: the return value is a summary a
+  /// caller may not print, and a summary that says "2 incidents" without saying
+  /// which products or why is the quiet outcome this guard exists to prevent.
+  BaselineSweepIncident _incident(
+    Product product,
+    String code,
+    String reason, {
+    required String action,
+    String? stack,
+    String severity = 'failure',
+  }) {
+    log?.call('baseline.sweep.product_incident', {
+      'productId': product.productId,
+      'code': code,
+      'reason': reason,
+      'severity': severity,
+      'action': action,
+      if (stack != null) 'stack': stack,
+    });
+    return BaselineSweepIncident(
+      productId: product.productId,
+      code: code,
+      reason: reason,
     );
   }
 

@@ -95,7 +95,7 @@ void main() {
       },
     );
 
-    test('the operator trigger CALLS the shared builder, not a second literal', () async {
+    test('the operator trigger CALLS the shared JOB builder, not a second shape', () async {
       // `ControlPlaneService.triggerOnboarding` needs a `Session` and a database
       // to call, so this asserts on the SOURCE — which is what actually has to
       // hold, and what the literal pin above structurally cannot see. That pin is
@@ -104,14 +104,24 @@ void main() {
       // precisely the drift this assertion exists to catch: two spellings of one
       // key let the sweep and the operator each enqueue a derivation the key
       // exists to make unique.
+      //
+      // CHANGED to assert `onboardingJob`, not `onboardingDedupeKey`. Both
+      // triggers now build their job through ONE factory, and the service no
+      // longer names the key function at all — it is reached only through that
+      // factory. That is one level STRONGER than what this asserted before: the
+      // key was the single-sourced half, while `maxAttempts` (`1` here against
+      // the definition's `2`) and the instruction text were a second, private
+      // shape for the same job type, and dedupe is by key rather than by shape,
+      // so the store admitted both as distinct work.
       final source = await _controlPlaneServiceSource();
 
       expect(
         source,
-        contains('onboardingDedupeKey('),
+        contains('onboardingJob('),
         reason:
-            'triggerOnboarding must build its key with the shared function the '
-            'sweep uses',
+            'triggerOnboarding must build its job with the shared factory the '
+            'sweep uses, so the key, the instruction, the attempts bound and the '
+            'work-item id have exactly one definition',
       );
       expect(
         source,
@@ -121,6 +131,13 @@ void main() {
         reason:
             'a second, hand-written spelling of the dedupe key is the exact '
             'defect this assertion exists to prevent',
+      );
+      expect(
+        source,
+        isNot(contains('onboardingDedupeKey(')),
+        reason:
+            'the factory owns the key format; a caller naming the key function '
+            'itself is a caller that could start building part of the job again',
       );
     });
 
@@ -308,6 +325,94 @@ void main() {
             reason: '${failure.runtimeType} is an availability refusal',
           );
         }
+      },
+    );
+
+    test(
+      'resolving HEAD returns the COMMITTED revision the tree reports',
+      () async {
+        // THE WIRING DEFECT THIS FOUND. The resolver asks for `HEAD`, and a
+        // real clone reports a commit id rather than the four letters it was
+        // asked for. The acquirer's equality check therefore rejected its own
+        // HEAD acquisition, the resolver caught `PinnedRevisionNotAcquired`
+        // as "host unreachable", and every product was skipped on every pass
+        // with `PINNED_REVISION_UNRESOLVABLE` — a whole trigger that reads
+        // correct and can never fire.
+        //
+        // It is only visible through the real acquirer with a materializer
+        // that reports a commit, which is why this sits here rather than in a
+        // unit test of either half.
+        final registry = RegistryFixture();
+        await registry.registerProduct(productId: 'product-a');
+        await seedCredential(
+          registry.engine,
+          productId: 'product-a',
+          repositoryId: 'repo',
+        );
+        final materializer = ScriptedSnapshotMaterializer();
+        final resolver = SnapshotPinnedRevisionResolver(
+          RepositorySnapshotAcquirer(
+            engine: registry.engine,
+            credentialKeyService: CredentialKeyService(
+              engine: registry.engine,
+              secretProvider: RecordingSecretProvider(),
+              verifier: ScriptedAccessVerifier(
+                committedRevision: kTestRevision,
+              ),
+            ),
+            materializer: materializer,
+          ),
+        );
+
+        expect(
+          await resolver.resolve(productId: 'product-a', repositoryId: 'repo'),
+          kTestRevision,
+          reason:
+              'the sweep pins jobs to the commit the remote is AT, never to the '
+              'string "HEAD"',
+        );
+        expect(
+          materializer.created.every((d) => !d.existsSync()),
+          isTrue,
+          reason: 'the resolver releases the tree it resolved',
+        );
+      },
+    );
+
+    test(
+      'a real PIN is still enforced against a tree at some other commit',
+      () async {
+        // The counterpart, so the carve-out above cannot be satisfied by
+        // dropping the check entirely. Only `HEAD` resolves; every other
+        // revision must be the revision the tree reports.
+        final registry = RegistryFixture();
+        await registry.registerProduct(productId: 'product-a');
+        await seedCredential(
+          registry.engine,
+          productId: 'product-a',
+          repositoryId: 'repo',
+        );
+        final acquirer = RepositorySnapshotAcquirer(
+          engine: registry.engine,
+          credentialKeyService: CredentialKeyService(
+            engine: registry.engine,
+            secretProvider: RecordingSecretProvider(),
+            verifier: ScriptedAccessVerifier(committedRevision: kTestRevision),
+          ),
+          materializer: ScriptedSnapshotMaterializer(),
+        );
+
+        await expectLater(
+          acquirer.acquire(
+            productId: 'product-a',
+            repositoryId: 'repo',
+            pinnedRevision: 'a-different-commit',
+          ),
+          throwsA(isA<PinnedRevisionNotAcquiredException>()),
+          reason:
+              'a lane deriving from a pin the tree is not at is a baseline of '
+              'drift, which is what this exception exists to prevent',
+        );
       },
     );
   });

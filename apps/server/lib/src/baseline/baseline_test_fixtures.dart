@@ -151,6 +151,12 @@ class ScriptedSnapshotMaterializer implements RepositorySnapshotMaterializer {
     return RepositorySnapshot(
       productId: productId,
       repositoryId: repositoryId,
+      // Always a COMMIT, whatever ref was asked for — which is exactly what a
+      // real clone reports and exactly why `kRepositoryHeadRef` exists: a tree
+      // cloned at `HEAD` is at some commit, not at the four letters `HEAD`, so
+      // the acquirer resolves that one ref instead of enforcing it. A fixture
+      // that echoed the requested ref would make the mismatch invisible and
+      // leave the production resolver permanently unresolvable.
       revision: reportRevision ?? revision,
       sourceRef: remote.toSshUrl(),
       acquiredAt: DateTime.utc(2026, 1, 1),
