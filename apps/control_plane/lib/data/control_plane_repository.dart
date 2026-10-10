@@ -133,6 +133,36 @@ class ControlPlaneRepository {
           .map(BaselineFactClaim.fromProtocol)
           .toList(),
       pendingBaselineDecisionId: d.pendingBaselineDecisionId,
+      // Read, not remembered: this is the whole fix. The raise response is gone
+      // with the screen that made it; this field is not.
+      pendingLifecycleGate: d.pendingLifecycleGate == null
+          ? null
+          : LifecycleGateResponse(
+              decisionId: d.pendingLifecycleGate!.decisionId,
+              action: d.pendingLifecycleGate!.action,
+              status: d.pendingLifecycleGate!.status,
+              question: d.pendingLifecycleGate!.question,
+              context: d.pendingLifecycleGate!.context == null
+                  ? null
+                  : DecisionContext(
+                      workflowState:
+                          d.pendingLifecycleGate!.context!.workflowState,
+                      availableOptions:
+                          d.pendingLifecycleGate!.context!.availableOptions,
+                    ),
+              options: d.pendingLifecycleGate!.options
+                  ?.map(
+                    (o) => DecisionOption(
+                      optionId: o.optionId,
+                      label: o.label,
+                      description: o.description,
+                      recommended: o.recommended,
+                    ),
+                  )
+                  .toList(),
+              blocking: d.pendingLifecycleGate!.blocking,
+              requestedAt: d.pendingLifecycleGate!.requestedAt,
+            ),
       openClarifications: d.openClarifications
           .map(
             (c) => ClarificationSummary(
@@ -1698,6 +1728,7 @@ class ProductDetailResponse {
     required this.openClarifications,
     required this.policies,
     this.pendingBaselineDecisionId,
+    this.pendingLifecycleGate,
   });
 
   final String productId;
@@ -1733,10 +1764,54 @@ class ProductDetailResponse {
   /// decisions — the screen needs it to submit a resolution.
   final String? pendingBaselineDecisionId;
 
+  /// The unresolved lifecycle gate, when one exists. Null when nothing is
+  /// awaiting a human.
+  ///
+  /// DURABLE, and the reason this class carries it: a lifecycle decision hangs
+  /// off the synthetic scope `product-lifecycle:<productId>` rather than a Work
+  /// Item row, so nothing else can list it and the product detail read is the
+  /// only place a client can find one it raised in an earlier session. Read on
+  /// every load, so the gate survives leaving the route — otherwise a
+  /// `blocking: true` decision is left with no surface able to raise, list or
+  /// resolve it.
+  final LifecycleGateResponse? pendingLifecycleGate;
+
   final List<ClarificationSummary> openClarifications;
 
   /// Active first, then revoked. Revoked policies are retained, not deleted.
   final List<PolicyResponse> policies;
+}
+
+/// An open lifecycle human gate, read from durable product-detail state.
+///
+/// A trimmed [DecisionResponse]: it carries what the gate panel renders and
+/// nothing else. It is deliberately not a [DecisionResponse], because those are
+/// built from the response of a call — and a response is gone once the screen
+/// that made the call is.
+class LifecycleGateResponse {
+  const LifecycleGateResponse({
+    required this.decisionId,
+    required this.action,
+    required this.status,
+    this.question,
+    this.context,
+    this.options,
+    required this.blocking,
+    this.requestedAt,
+  });
+
+  final String decisionId;
+
+  /// The `ProductLifecycleAction.wire` this gate authorises: pause | resume |
+  /// offboard | reinstate. Read from the decision's own durable binding, so it
+  /// is still correct after the route has been left and re-entered.
+  final String action;
+  final String status;
+  final String? question;
+  final DecisionContext? context;
+  final List<DecisionOption>? options;
+  final bool blocking;
+  final DateTime? requestedAt;
 }
 
 class ProductRepositoryResponse {

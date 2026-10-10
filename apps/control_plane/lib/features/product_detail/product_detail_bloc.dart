@@ -56,7 +56,7 @@ class BaselineApprovalResolved extends ProductDetailEvent {
   final String rationale;
 }
 
-/// The operator resolved a lifecycle gate this screen raised.
+/// The operator resolved a lifecycle gate this product has open.
 ///
 /// Lifecycle decisions hang off the synthetic scope
 /// `product-lifecycle:<productId>`, which is not a WorkItem row, so they are
@@ -135,24 +135,21 @@ class ProductDetailBloc extends Bloc<ProductDetailEvent, ProductDetailState> {
           );
         // The lifecycle gates. Each raises a `blocking: true` decision bound to
         // the scope `product-lifecycle:<productId>`.
+        //
+        // The response is deliberately NOT kept. The gate is re-read from
+        // durable state on the load below, so what the screen shows is what the
+        // registry holds — not what this one screen remembers having asked for.
         case GovernanceAction.pause:
         case GovernanceAction.resume:
         case GovernanceAction.offboard:
-          final decision = await _repository.requestLifecycleDecision(
+          await _repository.requestLifecycleDecision(
             productId: event.productId,
             // Non-null for exactly these three arms; the switch is the proof,
             // so the assertion is a type-narrowing cast, not a guess.
             action: event.action.lifecycleWire!,
           );
           final detail = await _repository.getProductDetail(event.productId);
-          emit(
-            ProductDetailState(
-              isLoading: false,
-              detail: detail,
-              pendingLifecycleDecision: decision,
-              pendingLifecycleAction: event.action,
-            ),
-          );
+          emit(ProductDetailState(isLoading: false, detail: detail));
           return;
         // Revocation is an attributed write, not a decision gate, so it never
         // goes through a switch arm that raises a HumanDecision.
@@ -182,8 +179,8 @@ class ProductDetailBloc extends Bloc<ProductDetailEvent, ProductDetailState> {
     LifecycleDecisionResolved event,
     Emitter<ProductDetailState> emit,
   ) async {
-    final pending = state.pendingLifecycleDecision;
-    if (pending == null || pending.decisionId != event.decisionId) {
+    final gate = state.openLifecycleGate;
+    if (gate == null || gate.decisionId != event.decisionId) {
       emit(
         state.copyWith(
           governanceError:
@@ -304,8 +301,6 @@ class ProductDetailState {
     this.isResolvingBaseline = false,
     this.isResolvingLifecycle = false,
     this.governanceError,
-    this.pendingLifecycleDecision,
-    this.pendingLifecycleAction,
   });
 
   final bool isLoading;
@@ -329,15 +324,19 @@ class ProductDetailState {
   /// actions that caused it. Carries the server's own reason verbatim.
   final String? governanceError;
 
-  /// The lifecycle gate this screen raised and is waiting on. Rendered in place:
-  /// a lifecycle decision lives at the synthetic scope
-  /// `product-lifecycle:<productId>`, which the needs-you decision surface
-  /// cannot read, so routing it there would strand a `blocking: true` gate.
-  final DecisionResponse? pendingLifecycleDecision;
+  /// The lifecycle gate that is open RIGHT NOW, or null.
+  ///
+  /// Derived from durable state on every load rather than held as a field set by
+  /// the raise call, and that is the entire point. A lifecycle decision hangs
+  /// off the synthetic scope `product-lifecycle:<productId>`, not a WorkItem row,
+  /// so no listing surface can find it: if the screen only remembers the gate it
+  /// just raised, leaving the route erases it, and the `blocking: true`
+  /// decision it stands for is then left with nothing able to raise it again,
+  /// list it, or resolve it. `_baselineGate` has always been driven this way.
+  LifecycleGateResponse? get openLifecycleGate => detail?.pendingLifecycleGate;
 
-  /// Which action raised [pendingLifecycleDecision]. The panel needs it to
-  /// name the decision and to know whether the offboard guard applies.
-  final GovernanceAction? pendingLifecycleAction;
+  /// Whether a lifecycle gate is open. Durable, not a memory of a call.
+  bool get lifecycleGateOpen => openLifecycleGate != null;
 
   ProductStatus get status => detail == null
       ? ProductStatus.unknown
@@ -364,8 +363,15 @@ class ProductDetailState {
   /// second case would be a gate on an irreversible action with no work at
   /// stake, which is exactly what the recorded decision of 2026-10-09 says not
   /// to do.
+  ///
+  /// Read from the gate's own durable action, not from what this screen last
+  /// tapped. That matters in both directions: an operator returning to a screen
+  /// with an open offboard gate must still be asked to state it (otherwise the
+  /// guard is satisfied by nobody saying it), and an operator returning to an
+  /// open pause gate must not be asked to attest about work that is not being
+  /// archived.
   bool get lifecycleOffboardNeedsWorkInFlightAssertion =>
-      pendingLifecycleAction == GovernanceAction.offboard &&
+      openLifecycleGate?.action == GovernanceAction.offboard.lifecycleWire &&
       (status == ProductStatus.governed || status == ProductStatus.paused);
 
   ProductDetailState copyWith({
@@ -376,8 +382,6 @@ class ProductDetailState {
     bool? isResolvingBaseline,
     bool? isResolvingLifecycle,
     String? governanceError,
-    DecisionResponse? pendingLifecycleDecision,
-    GovernanceAction? pendingLifecycleAction,
     bool clearError = false,
     bool clearGovernanceError = false,
   }) => ProductDetailState(
@@ -390,10 +394,6 @@ class ProductDetailState {
     governanceError: clearGovernanceError
         ? null
         : (governanceError ?? this.governanceError),
-    pendingLifecycleDecision:
-        pendingLifecycleDecision ?? this.pendingLifecycleDecision,
-    pendingLifecycleAction:
-        pendingLifecycleAction ?? this.pendingLifecycleAction,
   );
 }
 

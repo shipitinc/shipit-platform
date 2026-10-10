@@ -122,6 +122,57 @@ DecisionResponse _lifecycleDecision(
   );
 }
 
+/// The durable shape of the gate the fake has recorded.
+///
+/// Deliberately derived from the same [DecisionResponse] the raise returns, so
+/// the two cannot drift: what the fake told the caller and what its product
+/// detail read afterwards are the same decision.
+LifecycleGateResponse? _durableGate(
+  String action, {
+  String stateWire = 'governed',
+}) {
+  final d = _lifecycleDecision(action, stateWire: stateWire);
+  return LifecycleGateResponse(
+    decisionId: d.decisionId,
+    action: action,
+    status: d.status,
+    question: d.question,
+    context: d.context,
+    options: d.options,
+    blocking: d.blocking,
+    requestedAt: d.requestedAt,
+  );
+}
+
+/// The same product detail with the open lifecycle gate set or cleared.
+ProductDetailResponse _withGate(
+  ProductDetailResponse d,
+  LifecycleGateResponse? gate,
+) => ProductDetailResponse(
+  productId: d.productId,
+  name: d.name,
+  description: d.description,
+  state: d.state,
+  allowsDispatch: d.allowsDispatch,
+  updatedAt: d.updatedAt,
+  repositories: d.repositories,
+  credentials: d.credentials,
+  activeBaselineId: d.activeBaselineId,
+  activeBaselineRevision: d.activeBaselineRevision,
+  activeBaselineHash: d.activeBaselineHash,
+  activeBaselineAcceptedAt: d.activeBaselineAcceptedAt,
+  activeBaselineAcceptedBy: d.activeBaselineAcceptedBy,
+  activeBaselineFactCount: d.activeBaselineFactCount,
+  pendingBaselineId: d.pendingBaselineId,
+  pendingBaselineRevision: d.pendingBaselineRevision,
+  pendingBaselineVerified: d.pendingBaselineVerified,
+  pendingBaselineFacts: d.pendingBaselineFacts,
+  openClarifications: d.openClarifications,
+  policies: d.policies,
+  pendingBaselineDecisionId: d.pendingBaselineDecisionId,
+  pendingLifecycleGate: gate,
+);
+
 /// A repository that records what it was asked to do.
 ///
 /// The point of the whole suite is that the widget drives the *repository
@@ -130,6 +181,10 @@ class _GovernanceRepository extends MockRepository {
   _GovernanceRepository({required this.detail});
 
   ProductDetailResponse detail;
+
+  /// The lifecycle gate the fake currently holds, exactly as the server would
+  /// report it on the next product detail read.
+  LifecycleGateResponse? openGate;
 
   /// What `getProductDetail` returns once a write has landed. Without this the
   /// screen would keep showing the pre-action state and the tests would prove
@@ -184,6 +239,12 @@ class _GovernanceRepository extends MockRepository {
       drainInFlight: drainInFlight,
     ));
     await _settle();
+    // The server records the gate durably, and the product detail read is how
+    // a client finds it again. Modelling that here is the point: without it the
+    // fake would only ever know the gate in the response it just returned, and
+    // the tests would pass against a client that keeps the gate in memory.
+    openGate = _durableGate(action, stateWire: detail.state);
+    detail = _withGate(detail, openGate);
     return _lifecycleDecision(action, stateWire: detail.state);
   }
 
@@ -203,6 +264,11 @@ class _GovernanceRepository extends MockRepository {
       noWorkInFlight: noWorkInFlight,
     ));
     await _settle();
+    // Resolving clears it server-side. If another gate were still open the
+    // server would return the next oldest one, which is what makes an
+    // already-stranded product drainable rather than merely detectable.
+    openGate = null;
+    detail = _withGate(detail, null);
     return _lifecycleDecision('offboard', stateWire: detail.state);
   }
 
@@ -295,6 +361,18 @@ Future<void> _tapOutcome(WidgetTester tester, String label) async {
   await tester.ensureVisible(finder);
   await tester.pumpAndSettle();
   await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+/// Simulates leaving the product detail route.
+///
+/// The whole tree is replaced, so the `BlocProvider` the page built is disposed
+/// and its bloc closed. That is exactly what the router does on navigation, and
+/// it is why a gate held in bloc memory alone does not survive it.
+Future<void> _leaveRoute(WidgetTester tester) async {
+  await tester.pumpWidget(
+    const MaterialApp(home: Scaffold(body: SizedBox.shrink())),
+  );
   await tester.pumpAndSettle();
 }
 
@@ -456,7 +534,7 @@ void main() {
 
       expect(find.text('Offboard this product'), findsNothing);
       expect(
-        find.textContaining('A decision raised from this screen is open'),
+        find.textContaining('A lifecycle decision is open'),
         findsOneWidget,
       );
     });
@@ -952,5 +1030,124 @@ void main() {
 
       expect(repository.lifecycleRequests, hasLength(1));
     });
+  });
+
+  // The B1 regression guard. A raised lifecycle gate is a durable
+  // `blocking: true` decision that nothing else can reach — it hangs off the
+  // synthetic scope `product-lifecycle:<productId>`, not a WorkItem row — so if
+  // this screen forgets it on navigation, no surface can ever resolve it again.
+  group('an open lifecycle gate is durable, not client memory', () {
+    testWidgets(
+      'the gate is still on screen after leaving the route and returning',
+      (tester) async {
+        final repository = _GovernanceRepository(detail: _detail());
+        await _pumpProduction(tester, repository);
+        await _tap(tester, 'Pause work for this product');
+
+        await _leaveRoute(tester);
+        await _pumpProduction(tester, repository);
+
+        expect(find.text('This action needs your decision'), findsOneWidget);
+        expect(find.text('Pause work for ShipIt Platform?'), findsOneWidget);
+        expect(find.textContaining('ref plc-pause-shipit'), findsOneWidget);
+      },
+    );
+
+    testWidgets('the returned gate resolves without raising a second one', (
+      tester,
+    ) async {
+      final repository = _GovernanceRepository(detail: _detail());
+      await _pumpProduction(tester, repository);
+      await _tap(tester, 'Pause work for this product');
+
+      await _leaveRoute(tester);
+      await _pumpProduction(tester, repository);
+
+      await _tapOutcome(tester, 'Pause');
+      await tester.enterText(
+        find.byType(TextField),
+        'Picked up again after navigating away.',
+      );
+      await tester.pumpAndSettle();
+      await _tap(tester, 'Record decision');
+
+      // Resolved against the gate the SERVER still holds, not a fresh raise.
+      expect(repository.lifecycleResolutions, hasLength(1));
+      expect(
+        repository.lifecycleResolutions.single.decisionId,
+        'plc-pause-shipit',
+      );
+      expect(repository.lifecycleRequests, hasLength(1));
+      expect(find.text('This action needs your decision'), findsNothing);
+    });
+
+    testWidgets('a second lifecycle action is withheld while one is open', (
+      tester,
+    ) async {
+      final repository = _GovernanceRepository(detail: _detail());
+      await _pumpProduction(tester, repository);
+      await _tap(tester, 'Pause work for this product');
+
+      await _leaveRoute(tester);
+      await _pumpProduction(tester, repository);
+
+      // Both of these raise their own `blocking: true` gate. Two of them at
+      // once is what strands one permanently.
+      expect(find.text('Offboard this product'), findsNothing);
+      expect(find.text('Propose a new baseline'), findsNothing);
+      expect(
+        find.textContaining('A lifecycle decision is open'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the actions return once the gate is resolved', (tester) async {
+      final repository = _GovernanceRepository(detail: _detail());
+      await _pumpProduction(tester, repository);
+      await _tap(tester, 'Pause work for this product');
+
+      await _leaveRoute(tester);
+      await _pumpProduction(tester, repository);
+      await _tapOutcome(tester, 'Pause');
+      await tester.enterText(find.byType(TextField), 'Back to normal.');
+      await tester.pumpAndSettle();
+      await _tap(tester, 'Record decision');
+
+      expect(find.text('Pause work for this product'), findsOneWidget);
+      expect(find.text('Offboard this product'), findsOneWidget);
+      expect(find.textContaining('A lifecycle decision is open'), findsNothing);
+    });
+
+    testWidgets(
+      'the strand sequence cannot happen: leave, return, offboard — one gate only',
+      (tester) async {
+        // The reviewer's sequence, verbatim: raise Pause on a governed product,
+        // navigate back to Products, return, then try to offboard it. Resolving
+        // the offboard archives the product, after which (archived -> paused) is
+        // not an edge and the Pause gate can never be raised or resolved again.
+        final repository = _GovernanceRepository(detail: _detail());
+        await _pumpProduction(tester, repository);
+        await _tap(tester, 'Pause work for this product');
+        expect(repository.lifecycleRequests.single.action, 'pause');
+
+        await _leaveRoute(tester);
+        await _pumpProduction(tester, repository);
+
+        // The second action is not offered at all, so it cannot be raised.
+        expect(find.text('Offboard this product'), findsNothing);
+
+        // And the operator's actual next step still works.
+        await _tapOutcome(tester, 'Pause');
+        await tester.enterText(
+          find.byType(TextField),
+          'Paused deliberately; nothing else pending.',
+        );
+        await tester.pumpAndSettle();
+        await _tap(tester, 'Record decision');
+
+        expect(repository.lifecycleResolutions, hasLength(1));
+        expect(repository.lifecycleRequests, hasLength(1));
+      },
+    );
   });
 }

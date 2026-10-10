@@ -74,23 +74,27 @@ class ProductDetailPage extends StatelessWidget {
 /// `blocking: true` gate that nobody can action — the exact outcome
 /// `product_registry_endpoints.dart:164-165` promises never to happen.
 ///
+/// [gate] is what the REGISTRY says is open, re-read on every load. It is not
+/// the return of the call that raised it, because that value dies with the
+/// screen that made it, and a gate nobody can still reach is the failure this
+/// panel exists to prevent.
+///
 /// Nothing is pre-selected: the operator chooses an outcome and records a
 /// rationale, because the rationale is part of the durable `HumanDecision`
 /// (AGENTS.md §11).
 class _LifecycleDecisionGate extends StatefulWidget {
   const _LifecycleDecisionGate({
-    required this.action,
-    required this.decision,
+    required this.gate,
     required this.requiresWorkInFlightAssertion,
     required this.isResolving,
     required this.onResolve,
   });
 
-  final GovernanceAction action;
-  final DecisionResponse decision;
+  final LifecycleGateResponse gate;
 
   /// True for an offboard raised from `governed`/`paused`, where the engine
-  /// requires `ProductGuard.noWorkInFlight`.
+  /// requires `ProductGuard.noWorkInFlight`. Derived from the gate's own durable
+  /// action, so an operator returning to an open offboard gate is still asked.
   final bool requiresWorkInFlightAssertion;
   final bool isResolving;
 
@@ -120,7 +124,7 @@ class _LifecycleDecisionGateState extends State<_LifecycleDecisionGate> {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    final decision = widget.decision;
+    final decision = widget.gate;
     final options = decision.options ?? const <DecisionOption>[];
     return DesignPanel(
       edgeColor: palette.attentionTick,
@@ -143,7 +147,12 @@ class _LifecycleDecisionGateState extends State<_LifecycleDecisionGate> {
           ),
           const SizedBox(height: 6),
           Text(
-            decision.question ?? widget.action.label,
+            // The engine's own question. The fallback exists only for a gate
+            // raised without one; it never guesses at the action, because a
+            // guess here would be the screen describing a decision it did not
+            // read.
+            decision.question ??
+                'This product has a lifecycle decision to record.',
             style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary),
           ),
           const SizedBox(height: 4),
@@ -660,10 +669,16 @@ class _ProductDetailView extends StatelessWidget {
               detail.pendingBaselineId != null &&
               detail.pendingBaselineVerified,
         );
-        // One gate at a time. While a lifecycle gate is open the action list is
-        // hidden rather than left alongside it, because raising a second one
-        // would leave the first unresolvable from this screen.
-        final gateOpen = state.pendingLifecycleDecision != null;
+        // One gate at a time, and now for a durable reason rather than a
+        // session one: while a lifecycle gate is open the action list is
+        // hidden, because raising a second one would leave the first
+        // unresolvable. Each lifecycle action raises its own `blocking: true`
+        // gate and the registry will happily accept a second one — resolving
+        // it can archive the product, after which the first can no longer be
+        // raised (`archived -> paused` is not an edge), listed or resolved by
+        // anything. `gateOpen` comes from the durable read, so this protection
+        // survives leaving the route instead of lapsing with the page.
+        final gateOpen = state.lifecycleGateOpen;
         final isBusy = state.isRaisingGate || state.isResolvingLifecycle;
         final panel = _GovernancePanel(
           detail: detail,
@@ -720,7 +735,7 @@ class _ProductDetailView extends StatelessWidget {
                   _baselineGate(context, state)!,
                   const SizedBox(height: 22),
                 ],
-                if (state.pendingLifecycleDecision != null) ...[
+                if (state.lifecycleGateOpen) ...[
                   _lifecycleGate(context, state)!,
                   const SizedBox(height: 22),
                 ],
@@ -749,15 +764,18 @@ class _ProductDetailView extends StatelessWidget {
     );
   }
 
-  /// The lifecycle gate this screen raised, rendered in place. Null when none
+  /// The lifecycle gate this product has open, rendered in place. Null when none
   /// is open.
+  ///
+  /// Driven by durable state rather than by the response of the call that
+  /// raised it — the same discipline as [_baselineGate], and for the same
+  /// reason: this gate must still be here, resolvable, after the operator has
+  /// navigated away and come back.
   Widget? _lifecycleGate(BuildContext context, ProductDetailState state) {
-    final decision = state.pendingLifecycleDecision;
-    final action = state.pendingLifecycleAction;
-    if (decision == null || action == null) return null;
+    final gate = state.openLifecycleGate;
+    if (gate == null) return null;
     return _LifecycleDecisionGate(
-      action: action,
-      decision: decision,
+      gate: gate,
       requiresWorkInFlightAssertion:
           state.lifecycleOffboardNeedsWorkInFlightAssertion,
       isResolving: state.isResolvingLifecycle,
@@ -768,7 +786,7 @@ class _ProductDetailView extends StatelessWidget {
               // `product-lifecycle:<id>` scope back out of the decision would
               // be guessing at a string format for no gain.
               productId: state.detail!.productId,
-              decisionId: decision.decisionId,
+              decisionId: gate.decisionId,
               choice: choice,
               rationale: rationale,
               attestsNoWorkInFlight: noWorkInFlight,
@@ -1269,8 +1287,8 @@ class _GovernancePanelState extends State<_GovernancePanel> {
             const ContentRule(),
             const SizedBox(height: 14),
             Text(
-              'A decision raised from this screen is open above. Record it '
-              'there before raising another.',
+              'A lifecycle decision is open above. Record it there before '
+              'raising another.',
               style: ShipItType.bodySmall.copyWith(color: palette.inkTertiary),
             ),
           ] else if (widget.actions.isNotEmpty) ...[
