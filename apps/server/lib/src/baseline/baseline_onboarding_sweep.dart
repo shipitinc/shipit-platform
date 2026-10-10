@@ -1,20 +1,11 @@
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:product_registry/product_registry.dart';
 import 'package:scheduler/scheduler.dart'
-    show DuplicateActiveJobException, JobStore;
-
-// `onboardingDedupeKey` and `onboardingJob` are defined in
-// `packages/scheduler/lib/src/baseline_product.dart`, which is new in this
-// change and is NOT yet exported from that package's `lib/scheduler.dart`
-// barrel — adding the export means editing a file this lane does not own. The
-// two must stay in lockstep: the operator-requested trigger
-// (`ControlPlaneService.triggerOnboarding`) builds the same key inline, and if
-// the two ever disagree the sweep and the operator can each enqueue a job for
-// one derivation, which is exactly the duplicate the key exists to prevent.
-// `onboarding_dedupe_key_contract_test.dart` pins the literal so a change to
-// either side fails rather than diverging silently.
-// ignore: implementation_imports
-import 'package:scheduler/src/baseline_product.dart';
+    show
+        DuplicateActiveJobException,
+        JobStore,
+        onboardingDedupeKey,
+        onboardingJob;
 
 import '../credentials/repository_snapshot_acquirer.dart';
 
@@ -66,10 +57,28 @@ class SnapshotPinnedRevisionResolver implements PinnedRevisionResolver {
         repositoryId: repositoryId,
         pinnedRevision: _headRef,
       );
-    } on Object {
+    } on BaselineSourceUnavailableException {
       // Unresolvable is a legitimate answer, not a crash: no credential, no
-      // confirmed host key, an unreachable host. The sweep's job is to leave
+      // confirmed host key, an unusable credential. The sweep's job is to leave
       // that product alone and say nothing loud about it on every pass.
+      //
+      // Only the AVAILABILITY refusals are caught here, and each is named. A
+      // blanket `on Object` also swallowed
+      // `BaselineSnapshotCleanupException` — a scratch tree holding the deploy
+      // key's identity file that this process could not remove — and laundered a
+      // leaked /tmp tree containing a private key into an
+      // `PINNED_REVISION_UNRESOLVABLE` skip, which the sweep deliberately
+      // declines to log loudly. The acquirer's own contract says a tree it
+      // could not remove is an incident and never a result
+      // (`repository_snapshot_acquirer.dart`), so it is deliberately absent from
+      // this list and propagates.
+      return null;
+    } on HostKeyNotIndependentlyConfirmedException {
+      return null;
+    } on PinnedRevisionNotAcquiredException {
+      return null;
+    } on BaselineSnapshotMaterializationException {
+      // git refused or timed out. Same answer as an unreachable host.
       return null;
     }
     try {

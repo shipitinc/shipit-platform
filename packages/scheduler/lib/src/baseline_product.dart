@@ -66,16 +66,15 @@ String onboardingWorkItemId(String productId) => 'onboarding-$productId';
 /// Pinning is what makes the key mean *one specific derivation from one
 /// specific source state*.
 ///
-/// ## Drift hazard, recorded rather than hidden
+/// ## One builder, now actually shared
 ///
-/// `ControlPlaneService.triggerOnboarding` builds this same string inline. This
-/// file is not wired into it (that file is outside this change's ownership), so
-/// the two are currently two spellings of one key. A change to the format here
-/// without the same change there would let the sweep and the operator request
-/// each create a job for the same derivation, which is precisely the duplicate
-/// this key exists to prevent. `onboarding_dedupe_key_contract_test.dart` pins
-/// the exact literal so a change to either side fails rather than silently
-/// diverging.
+/// `ControlPlaneService.triggerOnboarding` calls this function rather than
+/// spelling the string, and the sweep reaches it through this package's
+/// `scheduler.dart` barrel. There is therefore no second spelling left to
+/// drift: a change to the format here is a change to both callers, and
+/// `onboarding_dedupe_key_contract_test.dart` still pins the exact literal so a
+/// change to the FORMAT fails loudly rather than orphaning every
+/// already-persisted job whose `dedupeKey` was written in the old one.
 String onboardingDedupeKey({
   required String productId,
   required String repositoryId,

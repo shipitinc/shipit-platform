@@ -669,6 +669,97 @@ void main() {
     );
 
     test(
+      'an AGENT CLAIM is not a verification: it is re-derived, not trusted',
+      () async {
+        // THE N-1 REGRESSION. `verifyBaseline` has two paths and BOTH set
+        // `verifiedAt`: the claim path (an identity with no
+        // `PlatformReDerivationProof`) records
+        // `verificationKind: agentClaimedEvidence`, for which
+        // `isIndependentlyVerified` is false by construction. A lane that
+        // short-circuits on `verifiedAt != null` treats an agent's word about
+        // its own work as though the platform had re-derived it — and because
+        // the short-circuit fires BEFORE the proof is built, the real platform
+        // verification is never minted at all. The product then can never
+        // satisfy `baselineVerifiedIndependently`, so the lane blocks its own
+        // repair: exactly the wrong failure direction for the one component
+        // whose job is to make terminal states honest.
+        await harness();
+
+        // Build the state the engine really produces for an agent's claim,
+        // through the engine's real claim path rather than a hand-written row.
+        final proposed = await registry.engine.proposeBaseline(
+          productId: 'product-a',
+          facts: deriveBaselineFacts(await _observationsFor(materializer)),
+        );
+        final claimed = await registry.engine.verifyBaseline(
+          productId: 'product-a',
+          baselineId: proposed.baselineId,
+          verifiedBy: 'agent:baseline-producer',
+          now: DateTime.utc(2026, 2, 2),
+        );
+        // Sanity: this really is the row the bug is about — a timestamp, a
+        // verifier, and NO independent verification.
+        expect(claimed.verifiedAt, isNotNull);
+        expect(claimed.verificationKind, EvidenceKind.agentClaimedEvidence);
+        expect(claimed.isIndependentlyVerified, isFalse);
+
+        final outcome = await lane.run(
+          productId: 'product-a',
+          repositoryId: 'repo',
+          pinnedRevision: kTestRevision,
+        );
+
+        // It did NOT short-circuit: the durable job record says this run
+        // verified the baseline rather than re-checked an existing attestation.
+        expect(outcome, isA<BaselineLaneAwaitingApproval>());
+        expect(
+          (outcome as BaselineLaneAwaitingApproval).alreadyVerified,
+          isFalse,
+          reason:
+              'an agent-claimed baseline must not be reported on a durable job '
+              'record as one that had already been verified',
+        );
+        // It went on to construct a real proof and record platform evidence.
+        expect(events, contains('baseline.lane.verified'));
+        final after = (await registry.engine.readBaselines('product-a')).single;
+        expect(after.baselineId, proposed.baselineId);
+        expect(after.verificationKind, EvidenceKind.platformVerifiedEvidence);
+        expect(after.isIndependentlyVerified, isTrue);
+
+        // NOT WEDGED. The claim no longer stands in the way of the guard it
+        // was minted for, and the product has left the state that guard holds
+        // it in.
+        expect(
+          (await registry.engine.readProduct('product-a')).state.canonical,
+          ProductState.baselineReview,
+        );
+        expect(
+          ProductTransitions.requiredGuards(
+            ProductState.baselinePending,
+            ProductState.baselineReview,
+          ),
+          contains(ProductGuard.baselineVerifiedIndependently),
+          reason:
+              'the guard the claim could never satisfy is the one this edge '
+              'demands — so reaching baselineReview is the proof the lane is '
+              'no longer blocking itself',
+        );
+
+        // And it CONVERGES: the next run re-checks the real attestation instead
+        // of minting another one or falling back to the claim.
+        final second =
+            await lane.run(
+                  productId: 'product-a',
+                  repositoryId: 'repo',
+                  pinnedRevision: kTestRevision,
+                )
+                as BaselineLaneAwaitingApproval;
+        expect(second.alreadyVerified, isTrue);
+        expect(await registry.engine.readBaselines('product-a'), hasLength(1));
+      },
+    );
+
+    test(
       'a changed discovery carries the operator claims forward, never drops them',
       () async {
         await harness();

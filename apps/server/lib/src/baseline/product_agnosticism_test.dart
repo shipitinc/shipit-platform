@@ -78,13 +78,19 @@ Future<Directory> _resolveServerRoot() async {
 ///
 /// Written out rather than globbed so that adding a new lane file without
 /// adding it here is visible in review. A gate that silently stops covering new
-/// code is worse than no gate.
+/// code is worse than no gate — and the test below turns that "visible in
+/// review" into a failure, so the list and the directory are cross-checked
+/// against each other rather than one against a hardcoded number.
 Future<List<File>> _laneSources() async {
   final root = await _resolveServerRoot();
   return [
     File('${root.path}/lib/src/baseline/baseline_derivation.dart'),
     File('${root.path}/lib/src/baseline/baseline_production_lane.dart'),
     File('${root.path}/lib/src/baseline/baseline_onboarding_sweep.dart'),
+    // Compiled into the package like any other `lib/` source and able to name a
+    // product or a host just as easily — so it is covered by this gate on the
+    // same terms as the three above, not exempted as "only a test".
+    File('${root.path}/lib/src/baseline/baseline_test_fixtures.dart'),
     File('${root.path}/lib/src/credentials/repository_snapshot_acquirer.dart'),
     File('${root.path}/lib/src/triage/lane_i_tick_hook.dart'),
     File(
@@ -93,13 +99,46 @@ Future<List<File>> _laneSources() async {
   ];
 }
 
+/// Every non-test `.dart` file that physically lives in the lane directory.
+///
+/// `*_test.dart` is excluded because a test asserts the guarantee rather than
+/// constituting it; everything else in that directory is lane source and is
+/// covered or the gate fails.
+Set<String> _laneDirectorySources(String rootPath) =>
+    Directory('$rootPath/lib/src/baseline')
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.endsWith('.dart'))
+        .where((f) => !f.path.endsWith('_test.dart'))
+        .map((f) => f.absolute.path)
+        .toSet();
+
+/// Lane files that live OUTSIDE `lib/src/baseline` and so have to be listed by
+/// hand. Named rather than counted, for the same reason the directory list is
+/// cross-checked: a count is a tautology, a path is a claim someone can check.
+/// Every path is relative to the WORKSPACE root, so a cross-package entry is
+/// written the same way as a cross-directory one.
+final List<({String label, String path})> kGateFilesOutsideLaneDirectory = [
+  (
+    label: 'the snapshot acquirer',
+    path: 'apps/server/lib/src/credentials/repository_snapshot_acquirer.dart',
+  ),
+  (
+    label: 'the tick hook that dispatches the lane',
+    path: 'apps/server/lib/src/triage/lane_i_tick_hook.dart',
+  ),
+  (
+    label: 'the scheduler definition for onboardProduct',
+    path: 'packages/scheduler/lib/src/baseline_product.dart',
+  ),
+];
+
 void main() {
   group('product agnosticism — the design\'s own grep gate, executed', () {
     test('every gate file exists where this test expects it', () async {
       // A silent no-op gate is worse than none: it would read "green" while
       // covering nothing. Assert coverage first.
       final sources = await _laneSources();
-      expect(sources, hasLength(6));
       for (final file in sources) {
         expect(
           file.existsSync(),
@@ -107,6 +146,57 @@ void main() {
           reason:
               '${file.path} is missing, so this gate would silently stop '
               'covering it',
+        );
+      }
+    });
+
+    test('this gate covers EVERY non-test file in the lane directory', () async {
+      // The real assertion, replacing a `hasLength(6)` that only restated the
+      // literal above it: a number cannot disagree with itself, so adding a
+      // seventh lane file and leaving this list at six would have kept the gate
+      // green while covering six files out of seven.
+      //
+      // Cross-checking the list against the DIRECTORY is what makes the list
+      // load-bearing. An unwatched file in `lib/src/baseline` is compiled into
+      // the package and can name a product, a host or a default path exactly as
+      // easily as one that is watched.
+      final root = await _resolveServerRoot();
+      final covered = (await _laneSources())
+          .map((f) => f.absolute.path)
+          .toSet();
+      final onDisk = _laneDirectorySources(root.path);
+
+      expect(
+        onDisk,
+        isNotEmpty,
+        reason: 'the lane directory scan found nothing at all',
+      );
+      expect(
+        covered,
+        containsAll(onDisk),
+        reason:
+            'these files sit in the lane directory, ship in the package, and are '
+            'not covered by the agnosticism gate: '
+            '${onDisk.difference(covered).map((p) => p.split('/').last).toList()}',
+      );
+    });
+
+    test('the gate names each lane file that lives outside the directory', () async {
+      // The other direction. A file the lane depends on can sit anywhere in the
+      // tree, and the directory scan cannot see it — so each one is named here
+      // explicitly, and a path that moves fails rather than quietly dropping out
+      // of the gate.
+      final root = await _resolveServerRoot();
+      final workspaceRoot = root.parent.parent.path;
+      final covered = (await _laneSources())
+          .map((f) => f.absolute.path)
+          .toSet();
+
+      for (final outside in kGateFilesOutsideLaneDirectory) {
+        expect(
+          covered,
+          contains(File('$workspaceRoot/${outside.path}').absolute.path),
+          reason: '${outside.label} (${outside.path}) is no longer gated',
         );
       }
     });

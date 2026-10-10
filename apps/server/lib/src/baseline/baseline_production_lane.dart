@@ -44,11 +44,17 @@ final class BaselineLaneAwaitingApproval extends BaselineLaneOutcome {
   final String decisionId;
   final int factCount;
 
-  /// True when the baseline was already verified and this run only re-checked
-  /// that the source still reproduces its scrape-derivable content. Recorded
-  /// rather than inferred, because "re-verified" and "verified for the first
-  /// time" produce the same durable state and an operator reading the job record
-  /// is owed the difference.
+  /// True when the baseline was already INDEPENDENTLY verified and this run
+  /// only re-checked that the source still reproduces its scrape-derivable
+  /// content. Recorded rather than inferred, because "re-verified" and "verified
+  /// for the first time" produce the same durable state and an operator reading
+  /// the job record is owed the difference.
+  ///
+  /// "Independently" is load-bearing: this is true only for a
+  /// `platformVerifiedEvidence` attestation, never for an agent's own claim.
+  /// This field is written to a durable job record, and a record that said
+  /// "re-verified" for a baseline no platform verification ever covered would be
+  /// exactly the misleading terminal state this lane exists to eliminate.
   final bool alreadyVerified;
 
   @override
@@ -323,11 +329,26 @@ class BaselineProductionLane {
       );
     }
 
-    if (proposed.verifiedAt != null) {
-      // Already verified by an earlier run. The comparable subset has just been
-      // re-derived and matched, so the source still says what the attestation
-      // said it said. Nothing to re-attest: re-verifying would bump the version
-      // and rewrite `verifiedAt` on every sweep for no change in meaning.
+    // `isIndependentlyVerified`, and NOT `verifiedAt != null`.
+    //
+    // `verifiedAt` is set by BOTH paths through `verifyBaseline`. The claim path
+    // — an identity with no `PlatformReDerivationProof` — records
+    // `verificationKind: agentClaimedEvidence` and a timestamp, and for that row
+    // `isIndependentlyVerified` is FALSE by construction
+    // (`product_baseline.dart:117`). Keying this short-circuit on the timestamp
+    // would treat an agent's claim about its own work as though the platform had
+    // re-derived it, and the effect is not a cosmetic mislabel: the short-circuit
+    // fires BEFORE the proof below is ever constructed, so the real
+    // platform verification is never minted, `baselineVerifiedIndependently` can
+    // never be satisfied, and the product can never leave `baselinePending`.
+    // The lane would block its own repair.
+    //
+    // An independently verified baseline is genuinely re-usable as-is: the
+    // comparable subset has just been re-derived and matched above, so the
+    // source still says what the attestation said it said. Re-attesting would
+    // bump the version and rewrite `verifiedAt` on every sweep for no change in
+    // meaning — which is why this branch exists at all.
+    if (proposed.isIndependentlyVerified) {
       return _awaitApproval(
         productId: productId,
         proposed: proposed,

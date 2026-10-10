@@ -1,12 +1,12 @@
+import 'dart:io';
+import 'dart:isolate';
+
 import 'package:control_plane_server/src/baseline/baseline_onboarding_sweep.dart';
+import 'package:control_plane_server/src/credentials/credential_key_service.dart';
+import 'package:control_plane_server/src/credentials/repository_snapshot_acquirer.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:scheduler/scheduler.dart';
 import 'package:workflow_engine/workflow_engine.dart' show ProductGuard;
-// The dedupe key is the one contract this sweep shares with the operator-requested
-// trigger, and neither the barrel nor the key function is reachable from
-// `test/` without the `implementation_imports` escape this file documents.
-// ignore: implementation_imports
-import 'package:scheduler/src/baseline_product.dart';
 // `test` is a dev_dependency of `control_plane_server`; it is unresolved as a
 // `lib/` import, which is a known cost of co-locating tests here.
 // ignore: depend_on_referenced_packages
@@ -34,6 +34,27 @@ class _ScriptedResolver implements PinnedRevisionResolver {
   }
 }
 
+/// The text of `control_plane_service.dart`, located through package resolution
+/// rather than through the working directory.
+///
+/// A gate that passes because it read the wrong file is worse than no gate, and
+/// `dart test` may be invoked from anywhere in the workspace — so if this
+/// library's own URI cannot be resolved, it refuses rather than guessing.
+Future<String> _controlPlaneServiceSource() async {
+  final resolved = await Isolate.resolvePackageUri(
+    Uri.parse(
+      'package:control_plane_server/src/services/control_plane_service.dart',
+    ),
+  );
+  if (resolved == null) {
+    throw StateError(
+      'could not resolve control_plane_service.dart; refusing to assert against '
+      'an unknown file',
+    );
+  }
+  return File.fromUri(resolved).readAsString();
+}
+
 void main() {
   late RegistryFixture registry;
   late InMemoryJobStore jobStore;
@@ -54,13 +75,15 @@ void main() {
 
   group('onboarding dedupe key contract', () {
     test(
-      'is the exact literal the operator-requested trigger already writes',
+      'is the exact literal every already-persisted onboarding job carries',
       () {
-        // THE DRIFT HAZARD, PINNED. `ControlPlaneService.triggerOnboarding`
-        // builds this string inline and that file is outside this change's
-        // ownership, so the two must stay in lockstep by hand. If either side is
-        // edited, this fails instead of the sweep and the operator quietly
-        // enqueueing two jobs for one derivation.
+        // THE FORMAT, PINNED. Both triggers now CALL this function —
+        // `ControlPlaneService.triggerOnboarding` included — so the two cannot
+        // produce two spellings of one key any more. What a change to the
+        // FORMAT still risks is different and just as real: every
+        // already-persisted `job.dedupeKey` was written in the old spelling, so
+        // changing it here silently orphans every historical onboarding job from
+        // its own dedupe lookup. This fails instead.
         expect(
           onboardingDedupeKey(
             productId: 'p',
@@ -71,6 +94,35 @@ void main() {
         );
       },
     );
+
+    test('the operator trigger CALLS the shared builder, not a second literal', () async {
+      // `ControlPlaneService.triggerOnboarding` needs a `Session` and a database
+      // to call, so this asserts on the SOURCE — which is what actually has to
+      // hold, and what the literal pin above structurally cannot see. That pin is
+      // satisfied by `onboardingDedupeKey`'s own OUTPUT, so it would have stayed
+      // green if the service went back to interpolating the key itself, which is
+      // precisely the drift this assertion exists to catch: two spellings of one
+      // key let the sweep and the operator each enqueue a derivation the key
+      // exists to make unique.
+      final source = await _controlPlaneServiceSource();
+
+      expect(
+        source,
+        contains('onboardingDedupeKey('),
+        reason:
+            'triggerOnboarding must build its key with the shared function the '
+            'sweep uses',
+      );
+      expect(
+        source,
+        isNot(
+          contains(r"'onboarding:$productId:$repositoryId:$startingRevision'"),
+        ),
+        reason:
+            'a second, hand-written spelling of the dedupe key is the exact '
+            'defect this assertion exists to prevent',
+      );
+    });
 
     test('refuses a blank identity or a blank revision', () {
       expect(
@@ -131,6 +183,133 @@ void main() {
         reason: 'the instruction must not name a product',
       );
     });
+  });
+
+  group('SnapshotPinnedRevisionResolver', () {
+    /// A resolver over the REAL acquirer, so each refusal is raised by the
+    /// component that owns it rather than handed to the resolver directly.
+    Future<
+      ({
+        SnapshotPinnedRevisionResolver resolver,
+        RefusingSnapshotMaterializer materializer,
+      })
+    >
+    resolverOver({
+      required RegistryFixture registry,
+      required Object failure,
+    }) async {
+      await registry.registerProduct(productId: 'product-a');
+      await seedCredential(
+        registry.engine,
+        productId: 'product-a',
+        repositoryId: 'repo',
+      );
+      final materializer = RefusingSnapshotMaterializer(failure);
+      return (
+        resolver: SnapshotPinnedRevisionResolver(
+          RepositorySnapshotAcquirer(
+            engine: registry.engine,
+            credentialKeyService: CredentialKeyService(
+              engine: registry.engine,
+              secretProvider: RecordingSecretProvider(),
+              verifier: ScriptedAccessVerifier(
+                committedRevision: kTestRevision,
+              ),
+            ),
+            materializer: materializer,
+          ),
+        ),
+        materializer: materializer,
+      );
+    }
+
+    test(
+      'a snapshot tree this process could not remove is an INCIDENT, not a skip',
+      () async {
+        // THE N-2 REGRESSION. `SshPinnedSnapshotMaterializer` raises
+        // `BaselineSnapshotCleanupException` when the scratch tree holding the
+        // deploy key's identity file cannot be deleted, and its own contract
+        // says that tree is an incident and never a result. The resolver caught
+        // it under a blanket `on Object` and returned `null`, which the sweep
+        // records as `PINNED_REVISION_UNRESOLVABLE` — a skip it deliberately
+        // declines to log loudly. A leaked /tmp tree containing a private deploy
+        // key therefore laundered itself into an ordinary "this repository has
+        // no readable head yet", every pass, for ever.
+        final registry = RegistryFixture();
+        final over = await resolverOver(
+          registry: registry,
+          failure: const BaselineSnapshotCleanupException(
+            '/tmp/baseline_snapshot_x',
+          ),
+        );
+
+        await expectLater(
+          over.resolver.resolve(
+            productId: 'product-a',
+            repositoryId: 'repo',
+          ),
+          throwsA(isA<BaselineSnapshotCleanupException>()),
+          reason:
+              'an operator has to be able to see this. A silent skip is the one '
+              'outcome that makes a leaked private key unfindable.',
+        );
+
+        // The refusal came from the SNAPSHOT stage — the stage that writes the
+        // deploy key's identity file into the scratch tree, and does so only
+        // after the confirmed host key matched. An incident raised before that
+        // point would not be a leaked key, so this pins which failure it is.
+        expect(over.materializer.demandedHostKeyFingerprints, [
+          kTestHostKeyFingerprint,
+        ]);
+      },
+    );
+
+    test(
+      'the availability refusals ARE routine: they resolve to "unresolvable"',
+      () async {
+        // The counterpart, so the test above cannot be satisfied by refusing
+        // everything. An unresolvable repository is an ordinary answer to the
+        // sweep's question and must stay one.
+        for (final failure in <Object>[
+          const BaselineSourceUnavailableException(
+            productId: 'product-a',
+            repositoryId: 'repo',
+            reason: 'no credential has been minted for this repository',
+          ),
+          const HostKeyNotIndependentlyConfirmedException(
+            productId: 'product-a',
+            repositoryId: 'repo',
+            reason: 'no host key fingerprint has been confirmed',
+          ),
+          const PinnedRevisionNotAcquiredException(
+            productId: 'product-a',
+            repositoryId: 'repo',
+            pinnedRevision: kTestRevision,
+            observedRevision: 'other',
+          ),
+          const BaselineSnapshotMaterializationException(
+            repositoryId: 'repo',
+            command: 'git fetch',
+            detail: 'the host refused the connection',
+          ),
+        ]) {
+          final registry = RegistryFixture();
+          final over = await resolverOver(
+            registry: registry,
+            failure: failure,
+          );
+
+          expect(
+            await over.resolver.resolve(
+              productId: 'product-a',
+              repositoryId: 'repo',
+            ),
+            isNull,
+            reason: '${failure.runtimeType} is an availability refusal',
+          );
+        }
+      },
+    );
   });
 
   group('BaselineOnboardingSweep', () {

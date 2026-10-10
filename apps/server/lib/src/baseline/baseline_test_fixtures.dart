@@ -162,6 +162,39 @@ class ScriptedSnapshotMaterializer implements RepositorySnapshotMaterializer {
   }
 }
 
+/// A [RepositorySnapshotMaterializer] that refuses instead of producing a tree.
+///
+/// The acquirer converts credential and trust failures into a small, NAMED set
+/// of exceptions, and everything downstream is expected to treat those very
+/// differently from one another: an unresolvable repository is a routine skip,
+/// while a scratch tree this process could not remove is an incident. This
+/// drives each of them through the real
+/// [RepositorySnapshotAcquirer.acquire] path, so a test can assert which one
+/// escapes a caller rather than which one a caller imagined.
+class RefusingSnapshotMaterializer implements RepositorySnapshotMaterializer {
+  RefusingSnapshotMaterializer(this.failure);
+
+  /// What [materialize] raises. Every refusal the acquirer is contracted to
+  /// throw can be driven through here, including the ones it does NOT convert.
+  final Object failure;
+
+  /// Host-key fingerprints demanded before this materializer refused.
+  final List<String> demandedHostKeyFingerprints = [];
+
+  @override
+  Future<RepositorySnapshot> materialize({
+    required String productId,
+    required String repositoryId,
+    required SshRemote remote,
+    required SecretBytes privateKeyPem,
+    required String confirmedHostKeyFingerprint,
+    required String pinnedRevision,
+  }) async {
+    demandedHostKeyFingerprints.add(confirmedHostKeyFingerprint);
+    throw failure;
+  }
+}
+
 /// Writes an active credential for [repositoryId] through the engine's own
 /// domain methods, so the fixture establishes exactly the two halves of the
 /// trust chain production establishes: a host key a human confirmed, and a

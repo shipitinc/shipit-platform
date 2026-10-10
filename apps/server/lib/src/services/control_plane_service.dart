@@ -12,7 +12,8 @@ import 'package:scheduler/scheduler.dart'
         JobQueue,
         triageDefectDefinition,
         triageDefectDedupeKey,
-        triageDefectInstruction;
+        triageDefectInstruction,
+        onboardingDedupeKey;
 import 'package:serverpod/serverpod.dart';
 import 'package:workflow_store/workflow_store.dart'
     show DurableWorkflowEngine, WorkflowStore;
@@ -1864,7 +1865,19 @@ class ControlPlaneService {
     // Use the job queue directly to enqueue the onboarding job
     // We need a JobQueue instance - let's use the job store directly
     final jobId = 'jb-$productId-${t.millisecondsSinceEpoch}';
-    final dedupeKey = 'onboarding:$productId:$repositoryId:$startingRevision';
+    // Built by the ONE function both onboarding triggers use. This used to
+    // interpolate the same string a second time, and two spellings of one key is
+    // how the operator request and the periodic sweep each enqueue a
+    // derivation the dedupe key exists to make unique — the store would see two
+    // distinct keys, admit both, and run the lane twice for one source state.
+    // It also refuses a blank product, repository or revision, where the
+    // interpolation silently accepted all three and produced a key that could
+    // never be rebuilt from its own inputs.
+    final dedupeKey = onboardingDedupeKey(
+      productId: productId,
+      repositoryId: repositoryId,
+      startingRevision: startingRevision,
+    );
 
     final job = Job(
       jobId: jobId,
