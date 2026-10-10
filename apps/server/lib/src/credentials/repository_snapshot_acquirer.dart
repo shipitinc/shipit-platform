@@ -15,6 +15,13 @@ import 'posix_file_permissions.dart';
 import 'secret_material.dart';
 import 'ssh_remote.dart';
 
+/// Separator between `PATH` entries.
+///
+/// The POSIX list separator, not [Platform.pathSeparator]. See
+/// `SshPinnedSnapshotMaterializer._pinnedPath` for why that distinction is
+/// named rather than inlined.
+const String _pathListSeparator = ':';
+
 /// Raised when a product's repository cannot be acquired, and the reason is
 /// something outside this process.
 ///
@@ -520,12 +527,37 @@ class SshPinnedSnapshotMaterializer implements RepositorySnapshotMaterializer {
     this.cloneTimeout = const Duration(minutes: 5),
     this.scratchPrefix = 'baseline_snapshot_',
     this.gitExecutable = 'git',
+    this.pathPrefix,
   });
 
   final Duration connectTimeout;
   final Duration cloneTimeout;
   final String scratchPrefix;
   final String gitExecutable;
+
+  /// Prepended to `PATH` for every helper this class spawns — `git`,
+  /// `ssh-keyscan` and the `ssh` the wrapper script execs.
+  ///
+  /// ## Why this class has the seam `RepositoryAccessVerifier` already had
+  ///
+  /// `git`, `ssh-keyscan` and `ssh-keygen` are spawned by **bare name**, so all
+  /// three are resolved through the ambient `PATH`, and a class that resolves
+  /// its helpers that way cannot be driven to any of them in a test without one
+  /// going out to the network. `RepositoryAccessVerifier` grew [pathPrefix]
+  /// precisely so its transport could be exercised against stub helpers, and
+  /// this class duplicated that transport without the seam — which is why every
+  /// test here substituted a fake for the process layer and why a real defect
+  /// in the real spawn sequence survived: the fake was always handed an argv
+  /// whose `-C` directory did not exist, and a fake has no `fatal: cannot change
+  /// to …` to notice.
+  ///
+  /// So this is the verifier's seam, taken for the verifier's reason and not as
+  /// an extraction of anything: the two implementations stay separate, each with
+  /// its own host-key check, which is the shape B7 recorded as deliberate.
+  ///
+  /// Null — the default, and the only value production uses — keeps the ambient
+  /// `PATH` exactly as before.
+  final String? pathPrefix;
 
   @override
   Future<RepositorySnapshot> materialize({
@@ -574,6 +606,31 @@ class SshPinnedSnapshotMaterializer implements RepositorySnapshotMaterializer {
         ).codeUnits,
       );
       PosixFileModes.applyStrict(wrapperPath, '700');
+
+      // The working tree has to EXIST before the first git call, and this is
+      // where it has to be created. `_git` spawns
+      // `git --no-pager -C <clonePath> …`, and `git -C <dir>` chdirs *before*
+      // it dispatches the subcommand — `git init` included. `-C` names where to
+      // work, not what to create: against a directory that is not there git does
+      // not fall back to creating one, it exits non-zero with
+      // `fatal: cannot change to '<path>': No such file or directory`.
+      //
+      // `scratch` came from `createTempSync`, which creates the scratch itself
+      // and nothing inside it, so on this path the FIRST git call — `init`, the
+      // cheapest one — was the one that died, and the whole acquisition failed
+      // before a single byte crossed the network. That failure is
+      // `BaselineSnapshotMaterializationException`, which
+      // `SnapshotPinnedRevisionResolver` reads as "the revision is
+      // unresolvable" and turns into a null: the sweep reported a skipped
+      // product and enqueued nothing, while every pass had already spent a
+      // credential version proving the credential was usable.
+      //
+      // Created through [PosixFileModes.createOwnerOnlyDirectory] rather than a
+      // bare `createSync` for the same reason the identity and `known_hosts`
+      // beside it are: the clone tree is private material in transit, and this
+      // class is deliberately `0700`/`0600` throughout. Under the near-
+      // universal umask `022` a default `createSync` leaves this `0755`.
+      PosixFileModes.createOwnerOnlyDirectory(clonePath);
 
       await _git(remote, wrapperPath, clonePath, ['init', '--quiet']);
       await _git(remote, wrapperPath, clonePath, [
@@ -669,6 +726,7 @@ class SshPinnedSnapshotMaterializer implements RepositorySnapshotMaterializer {
         'ssh-keyscan',
         ['-p', '${remote.port}', remote.host],
         connectTimeout,
+        environment: _helperEnvironment,
       );
     } on Object {
       // No scan, no clone. This is a refusal, and an absent `ssh-keyscan` is
@@ -700,7 +758,10 @@ class SshPinnedSnapshotMaterializer implements RepositorySnapshotMaterializer {
       process = await Process.start(
         'ssh-keygen',
         ['-lf', '-'],
-        environment: {'HOME': Directory.systemTemp.path},
+        environment: {
+          'HOME': Directory.systemTemp.path,
+          if (pathPrefix != null) 'PATH': _pinnedPath,
+        },
       );
     } on Object {
       return null;
@@ -726,6 +787,25 @@ class SshPinnedSnapshotMaterializer implements RepositorySnapshotMaterializer {
       r'SHA256:[A-Za-z0-9+/]+=*',
     ).firstMatch(await stdoutText)?.group(0);
   }
+
+  /// Environment applied to every bare-name helper this class spawns.
+  ///
+  /// Null unless [pathPrefix] was given, so production spawns nothing with a
+  /// `PATH` it did not already inherit.
+  Map<String, String>? get _helperEnvironment =>
+      pathPrefix == null ? null : {'PATH': _pinnedPath};
+
+  /// `PATH` with [pathPrefix] in front of the ambient value.
+  ///
+  /// Note the separator is the PATH *list* separator (`:`), not
+  /// [Platform.pathSeparator] — which is `/` on POSIX and the wrong character
+  /// entirely. Joining with the wrong one does not fail loudly: it produces a
+  /// single nonsense entry, the pinned directory silently stops taking effect,
+  /// and the real helper on `PATH` is found instead. That failure mode — a
+  /// security control quietly not applying — is why this is a named getter with
+  /// the reasoning attached rather than an inline template.
+  String get _pinnedPath =>
+      '$pathPrefix$_pathListSeparator${Platform.environment['PATH'] ?? ''}';
 
   Future<void> _git(
     SshRemote remote,
@@ -753,6 +833,7 @@ class SshPinnedSnapshotMaterializer implements RepositorySnapshotMaterializer {
         'HOME': Directory(clonePath).parent.path,
         'GIT_CONFIG_GLOBAL': '/dev/null',
         'GIT_CONFIG_SYSTEM': '/dev/null',
+        if (pathPrefix != null) 'PATH': _pinnedPath,
       },
     );
     if (result.exitCode != 0) {
@@ -773,6 +854,11 @@ class SshPinnedSnapshotMaterializer implements RepositorySnapshotMaterializer {
       environment: {
         'GIT_CONFIG_GLOBAL': '/dev/null',
         'GIT_CONFIG_SYSTEM': '/dev/null',
+        // The revision read has to come from the SAME git as the clone. Leaving
+        // this call on the ambient `PATH` while the clone is pinned would let a
+        // test — or an attacker who can write to an earlier `PATH` entry —
+        // report a revision that no pinned git ever checked out.
+        if (pathPrefix != null) 'PATH': _pinnedPath,
       },
     );
     if (result.exitCode != 0) return null;
