@@ -485,6 +485,177 @@ void main() {
     );
   });
 
+  group('N-2a the per-hop idempotency keys replay, they are not per-call '
+      'values', () {
+    // ## Why these tests exist at all
+    //
+    // Every other idempotency test in this file passes with the state guard
+    // ALONE. A caller that re-reads the item sees the state it left it at and
+    // walks nothing, so the keys are never consulted — which means the suite
+    // could mint a fresh key on every call and stay green. That was verified,
+    // not assumed: `work-entry:planning` -> `work-entry:planning-${now}` and
+    // the whole file passed unchanged.
+    //
+    // The keys exist for the caller that does NOT re-read: one that read
+    // `draft`, lost the race, and comes back later still holding that stale
+    // copy. Its state guard sees `draft` and tries `draft -> planning` again.
+    // Only a key that is constant per work item turns that replay into the
+    // already-accepted outcome; a per-call key re-runs the transition.
+
+    test('a caller replaying from a stale `draft` copy resolves under the '
+        'trigger\'s own keys instead of re-walking', () async {
+      final host = _Host();
+      await host.putGovernedProduct();
+      // Read once, here. Both callers below are handed THIS object, which
+      // reads `draft` forever no matter what the store does — the stale
+      // snapshot two concurrent callers really do hold.
+      final stale = await host.openDefectTriageItem('d-stale');
+
+      final first = await host.trigger.ensureWorkEntry(
+        item: stale,
+        kind: WorkEntryKind.defectTriage,
+      );
+      expect(first, isA<WorkEntryEnqueued>());
+
+      // The winner's job is FINISHED, so the cheap active-job guard cannot
+      // answer for the replay. That guard is the reason this test is not
+      // simply a second call: while a job is queued it short-circuits above
+      // the walk and the keys are never consulted, so the test would prove
+      // nothing. Finishing the job forces the replay past gate one and into
+      // `_walkToPlanned`, still holding `draft`.
+      final job = (await host.allJobs()).single;
+      await host.jobStore.saveJob(
+        job.copyWith(
+          state: JobState.succeeded,
+          completedAt: job.createdAt,
+          version: job.version + 1,
+        ),
+      );
+
+      // The replay: same stale object, no re-read. Its state guard still sees
+      // `draft` and asks for `draft -> planning` under `work-entry:planning`.
+      // That key is already in the history, so the engine returns the accepted
+      // outcome instead of attempting a second transition.
+      final replay = await host.trigger.ensureWorkEntry(
+        item: stale,
+        kind: WorkEntryKind.defectTriage,
+      );
+
+      // Replay must be a DECISION and not a throw. A per-call key misses the
+      // history lookup, and the transition it then attempts is
+      // `design_not_required -> planning`, which the graph refuses: the caller
+      // would learn it held a stale read by catching an exception, instead of
+      // being told what happened.
+      expect(replay, isA<WorkEntryDecision>());
+
+      // Exactly three transitions, still the ones the first caller made. A
+      // re-walk would show six.
+      expect(
+        await _acceptedKeys(host, stale.workItemId),
+        hasLength(3),
+        reason:
+            'the replay must resolve to the accepted outcome, not re-run the '
+            'hop and not append a second record',
+      );
+      expect(
+        (await host.reread(stale.workItemId)).state,
+        WorkItemState.designNotRequired,
+        reason: 'the replay must not move the item backwards',
+      );
+      expect(await host.allJobs(), hasLength(1));
+    });
+
+    test(
+      'both callers observing `draft` converge on one job and one walk',
+      () async {
+        final host = _Host();
+        await host.putGovernedProduct();
+        // One read, two callers, both holding `draft`. This is the scenario the
+        // keys exist for and it is NOT what `Future.wait` produces: two such
+        // calls interleave inside the store, so whichever loses the walk loses
+        // the CAS and the exception escapes `ensureWorkEntry` uncaught. What is
+        // modelled here is the ordering a sweep actually produces — a caller
+        // that observed `draft` and comes back later still holding that copy —
+        // which is the one the per-hop keys decide, and the one that is not
+        // already covered by the cheap active-job guard.
+        final stale = await host.openDefectTriageItem('d-concurrent');
+
+        final first = await host.trigger.ensureWorkEntry(
+          item: stale,
+          kind: WorkEntryKind.defectTriage,
+        );
+        final job = (await host.allJobs()).single;
+        await host.jobStore.saveJob(
+          job.copyWith(
+            state: JobState.succeeded,
+            completedAt: job.createdAt,
+            version: job.version + 1,
+          ),
+        );
+
+        final second = await host.trigger.ensureWorkEntry(
+          item: stale,
+          kind: WorkEntryKind.defectTriage,
+        );
+
+        expect(first, isA<WorkEntryEnqueued>());
+        // The second caller reaches the enqueue and finds the key spent. The
+        // name of the outcome is not asserted here on purpose: this group is
+        // about the WALK, and pinning the code would restate the N-3 test. What
+        // matters is that it is a decision and not a throw.
+        expect(second, isA<WorkEntrySkipped>());
+        expect(second.reason, isNotEmpty);
+        expect(
+          await _acceptedKeys(host, stale.workItemId),
+          hasLength(3),
+          reason:
+              'two callers walked the same item and the keys collapsed them '
+              'onto ONE walk of three hops',
+        );
+        expect(await host.allJobs(), hasLength(1));
+      },
+    );
+
+    test('the recorded walk keys are three distinct, fixed, trigger-owned '
+        'values', () async {
+      // Reads the keys OUT OF THE TRANSITION HISTORY, which is the only
+      // honest place to read them from: asserting a locally-written constant
+      // against itself is the tautology M-1 is about, and it would pass
+      // unchanged after the production keys were renamed or made per-call.
+      final host = _Host();
+      await host.putGovernedProduct();
+      final item = await host.openDefectTriageItem('d-keys');
+
+      await host.trigger.ensureWorkEntry(
+        item: item,
+        kind: WorkEntryKind.defectTriage,
+      );
+
+      final keys = await _acceptedKeys(host, item.workItemId);
+
+      // One per hop, in order, exactly as the walk names them. A per-call key
+      // would show three distinct values that are none of these; a renamed
+      // hop would show one that is.
+      expect(
+        keys,
+        <String>[
+          'work-entry:planning',
+          'work-entry:planned',
+          'work-entry:designNotRequired',
+        ],
+      );
+
+      // Namespaced away from lane A's `triage-intake:*` on purpose: the same
+      // work item is walked by both actors, and two key namespaces mean two
+      // independently auditable transition histories rather than one actor's
+      // history being attributed to the other.
+      for (final key in keys) {
+        expect(key, startsWith('work-entry:'));
+        expect(key, isNot(startsWith('triage-intake:')));
+      }
+    });
+  });
+
   group('N-3 a restart mid-dispatch produces no second job', () {
     test(
       'a job that was already dispatched is found, not duplicated',
@@ -610,8 +781,9 @@ void main() {
       );
     });
 
-    test('a finished job does not block a fresh one, and says the key is '
-        'spent rather than claiming a race it did not see', () async {
+    test('a finished job does not free the dedupe key: no second job is '
+        'created, and the code says the key is spent rather than claiming a '
+        'race it did not see', () async {
       final host = _Host();
       await host.putGovernedProduct();
       final item = await host.openDefectTriageItem('d-terminal');
@@ -839,7 +1011,17 @@ void main() {
         'notTriagableState': WorkEntrySkipCodes.notTriagableState,
         'noPlanningEvidence': WorkEntrySkipCodes.noPlanningEvidence,
         'workItemMissing': WorkEntrySkipCodes.workItemMissing,
+        // The newest and the most consequential of the codes: a collision
+        // with any other would report a permanent, spent-key condition as
+        // something transient, sending an operator to wait for a dispatch that
+        // can never happen. It was missing here while the collision was caught
+        // only by a test named for something else.
+        'dedupeKeyAlreadyConsumed': WorkEntrySkipCodes.dedupeKeyAlreadyConsumed,
         'otherLaneOwnsItem': WorkEntrySkipCodes.otherLaneOwnsItem,
+        // `noConsumerForCategory` is deliberately ABSENT: it is defined as the
+        // SAME value as `noConsumerForWorkEntryKind` (one code, one meaning),
+        // and listing it here would fail this distinctness check by design.
+        // Its aliasing is asserted by name in the test above instead.
       };
       expect(codes.values.toSet(), hasLength(codes.length));
       for (final entry in codes.entries) {
@@ -1001,6 +1183,62 @@ void main() {
         defectTriageWorkItemId('d-42'),
       );
     });
+
+    // The test above cannot fail if the accessor is re-spelled: the production
+    // body IS `defectTriageWorkItemId(defectId)`, so re-spelling it as
+    // `'defect-$defectId'` still agrees with the very function it replaced.
+    // It proves delegation and nothing else; on its own it is a test that
+    // advertises a guard it does not perform.
+    //
+    // These two close that. The first pins the VALUE independently of the
+    // production accessor, so a hand-rolled literal that happens to produce
+    // the same string is caught by the second. The second asserts the SHAPE
+    // from outside the accessor, which is what "delegated" has to mean: the
+    // accessor may not construct the id at all.
+    test('the delegated id has the shape the lanes already persisted', () {
+      // Written out here on purpose rather than read from the production
+      // accessor: a test that asks the thing under test what the answer is
+      // checks nothing. This literal is the contract `TriageProcessor
+      // ._extractDefectId` strips, and the prefix the dedupe key is built on.
+      expect(WorkEntryTrigger.triageWorkItemIdForDefect('d-42'), 'defect-d-42');
+    });
+
+    test('the accessor contains no id literal of its own', () async {
+      // The structural half, and the only one that survives a re-spelling that
+      // happens to produce the right string. Scoped to the accessor's own body
+      // so the guard is about delegation, not about how often the file mentions
+      // the shape in prose — the doc comment above it names `'defect-$defectId'`
+      // deliberately, and a file-wide grep would fail for that reason alone.
+      final source = await _workEntrySource();
+      final accessor = _bodyOf(
+        source,
+        'static String triageWorkItemIdForDefect',
+      );
+
+      expect(
+        accessor,
+        isNotNull,
+        reason:
+            'the accessor is not where this test expects it, so the '
+            'no-literal guard below would silently cover nothing',
+      );
+      expect(
+        accessor,
+        contains('defectTriageWorkItemId('),
+        reason:
+            'the accessor must delegate; this test would otherwise pass on a '
+            'body that constructs the id and happens to agree',
+      );
+      expect(
+        RegExp(r"""['"]defect-""").hasMatch(accessor!),
+        isFalse,
+        reason:
+            "the id shape must not be re-spelled here. It is load-bearing in "
+            "the scheduler's job workItemId, the dedupe key, and "
+            "TriageProcessor._extractDefectId; a second literal is a fourth "
+            "place for it to drift",
+      );
+    });
   });
 
   group('every decision is logged with its reason', () {
@@ -1015,16 +1253,80 @@ void main() {
         kind: WorkEntryKind.defectTriage,
       );
 
-      // The defect skip carries no log event of its own — it is returned to a
-      // caller that reports it. This asserts the shape that makes that safe:
-      // the reason is in the returned value, not only in a log line nobody
-      // wired up.
+      // The gate now writes its own log event (see `work_entry.gated` below),
+      // so this test no longer covers an unlogged defect. What it still
+      // asserts — and what a log line cannot replace — is that the REASON
+      // travels in the returned value: a caller that wires up no `log` at all
+      // still learns why nothing happened, from the value it is handed.
       final decision = await host.trigger.ensureWorkEntry(
         item: item,
         kind: WorkEntryKind.defectTriage,
       );
       expect((decision as WorkEntrySkipped).reason, isNotEmpty);
       expect(decision.toString(), contains(decision.code));
+    });
+
+    test('a gated defect is logged, so it is distinguishable from a trigger '
+        'that never ran', () async {
+      final host = _Host();
+      await host.putProduct(kProduct, ProductState.registered);
+      final item = await host.openDefectTriageItem('d-gated-log');
+
+      await host.trigger.ensureWorkEntry(
+        item: item,
+        kind: WorkEntryKind.defectTriage,
+      );
+
+      // The count of "nothing to do" and the count of "nothing ran" are
+      // identical from the outside. Only an event with the skip code in it
+      // separates them — the feature route already had one, and this is the
+      // defect route's equivalent.
+      expect(
+        host.events.map((event) => event.$1),
+        contains('work_entry.gated'),
+        reason:
+            'a gated defect must leave a durable trace. Without it the '
+            'returned decision reaches whoever holds the future, and an '
+            'operator looking at the run sees only an absence',
+      );
+
+      final gated = host.events.firstWhere(
+        (event) => event.$1 == 'work_entry.gated',
+      );
+      expect(gated.$2['skipCode'], WorkEntrySkipCodes.productNotGoverned);
+      expect(gated.$2['workItemId'], item.workItemId);
+      expect(gated.$2['productId'], kProduct);
+      // `productState` is what the gate was read as, so a recorded
+      // PRODUCT_NOT_GOVERNED can be re-checked later without re-running this.
+      expect(gated.$2['productState'], ProductState.registered.wire);
+      expect(gated.$2['state'], WorkItemState.draft.wire);
+
+      // No credential material, and no value that could only have come from a
+      // literal in the source: every field is either the item's own id, the
+      // product it belongs to, or the state both were read at.
+      expect(gated.$2.keys, hasLength(5));
+    });
+
+    test('the absent-product gate is logged under its own code', () async {
+      final host = _Host();
+      // No registry row at all. `PRODUCT_NOT_IN_REGISTRY` and
+      // `PRODUCT_NOT_GOVERNED` are different facts with different
+      // consequences, and the event is where an operator tells them apart.
+      final item = await host.openDefectTriageItem(
+        'd-gated-absent',
+        productId: 'a-product-nobody-registered',
+      );
+
+      await host.trigger.ensureWorkEntry(
+        item: item,
+        kind: WorkEntryKind.defectTriage,
+      );
+
+      final gated = host.events.firstWhere(
+        (event) => event.$1 == 'work_entry.gated',
+      );
+      expect(gated.$2['skipCode'], WorkEntrySkipCodes.productNotInRegistry);
+      expect(gated.$2['productState'], 'absent');
     });
 
     test('an enqueue is logged with the job id and the key', () async {
@@ -1093,6 +1395,21 @@ void main() {
   });
 }
 
+/// The idempotency keys the ACCEPTED transitions for [workItemId] were
+/// recorded under, in the order they were accepted.
+///
+/// Read from the durable transition history rather than from the constants in
+/// `work_entry.dart`, which are private to it and are exactly the thing these
+/// tests are supposed to pin. A test that restates the production constant
+/// next to itself asserts that the constant equals itself.
+Future<List<String?>> _acceptedKeys(_Host host, String workItemId) async {
+  final history = await host.workflowStore.readTransitionHistory(workItemId);
+  return history
+      .where((record) => record.outcome == TransitionOutcome.accepted)
+      .map((record) => record.idempotencyKey)
+      .toList();
+}
+
 /// A single-quoted or double-quoted string literal that begins with a slash.
 ///
 /// The design's §9 rule names three things `work_entry.dart` must never
@@ -1125,4 +1442,23 @@ Future<String> _workEntrySource() async {
     throw StateError('resolved $resolved but it does not exist');
   }
   return file.readAsString();
+}
+
+/// The source text of the member declaration starting at [declaration], from
+/// its opening line to the `;` that ends it.
+///
+/// Scoped to ONE declaration rather than the whole file, because a
+/// whole-file grep for a forbidden literal fails for reasons that have
+/// nothing to do with the guard: a doc comment that *explains* the shape
+/// contains the shape, and saying so is correct documentation.
+///
+/// Returns null when [declaration] is absent, so a caller that guards on
+/// "contains no literal" also fails when the member moved — a guard that finds
+/// nothing to scan must not read as a pass.
+String? _bodyOf(String source, String declaration) {
+  final start = source.indexOf(declaration);
+  if (start < 0) return null;
+  final end = source.indexOf(';', start);
+  if (end < 0) return null;
+  return source.substring(start, end + 1);
 }

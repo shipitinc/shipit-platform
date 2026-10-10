@@ -391,10 +391,33 @@ class WorkEntryTrigger {
     }
 
     if (!gate.allowsDispatch) {
+      final gateCode = gate.absent
+          ? WorkEntrySkipCodes.productNotInRegistry
+          : WorkEntrySkipCodes.productNotGoverned;
+      // A gated defect must leave a trace, exactly as a parked feature does.
+      //
+      // Without this the defect branch produced only a returned value, and the
+      // counts "nothing to do" and "nothing ran" are identical — which is
+      // precisely what `WorkEntrySkipCodes` exists to make distinguishable. The
+      // returned decision is a real record, but it reaches whoever holds the
+      // future; `log` is where the fact survives when nobody is holding it.
+      //
+      // Same three fields the feature park records, for the same reason: the
+      // item id, the product it belongs to, and the state it is sitting in.
+      // `productState` is what an operator re-checks the gate against, so
+      // `PRODUCT_NOT_GOVERNED` can be resolved without re-running the trigger.
+      //
+      // No credential material and no product-specific literal: every value is
+      // read from the item or the registry row this call already had to read.
+      log?.call('work_entry.gated', {
+        'workItemId': item.workItemId,
+        'productId': item.productId,
+        'state': item.state.wire,
+        'productState': gate.stateWire,
+        'skipCode': gateCode,
+      });
       return WorkEntrySkipped(
-        gate.absent
-            ? WorkEntrySkipCodes.productNotInRegistry
-            : WorkEntrySkipCodes.productNotGoverned,
+        gateCode,
         gate.reasonFor('No triage job was enqueued'),
       );
     }
@@ -693,6 +716,29 @@ class WorkEntryTrigger {
   /// under its own code because it is a different fact with a different
   /// consequence, and because inventing a lifecycle for a product id that has
   /// no row would be inventing a product.
+  ///
+  /// ## The `defects` bucket is the case this sentence exists for
+  ///
+  /// `defectTriageBucketProductId` (`lane_a_defect_triage_work_item.dart`) is a
+  /// synthetic triage bucket, not a product, and it has no registry row — so
+  /// every defect filed under it reads as
+  /// [WorkEntrySkipCodes.productNotInRegistry] here and is never dispatched.
+  /// That is the *correct* output of this method and it is deliberately not
+  /// special-cased: a bucket that reached `governed` would be claiming a
+  /// baseline it does not have.
+  ///
+  /// The open question — exempt the bucket, or give it a lifecycle — was
+  /// escalated rather than answered here, and human decision `b366bba0`
+  /// (`decisions/b366bba0-bd53-4090-932e-39e231819777.yaml`) chose
+  /// **OPTION_B: give the bucket a lifecycle**. A carve-out was rejected
+  /// because it would leave a whole class of defect permanently outside
+  /// governance, which is the property this work item exists to eliminate.
+  ///
+  /// So this method changes nothing for the bucket: it keeps reporting the
+  /// honest fact, and the decision that gives the bucket a row — with a human
+  /// approving its baseline, as any other product's must — is what will make
+  /// these defects dispatch. A reader who finds `PRODUCT_NOT_IN_REGISTRY` on a
+  /// bucket-filed defect is seeing the gate work, not a defect in it.
   Future<_ProductGate> _readProductGate(String productId) async {
     try {
       final product = await productRegistryEngine.readProduct(productId);
