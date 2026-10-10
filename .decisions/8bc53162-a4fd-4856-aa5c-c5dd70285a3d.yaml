@@ -1,0 +1,86 @@
+# human-decision.yaml
+decision_id: 8bc53162-a4fd-4856-aa5c-c5dd70285a3d
+type: SECURITY
+status: RESOLVED
+question: >-
+  verifyBaseline is an exposed Serverpod RPC whose WIRE default is the permissive evidence kind
+  ('platform_verified_evidence'), so any API client can write an arbitrary verifiedBy and satisfy
+  ProductGuard.baselineVerifiedIndependently — unlocking governance for a first baseline AND
+  re-baselining an already-governed product. It is exploitable now. Close it ahead of the rest of
+  the design work, or sequence the whole design first?
+context:
+  summary: >-
+    Raised by the design of the missing baseline-production path
+    (docs/engineering/dispatch/tasks/design-baseline-production-lane/design-revision.md, finding F-1).
+
+    The engine doc comment claims 'an agent may produce a baseline but may never attest to it',
+    but nothing in the code enforces it. verifyBaseline takes `kind` defaulting to
+    EvidenceKind.platformVerifiedEvidence, and isIndependentlyVerified tests only that kind plus a
+    non-empty verifiedBy. The same permissive value is hardcoded as the WIRE default at
+    product_registry_endpoints.dart:557-560, with the client hardcoding it again at
+    control_plane_repository.dart:1081.
+
+    This is therefore not merely the CLI self-attesting: it is a remote governance bypass. No UI
+    caller exists, so the product does not use it, but it is fully reachable by any API client.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: design-baseline-production-lane
+    item_ref: >-
+      Design of automatic baseline production with verification separated from production
+      (RISK_LEVEL 3; F-1, HD-1, HD-2).
+  evidence:
+    documents:
+      - type: OTHER
+        id: design-revision
+        url: docs/engineering/dispatch/tasks/design-baseline-production-lane/design-revision.md
+    qualitative_tradeoffs:
+      - dimension: Time to close
+        option_a: Fast-track L1+L3 standalone
+        option_b: Full lifecycle first
+        option_c: Show the exploit path first
+        assessment: >-
+          The exposure is live, so every unit of delay is live risk. L1+L3 are disjoint from the rest
+          of the plan and do not depend on HD-1, so they can ship without redesign.
+      - dimension: Review discipline
+        option_a: Fast-track L1+L3 standalone
+        option_b: Full lifecycle first
+        assessment: >-
+          Fast-tracking trades review thoroughness for speed, but a smaller reviewed change set is
+          also easier to review correctly. The remainder still goes through independent review.
+    recommendation:
+      recommended_option: OPTION_A
+      rationale: >-
+        A live governance bypass justifies shipping the smallest correct fix first. The seam is
+        designed so either answer to HD-1 remains implementable without redesign.
+      confidence: HIGH
+options:
+  - option_id: OPTION_A
+    label: Fast-track the security fix
+    description: Close the RPC exposure and make the guard fail closed now, ahead of full design review.
+    implications: Smaller reviewed diff; security remediation; rest of plan still goes through review.
+    risk_level: LOW
+  - option_id: OPTION_B
+    label: Full lifecycle first
+    description: Independent design review of the whole revision, then implement everything together.
+    implications: Keeps one reviewed change set, but leaves the bypass open longer.
+    risk_level: MEDIUM
+  - option_id: OPTION_C
+    label: Show the exploit path first
+    description: Demonstrate concretely how a caller would invoke it before choosing.
+    implications: Delays the decision but may surface further detail.
+    risk_level: LOW
+resolution:
+  outcome: OPTION_A
+  decided_by: human-operator
+  rationale: >-
+    Close it now. The bypass is live and reachable, L1+L3 do not depend on HD-1, and shipping the
+    smallest correct security fix first is the proportionate response. The remainder of the design
+    still goes through independent design review.
+  follow_up_actions:
+    - action: Implementation lane L1 — fail-closed guard, contracts and engine, sealed proof API.
+      owner: orchestrator-main
+    - action: Implementation lane L3 — remove `kind` from the RPC, endpoint, service and client.
+      owner: orchestrator-main
+created_by: orchestrator-main
+created_at: 2026-10-09T18:00:00Z
+updated_at: 2026-10-09T18:00:00Z

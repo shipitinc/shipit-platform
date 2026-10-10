@@ -1,0 +1,86 @@
+# human-decision.yaml
+decision_id: 2bb84f06-af46-40f1-93a9-82a6d327491a
+type: POLICY
+status: RESOLVED
+question: >-
+  HD-2: AGENTS.md section 12 is cited 11 times — including a DB schema comment in
+  product_baseline.spy.yaml:27 — as the rule that a producer may never attest to its own baseline, but
+  section 12 does not exist. AGENTS.md has section 13. How is the phantom citation resolved?
+context:
+  summary: >-
+    Raised alongside HD-1 by the design of the baseline-production lane, finding F-2.
+
+    The guard this work item hardens is documented as enforcing AGENTS.md section 12, and that section
+    is absent from the file. The enforcement is therefore conventional and undocumented: the citations
+    point at policy text that does not exist, which is the same phantom-citation class AGENTS.md
+    itself documents about section 13 in this repository.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: design-baseline-production-lane
+    item_ref: Design of automatic baseline production with verification separated from production.
+  evidence:
+    documents:
+      - type: OTHER
+        id: design-revision
+        url: docs/engineering/dispatch/tasks/design-baseline-production-lane/design-revision.md
+    qualitative_tradeoffs:
+      - dimension: Correctness of the cited rule
+        option_a: Restore the missing section 12 text
+        option_b: Re-point citations to section 13
+        option_c: Handle it in the security fix
+        assessment: >-
+          Restoring section 12 makes the citations true and gives the guard real policy text to enforce.
+          Re-pointing to section 13 conflates independence policy with credentials policy, which is a
+          different concern that section 13 already covers.
+      - dimension: Coupling to the remediation
+        option_a: Restore the missing section 12 text
+        option_c: Handle it in the security fix
+        assessment: >-
+          Policy and the code that enforces it are strongest when they land together, so folding the
+          restoration into the fast-tracked remediation keeps the invariant and its text in one change.
+    recommendation:
+      recommended_option: OPTION_A
+      rationale: >-
+        Restore the policy text the code already claims to enforce. Section 13 is credentials policy and
+        must not absorb an independence rule it was never written for.
+      confidence: HIGH
+options:
+  - option_id: OPTION_A
+    label: Restore the missing section 12 text
+    description: Write the independence policy the 11 citations already assume.
+    implications: >-
+      The guard enforces real policy rather than a citation to nothing. Requires composing policy text,
+      which is a human-authority act.
+    risk_level: LOW
+  - option_id: OPTION_B
+    label: Re-point citations to section 13
+    description: Change the 11 citations to reference the section that exists.
+    implications: >-
+      Smaller, but conflates independence policy with credentials policy in section 13.
+    risk_level: MEDIUM
+  - option_id: OPTION_C
+    label: Handle it in the security fix
+    description: Fold the section 12 restoration into the fast-tracked remediation.
+    implications: >-
+      Policy text and enforcing code land together in one reviewed change.
+    risk_level: LOW
+resolution:
+  outcome: OPTION_A
+  decided_by: human-operator
+  rationale: >-
+    Restore the missing section 12 text. The 11 citations already assume an independence policy that
+    does not exist, so the enforcement the guard performs is currently undocumented convention. Restore
+    the policy those citations point at; do not re-point them at section 13, which is credentials policy
+    and was never written to carry an independence rule.
+  follow_up_actions:
+    - action: >-
+        Compose AGENTS.md section 12 stating that a producer may not attest to its own baseline, that
+        platformVerifiedEvidence requires an independent re-derivation, and that the guard fails closed.
+      owner: orchestrator-main
+    - action: >-
+        Verify all 11 citations, including the product_baseline.spy.yaml:27 DB schema comment, resolve
+        against the restored section.
+      owner: orchestrator-main
+created_by: orchestrator-main
+created_at: 2026-10-09T18:00:00Z
+updated_at: 2026-10-09T18:00:00Z

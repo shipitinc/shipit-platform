@@ -1,0 +1,102 @@
+# human-decision.yaml
+decision_id: 7bbee7c6-c6a8-4600-aa51-129f479320b7
+type: SECURITY
+status: RESOLVED
+question: >-
+  HD-1: what legitimately mints EvidenceKind.platformVerifiedEvidence — the only evidence kind that
+  satisfies ProductGuard.baselineVerifiedIndependently and therefore unlocks the human governance gate?
+context:
+  summary: >-
+    Escalated by the design of the baseline-production lane
+    (docs/engineering/dispatch/tasks/design-baseline-production-lane/design-revision.md). The designer
+    designed the mechanism fully but deliberately declined to choose, because deciding what mints the
+    sole evidence kind unlocking a governance gate is security authority, not design authority.
+
+    Two findings made this unavoidable rather than hypothetical: verifyBaseline's permissive default
+    means any caller can currently self-certify, and AGENTS.md section 12 — cited 11 times as the rule
+    enforcing exactly this — does not exist.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: design-baseline-production-lane
+    item_ref: Design of automatic baseline production with verification separated from production.
+  evidence:
+    documents:
+      - type: OTHER
+        id: design-revision
+        url: docs/engineering/dispatch/tasks/design-baseline-production-lane/design-revision.md
+    qualitative_tradeoffs:
+      - dimension: What catches a producer that lies
+        option_a: Independent re-derivation
+        option_b: Trusted platform service
+        option_c: Human attestation
+        option_d: Second agent, distinct identity
+        assessment: >-
+          Re-derivation catches divergence mechanically — the verifier recomputes the baseline from
+          the same source and compares content hashes, so fabrication is detected rather than merely
+          forbidden. Its residual hole is a compromised process controlling both acquisitions, which
+          is stated explicitly rather than implied. A trusted service moves the hole to the service. A
+          second agent is the same principal with a different name, which the designer explicitly
+          rejected.
+      - dimension: Cost to the common path
+        option_a: Independent re-derivation
+        option_c: Human attestation
+        assessment: >-
+          Human attestation is strongest but makes every onboarding a manual step and collapses the
+          separate human approval gate into the verification step, weakening both.
+    recommendation:
+      recommended_option: OPTION_A
+      rationale: >-
+        Re-derivation makes independence structural and checkable, so a producer that fabricates is
+        caught by divergence rather than by policy. Its residual hole is documented honestly.
+      confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Independent re-derivation
+    description: >-
+      The verifier independently re-derives the baseline from the same source and compares content
+      hashes. A producer that fabricates is caught by divergence, not by policy.
+    implications: >-
+      Independence becomes structural. Residual hole — one compromised process controlling both
+      acquisitions — is stated rather than hidden. No new manual step.
+    risk_level: LOW
+  - option_id: OPTION_B
+    label: Trusted platform service
+    description: Only a designated platform service identity may set platformVerifiedEvidence.
+    implications: >-
+      Strong against agent self-attestation; the trust boundary moves to the service, so a compromised
+      service can still forge verification.
+    risk_level: MEDIUM
+  - option_id: OPTION_C
+    label: Human attestation
+    description: A human must verify before the evidence kind may be set.
+    implications: >-
+      Strongest in principle, but every onboarding becomes a manual step and it collapses the separate
+      human approval gate into verification.
+    risk_level: LOW
+  - option_id: OPTION_D
+    label: Second agent, distinct identity
+    description: Another agent verifies the baseline.
+    implications: >-
+      Explicitly rejected by the designer as the same hole renamed — a second agent is still an agent.
+    risk_level: HIGH
+resolution:
+  outcome: OPTION_A
+  decided_by: human-operator
+  rationale: >-
+    Independent re-derivation. Make the independence structural: the verifier recomputes the baseline
+    from the same source and compares content hashes, so a producer that fabricates is caught by
+    divergence rather than by convention. The known residual hole — a single compromised process
+    controlling both acquisitions — is to be stated in the code and design rather than left implicit.
+    A second agent is rejected as the same principal renamed.
+  follow_up_actions:
+    - action: >-
+        Implementation lane L1 — sealed PlatformReDerivationProof whose construction requires the
+        re-derived hash, so there is no default to omit and no wire parameter to abuse.
+      owner: orchestrator-main
+    - action: >-
+        State the residual hole explicitly in code comments and design docs rather than implying the
+        guarantee is absolute.
+      owner: orchestrator-main
+created_by: orchestrator-main
+created_at: 2026-10-09T18:00:00Z
+updated_at: 2026-10-09T18:00:00Z
