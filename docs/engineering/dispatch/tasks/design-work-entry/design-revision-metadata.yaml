@@ -1,0 +1,210 @@
+# Design Revision metadata — design/work-entry
+# Required fields per docs/engineering/DESIGN_GOVERNANCE.md ("Design Revision",
+# "Required Metadata (design-revision-metadata.yaml)").
+#
+# Path is `design-revision-metadata.yaml` per the governance doc; the house
+# convention across existing dispatch task directories uses a trailing slug, so
+# `design-revision.yaml` carries identical content.
+
+revision_id: b5ff65f3-ce59-4349-a457-01187b112e0d
+brief_id: 6fbb5bb2-4225-4856-b943-5eff1ff045be
+revision_number: 1
+status: UNDER_REVIEW
+risk_level: 2
+risk_rationale: >
+  Level 2 -- Feature UX Change. It changes a user flow: a submitted feature
+  request currently sits at draft forever, and after this revision it moves to
+  planned with a recorded reason; defects gain a recovery path they have never
+  had. Both the Reports screen and the feature-request list have listeners
+  (premise P-4), so this is a change to what a human observes. It also changes
+  what runs autonomously: a triageDefect job is an LLM invocation against a real
+  worktree, and making that path restart-safe makes it reachable.
+  Level 2 therefore requires HUMAN_DECISION_REQUIRED at Gate D4, which is where
+  HD-1(a) and HD-1(b) land -- the risk level and the escalation are one fact
+  seen twice. Level 3 was considered and rejected: no navigation change, no IA
+  change, one feature, and this revision changes no guard, no evidence kind, no
+  transition table and no human gate -- every one of which was the baseline
+  lane's Level 3 justification. Level 1 was considered and rejected because it
+  "does not affect user flow", and this does. A reviewer may reasonably read
+  the governed gate as a governance-model change and land on Level 3; that
+  disagreement is invited rather than defended against.
+
+changelog:
+  - "revision 1 (initial): seven dispatch questions answered."
+  - "CORRECTED FOUR DISPATCH PREMISES (design-revision.md section 1). createDefect
+     ALREADY enqueues a JobType.triageDefect job (control_plane_service.dart:1036-1062);
+     the root cause of the false 'nothing enqueues anywhere' is that JobQueue
+     enqueueIfAbsent calls tx.saveJob on a JobStore TRANSACTION HANDLE, which a
+     concrete-type call-site trace does not surface (D-1); Scheduler.tick ALREADY
+     enqueues (P-3); and a feature-request UI EXISTS inside the dispatch's own
+     feature list (P-4)."
+  - "Restated the problem: the defect path is wired but has no recovery path;
+     the feature path has neither a trigger nor a consumer."
+  - "Designed ensureWorkEntry: one idempotent operation, called by BOTH intake and
+     a new DefectTriageSweep, sharing ONE imported dedupe key. Section 3."
+  - "ANSWERED that the WorkItem-scoped Scheduler is used UNCHANGED (section 5), on
+     evidence, and recorded that RunnableWorkEvaluator is category-blind -- so
+     routing is done by NOT walking an item into an entry state, never by
+     filtering at dispatch (D-3)."
+  - "ANSWERED features-vs-defects as TWO paths on three independent structural
+     grounds (section 6): TriageResult.defectId is non-nullable,
+     _extractDefectId is defect--prefix-bound, and processCompletedTriageJob
+     bails at readDefect. A feature triage job would SUCCEED and be discarded.
+     Recorded EXTERNAL_WORK_ENTRY_CONSUMER_DEPENDENCY, mirroring lane E (D-4)."
+  - "ANSWERED the ungoverned-product question as accept-at-intake and gate-the-
+     walk (section 7), and ESCALATED the two parts I do not hold authority over
+     as HD-1(a) and HD-1(b). Neither is resolved."
+  - "Corrected my own mid-document route table: routing keys on WorkEntryKind,
+     not WorkItemCategory, because a defect's triage item and a feature's item
+     carry DIFFERENT categories and the defect item's category is explicitly not a
+     routing signal (HD-2)."
+  - "Four implementation lanes with non-overlapping OWNED_PATHS; no lane may touch
+     packages/scheduler, no schema change, no generated code."
+
+traceability:
+  requirements_covered:
+    - "dispatch Q1 -- trigger shape (intake vs sweep vs both): BOTH, one operation, one dedupe key (section 3, 11.1-11.4)"
+    - "dispatch Q2 -- ungoverned product: refuse / wait / terminal-fail: ANSWERED as accept + gate-the-walk (section 7); the two parts requiring human authority are escalated as HD-1(a)/(b)"
+    - "dispatch Q3 -- does the scheduler seam transfer from baseline: NO, and assessed rather than assumed (section 5, 11.6)"
+    - "dispatch Q4 -- features vs defects, one path or two: TWO. No feature consumer exists; recorded as EXTERNAL_WORK_ENTRY_CONSUMER_DEPENDENCY per the lane_e precedent (section 6, 11.1)"
+    - "dispatch Q5 -- idempotency and restart safety using the existing key: key imported, never re-spelled; three layers; residual double-execution hole named (section 8)"
+    - "dispatch Q6 -- product-agnosticism: no product names, no defaults, no environment lookups (section 9), enforced by test N-8"
+    - "dispatch Q7 -- verification plan incl. ungoverned product, duplicate submission, restart mid-dispatch: N-1, N-2, N-3 stated as the three named negatives (section 12)"
+    - "design only; proposed diffs as TEXT; 0 files modified outside OWNED_PATHS (sections 0, 11, 17)"
+    - "packages/**, apps/**, docker/**, .github/**, .decisions/**, AGENTS.md, docs/** read-only (sections 0, 11.6, 17)"
+    - "zero Docker/Compose commands (section 17) -- 0 issued; compose read as text only"
+    - "verify_schema_bootstrap.sh executed and reported: exit 0, 20 OK: assertions (sections 14 D-7, 17)"
+    - "no Human Decision resolved (section 13) -- 3 routed, 0 resolved"
+    - "per-lane non-overlapping OWNED_PATHS with dependency edges; SAFE_PARALLEL_WORK and PROHIBITED_PARALLEL_WORK reported (section 15)"
+    - "AGENTS.md section 12 read; correctly recorded as NOT engaged, because this revision touches no baseline, no evidence kind and no verification path (section 16)"
+    - "both landed baseline-lane reports read for established lane conventions and OWNED_PATHS discipline (section 17)"
+  requirements_gaps:
+    - "dispatch KEY FACTS ('verified, do not re-derive'): four premises are FALSE at d25a4d8 (section 1, P-1..P-4). Answered by contradiction rather than confirmation. Building on them would have designed a fix for a defect that does not exist, and would have designed a sweep for a path that already enqueues."
+    - "dispatch Q2, and the feature half of Q4: ANSWERED AS ESCALATED rather than decided. HD-1(a) and HD-1(b) are product/governance decisions this lane does not hold authority over. Neither is a coverage gap; both are deliberate refusals."
+    - "Section 2.2: whether triage has EVER dispatched is a runtime fact. No claim is made. Docker was out of bounds and the server was not started. Establishing it from the durable record is the first task of the implementation lane; if no triageDefect job has ever left queued, a separate runtime defect exists that this revision does not cover."
+
+design_system_compliance: PASS
+design_system_compliance_note: >
+  No view, token, component or route is added or changed. Recorded as PASS by
+  non-applicability; an independent reviewer may prefer UNKNOWN. Conceded openly:
+  this revision changes no design system at all, but it DOES change what two
+  existing screens display (a feature request's state; whether a defect appears
+  classified), so the reviewer should confirm a planned-state chip with a reason
+  is legible in the existing token set rather than assuming it.
+
+ux_accessibility_score: PASS
+ux_accessibility_note: >
+  No user-facing surface is added. The user-visible change is that a previously
+  static submission starts moving, and that a feature request on an ungoverned
+  product goes from draft to planned-with-a-reason -- which this revision
+  concedes is a WORSE visible outcome than draft, and which is why HD-1(b)
+  exists rather than being settled here. No WCAG criterion is engaged: no new
+  focusable element, no new input, no navigation change. The reviewer should
+  check that the recorded reason is rendered as text and not conveyed by colour
+  or icon alone, since that is the one place a new string reaches a screen.
+
+implementation_feasibility: HIGH
+implementation_feasibility_rationale: >
+  Every mechanism already exists: triageDefectDefinition, triageDefectDedupeKey,
+  triageDefectInstruction, Scheduler.tick's existing enqueue step,
+  DefectTriageWorkItemProvisioner, transition(idempotencyKey:),
+  JobQueue.enqueueIfAbsent, BaselineOnboardingSweep as the literal sweep
+  template, lane_e as the literal external-dependency template. The two new
+  files are additive Dart. No schema change, no migration, no generated code, no
+  new dependency, and -- per section 5 -- not one line of packages/scheduler.
+  The only unresolved inputs are HD-1 and HD-2, and HD-1 is resolved by choosing
+  between two WorkEntrySkipCodes at a single branch, which is a two-line change.
+
+created_by: design-agent
+created_at: 2026-10-10T23:11:09Z
+reviewed_by: null
+reviewed_at: null
+approved_by: null
+approved_at: null
+
+provenance:
+  worktree: /private/tmp/shipit-workentry
+  branch: design/work-entry
+  base_sha: d25a4d8
+  head_sha: d25a4d8a3a70ff49485c43af83019347d790d8f7
+  tree_clean_before_writing: true
+  files_modified_outside_owned_paths: 0
+  docker_or_compose_commands_issued: 0
+  verify_schema_bootstrap_sh: "exit 0, 20 OK: assertions, 0 failures"
+  dispatch_file_present: false
+  dispatch_file_note: >
+    docs/engineering/dispatch/tasks/design-work-entry/prompt.md does not exist
+    in the worktree or the canonical checkout. The task directory did not exist
+    and was created by this lane. The dispatch content was supplied inline in
+    the task message and is the sole source for section 16's traceability. There
+    is therefore NO DURABLE RECORD of what was asked, and a reviewer reading
+    only the repository will not find the requirements being traced.
+
+human_decisions_routed:
+  - id: HD-1(a)
+    question: >
+      Must a HUMAN-REPORTED DEFECT have a governed product before it may be
+      triaged? Today createDefect checks registration only
+      (control_plane_service.dart:923) and enqueues immediately, for a product in
+      any state including offboarded -- against ProductState's own text, "governed
+      ... Work may be dispatched for this product". This revision's governance
+      gate would newly ENFORCE it, changing shipped working behaviour on a path
+      outside this work item's scope.
+      (A) triage is exempt -- classifying a real-world defect report is not "work
+      for the product", and a governed product must still accept one;
+      (B) triage obeys governed like everything else.
+    recommendation: >
+      A. Offered as input, NOT as a decision. Recorded because enforcement would
+      change the live bug-reporting path, which is why it is escalated.
+    resolved: false
+    blocks: "Gate D4"
+    does_not_block: "L1, L2, L3, L4 -- the entire defect half of this revision"
+  - id: HD-1(b)
+    question: >
+      For a feature request against an ungoverned product: PARK (accept it, walk
+      to planned, record the reason) or REFUSE (reject at intake with "this
+      product is not governed")? Parking is truthful and loses nothing, but a
+      human sees their request accepted and then stall at planned -- a worse
+      visible outcome than today's draft. Refusing is honest at the moment of
+      submission but rejects a human over a platform-internal condition. This is
+      a change to what the Reports screen means, on a screen that has listeners.
+    recommendation: >
+      A (park), paired with UI copy that says why. Offered as input. The two
+      answers differ by two lines at one branch in work_entry.dart, so the seam
+      is already swappable.
+    resolved: false
+    blocks: "Gate D4, and the feature half's behaviour"
+    does_not_block: "L1, L2 -- the defect sweep is unaffected by this answer"
+  - id: HD-2
+    question: >
+      Should a defect's triage work item keep category: triageWorkItemCategory
+      rather than WorkItemCategory.feature? Not raised to change it. Raised
+      because this revision HAD to route on WorkEntryKind instead of
+      WorkItemCategory because the two disagree, and a reader deserves to know
+      that is a standing inconsistency rather than a choice this revision made.
+      (A) leave it -- routing keys on the intake, which the design already does;
+      (B) harmonise the categories so routing can key on category later.
+    recommendation: >
+      A. lane_a_defect_triage_work_item.dart:127-133 already says changing it is
+      "a domain decision, not wiring".
+    resolved: false
+    blocks: "nothing"
+    does_not_block: "All implementation"
+
+SAFE_PARALLEL_WORK: >
+  L1 (apps/server/lib/src/triage/work_entry.dart + work_entry_test.dart) is the
+  only lane with no upstream dependency and may proceed alone. Read-only lanes --
+  independent design review, QA contract authoring, any research -- may run
+  concurrently with L1, L2, L3 and L4.
+
+PROHIBITED_PARALLEL_WORK: >
+  L2 || L3, L3 || L4, L2 || L4 -- each has L1 upstream. Any lane modifying
+  packages/scheduler/** (section 5: the seam is used unchanged; a change there is
+  a review-blocking finding, not a task). Any lane modifying
+  triage_processor.dart or lane_a_defect_triage_work_item.dart (both work; both
+  are on the live defect path). Any lane touching apps/server/migrations/**,
+  apps/server/tool/**, or apps/server/lib/src/generated/** (no schema change, no
+  regeneration). Any implementation lane resolving HD-1 or HD-2, or taking any
+  Docker/Compose action.
+
+READY_FOR_INDEPENDENT_DESIGN_REVIEW: YES
