@@ -1,5 +1,12 @@
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:scheduler/scheduler.dart';
+// L1 owns `packages/scheduler/**` and has not exported the capacity API from
+// its barrel. Adding that export means editing a file this lane is not
+// permitted to modify, and it is under concurrent review — so the import is
+// explicit, narrow, and expected to be deleted when L1's barrel gains the
+// export. See the same note in `server.dart`.
+// ignore: implementation_imports
+import 'package:scheduler/src/capacity/capacity_lockable_store.dart';
 import 'package:serverpod/database.dart';
 
 import 'persistence_database.dart';
@@ -17,7 +24,14 @@ import 'util/db_row_util.dart';
 /// callers: it is the only production write path to `job`, so keeping it here
 /// makes it impossible to write a row whose stored dedupe key disagrees with
 /// its state.
-class PostgresJobStore implements JobStore {
+///
+/// ## It is also the store that can enforce a global execution cap
+///
+/// [CapacityLockingJobStore] is implemented here — and only here — because
+/// PostgreSQL is the only backend in this repository that can make
+/// "count the in-flight executions" and "claim one" atomic across processes.
+/// See [inCapacityLockedTransaction].
+class PostgresJobStore implements JobStore, CapacityLockingJobStore {
   PostgresJobStore(this._db);
 
   final PersistenceDatabase _db;
@@ -25,6 +39,67 @@ class PostgresJobStore implements JobStore {
   @override
   Future<T> inTransaction<T>(Future<T> Function(JobStore store) body) {
     return _db.inTransaction<T>(() => body(this));
+  }
+
+  /// Runs [body] inside a transaction holding the cluster-wide exclusive
+  /// advisory lock for [lockKey].
+  ///
+  /// ## Why this method exists at all
+  ///
+  /// `JobCapacityGuard` counts in-flight executions and then claims a job. That
+  /// pair has to be indivisible, or two replicas both read `inFlight = C-1`, both
+  /// admit, and the cap is exceeded by exactly one PER REPLICA — silently, on
+  /// every tick, under exactly the burst load the cap exists to stop. A job
+  /// claim's own CAS cannot supply that exclusion, because each replica contends
+  /// for a DIFFERENT job while counting the same global budget.
+  ///
+  /// `pg_advisory_xact_lock` is the exclusion that can. It is scoped to the
+  /// DATABASE and shared by every connection, so it serialises two schedulers in
+  /// one process exactly as it serialises two replicas across machines.
+  ///
+  /// ## Why `xact_lock` and not `pg_advisory_lock`
+  ///
+  /// A session-scoped `pg_advisory_lock` survives the statement that took it and
+  /// is released only by an explicit unlock or by the connection dying. One
+  /// thrown error between "lock taken" and "connection closed" would then hold
+  /// the budget forever, and every later tick would queue behind a lock no
+  /// process is using — a wedge with no error and no log line. The `_xact_`
+  /// variant is released by COMMIT, by ROLLBACK and by connection loss alike, so
+  /// there is no exit path that can strand it and nothing to release by hand.
+  /// `PersistenceDatabase.inTransaction` commits or rolls back on every path, so
+  /// the release is a property of the transaction rather than of a `finally`
+  /// somebody has to remember.
+  ///
+  /// ## Ordering, which is the whole point
+  ///
+  /// The lock is taken INSIDE the transaction and BEFORE [body] is called. Taken
+  /// outside it, the lock would be released at the end of the implicit
+  /// single-statement transaction — before the count and the claim had even
+  /// happened. Taken after the count, it would serialise the claim but not the
+  /// count, which is the overshoot. Issued through `_db.execute` rather than
+  /// `_db.query` so the row is never decoded: `pg_advisory_xact_lock` returns
+  /// `void`, and reading a `void` column back is a needless way to fail.
+  ///
+  /// `_db.execute` attaches to the transaction opened one line above, so the
+  /// lock is taken on the SAME connection the body will use. A lock taken on a
+  /// different connection would be released by that connection's next commit,
+  /// not by this transaction's.
+  @override
+  Future<T> inCapacityLockedTransaction<T>(
+    int lockKey,
+    Future<T> Function(JobStore store) body,
+  ) {
+    return _db.inTransaction<T>(() async {
+      await _db.execute(
+        'SELECT pg_advisory_xact_lock(@lockKey::bigint)',
+        parameters: QueryParameters.named({'lockKey': lockKey}),
+      );
+      // `this` is the handle bound to the open transaction: every call it makes
+      // routes through `_db`, which is now carrying `_activeTransaction`, so the
+      // count and the claim commit or roll back together. Exactly the handle
+      // `inTransaction` passes, for exactly the same reason.
+      return body(this);
+    });
   }
 
   @override

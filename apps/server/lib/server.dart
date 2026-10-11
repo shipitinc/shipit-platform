@@ -1,4 +1,4 @@
-import 'dart:async' show Timer;
+import 'dart:async' show Timer, unawaited;
 import 'dart:io' show Directory, File, Platform, Process, stdout;
 
 import 'package:serverpod/serverpod.dart';
@@ -21,6 +21,19 @@ import 'package:scheduler/scheduler.dart'
         WorkerDispatch,
         WorkerDispatcherAdapter,
         ProviderHealthMonitor;
+// The capacity API (L1) is not exported from the scheduler barrel, and
+// `packages/scheduler/**` is owned by L1 and under concurrent review — so this
+// lane cannot add the export. Narrow, explicit, and expected to be deleted when
+// L1's barrel exports it. Same note in `src/persistence/postgres_job_store.dart`.
+// ignore: implementation_imports
+import 'package:scheduler/src/capacity/job_capacity_guard.dart'
+    show JobCapacityGuard;
+// ignore: implementation_imports
+import 'package:scheduler/src/capacity/execution_capacity.dart'
+    show
+        ExecutionCapacity,
+        ExecutionCapacityResolution,
+        executionCapacityEnvVar;
 import 'package:worker_runtime/worker_runtime.dart'
     show
         CoordinatorAgentExecutionDriver,
@@ -67,12 +80,25 @@ import 'src/triage/work_entry.dart' show WorkEntryTrigger;
 /// worker (the worker drives every execution through it), the worker before the
 /// dispatcher (an empty registry can never select anything), and all of them
 /// before the scheduler, which holds the only reference the tick uses.
+///
+/// TWO THINGS ARE RESOLVED — AND MAY ABORT THE PROCESS — BEFORE ANY OF THAT.
+///
+/// [resolveTriageSource] and [resolveDispatchCapacity] run before `Serverpod` is
+/// even constructed, so a server that would misbehave never binds a port. Both
+/// refuse rather than degrade; see [resolveDispatchCapacity] for why an absent
+/// cap has no safe default.
 void run(List<String> args) async {
   // Resolved BEFORE the server starts. A misconfigured triage source is a
   // refusal to serve, not a warning: the alternative is a server that accepts
   // defect reports, durably queues them, and never classifies any of them.
   final triageSource = _resolveTriageSource();
   final workspaceRoot = _triageWorkspaceRoot();
+
+  // Also resolved BEFORE the server starts, and for a heavier reason: a server
+  // with no cap dispatches as many agent executions as the queue offers, which
+  // is what exhausted the host on 2026-10-10. It must never reach the point of
+  // being reachable at all.
+  final capacity = resolveDispatchCapacity(Platform.environment, log: _log);
 
   // Initialize Serverpod and connect it with your generated code.
   final pod = Serverpod(args, Protocol(), Endpoints());
@@ -164,6 +190,16 @@ void run(List<String> args) async {
   );
   providerHealthMonitor.start();
 
+  // The capacity guard, built over the store the scheduler will claim through.
+  //
+  // This is the ONLY thing standing between a deep queue and a host with no
+  // memory left, and it is built from `capacity` — which could only have come
+  // from `resolveDispatchCapacity`, which throws rather than return a
+  // hand-picked number. There is no code path from here to a guard-less
+  // Scheduler, and `Scheduler.capacitySummary` would say UNBOUNDED if there
+  // were.
+  final capacityGuard = JobCapacityGuard(store: jobStore, capacity: capacity);
+
   final scheduler = Scheduler(
     schedulerId: 'sched-triage',
     workflowStore: workflowStore,
@@ -171,8 +207,7 @@ void run(List<String> args) async {
     workerStore: workerStore,
     dispatch: dispatch,
     definition: triageDefectDefinition,
-    // The canonical triage builders from `packages/scheduler`. Without these
-    // the scheduler silently falls back to `_defaultDedupeKey` /
+    // Without these the scheduler silently falls back to `_defaultDedupeKey` /
     // `_defaultInstruction` / `_defaultRequest`, which stamp
     // `AgentRole.triageDefect` jobs with
     // 'Implement "<title>" (...) inside the worktree.' — a feature
@@ -180,6 +215,7 @@ void run(List<String> args) async {
     dedupeKeyBuilder: triageDefectDedupeKey,
     instructionBuilder: triageDefectInstruction,
     requestBuilder: triageDefectRequest,
+    capacityGuard: capacityGuard,
     workload: SchedulerWorkload(
       repositoryPath: triageSource.path,
       // A concrete commit, not the string 'HEAD'. The worktree manager refuses
@@ -310,6 +346,12 @@ void run(List<String> args) async {
     'providerHealthMonitor': true,
     'providerHealthCheckIntervalMinutes': 5,
     'baseline': baselineRuntime.describe(),
+    // The cap IN FORCE, not the cap that was requested. Read back off the
+    // scheduler rather than off the local `capacity` variable so that this line
+    // and the object actually dispatching can never disagree — `capacitySummary`
+    // is written to state UNBOUNDED when no guard is attached, which means this
+    // field is incapable of quietly describing a bound that is not there.
+    'capacity': scheduler.capacitySummary,
     // The gate's STATE, in both directions — not a claim that the sweep runs.
     // Present when it does not, because "the field is absent" is exactly the
     // ambiguity this entry point is supposed to remove. The sweep's liveness,
@@ -318,97 +360,442 @@ void run(List<String> args) async {
     'defectTriageSweep': workEntrySweepGate.describe(),
   });
 
-  // Run the scheduler every 30 seconds.
-  Timer.periodic(const Duration(seconds: 30), (_) async {
-    try {
-      final tickResult = await scheduler.tick();
+  // Run the scheduler every 30 seconds — ONE tick at a time.
+  //
+  // `Timer.periodic` does NOT await its callback. `scheduler.tick()` blocks for
+  // a full agent execution (up to 300 s), so the callback outlives its 30 s
+  // period and the next tick starts anyway: every tick re-reads all jobs and
+  // re-attempts a dispatch for everything the previous tick has not yet
+  // claimed. That overlap — not unbounded per-tick concurrency — is what turned
+  // 9 queued defects into 9 simultaneous agent sessions and exhausted the host
+  // on 2026-10-10.
+  //
+  // [TickSingleFlight] is what makes the two properties consistent: at most one
+  // tick in flight, and every trigger accounted for. A trigger that arrives
+  // while a tick runs does not wait — QUEUEING it would rebuild the pile-up one
+  // level down — and does not quietly do nothing either. It is dropped, and the
+  // drop is logged as its own event.
+  final tick = TickSingleFlight(
+    log: _log,
+    runTick: () async {
+      final outcome = TickOutcome(failedSections: <String>[]);
 
-      // Drain the outcomes this tick actually produced, into the processor.
-      // The set of ids to drain, and WHY it is the union of the three lists
-      // rather than `terminal` alone, is production knowledge and lives with
-      // the function that does the draining — see `drainTriageOutcomesFromTick`.
-      // What matters here is only that the tick's result is consumed by the one
-      // function that owns this boundary, with no second copy of the loop
-      // drifting out of step with it.
-      final drain = await drainTriageOutcomesFromTick(
-        tickResult: tickResult,
-        jobStore: jobStore,
-        triageProcessor: triageProcessor,
-        // `onboardProduct` is registered so the dispatch table is COMPLETE.
-        // Onboarding jobs are product-scoped and are claimed and run by
-        // `BaselineProductDispatcher` below, so they never appear in a triage
-        // `SchedulerTickResult` and this handler does not fire in this
-        // composition. It is registered because the alternative is an
-        // `UnhandledJobTypeException` — a job type no handler was written for —
-        // the moment any future composition lets one scheduler serve both.
-        handlers: {
-          JobType.onboardProduct: (job) => observeCompletedOnboardingJob(
-            job: job,
-            logger: _log,
-          ),
-        },
-        logger: _log,
-      );
-      if (drain.handedOff > 0) {
-        _log('triage.tick.drained', {
-          'considered': drain.considered,
-          'skipped': drain.skipped,
-          'handedOff': drain.handedOff,
-          'succeededJobIds': drain.succeededJobIds,
-          'failedJobIds': drain.failedJobIds,
-        });
-      }
-    } catch (e, st) {
-      // Log but don't crash the server
-      _log('scheduler.tick.failed', {'error': '$e', 'stack': st.toString()});
-    }
-
-    // The product-scoped half of the tick, in its own try: a triage tick that
-    // fails must not prevent onboarding from running, and vice versa. They read
-    // the same job store but answer different questions, and one of them
-    // throwing says nothing about the other.
-    try {
-      final baselinePass = await baselineRuntime.runOnce();
-      _log('baseline.tick.completed', {
-        'sweep': baselinePass.sweep?.toString(),
-        'dispatch': baselinePass.dispatch.toString(),
-      });
-    } catch (e, st) {
-      _log('baseline.tick.failed', {
-        'error': '$e',
-        'stack': st.toString(),
-        'action':
-            'baseline dispatch is retried on the next tick; triage is unaffected',
-      });
-    }
-
-    // The work-entry half of the tick, in its OWN try, alongside the other two:
-    // a triage tick that fails must not prevent work entry from running, and a
-    // failing defect read inside the sweep must not prevent the next tick.
-    //
-    // GATED, not merely present. Design-revision.md §15: this sweep is the
-    // first thing that would touch the 18 historically orphaned triage jobs,
-    // and P-2/P-5 (lane L4) have not proven the durable `enqueueIfAbsent` path
-    // yet. The gate cannot change while the process runs, so there is no
-    // window in which this line runs "sometimes" — and the state it is in was
-    // stated at startup by `work_entry.sweep.disabled`, or enabled, in which
-    // case the per-tick `work_entry.tick.completed` line below is the liveness
-    // signal. Absence of either is a real outage rather than a shape.
-    if (workEntrySweepGate.enabled) {
       try {
-        final sweepPass = await defectTriageSweep.run();
-        _log('work_entry.tick.completed', {'sweep': sweepPass.toString()});
+        final tickResult = await scheduler.tick();
+
+        // Drain the outcomes this tick actually produced, into the processor.
+        // The set of ids to drain, and WHY it is the union of the three lists
+        // rather than `terminal` alone, is production knowledge and lives with
+        // the function that does the draining — see `drainTriageOutcomesFromTick`.
+        // What matters here is only that the tick's result is consumed by the one
+        // function that owns this boundary, with no second copy of the loop
+        // drifting out of step with it.
+        final drain = await drainTriageOutcomesFromTick(
+          tickResult: tickResult,
+          jobStore: jobStore,
+          triageProcessor: triageProcessor,
+          // `onboardProduct` is registered so the dispatch table is COMPLETE.
+          // Onboarding jobs are product-scoped and are claimed and run by
+          // `BaselineProductDispatcher` below, so they never appear in a triage
+          // `SchedulerTickResult` and this handler does not fire in this
+          // composition. It is registered because the alternative is an
+          // `UnhandledJobTypeException` — a job type no handler was written for —
+          // the moment any future composition lets one scheduler serve both.
+          handlers: {
+            JobType.onboardProduct: (job) => observeCompletedOnboardingJob(
+              job: job,
+              logger: _log,
+            ),
+          },
+          logger: _log,
+        );
+        outcome.dispatched = tickResult.dispatched.length;
+        outcome.handledOff = drain.handedOff;
+        if (drain.handedOff > 0) {
+          _log('triage.tick.drained', {
+            'considered': drain.considered,
+            'skipped': drain.skipped,
+            'handedOff': drain.handedOff,
+            'succeededJobIds': drain.succeededJobIds,
+            'failedJobIds': drain.failedJobIds,
+          });
+        }
       } catch (e, st) {
-        _log('work_entry.tick.failed', {
+        // Log but don't crash the server
+        outcome.failedSections.add('triage');
+        _log('scheduler.tick.failed', {'error': '$e', 'stack': st.toString()});
+      }
+
+      // The product-scoped half of the tick, in its own try: a triage tick that
+      // fails must not prevent onboarding from running, and vice versa. They read
+      // the same job store but answer different questions, and one of them
+      // throwing says nothing about the other.
+      try {
+        final baselinePass = await baselineRuntime.runOnce();
+        _log('baseline.tick.completed', {
+          'sweep': baselinePass.sweep?.toString(),
+          'dispatch': baselinePass.dispatch.toString(),
+        });
+      } catch (e, st) {
+        outcome.failedSections.add('baseline');
+        _log('baseline.tick.failed', {
           'error': '$e',
           'stack': st.toString(),
           'action':
-              'work entry is retried on the next tick; triage and baseline are '
-              'unaffected',
+              'baseline dispatch is retried on the next tick; triage is unaffected',
         });
       }
-    }
+
+      // The work-entry half of the tick, in its OWN try, alongside the other two:
+      // a triage tick that fails must not prevent work entry from running, and a
+      // failing defect read inside the sweep must not prevent the next tick.
+      //
+      // GATED, not merely present. Design-revision.md §15: this sweep is the
+      // first thing that would touch the 18 historically orphaned triage jobs,
+      // and P-2/P-5 (lane L4) have not proven the durable `enqueueIfAbsent` path
+      // yet. The gate cannot change while the process runs, so there is no
+      // window in which this line runs "sometimes" — and the state it is in was
+      // stated at startup by `work_entry.sweep.disabled`, or enabled, in which
+      // case the per-tick `work_entry.tick.completed` line below is the liveness
+      // signal. Absence of either is a real outage rather than a shape.
+      if (workEntrySweepGate.enabled) {
+        try {
+          final sweepPass = await defectTriageSweep.run();
+          outcome.sweepEnqueued = sweepPass.enqueued.length;
+          _log('work_entry.tick.completed', {'sweep': sweepPass.toString()});
+        } catch (e, st) {
+          outcome.failedSections.add('workEntrySweep');
+          _log('work_entry.tick.failed', {
+            'error': '$e',
+            'stack': st.toString(),
+            'action':
+                'work entry is retried on the next tick; triage and baseline are '
+                'unaffected',
+          });
+        }
+      }
+
+      // NOTE: the sweep carries its own single-flight guard, and it is a
+      // narrower one — it stops two ticks reaching the sweep together, and it
+      // reports its own drops as `work_entry.sweep.pass_overlapped`. This guard
+      // is the outer of the two: it stops the two ticks existing at all. The
+      // sweep's drops are therefore always zero here, and are not re-reported.
+
+      return outcome;
+    },
+  );
+
+  Timer.periodic(const Duration(seconds: 30), (_) {
+    // `unawaited`, and not `async` on this closure: the guard must be taken
+    // synchronously, before the first `await` anywhere above it. An `async`
+    // closure would hand the guard decision to the microtask queue and the
+    // timer would be free to fire again first — the exact race this lane
+    // exists to close.
+    unawaited(tick.trigger());
   });
+}
+
+/// The code carried by a tick that was dropped because another was still
+/// running.
+///
+/// Declared here rather than inlined so the log line, the result value and the
+/// test cannot disagree about its spelling — the same reason
+/// `sweepPassOverlappedCode` exists in `defect_triage_sweep.dart`.
+const String tickOverlapDroppedCode = 'TICK_OVERLAP_DROPPED';
+
+/// What one completed tick did.
+///
+/// Mutable and filled in as the tick proceeds, because a tick is assembled from
+/// three independent halves that each catch their own failures: the counts have
+/// to be readable at the moment the tick ends, whichever halves ran.
+///
+/// The numbers exist so the completion line can distinguish "ran and dispatched
+/// nothing" from "did not run at all". That distinction is the whole reason a
+/// drop is allowed to exist, so it is worth carrying rather than inferring.
+class TickOutcome {
+  TickOutcome({List<String>? failedSections})
+    : failedSections = failedSections ?? <String>[];
+
+  /// Jobs this tick actually started an execution for.
+  int dispatched = 0;
+
+  /// Terminal jobs handed off to the triage processor this tick.
+  int handledOff = 0;
+
+  /// Defects this tick enqueued a triage job for. Always zero unless the
+  /// work-entry sweep gate is on.
+  int sweepEnqueued = 0;
+
+  /// Which halves of the tick threw, named. Empty is a tick that ran clean.
+  ///
+  /// Named rather than counted because "the tick failed" is not actionable and
+  /// "the baseline half failed" is — and because an unnamed failure is the one
+  /// that reads as "nothing to do".
+  final List<String> failedSections;
+
+  @override
+  String toString() =>
+      'dispatched: $dispatched, handledOff: $handledOff, '
+      'sweepEnqueued: $sweepEnqueued, failedSections: $failedSections';
+}
+
+/// The outcome of ONE trigger: either a tick ran, or the trigger was dropped
+/// because a tick was already running.
+///
+/// [ran] is the load-bearing field. A dropped trigger returns `ran: false` and a
+/// null [outcome], so no caller can read a dropped tick as a tick that found
+/// nothing to do — the two are not merely equal, they are not confusable.
+class TickSingleFlightResult {
+  const TickSingleFlightResult.dropped()
+    : ran = false,
+      outcome = null,
+      overlappedTicks = 1;
+
+  const TickSingleFlightResult.ran(this.outcome)
+    : ran = true,
+      overlappedTicks = 0;
+
+  /// Whether the tick actually ran.
+  final bool ran;
+
+  /// What it did. Null exactly when [ran] is false.
+  final TickOutcome? outcome;
+
+  /// Always 1 for a dropped trigger and 0 for a completed one. Carried on EVERY
+  /// result — including the ones that ran — so a consumer never has to tell an
+  /// absent field from a zero.
+  final int overlappedTicks;
+
+  @override
+  String toString() => ran
+      ? 'ran: true, overlappedTicks: $overlappedTicks, outcome: $outcome'
+      : 'ran: false, overlappedTicks: $overlappedTicks (dropped, code: '
+            '$tickOverlapDroppedCode)';
+}
+
+/// One tick at a time, with every trigger accounted for.
+///
+/// ## Why a guard at all
+///
+/// `Timer.periodic` does not await its callback, and one tick blocks for a full
+/// agent execution — `timeoutSeconds: 300`. The callback therefore outlives its
+/// 30-second period by a factor of ten, and without a guard every one of those
+/// ten periods starts another tick. Each overlapping tick independently re-reads
+/// all jobs and re-attempts a dispatch for everything the previous tick has not
+/// yet claimed. Nine queued defects became nine simultaneous agent sessions
+/// that way, and that is what exhausted the host.
+///
+/// ## Why a trigger is DROPPED rather than queued
+///
+/// A guard that serialised triggers instead would be correct and useless: the
+/// thirty queued triggers would each run a full tick back to back, so the host
+/// would see the same work, just later. Worse, the backlog would grow without
+/// bound whenever a tick takes longer than the period, and the queue would
+/// never drain. Dropping says the truth: that period's tick is already
+/// accounted for by the one running.
+///
+/// ## Why the drop is never silent
+///
+/// A dropped tick and a tick that found nothing to do produce the same absence
+/// of work. If the drop is not recorded, an operator looking at a quiet log
+/// cannot tell a healthy idle system from one that has been silently dropping
+/// every tick for a week. So the drop gets BOTH:
+///
+///  * its own event, `scheduler.tick.dropped_overlap`, greppable on its own
+///    without knowing that the answer lives in a field of a line which otherwise
+///    describes a tick that did real work; and
+///  * a `scheduler.tick.completed` line, so that line keeps ONE shape and
+///    carries `overlappedTicks` on every single tick including the zeroes.
+///    Without the second, "no completed line" would be indistinguishable from
+///    "a tick is still running".
+///
+/// Both shapes mirror `DefectTriageSweep.run`, which already carries this guard
+/// for the narrower question of two passes over the same defects.
+class TickSingleFlight {
+  TickSingleFlight({
+    required this.runTick,
+    this.log,
+  });
+
+  /// The tick, invoked only after the guard has been taken. Public so the
+  /// constructor can take it as an initializing formal, and so a test can hold
+  /// the same reference the loop calls.
+  final Future<TickOutcome> Function() runTick;
+
+  /// Where the two events go. Null silences them, which is what a test that only
+  /// cares about control flow wants.
+  final void Function(String event, Map<String, dynamic> data)? log;
+
+  /// The guard itself.
+  ///
+  /// ## Why this method is deliberately NOT `async`
+  ///
+  /// In an `async` body, a statement inserted above the `await` compiles, reads
+  /// correctly in isolation, and silently converts a sound guard into an unsound
+  /// one — because the whole body up to the first `await` runs in a microtask,
+  /// so a second trigger arriving in that window takes the guard before the first
+  /// one has. Making [trigger] non-`async` means there is no `await` between
+  /// entry and the guard flip: the check and the set are two adjacent synchronous
+  /// statements, so "the guard is taken before anything is awaited" is a
+  /// property the compiler enforces instead of one a reviewer has to notice.
+  ///
+  /// `_runTick` — everything below the guard — is async, which is where the
+  /// awaiting belongs.
+  bool _running = false;
+
+  /// Whether a tick is in flight. Read by tests and by nothing in production.
+  bool get isRunning => _running;
+
+  /// Runs one tick, or records that one is already running and returns.
+  ///
+  /// On the dropped path this completes IMMEDIATELY with [ran] false. It does not
+  /// wait for the running tick: see the class comment for why waiting is the
+  /// wrong answer.
+  Future<TickSingleFlightResult> trigger() {
+    if (_running) {
+      const dropped = TickSingleFlightResult.dropped();
+      // A dedicated event, IN ADDITION TO the `completed` line. The `completed`
+      // line is there so every tick leaves the same shape; this one is there so
+      // the drop is greppable on its OWN.
+      log?.call('scheduler.tick.dropped_overlap', <String, dynamic>{
+        'ran': false,
+        'dispatched': 0,
+        'handledOff': 0,
+        'sweepEnqueued': 0,
+        'overlappedTicks': 1,
+        'code': tickOverlapDroppedCode,
+        'action':
+            'this tick did not run because a tick was already in flight; '
+            'nothing was claimed, dispatched or enqueued by it. The tick '
+            'already running reports its own results on its own completed line.',
+      });
+      log?.call('scheduler.tick.completed', <String, dynamic>{
+        'ran': false,
+        'dispatched': 0,
+        'handledOff': 0,
+        'sweepEnqueued': 0,
+        'failedSections': const <String>[],
+        'overlappedTicks': 1,
+        'code': tickOverlapDroppedCode,
+      });
+      return Future<TickSingleFlightResult>.value(dropped);
+    }
+    _running = true;
+    // `whenComplete` releases the guard on the success path AND on the failure
+    // path, and passes the original error through untouched. A guard released
+    // only on success would wedge the loop shut after the first failure, and
+    // every later tick would report itself as "overlapping" against a tick that
+    // ended minutes ago — a loop that looks busy and is permanently stopped.
+    return _runGuarded().whenComplete(() {
+      _running = false;
+    });
+  }
+
+  /// The tick itself, and the completion line.
+  ///
+  /// Everything here is BELOW the guard, which is why it may await as much as it
+  /// likes. The completion line is emitted on both paths so that a failing tick
+  /// still leaves the same shape behind as a clean one.
+  Future<TickSingleFlightResult> _runGuarded() async {
+    try {
+      final outcome = await runTick();
+      log?.call('scheduler.tick.completed', <String, dynamic>{
+        'ran': true,
+        'dispatched': outcome.dispatched,
+        'handledOff': outcome.handledOff,
+        'sweepEnqueued': outcome.sweepEnqueued,
+        'failedSections': outcome.failedSections,
+        'overlappedTicks': 0,
+      });
+      return TickSingleFlightResult.ran(outcome);
+    } on Object {
+      // The tick's own halves already logged what they caught. This records
+      // that the tick as a whole ended badly, so a line that says `ran: true`
+      // with an empty `failedSections` is unambiguous: it means no half threw.
+      log?.call('scheduler.tick.completed', <String, dynamic>{
+        'ran': true,
+        'dispatched': -1,
+        'handledOff': -1,
+        'sweepEnqueued': -1,
+        'failedSections': const <String>['tick'],
+        'overlappedTicks': 0,
+      });
+      rethrow;
+    }
+  }
+}
+
+/// Thrown when the composition root refuses to build a scheduler with no
+/// execution cap.
+///
+/// A refusal, not a warning. The process does not come up: there is no version
+/// of "serve anyway, and log a note" that is honest, because the thing being
+/// refused is the exact condition that exhausted the host on 2026-10-10.
+class UnboundedDispatchRefused implements Exception {
+  const UnboundedDispatchRefused(this.diagnostic);
+
+  /// The reason, naming the variable and what was wrong with it. Never contains
+  /// a credential — only a variable name and the offending value.
+  final String diagnostic;
+
+  @override
+  String toString() => diagnostic;
+}
+
+/// Resolves the global execution cap from [environment], or REFUSES.
+///
+/// ## Why this throws rather than defaulting
+///
+/// The cap is `SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS`, and the human decision
+/// `f8c8b67f` fixed its first value at **C = 2**, overridable by this variable
+/// so it can be tuned after a watched run. C = 2 is the value an operator
+/// DEPLOYS; it is deliberately not a value baked into this binary.
+///
+/// Two defaults were available and both are worse than a refusal:
+///
+///  * default to **unbounded** — which re-creates the incident this work item
+///    was opened for, silently, and only after someone deployed the fix;
+///  * default to **2** — which reads as protection while the real cause was
+///    overlapping ticks, and which silently caps every other future
+///    composition at a number chosen for one host. It also puts a fiction in a
+///    log line that an operator will later trust.
+///
+/// So every unusable value — absent, empty, non-numeric, zero, negative —
+/// resolves to nothing and says which one it was. `ExecutionCapacityResolution`
+/// does that arithmetic; this function's only job is the decision, and the
+/// decision is no.
+///
+/// ## Why the refusal happens HERE
+///
+/// `Scheduler` constructed without a `capacityGuard` runs unbounded and says so
+/// in `capacitySummary`. That is the right design — a library should be usable
+/// in a test — and it is also exactly how the bug gets shipped: the default is
+/// "unbounded", and the one place that can refuse is the composition root.
+/// So this runs before `Serverpod` is constructed, which is before the process
+/// binds a port, which is before there is anything for an operator to attach to
+/// and find healthy.
+///
+/// Throws [UnboundedDispatchRefused].
+ExecutionCapacity resolveDispatchCapacity(
+  Map<String, String> environment, {
+  void Function(String event, Map<String, dynamic> data)? log,
+}) {
+  final resolution = ExecutionCapacityResolution.fromEnvironment(environment);
+  final capacity = resolution.capacity;
+  if (capacity == null) {
+    log?.call('server.capacity.refused', <String, dynamic>{
+      'capacity': 'NOT CONFIGURED — refusing to start',
+      'reason': resolution.diagnostic,
+      'action':
+          'set $executionCapacityEnvVar to an integer >= 1 before starting the '
+          'server. The decided first value is C = 2.',
+    });
+    throw UnboundedDispatchRefused(resolution.diagnostic);
+  }
+  log?.call('server.capacity.resolved', <String, dynamic>{
+    'capacity': capacity.startupSummary,
+  });
+  return capacity;
 }
 
 /// The single operator log for this file, so every event the composition emits
