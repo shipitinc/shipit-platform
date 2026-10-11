@@ -14,14 +14,7 @@ import 'package:product_registry/product_registry.dart'
 import 'package:qa_orchestration/qa_orchestration.dart' show QAContractStore;
 import 'package:workflow_engine/workflow_engine.dart' show ProductGuard;
 import 'package:scheduler/scheduler.dart'
-    show
-        JobStore,
-        JobQueue,
-        triageDefectDefinition,
-        triageDefectDedupeKey,
-        triageDefectInstruction,
-        onboardingJob,
-        onboardingWorkItemId;
+    show JobStore, JobQueue, onboardingJob, onboardingWorkItemId;
 import 'package:serverpod/serverpod.dart';
 import 'package:workflow_store/workflow_store.dart'
     show ConcurrentModificationException, DurableWorkflowEngine, WorkflowStore;
@@ -874,7 +867,7 @@ class ControlPlaneService {
     // sitting in `draft` while the durable row says `planned` with a recorded
     // reason — the reporting dishonesty this lane exists to close, in the one
     // place a human is about to read it.
-    return parked;
+    return parked.item;
   }
 
   /// How many times an intake re-reads and retries when another writer wins the
@@ -886,8 +879,11 @@ class ControlPlaneService {
   /// would be waiting on a writer that is not going to stop.
   static const int _workEntryConvergenceAttempts = 3;
 
-  /// Drives [WorkEntryTrigger.ensureWorkEntry] to convergence and returns the work
-  /// item as it stands afterwards.
+  /// Drives [WorkEntryTrigger.ensureWorkEntry] to convergence, and returns the
+  /// decision it reached together with the work item as it stands afterwards.
+  ///
+  /// `decision` is null only when every attempt lost its compare-and-swap; see
+  /// the exhaustion boundary below.
   ///
   /// ## The contract this implements, and why retry-and-converge
   ///
@@ -941,7 +937,8 @@ class ControlPlaneService {
   /// and `work_entry.dart` states why: it is the one place work-entry codes
   /// live, and a code minted here would be a second spelling of the same
   /// vocabulary.
-  Future<WorkItem> _ensureWorkEntryConverging({
+  Future<({WorkEntryDecision? decision, WorkItem item})>
+  _ensureWorkEntryConverging({
     required String workItemId,
     required WorkEntryKind kind,
   }) async {
@@ -966,7 +963,7 @@ class ControlPlaneService {
           'decision': decision.toString(),
           'code': decision.code,
         });
-        return settled;
+        return (decision: decision, item: settled);
       } on ConcurrentModificationException {
         // Someone else moved this item between the read above and the write
         // below. Nothing rolled back and nothing failed; the next iteration
@@ -992,7 +989,10 @@ class ControlPlaneService {
           'was enqueued by this path. The periodic work-entry sweep retries '
           'it, so nothing is lost.',
     });
-    return workflowStore.readWorkItem(workItemId);
+    return (
+      decision: null,
+      item: await workflowStore.readWorkItem(workItemId),
+    );
   }
 
   /// Feature requests as the Reports screen's `Feature requests` tab reads them.
@@ -1102,7 +1102,15 @@ class ControlPlaneService {
   /// Creates a new defect from a human report.
   ///
   /// Persists the Defect, initial DefectEvidence (textDescription + diagnosticBundle),
-  /// and the initial DefectEvent (created). Enqueues a triage job.
+  /// and the initial DefectEvent (created), then hands the durable triage work
+  /// item to [WorkEntryTrigger.ensureWorkEntry], which decides whether a triage
+  /// job may be created for this product at all.
+  ///
+  /// The report is always accepted and recorded. Whether it is also *dispatched*
+  /// depends on the product being `governed` (human decision `1a8d9769`), and a
+  /// defect that is not dispatched is a normal outcome with a recorded reason,
+  /// not a failure of the submission. `currentTriageJobId` is therefore null on
+  /// every outcome where no job exists, which is the honest report.
   Future<Defect> createDefect({
     required String title,
     required String description,
@@ -1215,7 +1223,8 @@ class ControlPlaneService {
       'severity': severity,
     });
 
-    // Durably provision the triage WorkItem BEFORE enqueueing the job.
+    // Durably provision the triage WorkItem BEFORE any job is enqueued, and
+    // let the work-entry trigger decide whether this defect may be triaged.
     //
     // The WorkItem used to be built in memory only, so nothing was ever
     // written to `work_item`. `Scheduler.tick` resolves every candidate job
@@ -1223,39 +1232,72 @@ class ControlPlaneService {
     // whose work item is absent, so the triage job was enqueued against a
     // work item that did not exist and could never be dispatched: 18 jobs
     // parked in `queued` in the live test DB with no work item behind them.
+    // The item is therefore created through the provisioner, which is the only
+    // place that resolves the QA contract, the description and the metadata the
+    // triage instruction is built from.
     //
-    // The item is now created through `DurableWorkflowEngine` (the only legal
-    // work-item write path) and walked to `designNotRequired`, an entry state
-    // of `triageDefectDefinition`. Idempotent: replaying intake re-reads the
-    // existing row, so no duplicate WorkItem (and therefore no second dedupe
-    // key) can be produced.
-    final defectWorkItem = await _triageWorkItemProvisioner.ensurePersisted(
-      defect: defect,
-      evidenceJson: jsonEncode(intakeEvidence),
-    );
-    final dedupeKey = triageDefectDedupeKey(
-      defectWorkItem,
-      triageDefectDefinition,
-    );
-    final instruction = triageDefectInstruction(
-      defectWorkItem,
-      triageDefectDefinition,
-    );
-    final enqueueResult = await jobQueue.enqueueIfAbsent(
+    // ## Why `ensurePersistedWithoutWalk` and not `ensurePersisted`
+    //
+    // This used to be `ensurePersisted` followed by an unconditional
+    // `enqueueIfAbsent`. Both halves of that are gone, and the reason is that
+    // they made the governed gate decorative.
+    //
+    // `ensurePersisted` walks the item to `designNotRequired`, which is an entry
+    // state of `triageDefectDefinition`. Walking is the exposure: the triage
+    // `Scheduler` is product-blind AND category-blind — `RunnableWorkEvaluator`
+    // reads neither `item.productId` nor `item.category`, and `Scheduler.tick`
+    // iterates every work item — so an item parked at an entry state is
+    // enqueued on the next tick no matter what the product's state is. Gating
+    // the enqueue while still walking would therefore have stopped nothing;
+    // the scheduler would have re-created the job thirty seconds later.
+    //
+    // So the item is persisted PRE-WALK and handed to
+    // `WorkEntryTrigger.ensureWorkEntry`, whose `governed` gate runs before its
+    // own walk. That ordering is the whole of human decision `1a8d9769`: a
+    // defect on an `offboarded` product is accepted and recorded, and no triage
+    // job is created for it.
+    //
+    // The gate is NOT re-implemented here. It lives in the trigger, and the
+    // trigger also owns the dedupe key, the instruction and the enqueue, so
+    // intake and the periodic sweep cannot drift. A second check at this call
+    // site would be the same gate decided twice, and two gates can disagree.
+    final defectWorkItem = await _triageWorkItemProvisioner
+        .ensurePersistedWithoutWalk(
+          defect: defect,
+          evidenceJson: jsonEncode(intakeEvidence),
+        );
+    final outcome = await _ensureWorkEntryConverging(
       workItemId: defectWorkItem.workItemId,
-      definition: triageDefectDefinition,
-      dedupeKey: dedupeKey,
-      instruction: instruction,
+      kind: WorkEntryKind.defectTriage,
     );
-    if (enqueueResult.created) {
-      // Update defect with triage job reference
+
+    // Only a job that actually exists is recorded on the defect. Every other
+    // outcome — gated, already triaged, a state no lane claims — leaves
+    // `currentTriageJobId` null, which is the honest answer: the report was
+    // accepted, and it is not currently being triaged.
+    final decision = outcome.decision;
+    final jobId = decision is WorkEntryEnqueued ? decision.jobId : null;
+    if (jobId != null) {
       final updatedDefect = defect.copyWith(
-        currentTriageJobId: enqueueResult.job.jobId,
+        currentTriageJobId: jobId,
         updatedAt: now,
         version: defect.version + 1,
       );
       await defectStore.saveDefect(updatedDefect);
+      return updatedDefect;
     }
+
+    logger.info('defect.triage_not_enqueued', {
+      'defectId': defect.defectId,
+      'workItemId': defectWorkItem.workItemId,
+      'code': decision?.code,
+      'decision':
+          decision?.toString() ?? 'no decision (intake did not converge)',
+      'action':
+          'the defect report is recorded and returned to the reporter; no '
+          'triage job was created. A gated defect is dispatched by the '
+          'periodic work-entry sweep once its product becomes governed.',
+    });
 
     return defect;
   }
