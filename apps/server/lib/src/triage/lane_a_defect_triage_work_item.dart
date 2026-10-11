@@ -43,6 +43,18 @@ const String _designNotRequiredKey = 'triage-intake:designNotRequired';
 /// `triageDefectDefinition` accepts as an entry state, BEFORE the job is
 /// enqueued.
 ///
+/// ## Two entry points, one persistence, and only one of them walks
+///
+/// [ensurePersisted] persists and walks. [ensurePersistedWithoutWalk] persists
+/// and stops, handing the item back at its pre-walk state so a caller that
+/// must first decide whether this defect may be triaged can decide it BEFORE
+/// the walk makes the item dispatchable. Both are built on [_persist], so the
+/// id, the product, the QA contract, the description and the metadata are
+/// written by one implementation; they differ in the state change and nothing
+/// else. [ensurePersisted]'s behaviour is exactly what it was — see its own
+/// doc comment, and [ensurePersistedWithoutWalk]'s for why the second entry
+/// point had to exist.
+///
 /// ## The QA contract is provisioned here, not invented downstream
 ///
 /// `GuardConditions.qaContractExists()` refuses
@@ -108,6 +120,113 @@ class DefectTriageWorkItemProvisioner {
     required Defect defect,
     String? evidenceJson,
   }) async {
+    return _advanceToTriageable(await _persist(defect, evidenceJson));
+  }
+
+  /// Persists the triage work item for [defect] and returns it WITHOUT walking
+  /// it to an entry state.
+  ///
+  /// [ensurePersisted] is the same operation with one difference: it also
+  /// drives the item `draft -> planning -> planned -> designNotRequired`
+  /// before handing it back. That difference is load-bearing, and this method
+  /// exists for no other reason.
+  ///
+  /// ## Why "without the walk" is the whole point
+  ///
+  /// `designNotRequired` is an entry state of `triageDefectDefinition`, and
+  /// `RunnableWorkEvaluator`
+  /// (`packages/scheduler/lib/src/policy/runnable_work.dart`) classifies by
+  /// state alone: it reads neither `WorkItemCategory` nor `productId`.
+  /// `Scheduler.tick` therefore enqueues a `triage_defect` job for EVERY work
+  /// item at that state, whatever the product's lifecycle says.
+  ///
+  /// So the moment this class walks an item, the item is dispatchable, and no
+  /// rule enforced downstream of it can stop that. A caller that must first
+  /// decide whether this defect may be triaged at all — the product's
+  /// `ProductState`, the absence of a live triage job, any future governance
+  /// rule — has to be given its chance BEFORE the walk, or it is ruling on a
+  /// job that is already queued. It could not be given that chance: this class
+  /// exposed exactly one public method and that method walked.
+  ///
+  /// This method is the missing entry point. It persists and returns; the
+  /// caller decides what happens next, and the decider owns the walk. The
+  /// caller today is `WorkEntryTrigger.ensureWorkEntry`
+  /// (`apps/server/lib/src/triage/work_entry.dart`), whose `governed` gate is
+  /// only meaningful because it runs before its own `_walkToDesignNotRequired`
+  /// — an item handed to it already walked would leave nothing for the gate to
+  /// hold back.
+  ///
+  /// ## What is shared with [ensurePersisted], and what is not
+  ///
+  /// SHARED, by one private implementation ([_persist]) rather than
+  /// re-derived: the work-item id, the read-before-create, the product
+  /// resolution, the QA-contract provisioning and backfill, the description,
+  /// the metadata, and every log event. Two copies of that on the live defect
+  /// path is how a work item and the instruction built from it drift apart
+  /// without anything noticing, so there is one implementation and both entry
+  /// points call it.
+  ///
+  /// DIFFERENT, and only this: no state change on the work item. The returned
+  /// item is at whatever state the durable record already holds — `draft` on a
+  /// first request, or wherever a prior partial run left it on a replay — and
+  /// is returned so a caller can pass it straight to a trigger.
+  ///
+  /// ## What it deliberately does NOT do
+  ///
+  /// It enforces no dispatch rule. It does not read the product's state, does
+  /// not look for an existing job, and does not enqueue. Those belong to the
+  /// caller that is about to decide whether this defect may be triaged; a
+  /// second copy of them here would be a governance gate installed on a path
+  /// whose real gate has not run yet, which is the same class of mistake as
+  /// filtering at dispatch.
+  ///
+  /// ## Replay
+  ///
+  /// Idempotent by the same construction as [ensurePersisted]: an existing
+  /// `defect-{defectId}` row is read, backfilled and returned, never
+  /// re-created, so calling this N times for one defect produces exactly one
+  /// work item and therefore exactly one dedupe key.
+  ///
+  /// It is also safe alongside [ensurePersisted] for the same defect —
+  /// whichever runs second reads the row the other wrote — and it never undoes
+  /// a walk the other one performed, because it performs no transitions at all.
+  Future<WorkItem> ensurePersistedWithoutWalk({
+    required Defect defect,
+    String? evidenceJson,
+  }) async {
+    final persisted = await _persist(defect, evidenceJson);
+
+    // Named, so "the item exists and was handed to a trigger that will decide"
+    // is distinguishable from "the item exists and was walked already". Without
+    // this the only difference between the two entry points is invisible from
+    // outside, and a reader of the log cannot tell which one ran.
+    log?.call('triage.work_item.persisted_awaiting_walk', {
+      'workItemId': persisted.workItemId,
+      'defectId': defect.defectId,
+      'state': persisted.state.wire,
+      'version': persisted.version,
+    });
+
+    return persisted;
+  }
+
+  /// Reads the durable triage work item for [defect], creating it when this is
+  /// the first time it is requested, and returns it in whatever state the
+  /// durable record already holds.
+  ///
+  /// ## The one implementation both public entry points share
+  ///
+  /// [ensurePersisted] walks and [ensurePersistedWithoutWalk] does not, so
+  /// everything ahead of the walk has to be written once rather than twice:
+  /// read-before-create, product resolution, QA-contract provisioning and
+  /// backfill, `createWorkItem`, and the log events. The state change is the
+  /// caller's, and only [ensurePersisted] performs it.
+  ///
+  /// The order below is the original one and is unchanged: read the row, and on
+  /// a hit attach the QA contract and return it; on a miss resolve the product,
+  /// create, and return what was created. Nothing here transitions, so a replay
+  /// of either entry point observes exactly the record the first one left.
+  Future<WorkItem> _persist(Defect defect, String? evidenceJson) async {
     final workItemId = defectTriageWorkItemId(defect.defectId);
     final existing = await _readOrNull(workItemId);
 
@@ -117,7 +236,7 @@ class DefectTriageWorkItemProvisioner {
         'state': existing.state.wire,
         'version': existing.version,
       });
-      return _advanceToTriageable(await _attachQAContract(existing, defect));
+      return _attachQAContract(existing, defect);
     }
 
     final productId = await _resolveProductId(defect);
@@ -150,7 +269,7 @@ class DefectTriageWorkItemProvisioner {
       'qaContractId': created.qaContractId,
     });
 
-    return _advanceToTriageable(created);
+    return created;
   }
 
   /// Persists the advisory triage QA contract for [defect] and returns the id
