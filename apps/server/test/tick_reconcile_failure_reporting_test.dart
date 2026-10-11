@@ -271,6 +271,15 @@ class _FaultingWorkflowStore implements WorkflowStore {
       _inner.appendTransitionRecord(record);
 
   @override
+  Future<void> appendOperatorAction(OperatorActionRecord record) =>
+      _inner.appendOperatorAction(record);
+
+  @override
+  Future<List<OperatorActionRecord>> readOperatorActionsForWorkItem(
+    String workItemId,
+  ) => _inner.readOperatorActionsForWorkItem(workItemId);
+
+  @override
   Future<T> inTransaction<T>(Future<T> Function(WorkflowStore store) body) =>
       body(this);
 }

@@ -479,6 +479,15 @@ class _ScopedWorkflowStore implements WorkflowStore {
       _delegate.appendTransitionRecord(record);
 
   @override
+  Future<void> appendOperatorAction(OperatorActionRecord record) =>
+      _delegate.appendOperatorAction(record);
+
+  @override
+  Future<List<OperatorActionRecord>> readOperatorActionsForWorkItem(
+    String workItemId,
+  ) => _delegate.readOperatorActionsForWorkItem(workItemId);
+
+  @override
   Future<T> inTransaction<T>(Future<T> Function(WorkflowStore store) body) =>
       _delegate.inTransaction<T>((_) => body(this));
 }

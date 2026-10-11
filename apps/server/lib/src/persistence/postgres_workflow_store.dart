@@ -257,6 +257,41 @@ class PostgresWorkflowStore implements WorkflowStore {
     );
   }
 
+  /// Appends one operator action. INSERT only — there is no ON CONFLICT clause
+  /// and no UPDATE, deliberately: this ledger is append-only, and a replay of
+  /// one operator intent must COLLIDE on `operator_action_request_unique`
+  /// rather than rewrite the row that already records what happened.
+  @override
+  Future<void> appendOperatorAction(OperatorActionRecord record) async {
+    await _db.execute(
+      '''INSERT INTO "operator_action" (
+             "actionId", "workItemId", "action", "fromState", "toState",
+             "requestedBy", "reason", "requestId", "jobId", "transitionId",
+             "attemptNumber", "createdAt"
+           ) VALUES (
+             @actionId, @workItemId, @action, @fromState, @toState,
+             @requestedBy, @reason, @requestId, @jobId, @transitionId,
+             @attemptNumber, @createdAt
+           )''',
+      parameters: QueryParameters.named(_operatorActionToParams(record)),
+    );
+  }
+
+  /// OLDEST FIRST. `requestId` is unique per work item, so the replay lookup
+  /// cannot face two candidates; the retry count is order-independent.
+  @override
+  Future<List<OperatorActionRecord>> readOperatorActionsForWorkItem(
+    String workItemId,
+  ) async {
+    final result = await _db.query(
+      '''SELECT * FROM "operator_action"
+         WHERE "workItemId" = @workItemId
+         ORDER BY "createdAt" ASC''',
+      parameters: QueryParameters.named({'workItemId': workItemId}),
+    );
+    return result.map(_operatorActionFromRow).toList();
+  }
+
   WorkItem _workItemFromRow(DatabaseResultRow row) {
     final m = row.toColumnMap();
     final metadata =
@@ -383,6 +418,41 @@ class PostgresWorkflowStore implements WorkflowStore {
       'resolvedOptionId': json['resolvedOptionId'],
       'metadataJson': PersistenceDatabase.encodeJson(json['metadata']),
       'updatedAt': PersistenceDatabase.toUtc(decision.updatedAt),
+    };
+  }
+
+  OperatorActionRecord _operatorActionFromRow(DatabaseResultRow row) {
+    final m = row.toColumnMap();
+    return OperatorActionRecord(
+      actionId: m['actionId'] as String,
+      workItemId: m['workItemId'] as String,
+      action: m['action'] as String,
+      fromState: m['fromState'] as String,
+      toState: m['toState'] as String,
+      requestedBy: m['requestedBy'] as String,
+      reason: m['reason'] as String,
+      requestId: m['requestId'] as String,
+      jobId: m['jobId'] as String?,
+      transitionId: m['transitionId'] as String?,
+      attemptNumber: m['attemptNumber'] as int?,
+      createdAt: decodeUtc(m['createdAt']) ?? DateTime.now().toUtc(),
+    );
+  }
+
+  Map<String, Object?> _operatorActionToParams(OperatorActionRecord record) {
+    return {
+      'actionId': record.actionId,
+      'workItemId': record.workItemId,
+      'action': record.action,
+      'fromState': record.fromState,
+      'toState': record.toState,
+      'requestedBy': record.requestedBy,
+      'reason': record.reason,
+      'requestId': record.requestId,
+      'jobId': record.jobId,
+      'transitionId': record.transitionId,
+      'attemptNumber': record.attemptNumber,
+      'createdAt': PersistenceDatabase.toUtc(record.createdAt),
     };
   }
 

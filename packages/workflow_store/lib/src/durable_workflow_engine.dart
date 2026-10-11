@@ -4,6 +4,7 @@ import 'package:platform_contracts/platform_contracts.dart';
 import 'package:workflow_engine/workflow_engine.dart';
 
 import 'human_facing_description.dart';
+import 'operator_action_record.dart';
 import 'store/workflow_store.dart';
 
 /// Thrown when the workflow policy rejects a transition. The rejected attempt
@@ -99,6 +100,29 @@ class DurableWorkflowEngine {
   /// prior outcome instead of re-running the transition. Rejected attempts
   /// are appended to history and raised as
   /// [WorkflowTransitionRejectedException].
+  ///
+  /// [reason], [operatorAction] and [metadataMerge] are ADDITIVE and all
+  /// default to null, which means "behave exactly as today". No existing
+  /// caller changes behaviour by omitting them, and every one of them is
+  /// written inside the transaction that already moves the work item, so a
+  /// crash can never leave the reason, the audit row or the attempt marker
+  /// describing a move that did not happen.
+  ///
+  /// * [reason] — recorded on the transition record. Defaults to the policy's
+  ///   own rejection reason, so on an accepted transition it stays null exactly
+  ///   as it always has. Supplying it does NOT make the record rejected: the
+  ///   outcome is decided by whether the policy accepted the edge, never by
+  ///   whether a reason was written.
+  /// * [operatorAction] — appended to the audit ledger through the SAME
+  ///   transaction handle the item and the transition record are written with.
+  ///   A rejected transition takes the path below before any transaction
+  ///   opens, so a refused action writes NO audit row: nothing was taken, so
+  ///   there is nothing to audit, and the rejected transition record already
+  ///   carries the attempt and its idempotency key.
+  /// * [metadataMerge] — MERGED into [WorkItem.metadata], never replacing it.
+  ///   A replace would silently wipe the defect payload the triage instruction
+  ///   reads, producing a retried job that classifies nothing while looking
+  ///   healthy. See [operatorRetry] for the caller that relies on this.
   Future<WorkItem> transition({
     required String workItemId,
     required WorkItemState to,
@@ -107,6 +131,9 @@ class DurableWorkflowEngine {
     Map<String, dynamic> context = const {},
     String? decisionId,
     String? idempotencyKey,
+    String? reason,
+    OperatorActionRecord? operatorAction,
+    Map<String, dynamic>? metadataMerge,
   }) async {
     final item = await _store.readWorkItem(workItemId);
 
@@ -154,7 +181,15 @@ class DurableWorkflowEngine {
       trigger: trigger,
       actor: actor,
       decisionId: decisionId,
-      reason: transition.rejectionReason,
+      reason: reason ?? transition.rejectionReason,
+      // The outcome follows the POLICY, not the presence of a reason. Before
+      // `reason` was a parameter the two were the same thing — an accepted
+      // transition had no reason to record — so inferring the outcome from
+      // `reason == null` would silently relabel an accepted retry as
+      // `rejected` the moment an operator supplied their own text.
+      outcome: transition.isValid
+          ? TransitionOutcome.accepted
+          : TransitionOutcome.rejected,
       guardEvaluations: transition.guardResults
           .map(
             (g) => TransitionGuardEvaluation(
@@ -188,6 +223,13 @@ class DurableWorkflowEngine {
           ? context['blockingReason'] as String? ??
                 'Awaiting human decision at ${DateTime.now().toUtc().toIso8601String()}'
           : null,
+      // MERGE, never replace. `WorkItem.copyWith` is
+      // `metadata: metadata ?? this.metadata`, so the merged map has to be
+      // built before the call; a null [metadataMerge] leaves the item's own
+      // map exactly as it was.
+      metadata: metadataMerge == null
+          ? item.metadata
+          : {...?item.metadata, ...metadataMerge},
     );
 
     final finalItem = updated.copyWith(
@@ -202,14 +244,161 @@ class DurableWorkflowEngine {
       try {
         await tx.saveWorkItem(finalItem, expectedVersion: item.version);
       } on ConcurrentModificationException {
+        // Rethrown, so the whole transaction rolls back. Nothing has been
+        // written yet — the audit row below is never even reached — which is
+        // what makes "no audit row without the move" true by ordering rather
+        // than by hope.
         rethrow;
       }
       await tx.appendTransitionRecord(record);
+      if (operatorAction != null) {
+        // Inside the SAME transaction, written through the SAME `tx` handle,
+        // and stamped with the transition id minted BEFORE the transaction
+        // opened. There is deliberately no path that writes an audit row
+        // outside this block.
+        await tx.appendOperatorAction(
+          operatorAction.copyWith(transitionId: record.transitionId),
+        );
+      }
     });
     return finalItem;
   }
 
-  /// Creates the blocking human decision and enters the human decision gate.
+  /// The actor an operator retry transitions as.
+  ///
+  /// [ActorType.orchestrator] is the only type the
+  /// `agentFailed -> designNotRequired` edge permits, and it is what this
+  /// engine already acts as everywhere else. The id names the PATH, not the
+  /// person: a human clicking a button is not an orchestrator, and the way
+  /// this repository records a human acting through the engine is exactly how
+  /// `resolveDecision` does it — the engine performs the move and the human's
+  /// identity and stated reason are recorded as data on the same durable
+  /// write. No new [ActorType] is introduced and nothing about
+  /// `actorIsNotSelf()` changes anywhere.
+  static const WorkflowActor operatorRetryActor = WorkflowActor(
+    actorId: 'operator-retry',
+    actorType: ActorType.orchestrator,
+  );
+
+  /// Metadata key carrying the retry attempt number.
+  ///
+  /// It lives on the work item because it is the only per-retry discriminator
+  /// a `DedupeKeyBuilder` can read: that builder is
+  /// `String Function(WorkItem, JobDefinition)` — synchronous, no store, no
+  /// request context. A retried item's original job key is consumed for ever
+  /// (`JobQueue.enqueueIfAbsent` refuses a key ANY job holds, terminal or not),
+  /// so without this marker the second retry would silently enqueue nothing.
+  static const String triageAttemptMetadataKey = 'triageAttempt';
+
+  /// The number of `retry` operator actions already recorded for
+  /// [workItemId] — the durable audit ledger, never a counter in memory.
+  Future<int> operatorRetryCount(String workItemId) async {
+    final recorded = await _store.readOperatorActionsForWorkItem(workItemId);
+    return recorded
+        .where((a) => a.action == OperatorActionKind.retry.wire)
+        .length;
+  }
+
+  /// The attempt number the NEXT retry of [workItemId] would mint.
+  Future<int> nextOperatorRetryAttempt(String workItemId) async =>
+      (await operatorRetryCount(workItemId)) + 1;
+
+  /// Performs ONE operator retry of a failed work item.
+  ///
+  /// This is the engine half of the retry: it performs the single durable
+  /// write and stamps the attempt marker that makes the next dispatch
+  /// possible. It deliberately does NOT enqueue a job, does not claim one, and
+  /// does not resolve a retry-count limit — the item lands in
+  /// `designNotRequired`, which the scheduler already treats as a runnable
+  /// entry state, so the ordinary tick does the rest on the ordinary path.
+  ///
+  /// Ordering, and why each piece is where it is:
+  ///
+  ///  1. **Replay.** The audit row is unique on `(workItemId, requestId)`, so
+  ///     it is the authoritative idempotency record. A caller that replays one
+  ///     operator intent — a lost response retried with the same [requestId] —
+  ///     finds its own row and returns the current item without writing again.
+  ///     This is what makes a network retry mint no second job: there is no
+  ///     second write, so there is no second `triageAttempt`, so there is no
+  ///     second dedupe key.
+  ///  2. **Attempt number**, counted from the ledger, NOT from a counter.
+  ///     Re-counted on every pass of the bounded loop below, because the
+  ///     competing writer may have moved the item on.
+  ///  3. **One transaction.** The state change, the transition record, the
+  ///     audit row and the attempt marker are the same commit.
+  ///
+  /// Two operators pressing retry on one item concurrently both compute
+  /// `n = 1`. The work-item compare-and-swap admits one writer; the loser
+  /// re-reads, sees attempt 1 recorded, and computes `n = 2`. That is the
+  /// correct outcome — two deliberate operator actions are two attempts — and
+  /// the loop is the same shape the scheduler's own reclaim uses.
+  ///
+  /// A refused action — the item is not in `agent_failed`, the edge does not
+  /// apply, another operator already moved it — throws
+  /// [WorkflowTransitionRejectedException] and writes NO audit row, because
+  /// nothing was taken. The rejected transition record carries the attempt.
+  Future<WorkItem> operatorRetry({
+    required String workItemId,
+    required String requestedBy,
+    required String reason,
+    required String requestId,
+    String? idempotencyKey,
+    int maxCompareAndSwapAttempts = 3,
+    TransitionTrigger trigger = TransitionTrigger.systemEvent,
+    WorkflowActor actor = operatorRetryActor,
+  }) async {
+    for (var pass = 1; ; pass++) {
+      // (1) REPLAY — the audit row is the idempotency record.
+      final recorded = await _store.readOperatorActionsForWorkItem(workItemId);
+      final prior = recorded.where((a) => a.requestId == requestId).firstOrNull;
+      if (prior != null) {
+        return _store.readWorkItem(workItemId);
+      }
+
+      // (2) ATTEMPT NUMBER — from the ledger, re-counted every pass.
+      final attempt =
+          recorded
+              .where((a) => a.action == OperatorActionKind.retry.wire)
+              .length +
+          1;
+
+      final item = await _store.readWorkItem(workItemId);
+
+      try {
+        return await transition(
+          workItemId: workItemId,
+          to: WorkItemState.designNotRequired,
+          trigger: trigger,
+          actor: actor,
+          context: {'operatorRetry': true, 'requestedBy': requestedBy},
+          idempotencyKey: idempotencyKey,
+          reason: reason,
+          // MERGED, never replacing: the defect payload the triage instruction
+          // reads must survive, or the retried job classifies nothing while
+          // looking healthy.
+          metadataMerge: {triageAttemptMetadataKey: attempt},
+          operatorAction: OperatorActionRecord(
+            actionId: _newId('oa'),
+            workItemId: workItemId,
+            action: OperatorActionKind.retry.wire,
+            fromState: item.state.wire,
+            toState: WorkItemState.designNotRequired.wire,
+            requestedBy: requestedBy,
+            reason: reason,
+            requestId: requestId,
+            attemptNumber: attempt,
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+      } on ConcurrentModificationException {
+        // Another writer took the work item. Re-count and try the whole block
+        // again, bounded so a writer continuously rewriting the item cannot
+        // make this spin.
+        if (pass >= maxCompareAndSwapAttempts) rethrow;
+      }
+    }
+  }
+
   ///
   /// The pending decision is persisted before the gate is entered, so a crash
   /// between the two leaves a durable (but unused) pending decision. Passing
@@ -630,6 +819,7 @@ class DurableWorkflowEngine {
     required WorkflowActor actor,
     String? decisionId,
     String? reason,
+    TransitionOutcome? outcome,
     List<TransitionGuardEvaluation> guardEvaluations = const [],
     String? idempotencyKey,
   }) {
@@ -642,9 +832,15 @@ class DurableWorkflowEngine {
       actorType: actor.actorType,
       actorId: actor.actorId,
       decisionId: decisionId,
-      outcome: reason == null
-          ? TransitionOutcome.accepted
-          : TransitionOutcome.rejected,
+      // Callers that pass [outcome] decide it from the policy. Callers that do
+      // not keep the original inference, so every pre-existing record — the
+      // scheduler's zombie reclaim, `work_entry`, the human-decision unlock —
+      // is unchanged byte for byte.
+      outcome:
+          outcome ??
+          (reason == null
+              ? TransitionOutcome.accepted
+              : TransitionOutcome.rejected),
       reason: reason,
       guardEvaluations: guardEvaluations,
       idempotencyKey: idempotencyKey,

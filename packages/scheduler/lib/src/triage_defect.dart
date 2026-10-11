@@ -12,10 +12,42 @@ const JobDefinition triageDefectDefinition = JobDefinition(
   maxAttempts: 2,
 );
 
-/// Builds a dedupe key for triage defect jobs: (defectId, jobType).
+/// Builds a dedupe key for triage defect jobs: (defectId, jobType[, attempt]).
 /// Only one active triage job per defect at a time.
-String triageDefectDedupeKey(WorkItem item, JobDefinition definition) =>
-    '${item.workItemId}:${definition.jobType.wire}';
+///
+/// ## Why the attempt suffix exists
+///
+/// An operator retry returns a failed work item to `designNotRequired`, so the
+/// scheduler enqueues for it again — but `JobQueue.enqueueIfAbsent` resolves a
+/// key that ANY job already holds, terminal or not. The original triage job for
+/// a failed item is TERMINAL, so its key is consumed for ever and reusing it
+/// returns `created: false`: the retry silently does nothing, and an operator
+/// who pressed "Try again" watches nothing happen.
+///
+/// The discriminator has to be readable from the `WorkItem` alone, because
+/// `DedupeKeyBuilder` is `String Function(WorkItem, JobDefinition)` —
+/// synchronous, no store, no request context — and it runs on every tick for
+/// every runnable item. `metadata['triageAttempt']` is written by the retry
+/// inside the transition's own transaction, so it is durable before any tick
+/// can read it.
+///
+/// ## WHY THE ABSENT CASE IS BYTE-IDENTICAL TO TODAY
+///
+/// With no `triageAttempt` the key is exactly the historical format, so every
+/// job already persisted under `'<workItemId>:triage_defect'` keeps matching
+/// and this change orphans NOTHING. Re-spelling the default key would silently
+/// strand every historical triage job and, on the next tick, enqueue a second
+/// job for work that is already being handled. This property is not to be
+/// traded for anything.
+///
+/// A non-integer value also falls through to the historical key rather than
+/// rendering `a<String>`: an unreadable marker must not mint a key that
+/// collides with neither the historical one nor any other attempt.
+String triageDefectDedupeKey(WorkItem item, JobDefinition definition) {
+  final base = '${item.workItemId}:${definition.jobType.wire}';
+  final attempt = (item.metadata ?? const <String, dynamic>{})['triageAttempt'];
+  return attempt is int ? '$base:a$attempt' : base;
+}
 
 /// Builds an instruction for triage defect jobs.
 ///

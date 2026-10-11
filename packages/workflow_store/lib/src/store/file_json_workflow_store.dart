@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:platform_contracts/platform_contracts.dart';
 
+import '../operator_action_record.dart';
 import 'workflow_store.dart';
 
 /// A durable [WorkflowStore] backed by a single JSON document on disk.
@@ -22,6 +23,7 @@ class FileJsonWorkflowStore implements WorkflowStore {
   final Map<String, WorkItem> _workItems = {};
   final Map<String, HumanDecision> _decisions = {};
   final Map<String, WorkflowTransitionRecord> _records = {};
+  final Map<String, OperatorActionRecord> _operatorActions = {};
 
   @override
   Future<T> inTransaction<T>(
@@ -96,6 +98,28 @@ class FileJsonWorkflowStore implements WorkflowStore {
     await _persist();
   }
 
+  @override
+  Future<void> appendOperatorAction(OperatorActionRecord record) async {
+    // Models `operator_action_request_unique` on (workItemId, requestId).
+    for (final existing in _operatorActions.values) {
+      if (existing.workItemId == record.workItemId &&
+          existing.requestId == record.requestId) {
+        throw OperatorActionConflictException(record);
+      }
+    }
+    _operatorActions[record.actionId] = record;
+    await _persist();
+  }
+
+  @override
+  Future<List<OperatorActionRecord>> readOperatorActionsForWorkItem(
+    String workItemId,
+  ) async {
+    return _operatorActions.values
+        .where((a) => a.workItemId == workItemId)
+        .toList(growable: false);
+  }
+
   void _checkVersion(WorkItem item, int? expectedVersion) {
     if (expectedVersion == null) {
       return;
@@ -120,6 +144,8 @@ class FileJsonWorkflowStore implements WorkflowStore {
     final workItems = decoded['workItems'] as Map<String, dynamic>? ?? {};
     final decisions = decoded['humanDecisions'] as Map<String, dynamic>? ?? {};
     final records = decoded['transitionRecords'] as Map<String, dynamic>? ?? {};
+    final operatorActions =
+        decoded['operatorActions'] as Map<String, dynamic>? ?? {};
 
     workItems.forEach((id, json) {
       _workItems[id] = WorkItem.fromJson(json as Map<String, dynamic>);
@@ -129,6 +155,11 @@ class FileJsonWorkflowStore implements WorkflowStore {
     });
     records.forEach((id, json) {
       _records[id] = WorkflowTransitionRecord.fromJson(
+        json as Map<String, dynamic>,
+      );
+    });
+    operatorActions.forEach((id, json) {
+      _operatorActions[id] = OperatorActionRecord.fromJson(
         json as Map<String, dynamic>,
       );
     });
@@ -142,6 +173,9 @@ class FileJsonWorkflowStore implements WorkflowStore {
       ),
       'transitionRecords': _records.map(
         (id, record) => MapEntry(id, _recordToJsonMap(record)),
+      ),
+      'operatorActions': _operatorActions.map(
+        (id, action) => MapEntry(id, action.toJson()),
       ),
     };
 

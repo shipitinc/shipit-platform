@@ -1,0 +1,53 @@
+class: OperatorActionRow
+table: operator_action
+serverOnly: true
+### APPEND-ONLY. A human taking an action that spends real model credits has
+### to leave a record of who and why that cannot be quietly edited afterwards,
+### so there is no update path and no delete path — on the model, on
+### WorkflowStore, or in any store. The only write the contract declares is
+### `appendOperatorAction`, and the only producer is the transaction
+### DurableWorkflowEngine.transition already opens, so an audit row and the
+### state change it authorises commit or roll back together. A refused attempt
+### writes none: nothing was taken, so there is nothing to audit.
+indexes:
+  operator_action_id_unique:
+    fields: actionId
+    unique: true
+  operator_action_work_item_idx:
+    fields: workItemId
+  ### The idempotency record. A replay of the same operator intent collides
+  ### here rather than creating a second row, a second job, or a second spend.
+  operator_action_request_unique:
+    fields: workItemId, requestId
+    unique: true
+  ### The authorisation index: "which durable action armed this job?"
+  operator_action_job_idx:
+    fields: jobId
+  ### The spend-bound index: "how many times has this item been restarted?"
+  operator_action_retry_idx:
+    fields: workItemId, action
+fields:
+  actionId: String
+  workItemId: String
+  ### Closed set: 'retry' | 'stop'.
+  action: String
+  fromState: String
+  toState: String
+  ### THE HUMAN, unlike work_item_transition.actorId, which names the path the
+  ### engine acted by. First class on purpose: a string parsed back out of an
+  ### idempotency key is a convention, not an audit.
+  requestedBy: String
+  reason: String
+  ### Client-minted, stable per operator intent. Unique per work item — this is
+  ### what makes a network replay of one press spend nothing twice.
+  requestId: String
+  ### Set for 'retry'; null for 'stop', which arms nothing.
+  jobId: String?
+  ### The work_item_transition row this action authorised. The engine mints the
+  ### transition id before it opens its transaction, so both rows commit
+  ### together and name each other.
+  transitionId: String?
+  ### 1 for the first retry of this item, 2 for the second, and so on, counted
+  ### from this table and never from memory.
+  attemptNumber: int?
+  createdAt: DateTime

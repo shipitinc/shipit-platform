@@ -57,6 +57,15 @@ class FaultyTransitionStore implements WorkflowStore {
     String idempotencyKey,
   ) => _inner.findTransitionByIdempotencyKey(workItemId, idempotencyKey);
 
+  @override
+  Future<void> appendOperatorAction(OperatorActionRecord record) =>
+      _inner.appendOperatorAction(record);
+
+  @override
+  Future<List<OperatorActionRecord>> readOperatorActionsForWorkItem(
+    String workItemId,
+  ) => _inner.readOperatorActionsForWorkItem(workItemId);
+
   /// `WorkflowStore` is an `interface class`, so its default bodies are not
   /// inherited by an implementer and every member must be redeclared.
   ///

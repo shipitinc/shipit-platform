@@ -1,5 +1,7 @@
 import 'package:platform_contracts/platform_contracts.dart';
 
+import '../operator_action_record.dart';
+
 /// A durable container for the state a workflow needs to resume after a
 /// process exit: the work item, its pending/resolved human decisions, and an
 /// append-only transition history.
@@ -30,6 +32,29 @@ abstract interface class WorkflowStore {
   );
 
   Future<void> appendTransitionRecord(WorkflowTransitionRecord record);
+
+  /// APPENDS one operator action. Append-only: there is no update or delete
+  /// counterpart on this interface, and none may be added.
+  ///
+  /// This is the only way an [OperatorActionRecord] is written. In particular
+  /// there is no code path that appends one outside the transaction
+  /// `DurableWorkflowEngine.transition` already opens, which is what makes an
+  /// audit row and the state change it authorises commit or roll back together.
+  /// Implementations MUST enforce `operator_action_request_unique` on
+  /// `(workItemId, requestId)`: a replay of the same operator intent collides
+  /// rather than creating a second row, a second job, or a second spend.
+  Future<void> appendOperatorAction(OperatorActionRecord record);
+
+  /// Operator actions recorded against [workItemId], OLDEST FIRST.
+  ///
+  /// ONE read serves both needs, so no second read method exists: the replay
+  /// check selects the row whose `requestId` matches, and the attempt count is
+  /// the number of rows whose `action` is 'retry'. The count is
+  /// order-independent; `requestId` is unique per work item, so the replay
+  /// check cannot find two candidates to be ambiguous about.
+  Future<List<OperatorActionRecord>> readOperatorActionsForWorkItem(
+    String workItemId,
+  );
 
   /// Runs [body] within a single store transaction. Implementations that back a
   /// transaction-capable database must make every store call inside [body]
@@ -73,4 +98,20 @@ class ConcurrentModificationException implements Exception {
   String toString() =>
       'Concurrent modification of $entityId (expected version '
       '$expectedVersion, actual $actualVersion)';
+}
+
+/// Raised when an operator action would duplicate `(workItemId, requestId)`.
+///
+/// PostgreSQL enforces the same rule with `operator_action_request_unique`;
+/// this is what the stores without a database say instead, so a replay is
+/// refused everywhere rather than only in production.
+class OperatorActionConflictException implements Exception {
+  OperatorActionConflictException(this.record);
+
+  final OperatorActionRecord record;
+
+  @override
+  String toString() =>
+      'Operator action ${record.requestId} already recorded for '
+      '${record.workItemId}';
 }

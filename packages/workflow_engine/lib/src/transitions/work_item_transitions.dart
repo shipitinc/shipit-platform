@@ -108,6 +108,27 @@ class WorkItemTransitions {
     (WorkItemState.agentFailed, WorkItemState.agentExecuting): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
     ],
+    // RETRY. An operator returns a failed agent run to `designNotRequired`,
+    // which `triageDefectDefinition.entryStates` already lists
+    // (packages/scheduler/lib/src/triage_defect.dart), so the EXISTING
+    // scheduler dispatch path enqueues and claims it with no change to that
+    // path at all. Landing in `agentExecuting` instead would assert that an
+    // execution is ALREADY RUNNING, and the scheduler correctly refuses to
+    // dispatch an item that claims that.
+    //
+    // The guard is derived from this table's own convention for an edge into
+    // an entry state, not invented: `planned -> designNotRequired` (:28) is
+    // the only other edge into this state and carries
+    // `actorAllowed([ActorType.orchestrator])` and nothing else. NO evidence
+    // guard either, because `designNotRequired` asserts that NO design is
+    // required, so there is nothing to prove. `agentAvailable()` appears only
+    // on `-> agentExecuting` edges, where the transition asserts "an agent is
+    // starting right now"; this edge asserts no such thing, and capacity is
+    // enforced at claim time by `JobCapacityGuard` exactly as it is for every
+    // other job.
+    (WorkItemState.agentFailed, WorkItemState.designNotRequired): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+    ],
     /*** Engineering review ***/
     (WorkItemState.agentCompleted, WorkItemState.reviewInProgress): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),

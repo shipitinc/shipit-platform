@@ -1,5 +1,6 @@
 import 'package:platform_contracts/platform_contracts.dart';
 
+import '../operator_action_record.dart';
 import 'workflow_store.dart';
 
 /// A non-durable [WorkflowStore] for tests and single-instance usage.
@@ -7,6 +8,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
   final Map<String, WorkItem> _workItems = {};
   final Map<String, HumanDecision> _decisions = {};
   final Map<String, WorkflowTransitionRecord> _records = {};
+  final Map<String, OperatorActionRecord> _operatorActions = {};
 
   @override
   Future<T> inTransaction<T>(
@@ -76,6 +78,31 @@ class InMemoryWorkflowStore implements WorkflowStore {
   @override
   Future<void> appendTransitionRecord(WorkflowTransitionRecord record) async {
     _records[record.transitionId] = record;
+  }
+
+  @override
+  Future<void> appendOperatorAction(OperatorActionRecord record) async {
+    // Models `operator_action_request_unique` on (workItemId, requestId): a
+    // replay of one operator intent collides instead of appending a second
+    // row. The in-memory store has no real unique index, so the invariant is
+    // asserted here rather than left to a database that only production has.
+    for (final existing in _operatorActions.values) {
+      if (existing.workItemId == record.workItemId &&
+          existing.requestId == record.requestId) {
+        throw OperatorActionConflictException(record);
+      }
+    }
+    _operatorActions[record.actionId] = record;
+  }
+
+  @override
+  Future<List<OperatorActionRecord>> readOperatorActionsForWorkItem(
+    String workItemId,
+  ) async {
+    // Insertion order, which is append order: a Dart Map preserves it.
+    return _operatorActions.values
+        .where((a) => a.workItemId == workItemId)
+        .toList(growable: false);
   }
 
   void _checkVersion(WorkItem item, int? expectedVersion) {

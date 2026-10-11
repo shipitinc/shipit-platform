@@ -111,6 +111,15 @@ class RacingWorkflowStore implements WorkflowStore {
   Future<void> appendTransitionRecord(WorkflowTransitionRecord record) =>
       _inner.appendTransitionRecord(record);
 
+  @override
+  Future<void> appendOperatorAction(OperatorActionRecord record) =>
+      _inner.appendOperatorAction(record);
+
+  @override
+  Future<List<OperatorActionRecord>> readOperatorActionsForWorkItem(
+    String workItemId,
+  ) => _inner.readOperatorActionsForWorkItem(workItemId);
+
   /// `WorkflowStore` is an `interface class`, so default bodies are not
   /// inherited by an implementer. Passing `this` keeps the race observable
   /// through the transaction handle the engine writes with.

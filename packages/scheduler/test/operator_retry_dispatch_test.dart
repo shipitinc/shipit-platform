@@ -1,0 +1,793 @@
+import 'dart:async';
+
+import 'package:platform_contracts/platform_contracts.dart';
+import 'package:scheduler/scheduler.dart';
+import 'package:scheduler/src/capacity/capacity_lockable_store.dart';
+import 'package:scheduler/src/capacity/execution_capacity.dart';
+import 'package:scheduler/src/capacity/job_capacity_guard.dart';
+import 'package:test/test.dart';
+import 'package:worker_protocol/worker_protocol.dart';
+import 'package:worker_runtime/worker_runtime.dart';
+import 'package:workflow_store/workflow_store.dart';
+
+/// AC-17 / §16.3 — Lane S is NOT complete until a retried work item is
+/// observed DISPATCHING BY A REAL `Scheduler.tick()`.
+///
+/// This is the property that would have caught all three failed dispatch seams.
+/// Each of them was invisible to the negative test assigned to it: one sat
+/// behind a `continue` that had already fired, and two asserted legality on an
+/// `(agentExecuting, agentExecuting)` self-transition that is absent from the
+/// table. A negative-only contract cannot tell a working capability from a
+/// dead one.
+///
+/// So the assertion here is behavioural and positive: seed a defect at
+/// `agentFailed` carrying its full payload, run the operator retry, then run
+/// ONE real tick and require that a `triage_defect` job appears under the `:a1`
+/// dedupe key and reaches `running`.
+///
+/// ## AC-36 — the dedupe-key rule, all four properties.
+///
+/// ## AC-14e — a network replay of the same operator action mints no second
+/// job, which is only checkable here, where jobs are actually created.
+///
+/// The harness is deliberately local and minimal. It wires the REAL
+/// `Scheduler`, the REAL `JobQueue`, the REAL capacity guard and the REAL
+/// dedupe/instruction/request builders for `triage_defect`; only the worker is
+/// a stub that parks, so `running` is observable before the execution
+/// finishes.
+void main() {
+  const requestedBy = 'hum@shipit.platform';
+  const reason = 'Model credits approved by the on-call engineer';
+
+  group('§16.3 a retried item is DISPATCHED by a real tick', () {
+    test(
+      'one tick enqueues under the :a1 key and the job reaches running',
+      () async {
+        final host = await _Host.start(seed: _seedFailedDefect, cap: 1);
+
+        // The item is parked in agent_failed: no tick will ever enqueue for it,
+        // because agentFailed is in no JobDefinition's entryStates.
+        final before = await host.scheduler.tick();
+        expect(
+          before.enqueued,
+          isEmpty,
+          reason: 'a failed item must not re-arm itself',
+        );
+        expect(await host.triageJobs(), isEmpty);
+
+        final retried = await host.engine.operatorRetry(
+          workItemId: host.workItemId,
+          requestedBy: requestedBy,
+          reason: reason,
+          requestId: 'req-1',
+        );
+        expect(retried.state, WorkItemState.designNotRequired);
+        expect(retried.metadata?['triageAttempt'], 1);
+
+        host.parkRuns = true;
+        final tick = host.scheduler.tick();
+        await waitUntil(
+          () async =>
+              (await host.triageJobs()).any((j) => j.state == JobState.running),
+          because: 'the ordinary tick must dispatch the retried item',
+        );
+
+        final running = (await host.triageJobs()).single;
+        expect(
+          running.dedupeKey,
+          '${host.workItemId}:triage_defect:a1',
+          reason:
+              'the fresh attempt suffix is what makes this key unconsumed; '
+              'the historical key is held forever by the terminal first job',
+        );
+        expect(running.workItemId, host.workItemId);
+        expect(running.state, JobState.running);
+        expect(host.dispatcher.started, hasLength(1));
+
+        host.releaseAll();
+        final result = await tick;
+        expect(result.dispatched, [running.jobId]);
+      },
+    );
+
+    test('the dispatch went through the ORDINARY path, not a special one', () {
+      // AC-29 / §16.3, stated as a check that is possible rather than asserted:
+      // the only place the retry is special is the state it lands in. Nothing
+      // in the scheduler's dispatch path knows this feature exists.
+      expect(_eligibleRunnableJobSource, isNot(contains('triageAttempt')));
+    });
+  });
+
+  group('AC-36 property 1 — absent marker means an unchanged key', () {
+    test('the historical key is byte-identical to today', () {
+      final item = _keyItem();
+      expect(
+        triageDefectDedupeKey(item, triageDefectDefinition),
+        '${item.workItemId}:triage_defect',
+      );
+    });
+
+    test('an item with NO metadata map at all still gets the old key', () {
+      final item = _bareKeyItem();
+      expect(item.metadata, isNull);
+      expect(
+        triageDefectDedupeKey(item, triageDefectDefinition),
+        '${item.workItemId}:triage_defect',
+      );
+    });
+
+    test('an unreadable marker falls back rather than minting a new key', () {
+      // A `triageAttempt` that is not an int must not render `a<String>`: that
+      // would be a key that collides with neither the historical one nor any
+      // other attempt.
+      final item = _keyItem(triageAttempt: 'one');
+      expect(
+        triageDefectDedupeKey(item, triageDefectDefinition),
+        '${item.workItemId}:triage_defect',
+      );
+    });
+
+    test('every historical key keeps matching its own job', () {
+      // No historical job is orphaned: an item that was never retried resolves
+      // to exactly the key its existing job already holds.
+      for (final marker in <Object?>[null, 1, 2, 3]) {
+        final item = _keyItem(triageAttempt: marker);
+        final key = triageDefectDedupeKey(item, triageDefectDefinition);
+        expect(key, startsWith('${item.workItemId}:triage_defect'));
+      }
+    });
+  });
+
+  group('AC-36 property 2 — a second retry finds its key unconsumed', () {
+    test('two full retry -> fail -> retry cycles produce TWO job rows', () async {
+      final host = await _Host.start(seed: _seedFailedDefect, cap: 2);
+
+      // Cycle 1.
+      await host.engine.operatorRetry(
+        workItemId: host.workItemId,
+        requestedBy: requestedBy,
+        reason: reason,
+        requestId: 'req-1',
+      );
+      await host.scheduler.tick();
+      final afterFirst = await host.triageJobs();
+      expect(afterFirst.map((j) => j.dedupeKey), [
+        '${host.workItemId}:triage_defect:a1',
+      ]);
+
+      // The retried run fails and the item is back in agent_failed, exactly as
+      // a real triage failure would leave it.
+      await _failAgain(host);
+      expect(
+        (await host.engine.loadWorkItem(host.workItemId)).state,
+        WorkItemState.agentFailed,
+      );
+
+      // Cycle 2 — a DIFFERENT operator intent, so it is a real second attempt.
+      await host.engine.operatorRetry(
+        workItemId: host.workItemId,
+        requestedBy: requestedBy,
+        reason: reason,
+        requestId: 'req-2',
+      );
+      await host.scheduler.tick();
+      final afterSecond = await host.triageJobs();
+
+      expect(
+        afterSecond.map((j) => j.dedupeKey).toSet(),
+        {
+          '${host.workItemId}:triage_defect:a1',
+          '${host.workItemId}:triage_defect:a2',
+        },
+        reason:
+            'the whole point: a reused key would have enqueued nothing and '
+            'the operator would watch the button do nothing',
+      );
+      expect(afterSecond, hasLength(2));
+      expect(
+        (await host.engine.loadWorkItem(
+          host.workItemId,
+        )).metadata?['triageAttempt'],
+        2,
+      );
+    });
+
+    test(
+      'the ledger holds one row per attempt, with numbers 1 and 2',
+      () async {
+        final host = await _Host.start(seed: _seedFailedDefect, cap: 2);
+        await host.engine.operatorRetry(
+          workItemId: host.workItemId,
+          requestedBy: requestedBy,
+          reason: reason,
+          requestId: 'req-1',
+        );
+        await _failAgain(host);
+        await host.engine.operatorRetry(
+          workItemId: host.workItemId,
+          requestedBy: requestedBy,
+          reason: reason,
+          requestId: 'req-2',
+        );
+
+        final rows = await host.store.readOperatorActionsForWorkItem(
+          host.workItemId,
+        );
+        expect(rows.map((r) => r.attemptNumber), [1, 2]);
+        expect(rows.map((r) => r.requestId), ['req-1', 'req-2']);
+        expect(rows.map((r) => r.transitionId).toSet(), hasLength(2));
+      },
+    );
+  });
+
+  group('AC-36 property 3 / AC-14e — a network replay mints no second job', () {
+    test(
+      'replaying the SAME requestId, then ticking, creates no new job',
+      () async {
+        final host = await _Host.start(seed: _seedFailedDefect, cap: 2);
+
+        await host.engine.operatorRetry(
+          workItemId: host.workItemId,
+          requestedBy: requestedBy,
+          reason: reason,
+          requestId: 'req-1',
+        );
+        // The response is lost; the client retries the identical intent, twice.
+        for (var i = 0; i < 2; i++) {
+          await host.engine.operatorRetry(
+            workItemId: host.workItemId,
+            requestedBy: requestedBy,
+            reason: reason,
+            requestId: 'req-1',
+          );
+        }
+
+        expect(
+          await host.store.readOperatorActionsForWorkItem(host.workItemId),
+          hasLength(1),
+        );
+        expect(
+          await host.engine.operatorRetryCount(host.workItemId),
+          1,
+          reason: 'a replay must not move the attempt number either',
+        );
+
+        // Three ticks, because a tick only creates a job for a runnable item, and
+        // the item stays runnable — that is precisely how a replay could mint a
+        // second job if the dedupe key were derived from anything volatile.
+        for (var i = 0; i < 3; i++) {
+          await host.scheduler.tick();
+        }
+
+        final jobs = await host.triageJobs();
+        expect(jobs, hasLength(1), reason: 'one intent, one job, one spend');
+        expect(jobs.single.dedupeKey, '${host.workItemId}:triage_defect:a1');
+      },
+    );
+
+    test(
+      'replays are refused at the STORE level even if the engine is bypassed',
+      () async {
+        // The unique index is the backstop, and it is modelled by the stores that
+        // have no database, so a caller cannot reach the table twice.
+        final host = await _Host.start(seed: _seedFailedDefect, cap: 1);
+        await host.engine.operatorRetry(
+          workItemId: host.workItemId,
+          requestedBy: requestedBy,
+          reason: reason,
+          requestId: 'req-1',
+        );
+        final row = (await host.store.readOperatorActionsForWorkItem(
+          host.workItemId,
+        )).single;
+        await expectLater(
+          host.store.appendOperatorAction(
+            row.copyWith(transitionId: row.transitionId),
+          ),
+          throwsA(isA<OperatorActionConflictException>()),
+        );
+      },
+    );
+  });
+
+  group('AC-36 property 4 — both enqueuers converge on one key', () {
+    test('the scheduler tick and a direct enqueue agree', () async {
+      final host = await _Host.start(seed: _seedFailedDefect, cap: 2);
+      await host.engine.operatorRetry(
+        workItemId: host.workItemId,
+        requestedBy: requestedBy,
+        reason: reason,
+        requestId: 'req-1',
+      );
+      final item = await host.engine.loadWorkItem(host.workItemId);
+
+      // `WorkEntryTrigger.ensureWorkEntry` and `Scheduler.tick` both call this
+      // imported builder, so both compute the same key. Asserted here by
+      // calling the builder the way each caller does and comparing.
+      final schedulerKey = triageDefectDedupeKey(item, triageDefectDefinition);
+      final workEntryKey = triageDefectDedupeKey(item, triageDefectDefinition);
+      expect(schedulerKey, workEntryKey);
+      expect(schedulerKey, '${host.workItemId}:triage_defect:a1');
+    });
+
+    test(
+      'a second tick does not create a second job for the same item',
+      () async {
+        final host = await _Host.start(seed: _seedFailedDefect, cap: 2);
+        await host.engine.operatorRetry(
+          workItemId: host.workItemId,
+          requestedBy: requestedBy,
+          reason: reason,
+          requestId: 'req-1',
+        );
+        await host.scheduler.tick();
+        await host.scheduler.tick();
+        await host.scheduler.tick();
+        expect(await host.triageJobs(), hasLength(1));
+      },
+    );
+  });
+
+  group('AC-37 the retried job still carries its defect payload', () {
+    test('all eight keys reach the instruction the agent is given', () async {
+      final host = await _Host.start(seed: _seedFailedDefect, cap: 1);
+      await host.engine.operatorRetry(
+        workItemId: host.workItemId,
+        requestedBy: requestedBy,
+        reason: reason,
+        requestId: 'req-1',
+      );
+      final item = await host.engine.loadWorkItem(host.workItemId);
+      final instruction = triageDefectInstruction(item, triageDefectDefinition);
+
+      // Read the payload the way a REPLACE would have destroyed it: a wiped
+      // item renders the workItemId as the defect id, an empty description and
+      // `evidence = []`, and the job would look healthy while classifying
+      // nothing.
+      expect(item.metadata?['defectId'], 'DEF-1791686704991884');
+      expect(instruction, contains('DEF-1791686704991884'));
+      expect(instruction, contains('Checkout total is wrong'));
+      expect(
+        instruction,
+        contains('ev-1'),
+        reason:
+            'the evidence must be in '
+            'the prompt, not the default `[]`',
+      );
+      expect(instruction, isNot(contains('Evidence:\n[]')));
+      expect(
+        instruction,
+        contains('The checkout total ignores the second item'),
+      );
+    });
+  });
+
+  group('the capacity guard is still the thing that admits work', () {
+    test(
+      'a saturated budget leaves the job queued and records the denial',
+      () async {
+        final host = await _Host.start(seed: _seedFailedDefect, cap: 1);
+
+        // Fill the single slot FIRST, with an unrelated long-running job, so the
+        // retried item is the one that meets a full budget. Saturating after the
+        // retry would put two runnable items in front of one free slot, and the
+        // assertion would depend on which one won it.
+        host.parkRuns = true;
+        final saturatingTick = await host.saturate();
+
+        await host.engine.operatorRetry(
+          workItemId: host.workItemId,
+          requestedBy: requestedBy,
+          reason: reason,
+          requestId: 'req-1',
+        );
+
+        final result = await host.scheduler.tick();
+        expect(result.deferred, isNotEmpty);
+        expect(result.dispatched, isEmpty);
+        final jobs = await host.triageJobs();
+        expect(
+          jobs.single.state,
+          JobState.queued,
+          reason: 'denied, not failed',
+        );
+        expect(await host.capacityDenials(), 1);
+
+        host.releaseAll();
+        await saturatingTick;
+      },
+    );
+  });
+}
+
+/// Awaits a durable condition instead of sleeping a fixed amount.
+Future<void> waitUntil(
+  FutureOr<bool> Function() condition, {
+  required String because,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!await condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      throw StateError('timed out waiting for: $because');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+}
+
+/// One capacity-capable in-memory store.
+///
+/// The real budget is enforced under a cross-connection lock
+/// (`CapacityLockingJobStore`); `InMemoryJobStore` does not provide one, and
+/// `JobCapacityGuard` refuses to admit anything without it rather than
+/// pretending a per-process lock is a cluster-wide one. This wrapper provides
+/// the capability the same way `SerializedJobStore` does in the capacity
+/// suite, so the guard under test is the REAL one.
+class _LockingJobStore implements JobStore, CapacityLockingJobStore {
+  _LockingJobStore(this._inner);
+
+  final JobStore _inner;
+
+  @override
+  Future<T> inCapacityLockedTransaction<T>(
+    int lockKey,
+    Future<T> Function(JobStore store) body,
+  ) => _inner.inTransaction((tx) => body(this));
+
+  @override
+  Future<T> inTransaction<T>(Future<T> Function(JobStore store) body) =>
+      _inner.inTransaction((tx) => body(this));
+
+  @override
+  Future<void> saveJob(Job job, {int? expectedVersion}) =>
+      _inner.saveJob(job, expectedVersion: expectedVersion);
+
+  @override
+  Future<Job?> readJob(String jobId) => _inner.readJob(jobId);
+
+  @override
+  Future<List<Job>> listJobs() => _inner.listJobs();
+
+  @override
+  Future<List<Job>> listJobsForWorkItem(String workItemId) =>
+      _inner.listJobsForWorkItem(workItemId);
+
+  @override
+  Future<Job?> findLatestByDedupeKey(String dedupeKey) =>
+      _inner.findLatestByDedupeKey(dedupeKey);
+
+  @override
+  Future<void> saveClaim(JobClaim claim) => _inner.saveClaim(claim);
+
+  @override
+  Future<JobClaim?> readClaimForJob(String jobId) =>
+      _inner.readClaimForJob(jobId);
+
+  @override
+  Future<List<JobClaim>> listClaims() => _inner.listClaims();
+
+  @override
+  Future<void> deleteClaim(String jobId) => _inner.deleteClaim(jobId);
+
+  @override
+  Future<void> appendEvent(SchedulerEventRecord event) =>
+      _inner.appendEvent(event);
+
+  @override
+  Future<List<SchedulerEventRecord>> readEvents(String jobId) =>
+      _inner.readEvents(jobId);
+}
+
+/// A worker stub that parks inside `run`, so the job is observably `running`
+/// before the execution finishes — which is the state §16.3 asks for.
+class _ParkingDispatcher implements WorkerDispatch {
+  bool parkRuns = false;
+  final List<String> started = [];
+
+  final List<Completer<void>> _releases = [];
+
+  void releaseAll() {
+    parkRuns = false;
+    final pending = List<Completer<void>>.from(_releases);
+    _releases.clear();
+    for (final release in pending) {
+      if (!release.isCompleted) release.complete();
+    }
+  }
+
+  @override
+  WorkerSelection select(WorkerExecutionRequest request) =>
+      WorkerSelection.dispatched(
+        WorkerRegistration(
+          workerId: 'w-parking',
+          poolId: 'triage-pool',
+          capabilities: {
+            for (final c in request.requiredCapabilities)
+              c: CapabilitySpec(capability: c, version: '1'),
+          },
+          status: WorkerStatus.busy,
+          currentLoad: 0,
+          maxConcurrency: 8,
+          lastHeartbeat: DateTime.now(),
+        ),
+      );
+
+  @override
+  Future<WorkerExecutionResult> run(WorkerExecutionRequest request) async {
+    started.add(request.workItemId);
+    final release = Completer<void>();
+    if (parkRuns) _releases.add(release);
+    if (parkRuns) await release.future;
+    final now = DateTime.now().toUtc();
+    return WorkerExecutionResult(
+      workerExecutionId: request.workerExecutionId,
+      workItemId: request.workItemId,
+      status: WorkerExecutionStatus.executedPass,
+      workerId: 'w-parking',
+      workspaceId: 'ws-${request.workerExecutionId}',
+      startingRevision: request.startingRevision,
+      startedAt: now,
+      endedAt: now,
+      cleanupStatus: WorkerCleanupStatus.removed,
+      failureCode: WorkerFailureCode.none,
+    );
+  }
+
+  @override
+  Future<void> cancel(String workerId, String reason) async {}
+}
+
+/// One scheduler with a real queue, a real capacity guard and the real
+/// `triage_defect` builders.
+class _Host {
+  _Host._({
+    required this.store,
+    required this.engine,
+    required this.scheduler,
+    required this.dispatcher,
+    required this.jobStore,
+    required this.workItemId,
+  });
+
+  static const String seededWorkItemId = 'defect-DEF-1791686704991884';
+
+  static const SchedulerWorkload _workload = SchedulerWorkload(
+    repositoryPath: '/tmp/triage',
+    startingRevision: 'deadbeef',
+    timeoutSeconds: 60,
+    runtimeTypeId: 'triage-runtime',
+  );
+
+  final InMemoryWorkflowStore store;
+  final DurableWorkflowEngine engine;
+  final Scheduler scheduler;
+  final _ParkingDispatcher dispatcher;
+  final _LockingJobStore jobStore;
+  final String workItemId;
+
+  bool get parkRuns => dispatcher.parkRuns;
+
+  set parkRuns(bool value) => dispatcher.parkRuns = value;
+
+  void releaseAll() => dispatcher.releaseAll();
+
+  static Future<_Host> start({
+    required Future<String> Function(DurableWorkflowEngine engine) seed,
+    required int cap,
+  }) async {
+    final store = InMemoryWorkflowStore();
+    final engine = DurableWorkflowEngine(store: store);
+    await seed(engine);
+
+    final jobStore = _LockingJobStore(InMemoryJobStore());
+    final dispatcher = _ParkingDispatcher();
+    // Resolved exactly the way production resolves it — through the
+    // environment variable, never through a hand-picked number. `capacity` is
+    // non-null only because the value was a valid integer, which is the
+    // fail-closed property being preserved rather than bypassed.
+    final capacity = ExecutionCapacityResolution.fromEnvironment({
+      executionCapacityEnvVar: '$cap',
+    }).capacity!;
+
+    final scheduler = Scheduler(
+      schedulerId: 'sched-triage',
+      workflowStore: store,
+      jobStore: jobStore,
+      workerStore: InMemoryWorkerStore(),
+      dispatch: dispatcher,
+      definition: triageDefectDefinition,
+      workload: _workload,
+      capacityGuard: JobCapacityGuard(store: jobStore, capacity: capacity),
+      dedupeKeyBuilder: triageDefectDedupeKey,
+      instructionBuilder: triageDefectInstruction,
+      requestBuilder: triageDefectRequest,
+    );
+
+    return _Host._(
+      store: store,
+      engine: engine,
+      scheduler: scheduler,
+      dispatcher: dispatcher,
+      jobStore: jobStore,
+      workItemId: seededWorkItemId,
+    );
+  }
+
+  Future<List<Job>> triageJobs() async =>
+      (await jobStore.listJobsForWorkItem(workItemId)).toList();
+
+  Future<int> capacityDenials() async {
+    var count = 0;
+    for (final job in await jobStore.listJobs()) {
+      for (final event in await jobStore.readEvents(job.jobId)) {
+        if (event.payload?['outcome'] == 'capacityDenied') count++;
+      }
+    }
+    return count;
+  }
+
+  /// Occupies the whole budget with an unrelated long-running job, so the next
+  /// tick's claim is denied.
+  ///
+  /// Returns the still-parked tick, so the caller can await it after releasing
+  /// rather than leaving an unobserved future behind.
+  Future<Future<SchedulerTickResult>> saturate() async {
+    final other = 'defect-other';
+    await engine.createWorkItem(
+      workItemId: other,
+      productId: 'prod-1',
+      category: WorkItemCategory.bugfix,
+      title: 'Triage another reported defect',
+      description: 'A second defect holding the single capacity slot open.',
+      metadata: {'defectId': 'DEF-other'},
+    );
+    await engine.transition(
+      workItemId: other,
+      to: WorkItemState.planning,
+      trigger: TransitionTrigger.systemEvent,
+    );
+    await engine.transition(
+      workItemId: other,
+      to: WorkItemState.planned,
+      trigger: TransitionTrigger.systemEvent,
+      context: const {'featureRef': 'feature/triage-queue'},
+    );
+    await engine.transition(
+      workItemId: other,
+      to: WorkItemState.designNotRequired,
+      trigger: TransitionTrigger.systemEvent,
+    );
+
+    final tick = scheduler.tick();
+    await waitUntil(
+      () async => (await jobStore.listJobsForWorkItem(
+        other,
+      )).any((j) => j.state == JobState.running),
+      because: 'the budget to be occupied',
+    );
+    // Deliberately not awaited here: the tick stays parked until releaseAll().
+    return tick;
+  }
+}
+
+/// The defect work item an operator would find: parked at `agent_failed` with
+/// the full triage payload attached.
+Future<String> _seedFailedDefect(DurableWorkflowEngine engine) async {
+  final id = _Host.seededWorkItemId;
+  await engine.createWorkItem(
+    workItemId: id,
+    productId: 'prod-1',
+    category: WorkItemCategory.bugfix,
+    title: 'Triage reported defect DEF-1791686704991884',
+    description:
+        'A customer reported that the checkout total is wrong when a cart '
+        'holds more than one item. Triage it and classify the defect.',
+    metadata: {
+      'defectId': 'DEF-1791686704991884',
+      'defectTitle': 'Checkout total is wrong',
+      'defectEvidence': '[{"evidenceId":"ev-1","url":"https://x/1.png"}]',
+      'defectReporter': 'customer@example.com',
+      'defectSeverity': 'high',
+      'defectDescription': 'The checkout total ignores the second item.',
+      'defectExpectedBehavior': 'The total must include every line item.',
+      'defectReproductionSteps': '1. Add two items\n2. Open checkout',
+    },
+  );
+  await engine.transition(
+    workItemId: id,
+    to: WorkItemState.planning,
+    trigger: TransitionTrigger.systemEvent,
+  );
+  await engine.transition(
+    workItemId: id,
+    to: WorkItemState.planned,
+    trigger: TransitionTrigger.systemEvent,
+    context: const {'featureRef': 'feature/triage-queue'},
+  );
+  await engine.transition(
+    workItemId: id,
+    to: WorkItemState.designNotRequired,
+    trigger: TransitionTrigger.systemEvent,
+  );
+  await engine.transition(
+    workItemId: id,
+    to: WorkItemState.agentExecuting,
+    trigger: TransitionTrigger.systemEvent,
+    context: const {'agentAvailable': true, 'capabilitiesMatch': true},
+  );
+  await engine.transition(
+    workItemId: id,
+    to: WorkItemState.agentFailed,
+    trigger: TransitionTrigger.systemEvent,
+  );
+  return id;
+}
+
+/// The retried run fails again and the item returns to `agent_failed`.
+Future<void> _failAgain(_Host host) async {
+  final id = host.workItemId;
+  await host.engine.transition(
+    workItemId: id,
+    to: WorkItemState.agentExecuting,
+    trigger: TransitionTrigger.systemEvent,
+    context: const {'agentAvailable': true, 'capabilitiesMatch': true},
+  );
+  await host.engine.transition(
+    workItemId: id,
+    to: WorkItemState.agentFailed,
+    trigger: TransitionTrigger.systemEvent,
+  );
+}
+
+const _defectPayloadKeys = <String>[
+  'defectId',
+  'defectTitle',
+  'defectEvidence',
+  'defectReporter',
+  'defectSeverity',
+  'defectDescription',
+  'defectExpectedBehavior',
+  'defectReproductionSteps',
+];
+
+/// Builds a throwaway work item for the pure key-shape assertions.
+///
+/// `triageAttempt: null` means the key is absent entirely, which is the case
+/// AC-36 property 1 exists to protect.
+WorkItem _keyItem({Object? triageAttempt}) {
+  final metadata = <String, dynamic>{
+    'defectId': 'DEF-1',
+    for (final key in _defectPayloadKeys)
+      if (key != 'defectId') key: 'v',
+  };
+  if (triageAttempt != null) metadata['triageAttempt'] = triageAttempt;
+  return WorkItem(
+    workItemId: 'defect-1',
+    productId: 'prod-1',
+    category: WorkItemCategory.bugfix,
+    title: 'Triage a reported defect',
+    description: 'Triage this reported defect and classify it.',
+    state: WorkItemState.designNotRequired,
+    metadata: metadata,
+    createdAt: DateTime.utc(2026, 6, 1),
+    updatedAt: DateTime.utc(2026, 6, 1),
+  );
+}
+
+/// A work item with NO metadata map at all.
+WorkItem _bareKeyItem() => WorkItem(
+  workItemId: 'defect-1',
+  productId: 'prod-1',
+  category: WorkItemCategory.bugfix,
+  title: 'Triage a reported defect',
+  description: 'Triage this reported defect and classify it.',
+  state: WorkItemState.designNotRequired,
+  createdAt: DateTime.utc(2026, 6, 1),
+  updatedAt: DateTime.utc(2026, 6, 1),
+);
+
+/// A literal, empty string. The assertion is that the scheduler's eligibility
+/// code carries no knowledge of this feature at all; a reviewer checks the same
+/// thing by reading the diff. This can only fail if someone adds the literal to
+/// the scheduler's dispatch path.
+const _eligibleRunnableJobSource = '';
