@@ -237,9 +237,7 @@ class ControlPlaneService {
   }
 
   /// Reads a single direction by ID.
-  Future<HumanDirection?> readDirection({
-    required String directionId,
-  }) async {
+  Future<HumanDirection?> readDirection({required String directionId}) async {
     return humanDirectionStore.readDirection(directionId: directionId);
   }
 
@@ -986,13 +984,12 @@ class ControlPlaneService {
       'attempts': _workEntryConvergenceAttempts,
       'action':
           'this request is durable and is returned as accepted; no triage job '
-          'was enqueued by this path. The periodic work-entry sweep retries '
-          'it, so nothing is lost.',
+          'was enqueued by this path. NO SWEEP EXISTS YET to retry it, so the '
+          'work item stays where it is until the work-entry sweep lands. '
+          'Nothing is discarded, but nothing retries it either — read this as '
+          '"recorded and not dispatched", not as "pending automatic retry".',
     });
-    return (
-      decision: null,
-      item: await workflowStore.readWorkItem(workItemId),
-    );
+    return (decision: null, item: await workflowStore.readWorkItem(workItemId));
   }
 
   /// Feature requests as the Reports screen's `Feature requests` tab reads them.
@@ -1295,8 +1292,9 @@ class ControlPlaneService {
           decision?.toString() ?? 'no decision (intake did not converge)',
       'action':
           'the defect report is recorded and returned to the reporter; no '
-          'triage job was created. A gated defect is dispatched by the '
-          'periodic work-entry sweep once its product becomes governed.',
+          'triage job was created. Re-dispatch requires the work-entry sweep, '
+          'which DOES NOT EXIST YET — until it lands, a gated defect stays '
+          'gated and will not be picked up on its own.',
     });
 
     return defect;
@@ -1677,10 +1675,7 @@ class ControlPlaneService {
       recommendation: 'fixed',
       blocking: true,
       requestedAt: now,
-      metadata: {
-        'defectId': defectId,
-        'fromStatus': defect.status.wire,
-      },
+      metadata: {'defectId': defectId, 'fromStatus': defect.status.wire},
       updatedAt: now,
     );
     await humanDecisionStore.saveHumanDecision(decision);
