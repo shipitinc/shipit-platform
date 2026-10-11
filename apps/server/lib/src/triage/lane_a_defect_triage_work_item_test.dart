@@ -489,6 +489,15 @@ void main() {
               'point. If the new entry point walked too this would be 3, which '
               'is the whole defect this split exists to close',
         ),
+        (
+          'workflowEngine.transition(',
+          3,
+          'the mutation primitive itself — three calls, every one of them '
+              'inside the walk. Pinning only the helper NAME leaves the '
+              'primitive unpinned, and a caller that moves an item by calling '
+              'this directly is a second definition of what triageable means '
+              'and a second thing to keep in step',
+        ),
       ];
 
       for (final (needle, expected, why) in pinned) {
@@ -760,20 +769,112 @@ Future<String> _laneASource() async {
 }
 
 /// The source text of the member declaration starting at [declaration], from
-/// its opening line to the `;` that ends it.
+/// its opening line through the `}` that closes its body.
 ///
 /// Scoped to ONE declaration rather than to the whole file, because a
 /// whole-file grep for a forbidden literal fails for reasons that have nothing
 /// to do with the guard: a doc comment that *explains* the shape contains the
 /// shape, and saying so is correct documentation.
 ///
+/// It ends at the MATCHING brace rather than at the first `;`. A member body
+/// is several statements long, so stopping at the first one scans a prefix and
+/// nothing more — and a forbidden call placed second then reads as absent. That
+/// is a guard passing vacuously, which is worse than no guard: it reports the
+/// absence of a defect it never looked at.
+///
 /// Returns null when [declaration] is absent, so a caller that guards on
 /// "contains no literal" also fails when the member moved — a guard that finds
-/// nothing to scan must not read as a pass.
+/// nothing to scan must not read as a pass. A member with no brace-delimited
+/// body at all — an expression-bodied rewrite, say — has no body text to
+/// return, and is reported the same way: loudly, not as a clean scan.
 String? _bodyOf(String source, String declaration) {
   final start = source.indexOf(declaration);
   if (start < 0) return null;
-  final end = source.indexOf(';', start);
-  if (end < 0) return null;
-  return source.substring(start, end + 1);
+  final close = _closingBraceOfBody(source, start);
+  if (close < 0) return null;
+  return source.substring(start, close + 1);
 }
+
+/// The index of the `}` that closes the body of the member whose text begins at
+/// [start], or -1 when there is no such brace.
+///
+/// The body's `{` is the first one *outside* the parameter list, so the scan
+/// counts parentheses until the signature is done — otherwise a named-parameter
+/// block would be read as the body. Inside the body every brace is counted,
+/// and string literals and comments are stepped over so that a brace in either
+/// cannot close the body early and shorten the scan back to a prefix.
+int _closingBraceOfBody(String source, int start) {
+  var index = start;
+  var parens = 0;
+  var depth = 0;
+  var inBody = false;
+
+  while (index < source.length) {
+    final char = source[index];
+
+    if (char == '/' && index + 1 < source.length) {
+      if (source[index + 1] == '/') {
+        final newline = source.indexOf('\n', index);
+        index = newline < 0 ? source.length : newline;
+        continue;
+      }
+      if (source[index + 1] == '*') {
+        final end = source.indexOf('*/', index + 2);
+        index = end < 0 ? source.length : end + 2;
+        continue;
+      }
+    }
+    if (char == "'" || char == '"') {
+      index = _endOfStringLiteral(source, index);
+      continue;
+    }
+
+    if (char == '{' && (inBody || parens == 0)) {
+      inBody = true;
+      depth++;
+    } else if (char == '}' && inBody) {
+      depth--;
+      if (depth == 0) return index;
+    } else if (char == '(' && !inBody) {
+      parens++;
+    } else if (char == ')' && !inBody) {
+      parens--;
+    }
+    index++;
+  }
+  return -1;
+}
+
+/// The index just past the string literal that opens at [quote].
+///
+/// Handles the triple-quoted forms, backslash escapes, and raw strings, where a
+/// backslash is an ordinary character rather than the start of an escape.
+int _endOfStringLiteral(String source, int quote) {
+  final char = source[quote];
+  final delimiter = source.startsWith(char * 3, quote) ? char * 3 : char;
+  final raw = _hasRawPrefix(source, quote);
+
+  var index = quote + delimiter.length;
+  while (index < source.length) {
+    if (!raw && source[index] == r'\') {
+      index += 2;
+      continue;
+    }
+    if (source.startsWith(delimiter, index)) return index + delimiter.length;
+    index++;
+  }
+  return source.length;
+}
+
+/// Whether the string literal opening at [quote] carries an `r`/`R` prefix.
+bool _hasRawPrefix(String source, int quote) {
+  var index = quote - 1;
+  while (index >= 0 && _letter.hasMatch(source[index])) {
+    index--;
+  }
+  if (index == quote - 1) return false;
+  return source[index] == 'r' || source[index] == 'R';
+}
+
+/// One ASCII letter — the run that can precede a quote as a string prefix.
+final RegExp _letter = RegExp('[a-zA-Z]');
