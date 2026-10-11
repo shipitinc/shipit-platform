@@ -94,11 +94,21 @@ class ExecutionCoordinator {
   );
 
   final Map<String, AgentSession> _liveSessions = {};
+  final Map<String, StreamSubscription<AgentEvent>> _subscriptions = {};
   final Map<String, Completer<AgentEvent>> _terminalContracts = {};
   final Map<String, Completer<AgentExecution>> _settledContracts = {};
   final Map<String, int> _eventSequences = {};
 
   bool get isBusy => _liveSessions.isNotEmpty;
+
+  /// How many agent sessions this coordinator currently holds.
+  ///
+  /// Read-only observability, and the number that must not grow across a
+  /// timeout: a drive path that resumes after its execution was released would
+  /// otherwise re-register a session nothing will ever take away again, leaking
+  /// both the map entry and its event subscription — and, worse, reporting a
+  /// dead execution as live.
+  int get liveSessionCount => _liveSessions.length;
 
   /// Whether this process currently holds a LIVE agent session for
   /// [executionId].
@@ -233,12 +243,38 @@ class ExecutionCoordinator {
       return _failWithoutSession(request, 'start failure: $e');
     }
 
+    // A drive path that resumes AFTER this execution was settled must not
+    // reopen it.
+    //
+    // `_terminalContracts` is inserted before the drive begins and removed by
+    // `_releaseExecution`, so its absence means this coordinator has already
+    // reached a verdict for this id - normally, or by timeout. Registering the
+    // session here anyway would do two lasting harm: the row below would be
+    // rewritten from terminal back to `running`, and the entry plus its event
+    // subscription would never be removed, because nothing is left driving.
+    // The second is worse than it looks - a resurrected `_liveSessions` entry
+    // makes `hasLiveSession` answer "alive" for an execution with nothing
+    // behind it, which is precisely how a timed-out execution turns back into a
+    // zombie that the lease renewal keeps alive forever.
+    if (!_terminalContracts.containsKey(request.executionId)) {
+      await session.close();
+      return _abandonedRecord(request);
+    }
+
     _liveSessions[request.executionId] = session;
-    session.eventStream.listen(
+    final subscription = session.eventStream.listen(
       (e) => _onSessionEvent(request.executionId, request.workItemId, e),
     );
+    _subscriptions[request.executionId] = subscription;
 
     final running = await store.readExecution(request.executionId);
+    if (running.isTerminal) {
+      // Settled between the check above and this read. Writing `running` over
+      // a terminal row would resurrect it, so stop here and keep the verdict.
+      _forget(request.executionId);
+      await session.close();
+      return running;
+    }
     await store.saveExecution(
       running.copyWith(
         status: AgentSessionStatus.running,
@@ -264,6 +300,26 @@ class ExecutionCoordinator {
     return _finalize(request, terminal, budget, dispatchStartedAt);
   }
 
+  /// The durable record for an execution this coordinator is no longer driving,
+  /// or a synthetic terminal one if the row cannot be read.
+  Future<AgentExecution> _abandonedRecord(AgentExecutionRequest request) async {
+    final recorded = await store.readExecutionOrNull(request.executionId);
+    if (recorded != null) return recorded;
+    return _failWithoutSession(
+      request,
+      'execution was already settled before its session could be registered',
+    );
+  }
+
+  /// Drops this coordinator's bookkeeping for [executionId] — the live-session
+  /// entry AND its event subscription. Both are registered together in [_drive],
+  /// so they are released together; leaving the subscription behind keeps the
+  /// session object and its event stream reachable for the life of the process.
+  void _forget(String executionId) {
+    _liveSessions.remove(executionId);
+    _subscriptions.remove(executionId)?.cancel();
+  }
+
   /// The last-resort terminal state for an execution whose dispatch path did
   /// not settle inside its budget.
   ///
@@ -275,8 +331,18 @@ class ExecutionCoordinator {
   /// the job is never left running behind a durable status string.
   ///
   /// The drive path may still be wedged somewhere that is not the terminal
-  /// wait and can finish later. That is safe: its writes are version-guarded,
-  /// it finds the execution already terminal, and the timeout verdict stands.
+  /// wait, and can finish long after this returns.
+  ///
+  /// It cannot undo this verdict, and NOT because of the optimistic version
+  /// guard: both late write sites re-read the row immediately before writing and
+  /// CAS against that fresh version, so the version check would pass and the
+  /// terminal row WOULD be overwritten. What actually holds the line is the
+  /// explicit terminal check each of them makes on the row they just read, plus
+  /// the fact that [_drive] refuses to register a session for an execution that
+  /// has already been released. A reviewer should treat "the version guard
+  /// saves us" as false here: it does not, and the tests assert on the write
+  /// sequence rather than on the final row precisely because the final row can
+  /// look correct while the row spent real time non-terminal.
   Future<AgentExecution> _expireExecution(
     AgentExecutionRequest request,
     Duration budget,
@@ -419,6 +485,21 @@ class ExecutionCoordinator {
 
       final results = await _complete(request, session, terminalEvent);
 
+      // A completion that arrives after the execution was already settled must
+      // not overwrite that verdict. This pre-check is an optimisation - it
+      // avoids even building the write - and the authoritative check is the one
+      // inside the transaction below, which is atomic with the read it guards.
+      //
+      // This is also what distinguishes a LATE result from a RESURRECTION: a
+      // result that arrives while the execution is still open finds a
+      // non-terminal row and lands normally, and nothing here discards it.
+      final settled = await store.readExecution(executionId);
+      if (settled.isTerminal) {
+        await session?.close();
+        _releaseExecution(executionId, record: settled);
+        return settled;
+      }
+
       await store.inTransaction((tx) async {
         await _appendEvent(
           executionId: executionId,
@@ -429,6 +510,7 @@ class ExecutionCoordinator {
         );
 
         final recorded = await tx.readExecution(executionId);
+        if (recorded.isTerminal) return; // Keep the verdict that already won.
         await tx.saveExecution(
           recorded.copyWith(
             status: results.status,
@@ -493,19 +575,34 @@ class ExecutionCoordinator {
     );
     await store.saveResult(request.executionId, stamped);
 
+    // A terminal event can arrive after this execution was already declared
+    // failed. The durable row, not the event, decides whether there is still an
+    // execution to complete.
+    final recorded = await store.readExecutionOrNull(request.executionId);
+    final alreadySettled = recorded != null && recorded.isTerminal;
+
     return switch (terminalEvent) {
-      SessionCompleted() => await _completeSuccess(request, stamped),
+      SessionCompleted() => await _completeSuccess(
+        request,
+        stamped,
+        alreadySettled: alreadySettled,
+      ),
       _ => await _completeFailure(request, stamped, terminalEvent),
     };
   }
 
   Future<_Completion> _completeSuccess(
     AgentExecutionRequest request,
-    AgentResult stamped,
-  ) async {
+    AgentResult stamped, {
+    required bool alreadySettled,
+  }) async {
     PlatformVerification? verification;
     final plan = verificationPlan;
-    if (plan != null) {
+    // Verification spawns a real process in the workspace and runs BEFORE the
+    // workflow transition. For an execution already declared failed, that is a
+    // subprocess spawned to produce evidence nobody will read: the write that
+    // would carry it is refused, and the transition is already decided.
+    if (plan != null && !alreadySettled) {
       final outcome = await verifier.verify(
         workingDirectory: request.workspace.path,
         command: plan.command,
@@ -768,7 +865,7 @@ class ExecutionCoordinator {
     AgentExecution? record,
     Object? error,
   }) {
-    _liveSessions.remove(executionId);
+    _forget(executionId);
     _eventSequences.remove(executionId);
     _terminalContracts.remove(executionId);
     final settled = _settledContracts.remove(executionId);

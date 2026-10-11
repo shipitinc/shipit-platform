@@ -32,12 +32,18 @@ void main() {
 
   tearDown(() => fixture.dispose());
 
-  ExecutionCoordinator coordinatorOf(FakeBehavior behavior) {
+  ExecutionCoordinator coordinatorOf(
+    FakeBehavior behavior, {
+    Completer<void>? startGate,
+    Completer<void>? instructionGate,
+  }) {
     final session = FakeAgentSession(
       executionId: 'exec-1',
       workItemId: 'wi-1',
       behavior: behavior,
       sessionId: 'ses-fake-1',
+      startGate: startGate,
+      instructionGate: instructionGate,
     );
     return ExecutionCoordinator(
       store: executionStore,
@@ -179,35 +185,96 @@ void main() {
     });
 
     test(
-      'an execution killed by its budget leaves no live session, so the zombie '
-      'this incident produced is observable as dead',
+      'a timed-out execution has nothing behind it, in EVERY wedge shape',
       () async {
-        await workItemReadyForExecution();
-        final coordinator = coordinatorOf(FakeBehavior.neverTerminate);
+        // Meaningful only across all of them. `neverTerminate` is the one shape
+        // whose drive path never re-registers a session, so a test written only
+        // against it passes for the wrong reason and hides the interaction that
+        // matters: a startSession or sendInstruction wedge that RESUMES after
+        // the budget expired re-registers a released session and makes this
+        // answer wrongly.
+        for (final shape in _wedges) {
+          await workItemReadyForExecution();
+          final gate = Completer<void>();
+          final coordinator = coordinatorOf(
+            shape.behavior,
+            startGate: shape.wedgesStart ? gate : null,
+            instructionGate: shape.wedgesInstruction ? gate : null,
+          );
 
-        final timedOut = await coordinator.execute(
-          AgentExecutionRequest(
-            executionId: 'exec-1',
-            workItemId: 'wi-1',
-            role: AgentRole.implementer,
-            runtimeTypeId: 'fake-runtime',
-            workspace: AgentWorkspace(
-              workspaceId: 'ws-1',
-              path: fixture.root.path,
+          final timedOut = await coordinator.execute(
+            AgentExecutionRequest(
+              executionId: 'exec-1',
+              workItemId: 'wi-1',
+              role: AgentRole.implementer,
+              runtimeTypeId: 'fake-runtime',
+              workspace: AgentWorkspace(
+                workspaceId: 'ws-1',
+                path: fixture.root.path,
+              ),
+              instruction: 'implement the calculator add function',
+              timeoutSeconds: 2,
+              permittedScope: 'lib/ only',
             ),
-            instruction: 'implement the calculator add function',
-            timeoutSeconds: 2,
-            permittedScope: 'lib/ only',
-          ),
-        );
+          );
+          expect(
+            timedOut.status,
+            AgentSessionStatus.failed,
+            reason: shape.name,
+          );
+          expect(
+            coordinator.hasLiveSession('exec-1'),
+            isFalse,
+            reason: '${shape.name}: released at expiry',
+          );
 
-        expect(timedOut.status, AgentSessionStatus.failed);
-        expect(
-          coordinator.hasLiveSession('exec-1'),
-          isFalse,
-          reason: 'a timed-out execution has nothing behind it',
-        );
+          // Resume the wedge AFTER the verdict. This is the whole hazard.
+          gate.complete();
+          await _settle();
+
+          expect(
+            coordinator.hasLiveSession('exec-1'),
+            isFalse,
+            reason:
+                '${shape.name}: a resumed drive path must not re-register a '
+                'released session, or the probe reports a dead execution as '
+                'alive and the zombie class returns',
+          );
+          expect(coordinator.liveSessionCount, 0, reason: shape.name);
+        }
       },
     );
   });
+}
+
+/// The wedge shapes a budget can expire inside, and where each one wedges.
+const _wedges = <_Wedge>[
+  _Wedge('neverTerminate', FakeBehavior.neverTerminate),
+  _Wedge('startSession', FakeBehavior.cancelRequested, wedgesStart: true),
+  _Wedge(
+    'sendInstruction',
+    FakeBehavior.cancelRequested,
+    wedgesInstruction: true,
+  ),
+];
+
+class _Wedge {
+  const _Wedge(
+    this.name,
+    this.behavior, {
+    this.wedgesStart = false,
+    this.wedgesInstruction = false,
+  });
+
+  final String name;
+  final FakeBehavior behavior;
+  final bool wedgesStart;
+  final bool wedgesInstruction;
+}
+
+/// Let a resumed drive path finish running, so a late write would have landed.
+Future<void> _settle() async {
+  for (var i = 0; i < 8; i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+  }
 }

@@ -4,15 +4,17 @@ import 'package:agent_runtime/agent_runtime.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 
 /// A scripted [AgentSession] for coordinator tests. Because the coordinator
-/// subscribes to the stream after `start`, and because broadcast delivery must
-/// be deterministic, the controller is synchronous: events are delivered
-/// straight through during the adds.
+///  /// subscribes to the stream after `start`, and because broadcast delivery must
+///  /// be deterministic, the controller is synchronous: events are delivered
+///  /// straight through during the adds.
 class FakeAgentSession implements AgentSession {
   FakeAgentSession({
     required this.executionId,
     required this.workItemId,
     this.behavior = FakeBehavior.complete,
     this.sessionId = 'ses-fake',
+    this.startGate,
+    this.instructionGate,
   });
 
   final String executionId;
@@ -24,13 +26,57 @@ class FakeAgentSession implements AgentSession {
   AgentSessionStatus _status = AgentSessionStatus.starting;
   var _cancelled = false;
 
+  /// When non-null, `createSession` wedges until this gate is completed. Models
+  /// a runtime that takes an unbounded time to bring a session up, and — because
+  /// the wedge is RELEASABLE — one that eventually answers after the
+  /// coordinator has already given up on it.
+  final Completer<void>? startGate;
+
+  /// When non-null, `sendInstruction` wedges until this gate is completed. Same
+  /// purpose for the instruction round trip.
+  final Completer<void>? instructionGate;
+
   @override
   AgentSessionStatus get status => _status;
 
   @override
   Stream<AgentEvent> get eventStream => _events.stream;
 
+  /// Lets a wedged `start` answer, so a test can resume a drive path that the
+  /// coordinator's budget already gave up on.
+  void releaseStart() {
+    final gate = startGate;
+    if (gate != null && !gate.isCompleted) gate.complete();
+  }
+
+  /// Lets a wedged `sendInstruction` answer.
+  void releaseInstruction() {
+    final gate = instructionGate;
+    if (gate != null && !gate.isCompleted) gate.complete();
+  }
+
+  /// Emits a completion as though the agent finished, for a session whose
+  /// configured behaviour never does so on its own. Used to deliver a terminal
+  /// event AFTER the coordinator stopped waiting for one.
+  void emitLateCompletion() {
+    if (_status == AgentSessionStatus.completed) return;
+    _status = AgentSessionStatus.completed;
+    unawaited(
+      getResult().then(
+        (result) => _events.add(
+          SessionCompleted(
+            eventId: 'evt-late-complete',
+            timestamp: DateTime.now(),
+            result: result,
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> start(AgentSessionConfig config) async {
+    final gate = startGate;
+    if (gate != null) await gate.future;
     _status = AgentSessionStatus.running;
     _events.add(
       SessionStarted(
@@ -44,6 +90,8 @@ class FakeAgentSession implements AgentSession {
 
   @override
   Future<void> sendInstruction(AgentInstruction instruction) async {
+    final gate = instructionGate;
+    if (gate != null) await gate.future;
     _events.add(
       AgentMessageChunk(
         eventId: 'evt-chunk',
