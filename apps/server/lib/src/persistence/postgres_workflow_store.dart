@@ -277,8 +277,19 @@ class PostgresWorkflowStore implements WorkflowStore {
     );
   }
 
-  /// OLDEST FIRST. `requestId` is unique per work item, so the replay lookup
-  /// cannot face two candidates; the retry count is order-independent.
+  /// OLDEST FIRST, with `"actionId"` as a tiebreaker.
+  ///
+  /// The interface promises "OLDEST FIRST" and `createdAt` alone does not
+  /// deliver it: two actions recorded in the same instant have no defined
+  /// order between them in SQL, so a store that relied on the bare timestamp
+  /// could return the same list in a different order on a different run.
+  /// `actionId` is UNIQUE, so the pair is a total order and the promise holds.
+  /// (`actionId` is not chronological — it embeds a timestamp plus a random
+  /// suffix — but it only has to be deterministic among rows whose timestamps
+  /// are equal, and it is.)
+  ///
+  /// `requestId` is unique per work item, so the replay lookup cannot face two
+  /// candidates; the retry count is order-independent.
   @override
   Future<List<OperatorActionRecord>> readOperatorActionsForWorkItem(
     String workItemId,
@@ -286,7 +297,7 @@ class PostgresWorkflowStore implements WorkflowStore {
     final result = await _db.query(
       '''SELECT * FROM "operator_action"
          WHERE "workItemId" = @workItemId
-         ORDER BY "createdAt" ASC''',
+         ORDER BY "createdAt" ASC, "actionId" ASC''',
       parameters: QueryParameters.named({'workItemId': workItemId}),
     );
     return result.map(_operatorActionFromRow).toList();

@@ -37,6 +37,13 @@ Future<void> _closeSessions() async {
 /// `wi-0001` / `wi-0002`, jobs `jb-*` on `wi-0001`, workers `wk-1` / `wk-2`,
 /// products `shipit` / `txn`. These constants live in the contract package and
 /// are shared by every suite here.
+///
+/// `runWorkflowStoreSuite` is invoked with NO deviations, so the PostgreSQL
+/// implementation is held to the strict `readOperatorActionsForWorkItem`
+/// ordering the interface promises. The in-memory run in
+/// `packages/store_contract_tests` declares one; the store whose ordering a
+/// real replay actually depends on is this one, so it is held to the contract
+/// in full.
 const Set<String> _ownedWorkItems = {'wi-0001', 'wi-0002'};
 const Set<String> _ownedWorkerIds = {'wk-1', 'wk-2'};
 
@@ -68,6 +75,16 @@ Future<void> _purgeSuiteRows() async {
     'DELETE FROM "job" WHERE "workItemId" = \'wi-0001\'',
     // Workflow.
     'DELETE FROM "human_decision" WHERE "workItemId" IN '
+        '(\'wi-0001\', \'wi-0002\')',
+    // `operator_action` before `work_item_transition` only because there is no
+    // foreign key to order by — the table is deliberately standalone, which is
+    // what lets the audit row commit and roll back with the item rather than
+    // being constrained by it. The consequence is that a cascade will NOT clean
+    // it up, so this purge has to name it explicitly: a row left over from an
+    // aborted run would make the workflow suite's duplicate-requestId
+    // assertion fail on a constraint it did not cause, and the failure would
+    // point at the wrong thing.
+    'DELETE FROM "operator_action" WHERE "workItemId" IN '
         '(\'wi-0001\', \'wi-0002\')',
     'DELETE FROM "work_item_transition" WHERE "workItemId" IN '
         '(\'wi-0001\', \'wi-0002\')',

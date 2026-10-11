@@ -45,6 +45,16 @@ dev_dependencies:
   control_plane_client:
     path: ../../packages/control_plane_client
   lints: '>=3.0.0 <7.0.0'
+  # Direct because test/operator_action_migration_test.dart reads the migration
+  # artifacts as TEXT and asserts on their content (AC-30: exactly one table, no
+  # existing table changed, AC-14d: no UPDATE/DELETE against the table). Without
+  # this the test compiles only because the package happens to be reachable
+  # transitively through Serverpod, which is exactly the kind of undeclared
+  # dependency `depend_on_referenced_packages` exists to catch — and which would
+  # break the moment Serverpod's own graph changed. Already resolved into this
+  # app's graph as a transitive dependency, so promoting it to direct adds no
+  # package; the constraint mirrors the resolved version.
+  path: ^1.9.1
   serverpod_cli: 3.4.13
   serverpod_test: 3.4.13
   store_contract_tests:

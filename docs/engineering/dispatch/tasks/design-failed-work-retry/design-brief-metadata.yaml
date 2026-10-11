@@ -203,6 +203,44 @@ correction_note: >
 approved_by: human-operator (HD-1, HD-2, HD-3 resolved durably in .decisions/)
 approved_at: 2026-10-11T13:40:00Z
 
+post_approval_amendments:
+  # Recorded here so a reader of this metadata -- which is what most consumers
+  # read -- cannot take the brief's pseudocode as authoritative over the code.
+  # An amendment is NOT a version bump: the design is not re-opened, no
+  # acceptance criterion changes, and nothing approved by the human is
+  # withdrawn. Each entry below is a place where implementation proved the
+  # brief's literal text wrong and the code departs from it DELIBERATELY.
+  - id: L6-1
+    recorded_at: 2026-10-11
+    recorded_by: correction lane (implementation of Lane S)
+    section: 6.4.2
+    brief_says: >
+      reason: reason ?? transition.rejectionReason
+    code_does: >
+      reason: reason ?? transition.rejectionReason, PLUS an explicit
+      outcome: transition.isValid ? accepted : rejected, passed to _buildRecord
+      as a new optional parameter whose DEFAULT is the original
+      `reason == null ? accepted : rejected` inference.
+    why_the_brief_is_wrong: >
+      _buildRecord infers the record's `outcome` from `reason == null`. That inference is safe
+      only while an accepted transition has no reason to record. The moment a caller supplies an
+      operator's own text the two facts decouple, so the brief's line -- which passes `reason`
+      into _buildRecord and leaves `outcome` to be inferred -- would have persisted 100% OF
+      ACCEPTED RETRIES with outcome='rejected'. The item would move, the scheduler would dispatch
+      it, and the durable record of that spend would say the workflow refused it. AC-13 ("the
+      accepted transition row carries a non-null reason") is unsatisfiable as written.
+    evidence: >
+      Found by implementation during Lane S, confirmed by independent review of c0c7c2d
+      (APPROVED_WITH_NON_BLOCKING_FOLLOWUP, zero blockers). The review proved the brief wrong.
+    strengthens_or_weakens: >
+      Neither. It satisfies AC-13 as written instead of working around it, and the
+      "reason == null behaves exactly as today" guarantee that makes the parameter safely additive
+      is untouched, because every pre-existing caller still takes the default inference.
+    not_a_silent_change: >
+      Recorded in design-brief.md section 6.4.2 under the same id, in a block marked as a
+      post-approval amendment. The brief remains authoritative for the DESIGN; this entry exists so
+      that authority is not mistaken for correctness about this one line.
+
 requirements_refs:
   # There is no requirements document for this work item. The dispatch is the
   # requirement, and it is recorded in prompt.md; the identifiers below are the

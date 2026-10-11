@@ -196,6 +196,38 @@ void main() {
   });
 
   group('AC-14d the ledger is append-only', () {
+    // A name-anchored scan cannot tell a WRITE PATH from a TEARDOWN, and
+    // pretending otherwise is the same failure `verify_schema_bootstrap.sh`
+    // documents for itself: a check that reads as coverage while the thing it
+    // guards is unenforced. So the exception is EXPLICIT, NAMED, and audited
+    // below rather than smuggled into the matcher.
+    //
+    // Each entry must be a test file. That constraint is itself asserted, so
+    // this list can never quietly grow to cover a production path -- which is
+    // the only way an allowlist becomes dangerous.
+    const fixturePurges = <String, String>{
+      'apps/server/test/integration/store_contracts_postgres_test.dart':
+          "teardown. `operator_action` has no foreign key to `work_item`, so "
+          "no cascade removes the store contract suite's fixture rows. They "
+          'MUST be deleted explicitly, or the suite\'s own '
+          'duplicate-requestId assertion fails on a constraint it did not '
+          'cause and the failure points at the wrong thing.',
+    };
+
+    test('every allowlisted purge is a TEST file, never production', () {
+      for (final path in fixturePurges.keys) {
+        expect(
+          path,
+          startsWith('apps/server/test/'),
+          reason:
+              '$path is allowlisted as a fixture purge. An allowlist entry '
+              'must be test-only; a production path may never be added here, '
+              'because that is the exact thing this test exists to catch.',
+        );
+        expect(File(p.join(repoRoot, path)).existsSync(), isTrue);
+      }
+    });
+
     test('no UPDATE or DELETE against operator_action exists anywhere', () {
       final offenders = <String>[];
       for (final entry in ['packages', 'apps']) {
@@ -208,6 +240,8 @@ void main() {
           if (path.contains('/generated/')) continue;
           if (path.contains('/migrations/')) continue;
           if (path.contains('/.dart_tool/')) continue;
+          final relative = p.relative(path, from: repoRoot);
+          if (fixturePurges.containsKey(relative)) continue;
           final text = file.readAsStringSync();
           if (RegExp(
                 r'(UPDATE\s+"operator_action")',
@@ -217,7 +251,7 @@ void main() {
                 r'(DELETE\s+FROM\s+"operator_action")',
                 caseSensitive: false,
               ).hasMatch(text)) {
-            offenders.add(p.relative(path, from: repoRoot));
+            offenders.add(relative);
           }
         }
       }
@@ -226,7 +260,8 @@ void main() {
         isEmpty,
         reason:
             'the audit ledger has no update or delete path. Introducing '
-            'one is a merge blocker, not a refactor.',
+            'one is a merge blocker, not a refactor. (The one allowlisted '
+            'fixture purge is a test teardown, asserted test-only above.)',
       );
     });
 

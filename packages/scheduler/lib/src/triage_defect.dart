@@ -1,6 +1,7 @@
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:scheduler/scheduler.dart';
 import 'package:workflow_engine/workflow_engine.dart';
+import 'package:workflow_store/workflow_store.dart';
 
 /// Triage defect job: AI triage of a human-reported defect.
 const JobDefinition triageDefectDefinition = JobDefinition(
@@ -40,13 +41,39 @@ const JobDefinition triageDefectDefinition = JobDefinition(
 /// job for work that is already being handled. This property is not to be
 /// traded for anything.
 ///
-/// A non-integer value also falls through to the historical key rather than
-/// rendering `a<String>`: an unreadable marker must not mint a key that
-/// collides with neither the historical one nor any other attempt.
+/// ## WHY AN UNREADABLE MARKER THROWS
+///
+/// A marker that is PRESENT but unreadable must not fall back to the historical
+/// key. That key is already consumed by the terminal job the retry exists to
+/// replace, so `enqueueIfAbsent` would return `created: false` and the operator
+/// would watch "Try again" do nothing — the exact silent-no-op class this
+/// feature exists to close, reached through a type coercion rather than
+/// through a missing edge. A loud failure on one work item is the better of
+/// the two failures.
+///
+/// The forms accepted are therefore every shape the marker legitimately takes
+/// on its way through JSON and back: an `int`, a whole-valued `double` (a
+/// `1.0` is still attempt one, and truncating `1.5` would let two different
+/// attempts collide on one key), and a numeric `String`. Anything else is a
+/// defect in whatever wrote the marker and is reported as one.
 String triageDefectDedupeKey(WorkItem item, JobDefinition definition) {
   final base = '${item.workItemId}:${definition.jobType.wire}';
-  final attempt = (item.metadata ?? const <String, dynamic>{})['triageAttempt'];
-  return attempt is int ? '$base:a$attempt' : base;
+  final marker = (item.metadata ?? const <String, dynamic>{})['triageAttempt'];
+  if (marker == null) return base;
+  final attempt = switch (marker) {
+    final int value => value,
+    final double value when value.isFinite && value == value.roundToDouble() =>
+      value.toInt(),
+    final String value when int.tryParse(value) != null => int.parse(value),
+    _ => throw FormatException(
+      'Unreadable ${DurableWorkflowEngine.triageAttemptMetadataKey} on work '
+      'item ${item.workItemId}: expected an int, a whole-valued double or a '
+      'numeric String, got ${marker.runtimeType} ($marker). Falling back to '
+      "'$base' would reuse a key the previous attempt already consumed, so "
+      'the retry would enqueue nothing while looking healthy.',
+    ),
+  };
+  return '$base:a$attempt';
 }
 
 /// Builds an instruction for triage defect jobs.

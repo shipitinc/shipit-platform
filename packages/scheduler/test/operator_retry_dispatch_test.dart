@@ -90,11 +90,88 @@ void main() {
       },
     );
 
-    test('the dispatch went through the ORDINARY path, not a special one', () {
-      // AC-29 / §16.3, stated as a check that is possible rather than asserted:
-      // the only place the retry is special is the state it lands in. Nothing
-      // in the scheduler's dispatch path knows this feature exists.
-      expect(_eligibleRunnableJobSource, isNot(contains('triageAttempt')));
+    test(
+      'a NON-retried item carrying a retry marker is still NOT dispatched',
+      () async {
+        // The real form of the AC-29 review obligation, as far as it can be
+        // made mechanical.
+        //
+        // This replaces a test that asserted `''.contains('triageAttempt') ==
+        // false` — which can never fail whatever the scheduler contains, and
+        // whose NAME claimed to guard exactly this regression. A check that
+        // cannot fail while claiming to catch the defect is worse than no
+        // check, because it manufactures assurance a reviewer is meant to
+        // rely on. The brief itself (AC-17 metadata) DROPPED the mechanical
+        // byte-identity gate as not runtime-observable, and this does not
+        // pretend to reinstate it.
+        //
+        // What IS runtime-observable is the rule the scheduler actually uses to
+        // decide eligibility: `RunnableWorkEvaluator.evaluate`, and nothing
+        // else. So this builds a work item that is indistinguishable from a
+        // retried one — same metadata, same marker, same defect payload — but
+        // parked in `agentFailed`, which is in no JobDefinition's entryStates.
+        //
+        // If anyone ever adds an eligibility branch keyed on the retry marker —
+        // the seam this design deleted three times — this item is exactly what
+        // it would wrongly pick up, and this fails.
+        final host = await _Host.start(seed: _seedFailedDefect, cap: 4);
+        final item = await host.engine.loadWorkItem(host.workItemId);
+        expect(item.state, WorkItemState.agentFailed);
+        expect(
+          item.metadata?['triageAttempt'],
+          isNull,
+          reason: 'the seed is a never-retried item; the marker is added below',
+        );
+
+        // Stamp a marker on a FAILED item. Nothing may dispatch it.
+        await host.store.saveWorkItem(
+          item.copyWith(metadata: {...?item.metadata, 'triageAttempt': 1}),
+        );
+
+        final result = await host.scheduler.tick();
+
+        expect(
+          result.enqueued,
+          isEmpty,
+          reason:
+              'eligibility is the policy answer and nothing else: '
+              'agentFailed is in no entryStates, so no tick enqueues for it',
+        );
+        expect(result.dispatched, isEmpty);
+        expect(await host.triageJobs(), isEmpty);
+      },
+    );
+
+    test('and the same item IS dispatched once the edge really is taken', () {
+      // The control for the test above, and the reason the pair is not
+      // vacuous: the SAME marker and the SAME defect payload, differing only
+      // in the state the transition actually moved the item to. The key the
+      // builder produces is identical for both — so if eligibility were keyed
+      // on the marker rather than on the policy, the two items would be
+      // indistinguishable here, and this pair would prove nothing.
+      final failed = _keyItem(
+        triageAttempt: 1,
+      ).copyWith(state: WorkItemState.agentFailed);
+      final retried = failed.copyWith(state: WorkItemState.designNotRequired);
+
+      expect(
+        triageDefectDedupeKey(failed, triageDefectDefinition),
+        triageDefectDedupeKey(retried, triageDefectDefinition),
+        reason:
+            'the dedupe key is the same for both; the STATE is what the '
+            'policy reads, and it is the state the edge moved',
+      );
+      expect(
+        triageDefectDefinition.entryStates.contains(failed.state),
+        isFalse,
+        reason:
+            'agentFailed is in no entryStates — this is the gate G1 the '
+            'three deleted seams all collided with',
+      );
+      expect(
+        triageDefectDefinition.entryStates.contains(retried.state),
+        isTrue,
+      );
     });
   });
 
@@ -116,15 +193,71 @@ void main() {
       );
     });
 
-    test('an unreadable marker falls back rather than minting a new key', () {
-      // A `triageAttempt` that is not an int must not render `a<String>`: that
-      // would be a key that collides with neither the historical one nor any
-      // other attempt.
-      final item = _keyItem(triageAttempt: 'one');
+    test('an ABSENT marker still means the historical key, exactly', () {
+      // The closed property, restated at its boundary: null is the only value
+      // that may take the silent path, because it is the only value that means
+      // "this item was never retried".
+      final item = _keyItem(triageAttempt: null);
+      expect(
+        item.metadata!.containsKey('triageAttempt'),
+        isFalse,
+        reason: 'a null argument must mean ABSENT, not "present and null"',
+      );
       expect(
         triageDefectDedupeKey(item, triageDefectDefinition),
         '${item.workItemId}:triage_defect',
       );
+    });
+
+    test('a marker that IS present but unreadable throws rather than '
+        'reusing a consumed key', () {
+      // The silent fallback this replaces would have returned
+      // '<id>:triage_defect' — the key the TERMINAL first job already holds.
+      // `enqueueIfAbsent` would then return created: false and the retry would
+      // enqueue nothing while looking healthy: the exact silent-no-op class
+      // this feature exists to close.
+      for (final unreadable in <Object>[
+        'one', // non-numeric string
+        '', // empty string
+        1.5, // non-integral double; truncating would collide two attempts
+        true, // bool
+        <int>[1], // list
+        <String, dynamic>{'a': 1}, // map
+        DateTime.utc(2026, 6, 1),
+      ]) {
+        final item = _keyItem(triageAttempt: unreadable);
+        expect(
+          () => triageDefectDedupeKey(item, triageDefectDefinition),
+          throwsA(isA<FormatException>()),
+          reason:
+              'an unreadable marker of type ${unreadable.runtimeType} '
+              'must be reported, not silently turned into a consumed key',
+        );
+      }
+    });
+
+    test('the numeric forms a marker legitimately round-trips through are '
+        'accepted', () {
+      // JSON is not the only path a metadata map travels: it round-trips
+      // through JSON documents, through YAML-ish tooling and through hand-set
+      // values. Every shape that still means "attempt N" must keep working,
+      // or a legitimate retry silently stops creating a job.
+      for (final entry in <Object, String>{
+        1: ':a1',
+        2: ':a2',
+        1.0: ':a1',
+        '3': ':a3',
+        ' 4 ': ':a4',
+      }.entries) {
+        final item = _keyItem(triageAttempt: entry.key);
+        expect(
+          triageDefectDedupeKey(item, triageDefectDefinition),
+          '${item.workItemId}:triage_defect${entry.value}',
+          reason:
+              'marker ${entry.key} (${entry.key.runtimeType}) is a '
+              'readable attempt number',
+        );
+      }
     });
 
     test('every historical key keeps matching its own job', () {
@@ -785,9 +918,3 @@ WorkItem _bareKeyItem() => WorkItem(
   createdAt: DateTime.utc(2026, 6, 1),
   updatedAt: DateTime.utc(2026, 6, 1),
 );
-
-/// A literal, empty string. The assertion is that the scheduler's eligibility
-/// code carries no knowledge of this feature at all; a reviewer checks the same
-/// thing by reading the diff. This can only fail if someone adds the literal to
-/// the scheduler's dispatch path.
-const _eligibleRunnableJobSource = '';

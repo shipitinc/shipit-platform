@@ -12,6 +12,18 @@ void main() {
   runWorkflowStoreSuite(
     groupName: 'WorkflowStore contract (InMemory)',
     createStore: () async => InMemoryWorkflowStore(),
+    // DECLARED DEVIATION, found by this suite and not yet fixed — the
+    // implementor is in `packages/workflow_store`, which the lane that found
+    // it may not edit. See WorkflowStoreContractDeviations for the one-line
+    // fix. This declaration becomes STALE the moment the fix lands, and the
+    // suite asserts that: it fails if the order is chronological anyway, so
+    // the deviation cannot quietly outlive its own reason for existing.
+    //
+    // The PostgreSQL run declares NO deviations, so it is held to the strict
+    // ordering the interface promises.
+    deviations: const WorkflowStoreContractDeviations(
+      operatorActionsNotChronological: true,
+    ),
   );
 
   runJobStoreSuite(

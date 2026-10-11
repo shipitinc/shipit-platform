@@ -822,8 +822,56 @@ Future<WorkItem> transition({
   String? idempotencyKey,
   String? reason,          // NEW. When null, behaviour is byte-identical to today.
 })
-// …  :156   reason: reason ?? transition.rejectionReason,
+// …  :156   reason: reason ?? transition.rejectionReason,   ← SEE THE AMENDMENT BELOW
 ```
+
+> #### ⚠ POST-APPROVAL AMENDMENT — the line above is WRONG as written, and the
+> #### implemented code deliberately departs from it. Recorded 2026-10-11,
+> #### Lane S, commit `c0c7c2d`. **This is a recorded correction to an approved
+> #### artifact, not a silent change**, and it was found by implementation and
+> #### confirmed by independent review, not by re-deriving the design.
+>
+> **What is wrong with it.** `_buildRecord` infers the record's `outcome` from
+> `reason == null`:
+>
+> ```dart
+> outcome: reason == null ? TransitionOutcome.accepted : TransitionOutcome.rejected
+> ```
+>
+> That inference was safe **only** because an accepted transition had no reason
+> to record. The moment a caller supplies an operator's own text, the two facts
+> decouple — and the pseudocode above hands `reason` straight into `_buildRecord`
+> while leaving `outcome` to be inferred. **100% of accepted retries would
+> therefore have been persisted with `outcome = 'rejected'`**: the operator
+> would press "Try again", the item would move to `design_not_required`, the
+> scheduler would dispatch it — and the durable record of that spend would say
+> the workflow refused it. AC-13 requires the opposite ("the accepted
+> transition row carries a non-null `reason`"), and it is unsatisfiable with
+> the pseudocode as written.
+>
+> **What was implemented instead.** The outcome is decided by the POLICY, not by
+> the presence of a reason:
+>
+> ```dart
+> reason: reason ?? transition.rejectionReason,
+> outcome: transition.isValid
+>     ? TransitionOutcome.accepted
+>     : TransitionOutcome.rejected,
+> ```
+>
+> with `outcome` a new optional parameter on `_buildRecord` that **defaults to
+> the original inference**, so every pre-existing caller — the scheduler's zombie
+> reclaim, `work_entry.dart`, the human-decision unlock — writes byte-identical
+> records. Only a caller that passes `outcome` explicitly, which today means
+> only `transition()`, can decouple the two, and it does so in the correct
+> direction.
+>
+> **This strengthens nothing and weakens nothing.** It satisfies AC-13 as
+> written rather than working around it, and it leaves the `reason == null ⇒
+> behave exactly as today` guarantee — which is what makes the parameter safely
+> additive — untouched. It is recorded here because **this brief is otherwise
+> authoritative over the code**, and an implementer who followed §6.4.2
+> literally would have shipped a durable record that lies about every retry.
 
 Why the parameter is kept as well as the audit row:
 

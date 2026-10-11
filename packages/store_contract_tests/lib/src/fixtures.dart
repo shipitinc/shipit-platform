@@ -1,5 +1,6 @@
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:worker_protocol/worker_protocol.dart';
+import 'package:workflow_store/workflow_store.dart';
 
 /// Shared fixture builders used by every contract suite. Values are chosen to
 /// exercise every serialized field (nested maps, lists, nullable fields and
@@ -111,6 +112,48 @@ WorkflowTransitionRecord buildTransitionRecord({
     ],
     idempotencyKey: idempotencyKey,
     occurredAt: DateTime.utc(2026, 1, 1, 12, 5),
+  );
+}
+
+/// Builds an operator-action fixture.
+///
+/// The optional values default to the interesting RUNTIME shape rather than to
+/// the trivial one: a retry binds a transition, names the job it armed and
+/// carries an attempt number, while a `stop` does none of those. Both are
+/// reachable from here so a store cannot pass on the nullable columns alone.
+OperatorActionRecord buildOperatorAction({
+  String actionId = 'oa-1',
+  String workItemId = kWorkItemId,
+  // The literal, not `OperatorActionKind.retry.wire`: an enum field access is
+  // not a constant expression and cannot be a default parameter value. The
+  // suite asserts the stored token back through `OperatorActionKind.fromWire`,
+  // which is the stronger direction anyway — it proves the value a store
+  // persists is in the closed set rather than agreeing with a constant here.
+  String action = 'retry',
+  String requestId = 'req-1',
+  String requestedBy = 'operator@shipit.platform',
+  String reason = 'Approved after reviewing the failure.',
+  String? transitionId,
+  String? jobId,
+  int? attemptNumber,
+  DateTime? instant,
+}) {
+  return OperatorActionRecord(
+    actionId: actionId,
+    workItemId: workItemId,
+    action: action,
+    fromState: WorkItemState.agentFailed.wire,
+    toState: WorkItemState.designNotRequired.wire,
+    requestedBy: requestedBy,
+    reason: reason,
+    requestId: requestId,
+    jobId: jobId,
+    transitionId: transitionId,
+    attemptNumber: attemptNumber,
+    // Microsecond-aligned and far from a clock boundary: the column is
+    // `timestamp without time zone`, and an ordering assertion must not depend
+    // on how a database rounds.
+    createdAt: instant ?? DateTime.utc(2026, 1, 1, 12, 30),
   );
 }
 
