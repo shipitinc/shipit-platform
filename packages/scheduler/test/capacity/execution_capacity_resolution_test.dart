@@ -120,8 +120,12 @@ void main() {
           executionCapacityEnvVar: '2',
         }).capacity!;
         expect(a.advisoryLockKey, b.advisoryLockKey);
-        expect(a.advisoryLockKey, isNonZero);
-        // Fits PostgreSQL's signed 64-bit advisory lock key space.
+
+        // PostgreSQL's `pg_advisory_xact_lock(bigint)` takes the whole SIGNED
+        // 64-bit range, and FNV-1a/64 yields the unsigned digest, so the key is
+        // legitimately NEGATIVE for most budget names. What must hold is that
+        // bigint can carry the value — not that it is positive.
+        expect(a.advisoryLockKey, greaterThanOrEqualTo(-0x8000000000000000));
         expect(a.advisoryLockKey, lessThanOrEqualTo(0x7FFFFFFFFFFFFFFF));
 
         // Different budgets must not share a lock, or one lane's traffic would
@@ -132,6 +136,17 @@ void main() {
         expect(other.advisoryLockKey, isNot(a.advisoryLockKey));
       },
     );
+
+    test('the key is a fixed digest, not merely self-consistent', () {
+      // Pinning the exact value is what turns a silently CHANGED derivation
+      // into a test failure. While a fleet runs mixed versions, every process
+      // taking the same lock depends on every version computing the same
+      // number — and a changed derivation would not fail anything else.
+      final capacity = ExecutionCapacityResolution.fromEnvironment(const {
+        executionCapacityEnvVar: '2',
+      }).capacity!;
+      expect(capacity.advisoryLockKey, -1990546432740124472);
+    });
 
     test(
       'the cap value does not change the lock key: one budget, one lock',

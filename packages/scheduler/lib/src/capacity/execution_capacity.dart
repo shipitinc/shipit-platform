@@ -40,7 +40,7 @@ class ExecutionCapacity {
   /// that may hold a slot simultaneously across every scheduler process.
   final int maxConcurrentExecutions;
 
-  /// The advisory-lock key for [budget].
+  /// The advisory-lock key for [budget], as a PostgreSQL `bigint`.
   ///
   /// STABLE by construction, not by hash: `String.hashCode` is explicitly not
   /// guaranteed stable across Dart versions or isolates, and a lock key that
@@ -48,6 +48,11 @@ class ExecutionCapacity {
   /// different keys — the overshoot this whole mechanism exists to prevent.
   /// FNV-1a/64 is deterministic, well-distributed, and identical in every
   /// process that computes it.
+  ///
+  /// The result is the unsigned 64-bit FNV digest reinterpreted as a signed
+  /// 64-bit integer, so it is frequently NEGATIVE. That is correct:
+  /// `pg_advisory_xact_lock(bigint)` accepts the whole signed range, and two
+  /// processes deriving the same negative number take the same lock.
   int get advisoryLockKey => _fnv1a64(budget);
 
   /// One line naming the resolved value, for the startup log.
@@ -61,9 +66,8 @@ class ExecutionCapacity {
       '(max concurrent agent executions, global)';
 
   static int _fnv1a64(String value) {
-    // 64-bit FNV-1a. Written with explicit masking so it is identical on the
-    // JS/VM/native targets this platform runs, where `int` is not uniformly
-    // 64-bit and would otherwise silently truncate.
+    // 64-bit FNV-1a, masked explicitly so the result is identical on every
+    // target regardless of how that target represents `int`.
     const int offsetBasis = 0xcbf29ce484222325;
     const int prime = 0x100000001b3;
     const int mask = 0xFFFFFFFFFFFFFFFF;
