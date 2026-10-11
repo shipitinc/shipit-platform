@@ -482,6 +482,13 @@ void run(List<String> args) async {
         );
         outcome.dispatched = tickResult.dispatched.length;
         outcome.handledOff = drain.handedOff;
+        // Rows the per-row guard caught. Reported here because the completion
+        // line is the only channel the scheduler has; leaving them here would
+        // make a contended or faulting reclaim indistinguishable from a clean
+        // tick.
+        outcome.reconcileFailed.addAll(
+          tickResult.reconcileFailed.map((f) => f.toString()),
+        );
         if (drain.handedOff > 0) {
           _log('triage.tick.drained', {
             'considered': drain.considered,
@@ -584,8 +591,11 @@ const String tickOverlapDroppedCode = 'TICK_OVERLAP_DROPPED';
 /// nothing" from "did not run at all". That distinction is the whole reason a
 /// drop is allowed to exist, so it is worth carrying rather than inferring.
 class TickOutcome {
-  TickOutcome({List<String>? failedSections})
-    : failedSections = failedSections ?? <String>[];
+  TickOutcome({
+    List<String>? failedSections,
+    List<String>? reconcileFailed,
+  }) : failedSections = failedSections ?? <String>[],
+       reconcileFailed = reconcileFailed ?? <String>[];
 
   /// Jobs this tick actually started an execution for.
   int dispatched = 0;
@@ -597,6 +607,20 @@ class TickOutcome {
   /// work-entry sweep gate is on.
   int sweepEnqueued = 0;
 
+  /// Jobs this tick could not reconcile, with the reason each one failed.
+  ///
+  /// Separate from [failedSections] on purpose: a failed SECTION is a half of
+  /// the tick that threw, whereas these are individual rows the per-row guard
+  /// caught so the rest of the tick could continue. Folding them into
+  /// `failedSections` would report a section that in fact ran clean.
+  ///
+  /// This list is the ONLY way a swallowed reconciliation failure reaches an
+  /// operator. The per-row guard stops one bad row from aborting the tick, which
+  /// means without this the tick would report success — dispatching fresh work —
+  /// while leaking reclaim capacity forever, and the completion line would read
+  /// exactly like a healthy one.
+  final List<String> reconcileFailed;
+
   /// Which halves of the tick threw, named. Empty is a tick that ran clean.
   ///
   /// Named rather than counted because "the tick failed" is not actionable and
@@ -607,7 +631,8 @@ class TickOutcome {
   @override
   String toString() =>
       'dispatched: $dispatched, handledOff: $handledOff, '
-      'sweepEnqueued: $sweepEnqueued, failedSections: $failedSections';
+      'sweepEnqueued: $sweepEnqueued, failedSections: $failedSections, '
+      'reconcileFailed: $reconcileFailed';
 }
 
 /// The outcome of ONE trigger: either a tick ran, or the trigger was dropped
@@ -746,6 +771,8 @@ class TickSingleFlight {
         'handledOff': 0,
         'sweepEnqueued': 0,
         'failedSections': const <String>[],
+        'reconcileFailed': const <String>[],
+        'reconcileFailedCount': 0,
         'overlappedTicks': 1,
         'code': tickOverlapDroppedCode,
       });
@@ -776,6 +803,8 @@ class TickSingleFlight {
         'handledOff': outcome.handledOff,
         'sweepEnqueued': outcome.sweepEnqueued,
         'failedSections': outcome.failedSections,
+        'reconcileFailed': outcome.reconcileFailed,
+        'reconcileFailedCount': outcome.reconcileFailed.length,
         'overlappedTicks': 0,
       });
       return TickSingleFlightResult.ran(outcome);

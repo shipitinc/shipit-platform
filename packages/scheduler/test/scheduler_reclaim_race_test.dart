@@ -42,8 +42,11 @@ void main() {
     RacingMode mode = RacingMode.versionBump,
     WorkItemState takesOverState = WorkItemState.agentFailed,
     Set<String> failingWorkItemIds = const {},
+    int races = 1,
+    Directory? target,
   }) async {
-    final seed = FileRestartHarness(dir, clock: () => t0);
+    final base = target ?? dir;
+    final seed = FileRestartHarness(base, clock: () => t0);
     await seed.itemRunnable(workItemId: workItemId);
     await seed.itemExecuting(workItemId: workItemId);
     final running = await seed.plantRunningJob(t0, workItemId: workItemId);
@@ -51,7 +54,7 @@ void main() {
       WorkerExecution(
         workerExecutionId: running.executionReference!.workerExecutionId,
         workItemId: workItemId,
-        repositoryPath: '${dir.path}/repo',
+        repositoryPath: '${base.path}/repo',
         requestedStartingRevision: 'deadbeef',
         requiredCapabilities: running.requiredCapabilities,
         status: WorkerExecutionStatus.agentExecuting,
@@ -62,14 +65,15 @@ void main() {
     );
 
     final store = RacingWorkflowStore(
-      FileRestartHarness(dir, clock: () => t0).workflowStore,
+      FileRestartHarness(base, clock: () => t0).workflowStore,
       mode: mode,
       takesOverState: takesOverState,
+      races: races,
     )..failingWorkItemIds.addAll(failingWorkItemIds);
 
     return (
       host: FileRestartHarness(
-        dir,
+        base,
         clock: () => t1,
         workflowStoreOverride: store,
       ),
@@ -237,5 +241,134 @@ void main() {
         expect((healthy.dispatch as ControlledDispatcher).runs, isEmpty);
       },
     );
+  });
+
+  group('W1: sustained contention defers, then a LATER tick completes', () {
+    test('more races than the attempt budget: nothing is half-applied and the '
+        'work item is NOT stranded', () async {
+      // Contention exceeding _maxReclaimAttempts. The earlier version returned
+      // as if it had succeeded, completed the job, and left the work item in
+      // agentExecuting forever.
+      final planted = await plantZombie(races: 4);
+      final store = planted.store;
+      final host = planted.host;
+
+      await host.scheduler.tick();
+
+      // Every attempt lost: the budget was exhausted without the item ever
+      // leaving agentExecuting. That is the condition under which the earlier
+      // version completed the job anyway and stranded the work.
+      expect(
+        store.fired,
+        greaterThanOrEqualTo(3),
+        reason:
+            'every attempt '
+            'must have lost the CAS, otherwise this is not the exhausted case',
+      );
+
+      final job = (await host.jobStore.listJobs()).single;
+      expect(
+        job.state,
+        JobState.running,
+        reason: 'the job must NOT complete while the work item is stranded',
+      );
+      expect(job.isTerminal, isFalse);
+      expect(
+        await host.jobStore.readClaimForJob(job.jobId),
+        isNotNull,
+        reason: 'the claim must stay held so the next tick re-reaches it',
+      );
+
+      // NOTHING half-applied: the worker execution is untouched too.
+      final execution = await host.workerStore.readWorkerExecution(
+        'wx-${job.jobId}',
+      );
+      expect(execution!.status, WorkerExecutionStatus.agentExecuting);
+      expect(
+        (await host.workflowEngine.loadWorkItem('wi-1')).state,
+        WorkItemState.agentExecuting,
+      );
+    });
+
+    test(
+      'once contention subsides a LATER tick completes the reclaim in full',
+      () async {
+        final planted = await plantZombie(races: 4);
+        final store = planted.store;
+        final host = planted.host;
+
+        await host.scheduler.tick();
+        expect((await host.jobStore.listJobs()).single.state, JobState.running);
+
+        // Contention stops. Same store, no more races left to win.
+        store.races = 0;
+        await host.scheduler.tick();
+
+        final job = (await host.jobStore.listJobs()).single;
+        expect(job.state, JobState.failed, reason: 'the deferral must heal');
+        expect(job.isTerminal, isTrue);
+        expect(await host.jobStore.readClaimForJob(job.jobId), isNull);
+        expect(
+          (await host.workflowEngine.loadWorkItem('wi-1')).state,
+          WorkItemState.agentFailed,
+        );
+        expect(
+          (await host.workerStore.readWorkerExecution(
+            'wx-${job.jobId}',
+          ))!.isTerminal,
+          isTrue,
+        );
+      },
+    );
+  });
+
+  group('W2: the job is terminal IFF the work item left agentExecuting', () {
+    test('across a range of contention levels the two never disagree', () async {
+      // The ORDER invariant, stated as an equivalence rather than as one
+      // example: whatever the contention, a terminal job implies the work item
+      // is already out of agentExecuting.
+      final scratch = <Directory>[];
+      for (final races in [0, 1, 2, 3, 4, 6]) {
+        // A fresh store per level: a second job for the same work item would
+        // dedupe away in a shared one.
+        final target = Directory.systemTemp.createTempSync('w2_races$races');
+        scratch.add(target);
+        final planted = await plantZombie(races: races, target: target);
+        final host = planted.host;
+        await host.scheduler.tick();
+
+        final job = (await host.jobStore.listJobs()).single;
+        final item = await host.workflowEngine.loadWorkItem('wi-1');
+        final stranded = item.state == WorkItemState.agentExecuting;
+
+        // The equivalence: the job is terminal EXACTLY when the work item has
+        // left agentExecuting. A deferred reclaim leaves both halves undone;
+        // a completed one leaves both done. The bug was a terminal job beside
+        // a stranded item — the two halves disagreeing.
+        expect(
+          job.isTerminal,
+          isNot(stranded),
+          reason:
+              'races=$races: a terminal job must never sit beside a work '
+              'item still in agentExecuting (permanent strand), and a '
+              'deferred reclaim must not have completed anything',
+        );
+
+        // And once contention clears, the pair converges together.
+        planted.store.races = 0;
+        await host.scheduler.tick();
+        final healedJob = (await host.jobStore.listJobs()).single;
+        final healedItem = await host.workflowEngine.loadWorkItem('wi-1');
+        expect(healedJob.isTerminal, isTrue, reason: 'races=$races');
+        expect(
+          healedItem.state,
+          WorkItemState.agentFailed,
+          reason: 'races=$races',
+        );
+      }
+      for (final d in scratch) {
+        d.deleteSync(recursive: true);
+      }
+    });
   });
 }

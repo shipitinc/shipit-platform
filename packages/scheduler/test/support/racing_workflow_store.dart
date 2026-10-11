@@ -40,7 +40,7 @@ class RacingWorkflowStore implements WorkflowStore {
   final WorkflowStore _inner;
   final RacingMode mode;
   final WorkItemState takesOverState;
-  final int races;
+  int races;
 
   /// How many times the race actually fired. A test asserting the race happened
   /// must check this, or it can pass for the wrong reason.

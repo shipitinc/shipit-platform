@@ -158,6 +158,57 @@ Future<Map<String, String>> modelRuntimeConfig(
   };
 }
 
+/// Whether a reclaim managed to get its work item out of
+/// [WorkItemState.agentExecuting].
+enum _WorkItemRelease {
+  /// Out of `agentExecuting` — either this reclaim moved it, or another writer
+  /// already had. The reclaim may go on to its remaining writes.
+  released,
+
+  /// STILL executing after the per-tick attempt budget.
+  ///
+  /// The reclaim must not proceed. Completing the job while the work item sits
+  /// in `agentExecuting` strands the work permanently, because `tick` only ever
+  /// reaches held jobs and a terminal job is never reconciled again.
+  contended,
+}
+
+/// Thrown when a reclaim could not release its work item inside the per-tick
+/// attempt budget.
+///
+/// Aborting BEFORE any of the reclaim's three writes is the entire point of
+/// throwing here: the job stays non-terminal, so the next tick re-reaches the
+/// row and tries again from a clean state. Once contention subsides a later
+/// tick completes the reclaim in full. Deferring is therefore a delay, never a
+/// loss — the same property the write ORDER in `Scheduler._reclaimZombie`
+/// preserves for a crash.
+///
+/// The budget is PER TICK, not per reclaim: sustained contention makes every
+/// tick attempt [Scheduler._maxReclaimAttempts] times and then defer, rather
+/// than blocking the tick indefinitely.
+class _ReclaimDeferredException implements Exception {
+  const _ReclaimDeferredException();
+
+  @override
+  String toString() =>
+      'zombie reclaim deferred: work item still agentExecuting after '
+      '${Scheduler._maxReclaimAttempts} attempts this tick';
+}
+
+/// One job a tick could not reconcile, and why.
+@immutable
+class ReconcileFailure {
+  const ReconcileFailure({required this.jobId, required this.error});
+
+  final String jobId;
+
+  /// `toString()` of whatever was thrown. Never a credential.
+  final String error;
+
+  @override
+  String toString() => '$jobId: $error';
+}
+
 /// What one [Scheduler.tick] did, for tests and for the audit tail.
 @immutable
 class SchedulerTickResult {
@@ -168,9 +219,26 @@ class SchedulerTickResult {
     required this.cancelledQueued,
     required this.deferred,
     required this.terminal,
+
+    /// Defaults to empty so every existing construction site keeps compiling —
+    /// adding a diagnostic must not force callers to know about it.
+    this.reconcileFailed = const [],
   });
 
   final List<String> reconciled;
+
+  /// Jobs this tick tried and FAILED to reconcile, with the reason.
+  ///
+  /// A row can fail to reconcile while the tick itself succeeds: a concurrent
+  /// writer keeps winning the work-item compare-and-swap, or the store faults.
+  /// The per-row guard stops that from aborting the tick, which means without
+  /// this list such a failure would be invisible — the tick would report
+  /// success, dispatch fresh work, and silently leak reclaim capacity forever.
+  ///
+  /// Named and counted rather than folded into [reconciled], because "this row
+  /// was not reconciled" is the one fact an operator has to act on and it is
+  /// exactly what a quiet log would otherwise hide.
+  final List<ReconcileFailure> reconcileFailed;
   final List<String> enqueued;
   final List<String> dispatched;
   final List<String> cancelledQueued;
@@ -364,6 +432,7 @@ class Scheduler {
   Future<SchedulerTickResult> tick() async {
     final now = _clock().toUtc();
     final reconciled = <String>[];
+    final reconcileFailed = <ReconcileFailure>[];
     final enqueued = <String>[];
     final dispatched = <String>[];
     final cancelledQueued = <String>[];
@@ -393,12 +462,17 @@ class Scheduler {
       try {
         await _reconcileClaim(job, claim, now);
         reconciled.add(job.jobId);
-      } catch (_) {
-        // Swallowed deliberately, and this is the honest accounting of it: the
-        // scheduler has no log channel of its own, so the only observable
-        // effect is that this job is absent from `reconciled` and retried on the
-        // next tick. Adding a logger is a composition-root change this lane does
-        // not own.
+      } catch (e) {
+        // Swallowed so the remaining rows still reconcile — but NOT silently.
+        // This tick result is the scheduler's only channel outward, so the row
+        // is reported here and the composition root is expected to log it; a
+        // failure that reaches nobody would leave a worker-store fault looking
+        // exactly like a healthy tick while reclaim capacity leaked forever.
+        //
+        // The job is deliberately absent from `reconciled` as well: it did not
+        // reconcile. Its claim is still held and still expired, so the next tick
+        // retries it — the failure is a delay, never a loss.
+        reconcileFailed.add(ReconcileFailure(jobId: job.jobId, error: '$e'));
         continue;
       }
     }
@@ -483,6 +557,7 @@ class Scheduler {
 
     return SchedulerTickResult(
       reconciled: reconciled,
+      reconcileFailed: reconcileFailed,
       enqueued: enqueued,
       dispatched: dispatched,
       cancelledQueued: cancelledQueued,
@@ -861,7 +936,21 @@ class Scheduler {
             'for $age (beyond the ${zombieStalenessBound.inMinutes}m bound)',
     };
 
-    await _releaseWorkItem(current.workItemId, execution, reason);
+    // NOTHING is written until the work item is out of `agentExecuting`.
+    //
+    // If the release is exhausted, abort here — before the worker execution and
+    // before the job — so no half-applied reclaim is left behind and the next
+    // tick re-reaches the still-held row. Completing the job first would strand
+    // the work permanently, since a terminal job is never reconciled again.
+    final release = await _releaseWorkItem(
+      current.workItemId,
+      execution,
+      reason,
+    );
+    if (release == _WorkItemRelease.contended) {
+      throw const _ReclaimDeferredException();
+    }
+
     await _retireWorkerExecution(execution, now, reason);
 
     await _queue.complete(
@@ -937,14 +1026,16 @@ class Scheduler {
   ///    [_maxReclaimAttempts]. Catching it and moving straight on would leave the
   ///    item exactly as stranded as before whenever the competing writer had not
   ///    itself taken the item out of [WorkItemState.agentExecuting].
-  Future<void> _releaseWorkItem(
+  Future<_WorkItemRelease> _releaseWorkItem(
     String workItemId,
     WorkerExecution execution,
     String reason,
   ) async {
     for (var attempt = 0; attempt < _maxReclaimAttempts; attempt++) {
       final item = await _workflowStore.readWorkItem(workItemId);
-      if (item.state != WorkItemState.agentExecuting) return;
+      if (item.state != WorkItemState.agentExecuting) {
+        return _WorkItemRelease.released;
+      }
 
       try {
         await _reclaimEngine.transition(
@@ -961,13 +1052,13 @@ class Scheduler {
           },
           idempotencyKey: 'zombie-reclaim:${execution.workerExecutionId}',
         );
-        return;
+        return _WorkItemRelease.released;
       } on WorkflowTransitionRejectedException {
         // A concurrent writer moved the item first — a real result arriving from
         // the wedged path, or another tick. Either way the item is no longer
         // stranded, which is the whole job of this call, so a refused transition
         // is a correct outcome and must not be retried or escalated.
-        return;
+        return _WorkItemRelease.released;
       } on ConcurrentModificationException {
         // Lost the compare-and-swap. Re-read and decide again: the competing
         // writer may have taken the item out of `agentExecuting`, in which case
@@ -975,9 +1066,12 @@ class Scheduler {
         continue;
       }
     }
-    // Still being contended after the bounded retries. The job is failed
-    // regardless, so the reclaim as a whole still converges; this is recorded by
-    // leaving the item alone rather than by fighting a writer indefinitely.
+    // Out of attempts and the item is STILL executing. Reporting that is the
+    // point: an earlier version returned as if it had succeeded, so the reclaim
+    // completed the job and left the work item in `agentExecuting` forever — the
+    // precise permanent strand this method exists to prevent, reached not by a
+    // crash but by exhausting a retry budget.
+    return _WorkItemRelease.contended;
   }
 
   /// Drives the zombie worker execution row to a terminal state.
