@@ -101,11 +101,14 @@ final class WorkEntrySweepGate {
   Map<String, dynamic> describe() => <String, dynamic>{
     'enabled': _enabled,
     'enableWith': enableWith,
-    if (_reason != null) 'reason': _reason,
+    if (_reason != null) 'reason': _oneLine(_reason),
     // Sanitised HERE rather than at construction, because this constructor is
     // public and a caller that supplies a raw value directly would otherwise
     // put a newline into a one-line log. The value is operator input; a log
-    // line is a security boundary, not a string builder.
+    // line is a security boundary, not a string builder. `reason` is sanitised
+    // for the same reason: it is equally caller-supplied, and an earlier
+    // revision sanitised `rejectedValue` here while leaving `reason` raw —
+    // which the comment above then contradicted.
     if (rejectedValue != null) 'rejectedValue': _oneLine(rejectedValue!),
     'liftingRequires': liftingRequires,
   };

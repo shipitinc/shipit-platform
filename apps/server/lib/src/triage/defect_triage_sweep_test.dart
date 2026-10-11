@@ -1319,6 +1319,17 @@ void main() {
         'y',
         'sure',
         'please',
+        // Values that CONTAIN a truthy token but are not on the allow-list.
+        // A containment check — `enablementValues.any(raw.contains)` — would
+        // read every one of these as ON. The allow-list is exact equality, so
+        // they are off; these cases exist to pin that, because the shipped
+        // implementation is correct and without them the suite would not
+        // defend it.
+        'not-on',
+        'off-but-really-on',
+        'on-call-override',
+        '1-but-not-really',
+        'yes-please-no',
       ]) {
         final gate = workEntrySweepGateFor(raw);
         expect(
