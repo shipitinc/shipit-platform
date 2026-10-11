@@ -203,4 +203,30 @@ mixin UnimplementedRepositoryApis {
     required String confirmedBy,
     String? checkedBy,
   }) async => throw UnimplementedError();
+
+  // Operator actions on a failed work item.
+  //
+  // `UnimplementedError` is deliberate here too, and for a sharper reason: a
+  // fake that returned an empty action set would make every screen that
+  // reaches this read look healthy and INERT — the same "quiet screen is
+  // indistinguishable from a healthy one" defect the panel exists to close. A
+  // test that does not care must say so by overriding; a test that reaches
+  // this read must implement it.
+  Future<WorkItemActionContextResponse> workItemActionContext(
+    String workItemId,
+  ) async => throw UnimplementedError();
+
+  Future<WorkItemActionResultResponse> retryFailedWorkItem({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async => throw UnimplementedError();
+
+  Future<WorkItemActionResultResponse> stopFailedWorkItem({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async => throw UnimplementedError();
 }

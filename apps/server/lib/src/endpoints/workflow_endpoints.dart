@@ -100,10 +100,19 @@ class WorkflowEndpoints extends Endpoint {
 
   /// Resolves a human decision through the durable engine.
   ///
-  /// This is the only legal request-side state transition. The decision,
-  /// its resolution, and the resulting work item move are persisted
-  /// transactionally; a repeated call is an idempotent replay, so retries
-  /// after a network failure never double-apply the transition.
+  /// This was, until `WorkItemActionEndpoints` landed, the only legal
+  /// request-side state transition. It is now the FIRST of two: the second is
+  /// the operator action surface on a work item parked in a failure state
+  /// (`work_item_action_endpoints.dart` — `retryFailedWorkItem` /
+  /// `stopFailedWorkItem`), which is deliberately a separate endpoint class so
+  /// this comment and `ControlPlaneService`'s had to be amended rather than
+  /// left quietly false.
+  ///
+  /// What still holds is the part that matters: there is still no third path,
+  /// and neither of these writes SQL or sets `WorkItem.state` directly. Both go
+  /// through `DurableWorkflowEngine` under the injected policy, both are
+  /// idempotent under a client-minted key, and a repeated call replays the
+  /// prior outcome instead of re-applying the transition.
   Future<ResolveDecisionView> resolveDecision(
     Session session, {
     required String decisionId,

@@ -59,6 +59,10 @@ providerHealthEndpoints:
 schedulerEndpoints:
   - listJobs:
   - inspect:
+workItemActionEndpoints:
+  - actionContext:
+  - retryFailedWorkItem:
+  - stopFailedWorkItem:
 workerEndpoints:
   - listWorkers:
   - listExecutions:

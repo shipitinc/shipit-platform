@@ -1,0 +1,35 @@
+### Everything the operator screen needs to decide what, if anything, it may
+### offer for a work item parked in a failure state.
+###
+### WIRE VALUES ONLY. There is no UI copy on this contract: every string the
+### client renders is a wire value it maps, exactly as `UiViewMappers
+### .workItemView` returns `state.wire` and the client maps it through
+### `PlainLanguage.statusFor`. `actions` is SERVER-COMPUTED from
+### `WorkItemTransitions` — the client renders what it is given and renders
+### nothing for an action id it does not recognise.
+###
+### See design-brief.md §6.2.
+class: WorkItemActionContextView
+fields:
+  workItemId: String
+  ### Durable `WorkItemState` wire value.
+  state: String
+  ### Server-computed from `WorkItemTransitions.isLegalTransition`. Empty when
+  ### no action is legal, which is the whole signal the page uses to decide
+  ### between the action panel and today's existing right-column text.
+  actions: List<WorkItemActionView>
+  ### null when no failure is recorded. Carries raw durable facts; the
+  ### plain-language sentence is the client's to derive (§5.6).
+  failure: WorkItemFailureView?
+  capacity: ExecutionCapacityView
+  ### HD-3 (5d9a1f62): the unset-means-unavailable case is a REPORTED state,
+  ### not an absent one. Never a fallback value; never blank. When false the
+  ### retry action is not offered and `retryLimitDiagnostic` names the variable
+  ### and what was wrong with it.
+  retryLimitResolved: bool
+  ### Never null when [retryLimitResolved] is false. Says which, rather than
+  ### silently omitting the action (§6.6.1 obligation 1).
+  retryLimitDiagnostic: String?
+  ### Append-only audit ledger for this item, oldest first — OQ-1: an audit
+  ### table no operator-facing surface reads is half of what the decision bought.
+  priorActions: List<OperatorActionSummaryView>

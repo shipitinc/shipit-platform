@@ -24,6 +24,7 @@ class MockRepository
     this.workItemDetail,
     this.decisionDetail,
     this.resolvedDecisions = const [],
+    this.actionContext,
   });
 
   final OverviewResponse? overviewResponse;
@@ -32,8 +33,22 @@ class MockRepository
   final WorkItemDetailResponse? workItemDetail;
   final DecisionDetailResponse? decisionDetail;
 
+  /// The server-computed action set for a failed work item. Null unless a test
+  /// sets it — and null means the panel is not rendered at all, which is what
+  /// keeps every existing golden in this file byte-identical.
+  final WorkItemActionContextResponse? actionContext;
+
   /// Decisions that already carry an outcome.
   final List<DecisionResponse> resolvedDecisions;
+
+  @override
+  Future<WorkItemActionContextResponse> workItemActionContext(
+    String workItemId,
+  ) async {
+    final context = actionContext;
+    if (context == null) throw StateError('no action context in fake');
+    return context;
+  }
 
   @override
   Future<ProductDetailResponse> getProductDetail(String productId) async {
@@ -352,6 +367,7 @@ TransitionResponse makeTransition({
   required String from,
   required String to,
   DateTime? at,
+  String? reason,
 }) {
   return TransitionResponse(
     transitionId: 't-${from}_$to',
@@ -359,6 +375,71 @@ TransitionResponse makeTransition({
     fromState: from,
     toState: to,
     transitionedAt: at ?? DateTime(2026, 9, 15, 10, 0),
+    reason: reason,
+  );
+}
+
+/// The action context a failed work item carries: the server-computed action
+/// set, the durable failure record, and the capacity snapshot.
+///
+/// The values are the LIVE QA evidence in design-brief.md §1.1 — the zombie
+/// reclaim, the 484-minute bound, a 2-of-2 budget — so the golden shows the
+/// panel with the content an operator would actually meet, and the classifier
+/// is exercised on a real cause rather than a convenient one.
+WorkItemActionContextResponse makeFailedActionContext({
+  int inFlight = 2,
+  int cap = 2,
+  bool retryLimitResolved = true,
+}) {
+  return WorkItemActionContextResponse(
+    workItemId: 'defect-DEF-1791686704991884',
+    state: 'agent_failed',
+    actions: [
+      if (retryLimitResolved)
+        const WorkItemActionResponse(
+          action: 'retry',
+          toState: 'design_not_required',
+          confirmRequired: true,
+          destructive: false,
+          attemptNumber: 1,
+          attemptLimit: 3,
+        ),
+      const WorkItemActionResponse(
+        action: 'stop',
+        toState: 'cancelled',
+        confirmRequired: true,
+        destructive: true,
+        attemptLimit: 0,
+      ),
+    ],
+    failure: WorkItemFailureResponse(
+      transitionId: 'tr-hn3liczxln-5',
+      at: DateTime(2026, 9, 16, 9, 50),
+      reason:
+          'operator step 3: stranded by pre-fix zombie reclaim '
+          '(job jb-hn3liczxln-li36ts); reconciled to agentFailed per reviewed '
+          'reclaim semantics',
+      actorType: 'orchestrator',
+      jobId: 'jb-hn3liczxln-li36ts',
+      jobState: 'failed',
+      jobFailureCode: 'executionInterrupted',
+      jobFailureReason:
+          'zombie execution reclaimed: execution wx-jb-hn3liczxln-li36ts is '
+          'still agentExecuting and has been non-terminal for 484m',
+      jobFailureJson: '{"code":"executionInterrupted","kind":"permanent"}',
+    ),
+    capacity: CapacitySnapshotResponse(
+      budget: 'agent_executions',
+      cap: cap,
+      inFlight: inFlight,
+      snapshotOnly: true,
+      resolved: true,
+    ),
+    retryLimitResolved: retryLimitResolved,
+    retryLimitDiagnostic: retryLimitResolved
+        ? 'SHIPIT_OPERATOR_MAX_RETRIES=3'
+        : 'SHIPIT_OPERATOR_MAX_RETRIES is unset',
+    priorActions: const [],
   );
 }
 

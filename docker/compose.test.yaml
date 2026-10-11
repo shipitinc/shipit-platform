@@ -111,7 +111,17 @@ services:
       #
       # Default 2 for QA: two opencode sessions measure ~1.5 GB against the 7.65 GB
       # Docker VM ceiling. Tune only after observing real peak (decision f8c8b67f).
-      SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS: "${SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS:-2}"
+      # Operator retry bound (design-brief.md §6.6, HD-3). Per WORK ITEM, and
+      # FAIL-CLOSED: unset means the retry action is never offered, so the
+      # interpolation here is deliberately NOT `${...:-3}`.
+      #
+      # Read that against the `${...:-2}` two lines above, which IS a default:
+      # this one has no default because a missing configuration must never arm
+      # an action that spends real model credits. `0` is valid and means
+      # "permanently disabled". The value operators configure IS 3; it is set
+      # here so a stack that forgets it reports "switched off" honestly instead
+      # of silently looking broken.
+      SHIPIT_OPERATOR_MAX_RETRIES: "${SHIPIT_OPERATOR_MAX_RETRIES:-3}"
       SHIPIT_TRIAGE_WORKSPACE_ROOT: /triage-workspaces
     ports:
       - "8082:8080"

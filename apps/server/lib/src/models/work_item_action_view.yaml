@@ -1,0 +1,24 @@
+### One legal operator action on a failed work item.
+###
+### Offered only when `WorkItemTransitions.isLegalTransition(from, to)` says the
+### edge exists. The server never offers `terminated`: it has the same effect
+### from an operator's point of view as `stop` under a word nobody can act on,
+### and two buttons for one effect is worse than one (design-brief.md §5.2,
+### HD-1).
+class: WorkItemActionView
+fields:
+  ### 'retry' | 'stop' — a closed set. The client renders NOTHING for an action
+  ### id it does not recognise, so an unknown value is inert rather than
+  ### dangerous (§10 N4).
+  action: String
+  ### The state this edge lands in, as a durable wire value.
+  toState: String
+  confirmRequired: bool
+  destructive: bool
+  ### This work item's 1-based retry count AFTER this action. null when the
+  ### action is not a retry.
+  attemptNumber: int?
+  ### The resolved per-work-item maximum; 0 means "not configured", which is a
+  ### valid configuration meaning permanently disabled — not a failure
+  ### (AC-15c).
+  attemptLimit: int

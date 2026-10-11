@@ -1,0 +1,24 @@
+### The global agent-execution budget as it stands right now.
+###
+### `inFlight` is derived from durable `job.state` rows exactly as
+### `JobCapacityGuard._countInFlight` derives it — the same predicate, over the
+### same rows — so the number on screen and the number the guard uses at claim
+### time are the same number.
+###
+### `snapshotOnly` is ALWAYS true and must stay true. This is an observation of
+### a budget at one instant, never a promise: `JobCapacityGuard` has no
+### read-only probe and adding one would be a lie, because the check must be
+### atomic with the reservation or two replicas each read `inFlight = C-1` and
+### the cap is exceeded by one per replica (design-brief.md P-5, §7.2).
+### Nothing on the operator screen may pre-check capacity.
+class: ExecutionCapacityView
+fields:
+  budget: String
+  cap: int
+  inFlight: int
+  snapshotOnly: bool
+  ### False when `SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS` did not resolve, in
+  ### which case [cap] is 0 and MUST NOT be shown as a real budget. The cap is
+  ### itself a fail-closed configuration (`execution_capacity.dart`); an
+  ### unresolved one is reported rather than papered over with a number.
+  resolved: bool

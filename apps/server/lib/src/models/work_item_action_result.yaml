@@ -1,0 +1,31 @@
+### The result of one operator action. Every call terminates in exactly one of
+### the outcomes named by `outcome`; there is no error outcome for "capacity
+### full", because a denial is a normal outcome with a defined meaning and
+### rendering it as an error would teach operators that the system is broken
+### when it is correctly bounded (design-brief.md §6.3, §7.1).
+###
+### `outcome` is a WIRE VALUE. The operator-facing sentence for each one is the
+### client's to word, from the vocabulary in design-brief.md §5.4/§8.2 — this
+### model carries no copy.
+class: WorkItemActionResult
+fields:
+  ### 'accepted' | 'alreadyRunning' | 'alreadyStopped' | 'notApplicable' |
+  ### 'notConfigured' | 'invalidRequest'.
+  outcome: String
+  workItem: WorkItemView
+  ### The job this action armed, when one exists. A retry arms none directly —
+  ### the scheduler enqueues from the item's durable `triageAttempt` marker on
+  ### its ordinary tick — so this is null for a freshly accepted retry.
+  jobId: String?
+  jobState: String?
+  ### 1-based attempt number this action consumed. 0 when it consumed none.
+  attemptNumber: int
+  inFlight: int?
+  cap: int?
+  ### The resolved per-work-item retry maximum, and whether it resolved at all.
+  ### Carried on the RESULT as well as on the context because `notConfigured`
+  ### covers two genuinely different situations — the limit is reached, or the
+  ### limit was never configured — and the client must word them differently
+  ### without the server authoring copy (AC-15b/AC-15c/AC-15d, §6.6.1).
+  retryLimitResolved: bool
+  attemptLimit: int

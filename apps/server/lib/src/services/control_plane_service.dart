@@ -57,6 +57,22 @@ import 'structured_logger.dart';
 /// execution orchestration all belong to the engine/coordinator packages
 /// that construct their domain objects here. Endpoints only observe state
 /// or unlock work that a human decision blocked.
+///
+/// ## There are now TWO request-side write paths, and both go through the engine
+///
+///  1. `resolveHumanDecision` — a human decision resolved through
+///     `DurableWorkflowEngine.resolveHumanDecision`.
+///  2. `WorkItemActionEndpoints` — the operator action surface on a work item
+///     parked in a failure state (`retryFailedWorkItem` / `stopFailedWorkItem`),
+///     which performs ONE durable transaction through
+///     `DurableWorkflowEngine.operatorRetry` / `.transition` and deliberately
+///     does not enqueue, dispatch or pre-check capacity.
+///
+/// The property that made the original comment true is unchanged and is what
+/// still makes it true: neither path writes SQL, neither calls
+/// `workflowStore.saveWorkItem` directly, and neither synthesises a transition
+/// the workflow engine does not already permit. Adding a third path without
+/// that would be the thing to refuse.
 class ControlPlaneService {
   ControlPlaneService(this.session, {StructuredLogger? logger})
     : logger = logger ?? StructuredLogger(session, 'service');

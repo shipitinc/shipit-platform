@@ -415,6 +415,129 @@ class ControlPlaneRepository {
     revision.value++;
   }
 
+  // -------------------------------------------------------------------
+  // Operator actions on a failed work item (design-brief.md §6).
+  //
+  // The action set is SERVER-COMPUTED from `WorkItemTransitions` and arrives
+  // here as wire values. Nothing below derives an action from a state string,
+  // and nothing below writes UI copy: the panel maps the wire to the vocabulary
+  // in `plain_language.dart` / `decision_choice.dart` exactly as every other
+  // screen does.
+  //
+  // `requestId` is a parameter and never minted here. It is minted by the
+  // CALLER once per operator intent — on confirm, not on load and not per HTTP
+  // attempt — and reused for every network retry of that same intent, which is
+  // what makes a double-click or a lost response unable to spend twice.
+  // -------------------------------------------------------------------
+
+  /// Reads the legal action set, the failure record and the capacity snapshot.
+  Future<WorkItemActionContextResponse> workItemActionContext(
+    String workItemId,
+  ) async {
+    final result = await _client.workItemActionEndpoints.actionContext(
+      workItemId: workItemId,
+    );
+    return WorkItemActionContextResponse(
+      workItemId: result.workItemId,
+      state: result.state,
+      actions: result.actions
+          .map(
+            (a) => WorkItemActionResponse(
+              action: a.action,
+              toState: a.toState,
+              confirmRequired: a.confirmRequired,
+              destructive: a.destructive,
+              attemptNumber: a.attemptNumber,
+              attemptLimit: a.attemptLimit,
+            ),
+          )
+          .toList(),
+      failure: result.failure == null
+          ? null
+          : WorkItemFailureResponse(
+              transitionId: result.failure!.transitionId,
+              at: result.failure!.at,
+              reason: result.failure!.reason,
+              actorType: result.failure!.actorType,
+              jobId: result.failure!.jobId,
+              jobState: result.failure!.jobState,
+              jobFailureCode: result.failure!.jobFailureCode,
+              jobFailureReason: result.failure!.jobFailureReason,
+              jobFailureJson: result.failure!.jobFailureJson,
+            ),
+      capacity: CapacitySnapshotResponse(
+        budget: result.capacity.budget,
+        cap: result.capacity.cap,
+        inFlight: result.capacity.inFlight,
+        snapshotOnly: result.capacity.snapshotOnly,
+        resolved: result.capacity.resolved,
+      ),
+      retryLimitResolved: result.retryLimitResolved,
+      retryLimitDiagnostic: result.retryLimitDiagnostic,
+      priorActions: result.priorActions
+          .map(
+            (p) => OperatorActionSummaryResponse(
+              action: p.action,
+              requestedBy: p.requestedBy,
+              reason: p.reason,
+              at: p.at,
+              attemptNumber: p.attemptNumber,
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  /// `agentFailed -> designNotRequired`: one durable write, then the ordinary
+  /// scheduler tick takes it from there. Never enqueues, never dispatches, and
+  /// never consults the capacity guard on this side of the wire.
+  Future<WorkItemActionResultResponse> retryFailedWorkItem({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async {
+    final result = await _client.workItemActionEndpoints.retryFailedWorkItem(
+      workItemId: workItemId,
+      requestId: requestId,
+      requestedBy: requestedBy,
+      reason: reason,
+    );
+    revision.value++;
+    return _workItemActionResult(result);
+  }
+
+  /// `agentFailed -> cancelled`, the generic non-terminal escape. Irreversible,
+  /// which is why it carries the same confirmation strip as the retry.
+  Future<WorkItemActionResultResponse> stopFailedWorkItem({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async {
+    final result = await _client.workItemActionEndpoints.stopFailedWorkItem(
+      workItemId: workItemId,
+      requestId: requestId,
+      requestedBy: requestedBy,
+      reason: reason,
+    );
+    revision.value++;
+    return _workItemActionResult(result);
+  }
+
+  WorkItemActionResultResponse _workItemActionResult(WorkItemActionResult r) =>
+      WorkItemActionResultResponse(
+        outcome: r.outcome,
+        workItem: _workItemResponse(r.workItem),
+        jobId: r.jobId,
+        jobState: r.jobState,
+        attemptNumber: r.attemptNumber,
+        inFlight: r.inFlight,
+        cap: r.cap,
+        retryLimitResolved: r.retryLimitResolved,
+        attemptLimit: r.attemptLimit,
+      );
+
   WorkItemResponse _workItemResponse(WorkItemView m) {
     return WorkItemResponse(
       workItemId: m.workItemId,
@@ -2527,6 +2650,177 @@ class CreateFeatureRequestResponse {
   final String title;
   final String state;
   final DateTime createdAt;
+}
+
+// ---------------------------------------------------------------------------
+// Operator actions on a failed work item.
+//
+// WIRE VALUES ONLY. No class below carries display copy: the action panel maps
+// each of these through `plain_language.dart` / `decision_choice.dart`, which is
+// the same boundary every other screen keeps. See design-brief.md §6.2.
+// ---------------------------------------------------------------------------
+
+class WorkItemActionContextResponse {
+  const WorkItemActionContextResponse({
+    required this.workItemId,
+    required this.state,
+    required this.actions,
+    required this.capacity,
+    required this.retryLimitResolved,
+    required this.retryLimitDiagnostic,
+    this.failure,
+    this.priorActions = const [],
+  });
+
+  final String workItemId;
+
+  /// Durable `WorkItemState` wire value. Mapped, never printed.
+  final String state;
+
+  /// Server-computed from `WorkItemTransitions`. An empty list is the whole
+  /// signal the page uses to keep today's existing right-column text.
+  final List<WorkItemActionResponse> actions;
+  final WorkItemFailureResponse? failure;
+  final CapacitySnapshotResponse capacity;
+
+  /// False when `SHIPIT_OPERATOR_MAX_RETRIES` did not resolve. A REPORTED
+  /// state, never an absent one: the operator must be able to see that
+  /// restarting is switched off here rather than conclude the screen is broken.
+  final bool retryLimitResolved;
+  final String? retryLimitDiagnostic;
+  final List<OperatorActionSummaryResponse> priorActions;
+}
+
+class WorkItemActionResponse {
+  const WorkItemActionResponse({
+    required this.action,
+    required this.toState,
+    required this.confirmRequired,
+    required this.destructive,
+    required this.attemptLimit,
+    this.attemptNumber,
+  });
+
+  /// 'retry' | 'stop' — a closed set. The panel renders NOTHING for a value
+  /// it does not recognise, so an unknown action is inert rather than
+  /// dangerous (design-brief.md §10 N4).
+  final String action;
+  final String toState;
+  final bool confirmRequired;
+  final bool destructive;
+
+  /// 1-based position among this item's retries AFTER this action. null for a
+  /// stop, which consumes no attempt.
+  final int? attemptNumber;
+
+  /// The resolved per-work-item maximum. 0 means "not configured", which is a
+  /// valid configuration meaning permanently disabled — not a failure.
+  final int attemptLimit;
+}
+
+class WorkItemFailureResponse {
+  const WorkItemFailureResponse({
+    required this.transitionId,
+    required this.at,
+    required this.reason,
+    required this.actorType,
+    required this.jobId,
+    required this.jobState,
+    required this.jobFailureCode,
+    required this.jobFailureReason,
+    required this.jobFailureJson,
+  });
+
+  final String? transitionId;
+  final DateTime? at;
+
+  /// `work_item_transition.reason`, verbatim and untranslated. Null is a
+  /// REPORTED absence: the panel says the system recorded nothing rather than
+  /// rendering a blank region (AC-21).
+  final String? reason;
+  final String? actorType;
+  final String? jobId;
+  final String? jobState;
+  final String? jobFailureCode;
+  final String? jobFailureReason;
+
+  /// The job's failure JSON exactly as stored, for the technical disclosure.
+  final String? jobFailureJson;
+}
+
+class CapacitySnapshotResponse {
+  const CapacitySnapshotResponse({
+    required this.budget,
+    required this.cap,
+    required this.inFlight,
+    required this.snapshotOnly,
+    required this.resolved,
+  });
+
+  final String budget;
+  final int cap;
+  final int inFlight;
+
+  /// Always true on the wire. This is an observation of a budget at one
+  /// instant, never a promise of a start time.
+  final bool snapshotOnly;
+
+  /// False when the concurrency cap itself did not resolve, in which case
+  /// [cap] is 0 and must not be printed as a real budget.
+  final bool resolved;
+}
+
+class OperatorActionSummaryResponse {
+  const OperatorActionSummaryResponse({
+    required this.action,
+    required this.requestedBy,
+    required this.reason,
+    required this.at,
+    this.attemptNumber,
+  });
+
+  /// 'retry' | 'stop'.
+  final String action;
+
+  /// THE HUMAN. `work_item_transition.actorId` deliberately holds the path the
+  /// engine acted by; this is where the person's name lives.
+  final String requestedBy;
+  final String reason;
+  final DateTime at;
+  final int? attemptNumber;
+}
+
+class WorkItemActionResultResponse {
+  const WorkItemActionResultResponse({
+    required this.outcome,
+    required this.workItem,
+    required this.attemptNumber,
+    required this.retryLimitResolved,
+    required this.attemptLimit,
+    this.jobId,
+    this.jobState,
+    this.inFlight,
+    this.cap,
+  });
+
+  /// 'accepted' | 'alreadyRunning' | 'alreadyStopped' | 'notApplicable' |
+  /// 'notConfigured' | 'invalidRequest'. A wire value; the panel words it.
+  final String outcome;
+  final WorkItemResponse workItem;
+  final String? jobId;
+  final String? jobState;
+
+  /// 1-based attempt number this action consumed; 0 when it consumed none.
+  final int attemptNumber;
+
+  /// Carried on the RESULT as well as on the context because `notConfigured`
+  /// covers two genuinely different situations — the bound is used up, or it
+  /// was never configured — which the operator must be told apart without the
+  /// server authoring copy.
+  final bool retryLimitResolved;
+  final int attemptLimit;
+  final int? inFlight;
+  final int? cap;
 }
 
 class ModelPolicyResponse {

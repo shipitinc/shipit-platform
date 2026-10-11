@@ -1,0 +1,25 @@
+### The durable record of why a work item stopped, as facts.
+###
+### RAW AND UNTRANSLATED. Every field here is verbatim durable state: the
+### `work_item_transition.reason` column, the terminal job's failure code and
+### reason, and the job's failure JSON. The plain-language sentence the operator
+### reads is derived on the client by the closed-set classifier of
+### design-brief.md §5.6, which recognises only causes this repository itself
+### emits and never guesses (N8). The raw record stays verbatim in the page's
+### existing "Show technical details" disclosure (AC-22).
+class: WorkItemFailureView
+fields:
+  transitionId: String?
+  at: DateTime?
+  ### `work_item_transition.reason` of the transition that ENTERED the failure
+  ### state. Verbatim, untranslated, and null when the system recorded none —
+  ### which the panel reports as missing rather than rendering blank (AC-21).
+  reason: String?
+  actorType: String?
+  jobId: String?
+  jobState: String?
+  ### `JobFailureCode.name` of the terminal job, e.g. `executionInterrupted`.
+  jobFailureCode: String?
+  jobFailureReason: String?
+  ### The job's failure JSON exactly as stored, for the technical disclosure.
+  jobFailureJson: String?

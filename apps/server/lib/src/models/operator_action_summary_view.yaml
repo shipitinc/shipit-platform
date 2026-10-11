@@ -1,0 +1,16 @@
+### One row of the append-only `operator_action` audit ledger, for the panel.
+###
+### `requestedBy` is the HUMAN — the one place in this repository where a
+### workflow action records the person rather than the path the engine acted by
+### (`work_item_transition.actorId` deliberately holds `operator-retry`, not a
+### name; see design-brief.md P-4 and OQ-1).
+class: OperatorActionSummaryView
+fields:
+  ### 'retry' | 'stop'.
+  action: String
+  requestedBy: String
+  reason: String
+  at: DateTime
+  ### 1-based position among this item's retries. Null for a `stop`, which
+  ### consumes no attempt.
+  attemptNumber: int?

@@ -11,6 +11,7 @@ import '../../shared/design_primitives.dart';
 import '../../shared/state_views.dart';
 import '../../shared/detail_sections.dart';
 import '../../shared/mobile_chrome.dart';
+import 'failed_work_item_action_panel.dart';
 import 'run_detail_bloc.dart';
 import 'run_detail_event.dart';
 
@@ -189,6 +190,19 @@ class _RunDetailView extends StatelessWidget {
                     'title: ${state.name} · category: ${state.category}',
                     for (final event in state.events)
                       '${event.timestamp.toIso8601String()} ${event.raw}',
+                    // AC-22: the raw reason and the job's failure JSON appear
+                    // verbatim here, one disclosure away. The panel shows a
+                    // plain sentence; this keeps the engineer's record intact
+                    // rather than translating it away.
+                    if (state.actionContext?.failure?.reason case final r?)
+                      'failure reason: $r',
+                    if (state.actionContext?.failure?.jobFailureJson
+                        case final j?)
+                      'failure json: $j',
+                    if (state.actionContext case final a?)
+                      'operator actions: ${a.priorActions.length}'
+                          '${a.retryLimitResolved ? '' : ' · SHIPIT_OPERATOR_MAX_RETRIES not resolved'}'
+                          '${a.capacity.resolved ? ' · capacity ${a.capacity.inFlight}/${a.capacity.cap} (snapshot only)' : ''}',
                   ],
                 ),
               ],
@@ -293,6 +307,12 @@ class _LeftColumn extends StatelessWidget {
           value: PlainLanguage.haltExplanation(
             state.haltedState ?? state.state,
           ),
+        ),
+      if (state.actionContext case final a? when a.actions.isNotEmpty)
+        const DefinitionEntry(
+          label: 'WHAT YOU CAN DO',
+          value: 'Start it again, or stop it.',
+          prose: true,
         ),
       if (state.heldUpJobs.isNotEmpty)
         DefinitionEntry(
@@ -645,6 +665,42 @@ class _RightColumn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
+    final now = (DateTime.now)();
+
+    // The action panel REPLACES the "Nothing needs you here" branch, and does
+    // so only when the server says an action is legal.
+    //
+    // That condition matters in both directions. Without it the screen would
+    // say "Nothing needs you here" under a heading promising a restart, which
+    // is worse than a dead button because it is a panel that promises one.
+    // And an empty action list is the signal for today's existing text — a
+    // finished run still says "This run has finished. Its record is kept for
+    // audit." (AC-2, §8.4).
+    final actionContext = state.actionContext;
+    if (actionContext case final a? when a.actions.isNotEmpty) {
+      return FailedWorkItemActionPanel(
+        actionContext: a,
+        haltCount: state.events.where((e) => e.type == 'agent_failed').length,
+        now: now,
+        pendingAction: state.pendingAction,
+        submitting: state.isSubmittingAction,
+        outcomeAnnouncement: state.actionAnnouncement,
+        onRetryPressed: () =>
+            context.read<RunDetailBloc>().add(RunDetailActionStarted('retry')),
+        onStopPressed: () =>
+            context.read<RunDetailBloc>().add(RunDetailActionStarted('stop')),
+        onSubmit: (action, reason, requestId) =>
+            context.read<RunDetailBloc>().add(
+              RunDetailActionSubmitted(
+                action: action,
+                reason: reason,
+                requestId: requestId,
+              ),
+            ),
+        onCancel: () =>
+            context.read<RunDetailBloc>().add(RunDetailActionCancelled()),
+      );
+    }
 
     // The board's right panel exists to hand the operator to the decision.
     // With nothing to decide there is nothing truthful to put here.
@@ -662,6 +718,17 @@ class _RightColumn extends StatelessWidget {
                 : 'The system is still working on this run.',
             style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary),
           ),
+          // A read failure is stated rather than hidden. Rendering the
+          // reassuring "nothing needs you" text when in fact the actions
+          // could not be READ is the exact quiet-screen dishonesty this panel
+          // exists to close, one layer up.
+          if (state.actionContextError != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              state.actionContextError!,
+              style: ShipItType.bodyMicro.copyWith(color: palette.inkTertiary),
+            ),
+          ],
         ],
       );
     }

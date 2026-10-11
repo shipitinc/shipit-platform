@@ -74,18 +74,22 @@ import 'package:control_plane_server/src/generated/model_stats_view.dart'
 import 'package:control_plane_server/src/generated/job_list_view.dart' as _i35;
 import 'package:control_plane_server/src/generated/job_inspection_view.dart'
     as _i36;
-import 'package:control_plane_server/src/generated/worker_list_view.dart'
+import 'package:control_plane_server/src/generated/work_item_action_context_view.dart'
     as _i37;
-import 'package:control_plane_server/src/generated/worker_execution_list_view.dart'
+import 'package:control_plane_server/src/generated/work_item_action_result.dart'
     as _i38;
-import 'package:control_plane_server/src/generated/worker_execution_inspection_view.dart'
+import 'package:control_plane_server/src/generated/worker_list_view.dart'
     as _i39;
-import 'package:control_plane_server/src/generated/job_summary_view.dart'
+import 'package:control_plane_server/src/generated/worker_execution_list_view.dart'
     as _i40;
-import 'package:control_plane_server/src/generated/work_item_detail_view.dart'
+import 'package:control_plane_server/src/generated/worker_execution_inspection_view.dart'
     as _i41;
-import 'package:control_plane_server/src/generated/resolve_decision_view.dart'
+import 'package:control_plane_server/src/generated/job_summary_view.dart'
     as _i42;
+import 'package:control_plane_server/src/generated/work_item_detail_view.dart'
+    as _i43;
+import 'package:control_plane_server/src/generated/resolve_decision_view.dart'
+    as _i44;
 import 'package:control_plane_server/src/generated/protocol.dart';
 import 'package:control_plane_server/src/generated/endpoints.dart';
 export 'package:serverpod_test/serverpod_test_public_exports.dart';
@@ -220,6 +224,8 @@ class TestEndpoints {
 
   late final _SchedulerEndpoints schedulerEndpoints;
 
+  late final _WorkItemActionEndpoints workItemActionEndpoints;
+
   late final _WorkerEndpoints workerEndpoints;
 
   late final _WorkflowEndpoints workflowEndpoints;
@@ -269,6 +275,10 @@ class _InternalTestEndpoints extends TestEndpoints
       serializationManager,
     );
     schedulerEndpoints = _SchedulerEndpoints(
+      endpoints,
+      serializationManager,
+    );
+    workItemActionEndpoints = _WorkItemActionEndpoints(
       endpoints,
       serializationManager,
     );
@@ -2294,6 +2304,126 @@ class _SchedulerEndpoints {
   }
 }
 
+class _WorkItemActionEndpoints {
+  _WorkItemActionEndpoints(
+    this._endpointDispatch,
+    this._serializationManager,
+  );
+
+  final _i2.EndpointDispatch _endpointDispatch;
+
+  final _i2.SerializationManager _serializationManager;
+
+  _i3.Future<_i37.WorkItemActionContextView> actionContext(
+    _i1.TestSessionBuilder sessionBuilder, {
+    required String workItemId,
+  }) async {
+    return _i1.callAwaitableFunctionAndHandleExceptions(() async {
+      var _localUniqueSession =
+          (sessionBuilder as _i1.InternalTestSessionBuilder).internalBuild(
+            endpoint: 'workItemActionEndpoints',
+            method: 'actionContext',
+          );
+      try {
+        var _localCallContext = await _endpointDispatch.getMethodCallContext(
+          createSessionCallback: (_) => _localUniqueSession,
+          endpointPath: 'workItemActionEndpoints',
+          methodName: 'actionContext',
+          parameters: _i1.testObjectToJson({'workItemId': workItemId}),
+          serializationManager: _serializationManager,
+        );
+        var _localReturnValue =
+            await (_localCallContext.method.call(
+                  _localUniqueSession,
+                  _localCallContext.arguments,
+                )
+                as _i3.Future<_i37.WorkItemActionContextView>);
+        return _localReturnValue;
+      } finally {
+        await _localUniqueSession.close();
+      }
+    });
+  }
+
+  _i3.Future<_i38.WorkItemActionResult> retryFailedWorkItem(
+    _i1.TestSessionBuilder sessionBuilder, {
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async {
+    return _i1.callAwaitableFunctionAndHandleExceptions(() async {
+      var _localUniqueSession =
+          (sessionBuilder as _i1.InternalTestSessionBuilder).internalBuild(
+            endpoint: 'workItemActionEndpoints',
+            method: 'retryFailedWorkItem',
+          );
+      try {
+        var _localCallContext = await _endpointDispatch.getMethodCallContext(
+          createSessionCallback: (_) => _localUniqueSession,
+          endpointPath: 'workItemActionEndpoints',
+          methodName: 'retryFailedWorkItem',
+          parameters: _i1.testObjectToJson({
+            'workItemId': workItemId,
+            'requestId': requestId,
+            'requestedBy': requestedBy,
+            'reason': reason,
+          }),
+          serializationManager: _serializationManager,
+        );
+        var _localReturnValue =
+            await (_localCallContext.method.call(
+                  _localUniqueSession,
+                  _localCallContext.arguments,
+                )
+                as _i3.Future<_i38.WorkItemActionResult>);
+        return _localReturnValue;
+      } finally {
+        await _localUniqueSession.close();
+      }
+    });
+  }
+
+  _i3.Future<_i38.WorkItemActionResult> stopFailedWorkItem(
+    _i1.TestSessionBuilder sessionBuilder, {
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async {
+    return _i1.callAwaitableFunctionAndHandleExceptions(() async {
+      var _localUniqueSession =
+          (sessionBuilder as _i1.InternalTestSessionBuilder).internalBuild(
+            endpoint: 'workItemActionEndpoints',
+            method: 'stopFailedWorkItem',
+          );
+      try {
+        var _localCallContext = await _endpointDispatch.getMethodCallContext(
+          createSessionCallback: (_) => _localUniqueSession,
+          endpointPath: 'workItemActionEndpoints',
+          methodName: 'stopFailedWorkItem',
+          parameters: _i1.testObjectToJson({
+            'workItemId': workItemId,
+            'requestId': requestId,
+            'requestedBy': requestedBy,
+            'reason': reason,
+          }),
+          serializationManager: _serializationManager,
+        );
+        var _localReturnValue =
+            await (_localCallContext.method.call(
+                  _localUniqueSession,
+                  _localCallContext.arguments,
+                )
+                as _i3.Future<_i38.WorkItemActionResult>);
+        return _localReturnValue;
+      } finally {
+        await _localUniqueSession.close();
+      }
+    });
+  }
+}
+
 class _WorkerEndpoints {
   _WorkerEndpoints(
     this._endpointDispatch,
@@ -2304,7 +2434,7 @@ class _WorkerEndpoints {
 
   final _i2.SerializationManager _serializationManager;
 
-  _i3.Future<_i37.WorkerListView> listWorkers(
+  _i3.Future<_i39.WorkerListView> listWorkers(
     _i1.TestSessionBuilder sessionBuilder,
   ) async {
     return _i1.callAwaitableFunctionAndHandleExceptions(() async {
@@ -2326,7 +2456,7 @@ class _WorkerEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i37.WorkerListView>);
+                as _i3.Future<_i39.WorkerListView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2334,7 +2464,7 @@ class _WorkerEndpoints {
     });
   }
 
-  _i3.Future<_i38.WorkerExecutionListView> listExecutions(
+  _i3.Future<_i40.WorkerExecutionListView> listExecutions(
     _i1.TestSessionBuilder sessionBuilder, {
     String? workItemId,
   }) async {
@@ -2357,7 +2487,7 @@ class _WorkerEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i38.WorkerExecutionListView>);
+                as _i3.Future<_i40.WorkerExecutionListView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2365,7 +2495,7 @@ class _WorkerEndpoints {
     });
   }
 
-  _i3.Future<_i39.WorkerExecutionInspectionView> inspect(
+  _i3.Future<_i41.WorkerExecutionInspectionView> inspect(
     _i1.TestSessionBuilder sessionBuilder, {
     required String workerExecutionId,
   }) async {
@@ -2390,7 +2520,7 @@ class _WorkerEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i39.WorkerExecutionInspectionView>);
+                as _i3.Future<_i41.WorkerExecutionInspectionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2409,7 +2539,7 @@ class _WorkflowEndpoints {
 
   final _i2.SerializationManager _serializationManager;
 
-  _i3.Future<List<_i40.JobSummaryView>> jobsForWorkItem(
+  _i3.Future<List<_i42.JobSummaryView>> jobsForWorkItem(
     _i1.TestSessionBuilder sessionBuilder, {
     required String workItemId,
   }) async {
@@ -2432,7 +2562,7 @@ class _WorkflowEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<List<_i40.JobSummaryView>>);
+                as _i3.Future<List<_i42.JobSummaryView>>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2440,7 +2570,7 @@ class _WorkflowEndpoints {
     });
   }
 
-  _i3.Future<_i41.WorkItemDetailView> inspect(
+  _i3.Future<_i43.WorkItemDetailView> inspect(
     _i1.TestSessionBuilder sessionBuilder, {
     required String workItemId,
   }) async {
@@ -2463,7 +2593,7 @@ class _WorkflowEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i41.WorkItemDetailView>);
+                as _i3.Future<_i43.WorkItemDetailView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -2502,7 +2632,7 @@ class _WorkflowEndpoints {
     });
   }
 
-  _i3.Future<_i42.ResolveDecisionView> resolveDecision(
+  _i3.Future<_i44.ResolveDecisionView> resolveDecision(
     _i1.TestSessionBuilder sessionBuilder, {
     required String decisionId,
     required String choice,
@@ -2541,7 +2671,7 @@ class _WorkflowEndpoints {
                   _localUniqueSession,
                   _localCallContext.arguments,
                 )
-                as _i3.Future<_i42.ResolveDecisionView>);
+                as _i3.Future<_i44.ResolveDecisionView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();

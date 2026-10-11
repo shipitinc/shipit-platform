@@ -73,10 +73,17 @@ void main() {
       for (final name in pngNames(goldens)) {
         frames[name] = decodePng('${goldens.path}/$name');
       }
-      expect(frames, hasLength(54));
-      // Verified across all 54: 8-bit non-interlaced RGBA, three sizes.
+      expect(frames, hasLength(56));
+      // Verified across all 56: 8-bit non-interlaced RGBA, three sizes.
       expect(frames['all_work_light.png']!.width, 1280);
       expect(frames['all_work_light.png']!.height, 900);
+      // The operator action panel (design-failed-work-retry, AC-27), which is
+      // a NEW surface rather than a re-baseline: no existing golden moved,
+      // because no existing fixture supplies a legal operator action.
+      expect(frames['run_detail_failed_light.png']!.width, 1280);
+      expect(frames['run_detail_failed_light.png']!.height, 900);
+      expect(frames['run_detail_failed_dark.png']!.width, 1280);
+      expect(frames['run_detail_failed_dark.png']!.height, 900);
       expect(frames['defect_list_empty_mobile.png']!.width, 390);
       expect(frames['defect_list_empty_mobile.png']!.height, 844);
       expect(frames['create_defect_mobile.png']!.height, 1080);

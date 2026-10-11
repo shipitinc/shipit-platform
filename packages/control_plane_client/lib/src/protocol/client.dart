@@ -72,19 +72,23 @@ import 'package:control_plane_client/src/protocol/model_stats_view.dart'
 import 'package:control_plane_client/src/protocol/job_list_view.dart' as _i34;
 import 'package:control_plane_client/src/protocol/job_inspection_view.dart'
     as _i35;
-import 'package:control_plane_client/src/protocol/worker_list_view.dart'
+import 'package:control_plane_client/src/protocol/work_item_action_context_view.dart'
     as _i36;
-import 'package:control_plane_client/src/protocol/worker_execution_list_view.dart'
+import 'package:control_plane_client/src/protocol/work_item_action_result.dart'
     as _i37;
-import 'package:control_plane_client/src/protocol/worker_execution_inspection_view.dart'
+import 'package:control_plane_client/src/protocol/worker_list_view.dart'
     as _i38;
-import 'package:control_plane_client/src/protocol/job_summary_view.dart'
+import 'package:control_plane_client/src/protocol/worker_execution_list_view.dart'
     as _i39;
-import 'package:control_plane_client/src/protocol/work_item_detail_view.dart'
+import 'package:control_plane_client/src/protocol/worker_execution_inspection_view.dart'
     as _i40;
-import 'package:control_plane_client/src/protocol/resolve_decision_view.dart'
+import 'package:control_plane_client/src/protocol/job_summary_view.dart'
     as _i41;
-import 'protocol.dart' as _i42;
+import 'package:control_plane_client/src/protocol/work_item_detail_view.dart'
+    as _i42;
+import 'package:control_plane_client/src/protocol/resolve_decision_view.dart'
+    as _i43;
+import 'protocol.dart' as _i44;
 
 /// Server half of Add Product: mints repository deploy keys and proves they can
 /// reach the repository (ADR 0018 §A2 / §A3).
@@ -1129,6 +1133,128 @@ class EndpointSchedulerEndpoints extends _i1.EndpointRef {
       );
 }
 
+/// Operator actions on a work item parked in a failure state.
+///
+/// The SECOND legal request-side write path, after
+/// `WorkflowEndpoints.resolveDecision`, and deliberately a separate class: the
+/// existing class's doc comment claims resolveDecision is the only one, and
+/// widening it in place would have left that comment false.
+///
+/// ## The retry is ONE durable write, and it deliberately does nothing else
+///
+/// `retryFailedWorkItem` performs exactly one durable transaction — the state
+/// change, the transition record, the `operator_action` audit row and the
+/// attempt marker — through [DurableWorkflowEngine.operatorRetry]. It does NOT
+/// enqueue a job, does NOT claim one, does NOT dispatch one, and does NOT
+/// consult the capacity guard.
+///
+/// The item lands in `designNotRequired`, a triage entry state the scheduler
+/// already treats as runnable, so the ordinary tick does the rest on the
+/// ordinary path. That is why there is no dispatch path here to get wrong, and
+/// why a capacity denial is the scheduler's ordinary behaviour rather than an
+/// outcome this method has to design.
+///
+/// **It does not pre-check capacity either, and must never be given one.** A
+/// pre-check is a time-of-check/time-of-use race and would produce a button
+/// that says "go" and then does nothing — the dead-button class this design has
+/// been burned by three times. The item simply stays runnable until a slot
+/// frees (§7.1, N1).
+/// {@category Endpoint}
+class EndpointWorkItemActionEndpoints extends _i1.EndpointRef {
+  EndpointWorkItemActionEndpoints(_i1.EndpointCaller caller) : super(caller);
+
+  @override
+  String get name => 'workItemActionEndpoints';
+
+  /// READ. The legal action set for this work item, computed server-side from
+  /// [WorkItemTransitions], plus the failure record and the capacity snapshot.
+  ///
+  /// An empty [WorkItemActionContextView.actions] is the whole signal the page
+  /// uses to keep today's existing right-column text instead of the action
+  /// panel, so it must be empty for exactly the right reason and not merely
+  /// because a lookup failed.
+  _i2.Future<_i36.WorkItemActionContextView> actionContext({
+    required String workItemId,
+  }) => caller.callServerEndpoint<_i36.WorkItemActionContextView>(
+    'workItemActionEndpoints',
+    'actionContext',
+    {'workItemId': workItemId},
+  );
+
+  /// WRITE. `agentFailed -> designNotRequired` through
+  /// [DurableWorkflowEngine.operatorRetry].
+  ///
+  /// One durable transaction, no enqueue, no dispatch, no capacity check. The
+  /// ordering below is §6.4's, and each step's position is load-bearing:
+  ///
+  ///  1. **Replay.** The `operator_action` row is unique on
+  ///     `(workItemId, requestId)`, so it is the authoritative idempotency
+  ///     record. A client that retries one operator intent — a lost response, a
+  ///     double-click — finds its own row and returns the current item without
+  ///     writing again. This is what makes a network retry mint no second job:
+  ///     no second write means no second `triageAttempt`, so no second dedupe
+  ///     key.
+  ///  2. **State.** Not `agent_failed` ⇒ `notApplicable`, nothing written.
+  ///  3. **Edge legality**, asked of the real table.
+  ///  4. **The bound.** Reached ⇒ `notConfigured`, nothing written. Unresolved
+  ///     ⇒ `notConfigured`, nothing written, and the diagnostic names the
+  ///     variable.
+  ///  5. **The reason.** Blank ⇒ `invalidRequest`, nothing written. The record
+  ///     must say why, not just what (§6.4 step 1, §6.3).
+  ///  6. **`alreadyRunning`.** Any non-terminal job for this item means a
+  ///     second operator action could be layered on top of a live attempt.
+  ///  7. **The write.** One transaction.
+  ///
+  /// `requestId` is minted by the client ONCE per operator intent — on confirm,
+  /// not on load and not per HTTP attempt — and reused for every network retry
+  /// of that intent.
+  _i2.Future<_i37.WorkItemActionResult> retryFailedWorkItem({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) => caller.callServerEndpoint<_i37.WorkItemActionResult>(
+    'workItemActionEndpoints',
+    'retryFailedWorkItem',
+    {
+      'workItemId': workItemId,
+      'requestId': requestId,
+      'requestedBy': requestedBy,
+      'reason': reason,
+    },
+  );
+
+  /// WRITE. `agentFailed -> cancelled` through [DurableWorkflowEngine].
+  ///
+  /// The generic non-terminal escape and nothing synthesised: `stop` writes
+  /// exactly the edge `WorkItemTransitions` already permits, under the same
+  /// actor the retry uses, and records the human and their reason on the same
+  /// durable write. A stop is terminal and irreversible — there is no edge back
+  /// from `cancelled` — which is why it is offered as an `OutlinedButton` with
+  /// a `negative` panel edge and the SAME confirmation strip as the retry, and
+  /// why it is never styled as the safe option (§10 N11, §9 A6).
+  ///
+  /// Unlike the retry, this does NOT refuse while a job is running: stopping is
+  /// precisely what an operator reaches for when work is already in flight, and
+  /// the brief withholds `alreadyRunning` from the stop path (design-brief.md
+  /// §6.4 step 1, §7.3 — "offers no retry button while it holds").
+  _i2.Future<_i37.WorkItemActionResult> stopFailedWorkItem({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) => caller.callServerEndpoint<_i37.WorkItemActionResult>(
+    'workItemActionEndpoints',
+    'stopFailedWorkItem',
+    {
+      'workItemId': workItemId,
+      'requestId': requestId,
+      'requestedBy': requestedBy,
+      'reason': reason,
+    },
+  );
+}
+
 /// Read endpoints for worker_runtime durable state (registrations +
 /// executions + results).
 /// {@category Endpoint}
@@ -1144,26 +1270,26 @@ class EndpointWorkerEndpoints extends _i1.EndpointRef {
   /// `WorkerRegistrationCodec.toJson(...)` verbatim, whose nested `capabilities`
   /// and `artifactCache` objects are `Map<String, dynamic>`; those are now typed
   /// views keyed by their wire names.
-  _i2.Future<_i36.WorkerListView> listWorkers() =>
-      caller.callServerEndpoint<_i36.WorkerListView>(
+  _i2.Future<_i38.WorkerListView> listWorkers() =>
+      caller.callServerEndpoint<_i38.WorkerListView>(
         'workerEndpoints',
         'listWorkers',
         {},
       );
 
   /// Lists worker executions, newest first. Reads only.
-  _i2.Future<_i37.WorkerExecutionListView> listExecutions({
+  _i2.Future<_i39.WorkerExecutionListView> listExecutions({
     String? workItemId,
-  }) => caller.callServerEndpoint<_i37.WorkerExecutionListView>(
+  }) => caller.callServerEndpoint<_i39.WorkerExecutionListView>(
     'workerEndpoints',
     'listExecutions',
     {'workItemId': workItemId},
   );
 
   /// Returns one execution, its events and (if present) its result. Reads only.
-  _i2.Future<_i38.WorkerExecutionInspectionView> inspect({
+  _i2.Future<_i40.WorkerExecutionInspectionView> inspect({
     required String workerExecutionId,
-  }) => caller.callServerEndpoint<_i38.WorkerExecutionInspectionView>(
+  }) => caller.callServerEndpoint<_i40.WorkerExecutionInspectionView>(
     'workerEndpoints',
     'inspect',
     {'workerExecutionId': workerExecutionId},
@@ -1183,9 +1309,9 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
   /// Read-only: the operator surface reports what the scheduler has committed
   /// and never enqueues, claims or cancels. Feeds the Run detail line that
   /// explains what is held up behind a pending decision.
-  _i2.Future<List<_i39.JobSummaryView>> jobsForWorkItem({
+  _i2.Future<List<_i41.JobSummaryView>> jobsForWorkItem({
     required String workItemId,
-  }) => caller.callServerEndpoint<List<_i39.JobSummaryView>>(
+  }) => caller.callServerEndpoint<List<_i41.JobSummaryView>>(
     'workflowEndpoints',
     'jobsForWorkItem',
     {'workItemId': workItemId},
@@ -1193,8 +1319,8 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
 
   /// Returns the current work item and its transition history. Never mutates
   /// state; `WorkItem.state` on the wire is always reported, never written.
-  _i2.Future<_i40.WorkItemDetailView> inspect({required String workItemId}) =>
-      caller.callServerEndpoint<_i40.WorkItemDetailView>(
+  _i2.Future<_i42.WorkItemDetailView> inspect({required String workItemId}) =>
+      caller.callServerEndpoint<_i42.WorkItemDetailView>(
         'workflowEndpoints',
         'inspect',
         {'workItemId': workItemId},
@@ -1215,7 +1341,7 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
   /// its resolution, and the resulting work item move are persisted
   /// transactionally; a repeated call is an idempotent replay, so retries
   /// after a network failure never double-apply the transition.
-  _i2.Future<_i41.ResolveDecisionView> resolveDecision({
+  _i2.Future<_i43.ResolveDecisionView> resolveDecision({
     required String decisionId,
     required String choice,
     required String decider,
@@ -1224,7 +1350,7 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
     required String publicKey,
     required String signature,
     required DateTime signedAt,
-  }) => caller.callServerEndpoint<_i41.ResolveDecisionView>(
+  }) => caller.callServerEndpoint<_i43.ResolveDecisionView>(
     'workflowEndpoints',
     'resolveDecision',
     {
@@ -1260,7 +1386,7 @@ class Client extends _i1.ServerpodClientShared {
     bool? disconnectStreamsOnLostInternetConnection,
   }) : super(
          host,
-         _i42.Protocol(),
+         _i44.Protocol(),
          securityContext: securityContext,
          streamingConnectionTimeout: streamingConnectionTimeout,
          connectionTimeout: connectionTimeout,
@@ -1279,6 +1405,7 @@ class Client extends _i1.ServerpodClientShared {
     productRegistryEndpoints = EndpointProductRegistryEndpoints(this);
     providerHealthEndpoints = EndpointProviderHealthEndpoints(this);
     schedulerEndpoints = EndpointSchedulerEndpoints(this);
+    workItemActionEndpoints = EndpointWorkItemActionEndpoints(this);
     workerEndpoints = EndpointWorkerEndpoints(this);
     workflowEndpoints = EndpointWorkflowEndpoints(this);
   }
@@ -1303,6 +1430,8 @@ class Client extends _i1.ServerpodClientShared {
 
   late final EndpointSchedulerEndpoints schedulerEndpoints;
 
+  late final EndpointWorkItemActionEndpoints workItemActionEndpoints;
+
   late final EndpointWorkerEndpoints workerEndpoints;
 
   late final EndpointWorkflowEndpoints workflowEndpoints;
@@ -1319,6 +1448,7 @@ class Client extends _i1.ServerpodClientShared {
     'productRegistryEndpoints': productRegistryEndpoints,
     'providerHealthEndpoints': providerHealthEndpoints,
     'schedulerEndpoints': schedulerEndpoints,
+    'workItemActionEndpoints': workItemActionEndpoints,
     'workerEndpoints': workerEndpoints,
     'workflowEndpoints': workflowEndpoints,
   };

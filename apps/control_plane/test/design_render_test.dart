@@ -306,6 +306,59 @@ void main() {
     }
   });
 
+  group('Run detail · failed work (the operator action panel)', () {
+    // AC-27. The goldens that already existed are UNCHANGED by this panel,
+    // which is itself the AC-2 assertion made visible: no fixture supplied a
+    // legal action, so no run-detail pixel moved. These two are the goldens for
+    // the NEW panel, added alongside rather than re-baselining over the old
+    // ones — a re-baseline hides the fact that nothing else moved.
+    for (final theme in {
+      'light': ShipItTheme.light(),
+      'dark': ShipItTheme.dark(),
+    }.entries) {
+      testWidgets('operator action panel (${theme.key})', (tester) async {
+        final failed = MockRepository(
+          workItemDetail: WorkItemDetailResponse(
+            workItem: WorkItemResponse(
+              workItemId: 'defect-DEF-1791686704991884',
+              title: 'Sign-in is rejected after a password reset',
+              description: 'Operators cannot sign in with a new password',
+              state: 'agent_failed',
+              createdAt: DateTime(2026, 9, 16, 9, 12),
+              updatedAt: DateTime(2026, 9, 16, 9, 50),
+            ),
+            transitionHistory: [
+              makeTransition(
+                from: 'agent_executing',
+                to: 'agent_failed',
+                at: DateTime(2026, 9, 16, 9, 50),
+                reason: 'operator step 3: stranded by pre-fix zombie reclaim',
+              ),
+            ],
+          ),
+          actionContext: makeFailedActionContext(),
+        );
+
+        final bloc = RunDetailBloc(
+          runId: 'defect-DEF-1791686704991884',
+          repository: failed,
+        )..add(RunDetailLoaded());
+        addTearDown(bloc.close);
+        await pump(tester, theme.value, '/runs/defect-DEF-1791686704991884', {
+          '/runs/:id': () => RunDetailPage(
+            runId: 'defect-DEF-1791686704991884',
+            bloc: bloc,
+            clock: clock,
+          ),
+        });
+        await expectLater(
+          find.byType(MaterialApp),
+          matchesGoldenFile('goldens/run_detail_failed_${theme.key}.png'),
+        );
+      });
+    }
+  });
+
   group('Decision detail', () {
     for (final theme in {
       'light': ShipItTheme.light(),

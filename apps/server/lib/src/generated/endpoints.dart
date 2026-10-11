@@ -22,11 +22,12 @@ import '../endpoints/intake_endpoints.dart' as _i8;
 import '../endpoints/product_registry_endpoints.dart' as _i9;
 import '../endpoints/provider_health_endpoints.dart' as _i10;
 import '../endpoints/scheduler_endpoints.dart' as _i11;
-import '../endpoints/worker_endpoints.dart' as _i12;
-import '../endpoints/workflow_endpoints.dart' as _i13;
+import '../endpoints/work_item_action_endpoints.dart' as _i12;
+import '../endpoints/worker_endpoints.dart' as _i13;
+import '../endpoints/workflow_endpoints.dart' as _i14;
 import 'package:control_plane_server/src/generated/human_direction_attachment_view.dart'
-    as _i14;
-import 'package:platform_contracts/src/types/baseline_fact.dart' as _i15;
+    as _i15;
+import 'package:platform_contracts/src/types/baseline_fact.dart' as _i16;
 
 class Endpoints extends _i1.EndpointDispatch {
   @override
@@ -92,13 +93,19 @@ class Endpoints extends _i1.EndpointDispatch {
           'schedulerEndpoints',
           null,
         ),
-      'workerEndpoints': _i12.WorkerEndpoints()
+      'workItemActionEndpoints': _i12.WorkItemActionEndpoints()
+        ..initialize(
+          server,
+          'workItemActionEndpoints',
+          null,
+        ),
+      'workerEndpoints': _i13.WorkerEndpoints()
         ..initialize(
           server,
           'workerEndpoints',
           null,
         ),
-      'workflowEndpoints': _i13.WorkflowEndpoints()
+      'workflowEndpoints': _i14.WorkflowEndpoints()
         ..initialize(
           server,
           'workflowEndpoints',
@@ -704,7 +711,7 @@ class Endpoints extends _i1.EndpointDispatch {
             ),
             'attachments': _i1.ParameterDescription(
               name: 'attachments',
-              type: _i1.getType<List<_i14.HumanDirectionAttachmentView>?>(),
+              type: _i1.getType<List<_i15.HumanDirectionAttachmentView>?>(),
               nullable: true,
             ),
             'createdBy': _i1.ParameterDescription(
@@ -1159,7 +1166,7 @@ class Endpoints extends _i1.EndpointDispatch {
             ),
             'facts': _i1.ParameterDescription(
               name: 'facts',
-              type: _i1.getType<List<_i15.BaselineFact>>(),
+              type: _i1.getType<List<_i16.BaselineFact>>(),
               nullable: false,
             ),
           },
@@ -1911,6 +1918,111 @@ class Endpoints extends _i1.EndpointDispatch {
         ),
       },
     );
+    connectors['workItemActionEndpoints'] = _i1.EndpointConnector(
+      name: 'workItemActionEndpoints',
+      endpoint: endpoints['workItemActionEndpoints']!,
+      methodConnectors: {
+        'actionContext': _i1.MethodConnector(
+          name: 'actionContext',
+          params: {
+            'workItemId': _i1.ParameterDescription(
+              name: 'workItemId',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+          },
+          call:
+              (
+                _i1.Session session,
+                Map<String, dynamic> params,
+              ) async =>
+                  (endpoints['workItemActionEndpoints']
+                          as _i12.WorkItemActionEndpoints)
+                      .actionContext(
+                        session,
+                        workItemId: params['workItemId'],
+                      ),
+        ),
+        'retryFailedWorkItem': _i1.MethodConnector(
+          name: 'retryFailedWorkItem',
+          params: {
+            'workItemId': _i1.ParameterDescription(
+              name: 'workItemId',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'requestId': _i1.ParameterDescription(
+              name: 'requestId',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'requestedBy': _i1.ParameterDescription(
+              name: 'requestedBy',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'reason': _i1.ParameterDescription(
+              name: 'reason',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+          },
+          call:
+              (
+                _i1.Session session,
+                Map<String, dynamic> params,
+              ) async =>
+                  (endpoints['workItemActionEndpoints']
+                          as _i12.WorkItemActionEndpoints)
+                      .retryFailedWorkItem(
+                        session,
+                        workItemId: params['workItemId'],
+                        requestId: params['requestId'],
+                        requestedBy: params['requestedBy'],
+                        reason: params['reason'],
+                      ),
+        ),
+        'stopFailedWorkItem': _i1.MethodConnector(
+          name: 'stopFailedWorkItem',
+          params: {
+            'workItemId': _i1.ParameterDescription(
+              name: 'workItemId',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'requestId': _i1.ParameterDescription(
+              name: 'requestId',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'requestedBy': _i1.ParameterDescription(
+              name: 'requestedBy',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'reason': _i1.ParameterDescription(
+              name: 'reason',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+          },
+          call:
+              (
+                _i1.Session session,
+                Map<String, dynamic> params,
+              ) async =>
+                  (endpoints['workItemActionEndpoints']
+                          as _i12.WorkItemActionEndpoints)
+                      .stopFailedWorkItem(
+                        session,
+                        workItemId: params['workItemId'],
+                        requestId: params['requestId'],
+                        requestedBy: params['requestedBy'],
+                        reason: params['reason'],
+                      ),
+        ),
+      },
+    );
     connectors['workerEndpoints'] = _i1.EndpointConnector(
       name: 'workerEndpoints',
       endpoint: endpoints['workerEndpoints']!,
@@ -1922,7 +2034,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['workerEndpoints'] as _i12.WorkerEndpoints)
+              ) async => (endpoints['workerEndpoints'] as _i13.WorkerEndpoints)
                   .listWorkers(session),
         ),
         'listExecutions': _i1.MethodConnector(
@@ -1938,7 +2050,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['workerEndpoints'] as _i12.WorkerEndpoints)
+              ) async => (endpoints['workerEndpoints'] as _i13.WorkerEndpoints)
                   .listExecutions(
                     session,
                     workItemId: params['workItemId'],
@@ -1957,7 +2069,7 @@ class Endpoints extends _i1.EndpointDispatch {
               (
                 _i1.Session session,
                 Map<String, dynamic> params,
-              ) async => (endpoints['workerEndpoints'] as _i12.WorkerEndpoints)
+              ) async => (endpoints['workerEndpoints'] as _i13.WorkerEndpoints)
                   .inspect(
                     session,
                     workerExecutionId: params['workerExecutionId'],
@@ -1983,7 +2095,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['workflowEndpoints'] as _i13.WorkflowEndpoints)
+                  (endpoints['workflowEndpoints'] as _i14.WorkflowEndpoints)
                       .jobsForWorkItem(
                         session,
                         workItemId: params['workItemId'],
@@ -2003,7 +2115,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['workflowEndpoints'] as _i13.WorkflowEndpoints)
+                  (endpoints['workflowEndpoints'] as _i14.WorkflowEndpoints)
                       .inspect(
                         session,
                         workItemId: params['workItemId'],
@@ -2023,7 +2135,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['workflowEndpoints'] as _i13.WorkflowEndpoints)
+                  (endpoints['workflowEndpoints'] as _i14.WorkflowEndpoints)
                       .listDecisions(
                         session,
                         workItemId: params['workItemId'],
@@ -2078,7 +2190,7 @@ class Endpoints extends _i1.EndpointDispatch {
                 _i1.Session session,
                 Map<String, dynamic> params,
               ) async =>
-                  (endpoints['workflowEndpoints'] as _i13.WorkflowEndpoints)
+                  (endpoints['workflowEndpoints'] as _i14.WorkflowEndpoints)
                       .resolveDecision(
                         session,
                         decisionId: params['decisionId'],
