@@ -49,8 +49,17 @@ services:
       SERVERPOD_DATABASE_NAME: shipit
       SERVERPOD_DATABASE_USER: shipit
       SERVERPOD_DATABASE_PASSWORD: shipit
+      # QA Postgres has no TLS. Serverpod requires SSL by default, so without this the
+      # server retries "Failed to connect to the database" forever and never serves.
+      SERVERPOD_DATABASE_REQUIRE_SSL: "false"
       SERVERPOD_API_SERVER_PORT: "8080"
       SHIPIT_TRIAGE_REPOSITORY_PATH: /triage-repo
+      # QA runs in `staging`, as this stack always has. In `development` Serverpod's
+      # schema analyzer is FATAL and reports two indexes as missing on every boot. That
+      # report is a FALSE POSITIVE: both exist in `shipit` with definitions
+      # byte-identical to schema_bootstrap.sql and the migrations. `staging` makes it a
+      # warning.
+      SERVERPOD_RUN_MODE: staging
       # Global cap on CONCURRENT agent executions, enforced durably at claim time
       # (pg_advisory_xact_lock + in-flight count inside the claim transaction), not
       # by an in-process semaphore -- so a restart does not reset it while executions
@@ -76,6 +85,13 @@ services:
     volumes:
       - triage_repo_qa:/triage-repo
       - triage_workspaces_qa:/triage-workspaces
+      # Durable, host-backed custody for QA deploy-key private halves. The host path
+      # comes from docker/.env; the container path is the fixed /var/lib/shipit/secrets
+      # that SHIPIT_LOCAL_SECRET_DIR points at. ADR 0018's DOCUMENTED FALLBACK (local
+      # secret store, A1/A4), a recorded deviation. This bind mount is what makes it
+      # survive container destruction. Sentinel default is deliberately a bad path so a
+      # lost variable lands somewhere obviously wrong rather than in the writable layer.
+      - ${SHIPIT_HOST_SECRET_DIR:-/tmp/shipit-secrets-NOT-CONFIGURED}:/var/lib/shipit/secrets
 
   client:
     build:
