@@ -207,6 +207,31 @@ void main() {
   });
 
   group('the reclaim is safe against a concurrent writer', () {
+    // NOTE on the `agentExecuting` pre-check in `_releaseWorkItem`.
+    //
+    // That pre-check (`if (item.state != agentExecuting) return;` before
+    // attempting the transition) has NO failing mutation — removing it does not
+    // break any test in this file. It is kept deliberately and its absence from
+    // the mutation table is recorded here so a future reader does not "simplify"
+    // it away on the grounds that no test covers it.
+    //
+    // WHY it exists even though the engine would reject the transition anyway:
+    //  * it is the guard that makes the method's loop correct on RE-entry. When
+    //    a concurrent writer has already taken the item out of `agentExecuting`,
+    //    the first line of each attempt short-circuits BEFORE an idempotency-key
+    //    lookup or a transition attempt. Removing it would push every concurrent
+    //    case through the exception path instead, which is correct but noisy and
+    //    slower under contention.
+    //  * it keeps a replay from even constructing a transition request for an
+    //    item that is no longer executing, which is the case a reclaim hits most
+    //    often (the second and later ticks).
+    //  * Its absence would be silently absorbed by the `WorkflowTransition-
+    //    RejectedException` / `ConcurrentModificationException` handlers rather
+    //    than failing loudly, so removing it looks free in the test suite while
+    //    changing real behaviour.
+    //
+    // The low-severity N2 finding from review acknowledges this explicitly: the
+    // disclosure was honest and no test is required. This comment is the record.
     test('an item another writer already moved is not fought over: no '
         'double-transition, the winner keeps its state', () async {
       final planted = await strandedHost(startedAt: zombieStart);

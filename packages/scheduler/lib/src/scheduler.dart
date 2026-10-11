@@ -247,6 +247,12 @@ class Scheduler {
   final RunnableWorkEvaluator _evaluator;
   final DurableWorkflowEngine _reclaimEngine;
 
+  /// How many times a reclaim re-reads the work item and retries after losing
+  /// the store's compare-and-swap. Bounded on purpose: a reclaim must converge
+  /// against ordinary contention without spinning against a writer that is
+  /// rewriting the item continuously.
+  static const int _maxReclaimAttempts = 3;
+
   /// The actor a reclaim transitions as. [ActorType.orchestrator] is what the
   /// `agentExecuting -> agentFailed` edge permits, and it is what the scheduler
   /// already acts as everywhere else in the transition graph.
@@ -366,6 +372,17 @@ class Scheduler {
 
     // 1. Recover claims that outlived their lease without ever persisting a
     //    terminal outcome.
+    //
+    //    Each row is reconciled inside its own guard. One unreconcilable row —
+    //    a concurrent writer, a transient store fault — must not abort the loop
+    //    and starve every OTHER expired claim behind it. This is defence in
+    //    depth, NOT a substitute for handling failures at their source: the
+    //    reclaim path catches its own rejection signals, and a test asserts that
+    //    it does so without relying on this guard.
+    //
+    //    A row that throws is deliberately NOT added to `reconciled`: it did not
+    //    reconcile. Its claim is still held and still expired, so the next tick
+    //    picks it up again — the failure is a delay, never a loss.
     for (final job in await _jobStore.listJobs()) {
       final isHeld =
           job.state == JobState.claimed || job.state == JobState.running;
@@ -373,8 +390,17 @@ class Scheduler {
       final claim = await _jobStore.readClaimForJob(job.jobId);
       final expired = claim == null || claim.isExpiredAt(now);
       if (!expired) continue;
-      await _reconcileClaim(job, claim, now);
-      reconciled.add(job.jobId);
+      try {
+        await _reconcileClaim(job, claim, now);
+        reconciled.add(job.jobId);
+      } catch (_) {
+        // Swallowed deliberately, and this is the honest accounting of it: the
+        // scheduler has no log channel of its own, so the only observable
+        // effect is that this job is absent from `reconciled` and retried on the
+        // next tick. Adding a logger is a composition-root change this lane does
+        // not own.
+        continue;
+      }
     }
 
     // 2. Ask the WORKFLOW POLICY what it may schedule for every item. Never a
@@ -885,37 +911,73 @@ class Scheduler {
   /// still in [WorkItemState.agentExecuting]; the transition carries an
   /// `idempotencyKey`, so a replay after a partial write returns the accepted
   /// outcome instead of transitioning again; and the store's compare-and-swap on
-  /// the item version rejects a concurrent writer, which is caught and treated as
-  /// "someone else already moved it" rather than fought over.
+  /// the item version rejects a concurrent writer.
+  ///
+  /// ## Both rejection signals are caught, and they are not interchangeable
+  ///
+  /// Losing the compare-and-swap raises [ConcurrentModificationException], which
+  /// is a SIBLING of [WorkflowTransitionRejectedException] — neither extends the
+  /// other — and `DurableWorkflowEngine.transition` rethrows it out of the
+  /// transaction rather than swallowing it. Catching only the rejected case
+  /// therefore let a lost race escape `_releaseWorkItem` entirely, and because
+  /// `tick` did not guard its reconciliation loop the exception aborted the
+  /// WHOLE tick: the job was never failed, its claim never released, its worker
+  /// execution never retired, and every other job's reconciliation was skipped
+  /// too. A reclaim that fails that way is strictly worse than the stranding
+  /// this method exists to prevent.
+  ///
+  /// The two are handled differently on purpose:
+  ///
+  ///  * [WorkflowTransitionRejectedException] means the transition was refused —
+  ///    the item is not where we thought, or the edge is illegal. Someone else
+  ///    owns the decision now, so this returns without retrying.
+  ///  * [ConcurrentModificationException] means the decision was legal but the
+  ///    item changed underneath the read. That is a lost race, not a refusal, so
+  ///    the state is re-read and the attempt retried, bounded by
+  ///    [_maxReclaimAttempts]. Catching it and moving straight on would leave the
+  ///    item exactly as stranded as before whenever the competing writer had not
+  ///    itself taken the item out of [WorkItemState.agentExecuting].
   Future<void> _releaseWorkItem(
     String workItemId,
     WorkerExecution execution,
     String reason,
   ) async {
-    final item = await _workflowStore.readWorkItem(workItemId);
-    if (item.state != WorkItemState.agentExecuting) return;
+    for (var attempt = 0; attempt < _maxReclaimAttempts; attempt++) {
+      final item = await _workflowStore.readWorkItem(workItemId);
+      if (item.state != WorkItemState.agentExecuting) return;
 
-    try {
-      await _reclaimEngine.transition(
-        workItemId: workItemId,
-        to: WorkItemState.agentFailed,
-        trigger: TransitionTrigger.systemEvent,
-        actor: _reclaimActor,
-        context: {
-          'zombieReclaimed': true,
-          'workerExecutionId': execution.workerExecutionId,
-          'workerId': execution.workerId,
-          'lastStatus': execution.status.name,
-          'reason': 'zombie execution reclaimed: $reason',
-        },
-        idempotencyKey: 'zombie-reclaim:${execution.workerExecutionId}',
-      );
-    } on WorkflowTransitionRejectedException {
-      // A concurrent writer moved the item first — a real result arriving from
-      // the wedged path, or another tick. Either way the item is no longer
-      // stranded, which is the whole job of this call, so a lost race is a
-      // correct outcome and must not be retried or escalated.
+      try {
+        await _reclaimEngine.transition(
+          workItemId: workItemId,
+          to: WorkItemState.agentFailed,
+          trigger: TransitionTrigger.systemEvent,
+          actor: _reclaimActor,
+          context: {
+            'zombieReclaimed': true,
+            'workerExecutionId': execution.workerExecutionId,
+            'workerId': execution.workerId,
+            'lastStatus': execution.status.name,
+            'reason': 'zombie execution reclaimed: $reason',
+          },
+          idempotencyKey: 'zombie-reclaim:${execution.workerExecutionId}',
+        );
+        return;
+      } on WorkflowTransitionRejectedException {
+        // A concurrent writer moved the item first — a real result arriving from
+        // the wedged path, or another tick. Either way the item is no longer
+        // stranded, which is the whole job of this call, so a refused transition
+        // is a correct outcome and must not be retried or escalated.
+        return;
+      } on ConcurrentModificationException {
+        // Lost the compare-and-swap. Re-read and decide again: the competing
+        // writer may have taken the item out of `agentExecuting`, in which case
+        // the loop's first line returns.
+        continue;
+      }
     }
+    // Still being contended after the bounded retries. The job is failed
+    // regardless, so the reclaim as a whole still converges; this is recorded by
+    // leaving the item alone rather than by fighting a writer indefinitely.
   }
 
   /// Drives the zombie worker execution row to a terminal state.

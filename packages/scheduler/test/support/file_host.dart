@@ -64,40 +64,42 @@ class FileRestartHarness {
   String get dedupeKey =>
       'wi-1:design_not_required:implement_feature:IMPLEMENTER';
 
-  Future<WorkItem> itemRunnable() async {
+  Future<WorkItem> itemRunnable({String workItemId = 'wi-1'}) async {
     await workflowEngine.createWorkItem(
-      workItemId: 'wi-1',
+      workItemId: workItemId,
       productId: 'prod-1',
       category: WorkItemCategory.feature,
       title: 'Implement calculator add',
       description:
           'Implement the calculator add function for the contract suite',
-      qaContractId: 'qa-1',
+      qaContractId: 'qa-1-$workItemId',
       featureRef: 'feature/calc',
     );
     await workflowEngine.transition(
-      workItemId: 'wi-1',
+      workItemId: workItemId,
       to: WorkItemState.planning,
       trigger: TransitionTrigger.systemEvent,
     );
     await workflowEngine.transition(
-      workItemId: 'wi-1',
+      workItemId: workItemId,
       to: WorkItemState.planned,
       trigger: TransitionTrigger.systemEvent,
       context: const {'featureRef': 'feature/calc'},
     );
     return workflowEngine.transition(
-      workItemId: 'wi-1',
+      workItemId: workItemId,
       to: WorkItemState.designNotRequired,
       trigger: TransitionTrigger.systemEvent,
     );
   }
 
-  Future<Job> enqueueJob({String? jobId}) async {
+  Future<Job> enqueueJob({String? jobId, String workItemId = 'wi-1'}) async {
     final result = await scheduler.queue.enqueueIfAbsent(
-      workItemId: 'wi-1',
+      workItemId: workItemId,
       definition: defaultImplementFeatureDefinition,
-      dedupeKey: dedupeKey,
+      dedupeKey: workItemId == 'wi-1'
+          ? dedupeKey
+          : '$workItemId:design_not_required:implement_feature:IMPLEMENTER',
       instruction: 'Implement the feature.',
       now: DateTime.utc(2026, 1, 1),
     );
@@ -120,8 +122,8 @@ class FileRestartHarness {
 
   /// Plants a claimed (or running) job plus its lease. Returns the job in its
   /// claimed state (before any worker dispatch).
-  Future<Job> plantClaimedJob(DateTime t0) async {
-    final job = await enqueueJob();
+  Future<Job> plantClaimedJob(DateTime t0, {String workItemId = 'wi-1'}) async {
+    final job = await enqueueJob(workItemId: workItemId);
     final claim = await scheduler.queue.claim(
       job: job,
       ownerId: 'sched-1',
@@ -134,8 +136,8 @@ class FileRestartHarness {
 
   /// Marks the claimed job as dispatched to a worker (execution reference
   /// durably recorded with the requested workerExecutionId).
-  Future<Job> plantRunningJob(DateTime t0) async {
-    final job = await plantClaimedJob(t0);
+  Future<Job> plantRunningJob(DateTime t0, {String workItemId = 'wi-1'}) async {
+    final job = await plantClaimedJob(t0, workItemId: workItemId);
     return scheduler.queue.markRunning(
       job: job,
       now: t0,
