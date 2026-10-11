@@ -71,6 +71,16 @@ class FakeAgentSession implements AgentSession {
     );
 
     switch (behavior) {
+      case FakeBehavior.hangOnInstruction:
+        // The instruction round trip never answers and never emits a terminal
+        // event: the shape of a wedged agent process. Nothing here returns, so
+        // the only thing that can end this execution is the budget.
+        await Completer<void>().future;
+      case FakeBehavior.neverTerminate:
+        // The instruction is accepted and the session keeps talking, but no
+        // terminal event is ever emitted - the shape of a session that stalls
+        // after doing work. Only the coordinator's budget can end this.
+        return;
       case FakeBehavior.complete:
         _status = AgentSessionStatus.completed;
         _events.add(
@@ -166,7 +176,19 @@ class FakeAgentSession implements AgentSession {
   }
 }
 
-enum FakeBehavior { complete, fail, interrupt, cancelRequested }
+enum FakeBehavior {
+  complete,
+  fail,
+  interrupt,
+  cancelRequested,
+
+  /// Accepts the instruction, emits activity, and then never emits a terminal
+  /// event.
+  neverTerminate,
+
+  /// Never answers the instruction at all.
+  hangOnInstruction,
+}
 
 class FakeAgentAdapter implements AgentAdapter {
   FakeAgentAdapter(this._session);

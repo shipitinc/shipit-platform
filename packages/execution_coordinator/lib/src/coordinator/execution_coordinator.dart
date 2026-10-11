@@ -82,6 +82,12 @@ class ExecutionCoordinator {
   final VerificationPlan? verificationPlan;
   final ModelExecutionRecordStore? modelExecutionRecordStore;
 
+  /// How long a timeout is allowed to wait for the agent process to confirm it
+  /// is stopping. Short on purpose: it must not extend the execution's budget
+  /// by an unbounded amount just to be polite to a process that may be the
+  /// thing that is wedged.
+  static const Duration _cancelGrace = Duration(seconds: 5);
+
   static const WorkflowActor _orchestrator = WorkflowActor(
     actorId: 'orchestrator',
     actorType: ActorType.orchestrator,
@@ -151,6 +157,40 @@ class ExecutionCoordinator {
     _terminalContracts[request.executionId] = terminal;
     _settledContracts[request.executionId] = Completer<AgentExecution>();
 
+    // `request.timeoutSeconds` is the budget for the WHOLE dispatch path:
+    // session start, the instruction round trip, the terminal-event wait,
+    // result retrieval and independent verification. It used to travel no
+    // further than `AgentSessionConfig`, where an adapter may apply it to a
+    // single ACP call, and nothing here ever enforced it end to end. A session
+    // that stalled between two phases therefore waited forever, and the only
+    // two bounded waits in the file were 60s on cancel and a hard-coded 30s on
+    // the terminal event - a bound that also contradicted a 300s budget by
+    // failing healthy agents early. The budget is the authority now, and it
+    // ends in a real terminal state rather than an abandoned future.
+    final budget = Duration(seconds: request.timeoutSeconds);
+    final dispatchStartedAt = DateTime.now();
+
+    return _drive(
+      request,
+      terminal,
+      budget,
+      dispatchStartedAt,
+    ).timeout(budget, onTimeout: () => _expireExecution(request, budget));
+  }
+
+  /// Drives one execution from session start to its durable terminal record.
+  ///
+  /// Runs under the caller's budget ([execute] applies it to this whole
+  /// future), so an individual step that hangs is bounded by the budget rather
+  /// than by nothing at all. The budget is passed down as well, because the
+  /// terminal-event wait inside [_finalize] must not be allowed to outlive the
+  /// execution it is waiting for.
+  Future<AgentExecution> _drive(
+    AgentExecutionRequest request,
+    Completer<AgentEvent> terminal,
+    Duration budget,
+    DateTime dispatchStartedAt,
+  ) async {
     final AgentSession session;
     try {
       session = await runtime.startSession(
@@ -199,8 +239,66 @@ class ExecutionCoordinator {
       // The session recorded the transport failure.
     }
 
-    return _finalize(request, terminal);
+    return _finalize(request, terminal, budget, dispatchStartedAt);
   }
+
+  /// The last-resort terminal state for an execution whose dispatch path did
+  /// not settle inside its budget.
+  ///
+  /// This is deliberately not an abandoned future. The agent process is asked
+  /// to stop, the execution is persisted as a real terminal `failed` record
+  /// carrying an honest reason, an `executionFailed` event is appended, the
+  /// work item leaves [WorkItemState.agentExecuting] for
+  /// [WorkItemState.agentFailed], and a model execution record is written - so
+  /// the job is never left running behind a durable status string.
+  ///
+  /// The drive path may still be wedged somewhere that is not the terminal
+  /// wait and can finish later. That is safe: its writes are version-guarded,
+  /// it finds the execution already terminal, and the timeout verdict stands.
+  Future<AgentExecution> _expireExecution(
+    AgentExecutionRequest request,
+    Duration budget,
+  ) async {
+    await _stopSessionQuietly(
+      request.executionId,
+      'execution exceeded its ${budget.inSeconds}s budget',
+    );
+    return _failWithoutSession(
+      request,
+      'execution exceeded its ${budget.inSeconds}s timeout budget without '
+      'reaching a terminal agent event',
+    );
+  }
+
+  /// Best-effort stop of the live session. A wedged transport must not be able
+  /// to hold the timeout path open, so the cancel wait is itself bounded, and a
+  /// cancel that never answers is not an error: the durable terminal record
+  /// written by the caller is the authority either way.
+  Future<void> _stopSessionQuietly(String executionId, String reason) async {
+    final session = _liveSessions[executionId];
+    if (session == null) return;
+    try {
+      await session.cancel(reason).timeout(_cancelGrace);
+    } catch (_) {
+      // The session is abandoned; only the durable record survives, and it is
+      // written regardless.
+    }
+  }
+
+  /// The honest terminal event for a session that stopped answering without
+  /// ever reporting one. Routed through the ordinary failure path, so it lands
+  /// on `AgentSessionStatus.failed` with this reason rather than on nothing.
+  SessionFailed _neverEmittedTerminalEvent(
+    String executionId,
+    Duration budget,
+  ) => SessionFailed(
+    eventId: 'timeout-$executionId',
+    timestamp: DateTime.now(),
+    error:
+        'session never emitted a terminal event within the '
+        '${budget.inSeconds}s execution budget',
+    recoverable: true,
+  );
 
   /// Cancels the live session for [executionId]; the driver loop finalizes the
   /// execution as cancelled and moves the work item out of execution.
@@ -277,19 +375,25 @@ class ExecutionCoordinator {
   Future<AgentExecution> _finalize(
     AgentExecutionRequest request,
     Completer<AgentEvent> terminal,
+    Duration budget,
+    DateTime dispatchStartedAt,
   ) async {
     final executionId = request.executionId;
     final session = _liveSessions[executionId];
     try {
-      final terminalEvent = await terminal.future.timeout(
-        const Duration(seconds: 30),
-        onTimeout: () => SessionFailed(
-          eventId: 'timeout-$executionId',
-          timestamp: DateTime.now(),
-          error: 'session never emitted a terminal event',
-          recoverable: true,
-        ),
-      );
+      // The terminal-event wait is bounded by what is LEFT of the execution
+      // budget, so it composes with it instead of racing it: it can never
+      // outlive the execution, and a slow-but-healthy agent is not failed early
+      // by a constant that is unrelated to the configured timeout.
+      final remaining = dispatchStartedAt
+          .add(budget)
+          .difference(DateTime.now());
+      final terminalEvent = remaining <= Duration.zero
+          ? _neverEmittedTerminalEvent(executionId, budget)
+          : await terminal.future.timeout(
+              remaining,
+              onTimeout: () => _neverEmittedTerminalEvent(executionId, budget),
+            );
 
       final results = await _complete(request, session, terminalEvent);
 

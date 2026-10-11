@@ -34,6 +34,35 @@ class SchedulerWorkload {
   final WorkerCleanupPolicy cleanupPolicy;
 }
 
+/// What reconciliation was able to observe about the process behind a
+/// non-terminal worker execution.
+///
+/// This exists because liveness is not a property that can be read off a status
+/// string. A live worker and a worker whose process died mid-execution both
+/// leave a row that is not terminal, and the old reconciler asked only the
+/// second question, which is why a zombie outlived a 10 minute lease for hours.
+enum ExecutionLiveness {
+  /// Observed alive right now. Renew the lease; never dispatch a duplicate.
+  alive,
+
+  /// Observed NOT alive. Nothing is running, so the claim must be reclaimed.
+  dead,
+
+  /// Liveness could not be observed from here.
+  unknown,
+}
+
+/// Observes whether anything is still running behind [execution].
+///
+/// Injected rather than derived because the scheduler cannot answer this from
+/// durable state alone: the worker row records what the execution was doing,
+/// not whether the process doing it still exists. A probe that can actually
+/// observe the runtime (the coordinator's live sessions, a worker heartbeat, an
+/// agent-runtime query) is what turns "is this row terminal" into "is there a
+/// process behind it".
+typedef ExecutionLivenessProbe =
+    Future<ExecutionLiveness> Function(WorkerExecution execution, DateTime now);
+
 /// Function to build a dedupe key for a work item.
 typedef DedupeKeyBuilder =
     String Function(WorkItem item, JobDefinition definition);
@@ -118,6 +147,8 @@ class Scheduler {
     required SchedulerWorkload workload,
     DateTime Function()? clock,
     this.claimLease = const Duration(minutes: 10),
+    ExecutionLivenessProbe? executionLiveness,
+    Duration? zombieStalenessAfter,
     WorkflowEngine? policy,
     ModelSelectionService? modelSelection,
     DedupeKeyBuilder? dedupeKeyBuilder,
@@ -141,6 +172,8 @@ class Scheduler {
        _instructionBuilder = instructionBuilder ?? _defaultInstruction,
        _modelSelection = modelSelection,
        _requestBuilder = requestBuilder ?? _defaultRequest,
+       _executionLiveness = executionLiveness,
+       _configuredZombieStaleness = zombieStalenessAfter,
        _providerHealthMonitor = providerHealthMonitor;
 
   final String schedulerId;
@@ -161,6 +194,39 @@ class Scheduler {
   final ModelSelectionService? _modelSelection;
   final RequestBuilder _requestBuilder;
   final ProviderHealthMonitor? _providerHealthMonitor;
+
+  /// Observes whether the process behind a non-terminal execution is alive.
+  /// Null means this scheduler has no way to observe it, which is itself a
+  /// visible state rather than a silent default: reconciliation then falls back
+  /// to the [zombieStalenessBound] window instead of renewing forever.
+  final ExecutionLivenessProbe? _executionLiveness;
+
+  final Duration? _configuredZombieStaleness;
+
+  /// The longest a non-terminal execution may go unobserved before it is
+  /// reclaimed. This is the bound that turns "fail open" into "fail open, but
+  /// not forever" - the difference between protecting live work and the
+  /// indefinite renewal that let a zombie outlive its lease for hours.
+  Duration get zombieStalenessBound {
+    final configured = _configuredZombieStaleness;
+    if (configured != null) return configured;
+    // A worker execution legitimately outlasts its agent only by the work
+    // around it: workspace preparation, the coordinator's independent
+    // verification, and cleanup. Four agent budgets plus one claim lease is far
+    // beyond any honest execution and far below a multi-hour stall.
+    return Duration(seconds: _workload.timeoutSeconds * 4) + claimLease;
+  }
+
+  /// One line for a startup log naming the liveness policy in force. A
+  /// scheduler that cannot observe liveness must say so, because the
+  /// diagnostic is otherwise invisible.
+  String get livenessSummary => _executionLiveness == null
+      ? 'execution liveness NOT observable from this scheduler: a '
+            'non-terminal execution is renewed until it has been non-terminal '
+            'for ${zombieStalenessBound.inMinutes}m, then reclaimed.'
+      : 'execution liveness observable; a non-terminal execution proven dead is '
+            'reclaimed, and one unobservable past ${zombieStalenessBound.inMinutes}m '
+            'is reclaimed.';
 
   /// The global execution-capacity budget, enforced at claim time. Null means
   /// this scheduler is UNBOUNDED, and that is a deliberate, visible state
@@ -568,8 +634,12 @@ class Scheduler {
   ///  - never dispatched           -> requeue (reclaim is safe);
   ///  - vended to the worker layer -> consult the worker store: if the
   ///    execution already ended, adopt its result; if it is still alive, DO
-  ///    NOT start a duplicate (worker_runtime's reconciler owns orphaning),
-  ///    just renew the lease so a live-but-slow execution is not interrupted.
+  ///    NOT start a duplicate, just renew the lease;
+  ///  - vended, non-terminal, and NOT observably alive -> the execution is a
+  ///    zombie and is reclaimed to a terminal job state. This is the branch
+  ///    that was missing: the old code treated "not terminal" as "alive", so a
+  ///    worker row whose process had died was renewed on every tick forever and
+  ///    the lease could never expire.
   Future<void> _reconcileClaim(Job job, JobClaim? claim, DateTime now) async {
     final ref = job.executionReference;
     if (ref == null) {
@@ -592,7 +662,13 @@ class Scheduler {
       return;
     }
     if (!execution.isTerminal) {
-      // Still alive: renew the lease instead of duplicating.
+      final liveness = await _livenessOf(execution, now);
+      if (_shouldReclaimZombie(execution, now, liveness)) {
+        await _reclaimZombie(job, execution, now, liveness);
+        return;
+      }
+      // Observed alive, or not yet old enough to judge: renew the lease rather
+      // than duplicating, so a genuinely live-but-slow execution is protected.
       final renewed = JobClaim(
         claimId: JobQueue.newClaimId(),
         jobId: job.jobId,
@@ -605,6 +681,99 @@ class Scheduler {
     }
     final result = await _workerStore.readResult(ref.workerExecutionId);
     await _adoptFromExecution(job, execution, result, now);
+  }
+
+  /// What could be observed about [execution] right now.
+  ///
+  /// A probe that throws is treated as `unknown`, not as `dead`: an
+  /// observation failure is not evidence of death, and must not be allowed to
+  /// kill live work.
+  Future<ExecutionLiveness> _livenessOf(
+    WorkerExecution execution,
+    DateTime now,
+  ) async {
+    final probe = _executionLiveness;
+    if (probe == null) return ExecutionLiveness.unknown;
+    try {
+      return await probe(execution, now);
+    } catch (_) {
+      return ExecutionLiveness.unknown;
+    }
+  }
+
+  /// Whether a non-terminal execution must be reclaimed as a zombie.
+  ///
+  /// Reclaimed when liveness is proven dead, and when liveness could not be
+  /// observed and the execution has outlived [zombieStalenessBound]. An
+  /// execution with no recorded start is reclaimed too: there is nothing to
+  /// judge it against, and an execution that cannot even say when it started is
+  /// not one whose progress anyone has been able to observe.
+  bool _shouldReclaimZombie(
+    WorkerExecution execution,
+    DateTime now,
+    ExecutionLiveness liveness,
+  ) {
+    if (liveness == ExecutionLiveness.alive) return false;
+    if (liveness == ExecutionLiveness.dead) return true;
+    final since = execution.startedAt ?? execution.createdAt;
+    if (since == null) return true;
+    return now.difference(since) > zombieStalenessBound;
+  }
+
+  /// Drives a job whose execution nothing is running behind to a TERMINAL
+  /// state, so it is no longer left running and its lease is no longer renewed.
+  ///
+  /// FAIL DIRECTION: this is the fail-CLOSED branch, and it is reached only
+  /// when liveness was either proven dead or has been unobservable for longer
+  /// than [zombieStalenessBound]. The unobservable case fails open *within a
+  /// bound* rather than open forever: renewing an execution nobody is running
+  /// is exactly the defect that produced a 4.78 hour stall, whereas the harm of
+  /// failing closed is bounded by that same window and surfaces as a visible
+  /// failed job rather than a silent duplicate.
+  ///
+  /// The job goes to `failed` rather than to a retry, deliberately. A retry
+  /// would re-dispatch against a work item that is still in
+  /// [WorkItemState.agentExecuting] - the scheduler cannot move that item, and
+  /// a second execution writing the same worktree while the first may still
+  /// hold it is the worse of the two harms. The worker layer still owns
+  /// orphaning the execution row itself.
+  Future<void> _reclaimZombie(
+    Job job,
+    WorkerExecution execution,
+    DateTime now,
+    ExecutionLiveness liveness,
+  ) async {
+    final current = (await _jobStore.readJob(job.jobId)) ?? job;
+    if (current.isTerminal) return;
+
+    final age = _durationSinceStart(execution, now);
+    final reason = switch (liveness) {
+      ExecutionLiveness.dead =>
+        'execution ${execution.workerExecutionId} is still ${execution.status.name} '
+            'but nothing is running behind it (observed dead after $age)',
+      _ =>
+        'execution ${execution.workerExecutionId} is still ${execution.status.name}, '
+            'no live execution could be observed, and it has been non-terminal '
+            'for $age (beyond the ${zombieStalenessBound.inMinutes}m bound)',
+    };
+
+    await _queue.complete(
+      job: current,
+      terminal: JobState.failed,
+      failure: JobFailure(
+        code: JobFailureCode.executionInterrupted,
+        kind: JobFailureKind.permanent,
+        reason: 'zombie execution reclaimed: $reason',
+      ),
+      now: now,
+      executionReference: current.executionReference,
+    );
+  }
+
+  String _durationSinceStart(WorkerExecution execution, DateTime now) {
+    final since = execution.startedAt ?? execution.createdAt;
+    if (since == null) return 'an unknown time';
+    return '${now.difference(since).inMinutes}m';
   }
 
   Future<void> _adoptFromExecution(

@@ -18,6 +18,8 @@ class FileRestartHarness {
     WorkerDispatch? dispatch,
     JobDefinition definition = defaultImplementFeatureDefinition,
     Duration claimLease = const Duration(minutes: 10),
+    ExecutionLivenessProbe? executionLiveness,
+    Duration? zombieStalenessAfter,
   }) {
     workflowStore = FileJsonWorkflowStore(File('${dir.path}/workflow.json'));
     workflowEngine = DurableWorkflowEngine(store: workflowStore);
@@ -41,6 +43,8 @@ class FileRestartHarness {
       ),
       clock: clock,
       claimLease: claimLease,
+      executionLiveness: executionLiveness,
+      zombieStalenessAfter: zombieStalenessAfter,
       modelSelection: modelSelection,
     );
   }
