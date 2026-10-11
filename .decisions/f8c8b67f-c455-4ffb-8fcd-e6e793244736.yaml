@@ -1,0 +1,94 @@
+# human-decision.yaml
+decision_id: f8c8b67f-c455-4ffb-8fcd-e6e793244736
+type: ARCHITECTURE
+status: RESOLVED
+question: >-
+  HD-1/HD-3 (combined): what are the execution limits? The host crashed serving a burst of 9
+  defects. Measured on this machine: Apple M2, 8 cores, 16 GB host, but agent work runs inside a
+  Docker VM capped at 7.65 GB; one opencode session measures 710-780 MB steady-state.
+context:
+  summary: >-
+    Raised by the design of execution limits
+    (docs/engineering/dispatch/tasks/design-execution-limits/design-revision.md), after the host
+    kernel-crashed on 2026-10-10 while ShipIt processed ~9 queued defects. The designer escalated
+    the numbers because host capacity had never been measured; the operator asked for measurement
+    first and then set everything at once.
+    Note the diagnosis was CORRECTED en route: clarificationCount is questions-per-result, not
+    rounds, and rounds 2-3 do not exist (terminal jobs hold the dedupe key). The amplifier is
+    overlapping ticks with no single-flight guard, not unbounded concurrency.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: design-execution-limits
+    item_ref: Bounding agent execution so a burst of intake cannot exhaust the host.
+  evidence:
+    documents:
+      - type: OTHER
+        id: design-revision
+        url: docs/engineering/dispatch/tasks/design-execution-limits/design-revision.md
+    measurements:
+      - "host: Apple M2, 8 cores, 16 GB"
+      - "docker VM ceiling: 7.65 GB (agent work runs inside this)"
+      - "opencode session: 710-780 MB steady-state, sampled live"
+      - "triage workspaces after the crash: 9 leftover JSON files, 56 KB total (disk was not the cause)"
+    qualitative_tradeoffs:
+      - dimension: Concurrency
+        option_a: C=1
+        option_b: C=2
+        option_c: C=3
+        assessment: >-
+          Two sessions is ~1.5 GB of 7.65 GB, leaving over 5 GB for Postgres, the server and the
+          headroom a 5-minute clone needs. C=1 wastes the host because a session is I/O-bound on
+          LLM calls much of the time. C=3 is ~2.3 GB and starts consuming the margin that clones
+          need - and peak memory for a session actually doing repo work is UNMEASURED, because the
+          710-780 MB sample is near-idle.
+      - dimension: Guard mechanism
+        option_a: Code-level host-load guard
+        option_b: Compose resource limits
+        assessment: >-
+          The code guard is inert as configured - no compose file declares mem_limit, cpus or
+          pids_limit, so a cgroup-derived check reads 'not loaded' and never fires. Compose limits
+          bound the thing that actually ran out. Host-load guard recommended AGAINST as code.
+    recommendation:
+      recommended_option: OPTION_B
+      rationale: >-
+        Set against the measured 7.65 GB Docker ceiling rather than the 16 GB host, because that is
+        where agent work actually runs. Start conservative and tune from observed peak.
+      confidence: MEDIUM
+options:
+  - option_id: OPTION_A
+    label: Minimal (C=1, no resource limits)
+    description: C=1, no backlog cap, no Compose limits, no host-load guard.
+    implications: Safest but wastes the host and still leaves the tick-overlap amplifier unaddressed.
+    risk_level: LOW
+  - option_id: OPTION_B
+    label: Measured set (C=2, single-flight 1, backlog 12, per-defect 4, Compose limits)
+    description: >-
+      C=2 concurrent agent executions, one tick at a time, backlog 12 per product, per-defect
+      invocation ceiling 4, and Compose mem_limit 6g / cpus 4.0 / pids_limit 512 on worker services.
+    implications: >-
+      All values overridable by environment so they can be tuned from observed peak after one
+      watched run. Does not block the sweep or backlog-cap follow-ons.
+    risk_level: LOW
+resolution:
+  outcome: OPTION_B
+  decided_by: human-operator
+  rationale: >-
+    Set all limits at once from measurement, overridable, then observe real peak before tuning
+    further. C=2 rather than 1 because a session is I/O-bound much of the time and one wastes an
+    8-core host; two is ~1.5 GB of a 7.65 GB Docker ceiling with ample margin. Per-defect ceiling
+    raised from the effective 2 to 4 to permit genuine retries without a runaway. Compose limits
+    replace the code host-load guard, which would never fire.
+  follow_up_actions:
+    - action: MUST ship L1 (concurrency cap) + L2 (tick single-flight) before QA restarts.
+      owner: orchestrator-main
+    - action: >-
+        Bring QA up, run agents under watch, and record OBSERVED PEAK memory per session - the
+        number this decision could not supply because no session had done repo work yet.
+      owner: orchestrator-main
+    - action: Tune C from the observed peak; do not raise it without re-measuring against 7.65 GB.
+      owner: orchestrator-main
+    - action: L5 Compose limits required before any shared or staging host, not only local QA.
+      owner: orchestrator-main
+created_by: orchestrator-main
+created_at: 2026-10-11T00:00:00Z
+updated_at: 2026-10-11T00:00:00Z
