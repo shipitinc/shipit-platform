@@ -263,12 +263,27 @@ void run(List<String> args) async {
   // the trigger is harmless (it is stateless: store handles plus a `JobQueue`
   // over one of them); a second set of STORES would not be, and there is none.
   //
-  // Deliberately NOT listed in the `server.composition` line below. That line
-  // enumerates what this process CAN do, and the sweep's honest signal is not a
-  // static `true` but the per-tick `work_entry.sweep.completed` line it emits
-  // on every single pass — a flag written once at startup cannot distinguish
-  // "the sweep is on the tick" from "the sweep is wedged", which is the one
-  // distinction this whole work item exists to preserve.
+  // BUILT, COMPOSED, AND GATED OFF. The sweep below is real and wired to this
+  // tick, but the tick invocation is conditional on an operator's explicit
+  // enablement — see [_workEntrySweepEnv] and `work_entry.sweep.disabled` at
+  // startup. Design-revision.md §15 holds it until lane L4 proves P-2 and P-5,
+  // because this would be the first thing to touch the 18 historically
+  // orphaned triage jobs.
+  final workEntrySweepGate = _resolveWorkEntrySweepGate();
+  if (!workEntrySweepGate.enabled) {
+    // STATED, not implied. A feature gate whose absence is silent is a silent
+    // no-op wearing the costume of a configuration file, and an operator six
+    // months from now must be able to read this line and know that the sweep
+    // exists, is not running, and why — without grepping for something that is
+    // not there.
+    _log('work_entry.sweep.disabled', <String, dynamic>{
+      ...workEntrySweepGate.describe(),
+      'action':
+          'no defect will be recovered by this sweep. Defects on an ungoverned '
+          'product stay gated, exactly as they did before it existed. This is '
+          'the documented design-revision.md section 15 gate, not a fault.',
+    });
+  }
   final defectTriageSweep = DefectTriageSweep(
     defectStore: defectStore,
     trigger: WorkEntryTrigger(
@@ -295,6 +310,12 @@ void run(List<String> args) async {
     'providerHealthMonitor': true,
     'providerHealthCheckIntervalMinutes': 5,
     'baseline': baselineRuntime.describe(),
+    // The gate's STATE, in both directions — not a claim that the sweep runs.
+    // Present when it does not, because "the field is absent" is exactly the
+    // ambiguity this entry point is supposed to remove. The sweep's liveness,
+    // once enabled, is the per-tick `work_entry.sweep.completed` line; that is
+    // a fact no startup-time field can carry.
+    'defectTriageSweep': workEntrySweepGate.describe(),
   });
 
   // Run the scheduler every 30 seconds.
@@ -365,22 +386,27 @@ void run(List<String> args) async {
     // a triage tick that fails must not prevent work entry from running, and a
     // failing defect read inside the sweep must not prevent the next tick.
     //
-    // The sweep already accounts for its own failures internally — a defect
-    // whose evaluation throws is recorded as an incident and the pass
-    // continues — so reaching this catch means something ABOVE the per-defect
-    // guard failed, which today is only the `listDefects` read. That is a real
-    // outage of this capability and is logged as one, with the action named.
-    try {
-      final sweepPass = await defectTriageSweep.run();
-      _log('work_entry.tick.completed', {'sweep': sweepPass.toString()});
-    } catch (e, st) {
-      _log('work_entry.tick.failed', {
-        'error': '$e',
-        'stack': st.toString(),
-        'action':
-            'work entry is retried on the next tick; triage and baseline are '
-            'unaffected',
-      });
+    // GATED, not merely present. Design-revision.md §15: this sweep is the
+    // first thing that would touch the 18 historically orphaned triage jobs,
+    // and P-2/P-5 (lane L4) have not proven the durable `enqueueIfAbsent` path
+    // yet. The gate cannot change while the process runs, so there is no
+    // window in which this line runs "sometimes" — and the state it is in was
+    // stated at startup by `work_entry.sweep.disabled`, or enabled, in which
+    // case the per-tick `work_entry.tick.completed` line below is the liveness
+    // signal. Absence of either is a real outage rather than a shape.
+    if (workEntrySweepGate.enabled) {
+      try {
+        final sweepPass = await defectTriageSweep.run();
+        _log('work_entry.tick.completed', {'sweep': sweepPass.toString()});
+      } catch (e, st) {
+        _log('work_entry.tick.failed', {
+          'error': '$e',
+          'stack': st.toString(),
+          'action':
+              'work entry is retried on the next tick; triage and baseline are '
+              'unaffected',
+        });
+      }
     }
   });
 }
@@ -390,6 +416,44 @@ void run(List<String> args) async {
 void _log(String event, Map<String, dynamic> data) {
   stdout.writeln('[$event] $data');
 }
+
+/// Environment variable that enables the defect-triage work-entry sweep on the
+/// live tick.
+///
+/// ## OFF unless it is explicitly turned on — and the off is the DEFAULT, not
+/// an omission
+///
+/// Unset, empty, or set to anything unrecognised leaves the sweep off. There is
+/// no value that enables it by accident: the recognised spellings are
+/// `workEntrySweepEnablementValues`, so a variable set to `false`, `0`, `off` or
+/// a typo cannot be read as consent to run the first thing that would touch the
+/// 18 historically orphaned triage jobs.
+///
+/// This is NOT a silent-absence flag. Absence is a STATE, and the state is
+/// printed: `work_entry.sweep.disabled` on every start while it holds, plus a
+/// `defectTriageSweep` field on `server.composition`. An operator can tell that
+/// the sweep exists, is not running, and what would lift it, by reading one
+/// startup line — without grepping for something that is not there.
+///
+/// It is also NOT a startup refusal. Refusing to serve the whole platform
+/// because a feature flag was misspelled would trade a safe, loud, recoverable
+/// state for an outage, and the safe direction is the one absence already fails
+/// in. `_resolveTriageSource` throws for the opposite reason — a missing
+/// triage source makes the server accept defects and classify none, which is a
+/// fault in the platform's core promise rather than a disabled extra.
+const String _workEntrySweepEnv = 'SHIPIT_WORK_ENTRY_SWEEP';
+
+/// Resolves the work-entry sweep's enablement from the process environment.
+///
+/// Reads the variable HERE, at the composition root, and hands the raw value to
+/// [workEntrySweepGateFor] rather than letting the sweep file touch the
+/// environment: environment belongs at the root, and the sweep's own
+/// product-agnosticism gate forbids an environment lookup in it — which is
+/// exactly why the parsing lives where it does rather than being smuggled in.
+WorkEntrySweepGate _resolveWorkEntrySweepGate() => workEntrySweepGateFor(
+  Platform.environment[_workEntrySweepEnv],
+  variableName: _workEntrySweepEnv,
+);
 
 /// Git repository (and the exact commit) every triage worktree is forked from.
 class _TriageSource {

@@ -71,7 +71,21 @@ class _FakeDefectStore implements DefectStore {
   /// When true, [listDefects] parks on [release] after signalling [entered].
   bool parks = false;
 
+  /// Answers every row regardless of the `limit` asked for — what a store that
+  /// ignores the bound would do, and what turns the page walk into a spin.
+  bool ignoresLimit = false;
+
   int listCalls = 0;
+
+  /// The `limit` of every [listDefects] call, in order — null included.
+  ///
+  /// Recorded rather than asserted against a constant so the gate can say
+  /// "no statement was ever unbounded" about what the code ACTUALLY asked for,
+  /// rather than about what a reader assumes it asked for.
+  final List<int?> limitsSeen = [];
+
+  /// The `offset` of every [listDefects] call, in order.
+  final List<int?> offsetsSeen = [];
 
   void put(Defect defect) => _defects[defect.defectId] = defect;
 
@@ -84,6 +98,8 @@ class _FakeDefectStore implements DefectStore {
     int? offset,
   }) async {
     listCalls++;
+    limitsSeen.add(limit);
+    offsetsSeen.add(offset);
     if (!entered.isCompleted) entered.complete();
     if (parks) await release.future;
     final fault = listFault;
@@ -105,7 +121,7 @@ class _FakeDefectStore implements DefectStore {
       return true;
     }).toList();
     if (offset != null) rows = rows.skip(offset).toList();
-    if (limit != null) rows = rows.take(limit).toList();
+    if (limit != null && !ignoresLimit) rows = rows.take(limit).toList();
     return rows;
   }
 
@@ -335,8 +351,10 @@ class _CountingRegistryEngine extends ProductRegistryEngine {
 /// Every store and engine one pass needs, so a test reads as a scenario rather
 /// than as wiring.
 class _Host {
-  _Host([List<Defect> defects = const []])
-    : defectStore = _FakeDefectStore(defects) {
+  _Host({
+    List<Defect> defects = const [],
+    int pageSize = DefectTriageSweep.defectPageSize,
+  }) : defectStore = _FakeDefectStore(defects) {
     registryEngine = _CountingRegistryEngine(
       store: registryStore,
       humanDecisionStore: InMemoryHumanDecisionStore(),
@@ -355,6 +373,7 @@ class _Host {
     sweep = DefectTriageSweep(
       defectStore: defectStore,
       trigger: trigger,
+      pageSize: pageSize,
       log: (event, fields) => events.add((event, fields)),
     );
   }
@@ -1230,6 +1249,352 @@ void main() {
         everyElement(startsWith('defect-d-')),
       );
     });
+  });
+
+  // =========================================================================
+  // The design-revision.md section 15 gate.
+  //
+  // The sweep is BUILT and WIRING-COMPOSED at this HEAD but is NOT enabled on
+  // the live tick: section 15 holds it until P-2 and P-5 pass, and those are
+  // lane L4's integration cases which do not exist in this repository yet. These
+  // tests pin the gate's SEMANTICS here; the wiring that consults them lives in
+  // `server.dart`, which has no test of its own — so what is pinned here is the
+  // part that can silently drift: what counts as "on", and what an operator is
+  // told when it is off.
+  // =========================================================================
+  group('the enablement gate', () {
+    test('the default is OFF, and the default is the constant', () {
+      // Not "off until someone remembers to unset it" — off because nothing
+      // was asked for. Asserted on the constant so flipping it is a visible
+      // edit to the policy, not an emergent property of a test.
+      expect(workEntrySweepEnabledByDefault, isFalse);
+    });
+
+    test('an ABSENT variable leaves it off', () {
+      // The default that matters: a fresh deployment that never heard of the
+      // variable must not run the first thing that would touch the 18 orphans.
+      expect(workEntrySweepGateFor(null).enabled, isFalse);
+    });
+
+    test('an EMPTY or whitespace-only variable leaves it off', () {
+      for (final raw in const ['', '   ', '\t', '\n']) {
+        expect(
+          workEntrySweepGateFor(raw).enabled,
+          isFalse,
+          reason: 'an empty value is not consent',
+        );
+      }
+    });
+
+    test('exactly the documented spellings turn it on', () {
+      for (final raw in workEntrySweepEnablementValues) {
+        expect(
+          workEntrySweepGateFor(raw).enabled,
+          isTrue,
+          reason: '`$raw` is documented as an enablement',
+        );
+        // Case-insensitive and whitespace-tolerant, because an operator who
+        // types `True` means exactly what `true` means.
+        expect(
+          workEntrySweepGateFor('  ${raw.toUpperCase()} \n').enabled,
+          isTrue,
+        );
+      }
+    });
+
+    test('nothing that MEANS OFF can be read as ON', () {
+      // The whole point of an explicit allow-list rather than "any non-empty
+      // value is true". A variable set to `false` that turned the sweep ON would
+      // be the worst bug this gate could have.
+      for (final raw in const [
+        'false',
+        'FALSE',
+        'no',
+        'off',
+        '0',
+        'disable',
+        'disabled',
+        'n',
+        'enabled',
+        'y',
+        'sure',
+        'please',
+      ]) {
+        final gate = workEntrySweepGateFor(raw);
+        expect(
+          gate.enabled,
+          isFalse,
+          reason: '`$raw` must not enable the sweep',
+        );
+        expect(
+          gate.rejectedValue,
+          raw,
+          reason:
+              'and the value the operator actually typed is reported back, so a '
+              'typo is visible rather than merely safe',
+        );
+      }
+    });
+
+    test('a log-injected value cannot forge a startup line', () {
+      // The value comes from the environment, which is operator input, and the
+      // startup log is one line per event. An unescaped newline would let that
+      // value fabricate the NEXT event on the log.
+      final gate = workEntrySweepGateFor(
+        'x\n[work_entry.sweep.disabled] fake line',
+      );
+      expect(gate.enabled, isFalse);
+      expect(gate.reason, isNot(contains('\n')));
+      expect(gate.describe().toString(), isNot(contains('\n')));
+    });
+
+    test('OFF is stated with a reason AND what would lift it', () {
+      // The "absence must be stated, not merely implied" requirement, pinned at
+      // the type that renders it. A gate that could report OFF without saying
+      // why would put the operator back to grepping for something absent.
+      final gate = workEntrySweepGateFor(null, variableName: 'SOME_VARIABLE');
+      final described = gate.describe();
+
+      expect(described['enabled'], isFalse);
+      expect(
+        described['reason'],
+        workEntrySweepGateReason,
+        reason: 'why it is off, in the operator\'s own terms',
+      );
+      expect(
+        described['liftingRequires'],
+        WorkEntrySweepGate.liftingRequires,
+        reason:
+            'and what evidence lifts it. Two named test cases and a command — '
+            'not "we will turn it on soon", which is not a plan',
+      );
+      expect(
+        described['liftingRequires'],
+        allOf(
+          contains('P-2'),
+          contains('P-5'),
+          contains('make test-integration'),
+        ),
+      );
+      expect(
+        described['enableWith'],
+        contains('SOME_VARIABLE'),
+        reason: 'the spelling an operator copies, with the accepted values',
+      );
+    });
+
+    test('the disabled reason names the gate and the orphans it protects', () {
+      // A reader six months out has to be able to tell what this IS from the
+      // log line alone, with no access to this file and no access to the design.
+      expect(workEntrySweepGateReason, contains('section 15'));
+      expect(workEntrySweepGateReason, contains('18'));
+      expect(
+        workEntrySweepGateReason,
+        contains('operator'),
+        reason: 'who turns it on, stated on the line itself',
+      );
+    });
+
+    test('ON is stated as a state too, never as an absence', () {
+      final described = workEntrySweepGateFor('1').describe();
+      expect(described['enabled'], isTrue);
+      expect(
+        described.containsKey('reason'),
+        isFalse,
+        reason: 'there is no reason to give when it is on',
+      );
+      expect(
+        described['liftingRequires'],
+        WorkEntrySweepGate.liftingRequires,
+        reason:
+            'but what the gate WAS waiting for stays on the record, so a '
+            'reader can still see it was a gate rather than a permanent default',
+      );
+    });
+
+    test('the rejected value is echoed when it caused the refusal', () {
+      final described = workEntrySweepGateFor('maybe').describe();
+      expect(described['enabled'], isFalse);
+      expect(described['rejectedValue'], 'maybe');
+      expect(
+        described['reason'],
+        contains('fails closed'),
+        reason:
+            'the refusal says it is deliberate, so an operator does not read a '
+            'typo as a mysterious no-op',
+      );
+    });
+
+    test('a null variable name never yields a broken instruction', () {
+      // The composition root supplies it; a caller that does not must still get
+      // a sentence rather than the literal string "null=...".
+      final described = workEntrySweepGateFor(null).describe();
+      expect(described['enableWith'], isNot(contains('null')));
+      expect(described['enableWith'], isNotEmpty);
+    });
+  });
+
+  group('the defect read is BOUNDED, and the bound is not a cap', () {
+    test('no statement is ever an unbounded read', () async {
+      // What the code actually ASKED FOR, recorded by the fake rather than
+      // inferred. `listDefects()` with no limit is
+      // `SELECT * FROM defect ORDER BY "updatedAt" DESC` with no bound, over a
+      // table that only grows.
+      final host = _Host();
+      await host.putGovernedProduct();
+      await host.seed('d-1');
+
+      await host.sweep.run();
+
+      expect(host.defectStore.limitsSeen, isNotEmpty);
+      for (final limit in host.defectStore.limitsSeen) {
+        expect(
+          limit,
+          isNotNull,
+          reason: 'an unbounded defect read was issued',
+        );
+        expect(limit, lessThanOrEqualTo(DefectTriageSweep.defectPageSize));
+      }
+    });
+
+    test('one pass walks EVERY page', () async {
+      // The other half, and the reason this is a bound and not a cap. A
+      // `limit` without a cursor would return the MOST RECENTLY UPDATED rows
+      // for ever and the tail would never be swept at all — a permanent silent
+      // no-op wearing the costume of a performance fix.
+      final host = _Host(pageSize: 3);
+      await host.putGovernedProduct();
+      for (var i = 0; i < 10; i++) {
+        await host.seed('d-$i');
+      }
+
+      final result = await host.sweep.run();
+
+      expect(
+        result.enqueued.map((e) => e.defectId),
+        unorderedEquals([for (var i = 0; i < 10; i++) 'd-$i']),
+        reason:
+            'ten defects over a page of three. Anything past the first page that '
+            'starves is a defect the sweep will never look at again',
+      );
+      expect(result.considered, 10);
+      expect(
+        result.accountedFor,
+        result.considered,
+        reason: 'the count reconciles across pages, not just within one',
+      );
+
+      // Four statements: three full pages, then a short one that ends the walk.
+      expect(host.defectStore.listCalls, 4);
+      expect(host.defectStore.offsetsSeen, [0, 3, 6, 9]);
+      expect(host.defectStore.limitsSeen, everyElement(3));
+      expect(await host.allJobs(), hasLength(10));
+    });
+
+    test(
+      'the walk ENDS — it is not an infinite scan',
+      () async {
+        // The failure mode a bound can introduce. A page size that is never
+        // exceeded and never short is a loop that never returns, and the sweep's
+        // re-entrancy guard would then report every later tick as "overlapping".
+        final host = _Host(pageSize: 4);
+        await host.putGovernedProduct();
+        for (var i = 0; i < 4; i++) {
+          await host.seed('d-$i');
+        }
+
+        final result = await host.sweep.run();
+
+        // Exactly one full page, then ONE more read that comes back empty.
+        expect(
+          host.defectStore.listCalls,
+          2,
+          reason:
+              'an exactly-full page cannot be told apart from "there is more", so '
+              'the walk must ask once more. That is inherent to offset paging '
+              'without a total count, and it is one empty statement, not a second '
+              'scan. What must NOT happen is a THIRD read, or a loop that never '
+              'ends — this test is what says so.',
+        );
+        expect(host.defectStore.offsetsSeen, [0, 4]);
+        expect(result.enqueued, hasLength(4));
+        expect(result.considered, 4);
+      },
+      // Without the end condition the sweep would spin here forever and the
+      // re-entrancy guard would report every subsequent tick as overlapping.
+      // This turns that into a reported failure instead of a hung suite.
+      timeout: Timeout(Duration(seconds: 10)),
+    );
+
+    test('a store that ignores the bound FAILS instead of spinning', () async {
+      // The failure mode the bound makes possible, and the reason the check is
+      // a thrown `StateError` rather than an `assert`.
+      //
+      // If the walk's only `await` is already resolved, the loop never yields
+      // to the timer queue — so a test timeout cannot fire either, and an
+      // unbounded read against a store that ignores `limit` does not "fail
+      // eventually", it wedges the isolate permanently. This asserts the
+      // recovery path instead: a named error, out of `run()`, with the guard
+      // released so the next tick is a real pass.
+      final host = _Host(pageSize: 3);
+      await host.putGovernedProduct();
+      for (var i = 0; i < 10; i++) {
+        await host.seed('d-$i');
+      }
+      // A store that answers more than it was asked for — exactly what the
+      // removed bound permitted.
+      host.defectStore.ignoresLimit = true;
+
+      await expectLater(
+        host.sweep.run(),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('load-bearing'), contains('retry')),
+          ),
+        ),
+      );
+
+      // And the guard came back, so the sweep is not wedged by its own
+      // defence: the next tick is a real pass, not a permanent "overlapping".
+      host.defectStore.ignoresLimit = false;
+      final recovered = await host.sweep.run();
+      expect(recovered.overlappedPasses, 0);
+      expect(recovered.enqueued, hasLength(10));
+    });
+
+    test('the production default is a page, and a positive one', () {
+      // `pageSize: 0` would make the "shorter than a page" end condition
+      // unreachable, turning a bound into a hang. The assertion is in the
+      // constructor; this pins the value itself, so the safe default cannot be
+      // quietly retuned to something degenerate.
+      expect(DefectTriageSweep.defectPageSize, greaterThan(0));
+      expect(DefectTriageSweep.defectPageSize, lessThanOrEqualTo(1000));
+    });
+
+    test(
+      'a defect outside the triagable set still costs a page, not a skip',
+      () async {
+        // Paging happens on the READ, before the status filter. So the bound is
+        // over what is read, and a table full of closed defects is still read in
+        // bounded statements rather than skipped past.
+        final host = _Host(pageSize: 2);
+        await host.putGovernedProduct();
+        for (var i = 0; i < 5; i++) {
+          host.defectStore.put(
+            _Host.defect('d-$i', status: DefectStatus.closed),
+          );
+        }
+
+        final result = await host.sweep.run();
+
+        expect(result.considered, 0);
+        expect(result.skipped, isEmpty);
+        expect(host.defectStore.limitsSeen, everyElement(2));
+        expect(host.defectStore.listCalls, 3);
+      },
+    );
   });
 }
 
