@@ -366,6 +366,23 @@ void main() {
       return file.path;
     }
 
+    /// Writes [bytes] DIRECTLY to the stub's own stdout.
+    ///
+    /// Directly, and not through a pipeline such as `yes a | head -c N`: a
+    /// pipeline puts the writer in a separate process, so the SIGPIPE lands on
+    /// `yes` and the stub still exits 0. `exec` is equally load-bearing — in a
+    /// plain shell script the SIGPIPE kills `dd` and the script carries on to
+    /// its own `exit 0`, so the probe would never observe the kill. Only
+    /// `exec`, where the stub process IS the writer, reproduces what the real
+    /// `opencode models` process is.
+    String bulkStdout(int bytes) =>
+        'exec dd if=/dev/zero bs=1024 count=${bytes ~/ 1024} 2>/dev/null';
+
+    /// Writes [bytes] directly to the stub's own stderr.
+    String bulkStderr(int bytes) =>
+        'dd if=/dev/zero bs=1024 count=${bytes ~/ 1024} 1>&2 2>/dev/null\n'
+        'exit 3';
+
     test(
       'reads no OPENCODE_* credential: a stub exiting 0 is healthy',
       () async {
@@ -447,6 +464,58 @@ void main() {
 
         expect(result.isUnhealthy, isTrue);
         expect(result.reason, contains('did not finish'));
+      },
+    );
+
+    test(
+      'a child that writes far more than a pipe buffer is still healthy',
+      () async {
+        // 64 KiB is the classic pipe capacity. A probe that stops reading once
+        // it has retained enough closes the READ end of the pipe; the child is
+        // SIGPIPEd and exits non-zero, and a perfectly healthy provider is
+        // reported as an outage. Two consecutive such probes mark every role
+        // all-providers-down and halt dispatch platform-wide — the exact
+        // failure this change exists to eliminate, reintroduced inside the
+        // probe. Real `opencode models` output is only ~328 B today, but it
+        // scales with the configured providers and models.
+        for (final bytes in const [1000, 200 * 1024, 1024 * 1024]) {
+          final result = await runOpencodeProviderProbe(
+            'opencode',
+            executable: stub(bulkStdout(bytes)),
+            timeout: const Duration(seconds: 30),
+          );
+
+          expect(
+            result.isHealthy,
+            isTrue,
+            reason: '$bytes bytes of stdout: ${result.reason}',
+          );
+        }
+      },
+    );
+
+    test(
+      'the retained output stays bounded however much the child writes',
+      () async {
+        const written = 1024 * 1024;
+        final result = await runOpencodeProviderProbe(
+          'opencode',
+          executable: stub(bulkStderr(written)),
+          timeout: const Duration(seconds: 30),
+        );
+
+        // The verdict is still a genuine failure — the child did exit 3.
+        expect(result.isUnhealthy, isTrue);
+        expect(result.reason, contains('exited 3'));
+        // And the reason carries a BOUNDED excerpt of 1 MiB of stderr, not the
+        // whole megabyte. A test that only asserted the verdict would pass
+        // against an unbounded buffer, which is its own memory hazard.
+        expect(result.reason, contains('truncated'));
+        expect(
+          result.reason.length,
+          lessThan(probeOutputTailLimit + 120),
+          reason: '1 MiB written, ${result.reason.length} chars retained',
+        );
       },
     );
   });

@@ -139,11 +139,14 @@ Future<ProviderProbeResult> runOpencodeProviderProbe(
     return ProviderProbeResult.unknown('probe could not start: $e');
   }
 
-  // Drain both pipes. An unread child blocks on a full pipe buffer, which
-  // would turn a successful probe into a timeout — evidence manufactured by
-  // the observer.
-  final stderrTail = _drainTail(process.stderr);
-  unawaited(_drainTail(process.stdout));
+  // Drain BOTH pipes all the way to EOF. An unread child blocks on a full pipe
+  // buffer, which would turn a successful probe into a timeout — evidence
+  // manufactured by the observer — and stopping the read early closes the pipe
+  // and SIGPIPEs the child, which would turn a successful probe into an
+  // outage. Both are the observer failing the provider, not the provider
+  // failing. See [_drainBounded].
+  final stderrDetail = _drainBounded(process.stderr);
+  unawaited(_drainBounded(process.stdout));
 
   try {
     final code = await process.exitCode.timeout(
@@ -161,7 +164,14 @@ Future<ProviderProbeResult> runOpencodeProviderProbe(
     if (code == 0) {
       return const ProviderProbeResult.healthy();
     }
-    final detail = await stderrTail;
+    // Bounded wait. The child has already exited, but a grandchild can still
+    // hold the inherited pipe open, and an unbounded await here would wedge
+    // `checkAll` forever — a monitor that stops checking is the same silent
+    // halt, one layer up.
+    final detail = await stderrDetail.timeout(
+      const Duration(seconds: 2),
+      onTimeout: () => '…(stderr did not close)',
+    );
     return ProviderProbeResult.unhealthy(
       'probe exited $code${detail.isEmpty ? '' : ': $detail'}',
     );
@@ -172,16 +182,53 @@ Future<ProviderProbeResult> runOpencodeProviderProbe(
   }
 }
 
-Future<String> _drainTail(Stream<List<int>> stream) async {
-  final buffer = StringBuffer();
+/// Maximum characters of a probe's output retained for a failure reason.
+///
+/// Named rather than a literal buried in a drain loop, because the bound is
+/// part of the contract an operator reads in a log line and a test asserts.
+const int probeOutputTailLimit = 2000;
+
+/// Reads [stream] to EOF, retaining at most [probeOutputTailLimit] characters
+/// and marking that it truncated.
+///
+/// ## Why this drains to EOF rather than stopping when it has enough
+///
+/// Abandoning the subscription is not "stopping early". It CLOSES the read end
+/// of the child's pipe. The child is SIGPIPEd and exits non-zero, the probe
+/// reads that as a failed provider, and after two such probes every role is
+/// marked all-providers-down and platform-wide dispatch halts — the exact
+/// failure this monitor was corrected for, reintroduced inside the probe that
+/// exists to prevent it. Real `opencode models` output is only ~328 B today,
+/// which is why this stayed latent, but it scales with the configured
+/// providers and models.
+///
+/// The retained buffer is still bounded, because a megabyte of provider error
+/// text inside a log line and a ticket is its own hazard. The bound is
+/// therefore enforced by slicing once the cap is reached and then READING ON,
+/// never by ending the read. Truncation is marked in the returned text so a
+/// reader can tell a short failure from a clipped one.
+Future<String> _drainBounded(Stream<List<int>> stream) async {
+  final retained = StringBuffer();
+  var total = 0;
+  var truncated = false;
   await for (final chunk in stream.transform(const SystemEncoding().decoder)) {
-    buffer.write(chunk);
-    if (buffer.length > 2000) {
-      buffer.write('…(truncated)');
-      break;
+    total += chunk.length;
+    if (retained.length >= probeOutputTailLimit) {
+      // Already full. Keep reading — the child is blocked on a full pipe
+      // buffer until this subscription closes — and discard.
+      truncated = true;
+      continue;
+    }
+    final room = probeOutputTailLimit - retained.length;
+    if (chunk.length > room) {
+      retained.write(chunk.substring(0, room));
+      truncated = true;
+    } else {
+      retained.write(chunk);
     }
   }
-  return buffer.toString().trim();
+  final text = retained.toString().trim();
+  return truncated ? '$text…(truncated, $total chars total)' : text;
 }
 
 /// Periodically probes providers from model policies and raises human decisions
