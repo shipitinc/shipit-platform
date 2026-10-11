@@ -503,6 +503,59 @@ void main() {
       },
     );
 
+    test(
+      'an unqualified model id is qualified at the boundary before it reaches '
+      'the wire',
+      () async {
+        // The adapter sends `value` verbatim and the runtime requires
+        // `<provider>/<model>`, so a caller-side omission used to surface as
+        // `-32602 "model not found"` against a request that looked well-formed.
+        // The runtime here echoes the QUALIFIED value back, which is what it
+        // would do for an id it can actually resolve.
+        const configured = 'space-bunny-free';
+        const qualified = 'opencode/space-bunny-free';
+        final transport = _LiveFrameTransport(
+          frames: [_livePongFrame],
+          configOptionsResponse: [
+            {'id': 'model', 'currentValue': qualified, 'category': 'model'},
+          ],
+        );
+
+        final run = await _drive(
+          transport,
+          runtimeConfig: const {'model': configured},
+        );
+
+        expect(transport.configRequests, hasLength(1));
+        expect(
+          transport.configRequests.single['value'],
+          equals(qualified),
+          reason: 'the wire value must carry the provider',
+        );
+        // And the model reported as in force is the one actually applied, not
+        // the string the caller happened to type.
+        expect(run.result.metadata?['model'], equals(qualified));
+        expect(run.result.metadata?['modelNotApplied'], isNull);
+      },
+    );
+
+    test('a provider-namespaced id is not rewritten when qualifying', () async {
+      // `openrouter/xiaomi/mimo-v2.5` is a real registry id. Treating "more
+      // than one slash" as an error, or splitting and rejoining, would
+      // corrupt it into a different model.
+      const model = 'openrouter/xiaomi/mimo-v2.5';
+      final transport = _LiveFrameTransport(
+        frames: [_livePongFrame],
+        configOptionsResponse: [
+          {'id': 'model', 'currentValue': model, 'category': 'model'},
+        ],
+      );
+
+      await _drive(transport, runtimeConfig: const {'model': model});
+
+      expect(transport.configRequests.single['value'], equals(model));
+    });
+
     test('a rejected model is never reported as the model in force', () async {
       // The binary's verbatim -32602 for an unknown model, replayed as the
       // error the transport would surface.

@@ -7,12 +7,14 @@ import 'package:agent_runtime/agent_runtime.dart'
 import 'package:execution_coordinator/execution_coordinator.dart'
     show ExecutionCoordinator, FileJsonExecutionStore, VerificationPlan;
 import 'package:workflow_store/workflow_store.dart' show DurableWorkflowEngine;
-import 'package:platform_contracts/platform_contracts.dart' show JobType;
+import 'package:platform_contracts/platform_contracts.dart'
+    show JobType, AgentRole;
 import 'package:product_registry/product_registry.dart'
     show ProductRegistryEngine;
 import 'package:scheduler/scheduler.dart'
     show
         Scheduler,
+        liveSessionLivenessProbe,
         triageDefectDefinition,
         triageDefectDedupeKey,
         triageDefectInstruction,
@@ -21,6 +23,13 @@ import 'package:scheduler/scheduler.dart'
         WorkerDispatch,
         WorkerDispatcherAdapter,
         ProviderHealthMonitor;
+import 'package:workflow_engine/workflow_engine.dart'
+    show
+        ModelSelection,
+        ModelSelectionService,
+        ModelSelectionSource,
+        kConfiguredDefaultDecisionId,
+        kConfiguredDefaultModelId;
 // The capacity API (L1) is not exported from the scheduler barrel, and
 // `packages/scheduler/**` is owned by L1 and under concurrent review — so this
 // lane cannot add the export. Narrow, explicit, and expected to be deleted when
@@ -190,6 +199,45 @@ void run(List<String> args) async {
   );
   providerHealthMonitor.start();
 
+  // ---- The model policy: made DURABLE here, not left to a runtime guess. ----
+  //
+  // `model_policy` shipped empty, so every role silently inherited a hardcoded
+  // fallback chosen inside the selection service at runtime — invisible,
+  // unauditable, and untunable without a redeploy. Decision 2fe73e11 fixed the
+  // default; this makes it a row an operator can see, read and change.
+  //
+  // Seeded, never migrated: no schema changes, and a role that already has a
+  // row is left alone, so an operator's later tuning survives a restart.
+  final modelSelection = ModelSelectionService(modelPolicyStore);
+  final modelPolicySeeding = await _seedModelPolicy(modelSelection);
+
+  // ---- Liveness: the question a worker row cannot answer. ----
+  //
+  // The scheduler used to read "is this execution terminal?" and, when it was
+  // not, renew the lease forever. A worker whose process died mid-execution is
+  // also not terminal, so a zombie was renewed on every tick and the 10 minute
+  // lease could never expire — which is how one execution sat in
+  // `agentExecuting` for 4.78 hours with nothing behind it.
+  //
+  // The coordinator's live-session set is the real answer, and it lives in this
+  // same process as this scheduler, so asking it is a local read.
+  final executionLiveness = liveSessionLivenessProbe(
+    // The real oracle, and the whole point of the wiring: this process's own
+    // live agent sessions. A worker execution row cannot answer this — a
+    // running agent and one whose process died an hour ago are both
+    // `agentExecuting` — so without this the scheduler runs on its staleness
+    // bound alone and an execution that legitimately runs long is reclaimed for
+    // being slow rather than for being dead.
+    (agentExecutionId) => coordinator.hasLiveSession(agentExecutionId),
+  );
+
+  // Read back what this scheduler's role will actually dispatch with, through
+  // the SAME selector the request builder uses.
+  final triageModelPolicy = await _describeModelInForce(
+    modelSelection,
+    triageDefectDefinition.requiredRole,
+  );
+
   // The capacity guard, built over the store the scheduler will claim through.
   //
   // This is the ONLY thing standing between a deep queue and a host with no
@@ -207,6 +255,15 @@ void run(List<String> args) async {
     workerStore: workerStore,
     dispatch: dispatch,
     definition: triageDefectDefinition,
+    // Without a selector the request carries NO model at all and the adapter
+    // applies its own default — which is the silent, unpinned state this
+    // wiring exists to remove.
+    modelSelection: modelSelection,
+    // Without this the scheduler runs on its staleness bound alone: an
+    // execution nothing is running behind is still eventually reclaimed, but
+    // only after the clock runs out, and one that legitimately runs long is
+    // reclaimed for being slow rather than for being dead.
+    executionLiveness: executionLiveness,
     // Without these the scheduler silently falls back to `_defaultDedupeKey` /
     // `_defaultInstruction` / `_defaultRequest`, which stamp
     // `AgentRole.triageDefect` jobs with
@@ -352,6 +409,20 @@ void run(List<String> args) async {
     // is written to state UNBOUNDED when no guard is attached, which means this
     // field is incapable of quietly describing a bound that is not there.
     'capacity': scheduler.capacitySummary,
+    // Which model is in force for this scheduler's role, read back through the
+    // SAME selector the dispatch path uses, so this line and the request that
+    // is actually built cannot disagree. `source` says whether it came from a
+    // durable `model_policy` row or from the operator-configured default, and
+    // the seeding fields say whether the table was populated at startup or the
+    // process is running on the in-code default.
+    'modelPolicy': {
+      ...modelPolicySeeding,
+      'inForceModelId': triageModelPolicy.modelId,
+      'inForceSource': triageModelPolicy.source.name,
+      'inForceIsFallback': triageModelPolicy.isFallback,
+      'defaultModelId': kConfiguredDefaultModelId,
+      'defaultDecisionId': kConfiguredDefaultDecisionId,
+    },
     // The gate's STATE, in both directions — not a claim that the sweep runs.
     // Present when it does not, because "the field is absent" is exactly the
     // ambiguity this entry point is supposed to remove. The sweep's liveness,
@@ -802,6 +873,85 @@ ExecutionCapacity resolveDispatchCapacity(
 /// is greppable by name and shares one format.
 void _log(String event, Map<String, dynamic> data) {
   stdout.writeln('[$event] $data');
+}
+
+/// Seeds `model_policy` from the operator-configured default, and reports what
+/// actually happened.
+///
+/// ## A failure here is loud, not quiet
+///
+/// The table shipped empty and nothing said so, which is why every role was
+/// silently running on an in-code guess for as long as it took someone to read
+/// a row count. If seeding fails the process keeps serving — a database fault
+/// is not a reason to refuse the platform's core promise — but it says so twice:
+/// a `server.modelpolicy.seed.failed` line naming the impact, and a `seedFailed`
+/// field on `server.composition`. An operator reading one startup line can tell
+/// "the policy is durable" from "the policy is a constant in this binary".
+///
+/// Returns the fields that go on the composition line.
+Future<Map<String, dynamic>> _seedModelPolicy(
+  ModelSelectionService selection,
+) async {
+  try {
+    final written = await selection.seedConfiguredDefault();
+    final roles = written.map((r) => r.wire).toList()..sort();
+    _log('server.modelpolicy.seeded', {
+      'rolesSeeded': roles,
+      'rolesSeededCount': roles.length,
+      'defaultModelId': kConfiguredDefaultModelId,
+      'decisionId': kConfiguredDefaultDecisionId,
+      // An empty list is not a no-op to stay silent about: it means every role
+      // already had a row, which is the state after the first start.
+      'note': roles.isEmpty
+          ? 'every role already had a policy row; nothing was overwritten'
+          : 'populated previously-unset roles',
+    });
+    return {
+      'seeded': true,
+      'seedFailed': false,
+      'rolesSeeded': roles.length,
+      'rolesAlreadySet': AgentRole.values.length - roles.length,
+    };
+  } catch (e, st) {
+    _log('server.modelpolicy.seed.failed', {
+      'error': '$e',
+      'stack': st.toString(),
+      'impact':
+          'model_policy is NOT populated; every role falls back to the '
+          'in-code default $kConfiguredDefaultModelId until this is fixed',
+    });
+    return {
+      'seeded': false,
+      'seedFailed': true,
+      'rolesSeeded': 0,
+      'rolesAlreadySet': 0,
+      'seedError': '$e',
+    };
+  }
+}
+
+/// The selection [role] will actually dispatch with, read through the same
+/// selector the scheduler's request builder uses.
+///
+/// A read failure is reported and answered with the in-code default rather than
+/// crashing the process: the returned selection still carries
+/// [ModelSelectionSource.configuredDefault] and `isFallback == true`, so the
+/// composition line shows the fallback for what it is instead of dressing it up
+/// as a policy.
+Future<ModelSelection> _describeModelInForce(
+  ModelSelectionService selection,
+  AgentRole role,
+) async {
+  try {
+    return await selection.select(role: role, escalationIndex: 0);
+  } catch (e, st) {
+    _log('server.modelpolicy.read.failed', {
+      'role': role.wire,
+      'error': '$e',
+      'stack': st.toString(),
+    });
+    return ModelSelection.fallback(role);
+  }
 }
 
 /// Environment variable that enables the defect-triage work-entry sweep on the

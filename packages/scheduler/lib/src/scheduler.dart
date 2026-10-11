@@ -63,6 +63,53 @@ enum ExecutionLiveness {
 typedef ExecutionLivenessProbe =
     Future<ExecutionLiveness> Function(WorkerExecution execution, DateTime now);
 
+/// Builds the probe that answers liveness from a live-session oracle.
+///
+/// The oracle is the thing that actually knows: a predicate over an AGENT
+/// execution id that is true only while a session for it is running in this
+/// process. The composition root supplies the real one — the execution
+/// coordinator's live-session set — and this function owns the DECISION about
+/// what a failed observation means, which is the part worth testing and the
+/// part that is easy to get backwards.
+///
+/// It lives here, next to [ExecutionLiveness] and the staleness bound it feeds,
+/// rather than in the composition root, because a fail-direction rule that
+/// cannot be executed is a rule nobody has checked. The composition root still
+/// chooses WHAT to observe; this only says what to conclude.
+///
+/// ## Fail direction
+///
+/// `unknown` — renew the lease, let the staleness bound decide — is returned
+/// whenever liveness cannot be observed:
+///
+///  * an execution that recorded no agent execution id has nothing to ask
+///    about. That is an absence of evidence, not evidence of death, and
+///    reporting `dead` would let a worker be reclaimed because its first agent
+///    execution id failed to persist;
+///  * an oracle that throws, for the same reason.
+///
+/// `unknown` does NOT reclaim immediately. Live work is never killed on a
+/// failure to observe, and a duplicate is never dispatched; an execution this
+/// probe genuinely cannot see falls back to the staleness bound, which is what
+/// stops an unobservable zombie from being renewed forever.
+ExecutionLivenessProbe liveSessionLivenessProbe(
+  bool Function(String agentExecutionId) hasLiveSession,
+) {
+  return (WorkerExecution execution, DateTime now) async {
+    final agentExecutionId = execution.agentExecutionId;
+    if (agentExecutionId == null || agentExecutionId.isEmpty) {
+      return ExecutionLiveness.unknown;
+    }
+    try {
+      return hasLiveSession(agentExecutionId)
+          ? ExecutionLiveness.alive
+          : ExecutionLiveness.dead;
+    } catch (_) {
+      return ExecutionLiveness.unknown;
+    }
+  };
+}
+
 /// Function to build a dedupe key for a work item.
 typedef DedupeKeyBuilder =
     String Function(WorkItem item, JobDefinition definition);

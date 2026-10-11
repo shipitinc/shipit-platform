@@ -73,6 +73,48 @@ Future<AcpTransport> defaultAcpTransport(AgentSessionConfig config) async {
   );
 }
 
+/// The provider half assumed when a caller configures a model id that carries
+/// no provider of its own.
+const String defaultOpencodeProviderId = 'opencode';
+
+/// Qualifies a configured model id into the `<provider>/<model>` form the
+/// opencode runtime requires on the wire.
+///
+/// `session/set_config_option` with `configId: 'model'` is answered with
+/// `-32602 "model not found"` when the value cannot be resolved, and the value
+/// is sent VERBATIM — so a caller that passes a bare `space-bunny-free` or
+/// `mimo-v2.6-flash-free` gets a wire-level rejection for what is really a
+/// caller-side mistake. That failure is invisible until an agent fails to
+/// start, and it is silent in the sense that matters most: the request looks
+/// well-formed.
+///
+/// Qualifying here rather than asserting earlier means the rule holds for every
+/// future caller instead of only the ones that remembered it. Policy still
+/// speaks provider-qualified ids, so this changes nothing for a caller that
+/// already does the right thing.
+///
+/// The rule, deliberately narrow:
+///  * an id that already contains `/` is already qualified and is passed
+///    through unchanged. Provider namespaced model ids are real and common
+///    (`openrouter/xiaomi/mimo-v2.5`), so "contains a slash" is the correct
+///    test and splitting or rewriting them would corrupt a valid id;
+///  * anything else gets [provider] prefixed;
+///  * surrounding whitespace is trimmed, because whitespace in a wire value is
+///    malformed rather than meaningful.
+///
+/// A malformed id such as `/foo` or `foo/` still contains a slash and is passed
+/// through: the runtime is the authority on what it can resolve, and
+/// manufacturing a corrected guess here would turn a precise wire rejection
+/// into a silent substitution of a DIFFERENT model.
+String qualifyModelId(
+  String modelId, {
+  String provider = defaultOpencodeProviderId,
+}) {
+  final trimmed = modelId.trim();
+  if (trimmed.contains('/')) return trimmed;
+  return '$provider/$trimmed';
+}
+
 /// AgentSession implementation driving the OpenCode ACP server.
 class OpenCodeSession implements AgentSession {
   OpenCodeSession({
@@ -117,7 +159,8 @@ class OpenCodeSession implements AgentSession {
   Duration _timeout = const Duration(minutes: 5);
 
   /// Provider name for error attribution (e.g., 'opencode', 'anthropic', 'openai').
-  String _provider = 'opencode';
+  /// Also the provider [qualifyModelId] assumes for an unqualified model id.
+  String _provider = defaultOpencodeProviderId;
 
   /// Escalation index incremented on provider errors to trigger re-dispatch.
   int _escalationIndex = 0;
@@ -142,6 +185,11 @@ class OpenCodeSession implements AgentSession {
     _workItemId = config.workItemId;
     _startedAt = DateTime.now();
     _model = config.runtimeConfig['model'];
+    // Qualified HERE, at the boundary that sends it, so every caller gets the
+    // wire form the runtime requires — not just the ones that remember to.
+    if (_model != null) {
+      _model = qualifyModelId(_model!, provider: _provider);
+    }
     _timeout = config.timeout;
 
     final transport = await _transportFactory(config);

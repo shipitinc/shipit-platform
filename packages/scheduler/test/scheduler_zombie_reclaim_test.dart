@@ -27,12 +27,27 @@ void main() {
 
   tearDown(() => dir.deleteSync(recursive: true));
 
+  /// A non-terminal worker execution carrying the given agent execution id.
+  WorkerExecution _execution({String? agentExecutionId}) => WorkerExecution(
+    workerExecutionId: 'wx-1',
+    workItemId: 'wi-1',
+    repositoryPath: '${dir.path}/repo',
+    requestedStartingRevision: 'deadbeef',
+    requiredCapabilities: const {},
+    status: WorkerExecutionStatus.agentExecuting,
+    cleanupPolicy: WorkerCleanupPolicy.removeAlways,
+    workerId: 'w-1',
+    agentExecutionId: agentExecutionId,
+    startedAt: t0,
+  );
+
   /// Plants the incident: a job claimed and marked running against a worker
   /// execution that has been stuck in `agentExecuting` since [startedAt], with
   /// no terminal outcome ever recorded.
   Future<FileRestartHarness> zombieHost({
     required DateTime startedAt,
     ExecutionLivenessProbe? probe,
+    String? agentExecutionId,
   }) async {
     final first = FileRestartHarness(dir, clock: () => t0);
     await first.itemRunnable();
@@ -47,6 +62,7 @@ void main() {
         status: WorkerExecutionStatus.agentExecuting,
         cleanupPolicy: WorkerCleanupPolicy.removeAlways,
         workerId: 'w-1',
+        agentExecutionId: agentExecutionId,
         startedAt: startedAt,
       ),
     );
@@ -224,6 +240,150 @@ void main() {
         expect((host.dispatch as ControlledDispatcher).runs, isEmpty);
       },
     );
+  });
+
+  group('liveSessionLivenessProbe — the decision rule', () {
+    // This is the probe `apps/server/lib/server.dart` supplies, and the rule is
+    // asserted here against the real function rather than a copy of it.
+    test('a live agent session is ALIVE', () async {
+      final probe = liveSessionLivenessProbe((id) => id == 'agx-live');
+      expect(
+        await probe(_execution(agentExecutionId: 'agx-live'), t1),
+        ExecutionLiveness.alive,
+      );
+    });
+
+    test('no live agent session is DEAD', () async {
+      final probe = liveSessionLivenessProbe((_) => false);
+      expect(
+        await probe(_execution(agentExecutionId: 'agx-gone'), t1),
+        ExecutionLiveness.dead,
+      );
+    });
+
+    test('no agent execution id is UNKNOWN, never DEAD — an absence of evidence '
+        'is not evidence of death', () async {
+      // The production incident left exactly this state: a worker row stuck in
+      // `agentExecuting` while `agent_execution` had 0 rows. Calling that dead
+      // would reclaim a worker whose first agent id merely failed to persist.
+      var consulted = false;
+      final probe = liveSessionLivenessProbe((_) {
+        consulted = true;
+        return false;
+      });
+      for (final id in <String?>[null, '']) {
+        expect(
+          await probe(_execution(agentExecutionId: id), t1),
+          ExecutionLiveness.unknown,
+          reason: 'for agentExecutionId ${id == null ? 'null' : 'empty'}',
+        );
+      }
+      expect(consulted, isFalse, reason: 'the oracle must not be asked');
+    });
+
+    test('an oracle that throws is UNKNOWN, never DEAD', () async {
+      final probe = liveSessionLivenessProbe(
+        (_) => throw StateError('coordinator unreachable'),
+      );
+      expect(
+        await probe(_execution(agentExecutionId: 'agx-unreachable'), t1),
+        ExecutionLiveness.unknown,
+      );
+    });
+  });
+
+  group('the production probe, wired end to end', () {
+    // The same rule, now driving a real Scheduler over a real store, to prove
+    // the verdicts reach the outcomes the incident turns on.
+    test(
+      'a live execution is ALIVE and is renewed, never duplicated',
+      () async {
+        final host = await zombieHost(
+          startedAt: t0.subtract(const Duration(hours: 4, minutes: 47)),
+          agentExecutionId: 'agx-live',
+          probe: liveSessionLivenessProbe((id) => id == 'agx-live'),
+        );
+
+        await host.scheduler.tick();
+
+        final job = (await host.jobStore.listJobs()).single;
+        expect(
+          job.state,
+          JobState.running,
+          reason: 'a live agent is never killed',
+        );
+        expect(job.isTerminal, isFalse);
+        expect((host.dispatch as ControlledDispatcher).runs, isEmpty);
+        expect(
+          await host.jobStore.readClaimForJob(job.jobId),
+          isNotNull,
+          reason: 'the lease was renewed, not dropped',
+        );
+      },
+    );
+
+    test(
+      'a dead execution is DEAD and is reclaimed, however recent it is',
+      () async {
+        final host = await zombieHost(
+          startedAt: t0, // 11 minutes old - well inside the staleness bound
+          agentExecutionId: 'agx-gone',
+          probe: liveSessionLivenessProbe((_) => false),
+        );
+
+        await host.scheduler.tick();
+
+        final job = (await host.jobStore.listJobs()).single;
+        expect(job.state, JobState.failed);
+        expect(job.isTerminal, isTrue);
+        expect(job.failure!.reason, contains('nothing is running behind it'));
+        expect(await host.jobStore.readClaimForJob(job.jobId), isNull);
+        expect((host.dispatch as ControlledDispatcher).runs, isEmpty);
+      },
+    );
+
+    test('an unobservable execution is renewed inside the bound and reclaimed '
+        'past it — fail open, but never forever', () async {
+      final fresh = await zombieHost(
+        startedAt: t0,
+        agentExecutionId: null,
+        probe: liveSessionLivenessProbe((_) => false),
+      );
+      await fresh.scheduler.tick();
+      expect(
+        (await fresh.jobStore.listJobs()).single.state,
+        JobState.running,
+        reason: 'unknown fails OPEN inside the bound',
+      );
+
+      final stale = FileRestartHarness(
+        dir,
+        clock: () => t1.add(const Duration(hours: 5)),
+        executionLiveness: liveSessionLivenessProbe((_) => false),
+      );
+      await stale.scheduler.tick();
+      expect((await stale.jobStore.listJobs()).single.state, JobState.failed);
+    });
+
+    test('a throwing oracle leaves the job running, not failed', () async {
+      final host = await zombieHost(
+        startedAt: t0,
+        agentExecutionId: 'agx-unreachable',
+        probe: liveSessionLivenessProbe(
+          (_) => throw StateError('coordinator unreachable'),
+        ),
+      );
+
+      await host.scheduler.tick();
+
+      final job = (await host.jobStore.listJobs()).single;
+      expect(
+        job.state,
+        JobState.running,
+        reason: 'a failed observation must not be read as proof of death',
+      );
+      expect(job.failure, isNull);
+    });
   });
 
   group('the staleness bound is derived, not guessed', () {

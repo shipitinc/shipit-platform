@@ -100,6 +100,28 @@ class ExecutionCoordinator {
 
   bool get isBusy => _liveSessions.isNotEmpty;
 
+  /// Whether this process currently holds a LIVE agent session for
+  /// [executionId].
+  ///
+  /// The one question durable state cannot answer. A worker execution row that
+  /// is still `agentExecuting` is byte-for-byte identical whether a process is
+  /// behind it or died an hour ago, which is why reconciliation cannot infer
+  /// liveness from it. This is the live-session set answering directly, and it
+  /// is what an [ExecutionLivenessProbe] asks.
+  ///
+  /// READ-ONLY and side-effect free: it observes, never registers, never
+  /// creates and never fabricates a verdict. There is deliberately no way to
+  /// mark an execution live from outside, so a `true` here means a session is
+  /// genuinely in this process's hands.
+  ///
+  /// FALSE means "no live session in this coordinator", which is not quite the
+  /// same as "provably dead": an execution id this coordinator has never seen
+  /// also answers false. A caller that needs to tell those apart must not infer
+  /// death from this alone — the scheduler's probe treats an unobservable
+  /// execution as `unknown` rather than `dead` for exactly that reason.
+  bool hasLiveSession(String executionId) =>
+      _liveSessions.containsKey(executionId);
+
   Future<AgentExecution?> latestExecutionFor(String workItemId) =>
       store.latestExecutionForWorkItem(workItemId);
 
