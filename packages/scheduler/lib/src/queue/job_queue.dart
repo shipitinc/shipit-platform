@@ -127,47 +127,93 @@ class JobQueue {
   /// the job is no longer eligible, or when it was cancelled in between.
   /// A `retryWaiting` job is promoted back through `queued` and claimed in
   /// the same operation, so a bounded retry resumes within a single pass.
+  ///
+  /// When a capacity budget applies, callers must not use this directly: they
+  /// must go through [JobCapacityGuard.tryAdmit], which needs the claim to run
+  /// inside a transaction that also holds the budget lock. [claimWithin] is the
+  /// body they use once they own such a transaction.
   Future<JobClaim?> claim({
     required Job job,
     required String ownerId,
     required DateTime now,
     required Duration lease,
   }) async {
+    return _store.inTransaction(
+      (tx) =>
+          claimWithin(tx, job: job, ownerId: ownerId, now: now, lease: lease),
+    );
+  }
+
+  /// [claim] against an ALREADY-OPEN transaction, without opening a nested one.
+  ///
+  /// Extracted so the capacity guard can make "count the in-flight executions"
+  /// and "claim one of them" a single atomic fact under the budget lock. A
+  /// nested transaction here would silently break that atomicity — the inner
+  /// one would commit independently of the outer count.
+  Future<JobClaim?> claimWithin(
+    JobStore tx, {
+    required Job job,
+    required String ownerId,
+    required DateTime now,
+    required Duration lease,
+  }) async {
+    final current = await tx.readJob(job.jobId);
+    if (current == null || !isEligibleAt(current, now)) return null;
+    var candidate = current;
+    if (candidate.state == JobState.retryWaiting) {
+      candidate = await _promote(tx, candidate);
+      if (candidate.state != JobState.queued) return null;
+    }
+    final updated = candidate.copyWith(
+      state: JobState.claimed,
+      version: candidate.version + 1,
+    );
+    try {
+      await tx.saveJob(updated, expectedVersion: candidate.version);
+    } on ConcurrentJobModificationException {
+      return null;
+    }
+    final claim = JobClaim(
+      claimId: newClaimId(),
+      jobId: candidate.jobId,
+      ownerId: ownerId,
+      leasedUntil: now.add(lease),
+      createdAt: now,
+    );
+    await tx.saveClaim(claim);
+    await _event(
+      tx,
+      candidate,
+      SchedulerEventType.jobClaimed,
+      payload: {
+        'ownerId': ownerId,
+        'leasedUntil': claim.leasedUntil.toIso8601String(),
+      },
+    );
+    return claim;
+  }
+
+  /// Records that a job was refused a slot by the global capacity budget.
+  ///
+  /// The job STAYS `queued`: no lease is taken, no state is written, and
+  /// emphatically no failure is recorded. "No capacity right now" is not an
+  /// error, and a job that reports one it did not have would be a lie an
+  /// operator could act on.
+  ///
+  /// Emitted at most once per consecutive denied window (same rule as
+  /// [recordDeferred]) so a saturated queue produces one honest line, not one
+  /// per tick for the length of the backlog.
+  Future<void> recordCapacityDenied({
+    required Job job,
+    required Map<String, Object?> payload,
+  }) {
     return _store.inTransaction((tx) async {
-      final current = await tx.readJob(job.jobId);
-      if (current == null || !isEligibleAt(current, now)) return null;
-      var candidate = current;
-      if (candidate.state == JobState.retryWaiting) {
-        candidate = await _promote(tx, candidate);
-        if (candidate.state != JobState.queued) return null;
+      final prior = await tx.readEvents(job.jobId);
+      if (prior.isNotEmpty &&
+          prior.last.payload?['outcome'] == 'capacityDenied') {
+        return;
       }
-      final updated = candidate.copyWith(
-        state: JobState.claimed,
-        version: candidate.version + 1,
-      );
-      try {
-        await tx.saveJob(updated, expectedVersion: candidate.version);
-      } on ConcurrentJobModificationException {
-        return null;
-      }
-      final claim = JobClaim(
-        claimId: newClaimId(),
-        jobId: candidate.jobId,
-        ownerId: ownerId,
-        leasedUntil: now.add(lease),
-        createdAt: now,
-      );
-      await tx.saveClaim(claim);
-      await _event(
-        tx,
-        candidate,
-        SchedulerEventType.jobClaimed,
-        payload: {
-          'ownerId': ownerId,
-          'leasedUntil': claim.leasedUntil.toIso8601String(),
-        },
-      );
-      return claim;
+      await _event(tx, job, SchedulerEventType.jobDeferred, payload: payload);
     });
   }
 

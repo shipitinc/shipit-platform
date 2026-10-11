@@ -4,6 +4,8 @@ import 'package:workflow_engine/workflow_engine.dart';
 import 'package:workflow_store/workflow_store.dart';
 import 'package:worker_runtime/worker_runtime.dart';
 
+import 'capacity/execution_capacity.dart';
+import 'capacity/job_capacity_guard.dart';
 import 'dispatch/worker_dispatch.dart';
 import 'health/provider_health_monitor.dart';
 import 'policy/retry_policy.dart';
@@ -122,6 +124,7 @@ class Scheduler {
     InstructionBuilder? instructionBuilder,
     RequestBuilder? requestBuilder,
     ProviderHealthMonitor? providerHealthMonitor,
+    this.capacityGuard,
   }) : schedulerId = schedulerId,
        _workflowStore = workflowStore,
        _jobStore = jobStore,
@@ -158,6 +161,32 @@ class Scheduler {
   final ModelSelectionService? _modelSelection;
   final RequestBuilder _requestBuilder;
   final ProviderHealthMonitor? _providerHealthMonitor;
+
+  /// The global execution-capacity budget, enforced at claim time. Null means
+  /// this scheduler is UNBOUNDED, and that is a deliberate, visible state
+  /// rather than a default:
+  ///
+  ///  * the cap is required configuration
+  ///    ([ExecutionCapacityResolution.fromEnvironment] resolves nothing when
+  ///    the environment variable is absent or unusable, so an unbounded
+  ///    scheduler cannot be produced by accident from a missing value);
+  ///  * the composition root owns wiring it, and [capacitySummary] is meant to
+  ///    be surfaced in the startup log so an operator can see which of the two
+  ///    states a running process is in.
+  ///
+  /// A process running with a null guard has no bound on concurrent agent
+  /// executions beyond whatever the worker registry happens to enforce.
+  final JobCapacityGuard? capacityGuard;
+
+  /// One line describing the capacity policy actually in force, for a startup
+  /// log. Never omits the fact that a cap is missing — the failure this guards
+  /// against is invisible, so the diagnostic has to carry it.
+  String get capacitySummary => capacityGuard == null
+      ? 'execution capacity NOT configured: this scheduler is UNBOUNDED and '
+            'will dispatch as many agent executions as the queue offers. Set '
+            '$executionCapacityEnvVar and inject a capacity guard before '
+            'starting the scheduler.'
+      : capacityGuard!.capacity.startupSummary;
 
   JobQueue get queue => _queue;
 
@@ -255,7 +284,9 @@ class Scheduler {
 
     // 4-8. Dispatch every eligible job, in fixed order, at most ONE attempt per
     //      job per tick. Re-reading live state each round lets a job that
-    //      completed during this tick free a capacity slot for the next one.
+    //      completed during this tick free a capacity slot for the next one —
+    //      and that slot is now a real, durable, counted one, released only by
+    //      the job reaching a terminal state or being reclaimed.
     final attempted = <String>{};
     for (;;) {
       final eligible = (await _eligibleRunnableJobs(
@@ -270,6 +301,13 @@ class Scheduler {
           dispatched.add(job.jobId);
         } else if (outcome.terminalJob != null) {
           terminal.add(outcome.terminalJob!.jobId);
+        } else if (outcome.capacityDenied) {
+          // Refused a slot by the global capacity budget. Reported through the
+          // SAME `deferred` channel as "no worker was free" because it is the
+          // same situation: the job is still queued and still wanted. It is not
+          // a failure, it is not terminal, and it is not dropped — the next
+          // tick retries it against whatever capacity exists then.
+          deferred.add(job.jobId);
         } else if (job.state == JobState.queued ||
             job.state == JobState.retryWaiting) {
           deferred.add(job.jobId);
@@ -277,8 +315,8 @@ class Scheduler {
         if (outcome.dispatched || outcome.terminalJob != null) {
           attempted.add(job.jobId);
         } else if (!outcome.dispatched) {
-          // Busy/no-worker/lost-claim/placement failure: do not spin on the
-          // same job within one tick; a later tick will retry it.
+          // Busy/no-worker/lost-claim/capacity-denied/placement failure: do not
+          // spin on the same job within one tick; a later tick will retry it.
           attempted.add(job.jobId);
         }
       }
@@ -351,13 +389,10 @@ class Scheduler {
       return const _DispatchOutcome();
     }
 
-    final claim = await _queue.claim(
-      job: current,
-      ownerId: schedulerId,
-      now: now,
-      lease: claimLease,
-    );
-    if (claim == null) return const _DispatchOutcome();
+    final admission = await _claim(current, now);
+    if (admission.claim == null) {
+      return _DispatchOutcome(capacityDenied: admission.capacityDenied);
+    }
 
     await _queue.markRunning(
       job: current,
@@ -382,6 +417,55 @@ class Scheduler {
         outcome: e.outcome,
       );
       return const _DispatchOutcome();
+    }
+  }
+
+  /// Claims [current], taking a capacity slot first when the budget is
+  /// configured.
+  ///
+  /// Returns the durable claim on success, or a null claim when the job must
+  /// simply not be dispatched this tick. The two refusals are reported apart:
+  /// losing the claim CAS means someone else took this specific job, whereas
+  /// `capacityDenied` means the shared budget was full and no job at all could
+  /// start this tick. Both leave the job queued for a later tick; conflating
+  /// them would make a saturated budget look like a contention bug.
+  Future<({JobClaim? claim, bool capacityDenied})> _claim(
+    Job current,
+    DateTime now,
+  ) async {
+    final guard = capacityGuard;
+    if (guard == null) {
+      final claim = await _queue.claim(
+        job: current,
+        ownerId: schedulerId,
+        now: now,
+        lease: claimLease,
+      );
+      return (claim: claim, capacityDenied: false);
+    }
+
+    final admission = await guard.tryAdmit(
+      job: current,
+      ownerId: schedulerId,
+      now: now,
+      lease: claimLease,
+    );
+    switch (admission) {
+      case CapacityAdmitted(:final claim):
+        return (claim: claim, capacityDenied: false);
+      case CapacityDenied():
+        // A denied job is left EXACTLY as it was. No claim is written, no state
+        // is written, and no failure is recorded — the honest record is "no
+        // capacity right now", which is what `deferred` already means. The job
+        // stays eligible, so a later tick retries it with no intervention and
+        // no loss.
+        await _queue.recordCapacityDenied(
+          job: current,
+          payload: admission.toEventPayload(),
+        );
+        return (claim: null, capacityDenied: true);
+      case CapacityClaimLost():
+        return (claim: null, capacityDenied: false);
     }
   }
 
@@ -707,8 +791,16 @@ Future<WorkerExecutionRequest> designReviewRequest(
 }
 
 class _DispatchOutcome {
-  const _DispatchOutcome({this.dispatched = false, this.terminalJob});
+  const _DispatchOutcome({
+    this.dispatched = false,
+    this.terminalJob,
+    this.capacityDenied = false,
+  });
 
   final bool dispatched;
   final Job? terminalJob;
+
+  /// The global capacity budget was full, so this job was not attempted. The
+  /// job is untouched and still queued.
+  final bool capacityDenied;
 }
