@@ -1,0 +1,911 @@
+# Design Brief metadata — design/failed-work-retry
+# Required fields per docs/engineering/DESIGN_GOVERNANCE.md ("Artifacts" ->
+# "Design Brief", "Required Fields").
+#
+# Companion artifacts:
+#   design-brief.md              the brief itself
+#   prompt.md                    the dispatch, captured verbatim-in-substance so the
+#                                requirements traced in section 15 have a durable record
+
+brief_id: 5471fea4-accf-47be-a1a0-cee7d47a5daa
+version: 1.5.0
+status: UNDER_REVIEW
+risk_level: 3
+
+created_by: design-agent
+created_at: 2026-10-11T12:49:42Z
+closeout_at: 2026-10-11T13:40:00Z
+corrected_at: 2026-10-11T15:10:00Z
+closeout_note: >
+  Revision 1.1.0 closed HD-1, HD-2 and HD-3 against the RESOLVED records in .decisions/. The
+  substantive change was HD-2: the idempotencyKey-prefix dispatch authorization proposed at 1.0.0 was
+  WITHDRAWN and replaced by an operator_action audit row written inside the transaction
+  DurableWorkflowEngine already opens.
+correction_1_4_note: >
+  Revision 1.4.0 corrects an INDEPENDENT RE-REVIEW of 1.3.0 that returned CHANGES_REQUIRED WITH NO
+  BLOCKERS. The reviewer independently confirmed and did not dispute: the seam deletion (zero
+  survivors, including in section 7, 6.5 and 6.1); the new edge's legality and its actorAllowed-alone
+  guard; AC-35's negative control; Lane S unable to merge green while inert; the three deleted ACs
+  losing no coverage; AC-16's rewrite being STRONGER; D-6 real; P-1's gates exact; HD-1/2/3 folding;
+  risk level 3; D-7 a genuine improvement. ITS SUMMARY WAS THE ORGANISING FACT: HD-4's retarget and
+  its accepted cost were applied to the core and left at the periphery. Every finding is the same
+  failure at a different distance from the centre.
+    H1.1 -- section 6.1's endpoint doc comment still said agentFailed -> agentExecuting and "the only
+      explicit forward edge"; both false, and it is the comment an implementer copies. Rewritten: it
+      now names the E1-prime edge HD-4 adds and says WHY NOT agentExecuting.
+    H1.2 -- section 5.2 bound retry to edge E1 and called it "the only forward edge". Section 5.1 was
+      correct about the current table; 5.2 is the design DECISION. 5.1 gains E1-prime; 5.2 rebinds.
+    H1.3 -- section 16.2's prohibition was justified by a harm HD-4 INVERTS; the stated "permanent
+      silent Working on it" cannot occur. Rule KEPT, justification RESTATED on two truthful grounds.
+    H1.4 -- section 17.2 listed section 6.4's algorithm ordering and "6.5.1's authorisation conjunct"
+      as not re-derived; both were rewritten at 1.3.0 and 6.5.1 has no conjunct left. Corrected.
+    H2 -- metadataMerge was LOAD-BEARING AND UNSPECIFIED: present in pseudocode and the lane box,
+      ABSENT from the additive signature this brief specifies, CONTRADICTED by 6.4.1 ("the work item's
+      own metadata is not touched"), OMITTED from 6.4.4's cost table, and MISLABELLED "-- HD-2,
+      unchanged". RESOLVED BY SPECIFYING IT, not removing it: NEW section 6.4.5, signature extended to
+      three optional params, MERGE semantics proved against the eight live defect-payload keys, cost
+      reconciled (a parameter, not a method -- the count stays 8), 6.4.1 retracted, 16.2 relabelled
+      new-at-1.3.0 / HD-4, AC-37 added.
+    H3 -- "byte-identical" reads as mechanical but is not: no golden, drift check or CI gate observes
+      a Dart source file's bytes. RESTATED AS REVIEW-ENFORCED with the one behavioural proof named
+      (AC-17's live tick), in AC-29, 16.3 and 17.1a. No CI job invented and none asserted to exist.
+    M1 -- section 15 gap 2 and this metadata still recorded the 1.2.0 fix (AC-15e/AC-32/AC-33) that
+      1.3.0 DELETED. Updated to the current Lane S acceptance set.
+    M2 -- an orphaned, unlabelled markdown table carrying 1.1.0's dispositions, which did not render as
+      a table. Labelled SUPERSEDED; it now renders.
+    M3 -- section 11's numbering note recorded only 1.1.0's changes. Replaced with a per-revision
+      added/rewritten/deleted table. Net 41 -> 45.
+    L1 -- _maxReclaimAttempts cited as :323 (a blank line) and, in one section, as both :323 and
+      :322-323 for the same line. Corrected to :322 everywhere, verified by grep.
+    L2 -- sections 13.5 and 17.2 listed 6.4.1 and "6.5.1's authorisation conjunct" as verified
+      unchanged. Both corrected.
+  unchanged_at_1_4: >
+    P-1 (gates G1-G4 exact), P-2 through P-6, HD-1/HD-2/HD-3 folding, the HD-4 core (section 6.5's
+    edge, its legality proof, 6.5.2's existing-path walkthrough, 6.5.3's label consequence), section
+    5's edge ENUMERATION, section 7's capacity behaviour, section 8's panel, section 9's
+    accessibility, AC-30, risk level 3. This revision moves documentation, not design.
+correction_1_5_note: >
+  Revision 1.5.0 is a final MECHANICAL correction pass. Re-review of 1.4.0 returned CHANGES_REQUIRED
+  WITH ZERO BLOCKERS and stated: "the brief's design is finished -- I found no defect in what gets
+  built. Every one of the six required edits is a label, a cross-reference, or a count." Nothing
+  verified is reopened; P-1, P-2..P-6, HD-1/2/3/4, section 7, section 8, section 9, AC-30, risk level
+  3 and the AC SET ITSELF (no AC added, removed or renumbered) are untouched.
+    H-A -- section 16.2 STILL mislabelled metadataMerge as "HD-2, unchanged", while the brief
+      CLAIMED at two sites that it had been relabelled. The brief's own 1.4.0 lane-box edit had
+      silently failed to match (a replace() without an assert -- D-8's failure class, committed by
+      the very lane that reported it). FIXED: the lane box is split by line index, and both false
+      completion claims now carry the correction. The metadata mirror was already right.
+    H-B -- AC-37 was assigned to NO lane. FIXED: added to the positive-acceptance list in the brief
+      (both the ASCII lane box and the table row), in this file's lane_s_seam, and in section 15
+      gap 2's current-set enumeration.
+    H-C -- readOperatorActionsForWorkItem was used by normative pseudocode but DECLARED NOWHERE, and
+      the interface gains TWO methods, not one. Verified by reading workflow_store.dart in full: it
+      declares nine methods plus inTransaction, and NO operator-action read of any kind. FIXED: the
+      read method is declared on the interface in section 6.4.3, with ONE method shown serving BOTH
+      section 6.4 step 0 (replay by requestId) and step 2 (retry count); the cost row, section 6.4.5
+      and this file's feasibility and risk text now say TWO, with the 8-implementor HEADCOUNT noted
+      as correct and unchanged.
+    M-A -- section 16.2 ground (b) cited AC-4 and is FALSE. Refuted by the brief’s own panel mock:
+      attemptNumber counts prior rows, so with zero prior rows the panel renders “attempt 1 of 3” and
+      AC-4's string is present. REPLACED with AC-1, which is sound and STRONGER: the action list is
+      server-computed from WorkItemTransitions, so without the edge the server cannot offer retry at
+      all, and AC-1 requires exactly [retry, stop].
+    M-B -- the byte-identical assertion survived at section 16.3 and in this file's AC-17, both
+      asserting exactly what AC-29 retracts. DROPPED at both sites, restated as review-enforced with
+      AC-17's live tick as the behavioural proof.
+    L-A -- "every one of them is read by triageDefectInstruction" is true of SEVEN of the eight live
+      metadata keys; defectReporter is written at lane_a_defect_triage_work_item.dart:495 and read
+      nowhere (grep: one hit, the write). Restated; AC-37's all-eight requirement is unaffected.
+    L-B -- the 1.4.0 claim that a SUPERSEDED label was applied was false; the orphan table had in
+      fact been DELETED. The underlying defect (0 orphans, 0 column mismatches) is fixed; the claim
+      now says what happened.
+    L-C -- section 15 gap 2's PARENT line and this file's sequencing rule still said "the seam ...
+      with its full predicate". Section 6.5 has had no seam and no predicate since HD-4. Both
+      parents corrected; the sub-bullets had already been updated.
+    L-D -- AC-29's "five named files" is five named SYMBOLS in TWO files. Restated precisely in both
+      artifacts.
+    L-E -- D-7 was CITED at two sites and DEFINED NOWHERE, the inverse of D-6's original defect. It
+      is now a real record in discovery_handed_to_manager with category DESIGN_DISCOVERY.
+  d8_sweep_result: >
+    COMPLETED ACROSS EVERY NORMATIVE SITE, per instruction. Swept section 6.4 and section 6.4.3 for
+    every identifier and resolved each one. THREE undeclared mechanisms were found; the review named
+    two, and this sweep found a third it had not:
+      1. workflowStore.findOperatorAction(workItemId, requestId) -- undeclared. Now
+         readOperatorActionsForWorkItem (section 6.4.3).
+      2. count(operator_action WHERE ...) -- undeclared; served by the SAME new method.
+      3. jobsForWorkItem(workItemId) -- NOT NAMED BY THE REVIEWER and found by this sweep. It matches
+         no member of any store: the real names are JobStore.listJobsForWorkItem
+         (packages/scheduler/lib/src/store/job_store.dart:18), surfaced by
+         ControlPlaneService.listJobsForWorkItem (control_plane_service.dart:1884). Renamed to the
+         real one.
+    EVERY OTHER IDENTIFIER RESOLVES: readWorkItem, findTransitionByIdempotencyKey,
+    appendTransitionRecord and isLegalTransition are real WorkflowStore/WorkItemTransitions members;
+    appendOperatorAction and metadataMerge are declared in section 6.4.3; transition is a declared
+    DurableWorkflowEngine parameter set; retryCount/configuredLimit/operatorRetryActor are
+    section-local names defined in section 6.4.1 or section 6.6. This was VERIFIED, not assumed --
+    the reviewer's statement that these two were the only remaining instances was itself wrong, which
+    is the sweep doing its job.
+hd4_note: >
+  Revision 1.3.0 closes HD-4 (decision 8a3f6b17-92d4-4e08-b6c1-8f0d5b27a934, ARCHITECTURE, RESOLVED,
+  outcome DESIGN_NOT_REQUIRED). Independent review found B1 NOT fixed at 1.2.0: the alternative branch
+  changed shape and became ALWAYS-FALSE. On branch B item.state is agentExecuting and the target is
+  agentExecuting; (agentExecuting, agentExecuting) is ABSENT from _legalTransitions and
+  _isGenericEscape rejects self-transitions (work_item_transitions.dart:303), so isValid was always
+  false and every authorised retry was dropped. Worse, the two conjuncts were MUTUALLY UNSATISFIABLE:
+  the authorisation conjunct required the audit row to name the item's LATEST transition (so the item
+  IS in agentExecuting) while edge legality required from != to (so it is NOT).
+  ROOT CAUSE: agentExecuting means "an execution is ALREADY RUNNING". Transitioning a failed item into
+  it asserts something untrue, and the scheduler correctly refuses to dispatch an item claiming to
+  already be executing. Specifying a dispatch seam around that target was the wrong shape, not merely a
+  wrong implementation.
+  THE SEAM IS DELETED IN ITS ENTIRETY -- section 6.5.2 is gone, not narrowed, not replaced by a fourth
+  variant, per the decision's binding instruction. There is no change to Scheduler._eligibleRunnableJobs,
+  no branch on statusOf, no replacement of isRunnable, no worker_execution guard, and no
+  requestOperatorDispatch anywhere. The retry now moves the item agentFailed -> designNotRequired --
+  a triage entry state (triage_defect.dart:10) whose designNotRequired -> agentExecuting edge is
+  already exercised (live transition tr-hn3lio9ndj-1hjznv6) -- so the entire existing dispatch path
+  applies unchanged.
+  ACCEPTED COST, SPECIFIED HERE: one new workflow-engine edge (section 6.5.1, AC-35, proved through
+  the real engine with a negative control) and a fresh dedupe key per retry (section 6.7, AC-36),
+  derived from durable metadata.triageAttempt because DedupeKeyBuilder is synchronous and takes only
+  (WorkItem, JobDefinition) -- scheduler.dart:113-115.
+correction_note: >
+  Revision 1.2.0 corrected INDEPENDENT DESIGN REVIEW findings on 1.1.0 (CHANGES_REQUIRED). The reviewer
+  CONFIRMED HD-1/HD-2/HD-3 folded in faithfully, P-1..P-6 all verify against source, the action set is
+  correct against the real transition table, atomicity is achievable, risk level 3 is right, and NO
+  human decision is reopened -- so nothing verified was re-derived. Six defects were corrected, two
+  of them blockers and both mine.
+    B1 (BLOCKER) -- the operator-retry eligibility rule was specified as DEAD CODE. 1.1.0 said "after
+      the existing checks, never instead of them" and counted "item exists and is NOT terminal" as an
+      existing gate. _eligibleRunnableJobs (scheduler.dart:569-599) contains TWO independent `continue`s
+      that drop any job whose item is agentExecuting -- :578-581 (statusOf != runnable) and :593-594
+      (isRunnable) -- and both fire before any appended check. Failure mode: a capacity-denied retry
+      leaves the item in agentExecuting with a queued job every tick drops, i.e. P-1 recurring through
+      the design's own `queued` outcome. Fixed by NEW section 6.5.2: restated as an explicit ALTERNATIVE
+      BRANCH with the concrete restructured control flow, a REPLACE-vs-NOT-BYPASS table, and the
+      reachable-only-where-branch-A-is-not property. Breaks section 7.1 item 5, AC-17 and dispatch
+      constraint 3's promise of "a queued alternative, NOT a button that silently does nothing".
+    B2 (BLOCKER, coupled) -- Lane S's contract was NEGATIVE-ONLY (AC-19b/c), so it could merge green
+      while dispatching nothing. Fixed at 1.2.0: NEW section 16.3 declares the completion gate, and
+      positive criteria were added. The negative-only incompleteness is DECLARED in requirements gaps
+      (item 2) rather than left undeclared.
+      >> SUPERSEDED AT 1.3.0: the positive criteria named here (AC-15e, AC-32, AC-33) were DELETED with
+      the seam. The CURRENT Lane S acceptance set is AC-35 (the edge is legal through the real engine,
+      with a negative control), AC-36 (the four dedupe-key properties), AC-17 (a retried item is
+      dispatched by a NORMAL tick), AC-14a-e (the audit record) and AC-10 (one-transaction atomicity),
+      with AC-19b, AC-19c, AC-29, AC-7 as negatives. See implementation_sequencing.lane_s_seam.
+    H1 (HIGH) -- a surviving 1.0.0 fragment asserted the WITHDRAWN prefix still authorises, plus an
+      orphaned `blocks:` line and a duplicate unresolved "### HD-3" heading. All deleted; see the
+      full-brief sweep table in design-brief.md section 17.1.
+    M1 (MEDIUM) -- SHIPIT_OPERATOR_MAX_RETRIES=0 was spec-inconsistent: section 6.6 named
+      ExecutionCapacityResolution.fromEnvironment, which resolves parsed < 1 to UNRESOLVED with a
+      "below the minimum of 1" diagnostic (execution_capacity.dart:156-164), while AC-15c calls 0 a
+      valid configuration. Fixed by one explicit sentence: reuse the PATTERN, not the helper; 0 must
+      resolve to a RESOLVED value meaning permanently disabled, with a configuration-styled diagnostic.
+    M2 (MEDIUM) -- "11 WorkflowStore implementors" was wrong; it is 8 (3 production + 5 test doubles).
+      The contract suite is NOT an implementor -- workflow_store_suite.dart:9-11 takes a
+      Future<WorkflowStore> Function() factory. Corrected in sections 6.4.4 and 12. The error was in the
+      SAFE direction but was repeated twice as load-bearing risk-pricing evidence.
+    LOW -- L1: AC-31's conclusion (schema_bootstrap.sql needs no change) is CORRECT but its evidence was
+      a proxy; the real reason is that verify_schema_bootstrap.sh:126-131 `required_objects` admits only
+      trigger:/index: kinds, so a generated table cannot be listed there. Reasoning restated.
+      L2: citation drift corrected -- reason is at durable_workflow_engine.dart:157 (was :156) and the
+      rejected path at :170-173 (was :169-172). L3: A3/A11 introduce Semantics(liveRegion: true) with
+      NO codebase precedent and AC-27's goldens cannot see a semantics tree; NEW AC-34 adds three
+      explicit widget tests asserting on tester.getSemantics(). L4: LEARNING_POLICY category tags added
+      to the durable discoveries -- P-6 = CONTRADICTION, section 14.1 = DESIGN_DISCOVERY, section 14.2 =
+      PROJECT_FACT. ALSO FOUND BY THE SWEEP AND NOT REPORTED: section 14's G5 row still read "Any
+      migration or schema change / None is needed", which is untrue after HD-2; corrected.
+  p1_status: >
+    P-1 REMAINS THE GOVERNING FINDING AND IS NOT SOFTENED. It is sharper if anything: B1 showed the
+    seam's own specification could not have delivered it, and section 16.3 now exists so the same class
+    of error cannot pass review twice.
+approved_by: human-operator (HD-1, HD-2, HD-3 resolved durably in .decisions/)
+approved_at: 2026-10-11T13:40:00Z
+
+requirements_refs:
+  # There is no requirements document for this work item. The dispatch is the
+  # requirement, and it is recorded in prompt.md; the identifiers below are the
+  # numbered constraints and deliverables of that dispatch.
+  - "dispatch constraint 1 -- the transition table is the authority; from agent_failed exactly one explicit legal edge (agentFailed -> agentExecuting) plus the generic terminal escape (cancelled/terminated); offer nothing the table forbids"
+  - "dispatch constraint 2 -- retry re-runs a real AI agent and spends real model credits; make that consequence visible and unambiguous BEFORE the human commits"
+  - "dispatch constraint 3 -- retry must respect SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS and the built zombie/timeout protections; on denial, tell the human plainly and offer a queued alternative, never a button that silently does nothing"
+  - "dispatch constraint 4 -- no raw SQL, no hand-written state mutation; every server-side move through DurableWorkflowEngine/WorkItemTransitions with the same injected policy, as packages/scheduler/lib/src/scheduler.dart does for its reclaim path"
+  - "dispatch constraint 5 -- durability/idempotency: specify double-click, refresh mid-flight, lost response and capacity denial, following the repo's existing idempotencyKey conventions"
+  - "dispatch constraint 6 -- plain language, existing vocabulary; no engineer jargon; a quiet log or empty screen must never be indistinguishable from a healthy one"
+  - "dispatch (a) -- the exact action set mapped to legal transitions, with copy for each; decide and justify whether abandon/cancel is wanted or scope creep"
+  - "dispatch (b) -- layout/interaction for the action panel: where it sits, what it shows about WHY it failed, how a credit-spending retry is confirmed"
+  - "dispatch (c) -- the client->server contract: RPC name and shape, specified as NEW surface (method, params, result, error cases)"
+  - "dispatch (d) -- behaviour when the capacity guard denies, and when the underlying job/execution is in a weird state"
+  - "dispatch (e) -- accessibility and existing design-system conventions"
+  - "dispatch (f) -- what the screen must NOT do (no capacity-guard bypass; retry never presented as free)"
+  - "dispatch (g) -- the nine parked agent_completed items are OUT OF SCOPE; note as a follow-up only, never conflated or solved here"
+  - "dispatch deliverable -- OWNED_PATHS / READ_ONLY_PATHS declared; no modification of production source under apps/** or packages/**"
+  - "dispatch hard constraint -- zero Docker/Compose mutating commands (QA is live); docker exec with a read-only command permitted; never make clean / qa-down / test-env-down / e2e-down / bare down -v; reading a compose file as text is the supported way to learn what a stack does; do NOT touch live database state"
+
+architecture_refs:
+  - "packages/workflow_engine/lib/src/transitions/work_item_transitions.dart -- THE transition table; the authority on what is legal. agentFailed -> agentExecuting at :108-110; agentExecuting -> agentFailed at :105-107; _isGenericEscape at :302-307; getGuards for the escapes at :314-329"
+  - "packages/workflow_engine/lib/src/validation/guard_conditions.dart -- agentAvailable() at :23, reading context['agentAvailable'] / ['capabilitiesMatch'] defaulting false at :207-209"
+  - "packages/platform_contracts/lib/src/enums/workflow_state.dart -- WorkItemState, isTerminal at :36-39, fromWire throws on unknown at :44-47"
+  - "packages/workflow_store/lib/src/durable_workflow_engine.dart -- transition() at :102-202; idempotent replay at :113-124; already-in-state rejection at :126-138; policy evaluation at :140-147; record built with reason: transition.rejectionReason at :149-167; atomic work-item + transition write with version CAS at :201-208; default orchestrator actor at :40-43"
+  - "packages/scheduler/lib/src/policy/runnable_work.dart -- RunnableWorkEvaluator; the AUTOMATIC dispatch policy. Entry-state gate at :83-85; the doc comment stating agentFailed/reviewRejected are deliberately not auto-enqueued at :63-67"
+  - "packages/scheduler/lib/src/scheduler.dart -- _reclaimEngine over the SAME injected policy at :292-295; tick step 3 enqueue switch at :492-516; _eligibleRunnableJobs at :569-599; _dispatchOne at :601-650; _claim and the capacity-denial contract at :652-697; capacityDenied reported as deferred at :537-543; zombie reclaim at :919-967; _releaseWorkItem at :1029-1075; the two rejection signals are siblings, not subtypes, at :1005-1028; _maxReclaimAttempts = 3 at :322"
+  - "packages/scheduler/lib/src/triage_defect.dart -- triageDefectDefinition.entryStates = {designNotRequired, designApproved} at :10; triageDefectDedupeKey at :17-18; maxAttempts 2 at :12"
+  - "packages/scheduler/lib/src/queue/job_queue.dart -- enqueueIfAbsent at :52-90; findLatestByDedupeKey short-circuit at :55-58; DuplicateActiveJobException re-resolved to the winner at :82-88"
+  - "packages/scheduler/lib/src/capacity/execution_capacity.dart -- SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS at :10; the fail-closed resolution at :125-173; why a cap must not default to unlimited at :88-92"
+  - "packages/scheduler/lib/src/capacity/job_capacity_guard.dart -- the only operation is tryAdmit, there is NO read-only probe; CapacityDenied writes nothing at :44-47, :50-82; global budget, not per-product, at :92-110"
+  - "packages/execution_coordinator/lib/src/coordinator/execution_coordinator.dart -- execute() moves the item into agentExecuting AT DISPATCH TIME at :148-155; reconcileOrphans writes agentFailed with an 'orphaned' reason at :412-450"
+  - "apps/server/lib/src/services/control_plane_service.dart -- class doc asserting NO direct WorkItem.state write and a single request-side write path at :53-61; workflowEngine getter (no injected policy) at :87-88; resolveHumanDecision at :1841-1869"
+  - "apps/server/lib/src/endpoints/workflow_endpoints.dart -- resolveDecision, documented as the ONLY legal request-side state transition at :101-153; inspect returning TransitionView.reason at :43-65"
+  - "apps/server/lib/src/endpoints/home_endpoints.dart -- the counting predicates: running at :28-33, waitingOnYou at :41-53, busy workers at :95-104"
+  - "apps/server/lib/src/services/ui_view_mappers.dart -- the wire-values-not-copy convention (state.wire, jobType.name); the client maps to plain language"
+  - "apps/server/lib/src/persistence/postgres_workflow_store.dart -- findTransitionByIdempotencyKey at :228-242; appendTransitionRecord at :243-258"
+  - "apps/server/lib/src/persistence/postgres_job_store.dart -- activeDedupeKey derivation (non-null while non-terminal) at :17-26; findLatestByDedupeKey with NO state filter at :246-256"
+  - "apps/server/lib/server.dart -- the composition order doc at :84-100; resolveDispatchCapacity fail-closed at :104-112; the Scheduler constructed as a local variable at :251-292 (no endpoint can reach it); TickSingleFlight at :444-566"
+  - "apps/server/lib/src/database/work_item_transition.spy.yaml -- the reason column, and the unique index on (workItemId, idempotencyKey)"
+  - "apps/server/lib/src/database/work_item.spy.yaml -- metadataJson exists on the work item"
+  - "apps/server/lib/src/database/job.spy.yaml -- job_active_dedupe_unique on activeDedupeKey, with the predicate-in-the-data explanation"
+  - "apps/server/lib/src/database/human_direction.spy.yaml -- the alternative durable home for an operator's reason (HD-2 option B)"
+  - "apps/control_plane/lib/core/plain_language.dart -- THE BINDING VOCABULARY. PlainStatus at :23-71 incl. needsYouItFailed 'Needs you — it failed' at :31 and isOperatorTurn at :68-70; statusFor at :84-128 (agent_failed -> needsYouItFailed at :121-125, with a comment at :119-120 that contradicts the code -- design-brief.md P-6); decisionType at :135-155 (escalation -> 'Restart after a problem' at :144); haltExplanation at :260-270 (agent_failed at :267)"
+  - "apps/control_plane/lib/shared/transition_copy.dart -- the accepted-pair copy; ('agent_failed','agent_executing') -> 'Retrying after an error' at :40"
+  - "apps/control_plane/lib/shared/decision_choice.dart -- the single wire-to-copy boundary; escalation labels at :37-46 ('Resume' at :39, 'Stop this work' at :40)"
+  - "apps/control_plane/lib/features/runs/runs_page.dart -- WorkFilter.matches at :63-71 (the failed item matches BOTH 'Needs you' and 'Failed')"
+  - "apps/control_plane/lib/features/run_detail/run_detail_page.dart -- the 'Nothing needs you here' branch at :651-667; the two-column/stacked/mobile composition at :136-183; the decision panel at :669-709; TechnicalDetails at :185-193"
+  - "apps/control_plane/lib/features/run_detail/run_detail_bloc.dart -- the timeline is built from the transition PAIR, discarding reason, at :66-75; recommendation/haltedState only when blocked at :39-49"
+  - "apps/control_plane/lib/features/needs_you/needs_you_page.dart -- _GateCard Semantics pattern at :218-227; _ConfirmStrip at :389-517 incl. 'WHY DID YOU DECIDE THIS?' at :450, 'required' hint at :461, button semantics at :470-478, 'This cannot be undone.' at :499"
+  - "apps/control_plane/lib/features/home/home_page.dart -- the copy doctrine at :441-445; the machines-band phrasing at :637-639"
+  - "apps/control_plane/lib/shared/design_primitives.dart -- DesignPanel :301, SidePanel :701, MicroLabel :46, ContentRule :11, InlineLink :195, TechnicalDetails :364, DetailHeader :453, DefinitionList :629"
+  - "apps/control_plane/lib/core/design_tokens.dart -- ShipItMetrics.sidePanelWidth 392, sidePanelGap 32, sidePanelMinContent 380, mobileBreakpoint 840; the ShipItType scale"
+  - "docs/engineering/dispatch/tasks/design-work-entry/design-revision.md -- the house format and the standing rules this brief reuses: ONE imported dedupe key never re-spelled, the three-layer idempotency argument, the premise-correction-first structure, and the explicit refusal to fix work_entry.dart's sweep from inside another lane (design-brief.md section 14.2)"
+  - "AGENTS.md -- section 12 baseline independence (not engaged: no baseline, no evidence kind, no verification path), section 13 credentials (not engaged), the shared-Docker rule (honoured: zero mutating commands), test resource hygiene, and AGENTS.md section 10's provenance/decision-actor invariants"
+  - "docs/engineering/DESIGN_GOVERNANCE.md -- required Design Brief fields; the 0-3 risk taxonomy and its approval paths"
+
+problem_statement: >
+  ShipIt detects that an agent execution failed, deliberately routes the work item to a human
+  (WorkItemState.agentFailed is excluded from every RunnableWorkEvaluator dispatch entry set, so it
+  will never auto-retry -- a decision that is correct and is preserved by this brief), and then gives
+  that human nothing to click. The Run detail screen's right-hand column renders "Nothing needs you
+  here" whenever blockingHumanDecisionId is null -- which it is for a failed item -- so the same view
+  states "Needs you -- it failed" and "Nothing needs you here" at once. Meanwhile the information an
+  operator would need to decide already crosses the wire and is discarded: the
+  work_item_transition.reason column and the terminal job's failureJson are returned by existing
+  endpoints and dropped by RunDetailBloc, which renders the transition PAIR copy instead. Verified in
+  live QA on 2026-10-11 against defect-DEF-1791686704991884: state agent_failed, no blocking decision,
+  one terminal job jb-hn3liczxln-li36ts (failed, zombie execution reclaimed after 484m) whose
+  dedupeKey defect-DEF-DEF...:triage_defect is already consumed.
+
+user_flows:
+  - name: "Arrive at a failed run (primary)"
+    entry: "The operator follows 'See details' from All work, Overview, or the Needs you list to /#/runs/<workItemId> for an item in agent_failed."
+    exit: "The action panel is rendered on the right (record on the left, stacked when narrow, single column on mobile) showing the plain status, why it stopped, the capacity snapshot, the attempt counter, and two actions."
+    notes: "No new route. The URL the operator already has becomes the place where the work happens."
+  - name: "Understand before acting"
+    entry: "The panel renders, from durable records only: the status line ('Needs you -- it failed'), a plain-language cause derived by a closed-set classifier over work_item_transition.reason and the job's failureJson, when it stopped and how many times, the capacity snapshot, and the attempt counter."
+    exit: "The operator either proceeds or leaves. Nothing is committed by reading."
+    notes: "An absent reason renders as 'The system did not record why this stopped.' -- never as an empty region or a substituted message. The raw record is always one 'Show technical details' disclosure away."
+  - name: "Try again (retry)"
+    entry: "The operator presses 'Try again'. The button row is replaced IN PLACE by a confirm strip carrying a mandatory reason field (mirroring _ConfirmStrip on the Needs you card)."
+    exit: "One of: 'Started.' / 'Queued -- it will start when a machine is free.' / 'This work is already running.' / 'This work has already been tried N times.' / 'We could not do that. Nothing changed.' -- every one stated in the view and announced on a live region."
+    notes: "The requestId is minted when the operator confirms, reused for every network retry of that confirmation, and discarded on cancel or resolution, so a double-click and a lost response can never spend credits twice."
+  - name: "Stop this work (abandon)"
+    entry: "The operator presses 'Stop this work'. The same confirm strip appears, with destructive tone."
+    exit: "agentFailed -> cancelled via the generic workflow escape. The item moves to 'Stopped'; its transition history and the original defect survive untouched."
+    notes: "Included deliberately; the argument both ways is in section 5.3 and the escalation is HD-1."
+  - name: "Capacity denied"
+    entry: "The operator presses 'Try again' while all agent slots are busy."
+    exit: "'Queued -- it will start when a machine is free. 2 of 2 agent slots busy.' The item reads 'Working on it'; the panel still shows the queued job and the capacity line; the next tick dispatches it with no human action."
+    notes: "Nothing is pre-gated. The guard decides at claim time; a denial writes no claim, no state and no failure."
+  - name: "Not applicable"
+    entry: "The operator opens a run that is not in agent_failed, or arrives after someone else already acted."
+    exit: "actionContext returns an empty action list; the panel does not render; the existing right-column text is unchanged."
+    notes: "A stale browser can never show a button for an illegal action, because the action set is computed SERVER-side from WorkItemTransitions."
+
+success_criteria:
+  - "Every action the screen offers maps to an edge in WorkItemTransitions; the server computes the set and the client renders what it is given (AC-1..AC-3)."
+  - "The credit cost and the attempt position are stated in text on the surface BEFORE the operator commits, and again in the confirmation (AC-4..AC-6)."
+  - "No path bypasses or weakens the execution capacity guard, the zombie reclaim, or the timeout (AC-15..AC-19, N1)."
+  - "Every write goes through DurableWorkflowEngine/WorkItemTransitions under the injected policy; no SQL, no hand-written state (AC-7, AC-8, N2)."
+  - "Double-click, crash between the enqueue and the transition, refresh mid-flight, lost response and capacity denial each converge to a stated, single, non-spending outcome (AC-9..AC-17)."
+  - "Every default-surface string is an existing vocabulary string or one listed verbatim in the brief; the raw record is preserved verbatim under the existing disclosure (AC-20..AC-23)."
+  - "The panel is announced as one unit with distinct focusable children, the outcome is announced on a live region, and Escape cancels the confirm (AC-24..AC-26)."
+  - "No new token, colour, font, component or route is introduced (AC-27, design_system_compliance)."
+
+constraints:
+  technical:
+    - "The transition table is the authority. agent_failed offers exactly agentFailed -> agentExecuting (work_item_transitions.dart:108-110) plus the generic escapes to cancelled/terminated (:302-307, :314-329). Nothing else may be offered."
+    - "The retry edge carries NO agentAvailable() guard, unlike its siblings at :36-39/:46-49/:88-91/:96-99 -- so capacity is enforced ONLY at claim time inside the scheduler, and the screen must never offer a way around it."
+    - "RunnableWorkEvaluator is the AUTOMATIC policy and must not change. agentExecuting is NOT an entry state of triageDefectDefinition (triage_defect.dart:10), which is why a bare transition strands the item (design-brief.md P-1)."
+    - "JobQueue.enqueueIfAbsent cannot create a second job under a consumed dedupe key (postgres_job_store.dart:246-256 has no state filter), so the retry job needs a request-scoped key (section 6.7)."
+    - "DurableWorkflowEngine.transition writes reason as transition.rejectionReason, which is null on acceptance -- there is currently NO durable place for an operator's stated reason (P-3, section 6.4.2, HD-2)."
+    - "No server RPC exists today to move a work item; this is new surface. resolveDecision is documented as the ONLY request-side transition and its doc must be amended (AC-28)."
+    - "The Scheduler is a local variable in server.dart's composition root and no endpoint can reach it; a handle must be exposed (section 6.5)."
+    - "JobCapacityGuard exposes no read-only probe and must not gain one: a pre-check is a time-of-check/time-of-use race (P-5)."
+    - "The live QA database and Docker stack are read-only to this lane. Verified: 0 mutating Docker/Compose commands, 0 DB writes."
+  brand:
+    - "Every default-surface string is drawn from plain_language.dart, transition_copy.dart or decision_choice.dart, or is listed verbatim in the brief. Raw wire values appear only inside the existing 'Show technical details' disclosure."
+    - "No engineer jargon. The recorded reason is engineer prose and must be classified, not pasted."
+    - "The home doctrine holds: 'Nothing moves forward until you decide. There is no time pressure beyond the limits shown.'"
+    - "A quiet screen must never be indistinguishable from a healthy one -- a missing reason is reported as missing, never rendered as an empty box."
+  regulatory:
+    - "An operator action that spends real model credits must be attributable. The human's identity and stated reason must be durably recorded (section 6.4.2, HD-2)."
+    - "The operator is NOT the transition's actor and cannot be (actorAllowed([orchestrator])). The engine acts as the orchestrator and the human is recorded as data, following the resolveDecision precedent."
+    - "No new ActorType, no weakening of actorIsNotSelf(), no new guard condition (N10)."
+  accessibility:
+    - "WCAG 2.2 AA. Panel semantics use the existing _GateCard pattern (container + explicitChildNodes) so button tap actions do not merge into one region."
+    - "The confirm button carries its own enabled/disabled semantic label; the reason field autofocuses; Escape cancels (a gap in the existing _ConfirmStrip, closed here rather than copied)."
+    - "The RPC outcome is announced on a Semantics liveRegion -- a NEW pattern in this app, deliberately introduced here rather than extending the existing silence."
+    - "Nothing is conveyed by colour alone; contrast pairs are existing tokens only; no motion is added."
+
+risk_assessment:
+  level: 3
+  re_confirmed_at: 1.1.0
+  rationale: >
+    Level 3 -- Major Workflow Change. It adds the FIRST request-side capability that spends real
+    money and starts autonomous work: every other operator decision resolves a gate, whereas this
+    starts a real agent execution. It changes the mental model of every operator reading every
+    failed item from "work failed and will not retry" to "work failed and a human restarts it". It
+    adds a second request-side state transition, which is precisely the surface area that the
+    no-hand-written-state rule exists to protect, and it requires changes to shared infrastructure on
+    the live dispatch path (Scheduler dispatch eligibility, DurableWorkflowEngine.transition's
+    signature). RE-CONFIRMED at 1.1.0 and again at 1.5.0, never lowered. The Level-3 weightings
+    from HD-2 stand unchanged: it added a migration, a new table and new methods on the
+    WorkflowStore interface -- **TWO of them as of 1.5.0**, appendOperatorAction (HD-2) and
+    readOperatorActionsForWorkItem (section 6.4 step 0 and step 2). 1.4.0 said one; the
+    8-implementor HEADCOUNT is right and unchanged, but the per-implementor METHOD COUNT was
+    understated by 100% -- the same cost-pricing error corrected at 1.2.0, for the same reason.
+    The level is read at the TOP of its band rather than below it: the level is 3 because of what
+    the change DOES, and the closeout did not change what it does. HD-1, HD-2, HD-3 and HD-4 were
+    routed at the Level 3 gate and are now
+    RESOLVED, so the risk level and the escalations were one fact seen twice and that fact has been
+    discharged. Level 2 was considered and rejected: it fits the panel but not "a new capability to
+    spend credits and start autonomous work", which is the substance. Levels 0 and 1 are excluded --
+    this adds a surface the design system has no existing answer for, so it is not a
+    design-system correction. A reviewer may reasonably land on Level 2 by reading the scheduler seam
+    as an implementation detail; that disagreement is invited, and nothing in the plan changes
+    either way, because the decisions are already resolved at either level.
+
+acceptance_criteria:
+  action_set:
+    - "AC-1  Given agent_failed, actionContext returns exactly [retry, stop], in that order, and nothing else; a test enumerates every state and fails if a non-legal action is ever offered."
+    - "AC-2  Given any other state, actionContext returns [] and the page renders today's existing right-column text unchanged."
+    - "AC-3  The panel offers no control mapping to terminated, waiting_for_human_decision, or any state the table forbids from agent_failed."
+  cost_visibility:
+    - "AC-4  Before any confirmation the panel contains 'This will be attempt N of M.' and a sentence stating that trying again costs model credits, both as text and not as tooltips."
+    - "AC-5  Pressing 'Try again' replaces the button row with a confirm strip requiring a non-empty reason; refused client-side AND returning invalidRequest server-side."
+    - "AC-6  No code path reaches retryFailedWorkItem without an explicit confirm step."
+  transition_path:
+    - "AC-7  REWRITTEN at 1.3.0. The move happens only through DurableWorkflowEngine.transition(to: designNotRequired, actor: ActorType.orchestrator) under an injected WorkflowEngine policy shared with the scheduler; a test asserts the actor type and that the guard evaluated is actorAllowed([orchestrator]) and NOT agentAvailable(), matching the convention of the only other edge into that state, planned -> designNotRequired (work_item_transitions.dart:28-30)."
+    - "AC-8  No SQL string for work_item or work_item_transition appears anywhere in the change."
+    - "AC-35  NEW at 1.3.0 -- HD-4's core deliverable and Lane S's primary acceptance. The new edge is PROVED legal through the real engine, not asserted in prose: WorkItemTransitions.validate(from: agentFailed, to: designNotRequired, trigger: systemEvent, actor: <operator actor>, ...) isValid. Carries a NEGATIVE CONTROL: validate(from: agentExecuting, to: agentExecuting, ...) must be INVALID, so the 1.2.0 self-transition defect cannot be reintroduced silently. A third assertion confirms agentFailed now has TWO explicit outgoing edges (work_item_transitions.dart:108-110 and the new entry) and that neither is a self-transition."
+  idempotency_and_durability:
+    - "AC-9  Two retryFailedWorkItem calls with the same requestId produce ONE transition row, ONE job and identical results."
+    - "AC-10  REWRITTEN at 1.3.0. The retry is ONE durable transaction (section 6.4), so the 1.2.0 enqueue/transition crash window no longer exists. The test asserts ATOMICITY instead: forcing the work-item compare-and-swap to fail leaves ZERO operator_action rows and the item still agent_failed; and a crash after commit leaves the item design_not_required with the attempt marker set, so a replay of the same requestId finds its own audit row and returns accepted without writing again. JUSTIFICATION: coverage is not lost -- the property that mattered (a crash never leaves a half-applied retry) is now stronger, because there is only one write to half-apply."
+    - "AC-11  A refresh mid-flight shows the real state and never a button for an illegal action: after the retry commits, actionContext returns []."
+    - "AC-12  A lost response followed by a client retry with the same requestId returns the first call's result and spends nothing twice."
+    - "AC-13  REWRITTEN at 1.1.0: the accepted transition row carries a non-null reason equal to the operator's text (decision 2b8f4c07 keeps the additive reason parameter AS WELL AS the audit row), AND an operator_action row exists carrying requestedBy and reason as first-class columns. The idempotencyKey still begins 'operator-retry:' -- as a REPLAY KEY ONLY, never as authorization (section 6.5.1)."
+    - "AC-14  retryFailedWorkItem with a blank reason writes nothing at all, asserted by row counts before and after."
+  audit_record:
+    - "AC-14a  A successful retry writes exactly ONE operator_action row per operator intent; a stop writes exactly one with action='stop' and job_id null."
+    - "AC-14b  ATOMICITY -- decision 2b8f4c07's binding follow-up. Forcing the work-item compare-and-swap to fail leaves ZERO operator_action rows: the audit row and the state change commit or roll back together. No code path writes an audit row outside the transition's transaction, and a test asserts the absence of one."
+    - "AC-14c  The operator_action row's transitionId equals the work_item_transition.transitionId of the transition it authorised, and that row is the item's LATEST transition at the moment of dispatch."
+    - "AC-14d  operator_action is append-only: no update or delete path exists anywhere, asserted by a test that fails if any UPDATE/DELETE against the table is introduced."
+    - "AC-14e  Replaying the same (workItemId, requestId) collides on operator_action_request_unique and creates NO second row, NO second job and NO second spend."
+  capacity:
+    - "AC-15  UNCHANGED at 1.3.0 IN SUBSTANCE, but note WHO denies: at 1.2.0 it was the retry RPC; at 1.3.0 the retry RPC never claims anything, so the scheduler's ordinary tick is denied by JobCapacityGuard -- a scheduler_event with outcome capacityDenied is written and NO claim row is created (asserted against job_claim)."
+    - "AC-15b  (HD-3) With SHIPIT_OPERATOR_MAX_RETRIES UNSET, actionContext returns retryLimitResolved: false and a non-blank retryLimitDiagnostic naming the variable; retryFailedWorkItem returns notConfigured; and the audit row count is unchanged. No fallback value appears anywhere -- not in the response, not in the log line."
+    - "AC-15c  (HD-3) 'Default 3' does NOT mean 'absent => 3'. A test boots the resolution with the variable absent, blank, unparseable and 0, and asserts the retry action is unavailable in all four; 0 means 'permanently disabled', a valid configuration, not a failure. Only an explicit 3 arms the retry."
+    - "AC-15d  (HD-3) With the limit unset, 'Stop this work' is STILL offered (HD-1), and the panel shows 'Starting this again is switched off on this machine. Nothing has been changed.', styled as information and not as an error."
+    - "AC-16  REWRITTEN at 1.3.0. The retry RPC returns outcome 'accepted' and the operator is told 'Done -- it will start as soon as a machine is free.' The item then reads 'Waiting to start' (design_not_required -> PlainStatus.waitingToStart, plain_language.dart:102-104) until a job is actually claimed, at which point it reads 'Working on it'. AT 1.2.0 this AC asserted the retry RPC itself returned 'queued' and that the item read 'Working on it' while idle -- both are now false and both were consequences of the deleted seam. JUSTIFICATION: not a coverage loss; the operator-visible promise is unchanged and is now stronger, because it is the platform's ordinary behaviour rather than a design promise."
+    - "AC-17  REWRITTEN at 1.3.0 -- this is Lane S's POSITIVE acceptance (section 16.3). After an operator retry moves a work item to designNotRequired, a REAL Scheduler.tick() with a free capacity slot dispatches a job for it and the job reaches running, through the ORDINARY _eligibleRunnableJobs -> _dispatchOne path, with NO change to Scheduler._eligibleRunnableJobs and NO requestOperatorDispatch in the codebase. [CORRECTED at 1.5.0 — M-B: the 1.4.0 metadata said “the gate also asserts that _eligibleRunnableJobs is BYTE-IDENTICAL”, which contradicted the retraction in AC-29: it is not mechanically checkable and no golden or CI gate observes a Dart source file. DROPPED. The gate rests on the BEHAVIOURAL claim — dispatch reached running through the ordinary path — plus the review obligation in AC-29.] AT 1.2.0 this AC read 'with requestOperatorDispatch never called again'; that method no longer exists."
+    - "AC-18  No code path sets inFlight above cap; the existing capacity tests pass unmodified."
+    - "AC-19  REWRITTEN at 1.3.0. The retry RPC refuses with alreadyRunning when ANY non-terminal job exists for the work item, so a second operator action can never be layered on top of a live attempt. AT 1.2.0 this AC was about requestOperatorDispatch refusing a job whose item had a non-terminal worker_execution -- a seam guard that no longer exists. The concern is preserved and relocated to the request path, where it is cheaper to test."
+    - "AC-19b  REWRITTEN at 1.3.0. A work item is NEVER re-dispatched without a recorded operator action. Concretely: agentFailed is NOT in triageDefectDefinition.entryStates (triage_defect.dart:10), so no tick enqueues for it and _eligibleRunnableJobs drops any job for it (scheduler.dart:578-581); the only way out is the agentFailed -> designNotRequired edge (section 6.5.1), and that edge is only ever taken by an RPC that writes an operator_action row in the same transaction. A fabricated idempotencyKey prefix does not satisfy this, and neither does a hand-written state change. NOT SUFFICIENT ON ITS OWN TO ACCEPT LANE S -- see AC-17, AC-35, AC-36 and section 16.3, which is the incompleteness inherited from 1.1.0 and 1.2.0."
+    - "AC-19c  REWRITTEN at 1.3.0. The audit is PER ATTEMPT, not a standing licence: after a retry's execution fails and the item returns to agentFailed, the FIRST retry's operator_action row remains on file and does NOT authorise anything -- a second retry must create its OWN row, with its OWN transition_id and its OWN attempt_number. Asserted by counting rows and checking attempt_number values 1, 2 across two retries. AT 1.2.0 this AC asserted that a non-latest transition_id fails a scheduler predicate; there is no such predicate. The property that made 'latest transition, not any' correct is preserved as an AUDIT-INTEGRITY property, which is what it actually always was."
+    - "AC-36  NEW at 1.3.0 -- HD-4's accepted cost and Lane S acceptance. The dedupe-key rule of section 6.7 holds all four properties, each asserted separately: (1) absent triageAttempt gives a BYTE-IDENTICAL key to today ('<workItemId>:triage_defect'), so no historical job is orphaned; (2) attempt n gives ':a'+n, so EACH retry finds its key unconsumed and really creates a job -- proven by running two full retry->fail->retry cycles and counting TWO triage_defect job rows for one work item; (3) a NETWORK RETRY of the same operator action mints NO second job (the requestId replay path); (4) the scheduler's tick and WorkEntryTrigger compute the SAME key for the same item, so job_active_dedupe_unique arbitrates rather than duplicating."
+    - "AC-37  NEW at 1.4.0 -- the metadataMerge MERGE-NOT-REPLACE proof. A work item seeded with all eight defect-payload metadata keys (defectId, defectTitle, defectEvidence, defectReporter, defectSeverity, defectDescription, defectExpectedBehavior, defectReproductionSteps -- the keys triageDefectInstruction reads at triage_defect.dart:49-56) is carried through a retry transition with metadataMerge {triageAttempt: 1} and comes out with all eight UNCHANGED and byte-identical, plus triageAttempt. The test FAILS if the merge is ever changed to a replace, because a replace would feed the retried triage job an empty defect payload and the job would classify nothing while looking healthy (section 6.4.5)."
+  vocabulary_and_honesty:
+    - "AC-20  Every string on the panel is either a BYTE-IDENTICAL existing string from plain_language.dart / transition_copy.dart / decision_choice.dart -- all three binding vocabulary files, named here because the 1.2.0 metadata rendering dropped them -- or is listed verbatim in the brief (section 5.4 / 8.2 / 8.2 unset-limit variant). A reviewer greps; nothing else is permitted."
+    - "AC-21  With no reason recorded, the panel says 'The system did not record why this stopped.' -- not an empty region and not a substituted message."
+    - "AC-22  The raw work_item_transition.reason and the job's failureJson appear verbatim in the page's existing TechnicalDetails disclosure."
+    - "AC-23  PlainLanguage.statusFor is unchanged for every wire value; the nine agent_completed items still read 'Working on it' after this change -- that is the point."
+  accessibility:
+    - "AC-24  The panel's semantics node is container: true, explicitChildNodes: true, with the buttons as distinct focusable children."
+    - "AC-25  After the RPC resolves, a liveRegion announces the outcome -- INCLUDING 'Starting this again is switched off on this machine' when the limit is unresolved, so the absence is ANNOUNCED rather than merely seen. This clause is HD-3's visibility obligation and was dropped from the 1.2.0 metadata rendering; restored at 1.3.0."
+    - "AC-26  Escape cancels the confirm strip and returns focus to the action row."
+    - "AC-27  No new colour, token, font or component; run-detail goldens are re-baselined ONLY for the new panel, with the diff reviewed."
+    - "AC-34  NEW at 1.2.0 (L3), UNCHANGED at 1.3.0 -- semantics are NOT covered by the goldens, and A3/A11 introduce Semantics(liveRegion: true) with NO precedent anywhere in this codebase. Three widget tests required, each asserting on tester.getSemantics() rather than pixels: (1) the panel's semantics node is a single container with explicitChildNodes and the two actions as DISTINCT focusable children; (2) the confirm submit button's semantics label flips with its enabled state -- 'Try again. Starts a fresh agent run.' vs 'Add a reason first'; (3) after the RPC resolves, the outcome string (including 'Starting this again is switched off on this machine' and 'Queued -- it will start when a machine is free.') is present in the semantics tree marked as a live region. CONCESSION: these assert the string is in the semantics tree as a live region, not that a particular screen reader announces it -- platform announcement behaviour is unverified on this app."
+  governance:
+    - "AC-28  ControlPlaneService's class doc and WorkflowEndpoints.resolveDecision's doc are amended to name the second write path; a stale 'the only legal request-side transition' claim is a merge blocker."
+    - "AC-29  REWRITTEN at 1.4.0 -- 'byte-identical' was NOT a testable assertion. A source file's bytes are not runtime-observable; no golden, drift check or CI gate observes a Dart source file, and AC-27's goldens are scoped to the run-detail panel and cannot see one at all. The property is real and is ENFORCED BY REVIEW PLUS ONE BEHAVIOURAL TEST: (i) section 16.2's Lane S box marks RunnableWorkEvaluator UNTOUCHED, so any edit is visible in the diff review reads; (ii) AC-17's LIVE TICK proves behaviourally that dispatch still flows through the ordinary _eligibleRunnableJobs -> _dispatchOne path, which it could not if the evaluator had changed. STATED HONESTLY: this is review-enforced, not mechanically enforced. An implementation lane wanting it mechanical must add a git diff --exit-code check over FIVE NAMED SYMBOLS ACROSS TWO FILES -- RunnableWorkEvaluator in runnable_work.dart, and Scheduler.tick / _eligibleRunnableJobs / _dispatchOne / _claim in scheduler.dart (CORRECTED at 1.5.0, L-D: 1.4.0 said “the five named files”, which was wrong) in its own pipeline; that is a repository-workflow change and is therefore NOT asserted here as if it existed."
+    - "AC-30  REWRITTEN at 1.1.0 -- the 1.0.0 'no migration' claim is WITHDRAWN by decision 2b8f4c07. There is EXACTLY ONE migration and it creates EXACTLY ONE table, operator_action. It changes NO existing table. serverpod generate output is committed as generated -- no hand-edited generated file."
+    - "AC-31  NEW at 1.1.0. apps/server/tool/verify_schema_bootstrap.sh passes after the migration, and apps/server/tool/schema_bootstrap.dart passes against the test database. The brief's assessment is that tool/schema_bootstrap.sql needs NO change (verified: it contains no CREATE TABLE, only two partial/expression unique indexes and two trigger functions); the IMPLEMENTER VERIFIES THIS rather than trusting it, and if the generator does emit something the bootstrap file must also carry, the bootstrap file is updated in the same change and the divergence check stays green."
+
+non_goals:
+  - "Fixing the nine parked agent_completed items. agent_completed is NOT terminal (workflow_state.dart:36-39), plain_language.dart:110 maps it to workingOnIt, and home_endpoints.dart:28-33 counts it as running -- so the Overview reads 12 of 12 'Working on it'. That is a stale-state and labelling defect with a different cause; conflating it would fix a symptom and hide the cause, and there is no agentCompleted -> agentExecuting edge to offer anyway. Recommended as its own brief (section 14.1). STILL OUT OF SCOPE at 1.1.0 -- unchanged by the closeout, and NOT folded into this screen's acceptance criteria."
+  - "Changing PlainLanguage.statusFor, including the comment/code contradiction at plain_language.dart:119-125 (P-6)."
+  - "Changing RunnableWorkEvaluator or any JobDefinition.entryStates."
+  - "Touching the zombie reclaim, the timeout, or the liveness probe -- they worked; the evidence shows the reclaim correctly producing tr-step3-9859703."
+  - "Any migration or schema change BEYOND the single operator_action migration that decision 2b8f4c07 requires. The 1.0.0 blanket 'no migration' non-goal is withdrawn by that decision; every OTHER schema change remains a non-goal."
+  - "Re-deciding that agentFailed is excluded from automatic dispatch."
+  - "A bulk 'retry all failed' action."
+  - "A cost/rate dashboard -- the Models section already carries cost."
+  - "Fixing WorkEntryTrigger's TRIAGE_ALREADY_ACTIVE message, which misreports a consumed terminal dedupe key as a concurrent race (section 14.2)."
+  - "Any attempt to add a read-only capacity probe."
+  - "Any path that bypasses the capacity guard, presents a retry as free, or offers an action the transition table forbids."
+  - "NEW at 1.1.0 -- editing the compose files to add SHIPIT_OPERATOR_MAX_RETRIES. The requirement is RECORDED (section 6.6.1) but those files are deployment configuration outside this lane's OWNED_PATHS; owner is orchestrator-main, as the decision's follow-up assigns."
+
+design_system_compliance: PASS
+design_system_compliance_note: >
+  PASS by construction, and this one is not merely by non-applicability. The panel composes only
+  existing primitives -- SidePanel, DesignPanel (with a palette.negative 3px edge, the same colour
+  PlainStatus.needsYouItFailed already uses for its row tick), MicroLabel, ContentRule, InlineLink,
+  FilledButton, OutlinedButton, TextField, TechnicalDetails, MobilePrimaryButton -- and only existing
+  tokens: ShipItType.sectionTitle / bodySmall / bodyMicro / status / monoMeta, and palette.negative /
+  attention / inkTertiary / accent. No new colour, font, metric, spacing value, component or route.
+  The screen reuses _ConfirmStrip's established two-step shape and its required-reason wording
+  verbatim, so the new surface is recognisably the same product. The single conformance item a
+  reviewer should check rather than assume: that the long confirm-strip copy ("Starts a fresh agent
+  run. The previous attempt is kept on record.") does not overflow the 392px side panel at
+  ShipItMetrics.sidePanelMinContent, and that the goldens are re-baselined for it and only for it.
+  RE-CONFIRMED at 1.1.0: none of the three decisions changed what the panel is built from. HD-1
+  added a second button to a panel already built on existing primitives; HD-2 changed what is STORED,
+  not what is RENDERED (the audit row feeds the reason field the panel already shows, plus OQ-1's
+  priorActions list, which reuses DefinitionList); HD-3 added one variant -- the unset-limit panel in
+  section 8.2 -- composed of the same primitives and the same tokens, deliberately NOT styled as an
+  error. Still PASS, still no new token, colour, font, metric or route.
+
+ux_accessibility_score: PASS
+ux_accessibility_note: >
+  RE-CONFIRMED at 1.1.0; no 1.0.0 criterion was weakened and one was added. Assessed against WCAG 2.2
+  AA and against the patterns already in this codebase. The panel reuses
+  _GateCard's exact semantics pattern (container: true, explicitChildNodes: true) and its stated
+  reason -- without it the buttons' tap actions merge upward and the whole card becomes one tappable
+  region with no cursor change to advertise it. The confirm strip reuses _ConfirmStrip's autofocus
+  and its enabled/disabled semantic label, and adds Escape-to-cancel, which the existing strip lacks
+  (a WCAG 2.1.1 gap closed here rather than copied). The RPC outcome is announced on a Semantics
+  liveRegion: a screen-reader user must not have to go hunting to discover the click did something.
+  Nothing is conveyed by colour alone -- every state carries a word, the destructive action is
+  distinguished by the word 'Stop' rather than by red, and the attempt counter is text rather than a
+  badge. Contrast pairs are existing tokens at existing sizes; no motion is added, so
+  prefers-reduced-motion is trivially satisfied. TWO CONCESSIONS STATED RATHER THAN HIDDEN: (1) the
+  why-it-stopped classifier is a heuristic over free text -- its failure direction is correct
+  (unrecognised input yields a truthful neutral sentence plus the raw record one disclosure away,
+  never a guessed cause) but it means the panel is occasionally less specific than the record; (2)
+  _ConfirmStrip today offers cancel only as a tap InlineLink, and this design adds the keyboard path
+  for the new surface without retro-fitting the existing one, which remains a follow-up.
+
+implementation_feasibility: MEDIUM
+implementation_feasibility_rationale: >
+  Not HIGH, because this cannot be delivered by the button alone. MEDIUM because every mechanism it
+  needs already exists and is already built, reviewed and shipped -- DurableWorkflowEngine.transition
+  with idempotencyKey replay, the exact policy object to reuse, JobQueue.enqueueIfAbsent with its
+  active-dedupe arbitration, JobCapacityGuard.tryAdmit and its capacityDenied contract,
+  Scheduler._dispatchOne with worker placement and claim CAS and lease persistence and outcome
+  adoption, the zombie reclaim's three-layer idempotency, ExecutionCoordinator.execute which needs no
+  change because it only transitions when the item is not already agentExecuting, the work_item
+  transition reason column, and _ConfirmStrip as the literal template for the confirmation.
+  RE-RATED at 1.1.0 and held at MEDIUM, for a different reason than at 1.0.0. At 1.0.0 the unknowns
+  were three open decisions. They are now closed, which removes uncertainty but ADDS work: HD-2
+  requires a new operator_action table, a migration, a new WorkflowStore.appendOperatorAction method
+  and therefore updates to 8 implementors -- 3 production (PostgresWorkflowStore, InMemoryWorkflowStore,
+  FileJsonWorkflowStore) and 5 test doubles (racing_workflow_store, faulty_workflow_store,
+  tick_reconcile_failure_reporting_test, lane_f_production_reachability_test, triage_execution_test).
+  The contract suite in packages/store_contract_tests is NOT an implementor -- it takes a
+  Future<WorkflowStore> Function() factory (workflow_store_suite.dart:9-11) -- but it gains two new
+  contract tests beside the existing append-only and atomicity suites. All of it is additive; none of
+  it is small. RE-RATED at 1.2.0: the two things that keep this at MEDIUM rather than LOW are (a) the
+  scheduler seam, whose eligibility rule needed RESTRUCTURING at 1.2.0 (review finding B1 -- see
+  design-brief.md section 6.5.2) on the LIVE dispatch path, which no one has built before; and (b) the
+  migration, whose blast radius is bounded but whose parity gate
+  (verify_schema_bootstrap.sh / schema_bootstrap.dart) must be re-proved. What keeps it above HIGH is
+  equally concrete: the operator_action indexes are plain btree and deliberately chosen so the
+  generator renders them, and tool/schema_bootstrap.sql is assessed as needing NO edit -- because
+  verify_schema_bootstrap.sh:126-131 `required_objects` admits only trigger:/index: kinds, so a
+  generated table cannot be listed there at all (restated at 1.2.0 per finding L1; the 1.1.0 evidence,
+  "the file contains no CREATE TABLE", was true but indirect). Assessed, not verified (AC-31). No new
+  dependency, no regenerated-then-hand-edited file, and no change to RunnableWorkEvaluator.
+
+human_decisions_routed:
+  - id: HD-1
+    question: >
+      Is "Stop this work" (agentFailed -> cancelled, the generic escape) wanted at all, and if so
+      does it need a second confirmation? FOR omission: destructive, irreversible, and there is no
+      edge back from a terminal state (_isGenericEscape applies only to a non-terminal `from`,
+      work_item_transitions.dart:303-306); the brief's dispatch was about restarting work. FOR
+      inclusion: it is one of only two edges the table offers, and omitting it makes the retry
+      coercive -- "I am offering you exactly one thing and it costs money" -- with no in-product
+      answer for an operator who declines, leaving "open a database client" as the only exit, which is
+      the incident class constraint 4 exists to prevent. Options: (A) offer it with one confirm strip
+      (recommended); (B) offer it with a typed confirmation because it is irreversible; (C) do not
+      offer it.
+    recommendation: >
+      A. Offered as input, NOT as a decision. The panel's composition is a one-row change between
+      A and C; the seam is already swappable.
+    decision_id: 7c1e9a44-3b62-4d18-9f05-2a7c6e14d903
+    decision_ref: .decisions/7c1e9a44-3b62-4d18-9f05-2a7c6e14d903.yaml
+    decision_type: PRODUCT
+    outcome: INCLUDE_STOP
+    decided_by: human-operator
+    resolved: true
+    blocks: "nothing -- CLOSED"
+    does_not_block: "n/a"
+    effect_on_design: >
+      Sections 5.2 and 5.3 stand UNCHANGED: the human adopted recommendation A. No re-derivation was
+      needed. The decision's binding follow-up -- "Implement the stop action against the generic
+      escape edge only. Never synthesise a transition that work_item_transitions.dart does not
+      already permit" -- is section 10 N2/N4 restated by the human, and is not an implementer's to
+      reinterpret. `terminated` remains deliberately not offered.
+  - id: HD-2
+    question: >
+      Where does an operator's stated reason live durably? Today there is nowhere: an accepted
+      transition writes reason = transition.rejectionReason, which is null (verified on every
+      accepted row in the live database), and context is not persisted. Every other operator action
+      here makes a reason mandatory ("Add a short reason -- saved with your name (required)"). This
+      ALSO decides what authorises a retry dispatch: the brief at 1.0.0 proposed authorising it with
+      an accepted transition row whose idempotencyKey begins 'operator-retry:', which is greppable and
+      atomic but is a convention enforced by a predicate, not a permission. Options: (A) an additive
+      optional `reason` parameter on DurableWorkflowEngine.transition, defaulting to today's value so
+      no existing caller changes (recommended at 1.0.0); (B) a HumanDirection record of type
+      directive targeting the work item, referencing the transition; (C) no durable reason, relying
+      on the key (NOT recommended -- a quiet log in a new place). A fourth option emerged in the
+      decision itself: (D) a dedicated operator_action audit row written in the same transaction.
+    recommendation: >
+      A at 1.0.0, with the caveat stated plainly in the brief: the key-prefix authorisation is the most
+      contestable decision in the document. THE HUMAN CHOSE D, AND WAS RIGHT -- "Authorization-by-
+      string-convention is not authorization." The brief records that this was the design agent's
+      error in weighting, not a close call: the 1.0.0 reasoning optimised for atomic + greppable + no
+      migration and under-weighted that a permission enforced by a naming convention is not a
+      permission. Recommendation A is WITHDRAWN as authorisation and survives only as the reason
+      carrier, which the decision explicitly asked to keep.
+    decision_id: 2b8f4c07-6d51-4a93-8e17-93c5b0a2f6d4
+    decision_ref: .decisions/2b8f4c07-6d51-4a93-8e17-93c5b0a2f6d4.yaml
+    decision_type: ARCHITECTURE
+    outcome: AUDIT_TABLE_SAME_TX
+    decided_by: human-operator
+    resolved: true
+    blocks: "nothing -- CLOSED"
+    does_not_block: "n/a"
+    effect_on_design: >
+      THE LARGEST CHANGE IN THIS REVISION. (1) The idempotencyKey-prefix authorisation is WITHDRAWN;
+      section 6.5.1 now authorises dispatch on an operator_action row. (2) New sections 6.4.3 (the
+      table, its atomicity, its rejected-attempt behaviour) and 6.4.4 (its real cost: 11
+      WorkflowStore implementors, one migration, two contract tests). (3) The algorithm's step (4)
+      now writes the audit row inside the transaction DurableWorkflowEngine already opens. (4) The
+      additive `reason` parameter is CONFIRMED rather than provisional, kept alongside the audit row
+      as the decision directed. (5) AC-30 is REWRITTEN -- the 1.0.0 "no migration" claim is withdrawn.
+      (6) Three new prohibitions N12/N13. (7) AC-14a-e, AC-19b, AC-19c, AC-31 added; AC-13 and AC-25
+      revised. (8) Retry count now reads operator_action rows, not transitions. The retry path's
+      ordering is UNCHANGED and so is the idempotency contract's shape.
+  - id: HD-3
+    question: >
+      What is SHIPIT_OPERATOR_MAX_RETRIES on the first release, and is a per-work-item limit the
+      right shape? A retry creates a NEW job and therefore a fresh maxAttempts budget, so an
+      unbounded button is a spend firehose. The brief specifies a required, fail-closed, per-item
+      maximum (absent, blank, unparseable or negative => retry is unavailable and says so). Three
+      parts are open: the VALUE; whether the bound is per work item (as designed) or per operator per
+      day (the latter bounds a mis-click loop rather than a per-item loop, and they prevent different
+      accidents); and whether 0 should mean "retry disabled entirely" (a kill switch the fail-closed
+      design already gives for free) or "unlimited".
+    recommendation: >
+      Per-item, 3, fail closed, 0 meaning disabled. Offered as input. The SHIPPING RISK IS REAL AND
+      STATED: if this variable is not set on every stack, the retry button never appears.
+    decision_id: 5d9a1f62-8b37-4e50-a9c4-71f2d8b3e605
+    decision_ref: .decisions/5d9a1f62-8b37-4e50-a9c4-71f2d8b3e605.yaml
+    decision_type: POLICY
+    outcome: THREE_PER_ITEM_FAIL_CLOSED
+    decided_by: human-operator
+    resolved: true
+    blocks: "nothing -- CLOSED"
+    does_not_block: "n/a"
+    effect_on_design: >
+      Confirmed unchanged in shape; the human REJECTED the design agent's alternative (per-operator
+      per-day) and kept per-item, on the reasoning that a per-day cap "is trivially reset and does
+      not bound a single pathological item". New at 1.1.0: section 6.6.1 discharges the decision's
+      binding follow-up that the unset case be VISIBLE -- server diagnostic (retryLimitResolved /
+      retryLimitDiagnostic), panel copy that is not styled as an error, a startup log line mirroring
+      capacitySummary, and "Stop this work" STILL offered so a missing variable never removes the
+      operator's only remaining exit. AC-15b/c/d and AC-25 and A11 added; N14 added. ONE PHRASE NEEDS
+      DISAMBIGUATION and is stated three times (section 6.6 bullet 2, AC-15b, AC-15c): "default 3"
+      and "if unset the action is never offered" are both true only under one reading -- 3 is the
+      value operators must CONFIGURE, and there is NO fallback constant in the code. Reading "default
+      3" as "absent => 3" would invert the decision. QA PRE-CONDITION recorded in section 6.6.1:
+      SHIPIT_OPERATOR_MAX_RETRIES=3 must be set on the QA stack before the screen is exercised, or
+      the retry action will correctly not appear and the screen will look broken. The compose files
+      are outside this lane's OWNED_PATHS; owner is orchestrator-main.
+
+  - id: HD-4
+    question: >
+      What state should an operator retry move a failed work item into? The Design Brief specified
+      `agentFailed -> agentExecuting` plus a new eligibility seam in
+      `Scheduler._eligibleRunnableJobs`. That specification produced dead code on three successive
+      review rounds. Retry the agent in place, or return the item to a runnable state and let the
+      existing dispatch path work?
+    recommendation: >
+      A (DESIGN_NOT_REQUIRED). Offered as input at 1.2.0 as a possible fourth option ("decide
+      agentExecuting's meaning in a workflow-engine ADR first"); the human chose it directly, which
+      was the correct call and cheaper than the ADR.
+    decision_id: 8a3f6b17-92d4-4e08-b6c1-8f0d5b27a934
+    decision_ref: .decisions/8a3f6b17-92d4-4e08-b6c1-8f0d5b27a934.yaml
+    decision_type: ARCHITECTURE
+    outcome: DESIGN_NOT_REQUIRED
+    decided_by: human-operator
+    resolved: true
+    blocks: "nothing -- CLOSED"
+    does_not_block: "n/a"
+    effect_on_design: >
+      THE SEAM IS DELETED. Section 6.5.2 is gone in its entirety -- not re-specified, not narrowed, not
+      replaced by a fourth variant, per the decision's binding instruction. Section 6.5 is now the
+      workflow-engine edge (agentFailed, designNotRequired) with actorAllowed([ActorType.orchestrator]),
+      matching the convention of planned -> designNotRequired (:28-30), proved through the real engine
+      by AC-35 with a negative control that (agentExecuting, agentExecuting) is ILLEGAL. The retry RPC
+      no longer enqueues and no longer dispatches: it performs ONE durable write and returns
+      `accepted` (section 6.4). Accepted cost, specified: the new edge (AC-35) and a fresh dedupe key
+      per retry (AC-36, section 6.7), derived from durable metadata.triageAttempt because
+      DedupeKeyBuilder is synchronous and receives only (WorkItem, JobDefinition) --
+      scheduler.dart:113-115. AC-15e/AC-32/AC-33 DELETED (they asserted things about branch B); AC-7,
+      AC-10, AC-15, AC-16, AC-17, AC-19, AC-19b, AC-19c REWRITTEN; AC-35 and AC-36 ADDED.
+      AC-14a-e, AC-14a-e unchanged (HD-2 is untouched). HD-1 and HD-3 unchanged.
+
+open_questions:
+  - id: OQ-1
+    question: >
+      Should the panel show WHO restarted the work, now that operator_action.requested_by is the
+      first place in this repository where the HUMAN's identity is recorded for a workflow action?
+      work_item_transition.actorId deliberately holds the PATH (operator-retry), not the person, so
+      the audit row knows something the screen currently cannot show -- and an audit no
+      operator-facing surface ever reads is only half of what the decision bought. (A) surface it:
+      a priorActions list on WorkItemActionContextView (already added in section 6.2) rendering
+      "Started again by <name> on <date> -- <reason>", reusing PlainLanguage.timeOfDay and the
+      existing DefinitionList. (B) leave the audit for engineers and show nothing.
+    recommendation: >
+      A, and this design lane is authorised to say so: it serves constraint 2 (the cost is the
+      operator's decision to make, so the operator should see who made the previous one), it reuses
+      two existing components, and it is the difference between an audit table and a cost screen.
+    not_blocking: >
+      It changes copy and one read, not structure: the retry path, the RPC shape, the seam and the
+      audit semantics are identical under (A) and (B). If the human prefers (B) it is a one-line
+      revert of priorActions. It MUST NOT hold the seam (section 16.2).
+    escalated_as_human_decision: false
+    rationale_for_not_escalating: >
+      A presentation choice with a clear default, inside this design's authority. Recorded here so a
+      reviewer sees it was considered rather than missed.
+
+discovery_handed_to_manager:
+  - id: D-1
+    category: ARCHITECTURE_DISCOVERY
+    status_at_1_1_0: CLOSED_BY_HD-2
+    summary: >
+      An accepted work_item_transition writes reason = transition.rejectionReason, which is NULL.
+      context is not persisted anywhere (work_item_transition has no metadata column). Therefore NO
+      request-side transition that is not a decision resolution can durably record WHY, or WHO, acted
+      -- which contradicts the operator surface's own rule that "the record should say why, not just
+      what" (needs_you_page.dart:386-388). DurableWorkflowEngine.transition needs an additive reason
+      parameter, or a parallel record type. Currently only latent: resolveDecision records the human
+      on the HumanDecision row instead.
+    authority: >
+      human (governance/architecture) -- routed as HD-2 and RESOLVED 2b8f4c07 in favour of the
+      parallel record type (operator_action) PLUS the additive reason parameter. The finding was
+      CONFIRMED, not overruled.
+    learning_policy_category: ARCHITECTURE_DISCOVERY
+    learning_policy_authority: "human (governance/architecture) -- RESOLVED by 2b8f4c07; no longer open"
+  - id: D-2
+    category: PROJECT_FACT
+    status_at_1_1_0: UNCHANGED_STILL_LOAD_BEARING
+    summary: >
+      The transition agentFailed -> agentExecuting carries actorAllowed([orchestrator]) and NO
+      agentAvailable() guard, unlike designRequired/designInReview/designApproved/designNotRequired
+      -> agentExecuting which all carry it. Capacity is therefore enforced ONLY at claim time inside
+      the scheduler, never by the transition table. Durable workflow-engine policy fact, verified in
+      work_item_transitions.dart:36-39/:46-49/:88-91/:96-99 vs :108-110 and guard_conditions.dart:23,
+      :207-209.
+    authority: automatic (verified fact); no persistence attempted by this lane
+    learning_policy_category: PROJECT_FACT
+    learning_policy_authority: "automatic (verified fact); no persistence attempted by this lane"
+  - id: D-3
+    category: CONTRADICTION
+    status_at_1_1_0: UNCHANGED_STILL_OPEN
+    summary: >
+      plain_language.dart:119-120 says an un-escalated failure "reads as stopped until a decision is
+      raised", but the code at :121-125 returns PlainStatus.needsYouItFailed. The code is what live QA
+      observed. A stale comment relative to its own code on the binding vocabulary.
+    authority: independent review to reconcile; NOT reconciled by this lane because the label change
+      shares its cause with the out-of-scope parked-items defect (section 14.1)
+    learning_policy_category: CONTRADICTION
+    learning_policy_authority: "independent review to reconcile; NOT persisted by this lane"
+  - id: D-4
+    category: PROJECT_FACT
+    status_at_1_1_0: UNCHANGED_STILL_OPEN
+    summary: >
+      JobQueue.enqueueIfAbsent cannot create a second job for a dedupe key whose previous job is
+      TERMINAL: findLatestByDedupeKey has no state filter (postgres_job_store.dart:246-256). The only
+      caller that reports this, WorkEntryTrigger, labels it 'a concurrent caller won this dedupe
+      key' -- which is false when the existing job is terminal (it is, for the live QA defect).
+      work_entry.dart is another lane's reviewed surface, so this is reported, not fixed. The brief
+      ROUTES AROUND it via the request-scoped dedupe key (section 6.7) rather than fixing it.
+    authority: independent review / separate small fix; routed to the Manager
+    learning_policy_category: PROJECT_FACT
+    learning_policy_authority: "automatic (verified fact); the FIX belongs to another lane's reviewed surface, so not persisted by this lane; routed to the Manager"
+  - id: D-5
+    category: PROJECT_FACT
+    status_at_1_1_0: NEW_AT_1_1_0
+    summary: >
+      Adding WorkflowStore.appendOperatorAction (required by decision 2b8f4c07) touches 8
+      implementors: 3 production (PostgresWorkflowStore, InMemoryWorkflowStore,
+      FileJsonWorkflowStore) and 5 test doubles (racing_workflow_store.dart,
+      faulty_workflow_store.dart, tick_reconcile_failure_reporting_test.dart,
+      lane_f_production_reachability_test.dart, triage_execution_test.dart). CORRECTED at 1.2.0 per
+      review finding M2: revision 1.1.0 said 11 and wrongly counted the shared contract suite as an
+      implementor -- workflow_store_suite.dart:9-11 takes a Future<WorkflowStore> Function() factory
+      and exercises whatever store it is handed, so it is NOT an implementor (it does gain two new
+      contract tests, beside the existing append-only one at :96-116 and transactional batching at
+      :117-126). Separately verified: verify_schema_bootstrap.sh:126-131 `required_objects` admits
+      only trigger:/index: kinds, so a generated table cannot be listed there at all -- which is the
+      real reason tool/schema_bootstrap.sql needs no change. The 1.1.0 evidence ("the file contains
+      no CREATE TABLE") was true but indirect. The operator_action indexes are deliberately plain
+      btree so the model generator renders them (assessed, not verified; AC-31).
+    authority: >
+      automatic (verified fact) -- informs feasibility and the implementation lane's work estimate;
+      no persistence attempted by this lane
+    learning_policy_category: PROJECT_FACT
+    learning_policy_authority: "automatic (verified fact); no persistence attempted by this lane"
+
+  - id: D-7
+    category: DESIGN_DISCOVERY
+    status_at_1_5_0: DEFINED
+    previously: >
+      CITED AT 1.3.0 (design-brief.md header and this file's hd4_note) BUT DEFINED NOWHERE -- the
+      inverse of D-6's original defect, which was a discovery reported with no durable ID. Corrected
+      at 1.5.0 (L-E): an ID that is referenced must be resolvable to a definition.
+    summary: >
+      A retried work item at designNotRequired reads "Waiting to start", not "Working on it", because
+      plain_language.dart:102-104 maps design_not_required to PlainStatus.waitingToStart while
+      agent_executing maps to workingOnIt (:109-116). The label flips to "Working on it" only once a
+      job is actually claimed and dispatched. A STATE CHOICE can therefore satisfy the repository's
+      own doctrine -- a quiet screen must never be indistinguishable from a healthy one -- with no
+      change to any mapping and no new copy. HD-4 produced this as a by-product; the general lesson
+      is that when a design has a labelling defect, the cheapest correct fix may be the state the
+      system is actually in rather than the words shown about it.
+    learning_policy_category: DESIGN_DISCOVERY
+    learning_policy_authority: >
+      independent review -- it concerns UI/design and the Design Contract, not this product's
+      knowledge files; NOT persisted by this lane.
+
+  - id: D-6
+    category: WORKFLOW_IMPROVEMENT
+    status_at_1_3_0: PERSISTED
+    previously: >
+      Reported only in the 1.2.0 structured result with NO durable ID. The reviewer correctly found 0
+      grep hits for it and that discovery_handed_to_manager held D-1..D-5 only. Now a real record.
+    summary: >
+      A design brief that appends a conjunct to an existing eligibility predicate should be treated as
+      SUSPECT until its exact line numbers are re-read. RunnableWorkEvaluator and
+      Scheduler._eligibleRunnableJobs are described in prose as "the scheduler drops jobs whose work
+      item is not runnable" -- which is true, and which is exactly the kind of true-but-incomplete
+      summary that hides a `continue` sitting between the two places an implementer would add a check.
+      Two concrete consequences, both of which occurred: (1) a prose summary of a control flow is not a
+      specification of it -- the predicate's `continue`s are invisible in the summary and decisive in
+      the code; (2) when a specification of a control flow fails TWICE, the correct inference is that
+      the DESIGN is wrong, not that the third formulation is -- stop and ask whether the target state
+      is correct. Here agentExecuting means "an execution is already running", and moving a failed item
+      into it asserts something untrue.
+    predicted_outcome: >
+      This discovery predicted the exact failure that then occurred (the 1.2.0 self-transition,
+      always-false branch), and the human's HD-4 rationale cites it verbatim.
+    learning_policy_category: WORKFLOW_IMPROVEMENT
+    learning_policy_authority: >
+      independent review -- it concerns the reusable design/review process, not this product, so it is
+      NOT persisted by this lane into any framework knowledge file; raised here for the Manager to route.
+
+implementation_sequencing:
+  rule: >
+    REQUIRED. The ENGINE EDGE (section 6.5) and the screen are a SINGLE INDIVIDIVISIBLE deliverable.
+    [CORRECTED at 1.5.0 — L-C: 1.4.0 still called this “the scheduler seam (section 6.5)”. Section 6.5 has
+    had no seam since HD-4 deleted the eligibility branch at 1.3.0; what it holds is the
+    workflow-engine edge.] P-1 is unchanged by the closeout:
+    P-1 is unchanged by the closeout: transitioning a work item to agentExecuting dispatches nothing,
+    because agentExecuting is not an entry state of triageDefectDefinition and all four gates G1-G4
+    are untouched by every decision. The retry avoids the gates by arriving at a state they accept
+    (designNotRequired), not by circumventing them.
+  lane_s_seam:
+    contents: >
+      RESTATED AT 1.3.0 FOR HD-4 -- this lane no longer touches the scheduler's dispatch path at all.
+      packages/workflow_engine: work_item_transitions.dart gains ONE edge,
+      (agentFailed, designNotRequired) -> actorAllowed([ActorType.orchestrator]), matching the
+      convention of the only other edge into that state, planned -> designNotRequired (:28-30);
+      plus AC-35's negative control that (agentExecuting, agentExecuting) is ILLEGAL.
+      packages/scheduler: triage_defect.dart ONLY -- triageDefectDedupeKey gains the attempt suffix
+      (section 6.7). Scheduler.tick, _eligibleRunnableJobs, _dispatchOne, _claim and
+      RunnableWorkEvaluator are ALL UNTOUCHED. There is no seam.
+      packages/workflow_store: appendOperatorAction + transition(reason:, operatorAction:) -- HD-2,
+      unchanged. PLUS transition(..., metadataMerge:) -- NEW AT 1.3.0, from HD-4's ACCEPTED COST
+      (section 6.4.5), NOT part of HD-2; it merges the attempt marker and is what makes the section
+      6.7 key rule work. Metadata is MERGED not replaced, because the live item carries eight
+      defect-payload keys that triageDefectInstruction reads (triage_defect.dart:49-56) and a replace
+      would silently empty them (AC-37). It adds a PARAMETER to an existing method, not a method, so
+      the implementor count stays 8. apps/server: operator_action.spy.yaml + the migration +
+      AC-31. packages/store_contract_tests: append-only + atomicity contract tests.
+    blocked_on: nothing
+    acceptance_positive: >
+      AC-35 (the edge is legal through the real engine, with a negative control), AC-36 (the four
+      dedupe-key properties), AC-17 (a retried item is dispatched by a NORMAL tick), AC-14a-e (the
+      audit record), AC-10 (one-transaction atomicity).
+    acceptance_negative: "AC-19b, AC-19c, AC-29, AC-7"
+    retired_at_1_3_0: >
+      AC-15e, AC-32 and AC-33 are DELETED, not reassigned. Each asserted something about branch B --
+      that branch B dispatches, that branch B blocks without a row, and that branch B must not bypass
+      isEligibleAt / provider health. Branch B does not exist, and the gates those ACs protected are
+      the scheduler's existing ones, already covered by AC-18 and the untouched capacity suite.
+      Keeping them would have required inventing a branch to test.
+  lane_u_screen:
+    contents: >
+      apps/server endpoints and wire models; apps/control_plane panel, confirm strip, plain-language
+      copy, accessibility; goldens re-baselined; the AC-34 semantics tests.
+    blocked_on: "Lane S. May not merge before it."
+  prohibited: >
+    Shipping the screen alone (AC-1..AC-4 are a JOINT gate on the whole change) -- BUT THE STATED HARM IS
+    RESTATED AT 1.4.0, because 1.3.0 justified it with a harm HD-4 REMOVES. 1.3.0 said a screen alone
+    would write agentFailed -> agentExecuting and strand the item as a silent "Working on it". HD-4
+    removes exactly that: without the edge, a screen alone writes to a state that does not exist, the
+    transition is rejected, and the panel sits there accepting clicks that change nothing. THE RULE
+    SURVIVES, AND IS ARGUABLY STRONGER, ON TWO TRUTHFUL GROUNDS. (a) It would be a button that does
+    nothing -- N7 forbids silent failure, and an operator pressing "Try again" and watching the panel
+    persist is the exact quiet-screen defect this brief exists to close. The failure is IMMEDIATE AND
+    VISIBLE rather than silent-and-permanent, which is an improvement, not a licence. (b) The screen
+    VISIBLE rather than silent-and-permanent, which is an improvement, not a licence. (b) The screen
+    CANNOT OFFER A RESTART AT ALL: the action list is server-computed from WorkItemTransitions (section
+    6.2), and without the new edge isLegalTransition(agentFailed, designNotRequired) is false, so the
+    server cannot offer retry -- and AC-1 requires exactly [retry, stop]. [CORRECTED at 1.5.0 -- M-A:
+    1.4.0 cited AC-4 and is REFUTED by the brief’s own panel mock; attemptNumber counts prior rows, so
+    with zero prior rows the panel renders “attempt 1 of 3” and AC-4's string IS present. AC-4 is
+    satisfiable without the edge; AC-1 is not.] NEITHER GROUND DEPENDS ON THE DELETED SEAM.
+    GROUND DEPENDS ON THE DELETED SEAM.
+    ALSO PROHIBITED: shipping the screen behind a feature flag that can be enabled before the ENGINE
+    EDGE is deployed. The 1.3.0 prohibition names the edge, because the seam that 1.2.0 named no longer
+    exists.
+  permitted_alternative: >
+    ONE atomic change carrying both, in a single reviewed commit, is acceptable and is the preferred
+    shape for a small team. What is prohibited is ORDERING, not co-location.
+  owner: "orchestrator-main -- lane decomposition is the Manager's call, not this design lane's."
+
+provenance:
+  worktree: /Users/alkebut/air/shipit-platform
+  branch: main
+  base_sha: 4dc9c5e4e2dfe043132e048234cd4bb4dee96d65
+  head_sha: 4dc9c5e4e2dfe043132e048234cd4bb4dee96d65
+  brief_version: 1.5.0
+  tree_clean_before_writing: false
+  tree_clean_note: >
+    git status showed pre-existing modifications to apps/control_plane/test/failures/*.png,
+    docker/compose.qa.yaml and melos_shipit_platform.iml, plus pre-existing untracked files at the
+    repository root (*.sql, *.png, cloudbuild.release.yaml.archive, design-execution-limits/). All
+    present BEFORE this lane began and untouched by it. The three .decisions/*.yaml files are the
+    Manager's, untracked, and also untouched here. Recorded so an independent reviewer can tell
+    lane-caused changes from pre-existing ones.
+  files_modified_outside_owned_paths: 0
+  decisions_files_modified: 0
+  decisions_files_note: >
+    All three .decisions records were READ ONLY. They were already RESOLVED and none needed a
+    correction, so PROHIBITED_PATHS was tightened to include .decisions/** rather than loosened.
+  docker_or_compose_commands_issued: 0
+  live_database_writes: 0
+  live_database_reads: >
+    Read-only SELECTs against the live QA Postgres via `docker exec docker-postgres-1 psql -U shipit
+    -d shipit -c "SELECT ..."`: the work_item table, the work_item_transition history for
+    defect-DEF-1791686704991884, the job rows for that work item, job/jobType/state counts, and the
+    job table's column and index definitions. No INSERT, UPDATE, DELETE, DDL, or transaction. The
+    connection string was obtained by READING docker/compose.qa.yaml AS TEXT (AGENTS.md's supported
+    way to learn what a stack does); no stack was started, stopped, reconfigured, or inspected via
+    `docker compose`.
+    AT 1.1.0 the closeout issued NO database command at all -- it is a paper exercise over
+    .decisions/** and source already read.
+  human_decisions_routed: 3
+  human_decisions_resolved: 3
+  human_decisions_open: 0
+  dispatch_file_present: true
+  dispatch_file_note: >
+    prompt.md was written by this lane from the dispatch message, up front, so that the requirements
+    traced in design-brief.md section 15 have a durable record in the repository. This is the
+    opposite of design-work-entry's recorded gap, where the dispatch file did not exist and the
+    reviewer could not find what was asked.
+
+READY_FOR_INDEPENDENT_DESIGN_REVIEW: YES

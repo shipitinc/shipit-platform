@@ -1,0 +1,55 @@
+# human-decision.yaml
+decision_id: 5d9a1f62-8b37-4e50-a9c4-71f2d8b3e605
+type: POLICY
+status: RESOLVED
+question: >-
+  (HD-3) How many times may one work item be retried by an operator before the retry action stops
+  being offered? And what happens when the limit is not configured?
+context:
+  summary: >-
+    Raised during live QA remediation while designing the operator action panel. A retry creates a
+    new job, and a new job receives a fresh attempt budget, so an unbounded retry button is an
+    unbounded spend firehose on a free-tier model whose usage limit already contributed to a host
+    crash on this host.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: design-failed-work-retry
+    item_ref: Bound the operator retry budget.
+  evidence:
+    documents:
+      - type: DESIGN
+        id: design-brief-failed-work-retry
+        url: docs/engineering/dispatch/tasks/design-failed-work-retry/design-brief.md
+      - type: OTHER
+        id: execution-limits-decision
+        url: .decisions/f8c8b67f-c455-4ffb-8fcd-e6e793244736.yaml
+    measurements:
+      - "in-force model is opencode/space-bunny-free, a metered free tier"
+      - "the capacity guard SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS already fails closed when unset"
+  options_considered:
+    - option: THREE_PER_ITEM_FAIL_CLOSED
+      description: 3 retries per work item; if the limit is unset the retry action never appears.
+    - option: TWO_PER_ITEM
+      description: Tighter bound, reflecting the metered free tier.
+    - option: UNLIMITED
+      description: No cap.
+resolution:
+  outcome: THREE_PER_ITEM_FAIL_CLOSED
+  decided_by: human-operator
+  rationale: >-
+    Three permits enough genuine retries to work through a transient failure while still bounding
+    the worst case. The cap is counted per work item, not per operator per day, because a
+    per-operator-per-day cap is trivially reset and does not bound a single pathological item.
+    Fail-closed is the deliberate choice and mirrors the capacity guard: if
+    SHIPIT_OPERATOR_MAX_RETRIES is unset the retry action is not offered at all, rather than
+    defaulting to a permissive value. An operator action that spends real credits must never be
+    armed by a missing configuration.
+  follow_up_actions:
+    - action: >-
+        The unset-means-unavailable behaviour must be visible in the design and in the acceptance
+        criteria, not treated as an incidental detail.
+      owner: orchestrator-main
+    - action: >-
+        Set SHIPIT_OPERATOR_MAX_RETRIES=3 on the QA stack before the screen is exercised, or the
+        retry action will correctly not appear and the screen will look broken.
+      owner: orchestrator-main

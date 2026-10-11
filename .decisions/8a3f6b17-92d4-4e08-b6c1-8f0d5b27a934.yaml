@@ -1,0 +1,81 @@
+# human-decision.yaml
+decision_id: 8a3f6b17-92d4-4e08-b6c1-8f0d5b27a934
+type: ARCHITECTURE
+status: RESOLVED
+question: >-
+  (HD-4) What state should an operator retry move a failed work item into? The Design Brief
+  specified `agentFailed -> agentExecuting` plus a new eligibility seam in
+  `Scheduler._eligibleRunnableJobs`. That specification produced dead code on three successive
+  review rounds. Retry the agent in place, or return the item to a runnable state and let the
+  existing dispatch path work?
+context:
+  summary: >-
+    Raised after three consecutive design-review rounds failed on the same seam.
+    1.1.0 appended the operator-retry rule AFTER two `continue`s that already drop any job whose
+    item is `agentExecuting` (scheduler.dart:578-581, :593-594) — dead on arrival.
+    1.2.0 restructured it as an alternative branch, but substituted a policy re-check
+    `evaluateWorkItemTransition(from: agentExecuting, to: agentExecuting)` — a self-transition,
+    which `_isGenericEscape` explicitly rejects (work_item_transitions.dart:303) and which has no
+    entry in `_legalTransitions` — so `isValid` is always false and every authorised retry is dropped.
+    Worse, the two conjuncts are mutually unsatisfiable: authorization requires the audit row to name
+    the item's LATEST transition (so the item IS in agentExecuting) while edge legality requires
+    `from != to` (so it is NOT). No work item satisfies both.
+    Root cause: `agentExecuting` means "an execution is already running". Transitioning a failed item
+    into it asserts something untrue, and the scheduler correctly refuses to dispatch an item that
+    claims to already be executing.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: design-failed-work-retry
+    item_ref: Decide the retry target state and whether the scheduler seam exists at all.
+  evidence:
+    documents:
+      - type: DESIGN
+        id: design-brief-failed-work-retry
+        url: docs/engineering/dispatch/tasks/design-failed-work-retry/design-brief.md
+    measurements:
+      - "work_item_transitions.dart:9-208 - (agentExecuting, agentExecuting) absent from _legalTransitions"
+      - "work_item_transitions.dart:303 - _isGenericEscape returns false when to == from"
+      - "scheduler.dart:578-581, :593-594 - two independent continues drop any agentExecuting job"
+      - "triage_defect.dart:10 - entryStates: {designNotRequired, designApproved}"
+      - "live transition tr-hn3lio9ndj-1hjznv6 - design_not_required -> agent_executing is a real, exercised edge"
+  options_considered:
+    - option: DESIGN_NOT_REQUIRED
+      description: Add one edge agentFailed -> designNotRequired; the existing scheduler path dispatches.
+    - option: KEEP_AGENT_EXECUTING
+      description: Retain the target and specify the scheduler seam a fourth time.
+    - option: SEPARATE_ADR
+      description: Decide agentExecuting's meaning and agent re-entry in a workflow-engine ADR first.
+resolution:
+  outcome: DESIGN_NOT_REQUIRED
+  decided_by: human-operator
+  rationale: >-
+    Retry returns the item to a state the scheduler ALREADY knows how to dispatch, rather than
+    teaching the scheduler a second way to dispatch. `designNotRequired` is a triage entry state
+    (triage_defect.dart:10) and `designNotRequired -> agentExecuting` is already an exercised edge
+    (live transition tr-hn3lio9ndj-1hjznv6), so the entire existing dispatch path applies unchanged.
+    This deletes the eligibility branch rather than re-specifying it — which is the only reliable
+    answer to a control-flow specification that produced dead code three times, and it is the
+    lesson the design agent's own D-6 discovery recorded.
+    It also matches the semantics honestly: a failed agent run leaves nothing to resume, so
+    re-planning the item is the truthful operation, not a fiction of continuation.
+    The cost is real and accepted: one new workflow-engine edge, and a fresh dedupe key per retry
+    because `enqueueIfAbsent` cannot reuse a terminal dedupe key.
+  follow_up_actions:
+    - action: >-
+        DELETE the §6.5.2 scheduler eligibility seam in its entirety. Do not re-specify it, narrow
+        it, or reach for a narrower variant — three narrower specifications already failed.
+      owner: orchestrator-main
+    - action: >-
+        Add the edge agentFailed -> designNotRequired to work_item_transitions.dart with its
+        guard, and prove it with a test through the real engine. Every other action in this feature
+        depends on this edge existing and being legal.
+      owner: orchestrator-main
+    - action: >-
+        Every retry must use a fresh dedupe key. Reusing the original terminal key silently no-ops
+        (JobQueue.enqueueIfAbsent reports a consumed terminal key as a race — discovery D-4).
+      owner: orchestrator-main
+    - action: >-
+        Re-run the design review after the seam is deleted. The Lane S / Lane U decomposition must
+        be restated: Lane S is now the workflow-engine edge + dedupe-key change, and it no longer
+        touches the scheduler dispatch path at all.
+      owner: orchestrator-main

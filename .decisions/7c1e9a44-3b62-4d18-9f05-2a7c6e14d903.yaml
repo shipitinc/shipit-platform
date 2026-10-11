@@ -1,0 +1,49 @@
+# human-decision.yaml
+decision_id: 7c1e9a44-3b62-4d18-9f05-2a7c6e14d903
+type: PRODUCT
+status: RESOLVED
+question: >-
+  (HD-1) Should the operator action panel for an agent_failed work item offer a way to abandon
+  the work, alongside "Try again"? Or is retry the only action?
+context:
+  summary: >-
+    Raised during live QA remediation. A work item parked in `agent_failed` renders as
+    "Needs you — it failed" with no action panel and no way to do anything. `agentFailed` is
+    deliberately excluded from every RunnableWorkEvaluator entry set so a human decides, but no
+    screen was ever built for that human.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: design-failed-work-retry
+    item_ref: Build the missing operator screen for agent_failed work items.
+  evidence:
+    documents:
+      - type: DESIGN
+        id: design-brief-failed-work-retry
+        url: docs/engineering/dispatch/tasks/design-failed-work-retry/design-brief.md
+      - type: OTHER
+        id: observed-ui
+        url: "http://localhost:8081/#/runs/defect-DEF-1791686704991884"
+    measurements:
+      - "work_item defect-DEF-1791686704991884: state=agent_failed, no action affordance"
+      - "transition table: agentFailed has exactly one explicit edge (-> agentExecuting) plus the generic terminal escape"
+  options_considered:
+    - option: INCLUDE_STOP
+      description: Offer "Stop this work" mapped to the legal agentFailed -> cancelled generic escape.
+    - option: RETRY_ONLY
+      description: Offer only "Try again"; declining work is impossible from the product.
+resolution:
+  outcome: INCLUDE_STOP
+  decided_by: human-operator
+  rationale: >-
+    Without an abandon action the panel is coercive — one available button, and pressing it spends
+    real model credits. A human who declines to spend has exactly one remaining exit: a database
+    client. That is the same failure class as the `agentFailed` vs `agent_failed` incident, where
+    a hand-written SQL mutation bypassed the transition table and broke every scheduler tick. A
+    product that routes a decision to a human must give that human both answers.
+    `terminated` is deliberately NOT offered: same effect as `cancelled` but not a word an
+    operator can act on.
+  follow_up_actions:
+    - action: >-
+        Implement the `stop` action against the generic escape edge only. Never synthesise a
+        transition that work_item_transitions.dart does not already permit.
+      owner: orchestrator-main
