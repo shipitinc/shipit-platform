@@ -1,0 +1,96 @@
+# human-decision.yaml
+decision_id: 2fe73e11-6c3d-4bb8-98c5-90fd5c303847
+type: ARCHITECTURE
+status: RESOLVED
+question: >-
+  Four fixes after a stuck agent run: (1) enforce timeoutSeconds on the dispatch path,
+  (2) make reconciliation reclaim orphaned executions, (4) populate model_policy instead of
+  relying on the hardcoded fallback - using space-bunny-free as the default, then (3) clear the
+  stuck execution.
+context:
+  summary: >-
+    Raised by the operator after finding a worker stuck in 'agentExecuting' for 4.78 hours with
+    NO process behind it (agent_execution has 0 rows; no opencode process in the container).
+    The agent was a zombie: a durable state string with nothing alive behind it.
+    Diagnosis: (a) timeoutSeconds=300 is passed to AgentSessionConfig but NEVER enforced on the
+    dispatch path - the only real timeouts are 60s on cancel and 30s on the terminal event;
+    (b) scheduler.dart:594 asks 'is the worker row terminal?' and, if not, RENEWS THE LEASE FOREVER.
+    A zombie is non-terminal forever, so reconciliation can never reclaim it. The 10-minute lease is
+    irrelevant because it keeps being renewed. (c) model_policy has 0 rows, so every role silently
+    falls back to a hardcoded model.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: fix-stuck-agent-executions
+    item_ref: Enforce agent timeouts, reclaim zombie executions, configure the model.
+  evidence:
+    documents:
+      - type: OTHER
+        id: design-revision
+        url: docs/engineering/dispatch/tasks/design-execution-limits/design-revision.md
+    measurements:
+      - "worker_execution wx-jb-hn3liczxln-li36ts: agentExecuting since 02:45:24Z, 4.78h"
+      - "agent_execution table: 0 rows - no agent session was ever recorded"
+      - "no opencode/node process inside the server container"
+      - "5 sibling executions from the same burst: executedFail, cleanup=removed (they failed correctly)"
+      - "model_policy: 0 rows"
+    qualitative_tradeoffs:
+      - dimension: Liveness vs churn
+        option_a: Renew lease while worker row is non-terminal
+        option_b: Check whether anything is actually alive
+        assessment: >-
+          Option A cannot distinguish a live worker from a dead one, because both are non-terminal.
+          It is correct for the first case and infinitely wrong for the second. Option B is the
+          only check that terminates.
+      - dimension: Model default
+        option_a: Keep hardcoded fallback (opencode/big-pickle)
+        option_b: Populate model_policy with space-bunny-free
+        assessment: >-
+          A hardcoded fallback is a guess made silently at runtime and cannot be tuned without a
+          redeploy. An explicit policy row is durable, auditable and changeable. The operator chose
+          space-bunny-free: the free tier already in use, known-good, and free.
+    recommendation:
+      recommended_option: OPTION_B
+      rationale: >-
+        Make liveness observable rather than inferred from a status string, enforce the timeout
+        that already exists, and configure the model explicitly instead of inheriting a guess.
+      confidence: HIGH
+options:
+  - option_id: OPTION_A
+    label: Minimal - fail the stuck job by hand
+    description: Clear the one stuck execution manually; change no code.
+    implications: Recovers capacity now but the same zombie recurs on the next crash.
+    risk_level: MEDIUM
+  - option_id: OPTION_B
+    label: Fix the class - timeout, liveness, model policy
+    description: Enforce the timeout, make reconciliation detect a dead worker, populate model_policy.
+    implications: >-
+      Stops the recurrence rather than the instance. Touches the scheduler and coordinator, so it
+      gets independent review before merge.
+    risk_level: LOW
+resolution:
+  outcome: OPTION_B
+  decided_by: human-operator
+  rationale: >-
+    Fix the class, not the instance, in the order given: (1) enforce timeoutSeconds on the dispatch
+    path - it already exists and is already trusted, it is simply never applied; (2) make
+    reconciliation distinguish a live worker from a zombie, because renewing the lease on a
+    non-terminal row is precisely why this one survived 4.78 hours against a 10-minute lease;
+    (4) populate model_policy with space-bunny-free as the explicit default rather than leaving
+    every role on a silent hardcoded fallback; then (3) clear the stuck execution LAST, once the
+    code that should have caught it is in place.
+  follow_up_actions:
+    - action: Enforce timeoutSeconds on the dispatch path; the 300s value must actually bound the work.
+      owner: orchestrator-main
+    - action: >-
+        Reconciliation must detect a dead execution, not infer liveness from a non-terminal row.
+        A zombie must reach a terminal state, not be renewed forever.
+      owner: orchestrator-main
+    - action: Populate model_policy with space-bunny-free for every agent role.
+      owner: orchestrator-main
+    - action: >-
+        Clear wx-jb-hn3liczxln-li36ts LAST, after the fixes, so it is reclaimed by the corrected
+        reconciliation rather than by hand.
+      owner: orchestrator-main
+created_by: orchestrator-main
+created_at: 2026-10-11T00:00:00Z
+updated_at: 2026-10-11T00:00:00Z
