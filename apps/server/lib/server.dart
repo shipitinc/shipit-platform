@@ -5,7 +5,12 @@ import 'package:serverpod/serverpod.dart';
 import 'package:agent_runtime/agent_runtime.dart'
     show AgentAdapterRegistry, AgentRuntime, OpencodeAdapter;
 import 'package:execution_coordinator/execution_coordinator.dart'
-    show ExecutionCoordinator, FileJsonExecutionStore, VerificationPlan;
+    show
+        ExecutionCoordinator,
+        ExecutionStore,
+        FileJsonExecutionStore,
+        ModelExecutionRecordStore,
+        VerificationPlan;
 import 'package:workflow_store/workflow_store.dart' show DurableWorkflowEngine;
 import 'package:platform_contracts/platform_contracts.dart'
     show JobType, AgentRole;
@@ -153,13 +158,20 @@ void run(List<String> args) async {
   // fact in the startup log rather than a surprise in the first job's failure.
   await _reportAdapterHealth(opencodeAdapter, triageRuntimeTypeId);
 
-  final coordinator = ExecutionCoordinator(
+  // The coordinator is built by [buildTriageExecutionCoordinator], which pins
+  // the TRIAGE verification plan. It is named there, not inlined here, because
+  // the plan is the exact field that shipped wrong: the `VerificationPlan`
+  // default runs `dart test`, and a triage worktree — a checkout of a
+  // README-only repository — has no `pubspec.yaml` and no `test/`, so every
+  // otherwise-successful triage job settled as `executedFail`. Extracting the
+  // composition makes the plan this process actually attaches reachable from a
+  // test without a real `opencode` binary or a database.
+  final coordinator = buildTriageExecutionCoordinator(
     store: FileJsonExecutionStore(
       File('${Directory.systemTemp.path}/execution_coordinator/store.json'),
     ),
     workflowEngine: durableWorkflowEngine,
     runtime: AgentRuntime(registry: agentAdapters),
-    verificationPlan: const VerificationPlan(),
     modelExecutionRecordStore: PostgresModelExecutionRecordStore(db),
   );
 
@@ -572,6 +584,61 @@ void run(List<String> args) async {
     unawaited(tick.trigger());
   });
 }
+
+/// The platform's independent verification for the TRIAGE role.
+///
+/// ## Why not the [VerificationPlan] default
+///
+/// The default is `dart test` (`execution_coordinator.dart`). That command
+/// CANNOT pass in a triage worktree: the worktree is a `git worktree` of
+/// `/triage-repo`, which contains only `README.md` — no `pubspec.yaml`, no
+/// `test/` — so `dart test` exits non-zero ("No pubspec.yaml file found").
+/// [`LocalWorker`] settles `passed = (agentResultStatus == completed) &&
+/// (verificationPassed ?? true)`, so the failed check turned every triage job
+/// whose agent succeeded into `executedFail` (`failureCode: agentFailed`,
+/// `detail: "verification ver-… failed"`, `checkName: dart_test`). The defect
+/// was present since the baseline commit and masked only because the
+/// provider-health bug deferred every job before an agent could run.
+///
+/// ## Why this exact command
+///
+/// A triage worktree IS a git checkout, so the honest, cheap independent check
+/// is that its `HEAD` resolves to a real commit in that worktree. It is the
+/// same plan the triage execution integration test composes
+/// (`apps/server/test/integration/triage_execution_test.dart`), and the same
+/// one the production-reachability test composes for a triage-defect pipeline
+/// (`lane_f_production_reachability_test.dart`); no composition establishes a
+/// different intended triage plan. The DESIGN lane, by contrast, verifies with
+/// `dart tool/verify.dart` over its own worktree — a different role with a
+/// different repository, which is why the plan is pinned to triage here.
+const VerificationPlan triageVerificationPlan = VerificationPlan(
+  command: ['git', 'rev-parse', '--verify', 'HEAD^{commit}'],
+  checkName: 'git_worktree_head',
+);
+
+/// Composes the ONE [ExecutionCoordinator] this server drives work through, with
+/// the triage verification plan attached.
+///
+/// Extracted from [run] so that the composition — in particular the
+/// [triageVerificationPlan] it attaches — is inspectable from a test without a
+/// real `opencode` binary or a database. It is the production construction
+/// path: [run] calls it, so a test that calls it exercises the same code the
+/// server does, not a hand-built copy.
+///
+/// [run] supplies a Postgres-backed [ModelExecutionRecordStore]; a test may
+/// omit it, exactly as a coordinator without one behaves in [run]'s absence.
+ExecutionCoordinator buildTriageExecutionCoordinator({
+  required ExecutionStore store,
+  required DurableWorkflowEngine workflowEngine,
+  required AgentRuntime runtime,
+  ModelExecutionRecordStore? modelExecutionRecordStore,
+}) => ExecutionCoordinator(
+  store: store,
+  workflowEngine: workflowEngine,
+  runtime: runtime,
+  verificationPlan: triageVerificationPlan,
+  modelExecutionRecordStore: modelExecutionRecordStore,
+);
 
 /// The code carried by a tick that was dropped because another was still
 /// running.
