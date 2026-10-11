@@ -45,8 +45,10 @@ import 'src/persistence/postgres_product_registry_store.dart';
 import 'src/baseline/baseline_lane_runner.dart'
     show observeCompletedOnboardingJob;
 import 'src/baseline/baseline_runtime.dart' show BaselineProductionRuntime;
+import 'src/triage/defect_triage_sweep.dart';
 import 'src/triage/lane_i_tick_hook.dart' show drainTriageOutcomesFromTick;
 import 'src/triage/triage_processor.dart';
+import 'src/triage/work_entry.dart' show WorkEntryTrigger;
 
 /// The starting point of the ShipIt control plane server.
 ///
@@ -226,13 +228,56 @@ void run(List<String> args) async {
   final baselineSession = await pod.createSession(enableLogging: false);
   final baselineDb = PersistenceDatabase(baselineSession.db);
   final baselineRegistryStore = PostgresProductRegistryStore(baselineDb);
+
+  // ONE registry engine, named, because two components below need it and a
+  // second instance over the same rows would be two places to change when the
+  // engine's construction ever does. It was already being built here, inline,
+  // as an argument.
+  final productRegistryEngine = ProductRegistryEngine(
+    store: baselineRegistryStore,
+    humanDecisionStore: PostgresHumanDecisionStore(workflowStore),
+  );
   final baselineRuntime = BaselineProductionRuntime.resolve(
-    engine: ProductRegistryEngine(
-      store: baselineRegistryStore,
-      humanDecisionStore: PostgresHumanDecisionStore(workflowStore),
-    ),
+    engine: productRegistryEngine,
     baselineStore: baselineRegistryStore,
     jobStore: jobStore,
+    log: _log,
+  );
+
+  // ---- The work-entry sweep: the RECOVERY half of an intake-only trigger. ----
+  //
+  // `createDefect` enqueues triage at intake. That path has no retry, so any
+  // exception between "defect accepted" and "job enqueued" leaves a defect with
+  // no job and nothing that will ever look again. More importantly, a defect
+  // reported against a product that is not yet `governed` is accepted, gated by
+  // `WorkEntryTrigger`, and left where it is — correct, and stuck for ever
+  // without a sweep to notice when the product becomes governed.
+  //
+  // The trigger is CONSTRUCTED here rather than reused from
+  // `ControlPlaneService.workEntryTrigger` because this process holds no
+  // service: endpoints build one per request over that request's `Session`.
+  // What matters is that it is built from the SAME live objects that getter
+  // builds from — [workflowStore], [durableWorkflowEngine], [jobStore] and the
+  // one [productRegistryEngine] above — so a defect gated in a request is seen
+  // identically here, in this process, on the next tick. A second instance of
+  // the trigger is harmless (it is stateless: store handles plus a `JobQueue`
+  // over one of them); a second set of STORES would not be, and there is none.
+  //
+  // Deliberately NOT listed in the `server.composition` line below. That line
+  // enumerates what this process CAN do, and the sweep's honest signal is not a
+  // static `true` but the per-tick `work_entry.sweep.completed` line it emits
+  // on every single pass — a flag written once at startup cannot distinguish
+  // "the sweep is on the tick" from "the sweep is wedged", which is the one
+  // distinction this whole work item exists to preserve.
+  final defectTriageSweep = DefectTriageSweep(
+    defectStore: defectStore,
+    trigger: WorkEntryTrigger(
+      workflowStore: workflowStore,
+      workflowEngine: durableWorkflowEngine,
+      productRegistryEngine: productRegistryEngine,
+      jobStore: jobStore,
+      log: _log,
+    ),
     log: _log,
   );
 
@@ -313,6 +358,28 @@ void run(List<String> args) async {
         'stack': st.toString(),
         'action':
             'baseline dispatch is retried on the next tick; triage is unaffected',
+      });
+    }
+
+    // The work-entry half of the tick, in its OWN try, alongside the other two:
+    // a triage tick that fails must not prevent work entry from running, and a
+    // failing defect read inside the sweep must not prevent the next tick.
+    //
+    // The sweep already accounts for its own failures internally — a defect
+    // whose evaluation throws is recorded as an incident and the pass
+    // continues — so reaching this catch means something ABOVE the per-defect
+    // guard failed, which today is only the `listDefects` read. That is a real
+    // outage of this capability and is logged as one, with the action named.
+    try {
+      final sweepPass = await defectTriageSweep.run();
+      _log('work_entry.tick.completed', {'sweep': sweepPass.toString()});
+    } catch (e, st) {
+      _log('work_entry.tick.failed', {
+        'error': '$e',
+        'stack': st.toString(),
+        'action':
+            'work entry is retried on the next tick; triage and baseline are '
+            'unaffected',
       });
     }
   });
