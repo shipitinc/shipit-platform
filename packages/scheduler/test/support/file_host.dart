@@ -20,8 +20,11 @@ class FileRestartHarness {
     Duration claimLease = const Duration(minutes: 10),
     ExecutionLivenessProbe? executionLiveness,
     Duration? zombieStalenessAfter,
+    WorkflowStore? workflowStoreOverride,
   }) {
-    workflowStore = FileJsonWorkflowStore(File('${dir.path}/workflow.json'));
+    workflowStore =
+        workflowStoreOverride ??
+        FileJsonWorkflowStore(File('${dir.path}/workflow.json'));
     workflowEngine = DurableWorkflowEngine(store: workflowStore);
     jobStore = FileJsonJobStore(File('${dir.path}/jobs.json'));
     workerStore = FileJsonWorkerStore(File('${dir.path}/workers.json'));
@@ -51,7 +54,7 @@ class FileRestartHarness {
 
   final Directory dir;
 
-  late FileJsonWorkflowStore workflowStore;
+  late WorkflowStore workflowStore;
   late DurableWorkflowEngine workflowEngine;
   late FileJsonJobStore jobStore;
   late FileJsonWorkerStore workerStore;
@@ -100,6 +103,20 @@ class FileRestartHarness {
     );
     return result.job;
   }
+
+  /// Moves the item to `agentExecuting`, which is the state a dispatched job's
+  /// work item really sits in while its execution runs. `plantRunningJob` records
+  /// the worker half of the chain; this records the workflow half, so a reclaim
+  /// test starts from the state QA observed rather than from `designNotRequired`.
+  Future<WorkItem> itemExecuting({String workItemId = 'wi-1'}) =>
+      workflowEngine.transition(
+        workItemId: workItemId,
+        to: WorkItemState.agentExecuting,
+        trigger: TransitionTrigger.systemEvent,
+        // The edge is guarded by `agentAvailable()`, and the context that
+        // satisfies it is the same one `RunnableWorkEvaluator` supplies.
+        context: const {'agentAvailable': true, 'capabilitiesMatch': true},
+      );
 
   /// Plants a claimed (or running) job plus its lease. Returns the job in its
   /// claimed state (before any worker dispatch).

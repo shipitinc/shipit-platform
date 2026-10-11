@@ -214,6 +214,17 @@ class Scheduler {
        _evaluator = RunnableWorkEvaluator(
          policy: policy ?? const WorkflowEngine(),
        ),
+       // Built over the store this scheduler already reads work items from, and
+       // over the SAME policy object `RunnableWorkEvaluator` uses, so a reclaim
+       // cannot decide an edge that scheduling would consider illegal.
+       //
+       // Present because a reclaim has to move the work item, not just the job.
+       // It exists ONLY for that; the scheduler otherwise never writes workflow
+       // state, and `policy` stays the optional injection it always was.
+       _reclaimEngine = DurableWorkflowEngine(
+         store: workflowStore,
+         policy: policy,
+       ),
        _queue = JobQueue(store: jobStore, clock: clock),
        _dedupeKeyBuilder = dedupeKeyBuilder ?? _defaultDedupeKey,
        _instructionBuilder = instructionBuilder ?? _defaultInstruction,
@@ -234,6 +245,15 @@ class Scheduler {
   final SchedulerWorkload _workload;
   final DateTime Function() _clock;
   final RunnableWorkEvaluator _evaluator;
+  final DurableWorkflowEngine _reclaimEngine;
+
+  /// The actor a reclaim transitions as. [ActorType.orchestrator] is what the
+  /// `agentExecuting -> agentFailed` edge permits, and it is what the scheduler
+  /// already acts as everywhere else in the transition graph.
+  static const WorkflowActor _reclaimActor = WorkflowActor(
+    actorId: 'scheduler',
+    actorType: ActorType.orchestrator,
+  );
   final JobQueue _queue;
   final RetryPolicy _retryPolicy = const RetryPolicy();
   final DedupeKeyBuilder _dedupeKeyBuilder;
@@ -779,11 +799,22 @@ class Scheduler {
   /// failed job rather than a silent duplicate.
   ///
   /// The job goes to `failed` rather than to a retry, deliberately. A retry
-  /// would re-dispatch against a work item that is still in
-  /// [WorkItemState.agentExecuting] - the scheduler cannot move that item, and
-  /// a second execution writing the same worktree while the first may still
-  /// hold it is the worse of the two harms. The worker layer still owns
-  /// orphaning the execution row itself.
+  /// would re-dispatch against a work item still in
+  /// [WorkItemState.agentExecuting] that the scheduler is not allowed to move,
+  /// and a second execution writing the same worktree while the first may still
+  /// hold it is the worse of the two harms.
+  ///
+  /// ## ORDER IS THE POINT
+  ///
+  /// The work item and the worker execution are reclaimed BEFORE the job, not
+  /// after. Failing the job first would be safe only if the process never died
+  /// between the two writes — but a terminal job is never re-reconciled
+  /// (`tick` only considers held jobs with an expired claim), so a crash in that
+  /// window would strand the work item permanently with no path back. In this
+  /// order a crash anywhere leaves the claim held and the claim expired, so the
+  /// next tick re-enters [_reconcileClaim] and converges: the work item is
+  /// already out of [WorkItemState.agentExecuting], so that step is a no-op, and
+  /// the job is still failed.
   Future<void> _reclaimZombie(
     Job job,
     WorkerExecution execution,
@@ -804,6 +835,9 @@ class Scheduler {
             'for $age (beyond the ${zombieStalenessBound.inMinutes}m bound)',
     };
 
+    await _releaseWorkItem(current.workItemId, execution, reason);
+    await _retireWorkerExecution(execution, now, reason);
+
     await _queue.complete(
       job: current,
       terminal: JobState.failed,
@@ -815,6 +849,122 @@ class Scheduler {
       now: now,
       executionReference: current.executionReference,
     );
+  }
+
+  /// Moves the work item out of [WorkItemState.agentExecuting] so a zombie does
+  /// not strand the work forever.
+  ///
+  /// ## Why `agentFailed`, from the real transition table
+  ///
+  /// Edges out of `agentExecuting` in `WorkItemTransitions` are exactly two, plus
+  /// the generic orchestrator escape:
+  ///
+  ///  * `agentCompleted` — guarded by `qaContractExists()` AND
+  ///    `agentResultValid()`. A zombie has no agent result, so this edge is not
+  ///    available and asserting it would be a lie about what ran.
+  ///  * `agentFailed` — guarded by `actorAllowed([orchestrator])` alone.
+  ///  * `cancelled` / `terminated` — the generic escape, but BOTH are workflow
+  ///    terminal states. Choosing them would turn a recoverable reclaim into
+  ///    permanent loss, which is the exact harm this method exists to prevent.
+  ///
+  /// So `agentFailed` is the only honest non-terminal exit, and it is recoverable:
+  /// `(agentFailed -> agentExecuting)` is itself a legal edge, so a human or a
+  /// re-plan can put the work back into execution. It is deliberately NOT
+  /// auto-re-dispatched — `RunnableWorkEvaluator` does not list `agentFailed` in
+  /// any entry set, because reworking a failed result routes through the
+  /// workflow's correction gate rather than an automatic re-run. It therefore
+  /// surfaces to a human instead of silently re-running or silently vanishing.
+  ///
+  /// This is the same state a genuine agent failure lands in, so a reclaim is
+  /// indistinguishable from a real failure to anything reading the item.
+  ///
+  /// ## Idempotent and safe under a concurrent writer
+  ///
+  /// Three layers, because a reclaim must never resurrect or double-transition:
+  /// the current state is re-read and the call is skipped unless the item is
+  /// still in [WorkItemState.agentExecuting]; the transition carries an
+  /// `idempotencyKey`, so a replay after a partial write returns the accepted
+  /// outcome instead of transitioning again; and the store's compare-and-swap on
+  /// the item version rejects a concurrent writer, which is caught and treated as
+  /// "someone else already moved it" rather than fought over.
+  Future<void> _releaseWorkItem(
+    String workItemId,
+    WorkerExecution execution,
+    String reason,
+  ) async {
+    final item = await _workflowStore.readWorkItem(workItemId);
+    if (item.state != WorkItemState.agentExecuting) return;
+
+    try {
+      await _reclaimEngine.transition(
+        workItemId: workItemId,
+        to: WorkItemState.agentFailed,
+        trigger: TransitionTrigger.systemEvent,
+        actor: _reclaimActor,
+        context: {
+          'zombieReclaimed': true,
+          'workerExecutionId': execution.workerExecutionId,
+          'workerId': execution.workerId,
+          'lastStatus': execution.status.name,
+          'reason': 'zombie execution reclaimed: $reason',
+        },
+        idempotencyKey: 'zombie-reclaim:${execution.workerExecutionId}',
+      );
+    } on WorkflowTransitionRejectedException {
+      // A concurrent writer moved the item first — a real result arriving from
+      // the wedged path, or another tick. Either way the item is no longer
+      // stranded, which is the whole job of this call, so a lost race is a
+      // correct outcome and must not be retried or escalated.
+    }
+  }
+
+  /// Drives the zombie worker execution row to a terminal state.
+  ///
+  /// ## Why the scheduler does this, rather than "leaving it to the worker layer"
+  ///
+  /// The previous version deferred this to `worker_runtime`'s reconciler. In
+  /// this topology that deferral is dead: the coordinator's `reconcileOrphans()`
+  /// finds nothing because `agent_execution` has no row for this execution, and
+  /// once the job is terminal no later tick re-reaches this execution at all —
+  /// `tick` only reconciles held jobs whose claim expired. QA showed the
+  /// consequence directly: the job failed, capacity was released, and the
+  /// `worker_execution` row stayed `agentExecuting` forever.
+  ///
+  /// The scheduler already holds the verdict that this execution is dead, so
+  /// leaving the row asserting otherwise is the scheduler contradicting itself.
+  /// `orphaned` is the status `WorkerReconciler` itself uses for "the executor
+  /// went away", which keeps the two paths converging on one vocabulary instead
+  /// of inventing a second way of saying the same thing.
+  ///
+  /// `cleanupStatus` is deliberately NOT touched. Nothing in this repository
+  /// consumes `WorkerExecution.cleanupMissing`, and claiming cleanup happened
+  /// would be a lie; leaving the recorded value alone keeps the row honest about
+  /// what is still outstanding for whoever owns workspaces.
+  ///
+  /// The compare-and-swap is the concurrency guard: a worker that is somehow
+  /// still alive and writing will lose to a verdict that was already durably
+  /// recorded, which is the correct ordering. That rejection is caught rather
+  /// than propagated — the job must still be failed.
+  Future<void> _retireWorkerExecution(
+    WorkerExecution execution,
+    DateTime now,
+    String reason,
+  ) async {
+    if (execution.isTerminal) return;
+    try {
+      await _workerStore.saveWorkerExecution(
+        execution.copyWith(
+          status: WorkerExecutionStatus.orphaned,
+          failureCode: WorkerFailureCode.agentFailed,
+          reason: 'orphaned by scheduler zombie reclaim: $reason',
+          endedAt: now,
+          version: execution.version + 1,
+        ),
+        expectedVersion: execution.version,
+      );
+    } on ConcurrentWorkerModificationException {
+      // Another writer already moved this row; its verdict stands.
+    }
   }
 
   String _durationSinceStart(WorkerExecution execution, DateTime now) {
