@@ -170,7 +170,19 @@ class OperatorRetryLimitResolution {
     //
     // A leading `-` is permitted so the negative case below still reports the
     // value it refused rather than calling it unparseable.
-    if (!RegExp(r'^-?[0-9]+$').hasMatch(trimmed)) {
+    //
+    // The REGEX is necessary but NOT sufficient, and the second half is why
+    // this cannot be `int.parse`: a long run of digits passes the shape check
+    // and then `int.parse` THROWS — "Positive input exceeds the limit of
+    // integer". That exception would escape `resolveRetryLimit()` into both
+    // `actionContext` and `retryFailedWorkItem`, so a mistyped configuration
+    // would take down the READ path and hand the operator an unhandled 500.
+    // The money would still be safe (nothing is armed), but the surface that
+    // exists to tell an operator the truth would itself be the thing that
+    // breaks. `int.tryParse` routes the overflow to the SAME fail-closed
+    // branch as every other unusable value.
+    final parsed = int.tryParse(trimmed);
+    if (parsed == null || !RegExp(r'^-?[0-9]+$').hasMatch(trimmed)) {
       return OperatorRetryLimitResolution(
         diagnostic:
             'operator retry NOT available: $operatorRetryLimitEnvVar="$raw" is not '
@@ -179,7 +191,6 @@ class OperatorRetryLimitResolution {
             'integer >= 0 before an operator can restart work.',
       );
     }
-    final parsed = int.parse(trimmed);
     if (parsed < 0) {
       return OperatorRetryLimitResolution(
         diagnostic:
@@ -288,6 +299,31 @@ class WorkItemActionEndpoints extends Endpoint {
   @override
   bool get logSessions => true;
 
+  /// The service every method in this class reads and writes through.
+  ///
+  /// An overridable seam rather than a `ControlPlaneService(session)` written
+  /// inline at each of the three call sites, and it exists for one reason: the
+  /// refusals this surface makes — `alreadyRunning`, the blank reason, the
+  /// retry bound — are the whole safety story, and until this seam existed
+  /// there was NO way to reach them in a test. `ControlPlaneService` builds its
+  /// stores from `session.db`, so exercising any of them meant standing up a
+  /// Postgres, and a guard that no test can reach is a guard that no test
+  /// protects.
+  ///
+  /// Production behaviour is unchanged: this returns the same
+  /// `ControlPlaneService(session)` the three methods constructed before, with
+  /// the same lazy `PersistenceDatabase`. It is deliberately NOT a
+  /// capability override — a test substitutes the STORE, never the refusal.
+  ///
+  /// `@doNotGenerate` is REQUIRED and is not decoration. Serverpod treats every
+  /// public, non-`@doNotGenerate`, `Session`-first method on an `Endpoint` as a
+  /// wire endpoint and fails generation unless it returns `Future` or `Stream`;
+  /// this returns a plain `ControlPlaneService`, so without the annotation
+  /// `serverpod generate` exits 1.
+  @doNotGenerate
+  ControlPlaneService serviceFor(Session session) =>
+      ControlPlaneService(session);
+
   /// Reads the retry limit for this request.
   ///
   /// A method rather than a constant so a test can inject a literal map — the
@@ -311,7 +347,7 @@ class WorkItemActionEndpoints extends Endpoint {
     Session session, {
     required String workItemId,
   }) async {
-    final service = ControlPlaneService(session);
+    final service = serviceFor(session);
     final item = await service.readWorkItem(workItemId);
     final recorded = await service.workflowStore.readOperatorActionsForWorkItem(
       workItemId,
@@ -393,7 +429,7 @@ class WorkItemActionEndpoints extends Endpoint {
     required String requestedBy,
     required String reason,
   }) async {
-    final service = ControlPlaneService(session);
+    final service = serviceFor(session);
     final limit = resolveRetryLimit();
     final recorded = await service.workflowStore.readOperatorActionsForWorkItem(
       workItemId,
@@ -547,7 +583,7 @@ class WorkItemActionEndpoints extends Endpoint {
     required String requestedBy,
     required String reason,
   }) async {
-    final service = ControlPlaneService(session);
+    final service = serviceFor(session);
     final limit = resolveRetryLimit();
     final recorded = await service.workflowStore.readOperatorActionsForWorkItem(
       workItemId,
