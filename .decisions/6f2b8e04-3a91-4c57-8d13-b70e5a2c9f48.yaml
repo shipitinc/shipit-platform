@@ -1,0 +1,51 @@
+# human-decision.yaml
+decision_id: 6f2b8e04-3a91-4c57-8d13-b70e5a2c9f48
+type: DEPLOYMENT_AUTHORITY
+status: RESOLVED
+question: >-
+  `serverpod create-migration` appended a PRE-EXISTING, never-registered migration
+  (20261006150645000, the product-credential unique index, created by 07c8c8f and absent from
+  migration_registry.txt as of the Lane S design commit) alongside Lane S's own operator_action
+  migration. Its own comment states a prerequisite only a human can audit: no repository may hold
+  two non-revoked credentials for one repository. Accept it bundled, or split it out?
+context:
+  summary: >-
+    Raised by the Lane S engineering review. The drift is pre-existing, not introduced by Lane S,
+    and the review confirmed it is idempotent (CREATE UNIQUE INDEX IF NOT EXISTS) and deletes
+    nothing. The problem is COUPLING, not corruption: on a chain-migrated database that violates the
+    one-active-credential-per-repository invariant, the credential-index migration fails, Serverpod
+    aborts, and 20261011150657397 (operator_action) never applies. An unrelated, unauditable drift
+    would gate Lane S's migration on databases it has nothing to do with.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: lane-s-operator-retry-seam
+    item_ref: Decide whether the credential-index migration travels with Lane S.
+  evidence:
+    documents:
+      - type: OTHER
+        id: lane-s-review
+        url: docs/engineering/dispatch/tasks/design-failed-work-retry/design-brief.md
+    measurements:
+      - "apps/server/migrations/20261006150645000/ exists from 07c8c8f but was absent from migration_registry.txt at 0836a26"
+      - "20261011150657397/migration.sql contains 0 references to product_credential - it is fully self-contained"
+      - "20261006150645000/migration.sql: CREATE UNIQUE INDEX IF NOT EXISTS product_credential_active_repository_unique"
+resolution:
+  outcome: SPLIT_OUT
+  decided_by: human-operator
+  rationale: >-
+    Registering a migration that has never been applied is an unaudited change to every database
+    this repository has ever deployed to. Its own comment says the prerequisite is not satisfied by
+    the file itself and must be audited against the deploy target. Bundling it would make Lane S's
+    operator_action migration unreachable on exactly the databases that violate that invariant, so a
+    defect in credential hygiene could block an unrelated feature's schema.
+    Splitting restores the pre-existing state (the credential index stays unregistered) and lets the
+    drift be audited on its own terms before it is ever applied.
+  follow_up_actions:
+    - action: >-
+        Remove 20261006150645000 from migration_registry.txt so it does not gate Lane S's migration.
+      owner: orchestrator-main
+    - action: >-
+        The credential-index migration remains a live, unaudited follow-up. Before it is ever registered,
+        audit every target database for the one-active-credential-per-repository invariant (ADR 0018).
+        Do NOT register it as a side effect of creating an unrelated migration again.
+      owner: human-operator
