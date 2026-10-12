@@ -1231,3 +1231,32 @@ mid-walk). So the earlier "`+192 All tests passed!` in a primary clone" is **not
 43 098 ms figure was a symptom of the same timeout under load. One integration run was `+79 −9` from 379
 connection-pool-lock timeouts; the second was `+194 −1`. **Recorded as observed, not fixed** — fixing it
 means touching a test outside this lane's authority.
+
+## Agent failure detail — human-chosen remediation order (recorded 2026-10-12)
+
+For dogfooding, the human asked for more detail on *why* an agent failed. Four independent
+losses were identified by read-only inspection; the human chose the order **B → A → C**:
+
+- **B (root).** Switch `ExecutionCoordinator`'s store from `FileJsonExecutionStore`
+  (`apps/server/lib/server.dart`) to the existing `PostgresExecutionStore`. The `agent_execution`,
+  `agent_result`, `agent_event` and `platform_verification` tables already exist and are migrated
+  but are EMPTY, because the file store writes to `${TMPDIR}/execution_coordinator/store.json`,
+  which does not exist in the container. This is why `AgentResult.diagnostics`
+  (exitCode / toolCalls / errors), `summary`, and the session event stream are unavailable, and why
+  `ExecutionEndpoints.inspect` has nothing to read. Restores durable, inspectable agent outcomes.
+- **A.** Persist the concrete failure cause onto `Job.failure` (today only a generic
+  `"agent session failed"` reaches `job.failureJson`; the real ACP error is logged to stdout only)
+  and map `failure` through `JobRecordView`, which currently has no failure field at all.
+- **C.** Operator-facing failure detail panel on the run-detail page (plain-language summary plus a
+  collapsed "Show technical details" block; never raw provider text in operator-facing copy).
+
+**Not chosen: D** (agent transcript artifacts) — deferred until B's diagnostics prove insufficient;
+it carries storage, retention and secret-scrubbing cost.
+
+**Open prerequisite the human must answer before B:** whether `FileJsonExecutionStore` was chosen
+deliberately. If so, moving to Postgres is a product decision, not a bug fix.
+
+**Observed 2026-10-12 (QA, read-only):** the real triage failure was
+`AcpRequestException(-32603) ... Invalid credential {service: session, errorName: APIError}`,
+surfacing only via `[triage.execution_not_successful]` in container stdout. It reached the UI as
+nothing at all — the run page rendered only "Stopped · stopped N times".
