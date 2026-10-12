@@ -17,6 +17,28 @@
 | `corrected_at_1_4` | `2026-10-11T18:40:00Z` |
 | `corrected_at_1_5` | `2026-10-11T20:05:00Z` |
 
+> ### ⚠️ READ FIRST — §6.6 is SUPERSEDED by HD-5, 2026-10-12
+>
+> This brief carries a **human decision record** — `.decisions/8585491a-11a9-473e-ae4f-d66a210408f3.yaml`
+> (HD-5) — that **supersedes HD-3 (`5d9a1f62`) in full**. HD-3 required operator retry to **fail closed**:
+> three retries per work item, and if `SHIPIT_OPERATOR_MAX_RETRIES` was unset the retry action was not
+> offered at all.
+>
+> **Under HD-5, operator retry is UNCUNTED by default.** An unset, blank, unparseable or negative value
+> resolves to uncounted and the action **is** offered; an explicit `0` still disables it; an explicit
+> positive integer still caps it, counted per work item as HD-3 counted it. **AUTOMATIC retries are
+> unaffected** — still bounded by the job's own `maxAttempts` via `RetryPolicy.canRetry`.
+>
+> **Every clause this brief states about the retry-count bound is marked SUPERSEDED in place, with a
+> pointer and a reason. Nothing has been deleted.** The affected sites are §6.6 (heading, bullets and
+> rationale), §6.6.1, the §6.3 `notConfigured` unset row, the §8 unset panel variant, A11, N14, AC-15b,
+> AC-15c, AC-15d, the §12 retry-storm and unset-variable risk rows, the §13.1 HD-3 record, the change
+> ledger, and the §2 premises note. **§6.6's banner is the single authoritative summary.**
+>
+> **If you are about to implement anything in §6, read the banner at §6.6 before you read the clause.**
+> A superseded clause below it still says what HD-3 said, in HD-3's words, and it is there deliberately:
+> the audit trail has to show the reversal rather than two apparently current answers to one question.
+
 > ### 1.5.0 — re-review of 1.4.0: `CHANGES_REQUIRED`, **BLOCKERS: 0**
 >
 > The reviewer's verdict: *"the brief's design is finished — I found no defect in what gets built.
@@ -180,6 +202,12 @@ dispatch, and **each one changes the design**.
 
 > **After the 1.1.0 closeout, nothing here was withdrawn.** HD-1/HD-2/HD-3 were decisions about
 > *what to build*, not about *what is true*. In particular:
+>
+> ⚠️ **[PARTLY SUPERSEDED — HD-5 `8585491a`, 2026-10-12.]** The sentence above was true at the 1.1.0
+> closeout and is **no longer true of HD-3**, which the human reversed on 2026-10-12 and which is
+> **superseded in full** — a decision about *what to build*, after all. HD-1 and HD-2 stand. None of the
+> five premise corrections (P-1…P-6) is touched by the reversal; every bullet below still holds, and
+> **P-1 remains the single most important finding in this document.**
 >
 > - **P-1 is unaffected and remains the single most important finding in this document.** Resolving
 >   HD-2 in favour of a real audit row did not make the dispatch path work; gates G1–G4 are untouched
@@ -679,6 +707,15 @@ fields:
 | `notApplicable` | item is not in `agent_failed` | **nothing written** | `This work is not waiting on you.` + the current plain status |
 | `notConfigured` | **limit reached**: retry count ≥ configured maximum | **nothing written** | `This work has already been tried 3 times. Stop it, or leave it for review.` |
 | `notConfigured` | **limit unresolved** (HD-3): `SHIPIT_OPERATOR_MAX_RETRIES` unset/blank/unparseable/negative | **nothing written** | `Starting this again is switched off on this machine. Nothing has been changed.` — see §6.6.1, §8.2 |
+
+⚠️ **[SUPERSEDED — HD-5 `8585491a`, 2026-10-12.]** The row above describes the **unset** case, and under
+HD-5 the unset case **is no longer an outcome at all**: `notConfigured` is not returned because a value
+is missing, because a missing value now means **uncounted** and the retry proceeds. The row is retained
+as the record of HD-3's behaviour and must not be implemented.
+
+**What replaces it:** `notConfigured` is returned for exactly two reasons — `SHIPIT_OPERATOR_MAX_RETRIES=0`
+explicitly, or an explicit positive `N` whose count is reached. The `notConfigured` outcome itself, and the
+rule that **every rejection path writes nothing at all**, are unchanged and still apply to those two.
 | `invalidRequest` | empty/absent `reason` | **nothing written** | `Add a short reason before you continue.` |
 
 **There is no error outcome for "capacity full".** A denial is a normal outcome with a defined
@@ -1224,6 +1261,37 @@ the mapping was already correct and the seam was feeding it the wrong state.
 
 ### 6.6 Retry-count limit — a fail-closed bound on spending
 
+> ### ⚠️ SUPERSEDED IN FULL — HD-5 `8585491a-11a9-473e-ae4f-d66a210408f3`, 2026-10-12
+>
+> **The heading above and every clause in §6.6 are SUPERSEDED.** They are retained verbatim as the record
+> of what HD-3 (`5d9a1f62`) decided and of why it was defensible. They are **not current instruction** —
+> do not implement from this section.
+>
+> **What is true now.** Operator retry is **UNCOUNTED by default**. `SHIPIT_OPERATOR_MAX_RETRIES` unset,
+> blank, unparseable or negative ⇒ the action is **offered**, not withheld. An explicit `0` still disables
+> operator retry; an explicit positive integer still caps it, counted per work item exactly as HD-3 counted
+> it. **AUTOMATIC retries are UNAFFECTED** — still bounded by the job's own `maxAttempts` through
+> `RetryPolicy.canRetry` (`triage_defect` is still `maxAttempts: 2`). `SHIPIT_OPERATOR_MAX_RETRIES` does
+> not read or write that path.
+>
+> **Why the human reversed it.** The action is human-triggered through an authenticated operator session
+> whose only caller is the operator UI, and an operator deciding whether to try again is the person best
+> placed to decide. The human wants a count only where the retry is **agent-driven**, and that bound
+> already exists one layer down.
+>
+> **HD-3 was not wrong.** *"An operator action that spends real credits must never be armed by a missing
+> configuration"* is sound reasoning, applied to the wrong actor. Withholding the button when the variable
+> is unconfigured is indistinguishable from a broken screen to the operator the screen exists for, and the
+> spend firehose HD-3 feared is not reachable — there is no automation caller of that RPC.
+>
+> **Residual risk, stated rather than buried.** `requestedBy` is a **client-supplied `String`**, not a
+> cryptographic identity claim. "Human-triggered" therefore rests on the **caller list**, not on the
+> recorded identity. If an agent, cron, webhook or non-UI caller is ever added, this decision's premise
+> is void and it must be **reopened**, not compensated for by raising the cap.
+>
+> Record: `.decisions/8585491a-11a9-473e-ae4f-d66a210408f3.yaml`. HD-3's own object carries the matching
+> `## SUPERSEDED IN FULL` block: `.decisions/5d9a1f62-8b37-4e50-a9c4-71f2d8b3e605.yaml`.
+
 The job's `maxAttempts: 2` (`triage_defect.dart:12`) is **per job**. A retry creates a new job and
 therefore a **fresh** budget, so an unbounded button is a spend firehose: click it N times, pay N
 times. The screen is where a human is told the running total, and it is where the bound belongs.
@@ -1232,8 +1300,27 @@ times. The screen is where a human is told the running total, and it is where th
 > RESOLVED).]** The human confirmed the fail-closed mechanism and **rejected my proposed alternative
 > shape**: *"a per-operator-per-day cap is trivially reset and does not bound a single pathological
 > item."* The count is **per work item**. The value is **3**.
+>
+> ⚠️ **[SUPERSEDED — HD-5 `8585491a`, 2026-10-12.]** This blockquote is **retained as history, not as
+> instruction.** HD-3 is superseded in full; see the §6.6 banner. One clause of it **survives and is
+> still correct**: the human's rejection of a per-operator-per-day cap. That reasoning is unchanged and
+> governs the explicit-cap case, which HD-5 keeps. The **value 3** no longer applies to anything — 3 is
+> now a value an operator may choose to configure, not a default.
 
 Design:
+
+> ⚠️ **[SUPERSEDED — HD-5 `8585491a`, 2026-10-12.]** All three bullets below are superseded as
+> instructions. Bullet 1's **fail-closed** arm ("absent, blank, unparseable, or negative ⇒ **retry is
+> unavailable**") is now **inverted**: those values resolve to **unbounded** and the action is **offered**.
+> Bullet 2 ("there is no code-level default") is superseded — there is now **no count at all** by default,
+> which is a different thing and not a fallback constant. Bullet 3's **counting mechanism and its
+> per-work-item ledger source survive intact** for the explicit-cap case. Bullet 1's sub-bullet is
+> **split**: its "reuse the *pattern*" half is superseded, its "`0` must resolve to a RESOLVED value
+> meaning *permanently disabled*" half is **still exactly right** and is preserved by HD-5.
+>
+> **What an implementer needs instead:** unset/blank/unparseable/negative ⇒ `unbounded`; `0` ⇒ permanently
+> disabled; positive `N` ⇒ capped at `N`. `retryLimitResolved` no longer means "a count is configured" —
+> the uncounted state is a **resolved** state, not a missing one.
 
 - `SHIPIT_OPERATOR_MAX_RETRIES` — **required**, integer ≥ 0, resolved at startup by a resolution
   modelled on `ExecutionCapacityResolution.fromEnvironment`
@@ -1252,6 +1339,12 @@ Design:
   reason is the decision's own: *"An operator action that spends real credits must never be armed by
   a missing configuration."* An implementer who reads "default 3" as "absent ⇒ 3" would invert the
   decision, so the brief states it three times: §6.6 bullet 2, AC-15b, and AC-15c.
+  > ⚠️ **[SUPERSEDED — HD-5 `8585491a`, 2026-10-12.]** The *reasoning* above is HD-3's and it is
+  > retained because it was sound; the *conclusion* is **reversed**. A missing configuration no longer
+  > disarms the action — it leaves it **uncounted**. The trap this bullet warned about has moved rather
+  > than vanished: an implementer who now reads "default 3" as "absent ⇒ 3" would re-introduce a
+  > fallback constant where the decision wants **no count**. **There is no default and there is no
+  > fallback: absent means uncounted.**
 - `attemptNumber` counts `operator_action` rows for this work item with `action = 'retry'`
   (`operator_action_retry_idx`). At 1.0.0 this count was taken from accepted transitions; at 1.1.0 it
   comes from the audit table, which is exact and append-only. `attemptLimit` is the
@@ -1265,8 +1358,40 @@ Design:
 > 'unlimited' re-creates the host exhaustion it was built to prevent"*
 > (`execution_capacity.dart:88-92`). The decision adopts the same reasoning verbatim.
 >
+> ⚠️ **[SUPERSEDED — HD-5 `8585491a`, 2026-10-12.]** This is the clause the reversal most directly
+> inverts, so the scope of the reversal is stated precisely rather than swept broadly:
+>
+> - **Operator retry** now *does* ship with no limit, and a missing value **does** mean unlimited. This
+>   bullet is therefore **wrong as applied to `SHIPIT_OPERATOR_MAX_RETRIES`** and must not be used to
+>   argue for reinstating a fail-closed default.
+> - **The capacity cap is NOT reversed.** `SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS` still fails closed when
+>   unset, and `execution_capacity.dart:88-92` still says exactly what it says. The "unlimited re-creates
+>   host exhaustion" reasoning remains **correct and governing for the capacity guard**, which is why HD-5
+>   leaves automatic retries bounded by `maxAttempts` and touches nothing there.
+> - **Why the two cases differ, since the cited reasoning would otherwise read as governing both.** The
+>   capacity cap bounds *machine-wide agent concurrency* and a missing value there means *unbounded work
+>   on a host that has already kernel-crashed once*. Operator retry bounds *one human pressing one
+>   button*, and the action's only caller is an authenticated operator session. The reasoning was never
+>   wrong; the two subjects are not alike, and HD-3 extended it to the weaker of the two.
+>
 > #### 6.6.1 The unset case is a VISIBLE state, not an absent one
 >
+> ⚠️ **[SUPERSEDED IN WHOLE — HD-5 `8585491a`, 2026-10-12.]** This subsection exists to make an
+> unavailable action visible. **The action is no longer unavailable when the variable is unset** — it is
+> offered, uncounted. All three obligations below, and the panel variant in §8, describe a state the
+> product no longer has. They are retained because HD-3's follow-up demanded them and because the
+> *reasoning* behind them survives in a narrowed form.
+>
+> **What survives, and it is real:** an operator must never have to guess whether a missing button means
+> "you may not do this" or "something is broken". HD-3 got that right and it still binds — for the states
+> that **remain**: an explicit `0` (permanently disabled) and an explicit positive `N` once reached
+> (`notConfigured` from the count). The `liveRegion` announcement, the `retryLimitDiagnostic` on
+> `WorkItemActionContextView` and the startup log line all remain correct **for those states**.
+> `retryLimitResolved: false` now means **"explicitly disabled or count exhausted"**, never "unset".
+>
+> **What no longer applies:** obligation 2's `Starting this again is switched off on this machine. Nothing
+> has been changed.` as the *unset* case, and obligation 3's use of `capacitySummary` as the reason to log
+> an unset limit at all. An unset limit has nothing to announce, because it constrains nothing.
 > The decision's binding follow-up: *"The unset-means-unavailable behaviour must be visible in the
 > design and in the acceptance criteria, not treated as an incidental detail."* Three obligations
 > follow, and all three are testable:
@@ -1292,6 +1417,19 @@ Design:
 > same do-not-delete comment. **Those files are deployment configuration and are outside this
 > design lane's `OWNED_PATHS`** — this brief records the requirement and does not make the change.
 > Owner: `orchestrator-main`, exactly as the decision's follow-up assigns it.
+>
+> ⚠️ **[SUPERSEDED — HD-5 `8585491a`, 2026-10-12.]** **This obligation is discharged, and it is
+> discharged by REMOVAL — do not set the variable anywhere to satisfy it.** Setting
+> `SHIPIT_OPERATOR_MAX_RETRIES=3` on any stack now *re-creates a cap the human removed*; a stack that
+> wants the cap sets it deliberately, and a stack that does not sets nothing.
+>
+> **The `${VAR:-3}` interpolation this block prescribes must not be written into any compose file.** The
+> four stacks now read `${SHIPIT_OPERATOR_MAX_RETRIES:-}` (empty) or omit the variable entirely. Three of
+> them had `:-3` **committed** by `d41f2b6` and were lowered to empty by `8492dcb`; `compose.qa.yaml`
+> never had it at any commit. The `:-3` the QA stack was actually running existed **only as an
+> uncommitted working-tree edit** — so the cap the live QA environment carried was invisible to review
+> and to anyone reading the repository. That edit has been removed and a comment recording why now
+> stands in its place. Owner: `orchestrator-main`.
 >
 > Without it, the retry button will **correctly** not appear, and an operator (or QA) will reasonably
 > conclude the screen is broken. That is the correct behaviour producing a false signal, and the two
@@ -1492,6 +1630,13 @@ row tick agree by construction.
 **The unset-limit variant** (HD-3, `5d9a1f62` — §6.6.1). When `retryLimitResolved == false` the
 `This will be attempt N of M.` line is replaced, and the layout below it does not change:
 
+> ⚠️ **[SUPERSEDED — HD-5 `8585491a`, 2026-10-12.]** This mock is the **unset** case. Under HD-5 an unset
+> limit renders `This will be attempt N.` with **no total** — there is no `of M` — and the retry button
+> **is offered**. The variant below is still correct for the two states that remain (`0` = permanently
+> disabled, and a positive `N` whose count is reached), including its accessibility reasoning: a screen
+> reader user must never conclude the screen is broken because a control is missing. Only its *trigger*
+> is narrowed, from "unset" to "explicitly disabled or count exhausted". Retained, not deleted.
+
 ```
 ├─ (ContentRule) ──────────────────────────────────────────────────────────┤
 │ 2 of 2 agent slots busy.                                                 │  monoMeta
@@ -1591,12 +1736,27 @@ Assessed against WCAG 2.2 AA and against the patterns already in this codebase.
 | A10 | No colour-only state on the retry count | `This will be attempt 1 of 3.` is text, not a badge. |
 | **A11 (NEW at 1.1.0, from HD-3)** **An unavailable action is announced, not silently absent** | When `retryLimitResolved == false`, the panel's `liveRegion` announces `Starting this again is switched off on this machine. Nothing has been changed.` A screen-reader user must not conclude the screen is broken because an environment variable is unset — which is precisely the misreading §6.6.1 exists to prevent. |
 
+⚠️ **[SUPERSEDED IN ITS TRIGGER — HD-5 `8585491a`, 2026-10-12.]** The **criterion stands**; only its
+`when` clause is narrowed. `retryLimitResolved == false` no longer means "an environment variable is
+unset" — it now means **explicitly disabled (`0`) or count exhausted**. The unset case announces nothing
+because it disables nothing. The accessibility argument underneath A11 is **not weakened by the
+reversal** and should be read as its strongest form: an operator must never have to guess whether a
+missing button means "you may not do this" or "something is broken" — which is the confusion HD-5
+removes by no longer letting a missing configuration remove the button at all.
+
 **Re-confirmed at 1.1.0.** Neither decision changed the accessibility position: HD-1 added a second
 button to a panel already built around `_GateCard`'s semantics pattern (A1 covers both, and A6
 distinguishes the destructive one by *word*, not colour); HD-2 changed what is stored, not what is
 rendered — the audit row feeds the same `reason` field the panel already displays, plus OQ-1's
 `priorActions` list, which reuses `DefinitionList` and therefore inherits the same semantics; HD-3
 **adds** an obligation (A11) rather than relaxing one. No criterion from 1.0.0 was weakened.
+
+⚠️ **[PARTLY SUPERSEDED — HD-5 `8585491a`, 2026-10-12.]** The claim "HD-3 **adds** an obligation rather
+than relaxing one" is now **false**, and the reversal is a relaxation of A11's trigger. It is recorded
+here rather than left to be discovered: A11 was added by HD-3, and HD-5 narrows the state that triggers
+it (§9 above). The 1.0.0 accessibility criteria are still **not** weakened — nothing about contrast,
+target size, motion or semantics changed. But the honest statement is that one criterion's *applicability*
+was narrowed by a later human decision, not by a design revision.
 
 **One honest limitation:** the "why it stopped" classifier (§5.6) is a heuristic over free text. When
 it does not recognise a cause it says so in neutral, truthful words rather than guessing — which is
@@ -1627,6 +1787,18 @@ Each of these is a design constraint, not an implementation detail, and each is 
 | **N13 (NEW at 1.1.0, from HD-2)** **No audit row written outside the transition's transaction, and no update or delete of an existing one.** The audit is append-only and atomic with the state change. | The decision's binding follow-up. A separate write could diverge under a crash; an update would destroy the history the audit exists to keep. Tested by AC-14b/AC-14d. |
 | **N14 (NEW at 1.1.0, from HD-3)** **No fallback for the retry limit.** An absent, blank, unparseable, or negative `SHIPIT_OPERATOR_MAX_RETRIES` must never resolve to a permissive number. | *"An operator action that spends real credits must never be armed by a missing configuration."* Tested by AC-15b/AC-15c. |
 
+⚠️ **[SUPERSEDED IN FULL — HD-5 `8585491a`, 2026-10-12.]** N14 stated the rule with the wrong polarity.
+An absent, blank, unparseable or negative `SHIPIT_OPERATOR_MAX_RETRIES` now resolves to **uncounted**,
+which is permissive — that *is* the decision, not an accident of it, and an implementer must not "fix" it
+back.
+
+**What survives from N14 is the half that was never about permissiveness:** a missing or malformed value
+must never resolve to an **arbitrary number**. `3` is not the value that must not be assumed; a
+**fallback constant** is. HD-5 keeps that exactly — there is no default, no fallback and no count unless
+an operator configures one. The quoted rationale is **withdrawn as applied to this action**, not because
+spending credits is acceptable but because the action is human-triggered; the same reasoning still governs
+`SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS` and automatic retries, both of which remain bounded.
+
 ---
 
 ## 11. Acceptance criteria
@@ -1643,6 +1815,7 @@ sequencing rule behind that gate is stated in §16.2 and is a review blocker, no
 | 1.2.0 | AC-15e, AC-32, AC-33, AC-34 | AC-13, AC-25, AC-15 | — |
 | **1.3.0 (HD-4)** | **AC-35** (the edge, with a negative control), **AC-36** (the dedupe-key rule) | **AC-7, AC-10, AC-15, AC-16, AC-17, AC-19, AC-19b, AC-19c** | **AC-15e, AC-32, AC-33** — all three asserted properties of the deleted branch B |
 | **1.4.0** | **AC-37** (`metadataMerge` preserves the defect payload) | **AC-29** (byte-identical → review-enforced) | — |
+| **HD-5 (2026-10-12)** | — | **§6.6 and §6.6.1 in full; §6.3 `notConfigured` (unset row); N14; A11's trigger; AC-15b, AC-15c, AC-15d; §8 unset variant; the §12 `SHIPIT_OPERATOR_MAX_RETRIES` risk row; the §13.1 HD-3 record; the L2 premises note** — each **marked SUPERSEDED in place, none deleted**, per `8585491a-11a9-473e-ae4f-d66a210408f3` | **Nothing.** |
 
 Net: 41 → **45**. Every deletion is justified in place; nothing from 1.0.0 was deleted, and no
 criterion has ever been weakened.
@@ -1739,13 +1912,33 @@ criterion has ever been weakened.
   `retryLimitResolved: false` and a non-blank `retryLimitDiagnostic` naming the variable; the server
   returns `notConfigured` from `retryFailedWorkItem`; **and the audit row count is unchanged.** No
   fallback value appears anywhere: not in the response, not in the log line.
+  > ⚠️ **[SUPERSEDED — HD-5 `8585491a`, 2026-10-12.]** Inverted. With the variable unset the retry is
+  > **available and uncounted**: `actionContext` does not withhold it, `retryFailedWorkItem` does not
+  > return `notConfigured`, and `operator_action` gains a row **plus** a transition and a job.
+  >
+  > **Two halves of AC-15b survive and are kept:** (a) **the audit row is authoritative and exact** — the
+  > ledger, not an in-memory counter, is what an explicit count is computed from; and (b) **no fallback
+  > value appears anywhere, not in the response and not in the log line.** (b) is *more* load-bearing now
+  > than it was: with no default the response must say "uncounted" truthfully rather than quietly
+  > reporting a number nobody configured.
 - **AC-15c (HD-3)** **"Default 3" does not mean "absent ⇒ 3".** A test boots the resolution with the
   variable absent, blank, unparseable, and `0`, and asserts the retry action is unavailable in all
   four — with `0` meaning "permanently disabled", which is a valid configuration, not a failure. Only
   an explicit `3` arms the retry.
+  > ⚠️ **[SUPERSEDED — HD-5 `8585491a`, 2026-10-12.]** The **premise** survives; the **conclusion** is
+  > inverted. *"Default 3" does not mean "absent ⇒ 3"* is **still exactly right** — there is no `3`, no
+  > default, and no fallback constant — but nothing needs arming, so the test's assertions change: with
+  > the variable absent, blank or unparseable the action is **available**; with `0` it is **unavailable**;
+  > with a positive `N` it is available until `N` is reached. `0` remains a valid configuration meaning
+  > *permanently disabled*, not a failure — that clause is **carried forward verbatim**.
 - **AC-15d (HD-3)** With the limit unset, **"Stop this work" is still offered** (HD-1), and the panel
   shows `Starting this again is switched off on this machine. Nothing has been changed.` styled as
   information, not as an error.
+  > ⚠️ **[SUPERSEDED — HD-5 `8585491a`, 2026-10-12.]** Both halves are overtaken. With the limit unset the
+  > panel shows no such message because nothing is switched off. The clause's **underlying HD-1
+  > guarantee survives untouched and is unchanged by HD-5**: *"Stop this work"* is always offered, because
+  > an operator who cannot retry must still have both answers. That guarantee is now strictly easier to
+  > satisfy, since the only states in which retry is withheld are ones an operator configured.
 - **AC-16 (REWRITTEN at 1.3.0)** The retry RPC returns `outcome: 'accepted'` and the operator is told
   `Done — it will start as soon as a machine is free.` The item then reads **"Waiting to start"**
   (`design_not_required` → `PlainStatus.waitingToStart`, `plain_language.dart:102-104`) until a job is
@@ -1926,9 +2119,28 @@ it.
 | **NEW — the migration diverges between the fresh path and the chain path** | Low–Medium | `tool/schema_bootstrap.sql` holds no `CREATE TABLE`, so it should need no edit (verified, not assumed); `verify_schema_bootstrap.sh` and `schema_bootstrap.dart` are required gates (AC-31). The `operator_action` indexes are plain btree and renderable by the model generator — deliberately chosen so this is cheap. |
 | **NEW — a retry authorisation survives a second failure and re-arms the old job** | Low | AC-19c. The `transition_id == latest transition` conjunct is what prevents it; this is precisely the case that made "latest transition" rather than "any transition" the right formulation. |
 | A retry storm: N operators press retry on N items simultaneously | Low | The advisory lock is per-claim and already arbitrates (`job_capacity_guard.dart:92-186`); `enqueueIfAbsent` arbitrates per dedupe key; `operator_action_request_unique` arbitrates per intent; §6.6 bounds per item. |
+
+⚠️ **[PARTLY SUPERSEDED — HD-5 `8585491a`, 2026-10-12.]** This row's last clause, *"§6.6 bounds per
+item"*, is **no longer true**: §6.6 bounds per item only when an operator configures a cap, and bounds it
+by nothing at all by default. The three arbitration mechanisms it names are unaffected and still hold —
+what HD-5 removes is the **spend** bound, not the **concurrency** arbitration. An operator can now press
+retry repeatedly on one item, and the capacity guard (`SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS`, still
+fail-closed) plus each job's own `maxAttempts` are what bound the resulting work.
 | The confirm strip's mandatory reason annoys operators | Medium | It matches the existing decision screen's behaviour exactly (`:461`). Consistency is the argument; if it is rejected, reject it for the decision screen too. |
 | The panel's classifier mislabels a cause | Low | It can only be *less specific*, never wrong: unrecognised input yields a neutral sentence plus the raw record (AC-21, AC-22). |
 | `SHIPIT_OPERATOR_MAX_RETRIES` unset ⇒ the button never appears | **High, by design** | Confirmed deliberate by HD-3. Now **visible** rather than silent (§6.6.1, AC-15b/AC-15d), with the QA pre-condition recorded so the correct behaviour is not mistaken for a broken screen. |
+
+⚠️ **[SUPERSEDED IN FULL — HD-5 `8585491a`, 2026-10-12.]** The behaviour this row rates as **High** is
+**no longer the behaviour**. With the variable unset the button **does** appear, and the retry proceeds.
+The row is retained because it is the honest record of the risk HD-3 accepted.
+
+**The risk itself did not vanish; it changed owner.** What remains is that an operator may press retry
+repeatedly and spend repeatedly, with no running total in the UI unless a cap is configured. HD-5 prices
+that and accepts it — the actor is a human behind an authenticated operator session whose only caller is
+the operator UI, not an agent. The mitigation HD-3 relied on (the button being absent) is **no longer the
+mitigation**, so the residual-risk statement in `8585491a` becomes load-bearing: `requestedBy` is a
+**client-supplied string**, not a cryptographic identity claim. If a non-UI caller ever appears, reopen the
+decision — do not respond by raising the cap.
 
 ---
 
@@ -1988,6 +2200,16 @@ the migration), §6.5.1 (new — the restated authorisation conjunct), §6.2 (wi
 (AC-13, AC-14a–e, AC-15b–d, AC-19b/c, AC-30, AC-31), §12. **Closed.**
 
 #### HD-3 → `THREE_PER_ITEM_FAIL_CLOSED` — `5d9a1f62-8b37-4e50-a9c4-71f2d8b3e605` (POLICY, RESOLVED)
+
+> ⚠️ **[SUPERSEDED IN FULL — HD-5 `8585491a-11a9-473e-ae4f-d66a210408f3`, 2026-10-12.]** Everything in
+> this subsection is **retained as history and is not current instruction.** HD-3 is superseded in full.
+> Its object carries a matching `## SUPERSEDED IN FULL` block, and its own text above is unedited — the
+> decision trail reads in order.
+>
+> **One claim below must not survive into implementation:** that HD-3 is *closed and final*. It was
+> closed, and the human has since reopened and reversed it. **HD-3's rejection of a per-operator-per-day
+> cap is the one substantive judgment that survives** — that reasoning still governs the explicit-cap
+> case, which HD-5 keeps. Its fail-closed default does not survive.
 
 > *"Three permits enough genuine retries to work through a transient failure while still bounding the
 > worst case. The cap is counted per work item, not per operator per day, because a per-operator-per-day
@@ -2241,6 +2463,17 @@ should distinguish `ACTIVE_JOB_EXISTS` from `TERMINAL_JOB_WITH_SAME_KEY`.
 | Risk level 0–3 with rationale | §12 (`3`, re-confirmed at 1.1.0, re-confirmed again at 1.2.0) |
 | **Human decisions routed and resolved** | **§13.1** — HD-1 `7c1e9a44` → `INCLUDE_STOP`; HD-2 `2b8f4c07` → `AUDIT_TABLE_SAME_TX`; HD-3 `5d9a1f62` → `THREE_PER_ITEM_FAIL_CLOSED`. 3 routed, **3 resolved, 0 open.** |
 | **Decision follow-ups discharged** | `2b8f4c07` same-transaction atomicity → §6.4.3 + AC-14b; additive `reason` parameter → §6.4.2 (confirmed, not provisional). `5d9a1f62` visibility obligation → §6.6.1 + AC-15b/AC-15c/AC-15d + AC-25 + QA pre-condition. `7c1e9a44` generic-escape-only → §10 N2/N4, AC-3. |
+
+⚠️ **[SUPERSEDED IN PART — HD-5 `8585491a`, 2026-10-12.]** The two rows above are **accurate as of
+2026-10-11** and are retained unchanged as the ledger of that revision. Two updates a reader must have:
+
+- **HD-3 is SUPERSEDED in full.** Its "visibility obligation" was discharged by the clauses listed in the
+  §6.6 banner and is **now discharged by removal** — there is nothing to make visible when unset.
+- **The ledger already omitted HD-4** (`8a3f6b17`), which is documented at 1.3.0/1.4.0 and is unaffected
+  by HD-5. That omission is pre-existing and is **not** corrected here; correcting it would edit a
+  revision record this lane does not own.
+- **HD-5 is now routed and resolved:** `8585491a-11a9-473e-ae4f-d66a210408f3` (POLICY, RESOLVED) →
+  `UNCOUNTED_OPERATOR_BOUNDED_AUTOMATIC`, superseding `5d9a1f62` in full.
 | **Required implementation sequencing** | **§16.2** — seam first (or atomic with), then screen. **§16.3** — why a negative-only lane contract cannot discharge it. |
 | **Constraint 3 "a queued alternative, NOT a button that silently does nothing"** | §7.1 item 5, AC-17, and **§6.5.2** — the alternative branch that makes a later tick actually retry a capacity-denied job. This was the constraint the reviewer's B1 found unmeetable at 1.1.0. |
 
@@ -2280,6 +2513,10 @@ should distinguish `ACTIVE_JOB_EXISTS` from `TERMINAL_JOB_WITH_SAME_KEY`.
 4. ~~The exact `SHIPIT_OPERATOR_MAX_RETRIES` value is unknown.~~ — **CLOSED: 3**, per `5d9a1f62`. What
    remains is an *operational* obligation, not a design gap: every stack must actually set it
    (§6.6.1 QA pre-condition), which sits outside this lane's `OWNED_PATHS`.
+   > ⚠️ **[SUPERSEDED — HD-5 `8585491a`, 2026-10-12.]** *"CLOSED: 3"* is **no longer the answer**: there is
+   > no default value, and the operational obligation to set one is **discharged by removal**. This item
+   > is better described as *closed by the reverse decision* — the question "what value?" was answered by
+   > removing the question. The QA stack in particular must set nothing.
 5. **NEW at 1.1.0 — `schema_bootstrap.sql` is assessed as needing no edit, but not verified.** §6.4.4
    records why (restated on the correct grounds at 1.2.0 — see L1 there), and AC-31 makes the
    implementer verify rather than trust it. If the generator emits something the bootstrap file must

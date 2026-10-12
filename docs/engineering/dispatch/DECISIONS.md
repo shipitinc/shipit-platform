@@ -368,3 +368,33 @@ premise in a dispatch is to **report it and stop**, which it did do as well.
 ## Decision f9a043ae-a2bc-41f4-bc7a-46ca88103123 — typed confirmation only when governed (2026-10-09)
 
 Offboarding a **governed** product requires typing the product id; a **registered** product offboards in one tap. Offboarding a governed product discards an accepted baseline and cannot be reversed without a fresh baseline review, so it earns a real gate — while the operator's own case (registered, no baseline, no key) has nothing to lose and stays frictionless. Also matches the design system's existing pattern for irreversible decisions.
+
+## HD-5 → `UNCOUNTED_OPERATOR_BOUNDED_AUTOMATIC` — `8585491a-11a9-473e-ae4f-d66a210408f3` (POLICY, RESOLVED, 2026-10-12)
+
+**Supersedes `5d9a1f62-8b37-4e50-a9c4-71f2d8b3e605` (HD-3) in full.** The human reversed HD-3:
+
+> *"Ship IT restricts the number of times I can retry a job. Can you revert that decision it's ok to retry a job unlimited times as long as the try is human triggered and not automatic. We'd only want to limit the retries if it was an agent driven process."*
+
+| decision_id | was | now |
+|---|---|---|
+| `5d9a1f62` (HD-3) | 3 retries per work item; **fail closed** — unset ⇒ the retry action is not offered at all | **SUPERSEDED IN FULL** by `8585491a` |
+| `8585491a` (HD-5) | — | **UNCOUNTED by default.** Unset/blank/unparseable/negative ⇒ the action is offered. Explicit `0` ⇒ disabled. Explicit positive `N` ⇒ capped at `N`, counted per work item as HD-3 counted it. **AUTOMATIC retries unaffected** — still `maxAttempts` via `RetryPolicy.canRetry` (`triage_defect` is `maxAttempts: 2`). |
+
+**HD-3 was not wrong, and the record says so.** *"An operator action that spends real credits must never be armed by a missing configuration"* is sound reasoning applied to the wrong actor: with `SHIPIT_OPERATOR_MAX_RETRIES` unset the retry action now resolves to **unbounded** and **is** offered. The bound was aimed at automation and was landing on a human's judgement, and the fail-closed half had a cost of its own — a correct button that reads as a broken screen to the operator it serves. What HD-5 gives up is named rather than argued away: an operator who clicks retry repeatedly spends repeatedly, and nothing counts it unless an operator configures a cap. The human priced that and accepted it.
+
+**Retained from HD-3, still load-bearing:** the **per-work-item** count and the human's rejection of a per-operator-per-day cap (*"trivially reset and does not bound a single pathological item"*); **`0` as a valid configuration** meaning permanently disabled, not a failure; counting from the **`operator_action` ledger**, which is exact and append-only.
+
+### Residual risk — recorded, not buried
+
+**"Human-triggered" is a property of the caller list, not of the audit row.** `requestedBy` on the retry action is a **client-supplied `String`** written into `operator_action` as-is — not a cryptographic identity claim. Anything able to reach the RPC with a session can attribute a retry to any string it likes. Commit `611f2cc` therefore pins the caller list **by name in a test** so a future agent/cron/webhook path fails loudly. **If a non-UI caller is ever added, this decision's premise is void — reopen it; do not widen the cap to compensate.**
+
+### The QA-stack finding
+
+`docker/compose.qa.yaml` **never had `SHIPIT_OPERATOR_MAX_RETRIES` set at any commit, on any ref** — `git log --all -S 'SHIPIT_OPERATOR_MAX_RETRIES' -- docker/compose.qa.yaml` returns nothing. The `:-3` the QA stack was actually running existed **only as an uncommitted working-tree edit**, so the cap the live QA environment carried was invisible to review. The other three stacks *did* commit `:-3` (`d41f2b6`) and lowered it to empty (`8492dcb`). The QA edit is removed and a comment recording why now stands in its place. Corroborated independently by `611f2cc`: *"compose.qa.yaml is untouched — it sets no operator-retry value at any commit."*
+
+### Reconciliation, per `LEARNING_POLICY.md`
+
+The reviewer's `DO_NOT_MERGE` on `fix/operator-retry-unbounded` (`611f2cc`) was a **`CONTRADICTION`** — this index, the decision object and the design brief all said *fail closed* while the code said *uncounted*. Per `LEARNING_POLICY.md` a contradiction must be **surfaced and reconciled, never silently overwritten**, so:
+
+- **Nothing was deleted.** HD-3's object carries a `## SUPERSEDED IN FULL` block appended below its own unchanged resolution, and every affected clause of `design-failed-work-retry/design-brief.md` is marked **SUPERSEDED in place** with a pointer and a reason. The audit trail shows the reversal rather than two apparently current answers to one question.
+- Both decisions are readable in order, each with its own reasoning intact.
