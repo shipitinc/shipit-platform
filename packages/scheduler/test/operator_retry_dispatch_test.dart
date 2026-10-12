@@ -461,6 +461,174 @@ void main() {
     );
   });
 
+  group(
+    'a DECISION-driven re-triage dispatches too — the QA defect, reproduced',
+    () {
+      // Everything above proves the OPERATOR RETRY end-to-end. Nothing proved
+      // the other half: an item that arrives at `designNotRequired` because a
+      // human resolved a rework, rather than because an operator pressed a
+      // button. That is the live QA defect on `defect-DEF-1791684804452198`
+      // (2026-10-12), where every triage key was already consumed by a
+      // TERMINAL job and `enqueueIfAbsent` returned `created: false` on every
+      // tick, forever.
+      //
+      // The setup below is that item's job table verbatim, created through the
+      // REAL `JobQueue` so the keys are genuinely held rather than asserted to
+      // be. Nothing about the queue's own rules is changed: a `succeeded` or
+      // `failed` holder keeps its key, exactly as the stale-job lane decided,
+      // and only the DISCRIMINATOR decides whether a fresh key is asked for.
+
+      test(
+        'an engineering-review rework enqueues under a FRESH key and runs',
+        () async {
+          final host = await _Host.start(
+            seed: _seedDefectAtEngineeringReviewGate,
+            cap: 1,
+          );
+          await _holdTerminalTriageJob(
+            host,
+            '${host.workItemId}:triage_defect',
+            JobState.failed,
+          );
+          await _holdTerminalTriageJob(
+            host,
+            '${host.workItemId}:triage_defect:a1',
+            JobState.failed,
+          );
+          await _holdTerminalTriageJob(
+            host,
+            '${host.workItemId}:triage_defect:a2',
+            JobState.succeeded,
+          );
+          expect(
+            (await host.triageJobs()).map((j) => j.dedupeKey).toSet(),
+            {
+              '${host.workItemId}:triage_defect',
+              '${host.workItemId}:triage_defect:a1',
+              '${host.workItemId}:triage_defect:a2',
+            },
+            reason:
+                'the seeded state must be the QA state, or nothing below '
+                'proves anything',
+          );
+
+          // THE BUG, verbatim: the item is already at a `triageDefectDefinition`
+          // entry state and a tick enqueues nothing, because the key the
+          // builder computes is one a terminal job holds.
+          final before = await host.scheduler.tick();
+          expect(
+            before.enqueued,
+            isEmpty,
+            reason:
+                'this is the inert item: designNotRequired is a legal entry '
+                'state and the key is consumed, so no job can be created',
+          );
+
+          // The human says "this is not acceptable".
+          final reworked = await host.engine.resolveHumanDecision(
+            decisionId:
+                (await host.store.readHumanDecisionsForWorkItem(
+                      host.workItemId,
+                    ))
+                    .firstWhere(
+                      (d) =>
+                          d.decisionType == HumanDecisionType.engineeringReview,
+                    )
+                    .decisionId,
+            choice: HumanDecisionChoice.rework,
+            decider: 'bob@example.com',
+            rationale: 'The result is not acceptable',
+            signature: DecisionSignature(
+              algorithm: 'Ed25519',
+              publicKey: 'key-1',
+              signature: 'sig-1',
+              signedAt: DateTime.now(),
+            ),
+          );
+          expect(reworked.state, WorkItemState.designNotRequired);
+          expect(
+            reworked.metadata?['triageAttempt'],
+            3,
+            reason:
+                'the rework advances the discriminator past every key a '
+                'terminal job holds; this is the value that was missing',
+          );
+
+          host.parkRuns = true;
+          final tick = host.scheduler.tick();
+          await waitUntil(
+            () async => (await host.triageJobs()).any(
+              (j) => j.state == JobState.running,
+            ),
+            because: 'the re-triaged item must dispatch on the ordinary tick',
+          );
+
+          final running = (await host.triageJobs()).singleWhere(
+            (j) => j.state == JobState.running,
+          );
+          expect(
+            running.dedupeKey,
+            '${host.workItemId}:triage_defect:a3',
+            reason: 'the fresh suffix is the whole fix',
+          );
+          expect(host.dispatcher.started, hasLength(1));
+
+          host.releaseAll();
+          await tick;
+        },
+      );
+
+      test('the re-entry dispatch does NOT disturb the queue\'s own rule: a '
+          'terminal holder keeps its key', () async {
+        // The control for the test above. The fix is in the DISCRIMINATOR,
+        // not in `enqueueIfAbsent`: against the SAME consumed `:a2` key the
+        // queue must still refuse, and against the new `:a3` it must still
+        // create. If someone "fixed" this by teaching the queue to yield a
+        // consumed key to an item in an entry state, this fails.
+        final host = await _Host.start(
+          seed: _seedDefectAtEngineeringReviewGate,
+          cap: 1,
+        );
+        final queue = JobQueue(store: host.jobStore);
+        final consumed = await queue.enqueueIfAbsent(
+          workItemId: host.workItemId,
+          definition: triageDefectDefinition,
+          dedupeKey: '${host.workItemId}:triage_defect:a2',
+          instruction: 'x',
+        );
+        expect(consumed.created, isTrue);
+        await queue.complete(job: consumed.job, terminal: JobState.succeeded);
+        expect(
+          (await host.jobStore.readJob(consumed.job.jobId))!.state,
+          JobState.succeeded,
+        );
+
+        final again = await queue.enqueueIfAbsent(
+          workItemId: host.workItemId,
+          definition: triageDefectDefinition,
+          dedupeKey: '${host.workItemId}:triage_defect:a2',
+          instruction: 'x',
+        );
+        expect(
+          again.created,
+          isFalse,
+          reason:
+              'a succeeded job records an ATTEMPT; re-enqueueing against it '
+              'would be an unbounded automatic re-run. That rule is '
+              'untouched and must stay untouched.',
+        );
+
+        final fresh = await queue.enqueueIfAbsent(
+          workItemId: host.workItemId,
+          definition: triageDefectDefinition,
+          dedupeKey: '${host.workItemId}:triage_defect:a3',
+          instruction: 'x',
+        );
+        expect(fresh.created, isTrue, reason: 'a key nothing holds is free');
+      });
+    },
+  );
+
   group('AC-37 the retried job still carries its defect payload', () {
     test('all eight keys reach the instruction the agent is given', () async {
       final host = await _Host.start(seed: _seedFailedDefect, cap: 1);
@@ -870,6 +1038,154 @@ Future<void> _failAgain(_Host host) async {
     to: WorkItemState.agentFailed,
     trigger: TransitionTrigger.systemEvent,
   );
+}
+
+/// The same defect, parked at `waitingForHumanDecision` on an
+/// `engineeringReview` decision, with a `triageAttempt` of 2 already behind
+/// it — the exact shape of `defect-DEF-1791684804452198` when it went inert.
+///
+/// The marker is stamped through the durable store rather than a transition,
+/// because no public API writes it on this route (that is the defect being
+/// tested) and the walk below must start from `draft`.
+Future<String> _seedDefectAtEngineeringReviewGate(
+  DurableWorkflowEngine engine,
+) async {
+  const id = _Host.seededWorkItemId;
+  await engine.createWorkItem(
+    workItemId: id,
+    productId: 'prod-1',
+    category: WorkItemCategory.bugfix,
+    title: 'Triage reported defect DEF-1791686704991884',
+    description:
+        'A customer reported that the checkout total is wrong when a cart '
+        'holds more than one item. Triage it and classify the defect.',
+    metadata: {
+      'defectId': 'DEF-1791686704991884',
+      'defectSeverity': 'high',
+      'triageAttempt': 2,
+    },
+  );
+  Future<void> step(
+    WorkItemState to, {
+    Map<String, dynamic> context = const {},
+  }) => engine.transition(
+    workItemId: id,
+    to: to,
+    trigger: to == WorkItemState.agentCompleted
+        ? TransitionTrigger.agentResult
+        : to == WorkItemState.reviewInProgress
+        ? TransitionTrigger.agentResult
+        : TransitionTrigger.systemEvent,
+    context: context,
+  );
+
+  await step(WorkItemState.planning);
+  await step(WorkItemState.planned, context: const {'featureRef': 'f-1'});
+  await step(
+    WorkItemState.designRequired,
+    context: const {'designContractId': 'dc-1'},
+  );
+  await step(
+    WorkItemState.designInReview,
+    context: const {'designContractStatus': DesignContractStatus.underReview},
+  );
+  await engine.resolveHumanDecision(
+    decisionId: (await engine.requestHumanDecision(
+      workItemId: id,
+      decisionType: HumanDecisionType.designApproval,
+      actor: const WorkflowActor(
+        actorId: 'orch-1',
+        actorType: ActorType.orchestrator,
+      ),
+    )).decisionId,
+    // An approval is NOT a re-triage, so it must leave the marker alone — the
+    // seed asserts exactly that below.
+    choice: HumanDecisionChoice.approve,
+    decider: 'alice@example.com',
+    rationale: 'Approved',
+    signature: DecisionSignature(
+      algorithm: 'Ed25519',
+      publicKey: 'key-1',
+      signature: 'sig-1',
+      signedAt: DateTime.now(),
+    ),
+  );
+  expect(
+    (await engine.loadWorkItem(id)).metadata?['triageAttempt'],
+    2,
+    reason:
+        'design approval is ordinary progress, not a re-triage. If it moved '
+        'the discriminator, the seeded QA state below would be a fiction.',
+  );
+  await step(
+    WorkItemState.agentExecuting,
+    context: const {'agentAvailable': true, 'capabilitiesMatch': true},
+  );
+  final agentResult = AgentResult(
+    resultId: 'res-1',
+    sessionId: 'ses-1',
+    workItemId: id,
+    status: AgentResultStatus.completed,
+    artifacts: const [],
+    diagnostics: AgentDiagnostics(
+      exitCode: 0,
+      durationMs: 1,
+      toolCalls: 1,
+      errors: const [],
+      warnings: const [],
+    ),
+    structuredResult: const {},
+    completedAt: DateTime.now(),
+  );
+  await step(
+    WorkItemState.agentCompleted,
+    context: {'qaContractId': 'qa-1', 'agentResult': agentResult},
+  );
+  await step(
+    WorkItemState.reviewInProgress,
+    context: {'agentResult': agentResult},
+  );
+  await engine.requestHumanDecision(
+    workItemId: id,
+    decisionType: HumanDecisionType.engineeringReview,
+    question: 'Approve the implementation?',
+    actor: const WorkflowActor(
+      actorId: 'reviewer-2',
+      actorType: ActorType.engineeringReviewer,
+    ),
+    extraContext: const {'producerActorId': 'agent-1'},
+  );
+  expect(
+    (await engine.loadWorkItem(id)).state,
+    WorkItemState.waitingForHumanDecision,
+  );
+  return id;
+}
+
+/// Creates one TERMINAL triage job under [dedupeKey] through the real
+/// [JobQueue], so the key is genuinely held rather than assumed to be.
+///
+/// This is the QA job table reproduced, not a new scenario: the fix must not
+/// touch how a holder keeps a key, only whether the item asks for a different
+/// one.
+Future<void> _holdTerminalTriageJob(
+  _Host host,
+  String dedupeKey,
+  JobState terminal,
+) async {
+  final queue = JobQueue(store: host.jobStore);
+  final created = await queue.enqueueIfAbsent(
+    workItemId: host.workItemId,
+    definition: triageDefectDefinition,
+    dedupeKey: dedupeKey,
+    instruction: 'seeded terminal holder',
+  );
+  expect(
+    created.created,
+    isTrue,
+    reason: '$dedupeKey must actually be free when this seeds it',
+  );
+  await queue.complete(job: created.job, terminal: terminal);
 }
 
 const _defectPayloadKeys = <String>[

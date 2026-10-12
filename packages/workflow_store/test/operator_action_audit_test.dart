@@ -406,44 +406,138 @@ void main() {
       expect(after.length, before.length + 1);
     });
 
-    test('an existing triageAttempt is OVERWRITTEN by the newer one', () async {
-      // Merge, not append: the newest attempt number must win, or the dedupe
-      // key would never change and a second retry would reuse a consumed key.
+    test(
+      'a stale triageAttempt is ADVANCED, never lowered back onto the ledger',
+      () async {
+        // ## THIS TEST'S EXPECTATION CHANGED, AND THE OLD ONE WAS WRONG
+        //
+        // It used to assert that a marker of `7` left by some earlier path is
+        // OVERWRITTEN with `1` — "the ledger says this is the first recorded
+        // retry, and the marker must say so too". Its stated reason was that
+        // "a kept 7 would make the dedupe key collide with nothing and enqueue
+        // nothing", which is not true: `:a7` is a key nothing holds, so a kept
+        // 7 dispatches normally.
+        //
+        // The real defect in that rule is the opposite one, and it is what this
+        // work item hit in QA on 2026-10-12
+        // (`defect-DEF-1791684804452198`): counting the marker from the RETRY
+        // LEDGER alone means an item whose marker was advanced by a resolved
+        // rework decision — which records no retry row — gets handed the ledger
+        // number again on its next retry. That number is a key the rework's
+        // own dispatch already consumed, so `enqueueIfAbsent` returns
+        // `created: false` and the item is inert for ever. One counter, two
+        // writers, two arithmetic rules — they collide.
+        //
+        // So the marker is now monotone: every value it has ever carried is
+        // strictly below the next one, whatever order the intents arrived in.
+        final store = InMemoryWorkflowStore();
+        final engine = DurableWorkflowEngine(store: store);
+        final id = await _seedFailedDefect(engine);
+
+        // A marker left by an earlier path. The retry must go ABOVE it, never
+        // back down to the ledger count.
+        await engine.transition(
+          workItemId: id,
+          to: WorkItemState.designNotRequired,
+          trigger: TransitionTrigger.systemEvent,
+          metadataMerge: const {'triageAttempt': 7},
+        );
+        final stamped = await store.readWorkItem(id);
+        expect(stamped.metadata?['triageAttempt'], 7);
+        final sizeBeforeRetry = stamped.metadata!.length;
+
+        await _failAgain(engine, id);
+        await engine.operatorRetry(
+          workItemId: id,
+          requestedBy: requestedBy,
+          reason: reason,
+          requestId: 'req-9',
+        );
+        final after = (await store.readWorkItem(id)).metadata!;
+        expect(
+          after['triageAttempt'],
+          8,
+          reason:
+              'the ledger count is a FLOOR, not the answer: this retry is the '
+              'first recorded one and would have been handed 1, which is a key '
+              'a later rework on this same item had already consumed',
+        );
+        expect(
+          after['triageAttempt'],
+          isA<int>(),
+          reason:
+              'merge REPLACES the value under the key. A combined or appended '
+              'value would be a list or a string here, and no reader accepts '
+              'one — it would throw on the next tick instead of dispatching.',
+        );
+        expect(
+          after.length,
+          sizeBeforeRetry,
+          reason:
+              'merge REPLACES the value under the existing key, so the map '
+              'gains no entry — an appended marker would leave two values '
+              'under one name and the next reader could not choose',
+        );
+        expect(
+          after['defectId'],
+          before0[id]!['defectId'],
+          reason: 'the defect payload is untouched by the overwrite',
+        );
+      },
+    );
+
+    test('the retry ledger floor holds even when the marker is reset', () async {
+      // The defensive half of the same rule, and the reason `floor` exists
+      // rather than a bare increment. An out-of-band writer that RESETS the
+      // marker — a repair, a hand edit, a restored backup — must not be able to
+      // walk the counter back under a key an earlier retry already consumed.
+      // The ledger is the one watermark that cannot be reset without touching
+      // an append-only table, so it is the floor.
       final store = InMemoryWorkflowStore();
       final engine = DurableWorkflowEngine(store: store);
       final id = await _seedFailedDefect(engine);
 
-      // A stale marker from some earlier path must not win: the attempt number
-      // is counted from the durable ledger, and merge means the newest value
-      // REPLACES the old one rather than the two being combined or kept.
-      await engine.transition(
+      await engine.operatorRetry(
         workItemId: id,
-        to: WorkItemState.designNotRequired,
-        trigger: TransitionTrigger.systemEvent,
-        metadataMerge: const {'triageAttempt': 7},
+        requestedBy: requestedBy,
+        reason: reason,
+        requestId: 'req-1',
       );
-      expect((await store.readWorkItem(id)).metadata?['triageAttempt'], 7);
+      await _failAgain(engine, id);
+      await engine.operatorRetry(
+        workItemId: id,
+        requestedBy: requestedBy,
+        reason: reason,
+        requestId: 'req-2',
+      );
+      expect((await store.readWorkItem(id)).metadata?['triageAttempt'], 2);
+
+      // Reset the marker to 1 — the value req-1 already consumed.
+      final item = await store.readWorkItem(id);
+      await store.saveWorkItem(
+        item.copyWith(metadata: {...?item.metadata, 'triageAttempt': 1}),
+      );
 
       await _failAgain(engine, id);
       await engine.operatorRetry(
         workItemId: id,
         requestedBy: requestedBy,
         reason: reason,
-        requestId: 'req-9',
+        requestId: 'req-3',
       );
-      final after = (await store.readWorkItem(id)).metadata!;
       expect(
-        after['triageAttempt'],
-        1,
+        (await store.readWorkItem(id)).metadata?['triageAttempt'],
+        3,
         reason:
-            'the ledger says this is the first recorded retry, and the '
-            'marker must say so too — a kept 7 would make the dedupe key '
-            'collide with nothing and enqueue nothing',
+            'two retry rows are recorded, so the third retry cannot be handed '
+            '2 or anything lower — only strictly above what came before',
       );
       expect(
-        after['defectId'],
-        before0[id]!['defectId'],
-        reason: 'the defect payload is untouched by the overwrite',
+        (await store.readOperatorActionsForWorkItem(
+          id,
+        )).map((r) => r.attemptNumber),
+        [1, 2, 3],
+        reason: 'the AUDIT position is a separate number and still counts rows',
       );
     });
   });
