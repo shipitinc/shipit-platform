@@ -9,13 +9,33 @@ import '../triage/lane_i_tick_hook.dart';
 /// Resolves the workload an engineering reviewer must operate on: the revision
 /// the IMPLEMENTER actually produced, never the triage/construction-time source.
 ///
-/// The produced artifact is recorded on the implementer's [WorkerExecution] as
-/// `repositoryPath` plus the artifact commit's `endingRevision` (see
-/// `ArtifactCommitter`). Only a non-reviewer execution whose `endingRevision`
-/// differs from its `requestedStartingRevision` matters: an equal pair means no
-/// commit was produced, and a reviewer execution is never a source of artifacts.
+/// Selection is ANCHORED ON IDENTITY, not on recency. [WorkerExecution] carries
+/// no role field, so "the implementer's execution" cannot be read off it
+/// directly. It is resolved instead through the one identifier that does join
+/// the two durable records: the coordinator stamps the producing execution id
+/// onto the work item's metadata as `producerActorId`
+/// (`ExecutionCoordinator._completeSuccess`), and `LocalWorker` records that
+/// very same id on the worker execution as `agentExecutionId`
+/// (`LocalWorker._finish`, fed by `AgentExecutionRequest.executionId`, which is
+/// `'agx-$workerExecutionId'`). The implementer's artifact therefore belongs to
+/// the one execution whose `agentExecutionId` equals `producerActorId`.
 ///
-/// Returns `null` when nothing can be resolved. That is deliberate and
+/// Recency would be wrong here. `LocalWorker` commits an artifact for EVERY
+/// non-reviewer role (`ArtifactCommitter`, branch `shipit/impl/<workItemId>`),
+/// so a LATER triage run — which in this deployment works in its own scratch
+/// repository, not the product repository — is exactly as much a candidate as
+/// the implementer's run. "Latest" would hand a reviewer the triage commit as
+/// if it were the implementation under review: the wrong-revision dispatch this
+/// resolver exists to prevent.
+///
+/// The produced artifact is recorded as `repositoryPath` plus the artifact
+/// commit's `endingRevision`. An `endingRevision` equal to
+/// `requestedStartingRevision` (or null) means no commit was produced, and a
+/// reviewer execution is never a source of artifacts.
+///
+/// Returns `null` whenever the artifact cannot be identified with certainty: no
+/// `producerActorId`, no execution carrying it, an ambiguous match, a reviewer
+/// execution, or an execution that produced no artifact. That is deliberate and
 /// fail-closed: the scheduler then does not dispatch at all and reports the job
 /// in `SchedulerTickResult.blockedArtifactMissing`, where
 /// [engineeringReviewMissingArtifact] turns it into a blocking human decision.
@@ -24,34 +44,36 @@ WorkloadResolver engineeringReviewWorkloadResolver({
   required String runtimeTypeId,
 }) {
   return (job, item) async {
-    final executions = await workerStore.listWorkerExecutions();
-    WorkerExecution? latest;
-    DateTime latestAt = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
-    for (final execution in executions) {
+    // The anchor is the only trustworthy statement of WHO produced the work
+    // item. Without it there is nothing to anchor to, and nothing may be
+    // guessed at.
+    final producerActorId = item.metadata?['producerActorId'];
+    if (producerActorId is! String || producerActorId.isEmpty) return null;
+
+    final matches = <WorkerExecution>[];
+    for (final execution in await workerStore.listWorkerExecutions()) {
       if (execution.workItemId != item.workItemId) continue;
+      if (execution.agentExecutionId != producerActorId) continue;
       if (execution.requiredCapabilities.contains(
         WorkerCapability.engineeringReview,
       )) {
         continue;
       }
-      final produced = execution.endingRevision;
-      if (produced == null || produced == execution.requestedStartingRevision) {
-        continue;
-      }
-      final at =
-          execution.endedAt ??
-          execution.startedAt ??
-          execution.createdAt ??
-          DateTime.fromMillisecondsSinceEpoch(0);
-      if (latest == null || at.isAfter(latestAt)) {
-        latest = execution;
-        latestAt = at;
-      }
+      matches.add(execution);
     }
-    if (latest == null) return null;
+    // Exactly one producer. Two executions carrying the same agent execution id
+    // cannot be told apart from this data, so refusing beats picking one and
+    // dispatching a reviewer at a revision nobody vouched for.
+    if (matches.length != 1) return null;
+
+    final producer = matches.single;
+    final produced = producer.endingRevision;
+    if (produced == null || produced == producer.requestedStartingRevision) {
+      return null;
+    }
     return SchedulerWorkload(
-      repositoryPath: latest.repositoryPath,
-      startingRevision: latest.endingRevision!,
+      repositoryPath: producer.repositoryPath,
+      startingRevision: produced,
       timeoutSeconds: 300,
       runtimeTypeId: runtimeTypeId,
     );
