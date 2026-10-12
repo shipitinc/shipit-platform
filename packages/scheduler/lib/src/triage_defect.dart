@@ -18,19 +18,24 @@ const JobDefinition triageDefectDefinition = JobDefinition(
 ///
 /// ## Why the attempt suffix exists
 ///
-/// An operator retry returns a failed work item to `designNotRequired`, so the
-/// scheduler enqueues for it again — but `JobQueue.enqueueIfAbsent` resolves a
-/// key that ANY job already holds, terminal or not. The original triage job for
-/// a failed item is TERMINAL, so its key is consumed for ever and reusing it
-/// returns `created: false`: the retry silently does nothing, and an operator
-/// who pressed "Try again" watches nothing happen.
+/// Re-triage — a human-initiated "do this work again", whether that is an
+/// operator retry or a resolved rework/reject decision — returns the work item
+/// to a state this job can dispatch from, so the scheduler enqueues for it
+/// again. But `JobQueue.enqueueIfAbsent` resolves a key that ANY job already
+/// holds, terminal or not. The triage job for an item that has been triaged
+/// once is TERMINAL, so its key is consumed for ever and reusing it returns
+/// `created: false`: the re-triage silently does nothing, and the human who
+/// asked for it watches nothing happen.
 ///
 /// The discriminator has to be readable from the `WorkItem` alone, because
 /// `DedupeKeyBuilder` is `String Function(WorkItem, JobDefinition)` —
 /// synchronous, no store, no request context — and it runs on every tick for
-/// every runnable item. `metadata['triageAttempt']` is written by the retry
-/// inside the transition's own transaction, so it is durable before any tick
-/// can read it.
+/// every runnable item. `metadata['triageAttempt']` is written inside the
+/// re-triage's own transaction — by `DurableWorkflowEngine.operatorRetry` for a
+/// retry, and by `DurableWorkflowEngine.resolveHumanDecision` for a resolved
+/// rework/reject decision — so it is durable before any tick can read it, and
+/// it advances for EVERY route that re-enters triage, not only the retry
+/// endpoint.
 ///
 /// ## WHY THE ABSENT CASE IS BYTE-IDENTICAL TO TODAY
 ///
@@ -41,38 +46,25 @@ const JobDefinition triageDefectDefinition = JobDefinition(
 /// job for work that is already being handled. This property is not to be
 /// traded for anything.
 ///
-/// ## WHY AN UNREADABLE MARKER THROWS
+/// ## WHY THE READING IS DELEGATED, NOT REPEATED
 ///
-/// A marker that is PRESENT but unreadable must not fall back to the historical
-/// key. That key is already consumed by the terminal job the retry exists to
-/// replace, so `enqueueIfAbsent` would return `created: false` and the operator
-/// would watch "Try again" do nothing — the exact silent-no-op class this
-/// feature exists to close, reached through a type coercion rather than
-/// through a missing edge. A loud failure on one work item is the better of
-/// the two failures.
+/// The marker is read by [DurableWorkflowEngine.readTriageAttempt], which is
+/// the same reader `DurableWorkflowEngine.nextTriageAttempt` uses to produce
+/// the value stamped in the first place. Two copies of "how a marker is read"
+/// is how a writer and a reader come to disagree about which numbers are
+/// attempt numbers, and the disagreement would not throw — it would build a
+/// different key and enqueue nothing.
 ///
-/// The forms accepted are therefore every shape the marker legitimately takes
-/// on its way through JSON and back: an `int`, a whole-valued `double` (a
-/// `1.0` is still attempt one, and truncating `1.5` would let two different
-/// attempts collide on one key), and a numeric `String`. Anything else is a
-/// defect in whatever wrote the marker and is reported as one.
+/// That reader also owns the unreadable case: a marker that is PRESENT but is
+/// not an int, a whole-valued double or a numeric String throws
+/// [FormatException] rather than falling back to the historical key, because
+/// that key is already consumed by the terminal job the re-triage exists to
+/// replace. See that method for the full argument; it is stated once, here, to
+/// record that this builder inherits it rather than choosing it.
 String triageDefectDedupeKey(WorkItem item, JobDefinition definition) {
   final base = '${item.workItemId}:${definition.jobType.wire}';
-  final marker = (item.metadata ?? const <String, dynamic>{})['triageAttempt'];
-  if (marker == null) return base;
-  final attempt = switch (marker) {
-    final int value => value,
-    final double value when value.isFinite && value == value.roundToDouble() =>
-      value.toInt(),
-    final String value when int.tryParse(value) != null => int.parse(value),
-    _ => throw FormatException(
-      'Unreadable ${DurableWorkflowEngine.triageAttemptMetadataKey} on work '
-      'item ${item.workItemId}: expected an int, a whole-valued double or a '
-      'numeric String, got ${marker.runtimeType} ($marker). Falling back to '
-      "'$base' would reuse a key the previous attempt already consumed, so "
-      'the retry would enqueue nothing while looking healthy.',
-    ),
-  };
+  final attempt = DurableWorkflowEngine.readTriageAttempt(item);
+  if (attempt == null) return base;
   return '$base:a$attempt';
 }
 

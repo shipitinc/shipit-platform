@@ -280,15 +280,109 @@ class DurableWorkflowEngine {
     actorType: ActorType.orchestrator,
   );
 
-  /// Metadata key carrying the retry attempt number.
+  /// Metadata key carrying the RE-TRIAGE DISCRIMINATOR.
   ///
-  /// It lives on the work item because it is the only per-retry discriminator
+  /// It lives on the work item because it is the only per-intent discriminator
   /// a `DedupeKeyBuilder` can read: that builder is
   /// `String Function(WorkItem, JobDefinition)` — synchronous, no store, no
-  /// request context. A retried item's original job key is consumed for ever
+  /// request context. An item's original job key is consumed for ever
   /// (`JobQueue.enqueueIfAbsent` refuses a key ANY job holds, terminal or not),
-  /// so without this marker the second retry would silently enqueue nothing.
+  /// so without this marker the SECOND arrival at a triage entry state would
+  /// silently enqueue nothing.
+  ///
+  /// ## IT COUNTS INTENTS, NOT RETRIES
+  ///
+  /// It was named for the operator retry because the retry was the only thing
+  /// that stamped it, and it was counted from the operator-action ledger for
+  /// the same reason. Both are wrong now, and both wrong the same way: an
+  /// item reaches a triage entry state by several routes, and a counter that
+  /// only knows about one of them hands two different intents the same number.
+  ///
+  /// It is ONE monotone counter with ONE arithmetic rule, [nextTriageAttempt],
+  /// advanced by every human-initiated re-triage — the operator retry and the
+  /// resolved rework/reject decisions alike. Two writers, two different rules,
+  /// one counter is how the two collide: a rework decision advancing it to 3
+  /// while the ledger still counts two retries hands the NEXT operator retry
+  /// the number 3 as well, and that retry reuses the key the rework just
+  /// consumed — the same silent no-op, reached from the other end.
+  ///
+  /// Strict monotonicity is the whole safety argument. A number that only ever
+  /// goes UP cannot name a key some earlier attempt already holds, whatever
+  /// order intents arrive in.
   static const String triageAttemptMetadataKey = 'triageAttempt';
+
+  /// The discriminator stamped on [item], or null when it is ABSENT.
+  ///
+  /// ## THE ONE READER
+  ///
+  /// [nextTriageAttempt] and `triageDefectDedupeKey`
+  /// (packages/scheduler/lib/src/triage_defect.dart, which builds
+  /// `'<workItemId>:triage_defect:a<n>'` from it on every tick) both call this,
+  /// so the number the engine stamps and the number the scheduler reads cannot
+  /// be derived by two different rules and drift apart. That drift is not
+  /// hypothetical: it is the shape of the defect this counter is here to fix.
+  ///
+  /// `null` is returned for an ABSENT marker and for an explicitly null one,
+  /// because both mean the same thing — this work item has never been
+  /// re-triaged — and both resolve to the historical, byte-identical
+  /// `'<workItemId>:triage_defect'` key. That key is the one every already
+  /// persisted job still matches, so the absent case may not change.
+  ///
+  /// ## WHY A PRESENT-BUT-UNREADABLE MARKER THROWS
+  ///
+  /// A marker that is present but unreadable must not fall back to the
+  /// historical key. That key is already consumed by the terminal job the
+  /// re-triage exists to replace, so `enqueueIfAbsent` would return
+  /// `created: false` and the human would watch their decision do nothing —
+  /// the exact silent-no-op class this marker exists to close, reached through
+  /// a type coercion rather than through a missing edge. A loud failure on one
+  /// work item is the better of the two failures.
+  ///
+  /// The forms accepted are every shape the marker legitimately takes on its
+  /// way through JSON and back: an `int`, a whole-valued `double` (a `1.0` is
+  /// still attempt one, and truncating `1.5` would let two different attempts
+  /// collide on one key), and a numeric `String`. Anything else is a defect in
+  /// whatever wrote the marker and is reported as one.
+  static int? readTriageAttempt(WorkItem item) {
+    final marker =
+        (item.metadata ?? const <String, dynamic>{})[triageAttemptMetadataKey];
+    if (marker == null) return null;
+    return switch (marker) {
+      final int value => value,
+      final double value
+          when value.isFinite && value == value.roundToDouble() =>
+        value.toInt(),
+      final String value when int.tryParse(value) != null => int.parse(value),
+      _ => throw FormatException(
+        'Unreadable $triageAttemptMetadataKey on work '
+        'item ${item.workItemId}: expected an int, a whole-valued double or a '
+        'numeric String, got ${marker.runtimeType} ($marker). Falling back to '
+        "the historical unsuffixed key would reuse one the previous attempt "
+        'already consumed, so the re-triage would enqueue nothing while '
+        'looking healthy.',
+      ),
+    };
+  }
+
+  /// The next discriminator value for [item]: strictly greater than both the
+  /// value it already carries and [floor].
+  ///
+  /// ONE arithmetic rule for both writers ([operatorRetry] and
+  /// [resolveHumanDecision]) — see [triageAttemptMetadataKey] for why two
+  /// rules over one counter collide.
+  ///
+  /// [floor] lets a caller that knows a higher watermark pass it in without a
+  /// second mechanism: [operatorRetry] passes the operator-action ledger
+  /// count, so a retry can never be handed a number at or below a retry that
+  /// came before it even if the marker itself was tampered with or reset
+  /// out-of-band. The default of `0` is right for callers that have no second
+  /// watermark, because the marker is then the only record that exists.
+  ///
+  /// ABSENT means `1`, so the FIRST re-triage of a never-re-triaged item is
+  /// `:a1` and never `:a0` — and, critically, is never the unsuffixed
+  /// historical key that a terminal job already holds.
+  static int nextTriageAttempt(WorkItem item, {int floor = 0}) =>
+      max(floor, readTriageAttempt(item) ?? 0) + 1;
 
   /// The number of `retry` operator actions already recorded for
   /// [workItemId] — the durable audit ledger, never a counter in memory.
@@ -299,7 +393,15 @@ class DurableWorkflowEngine {
         .length;
   }
 
-  /// The attempt number the NEXT retry of [workItemId] would mint.
+  /// The AUDIT position of the next retry of [workItemId] — how many `retry`
+  /// rows exist, plus one.
+  ///
+  /// This is the number written to `OperatorActionRecord.attemptNumber` and
+  /// shown to the operator, and it is deliberately NOT the dispatch
+  /// discriminator. The two used to be the same value and must no longer be:
+  /// a resolved rework decision advances the discriminator without recording a
+  /// retry row, so from that point on the audit position and the dedupe
+  /// suffix legitimately diverge. Read [nextTriageAttempt] for the latter.
   Future<int> nextOperatorRetryAttempt(String workItemId) async =>
       (await operatorRetryCount(workItemId)) + 1;
 
@@ -321,17 +423,27 @@ class DurableWorkflowEngine {
   ///     This is what makes a network retry mint no second job: there is no
   ///     second write, so there is no second `triageAttempt`, so there is no
   ///     second dedupe key.
-  ///  2. **Attempt number**, counted from the ledger, NOT from a counter.
+  ///  2. **Audit position**, counted from the ledger, NOT from a counter.
   ///     Re-counted on every pass of the bounded loop below, because the
-  ///     competing writer may have moved the item on.
-  ///  3. **One transaction.** The state change, the transition record, the
+  ///     competing writer may have moved the item on. This is what
+  ///     `OperatorActionRecord.attemptNumber` records — how many retries this
+  ///     item has had.
+  ///  3. **Discriminator**, from [nextTriageAttempt] with the ledger count as
+  ///     its floor. This is a DIFFERENT number from step 2 and is no longer
+  ///     derived from it: a resolved rework decision advances the same
+  ///     discriminator without recording a retry row, so from the first rework
+  ///     onward the two legitimately differ. Deriving the marker from the
+  ///     ledger alone is what let a decision's fresh key be handed straight
+  ///     back to the next retry.
+  ///  4. **One transaction.** The state change, the transition record, the
   ///     audit row and the attempt marker are the same commit.
   ///
-  /// Two operators pressing retry on one item concurrently both compute
-  /// `n = 1`. The work-item compare-and-swap admits one writer; the loser
-  /// re-reads, sees attempt 1 recorded, and computes `n = 2`. That is the
-  /// correct outcome — two deliberate operator actions are two attempts — and
-  /// the loop is the same shape the scheduler's own reclaim uses.
+  /// Two operators pressing retry on one item concurrently both compute the
+  /// same discriminator. The work-item compare-and-swap admits one writer; the
+  /// loser re-reads, sees the committed marker, and computes a strictly higher
+  /// one. That is the correct outcome — two deliberate operator actions are two
+  /// attempts — and the loop is the same shape the scheduler's own reclaim
+  /// uses.
   ///
   /// A refused action — the item is not in `agent_failed`, the edge does not
   /// apply, another operator already moved it — throws
@@ -355,14 +467,20 @@ class DurableWorkflowEngine {
         return _store.readWorkItem(workItemId);
       }
 
-      // (2) ATTEMPT NUMBER — from the ledger, re-counted every pass.
-      final attempt =
+      // (2) AUDIT POSITION — from the ledger, re-counted every pass.
+      final auditPosition =
           recorded
               .where((a) => a.action == OperatorActionKind.retry.wire)
               .length +
           1;
 
       final item = await _store.readWorkItem(workItemId);
+
+      // (3) DISCRIMINATOR — one monotone counter shared with the resolved
+      // decision path, with the ledger count as the floor so a retry can never
+      // be handed a number at or below an earlier retry. Computed BEFORE the
+      // write so an unreadable marker fails with nothing written.
+      final attempt = nextTriageAttempt(item, floor: auditPosition - 1);
 
       try {
         return await transition(
@@ -386,7 +504,7 @@ class DurableWorkflowEngine {
             requestedBy: requestedBy,
             reason: reason,
             requestId: requestId,
-            attemptNumber: attempt,
+            attemptNumber: auditPosition,
             createdAt: DateTime.now().toUtc(),
           ),
         );
@@ -627,6 +745,24 @@ class DurableWorkflowEngine {
       target,
     );
 
+    // THE RE-TRIAGE DISCRIMINATOR, advanced here and nowhere else.
+    //
+    // Computed BEFORE `saveHumanDecision` below, and before the policy is even
+    // consulted, so that an unreadable marker fails with NOTHING written: the
+    // decision stays pending and the human may retry once the data is
+    // repaired, instead of finding a resolved decision attached to a work item
+    // that never moved.
+    //
+    // `null` means "this resolution does not re-triage anything" and leaves the
+    // item's metadata exactly as it was. See [_isReWorkDecision] for what
+    // counts and, more importantly, for what is deliberately NOT asked: the
+    // target state.
+    final isReWorkDecision = _isReWorkDecision(
+      decision.decisionType,
+      effectiveChoice,
+    );
+    final reTriageAttempt = isReWorkDecision ? nextTriageAttempt(item) : null;
+
     // Prepare context with escalation index and max escalation for validation
     final currentEscalationIndex =
         item.metadata?['escalationIndex'] as int? ?? 0;
@@ -682,6 +818,9 @@ class DurableWorkflowEngine {
     final updatedMetadata = Map<String, dynamic>.from(item.metadata ?? {});
     if (isEscalationTransition) {
       updatedMetadata['escalationIndex'] = currentEscalationIndex + 1;
+    }
+    if (reTriageAttempt != null) {
+      updatedMetadata[triageAttemptMetadataKey] = reTriageAttempt;
     }
 
     final updated = item.copyWith(
@@ -746,6 +885,94 @@ class DurableWorkflowEngine {
       }
     });
     return finalItem;
+  }
+
+  /// True when this (type, choice) resolution means "do this work again".
+  ///
+  /// This is the predicate that advances [triageAttemptMetadataKey] in
+  /// [resolveHumanDecision], and it is the WHOLE of the re-triage rule. It
+  /// reads the CHOICE — the human's intent — and deliberately does not read
+  /// [target].
+  ///
+  /// ## WHY THE TARGET STATE IS NOT ASKED
+  ///
+  /// Two reasons, and the second one is the load-bearing half.
+  ///
+  /// First, the obvious alternative — "advance whenever the routing table
+  /// lands the item on a triage entry state" — needs a list of those states,
+  /// and `workflow_store` cannot ask `scheduler` for it: the dependency runs
+  /// the other way, so the list would be a copy. This repository has already
+  /// been bitten by exactly that copy. `HumanDecisionRouting.escalationTargetFor`
+  /// is a second transcription of `targetFor` that has silently diverged from
+  /// it on two pairs, and that divergence is documented in
+  /// `human_decision_routing.dart` as a real incoherence in the escalation
+  /// accounting rather than a theoretical one. A second copy of "which states
+  /// re-dispatch for triage" would be a third, in a file with no test that can
+  /// notice it going stale.
+  ///
+  /// Second — and this is why the predicate is safe to make WIDE — over-stamping
+  /// costs nothing and under-stamping is the defect. The discriminator only
+  /// ever increases, so a bump on a route that turns out not to need one
+  /// produces a key nothing holds and the dispatch proceeds normally. A route
+  /// that needs a bump and does not get one reuses a key a terminal job already
+  /// holds and the item is inert for ever. The asymmetry is total, so the rule
+  /// is written to err towards stamping.
+  ///
+  /// ## THE CHOICES, AND WHY EACH IS HERE
+  ///
+  ///  * `rework` and `reject` — the two answers that mean the delivered work
+  ///    is not accepted and must be produced again. `HumanDecisionRouting`
+  ///    sends `(engineeringReview, rework)`, `(qaWaiver, reject)`,
+  ///    `(qaRework, reject)` and `(humanQaApproval, reject)` straight to
+  ///    `designNotRequired`, a `triageDefectDefinition` entry state, so each of
+  ///    them re-enters triage with a key the previous run already consumed.
+  ///  * `(escalation, approve)` — the one approve that means "again". It is
+  ///    described in `work_item_transitions.dart` as "a human chose to resume
+  ///    after a failure was escalated to them", and it routes to
+  ///    `designNotRequired` like the four above. It is listed here rather than
+  ///    folded into "rework or reject" because a rule keyed on the choice alone
+  ///    would miss it, and missing it reintroduces the defect on the exact
+  ///    route the dogfood work item took.
+  ///
+  /// Every other choice — approve, waive, cancel, defer, fixed, stillBroken,
+  /// partiallyFixed — expresses either acceptance, abandonment, or a deferral,
+  /// and none of them re-enters triage. They leave the discriminator untouched,
+  /// which is the "a transition that carries no new intent must not inflate the
+  /// counter" half of the rule.
+  ///
+  /// ## WHAT THIS DELIBERATELY DOES NOT COVER
+  ///
+  /// Transitions taken through the generic [transition] API are NOT stamped,
+  /// including `planned -> designNotRequired` and `reviewRejected ->
+  /// designNotRequired`. `transition` is called for ordinary progress as well
+  /// as for operator intent, and stamping there would put this key on every
+  /// write path in the engine — the thing that would turn a per-intent marker
+  /// into a per-transition stamp. The routes that need a stamp reach triage
+  /// through a human DECISION or through [operatorRetry], and those are the two
+  /// places it is written.
+  ///
+  /// A consequence worth stating plainly: an item that is moved into a triage
+  /// entry state by neither — a data repair, for instance — still arrives
+  /// without a fresh discriminator. Repairing that means stamping at the repair
+  /// site, which is a deliberate, reviewed act, not something this predicate
+  /// can do from the other side of the store.
+  bool _isReWorkDecision(
+    HumanDecisionType decisionType,
+    HumanDecisionChoice choice,
+  ) {
+    return switch (choice) {
+      HumanDecisionChoice.rework => true,
+      HumanDecisionChoice.reject => true,
+      // The one approve that means "again" — see above.
+      HumanDecisionChoice.approve =>
+        decisionType == HumanDecisionType.escalation,
+      HumanDecisionChoice.waive ||
+      HumanDecisionChoice.cancel ||
+      HumanDecisionChoice.defer ||
+      HumanDecisionChoice.fixed ||
+      HumanDecisionChoice.stillBroken ||
+      HumanDecisionChoice.partiallyFixed => false,
+    };
   }
 
   /// Checks if a decision resolution constitutes an escalation transition.
