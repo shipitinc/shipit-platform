@@ -667,9 +667,52 @@ class ExecutionCoordinator {
     }
 
     final item = await workflowEngine.loadWorkItem(request.workItemId);
+    // The gate reads the PERSISTED [PlatformVerification] rather than a local
+    // outcome flag, so the row a reviewer or operator can read is the same row
+    // that decided the state. `null` — no plan configured, or `alreadySettled`,
+    // where verification is deliberately skipped — is NOT a failure: a check
+    // that never ran has no verdict, and inventing one would strand work items
+    // on a failure nothing observed.
+    final verificationFailed = verification?.status == AgentClaimStatus.failed;
     if (request.role == AgentRole.engineeringReviewer) {
       // For engineering reviewers, the coordinator must NOT transition out of
       // reviewInProgress; the tick handler will raise a human decision instead.
+    } else if (verificationFailed) {
+      // The platform's independent check ran and disagreed with the agent's
+      // success report. Recording `agentCompleted` anyway advanced a work item
+      // the platform had just refuted, and nothing downstream re-derived the
+      // failure from the verification row — the item sat at `agentCompleted`
+      // with a failed job behind it, and the operator affordance that can act
+      // on it accepts only `agentFailed`. `agentExecuting -> agentFailed` is
+      // legal for the orchestrator actor
+      // (packages/workflow_engine/.../work_item_transitions.dart:105).
+      //
+      // No `metadataMerge` here, deliberately. `producerActorId` names the
+      // execution whose result the engineering-review gate's `actorIsNotSelf()`
+      // guard is checked against; a refuted result is not a producer, and an
+      // operator retry re-runs triage and claims a fresh execution that stamps
+      // the identity on its own success.
+      final reason = verification?.detail ?? 'platform verification failed';
+      await workflowEngine.transition(
+        workItemId: request.workItemId,
+        to: WorkItemState.agentFailed,
+        trigger: TransitionTrigger.agentResult,
+        actor: _orchestrator,
+        // The engine's own `reason` parameter, which is the field PERSISTED on
+        // the transition record — `context` only reaches the guard evaluator.
+        // Without it the item settles at `agentFailed` with nothing in its
+        // history saying why, which is the "stranded with no signal" half of
+        // the same defect. Supplying it cannot flip the outcome: the engine
+        // derives `outcome` from the policy, never from the presence of a
+        // reason.
+        reason: reason,
+        context: {
+          'agentResult': stamped,
+          // Same key `_completeFailure` uses, so a reader does not have to know
+          // which of the two paths settled the item.
+          'reason': reason,
+        },
+      );
     } else {
       await workflowEngine.transition(
         workItemId: request.workItemId,
