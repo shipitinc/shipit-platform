@@ -901,40 +901,7 @@ void main() {
         // `dart test` runs with the package root as the working directory, so
         // the repository root is two levels up (`apps/server` -> `apps` -> `.`).
         const repoRoot = '../..';
-        final callers = <String>[];
-
-        for (final dir in ['apps', 'packages', 'cli', 'tools']) {
-          final path = Directory('$repoRoot/$dir');
-          if (!path.existsSync()) continue;
-          for (final entity in path.listSync(recursive: true)) {
-            if (entity is! File || !entity.path.endsWith('.dart')) continue;
-            // Generated protocol clients are the transport, not a caller.
-            if (entity.path.contains('.g.dart') ||
-                entity.path.contains('/generated/') ||
-                entity.path.contains('/protocol/')) {
-              continue;
-            }
-            // The endpoint declares it; that is the definition, not a use.
-            if (entity.path.endsWith(
-              'endpoints/work_item_action_endpoints.dart',
-            )) {
-              continue;
-            }
-            // PRODUCTION callers only. Tests legitimately call the endpoint
-            // directly — they are how the guards are exercised — so tests are
-            // excluded by path and a caller must sit under a `lib/` directory
-            // to count at all. A new automation path written under an
-            // unexpected folder therefore still fails here rather than passing
-            // unseen.
-            if (!entity.path.contains('/lib/')) continue;
-            if (!_codeOnly(entity.readAsStringSync()).contains(
-              'retryFailedWorkItem',
-            )) {
-              continue;
-            }
-            callers.add(entity.path.replaceFirst('$repoRoot/', ''));
-          }
-        }
+        final callers = _productionCallersOfRetry(repoRoot);
 
         expect(
           callers,
@@ -950,6 +917,42 @@ void main() {
               'into unbounded UNSOLICITED spend, and must be a human decision '
               'rather than a merge. Review the new path before adding it to '
               'this list.',
+        );
+      },
+    );
+
+    test(
+      'the audit is not blind to a caller OUTSIDE a lib/ directory (M1)',
+      () {
+        // The mutant that proved the old filter toothless. `apps/server/bin/`
+        // is a real directory holding real executable entrypoints; a caller
+        // written there was skipped by the `/lib/` filter and the audit stayed
+        // green.
+        //
+        // Rather than assert the scan's internals, this drives the SAME scan
+        // over a temporary planted caller and requires it to be CAUGHT — so
+        // the property is executable, and it fails loudly if someone narrows
+        // the filter back to `/lib/` or excludes `bin/` again.
+        const repoRoot = '../..';
+        final planted = Directory('$repoRoot/apps/server/bin')
+          ..createSync(recursive: true);
+        final file = File('${planted.path}/zz_audit_mutant.dart');
+        const body =
+            '// Temporary caller planted by the audit self-test.\n'
+            'Future<void> plant() => retryFailedWorkItem(workItemId: "w");\n';
+        file.writeAsStringSync(body);
+        addTearDown(() {
+          if (file.existsSync()) file.deleteSync();
+        });
+
+        expect(
+          _productionCallersOfRetry(repoRoot),
+          contains('apps/server/bin/zz_audit_mutant.dart'),
+          reason:
+              'the caller audit MUST catch an automation caller outside lib/. '
+              'Before this correction it filtered on `/lib/` and reported '
+              'green while an apps/server/bin/ caller sat in the tree — the '
+              'false green that made it load-bearing.',
         );
       },
     );
@@ -1100,3 +1103,90 @@ String _codeOnly(String source) => source
       return i < 0 ? line : line.substring(0, i);
     })
     .join('\n');
+
+/// Every non-test Dart file under the given root that names
+/// `retryFailedWorkItem` in CODE (see [_codeOnly]), as paths relative to
+/// [repoRoot].
+///
+/// ## WHY IT SCANS EVERYTHING INSTEAD OF FILTERING ON `/lib/`
+///
+/// The previous version of this audit skipped any path without a `/lib/`
+/// segment and justified it in a comment: "a caller must sit under a `lib/`
+/// directory to count at all... therefore still fails here rather than passing
+/// unseen."
+///
+/// **That was false, and it was load-bearing.** `apps/server/bin/` exists,
+/// holds six real executable entrypoints (`onboard_shipit.dart`,
+/// `add_human_claims.dart`, …), and is not under `lib/` — so an automation
+/// caller written there was skipped and the audit reported green while an
+/// agent-driven, credit-spending caller sat in the tree. A test that cannot
+/// fail is not a test, and this one gates an UNBOUNDED spend.
+///
+/// The filter is therefore inverted: it excludes things that are not callers
+/// BY CONSTRUCTION — tests, generated transport, build output, and the endpoint
+/// that declares the method — and asks nothing else of the path. Tests are
+/// excluded because they legitimately call the endpoint directly (they are how
+/// the guards are exercised), not because of where they sit.
+///
+/// Narrowing this back to `/lib/`, or adding an exclusion for `bin/` or `tool/`,
+/// reintroduces the blind spot. `test/…the audit is not blind to a caller
+/// OUTSIDE a lib/ directory` plants a real caller in `apps/server/bin/` and
+/// fails if it is not caught, so the property is executable rather than a
+/// claim in a comment.
+List<String> _productionCallersOfRetry(String repoRoot) {
+  final callers = <String>[];
+
+  for (final dir in ['apps', 'packages', 'cli', 'tools']) {
+    final path = Directory('$repoRoot/$dir');
+    if (!path.existsSync()) continue;
+    for (final entity in path.listSync(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      final relative = entity.path.replaceFirst('$repoRoot/', '');
+
+      // Generated protocol clients are the transport, not a caller.
+      if (relative.contains('.g.dart') ||
+          relative.contains('/generated/') ||
+          relative.contains('/protocol/')) {
+        continue;
+      }
+      // Build output and tool caches are not source. They are gitignored and
+      // regenerated, so scanning them would make the verdict depend on whether
+      // someone happened to run `flutter test` first.
+      if (relative.contains('/.dart_tool/') || relative.contains('/build/')) {
+        continue;
+      }
+      // The endpoint DECLARES the method; that is the definition, not a use.
+      if (relative.endsWith('endpoints/work_item_action_endpoints.dart')) {
+        continue;
+      }
+      if (_isTestSource(relative)) continue;
+      if (!_codeOnly(entity.readAsStringSync()).contains(
+        'retryFailedWorkItem',
+      )) {
+        continue;
+      }
+      callers.add(relative);
+    }
+  }
+  return callers;
+}
+
+/// True when [relative] is test source by Dart convention rather than by
+/// location: any `test/`, `test_driver/` or `integration_test/` directory, or
+/// any file named `*_test.dart`.
+///
+/// ## WHY THIS IS A CONVENTION AND NOT A PATH PREFIX
+///
+/// Naming the convention rather than one hard-coded directory is what makes
+/// the caller audit total: a test that happens to live at a package root, or
+/// under `tool/`, is still excluded, while a PRODUCTION entrypoint in `bin/`
+/// or `tool/` is still counted. Both halves of that were false under the old
+/// `/lib/` filter, which got the first right only by accident and the second
+/// wrong.
+bool _isTestSource(String relative) {
+  if (relative.endsWith('_test.dart')) return true;
+  final segments = relative.split('/');
+  return segments.any(
+    (s) => s == 'test' || s == 'test_driver' || s == 'integration_test',
+  );
+}

@@ -64,6 +64,30 @@ void main() {
       expect(capacitySnapshotSentence(2, 2), '2 of 2 agent slots busy.');
     });
 
+    test('an UNCUNTED attempt position states no budget at all (B1)', () {
+      // `attemptLimit` is a non-nullable `int` on a frozen wire model, so
+      // "uncounted" and "zero" share the value `0` — and `0` is the DEFAULT
+      // since the 2026-10-12 reversal. The clause is therefore gated on a real
+      // count. This is the sentence the panel rendered as "attempt 5 of 0".
+      expect(attemptPositionSentence(5, 0), 'This will be attempt 5.');
+      expect(attemptPositionSentence(1, 0), 'This will be attempt 1.');
+
+      // The negative, on every shape: no "of 0" may survive anywhere.
+      for (final attempt in [1, 2, 5, 17]) {
+        expect(attemptPositionSentence(attempt, 0), isNot(contains('of ')));
+      }
+
+      // …and the bounded case is untouched, so this is a gate and not a
+      // deletion. The existing assertions above pin "of 3"; this pins the
+      // whole positive range explicitly.
+      for (final limit in [1, 2, 3, 10]) {
+        expect(
+          attemptPositionSentence(1, limit),
+          'This will be attempt 1 of $limit.',
+        );
+      }
+    });
+
     test('the retry is NOT labelled "Resume" (§5.5)', () {
       // `decisionChoiceLabel('approve', 'escalation')` IS "Resume". Reusing it
       // would be more consistent and wrong: nothing here was paused, and
@@ -208,6 +232,39 @@ void main() {
         ),
         contains('tried 1 time.'),
       );
+    });
+
+    test('a count of ZERO is "switched off", never "tried 0 times" (L2)', () {
+      // REACHABLE, and proven so rather than assumed. The server returns
+      // `outcome: 'notConfigured'` with `retryLimitResolved: true` and
+      // `attemptLimit: 0` for an explicit `SHIPIT_OPERATOR_MAX_RETRIES=0`
+      // — `work_item_action_endpoints_test.dart` asserts exactly that triple
+      // ("a disabled retry writes nothing"). The old interpolation turned
+      // that into "This work has already been tried 0 times", which asserts a
+      // spent budget on a machine that deliberately has none.
+      expect(
+        operatorActionAnnouncement(
+          'notConfigured',
+          retryLimitResolved: true,
+          attemptLimit: 0,
+        ),
+        retrySwitchedOffSentence,
+      );
+
+      // The helper itself, driven directly — it is exported, so a future
+      // caller must not be handed the "0 times" reading either.
+      expect(retryLimitReachedSentence(0), retrySwitchedOffSentence);
+      expect(retryLimitReachedSentence(0), isNot(contains('0 times')));
+      expect(retryLimitReachedSentence(0), isNot(contains('0 time')));
+
+      // PRE-EXISTING, not a regression: this interpolation is byte-identical
+      // at the base commit. What the 2026-10-12 reversal changed is that `0`
+      // became the COMMON value rather than the disabled one, which is what
+      // made the wrong reading visible on the default path.
+      //
+      // A positive count is still stated as a spent budget, unchanged.
+      expect(retryLimitReachedSentence(1), contains('tried 1 time.'));
+      expect(retryLimitReachedSentence(3), contains('tried 3 times.'));
     });
   });
 
