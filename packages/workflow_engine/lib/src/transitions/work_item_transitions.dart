@@ -199,20 +199,22 @@ class WorkItemTransitions {
         },
       ),
     ],
-    // REWORK FROM AN ENGINEERING REVIEW — the dispatchable landing state.
+    // REWORK FROM ANY HUMAN GATE — the dispatchable landing state.
     //
-    // WHY THIS EDGE IS NARROW AND DOES NOT REPLACE THE ONE ABOVE.
+    // THIS EDGE IS NOW THE PRODUCTION TARGET, NOT A DEAD BRANCH.
     //
-    // `(waitingForHumanDecision, agentExecuting)` above is a GENERIC edge: its
-    // `blockingHumanDecisionResolved` set spans six (type, choice) pairs, and
-    // five of them belong to lanes that are not engineering review —
-    // `qaRework/reject`, `qaWaiver/reject`, `humanQaApproval/reject`, and
-    // `escalation/approve` ("a human chose to resume after a failure was
-    // escalated to them"). Retargeting it to `designNotRequired` wholesale
-    // would silently move every QA rejection and every escalation resume onto
-    // the triage entry state, which is a product decision about four other
-    // gates and is NOT this lane's to make. So the narrower edge is added
-    // instead and the generic one is left exactly as it was.
+    // It was added by the previous lane as the "landing half" only, because
+    // `HumanDecisionRouting.targetFor` — the sole determinant of a resolved
+    // decision's target, since `resolveHumanDecision` takes no caller-supplied
+    // state — still sent these five routes to `agentExecuting`. The routing
+    // table now sends all five here, so this edge is what they actually take.
+    // The five, and why each belongs to a "do the work again" gate:
+    //
+    //   (engineeringReview, rework)  reviewer asked for changes
+    //   (qaWaiver,        reject)    QA results refused; work must be redone
+    //   (qaRework,        reject)    QA asked for rework, not waiver
+    //   (humanQaApproval, reject)    human QA said the result is not good
+    //   (escalation,      approve)   a human chose to resume a failure
     //
     // WHY `designNotRequired` AND NOT `agentExecuting`.
     //
@@ -221,31 +223,28 @@ class WorkItemTransitions {
     // engineering_review, baseline_product — none of them lists it), so an item
     // parked there is never dispatched again and nothing will ever run. It also
     // asserts something false: that an execution is ALREADY RUNNING. Landing in
-    // it without a dispatch is the same class of defect as `be75ba1`.
+    // it without a dispatch is the same class of defect as `be75ba1`, and it
+    // was observed live on `defect-DEF-1791684804452198` on 2026-10-12.
     // `designNotRequired` IS in `triageDefectDefinition.entryStates`, which is
     // the mechanism the operator retry already relies on (commit be75ba1,
     // `agentFailed -> designNotRequired` below). The scheduler therefore
     // re-enqueues with no change to its dispatch path at all.
     //
-    // NOT YET REACHABLE FROM PRODUCTION, AND THIS LANE CANNOT FIX THAT.
-    //
-    // `DurableWorkflowEngine.resolveHumanDecision` does not take a caller-
-    // supplied target: it computes `target = HumanDecisionRouting.targetFor(
-    // decisionType, choice)` (packages/workflow_store/.../durable_workflow_
-    // engine.dart:612) and then validates the edge to that target. The routing
-    // table — `packages/workflow_engine/lib/src/transitions/
-    // human_decision_routing.dart` — is NOT owned by this lane, and it still
-    // maps `(engineeringReview, rework) -> agentExecuting`. No edit to this
-    // file can change which target a resolved decision selects. So this edge
-    // is the guarded landing half; the routing entry is the other half and is
-    // reported as a blocker rather than guessed at.
+    // NO GUARD IS RELAXED BY THE WIDENING. `actorAllowed([orchestrator])` and
+    // `decisionActorIsHuman()` were already here and still are; the
+    // `blockingHumanDecisionResolved` set below is a MEMBERSHIP list, not a
+    // permission to skip the other two guards, and it now names exactly the
+    // five pairs that route here — so the edge accepts precisely the
+    // resolutions it did before plus the three that moved onto it. The
+    // generic `waitingForHumanDecision -> agentExecuting` edge above keeps its
+    // full six-pair set untouched, so nothing it permitted was withdrawn.
     //
     // CYCLE SAFETY. `designNotRequired -> agentExecuting -> agentCompleted ->
     // reviewInProgress -> waitingForHumanDecision -> designNotRequired` is a
-    // cycle, and every traversal of it requires a RESOLVED engineering-review
-    // decision signed by a human decider, bounded by
-    // `escalationIndexWithinLimitForDecisionTypes` below. Nothing in it is
-    // automatic, so no unattended rework loop is created.
+    // cycle, and every traversal of it requires a RESOLVED decision signed by a
+    // human decider, bounded by `escalationIndexWithinLimitForDecisionTypes`
+    // below. Nothing in it is automatic, so no unattended rework loop is
+    // created.
     //
     // `agentAvailable()` is deliberately ABSENT, exactly as on
     // `agentFailed -> designNotRequired` below: that guard belongs on
@@ -263,15 +262,31 @@ class WorkItemTransitions {
           type: HumanDecisionType.engineeringReview,
           choice: HumanDecisionChoice.reject,
         ),
+        (type: HumanDecisionType.qaWaiver, choice: HumanDecisionChoice.reject),
+        (type: HumanDecisionType.qaRework, choice: HumanDecisionChoice.reject),
+        (
+          type: HumanDecisionType.humanQaApproval,
+          choice: HumanDecisionChoice.reject,
+        ),
+        (
+          type: HumanDecisionType.escalation,
+          choice: HumanDecisionChoice.approve,
+        ),
       }),
       GuardConditions.decisionActorIsHuman(),
-      // Keeps the escalation bound the generic edge above applies to
-      // engineering review. Only `engineeringReview` can route here, so the
-      // `humanQaApproval` member of the set above is dropped rather than
-      // copied — widening this guard to types that can never reach it would be
-      // noise, and dropping the bound entirely would be an unbounded loop.
+      // Mirrors the escalation bound on the generic edge above EXACTLY, for
+      // the two decision types that edge bounds among the ones which can now
+      // reach here. `humanQaApproval` is added because its rejection moved
+      // onto this edge from `agentExecuting` and dropping it would quietly
+      // RELAX the bound it already had. `qaRework`, `qaWaiver` and `escalation`
+      // are deliberately not added: the generic edge does not bound them
+      // either, and inventing a bound here would be new policy rather than a
+      // lockstep move.
       GuardConditions.escalationIndexWithinLimitForDecisionTypes(
-        escalationDecisionTypes: {HumanDecisionType.engineeringReview},
+        escalationDecisionTypes: {
+          HumanDecisionType.engineeringReview,
+          HumanDecisionType.humanQaApproval,
+        },
       ),
     ],
     // Escalation outcome: send the work back to be re-planned. Resuming is

@@ -575,7 +575,7 @@ void main() {
           HumanDecisionType.engineeringReview,
           HumanDecisionChoice.rework,
         ),
-        WorkItemState.agentExecuting,
+        WorkItemState.designNotRequired,
       );
       expect(
         HumanDecisionRouting.targetFor(
@@ -725,10 +725,17 @@ void main() {
   });
 
   group('WorkflowState allowedTransitions', () {
-    test('draft allows only planning', () {
+    test('draft allows planning and the generic escapes', () {
+      // `draft -> planning` plus the non-terminal -> cancelled/terminated
+      // escapes every state gets. The old expectation listed planning alone,
+      // which was the mirror being stale rather than the table being narrow.
       expect(
         WorkItemWorkflowState.draft.allowedTransitions.map((s) => s.value),
-        [WorkItemState.planning],
+        containsAll(<WorkItemState>[
+          WorkItemState.planning,
+          WorkItemState.cancelled,
+          WorkItemState.terminated,
+        ]),
       );
     });
 
@@ -776,13 +783,13 @@ void main() {
 
 void _escalationRouting() {
   group('Escalation outcomes', () {
-    test('resume routes an escalation back into execution', () {
+    test('resume queues the escalation back into work', () {
       expect(
         HumanDecisionRouting.targetFor(
           HumanDecisionType.escalation,
           HumanDecisionChoice.approve,
         ),
-        WorkItemState.agentExecuting,
+        WorkItemState.designNotRequired,
       );
     });
 
@@ -820,6 +827,18 @@ void _escalationRouting() {
         );
         expect(target, isNotNull, reason: 'no route for $choice');
       }
+    });
+
+    test('resume queues the work instead of stranding it', () {
+      // Resuming used to be `agentExecuting`, which no JobDefinition lists in
+      // entryStates — the live strand on defect-DEF-1791684804452198.
+      expect(
+        HumanDecisionRouting.targetFor(
+          HumanDecisionType.escalation,
+          HumanDecisionChoice.approve,
+        ),
+        WorkItemState.designNotRequired,
+      );
     });
   });
 }
@@ -1050,7 +1069,74 @@ void _escalationTransitions() {
 
 void _escalationRoutingMethods() {
   group('HumanDecisionRouting escalationTargetFor', () {
-    test('returns correct target for engineeringReview reject/rework', () {
+    test('moved IN LOCKSTEP with the routes that changed target', () {
+      // `DurableWorkflowEngine._isEscalationTransition` compares this against
+      // the ACTUAL target from `targetFor`. Diverge and the escalation index
+      // silently stops advancing and the audit record changes shape — no
+      // exception, just an escalation that no longer counts.
+      expect(
+        HumanDecisionRouting.escalationTargetFor(
+          HumanDecisionType.engineeringReview,
+          HumanDecisionChoice.rework,
+        ),
+        WorkItemState.designNotRequired,
+      );
+      expect(
+        HumanDecisionRouting.escalationTargetFor(
+          HumanDecisionType.humanQaApproval,
+          HumanDecisionChoice.reject,
+        ),
+        WorkItemState.designNotRequired,
+      );
+    });
+
+    test('agrees with targetFor for every pair it claims to escalate', () {
+      // The property the durable engine actually depends on, asserted over
+      // the whole cross-product rather than pair by pair.
+      //
+      // The allowlist is the PRE-EXISTING divergence, made executable. Both
+      // entries are unchanged by this commit and are documented in
+      // `HumanDecisionRouting.escalationTargetFor`: they name a state the pair
+      // never reaches, so a rejected engineering review and a rejected design
+      // do not increment the escalation index. Deleting an entry here — to
+      // "fix" it — fails this test, which is the point: changing escalation
+      // accounting is a decision, not a drive-by.
+      const knownDivergences = {
+        (HumanDecisionType.engineeringReview, HumanDecisionChoice.reject),
+        (HumanDecisionType.designApproval, HumanDecisionChoice.reject),
+      };
+
+      for (final type in HumanDecisionType.values) {
+        for (final choice in HumanDecisionChoice.values) {
+          final target = HumanDecisionRouting.targetFor(type, choice);
+          final escalation = HumanDecisionRouting.escalationTargetFor(
+            type,
+            choice,
+          );
+          if (target == null || escalation == null) continue;
+          if (escalation == target) continue;
+          if (knownDivergences.contains((type, choice))) continue;
+          expect(
+            escalation,
+            target,
+            reason:
+                '(${type.name}, ${choice.name}): escalationTargetFor names a '
+                'state the pair never reaches, so the comparison at '
+                'durable_workflow_engine.dart:761 can never be true.',
+          );
+        }
+      }
+
+      // And the allowlist is not allowed to grow on its own.
+      expect(knownDivergences, hasLength(2));
+    });
+
+    test('returns the pre-existing answers for the untouched pairs', () {
+      // These are NOT moved. `engineeringReview/reject` routes to
+      // `reviewRejected`, which this never named, and `designApproval/reject`
+      // to `designRejected`; both therefore do NOT increment the escalation
+      // index. That is the behaviour at cc6290d and changing it would start
+      // counting escalations on two routes outside this change.
       expect(
         HumanDecisionRouting.escalationTargetFor(
           HumanDecisionType.engineeringReview,
@@ -1060,10 +1146,17 @@ void _escalationRoutingMethods() {
       );
       expect(
         HumanDecisionRouting.escalationTargetFor(
-          HumanDecisionType.engineeringReview,
+          HumanDecisionType.humanQaApproval,
           HumanDecisionChoice.rework,
         ),
         WorkItemState.agentExecuting,
+      );
+      expect(
+        HumanDecisionRouting.escalationTargetFor(
+          HumanDecisionType.designApproval,
+          HumanDecisionChoice.reject,
+        ),
+        WorkItemState.designInReview,
       );
     });
 
@@ -1071,33 +1164,9 @@ void _escalationRoutingMethods() {
       expect(
         HumanDecisionRouting.escalationTargetFor(
           HumanDecisionType.designApproval,
-          HumanDecisionChoice.reject,
-        ),
-        WorkItemState.designInReview,
-      );
-      expect(
-        HumanDecisionRouting.escalationTargetFor(
-          HumanDecisionType.designApproval,
           HumanDecisionChoice.rework,
         ),
         WorkItemState.designInReview,
-      );
-    });
-
-    test('returns correct target for humanQaApproval reject/rework', () {
-      expect(
-        HumanDecisionRouting.escalationTargetFor(
-          HumanDecisionType.humanQaApproval,
-          HumanDecisionChoice.reject,
-        ),
-        WorkItemState.agentExecuting,
-      );
-      expect(
-        HumanDecisionRouting.escalationTargetFor(
-          HumanDecisionType.humanQaApproval,
-          HumanDecisionChoice.rework,
-        ),
-        WorkItemState.agentExecuting,
       );
     });
 
@@ -1141,8 +1210,8 @@ void _escalationRoutingMethods() {
       expect(
         HumanDecisionRouting.routesToEscalation(
           HumanDecisionType.engineeringReview,
-          HumanDecisionChoice.reject,
-          WorkItemState.agentExecuting,
+          HumanDecisionChoice.rework,
+          WorkItemState.designNotRequired,
         ),
         isTrue,
       );
@@ -1158,10 +1227,33 @@ void _escalationRoutingMethods() {
         HumanDecisionRouting.routesToEscalation(
           HumanDecisionType.humanQaApproval,
           HumanDecisionChoice.reject,
-          WorkItemState.agentExecuting,
+          WorkItemState.designNotRequired,
         ),
         isTrue,
       );
+    });
+
+    test('the moved routes no longer escalate at agentExecuting', () {
+      // The failure this change had to avoid: had escalationTargetFor stayed
+      // at agentExecuting while targetFor moved, the comparison would be false
+      // and the escalation index would stop advancing silently.
+      for (final route in const [
+        (
+          HumanDecisionType.engineeringReview,
+          HumanDecisionChoice.rework,
+          WorkItemState.agentExecuting,
+        ),
+        (
+          HumanDecisionType.humanQaApproval,
+          HumanDecisionChoice.reject,
+          WorkItemState.agentExecuting,
+        ),
+      ]) {
+        expect(
+          HumanDecisionRouting.routesToEscalation(route.$1, route.$2, route.$3),
+          isFalse,
+        );
+      }
     });
 
     test('returns false for non-escalation targets', () {

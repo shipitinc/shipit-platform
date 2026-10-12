@@ -2,8 +2,8 @@ import 'package:platform_contracts/platform_contracts.dart';
 import 'package:test/test.dart';
 import 'package:workflow_engine/workflow_engine.dart';
 
-/// REWORK-ENTRY-STATE — engineering-review rework must land on a DISPATCHABLE
-/// entry state, not on `agentExecuting`.
+/// REWORK-ENTRY-STATE — a human gate that says "do the work again" must land
+/// on a DISPATCHABLE entry state, not on `agentExecuting`.
 ///
 /// ## The defect
 ///
@@ -22,19 +22,20 @@ import 'package:workflow_engine/workflow_engine.dart';
 /// same class of defect as `be75ba1` (`agentFailed` reachable but with no work
 /// to start), reached here through a human decision instead.
 ///
-/// `designNotRequired` IS in `triageDefectDefinition.entryStates`, which is the
-/// mechanism the operator retry already relies on. That is the target.
+/// `designNotRequired` IS in `triageDefectDefinition.entryStates`, which is
+/// the mechanism the operator retry already relies on. That is the target.
 ///
-/// ## What this file does NOT claim
+/// ## The fix needed BOTH halves, and this file now has both
 ///
-/// The `rework` half of the fix is NOT complete on this branch. The target of a
-/// resolved decision is chosen by `HumanDecisionRouting.targetFor`, which is not
-/// owned by this lane, and it still maps `(engineeringReview, rework) ->
-/// agentExecuting`. The edge this file pins is the guarded LANDING half; a test
-/// that called `HumanDecisionRouting.targetFor(engineeringReview, rework)` and
-/// asserted `designNotRequired` would be asserting a change that was not made.
-/// The routing half is asserted below in its CURRENT state so the gap is pinned
-/// visibly rather than silently.
+/// The previous lane owned only this package's transition table, so it could
+/// add the guarded landing edges but could not move the routing table, whose
+/// entries are the sole determinant of a resolved decision's target
+/// (`DurableWorkflowEngine.resolveHumanDecision` computes
+/// `HumanDecisionRouting.targetFor(type, choice)` and takes no caller-supplied
+/// state). An edge nothing routes to changes nothing in production, so it
+/// reported IMPLEMENTATION_BLOCKED and pinned the gap with a failing-on-change
+/// assertion. That pin is now INVERTED, and the whole table is asserted to
+/// contain no `agentExecuting` target at all.
 const _workItemId = '123e4567-e89b-12d3-a456-426614174001';
 
 const _orch = WorkflowActor(
@@ -193,9 +194,10 @@ void main() {
       );
     });
 
-    test("another gate's resolution cannot take the edge", () {
-      // The edge is scoped to engineering review on purpose; a QA rejection is
-      // routed by its own table entry and must not inherit this target.
+    test("another gate's APPROVAL cannot take the edge", () {
+      // Widening the edge to the five rework routes must not turn it into a
+      // hole: a resolution that does not ask for the work to be redone still
+      // cannot reach it, however many pairs the guard set lists.
       final result = WorkItemTransitions.validate(
         WorkItemState.waitingForHumanDecision,
         WorkItemState.designNotRequired,
@@ -204,7 +206,29 @@ void main() {
         _gateContext(
           _resolvedDecision(
             type: HumanDecisionType.humanQaApproval,
-            choice: HumanDecisionChoice.reject,
+            choice: HumanDecisionChoice.approve,
+          ),
+        ),
+      );
+
+      expect(
+        result.isValid,
+        isFalse,
+        reason: 'approve completes the work; it never re-queues it',
+      );
+      expect(result.failedGuards, contains('blocking_human_decision_resolved'));
+    });
+
+    test('an unmapped decision type cannot take the edge', () {
+      final result = WorkItemTransitions.validate(
+        WorkItemState.waitingForHumanDecision,
+        WorkItemState.designNotRequired,
+        TransitionTrigger.humanDecision,
+        _orch,
+        _gateContext(
+          _resolvedDecision(
+            type: HumanDecisionType.qaRework,
+            choice: HumanDecisionChoice.waive,
           ),
         ),
       );
@@ -476,106 +500,130 @@ void main() {
     });
   });
 
-  group(
-    'the GENERIC agentExecuting edge is left load-bearing for other lanes',
-    () {
-      test('qaRework/reject still routes to agentExecuting', () {
+  group('the GENERIC agentExecuting edge keeps every guard it already had', () {
+    // Routing no longer SELECTS this edge for these pairs — they now land on
+    // `designNotRequired`. The edge itself is deliberately left untouched:
+    // its `blockingHumanDecisionResolved` set spans six (type, choice) pairs
+    // belonging to four other lanes, and narrowing it would withdraw
+    // capability those lanes have never been asked to lose. The pair is
+    // unused, not forbidden.
+    for (final route in const [
+      (HumanDecisionType.qaRework, HumanDecisionChoice.reject),
+      (HumanDecisionType.humanQaApproval, HumanDecisionChoice.reject),
+      (HumanDecisionType.escalation, HumanDecisionChoice.approve),
+      (HumanDecisionType.engineeringReview, HumanDecisionChoice.rework),
+      (HumanDecisionType.engineeringReview, HumanDecisionChoice.reject),
+      (HumanDecisionType.qaWaiver, HumanDecisionChoice.reject),
+    ]) {
+      test('(${route.$1.name}, ${route.$2.name}) is still a legal pair', () {
         final result = WorkItemTransitions.validate(
           WorkItemState.waitingForHumanDecision,
           WorkItemState.agentExecuting,
           TransitionTrigger.humanDecision,
           _orch,
-          _gateContext(
-            _resolvedDecision(
-              type: HumanDecisionType.qaRework,
-              choice: HumanDecisionChoice.reject,
-            ),
-          ),
-        );
-
-        expect(
-          result.isValid,
-          isTrue,
-          reason:
-              'retargeting the generic edge wholesale would have silently moved '
-              'QA rejection off its own route — that is why a narrower edge was '
-              'added instead',
-        );
-      });
-
-      test('humanQaApproval/reject still routes to agentExecuting', () {
-        final result = WorkItemTransitions.validate(
-          WorkItemState.waitingForHumanDecision,
-          WorkItemState.agentExecuting,
-          TransitionTrigger.humanDecision,
-          _orch,
-          _gateContext(
-            _resolvedDecision(
-              type: HumanDecisionType.humanQaApproval,
-              choice: HumanDecisionChoice.reject,
-            ),
-          ),
+          _gateContext(_resolvedDecision(type: route.$1, choice: route.$2)),
         );
 
         expect(result.isValid, isTrue);
       });
+    }
 
-      test('escalation/approve still resumes into agentExecuting', () {
-        final result = WorkItemTransitions.validate(
-          WorkItemState.waitingForHumanDecision,
-          WorkItemState.agentExecuting,
-          TransitionTrigger.humanDecision,
-          _orch,
-          _gateContext(
-            _resolvedDecision(
-              type: HumanDecisionType.escalation,
-              choice: HumanDecisionChoice.approve,
-            ),
+    test('the generic edge still permits exactly those six pairs', () {
+      // Pin the MEMBERSHIP, not just that it accepts things: this is the
+      // guard the previous lane refused to retarget, and a future edit that
+      // quietly drops one of these six is the regression to catch.
+      final result = WorkItemTransitions.validate(
+        WorkItemState.waitingForHumanDecision,
+        WorkItemState.agentExecuting,
+        TransitionTrigger.humanDecision,
+        _orch,
+        _gateContext(
+          _resolvedDecision(
+            type: HumanDecisionType.qaRework,
+            choice: HumanDecisionChoice.reject,
           ),
-        );
+        ),
+      );
 
-        expect(result.isValid, isTrue);
-      });
+      expect(result.guardResults.map((g) => g.name).toList(), [
+        'actor_allowed',
+        'blocking_human_decision_resolved',
+        'decision_actor_is_human',
+        'escalation_index_within_limit',
+      ]);
+    });
 
-      test('the generic edge kept its exact guard membership', () {
-        final names = WorkItemTransitions.getGuards(
-          WorkItemState.waitingForHumanDecision,
-          WorkItemState.agentExecuting,
-        ).map((g) => g.name).toList();
+    test('the generic edge kept its exact guard membership', () {
+      final names = WorkItemTransitions.getGuards(
+        WorkItemState.waitingForHumanDecision,
+        WorkItemState.agentExecuting,
+      ).map((g) => g.name).toList();
 
-        expect(names, [
-          'actor_allowed',
-          'blocking_human_decision_resolved',
-          'decision_actor_is_human',
-          'escalation_index_within_limit',
-        ]);
-      });
-    },
-  );
+      expect(names, [
+        'actor_allowed',
+        'blocking_human_decision_resolved',
+        'decision_actor_is_human',
+        'escalation_index_within_limit',
+      ]);
+    });
+  });
 
-  group('PINNED GAP — the rework half still needs the routing table', () {
-    test(
-      'HumanDecisionRouting still sends (engineeringReview, rework) to '
-      'agentExecuting, so production rework is NOT yet fixed by this branch',
-      () {
-        // This is the blocker, asserted so it cannot be forgotten. It FAILS the
-        // moment `human_decision_routing.dart` is changed to designNotRequired
-        // — at which point this expectation is inverted and the comment in
-        // work_item_transitions.dart updated.
+  group('the PINNED GAP is CLOSED — routing now sends rework here', () {
+    test('HumanDecisionRouting sends (engineeringReview, rework) to '
+        'designNotRequired, so production rework is fixed', () {
+      // This test INVERTED the pin the previous lane left. It asserted
+      // `agentExecuting` deliberately, so that it would fail the moment the
+      // routing table was corrected — which is exactly what happened. The
+      // edge alone was never the fix: `resolveHumanDecision` derives its
+      // target from this table and takes no caller-supplied state, so an
+      // unreached edge changes nothing in production.
+      expect(
+        HumanDecisionRouting.targetFor(
+          HumanDecisionType.engineeringReview,
+          HumanDecisionChoice.rework,
+        ),
+        WorkItemState.designNotRequired,
+      );
+    });
+
+    test('every stranding route now lands on a dispatchable entry state', () {
+      // The five routes this change moved. `agentExecuting` is in the
+      // `entryStates` of NO wired JobDefinition, so a route that lands
+      // there is a permanent dead end: nothing enqueues for it, nothing
+      // runs, and the decision is already answered.
+      const stranding = {
+        (HumanDecisionType.engineeringReview, HumanDecisionChoice.rework),
+        (HumanDecisionType.qaWaiver, HumanDecisionChoice.reject),
+        (HumanDecisionType.qaRework, HumanDecisionChoice.reject),
+        (HumanDecisionType.humanQaApproval, HumanDecisionChoice.reject),
+        (HumanDecisionType.escalation, HumanDecisionChoice.approve),
+      };
+
+      for (final route in stranding) {
+        final target = HumanDecisionRouting.targetFor(route.$1, route.$2);
         expect(
-          HumanDecisionRouting.targetFor(
-            HumanDecisionType.engineeringReview,
-            HumanDecisionChoice.rework,
-          ),
-          WorkItemState.agentExecuting,
-          reason:
-              'resolveHumanDecision derives its target from this table and '
-              'takes no caller-supplied state, so no edit to the transition '
-              'table can redirect a resolved rework. The edge this lane added '
-              'is the landing half only.',
+          target,
+          WorkItemState.designNotRequired,
+          reason: '(${route.$1.name}, ${route.$2.name}) must not strand',
         );
-      },
-    );
+      }
+    });
+
+    test('NO route anywhere in the table targets agentExecuting', () {
+      // The general form of the fix, so a future sixth stranding route fails
+      // here rather than in a live QA environment.
+      for (final type in HumanDecisionType.values) {
+        for (final choice in HumanDecisionChoice.values) {
+          expect(
+            HumanDecisionRouting.targetFor(type, choice),
+            isNot(WorkItemState.agentExecuting),
+            reason:
+                '(${type.name}, ${choice.name}) strands: agentExecuting is in '
+                'no JobDefinition entryStates, so nothing dispatches it',
+          );
+        }
+      }
+    });
 
     test(
       'the reject half needs no routing change and is already dispatchable',
