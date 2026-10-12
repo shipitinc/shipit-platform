@@ -337,10 +337,60 @@ void main() {
           rationale: 'A follow-up defect was found',
           signature: _sig(),
         );
-        expect(reworked.state, WorkItemState.agentExecuting);
+        // A rejected human QA approval lands on `designNotRequired`, NOT on
+        // `agentExecuting`. See the note below — do not "restore" the old
+        // expectation here.
+        expect(reworked.state, WorkItemState.designNotRequired);
         expect(reworked.blockingHumanDecisionId, isNull);
         expect(await engine.isWaitingForHumanDecision(_workItemId), isFalse);
 
+        // WHY `designNotRequired` AND NOT `agentExecuting`
+        //
+        // This test used to assert `agentExecuting` here, which pinned the
+        // stranding state as correct behaviour. `agentExecuting` is in the
+        // `entryStates` of NO wired JobDefinition, so an item parked there is
+        // never enqueued and nothing can ever dispatch it: the gate is
+        // resolved, the item is unrecoverable. It also asserts something
+        // untrue — that an execution is ALREADY RUNNING — when resolving a
+        // decision does not start one. Observed live on work item
+        // `defect-DEF-1791684804452198` on 2026-10-12, stuck at
+        // agent_executing since 16:43:11 with no job enqueued.
+        //
+        // `designNotRequired` IS in `triageDefectDefinition.entryStates` and
+        // `implementFeatureDefinition.entryStates`, so it is dispatchable, and
+        // it is where the shipped operator retry already sends a failed item
+        // (`agentFailed -> designNotRequired`). The routing table
+        // (`HumanDecisionRouting.targetFor`) is the sole determinant of where
+        // a resolved decision lands, so this expectation tracks production
+        // behaviour rather than restating the old stranding state.
+        //
+        // The remainder of the test proves what its NAME claims — that
+        // resolving the gate UNBLOCKS it — by driving the item forward from
+        // the state it actually landed in. There is no direct
+        // `designNotRequired -> agentCompleted` edge; the only legal path is
+        // through `agentExecuting`, which is reached here by an explicit
+        // orchestrator transition carrying `agentAvailable` — i.e. the
+        // dispatch that the stranding state made impossible. Reaching
+        // `agentCompleted` from the real landing state is a stronger proof of
+        // recovery than the old `agentExecuting -> agentCompleted` hop, which
+        // could only succeed precisely because the gate had left the item
+        // nowhere to go.
+
+        // Step 1: the scheduler/orchestrator dispatches the reworked item.
+        await engine.transition(
+          workItemId: _workItemId,
+          to: WorkItemState.agentExecuting,
+          trigger: TransitionTrigger.systemEvent,
+          actor: _orch,
+          context: {'agentAvailable': true, 'capabilitiesMatch': true},
+        );
+        expect(
+          (await engine.loadWorkItem(_workItemId)).state,
+          WorkItemState.agentExecuting,
+        );
+
+        // Step 2: the dispatched run completes, proving the item is live and
+        // not stranded behind its own resolved gate.
         await engine.transition(
           workItemId: _workItemId,
           to: WorkItemState.agentCompleted,
