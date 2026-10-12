@@ -354,6 +354,111 @@ void main() {
     },
   );
 
+  // -------------------------------------------------------------------
+  // B1 / B2 — the UNCOUNTED default must never render "of 0"
+  //
+  // `attemptLimit` is a non-nullable `int` on a frozen wire model, so "no
+  // count was configured" and "the count is zero" share the value `0`. Since
+  // 2026-10-12 `0` is the DEFAULT — operator retries are uncounted unless an
+  // operator caps them — so the panel rendered the literal string
+  // "This will be attempt 5 of 0." on the majority path. These tests pin the
+  // exact wire shape the new default produces.
+  // -------------------------------------------------------------------
+
+  testWidgets(
+    'B1/B2: the UNCUNTED default (attemptLimit == 0) never renders "of 0"',
+    (tester) async {
+      // The exact shape the server emits when SHIPIT_OPERATOR_MAX_RETRIES is
+      // unset: `retry != null` (retry IS available — this is the reversal's
+      // whole point) with `attemptLimit == 0` (no count bound applies).
+      //
+      // attemptNumber 5 is deliberate: it is the reviewer's live repro and it
+      // proves the attempt position itself still RENDERS — the fix gates the
+      // "of M" clause, it does not delete the sentence.
+      await pump(
+        tester,
+        FailedWorkItemActionPanel(
+          actionContext: context(actions: [retryAction(attempt: 5, limit: 0)]),
+          haltCount: 1,
+          now: now,
+        ),
+      );
+
+      // The negative, stated as a negative on the rendered text.
+      expect(find.textContaining('of 0'), findsNothing);
+      // Nothing anywhere on the panel may read "of 0"…
+      for (final node in allSemanticsNodes(tester)) {
+        expect(
+          node.label,
+          isNot(contains('of 0')),
+          reason: 'the semantics tree must not carry "of 0" either',
+        );
+      }
+
+      // …and the sentence is still there, truthfully, without a false budget.
+      expect(find.text('This will be attempt 5.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'B1/B2: a REAL count still renders "of N" — the clause is gated, not deleted',
+    (tester) async {
+      // The paired negative. Without this, "drop the sentence entirely" would
+      // satisfy the test above and leave a bounded budget unreadable as one,
+      // which is the opposite defect.
+      await pump(
+        tester,
+        FailedWorkItemActionPanel(
+          actionContext: context(actions: [retryAction(attempt: 2, limit: 3)]),
+          haltCount: 1,
+          now: now,
+        ),
+      );
+
+      expect(find.text('This will be attempt 2 of 3.'), findsOneWidget);
+    },
+  );
+
+  testWidgets('B1/B2: the switch-off case is UNCHANGED by the uncounted fix', (
+    tester,
+  ) async {
+    // `attemptLimit == 0` must not be confused with "there is no retry at
+    // all". When the server does not OFFER retry, the panel says the action
+    // is switched off — a different sentence, and the one that must survive.
+    await pump(
+      tester,
+      FailedWorkItemActionPanel(
+        actionContext: context(
+          actions: [stopAction],
+          retryLimitResolved: false,
+        ),
+        haltCount: 1,
+        now: now,
+      ),
+    );
+
+    expect(find.text(retrySwitchedOffSentence), findsOneWidget);
+    expect(find.textContaining('of 0'), findsNothing);
+    expect(find.text(retryActionLabel), findsNothing);
+  });
+
+  testWidgets('B1/B2: the cost line is still on the surface when uncounted', (
+    tester,
+  ) async {
+    // Uncounted must not read as FREE. The cost sentence is a separate
+    // element and the uncounted fix must not have removed it.
+    await pump(
+      tester,
+      FailedWorkItemActionPanel(
+        actionContext: context(actions: [retryAction(attempt: 5, limit: 0)]),
+        haltCount: 1,
+        now: now,
+      ),
+    );
+
+    expect(find.textContaining('costs model'), findsOneWidget);
+  });
+
   testWidgets('AC-4: the cost line is TEXT on the surface, not a tooltip', (
     tester,
   ) async {

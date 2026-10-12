@@ -111,10 +111,27 @@ const String blankReasonSentence = 'Add a short reason before you continue.';
 /// rather than left watching a panel that did not change.
 const String failedSentence = 'We could not do that. Nothing changed.';
 
-/// `This will be attempt N of M.` — the attempt position, stated in text and
-/// never as a colour-only badge (§9 A10, AC-4).
-String attemptPositionSentence(int attempt, int limit) =>
-    'This will be attempt $attempt of $limit.';
+/// The attempt position, stated in text and never as a colour-only badge
+/// (§9 A10, AC-4).
+///
+/// ## WHY THE "of M" CLAUSE IS GATED ON A REAL COUNT
+///
+/// [limit] is a non-nullable `int` on a frozen wire model, so "no count was
+/// configured" and "the count is zero" arrive as the SAME value, `0`. Since the
+/// 2026-10-12 reversal `0` is the DEFAULT — an operator may restart as often as
+/// they like — so rendering the number unconditionally produced the literal
+/// string "This will be attempt 5 of 0." on the default path. That is not a
+/// cosmetic wart: it asserts a zero-length budget the operator never chose, and
+/// it is false on the majority of machines.
+///
+/// The panel already carries the honest truth for the uncounted case in
+/// [retrySwitchedOffSentence] and the panel's own test pins it. So the count
+/// clause is stated ONLY when a real count exists, and the sentence below stays
+/// otherwise byte-identical to the bounded one so a configured budget is still
+/// legible as a budget.
+String attemptPositionSentence(int attempt, int limit) => limit > 0
+    ? 'This will be attempt $attempt of $limit.'
+    : 'This will be attempt $attempt.';
 
 /// §5.4 — the capacity snapshot in the shape the Overview already uses
 /// (`N of M machines busy`, `home_page.dart`). Always an observation, never a
@@ -129,9 +146,26 @@ String capacitySnapshotPhrase(int inFlight, int cap) =>
 
 /// §6.3 — the bound is spent. The offered number comes from the wire, so this
 /// can never drift from the value the server actually enforced.
-String retryLimitReachedSentence(int limit) =>
-    'This work has already been tried $limit '
-    '${limit == 1 ? 'time' : 'times'}. Stop it, or leave it for review.';
+///
+/// ## WHY A NON-POSITIVE COUNT IS NOT "ZERO TIMES"
+///
+/// The wire field is a non-nullable `int` and `0` means "there is no count",
+/// so it is what arrives when operator retry is SWITCHED OFF on purpose
+/// (`SHIPIT_OPERATOR_MAX_RETRIES=0`). Interpolating it produced the literal
+/// "This work has already been tried 0 times" — a statement about a budget the
+/// operator never spent, on a machine that deliberately has none. The total is
+/// routed to [retrySwitchedOffSentence] instead, which is the true reading.
+///
+/// This guard is a correction to PRE-EXISTING copy, not a regression introduced
+/// by the 2026-10-12 reversal: the interpolation is byte-identical at the base
+/// commit. What changed is that `0` became the common value instead of the
+/// disabled one, which is what made the wrong reading visible on the default
+/// path. See `operatorActionAnnouncement` below, which is the only caller.
+String retryLimitReachedSentence(int limit) {
+  if (limit <= 0) return retrySwitchedOffSentence;
+  return 'This work has already been tried $limit '
+      '${limit == 1 ? 'time' : 'times'}. Stop it, or leave it for review.';
+}
 
 /// OQ-1 — who restarted this, from the append-only audit ledger the retry
 /// writes. Reuses `PlainLanguage.timeOfDay` and the existing `DefinitionList`.
