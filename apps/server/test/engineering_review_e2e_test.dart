@@ -13,16 +13,47 @@ import 'package:control_plane_server/src/review/engineering_review_gate.dart';
 import 'support/design_gate_agents.dart';
 import 'support/git_repo_fixture.dart';
 
+/// Runs a read-only git command in [repoPath] under the fixture's hermetic
+/// environment (no global/system git config), returning trimmed stdout.
+///
+/// Only ever called with plumbing that cannot mutate the repository, so the
+/// assertions below inspect the real object database instead of re-deriving it
+/// from in-memory fixtures.
+String gitOut(String repoPath, List<String> args) {
+  final result = Process.runSync(
+    'git',
+    ['-C', repoPath, ...args],
+    environment: {
+      ...Platform.environment,
+      'GIT_CONFIG_GLOBAL': '/dev/null',
+      'GIT_CONFIG_SYSTEM': '/dev/null',
+    },
+  );
+  if (result.exitCode != 0) {
+    throw StateError(
+      'git ${args.join(' ')} failed (${result.exitCode}): ${result.stderr}',
+    );
+  }
+  return result.stdout.toString().trim();
+}
+
 /// In-memory end-to-end host for the automated engineering-review chain:
 /// implementation -> `agentCompleted` -> engineering review -> human gate ->
 /// `qaInProgress`. Real workflow engine, real store, real coordinator and real
 /// workers; the agents are gated fakes so the test is deterministic.
 class EngineeringReviewE2EHost {
+  /// [resolveReviewWorkload] defaults to TRUE because that is what production
+  /// does: the composition root always wires the real
+  /// `engineeringReviewWorkloadResolver`, so a reviewer never sees the
+  /// construction-time workload. The inert workload is a test-only deviation,
+  /// and a deviation that must be spelled out at the call site can never be
+  /// what a test gets by forgetting an argument — which is exactly how the
+  /// success path ended up running the resolver only on the failure path.
   EngineeringReviewE2EHost({
     required GitRepoFixture repo,
     required String workspaceRoot,
     bool writeImplementerArtifact = true,
-    bool resolveReviewWorkload = false,
+    bool resolveReviewWorkload = true,
   }) {
     workflowStore = InMemoryWorkflowStore();
     workflowEngine = DurableWorkflowEngine(store: workflowStore);
@@ -163,6 +194,13 @@ class EngineeringReviewE2EHost {
     executionStore: executionStore,
     logger: (_, _) {},
   )(job);
+
+  /// Every durable [WorkerExecution] the real [LocalWorker] recorded for
+  /// [workItemId] — read back from the store, not reconstructed by the test.
+  Future<List<WorkerExecution>> workerExecutionsFor(String workItemId) async =>
+      (await workerStore.listWorkerExecutions())
+          .where((e) => e.workItemId == workItemId)
+          .toList();
 }
 
 void main() {
@@ -183,9 +221,14 @@ void main() {
     'engineering review chain: agentCompleted -> reviewInProgress -> human gate '
     '-> approve -> qaInProgress',
     () async {
+      // The REAL resolver is wired in (stated explicitly here, not inherited
+      // from a default): this is the success path, and the whole point of the
+      // resolver is that a reviewer is dispatched against the revision the
+      // IMPLEMENTER produced. Steps 1-3 below assert that end to end.
       final host = EngineeringReviewE2EHost(
         repo: repo,
         workspaceRoot: '${temp.path}/workspaces',
+        resolveReviewWorkload: true,
       );
 
       await host.workflowEngine.createWorkItem(
@@ -220,11 +263,119 @@ void main() {
 
       final afterImpl = await host.workflowEngine.loadWorkItem('wi-er');
       expect(afterImpl.state, WorkItemState.agentCompleted);
-      expect(afterImpl.metadata?['producerActorId'], isNotNull);
+
+      // 1a. THE IDENTITY JOIN, proven against a real ExecutionCoordinator +
+      //     LocalWorker round trip rather than hand-built fixtures. The
+      //     coordinator stamped `producerActorId` from the execution it settled,
+      //     and LocalWorker recorded that same id on the worker execution as
+      //     `agentExecutionId` (itself `'agx-$workerExecutionId'`). The
+      //     resolver anchors on exactly this equality, so if any one of the
+      //     three sides disagreed the reviewer below could not be resolved.
+      final producerActorId = afterImpl.metadata?['producerActorId'];
+      expect(producerActorId, isA<String>());
+      expect((producerActorId as String).isNotEmpty, isTrue);
+
+      final implExecutions = (await host.workerExecutionsFor(
+        'wi-er',
+      )).where((e) => e.agentExecutionId == producerActorId).toList();
+      expect(
+        implExecutions,
+        hasLength(1),
+        reason:
+            'exactly one worker execution must carry producerActorId '
+            '$producerActorId, else the resolver refuses to dispatch',
+      );
+
+      final implExecution = implExecutions.single;
+      expect(
+        implExecution.agentExecutionId,
+        'agx-${implExecution.workerExecutionId}',
+        reason:
+            'LocalWorker derives the agent execution id from the worker '
+            'execution id; the resolver depends on that exact form',
+      );
+      expect(
+        implExecution.requiredCapabilities,
+        isNot(contains(WorkerCapability.engineeringReview)),
+        reason:
+            'the resolver filters reviewer-role executions out of the '
+            'producer candidates',
+      );
+      expect(implExecution.status, WorkerExecutionStatus.executedPass);
+
+      // 1b. The implementer really produced an artifact, so there IS something
+      //     for the resolver to resolve. Asserted rather than assumed.
+      final produced = implExecution.endingRevision;
+      expect(
+        produced,
+        isNotNull,
+        reason:
+            'the implementer wrote lib/calculator.dart and LocalWorker '
+            'commits it before cleanup removes the worktree',
+      );
+      expect(
+        produced,
+        isNot(repo.startingRevision),
+        reason:
+            'a commit equal to the requested starting revision means '
+            'nothing was produced and the resolver fails closed',
+      );
+      expect(implExecution.requestedStartingRevision, repo.startingRevision);
+
+      // 1c. The produced revision is DURABLE and carries the implemented code:
+      //     reachable on shipit/impl/wi-er, with the implemented calculator in
+      //     its tree rather than the fixture's UnimplementedError baseline.
+      expect(
+        gitOut(repo.root.path, ['rev-parse', 'shipit/impl/wi-er']),
+        produced,
+      );
+      expect(
+        gitOut(repo.root.path, ['show', '$produced:lib/calculator.dart']),
+        'int add(int a, int b) => a + b;',
+      );
 
       // 2. The review scheduler enqueues and runs the reviewer, moving the item
       //    to reviewInProgress (B1 + B2).
-      await host.runEngineeringReview();
+      final reviewTick = await host.runEngineeringReview();
+
+      // 2a. The resolver RESOLVED. Had it returned null the job would have been
+      //     reported as blocked and nothing would have been dispatched at all.
+      expect(
+        reviewTick.blockedArtifactMissing,
+        isEmpty,
+        reason:
+            'the real resolver refused to dispatch; the reviewer would '
+            'have run against a revision it could not vouch for',
+      );
+      expect(reviewTick.dispatched, isNotEmpty);
+
+      // 2b. The reviewer was dispatched against the IMPLEMENTER's commit, not
+      //     the construction-time workload. Its execution carries the resolved
+      //     revision as its requested starting revision, and that revision is
+      //     demonstrably NOT the repository's construction-time revision.
+      final reviewExecutions = (await host.workerExecutionsFor('wi-er'))
+          .where(
+            (e) => e.requiredCapabilities.contains(
+              WorkerCapability.engineeringReview,
+            ),
+          )
+          .toList();
+      expect(reviewExecutions, hasLength(1));
+
+      final reviewExecution = reviewExecutions.single;
+      expect(reviewExecution.requestedStartingRevision, produced);
+      expect(
+        reviewExecution.requestedStartingRevision,
+        isNot(repo.startingRevision),
+      );
+      expect(
+        reviewExecution.agentExecutionId,
+        isNot(producerActorId),
+        reason:
+            'the reviewer must be a distinct execution from the producer, '
+            'or actorIsNotSelf() would be vacuous',
+      );
+      expect(reviewExecution.status, WorkerExecutionStatus.executedPass);
 
       final inReview = await host.workflowEngine.loadWorkItem('wi-er');
       expect(inReview.state, WorkItemState.reviewInProgress);
