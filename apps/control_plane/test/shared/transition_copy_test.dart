@@ -183,6 +183,73 @@ void main() {
     });
   });
 
+  group('every DISPATCHABLE state has copy for every visible transition', () {
+    // `review_rejected` became dispatchable on 2026-10-12: a human chose to keep
+    // the state (rather than collapse a rejected review into
+    // `design_not_required`) and to make it dispatchable, so a rejected
+    // engineering review re-enters triage instead of being a dead end.
+    //
+    // Dispatchable means the scheduler will now put work on an item sitting in
+    // that state, so every transition an operator can see leaving it has to say
+    // something true. The table-enumeration test above already proves no
+    // accepted pair falls through to the neutral default; this pins the two
+    // pairs a rejected review can actually take, by name, so an edit to either
+    // string is a named failure rather than something only a regex noticed.
+    test('both ways out of a rejected review carry their own copy', () {
+      expect(
+        plainTransitionMessage(
+          'review_rejected',
+          'design_not_required',
+        ),
+        'Review not approved, work queued to start again',
+        reason:
+            'the item is queued to start again — this is what "dispatchable" '
+            'means, and the copy is what tells the operator their rejection '
+            'did not stop the work',
+      );
+      expect(
+        plainTransitionMessage('review_rejected', 'design_in_review'),
+        'Changes asked for, design updated',
+      );
+    });
+
+    test('the rejection itself is still visible as its own event', () {
+      // The reason option B was chosen: the operator can see "you rejected
+      // this" rather than a state that reads like a design decision.
+      expect(
+        plainTransitionMessage(
+          'waiting_for_human_decision',
+          'review_rejected',
+        ),
+        'Review not approved',
+      );
+    });
+
+    test('the copy for a dispatchable rejected review promises no immediate '
+        'execution', () {
+      // `agent_executing` asserts an execution is ALREADY running, which is
+      // exactly what `review_rejected -> agent_executing` used to (wrongly)
+      // claim. If that edge is ever restored, this row is where the operator
+      // would be told something untrue, and there must be copy for it before
+      // it is.
+      expect(
+        knownTransitionMessage('review_rejected', 'agent_executing'),
+        isNull,
+        reason:
+            'copy for this pair does not exist and must not be added while '
+            'the edge does not exist',
+      );
+      expect(
+        plainTransitionMessage('review_rejected', 'design_not_required'),
+        isNot(contains('Agent started work')),
+        reason:
+            '"Agent started work" is the `-> agent_executing` copy. Reusing it '
+            'for a queued item would claim a running execution that has not '
+            'happened yet.',
+      );
+    });
+  });
+
   group('technical truth preservation', () {
     test('raw pair is always retrievable for known transitions', () {
       expect(

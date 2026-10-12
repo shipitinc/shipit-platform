@@ -4,11 +4,65 @@ import 'package:workflow_engine/workflow_engine.dart';
 import 'package:workflow_store/workflow_store.dart';
 
 /// Triage defect job: AI triage of a human-reported defect.
+///
+/// ## WHY `reviewRejected` IS AN ENTRY STATE
+///
+/// A human decision (option B, taken 2026-10-12) settled that a rejected
+/// engineering review KEEPS its own state instead of collapsing into
+/// `designNotRequired`, and is dispatchable from there. Before that,
+/// `reviewRejected` was in no `entryStates` and was inert by construction: it is
+/// the target of exactly one route — `HumanDecisionRouting.targetFor(
+/// engineeringReview, reject)` — so a rejected review parked there forever
+/// with its decision already answered and no job ever minted. `reviewRejected`
+/// had no production caller for its own outgoing edge either:
+/// `reviewRejected -> designNotRequired` exists in the engine transition table
+/// and NOTHING in the repository takes it, which is the same dead end seen from
+/// the other side.
+///
+/// The state is kept because "you rejected this" is a distinct fact from "this
+/// needs a design" and an operator reading a collapsed state cannot tell a
+/// rejection from a design decision. The DISPATCHABILITY is what stops the
+/// rejection being terminal.
+///
+/// ## WHY IT NEEDS A PROBE TARGET OF ITS OWN
+///
+/// `RunnableWorkEvaluator` asks the policy "may an execution begin here?" by
+/// probing `<entryState> -> definition.targetState`, and `targetState` defaults
+/// to `agentExecuting`. `reviewRejected -> agentExecuting` is NOT an edge — it
+/// was deliberately REMOVED, because `agentExecuting` asserts an execution is
+/// already running and is in the `entryStates` of no wired definition. So
+/// listing the state in `entryStates` alone classifies it `noAction` and nothing
+/// is enqueued. That was verified, not assumed: with `reviewRejected` in
+/// `entryStates` and no probe target, `RunnableWorkEvaluator.evaluate` returns
+/// `noAction`, while `reviewRejected -> agentExecuting` is `false` and
+/// `reviewRejected -> designNotRequired` is `true`.
+///
+/// So the state names its own legal hop. The hop is an ordinary edge into an
+/// ordinary entry state, guarded only by `actorAllowed([orchestrator])` — the
+/// scheduler's own actor type — so the policy answers it the same way it
+/// answers `planned -> designNotRequired`. The question is still asked of the
+/// policy, so widening this set cannot make an illegal entry state dispatchable.
+///
+/// ## WHAT ELSE REACHES `reviewRejected`
+///
+/// Nothing. `designApproval/reject` routes to `designRejected` — a DIFFERENT
+/// state, and one already served by `designRevisionDefinition`. The
+/// `designRejection` decision type has no `targetFor` entry at all. So this
+/// change cannot pull a design rejection into the triage lane, and it does not
+/// widen any other job's entry set. `test/triage_entry_state_drift_guard_test.dart`
+/// asserts both halves of that against the live routing table.
 const JobDefinition triageDefectDefinition = JobDefinition(
   jobType: JobType.triageDefect,
   requiredRole: AgentRole.triageDefect,
   requiredCapabilities: {WorkerCapability.linux, WorkerCapability.git},
-  entryStates: {WorkItemState.designNotRequired, WorkItemState.designApproved},
+  entryStates: {
+    WorkItemState.designNotRequired,
+    WorkItemState.designApproved,
+    WorkItemState.reviewRejected,
+  },
+  entryProbeTargets: {
+    WorkItemState.reviewRejected: WorkItemState.designNotRequired,
+  },
   priority: JobPriority.high,
   maxAttempts: 2,
 );
