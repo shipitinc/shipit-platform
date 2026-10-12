@@ -1,74 +1,110 @@
+import 'dart:io';
+
 import 'package:control_plane/shared/transition_copy.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:platform_contracts/platform_contracts.dart';
 
-/// Mirrors the accepted-pair table in
-/// `packages/workflow_engine/lib/src/transitions/work_item_transitions.dart`
-/// (enumerated from source this session) plus the generic non-terminal ->
-/// cancelled/terminated escapes, so the plain-copy layer can never silently
-/// fall back on a pair the engine actually produces.
-const _engineAcceptedPairs = <(String, String)>[
-  // Planning
-  ('draft', 'planning'),
-  ('planning', 'planned'),
-  ('planning', 'cancelled'),
-  ('planned', 'design_required'),
-  ('planned', 'design_not_required'),
-  // Design
-  ('design_required', 'design_in_review'),
-  ('design_in_review', 'waiting_for_human_decision'),
-  ('waiting_for_human_decision', 'design_approved'),
-  ('waiting_for_human_decision', 'design_rejected'),
-  ('waiting_for_human_decision', 'design_in_review'),
-  ('design_approved', 'agent_executing'),
-  ('design_rejected', 'design_in_review'),
-  // Execution
-  ('design_not_required', 'agent_executing'),
-  ('agent_executing', 'agent_completed'),
-  ('agent_executing', 'agent_failed'),
-  ('agent_failed', 'agent_executing'),
-  // Engineering review
-  ('agent_completed', 'review_in_progress'),
-  ('review_in_progress', 'waiting_for_human_decision'),
-  ('waiting_for_human_decision', 'review_approved'),
-  ('waiting_for_human_decision', 'review_rejected'),
-  ('waiting_for_human_decision', 'agent_executing'),
-  ('review_approved', 'qa_in_progress'),
-  ('review_rejected', 'agent_executing'),
-  ('review_rejected', 'design_in_review'),
-  // QA
-  ('qa_in_progress', 'qa_passed'),
-  ('qa_in_progress', 'qa_failed'),
-  ('qa_passed', 'waiting_for_human_decision'),
-  ('qa_failed', 'waiting_for_human_decision'),
-  ('waiting_for_human_decision', 'qa_passed'),
-  ('waiting_for_human_decision', 'completed'),
-  // Deployment
-  ('qa_passed', 'deploying'),
-  ('deploying', 'waiting_for_human_decision'),
-  ('waiting_for_human_decision', 'deployed'),
-  ('waiting_for_human_decision', 'deployment_failed'),
-  ('deploying', 'deployed'),
-  ('deploying', 'deployment_failed'),
-  ('deployment_failed', 'deploying'),
-  ('deployed', 'completed'),
-  // generic escapes from every non-terminal state
-  ('agent_executing', 'cancelled'),
-  ('planning', 'terminated'),
-];
+/// The engine's accepted-pair table, enumerated LIVE from its source.
+///
+/// `control_plane` cannot depend on `workflow_engine` — it is a Flutter app
+/// and the engine is a pure Dart package below it — so this cannot call
+/// `WorkItemTransitions.isLegalTransition`. Reading the table as text is the
+/// same trick `apps/server/test/baseline_verification_wire_test.dart` uses to
+/// read a sibling package's source, and it is enough: the pairs are written
+/// as `(WorkItemState.a, WorkItemState.b): [` and the engine's own state enum
+/// converts them to wire values, so no hand-written snake_case can drift.
+///
+/// The previous version of this test carried a HARDCODED list "enumerated
+/// from source this session". It passed while `agentFailed ->
+/// designNotRequired`, `reviewRejected -> designNotRequired`,
+/// `waitingForHumanDecision -> designNotRequired` and
+/// `waitingForHumanDecision -> planning` were all live edges with no copy —
+/// because the list and the table were edited independently. A list that has
+/// to be maintained by hand cannot guard a table that has to be maintained by
+/// hand; this one is derived.
+const _engineTransitionsSource =
+    '../../packages/workflow_engine/lib/src/transitions/'
+    'work_item_transitions.dart';
+
+/// Every `(from, to)` entry of `_legalTransitions`, in wire values.
+Set<(String, String)> _liveEnginePairs() {
+  final source = File(_engineTransitionsSource);
+  expect(
+    source.existsSync(),
+    isTrue,
+    reason:
+        'cannot read the engine transition table at '
+        '$_engineTransitionsSource — the drift guard is now worthless if it '
+        'silently enumerates nothing',
+  );
+
+  final wire = {
+    for (final state in WorkItemState.values) state.name: state.wire,
+  };
+  final entry = RegExp(
+    r'\(WorkItemState\.(\w+), WorkItemState\.(\w+)\):\s*\[',
+  );
+
+  final pairs = <(String, String)>{};
+  for (final match in entry.allMatches(source.readAsStringSync())) {
+    final from = wire[match.group(1)!];
+    final to = wire[match.group(2)!];
+    expect(
+      from,
+      isNotNull,
+      reason: 'unknown WorkItemState member ${match.group(1)}',
+    );
+    expect(to, isNotNull, reason: 'unknown WorkItemState member ${match.group(2)}');
+    pairs.add((from!, to!));
+  }
+
+  expect(
+    pairs,
+    isNotEmpty,
+    reason: 'the regex matched no table entries — it has gone stale',
+  );
+  return pairs;
+}
 
 void main() {
   group('plainTransitionMessage', () {
     test('every engine-accepted pair has dedicated plain copy', () {
-      final unmatched = _engineAcceptedPairs
-          .where((p) => knownTransitionMessage(p.$1, p.$2) == null)
-          .toList();
+      final pairs = _liveEnginePairs();
+      final unmatched = pairs.where((p) => knownTransitionMessage(p.$1, p.$2) == null).toList()
+        ..sort((a, b) => '${a.$1}->${a.$2}'.compareTo('${b.$1}->${b.$2}'));
       expect(
         unmatched,
         isEmpty,
         reason:
             'pairs produced by the engine must never hit the neutral '
-            'default: $unmatched',
+            'default. Add copy for each in '
+            'lib/shared/transition_copy.dart: $unmatched',
       );
+    });
+
+    test('the guard actually enumerates the table', () {
+      // A guard that silently matches nothing is the failure mode this file
+      // replaced. Pin a few pairs that exist, and the count, so a regex that
+      // stops matching fails loudly instead of passing on an empty set.
+      final pairs = _liveEnginePairs();
+
+      expect(pairs, contains(('draft', 'planning')));
+      expect(pairs, contains(('design_not_required', 'agent_executing')));
+      expect(pairs, contains(('deployed', 'completed')));
+      expect(
+        pairs.length,
+        greaterThanOrEqualTo(40),
+        reason: 'the engine table has ~46 explicit entries',
+      );
+    });
+
+    test('generic escapes are covered by the wildcard arms', () {
+      // `(_, 'cancelled')` and `(_, 'terminated')` cover these without being
+      // enumerated, so they are asserted directly rather than via the table.
+      for (final state in WorkItemState.values.where((s) => !s.isTerminal)) {
+        expect(knownTransitionMessage(state.wire, 'cancelled'), isNotNull);
+        expect(knownTransitionMessage(state.wire, 'terminated'), isNotNull);
+      }
     });
 
     test('default copy is plain, not a raw pair', () {
@@ -98,6 +134,51 @@ void main() {
       expect(
         plainTransitionMessage('weirdFuture', 'alsoFuture'),
         'The work moved to a new stage.',
+      );
+    });
+  });
+
+  group('the rework landings an operator will now see', () {
+    // These four pairs are the ones this change put on screen. They are
+    // spelled out so a later edit that drops one of them is a named failure
+    // rather than something only the table-enumeration test would notice.
+    test('a rejected review queues the work instead of resuming it', () {
+      expect(
+        knownTransitionMessage('review_rejected', 'design_not_required'),
+        'Review not approved, work queued to start again',
+      );
+    });
+
+    test('a human rejection at any gate queues the work', () {
+      expect(
+        knownTransitionMessage(
+          'waiting_for_human_decision',
+          'design_not_required',
+        ),
+        'Changes asked for, work queued to start again',
+      );
+    });
+
+    test('the operator retry queues the work', () {
+      expect(
+        knownTransitionMessage('agent_failed', 'design_not_required'),
+        'Trying again after an error',
+      );
+    });
+
+    test('sending an escalation back re-plans it', () {
+      expect(
+        knownTransitionMessage('waiting_for_human_decision', 'planning'),
+        'Sent back to be re-planned',
+      );
+    });
+
+    test('no copy promises a resume on a state that cannot dispatch', () {
+      // `review_rejected -> agent_executing` was deleted with its edge; copy
+      // for an impossible pair is a promise the engine will never keep.
+      expect(
+        knownTransitionMessage('review_rejected', 'agent_executing'),
+        isNull,
       );
     });
   });

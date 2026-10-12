@@ -4,9 +4,16 @@
 /// `packages/workflow_engine/lib/src/transitions/work_item_transitions.dart`
 /// plus the generic non-terminal -> cancelled/terminated escapes, and use the
 /// same snake_case wire values as `WorkItemState.wire`
-/// (`packages/platform_contracts/lib/src/enums/workflow_state.dart`).
-/// Presentation only: the durable raw pair is always retained for the
-/// technical detail layer, never replaced.
+/// (`packages/platform_contracts/platform_contracts`). Presentation only: the
+/// durable raw pair is always retained for the technical detail layer, never
+/// replaced.
+///
+/// This package cannot depend on `workflow_engine` (it is a Flutter app; the
+/// engine is a pure Dart package below it), so the "every accepted pair has
+/// copy" property is enforced by `test/shared/transition_copy_test.dart`, which
+/// enumerates the engine's table LIVE from source rather than from a
+/// hand-maintained list. A hardcoded list is what let a missing pair through
+/// once already. Add an edge to the engine and that test names the missing copy.
 ///
 /// Principle (004 §11/§14): PLAIN LANGUAGE BY DEFAULT, TECHNICAL TRUTH
 /// DELIBERATELY AVAILABLE. Raw internal pairs therefore never appear as the
@@ -25,8 +32,12 @@ String? knownTransitionMessage(String from, String to) => switch ((from, to)) {
   ('planned', 'design_in_review') => 'Design needed before building',
   ('planned', 'design_not_required') => 'No design needed, ready to build',
   ('design_required', 'design_in_review') => 'Design under review',
+  ('design_required', 'agent_executing') => 'Agent started work',
   ('design_in_review', 'waiting_for_human_decision') =>
     'Sent to you for approval',
+  // Work can proceed to execution straight out of design review when the
+  // design revision is settled and only the build is outstanding.
+  ('design_in_review', 'agent_executing') => 'Agent started work',
   ('waiting_for_human_decision', 'design_approved') => 'Design approved',
   ('waiting_for_human_decision', 'design_rejected') => 'Design not approved',
   ('waiting_for_human_decision', 'design_in_review') =>
@@ -38,15 +49,30 @@ String? knownTransitionMessage(String from, String to) => switch ((from, to)) {
   ('agent_executing', 'agent_completed') => 'Agent finished its work',
   ('agent_executing', 'agent_failed') => "Agent's work hit an error",
   ('agent_failed', 'agent_executing') => 'Retrying after an error',
+  // The operator pressed "try again" on a failed run. This is the retry
+  // returning the item to a state the scheduler dispatches from, so the copy
+  // is the queue, not a second "retrying" that duplicates the line above.
+  ('agent_failed', 'design_not_required') => 'Trying again after an error',
   ('agent_completed', 'review_in_progress') => 'Independent review started',
+  // The implementation turned out to need a design revision, so the item goes
+  // back to design rather than to review.
+  ('agent_completed', 'design_in_review') => 'Design revision needed',
   ('review_in_progress', 'waiting_for_human_decision') =>
     'Sent to you for approval',
   ('waiting_for_human_decision', 'review_approved') => 'Review approved',
   ('waiting_for_human_decision', 'review_rejected') => 'Review not approved',
+  // One pair, five different gates (engineering review rework, QA waiver
+  // rejection, QA rework rejection, human QA rejection, escalation resume), so
+  // the copy is the one thing true of all five: the human asked for the work
+  // to be done again and it is queued to start again.
+  ('waiting_for_human_decision', 'design_not_required') =>
+    'Changes asked for, work queued to start again',
   ('waiting_for_human_decision', 'agent_executing') =>
     'Changes asked for, work resumed',
+  ('waiting_for_human_decision', 'planning') => 'Sent back to be re-planned',
   ('review_approved', 'qa_in_progress') => 'QA started',
-  ('review_rejected', 'agent_executing') => 'Changes asked for, work resumed',
+  ('review_rejected', 'design_not_required') =>
+    'Review not approved, work queued to start again',
   ('review_rejected', 'design_in_review') =>
     'Changes asked for, design updated',
   ('qa_in_progress', 'qa_passed') => 'QA passed',

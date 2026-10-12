@@ -18,9 +18,23 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
   @override
   final WorkItemState value;
 
+  /// Mirror of the accepted pairs in `WorkItemTransitions._legalTransitions`
+  /// plus the generic non-terminal -> `cancelled`/`terminated` escapes.
+  ///
+  /// This list is CORRECTNESS-OF-RECORD, not a runtime authority: nothing
+  /// consults it. `WorkItemTransitions.isLegalTransition` reads the table
+  /// directly, `TransitionValidator` only ever sees guards handed to it, and
+  /// `canTransitionTo` (the only reader of this list) has zero callers. It is
+  /// kept in sync anyway because a stale list here is a lie that the next
+  /// reader will believe, and `transition_consistency_test.dart` fails if the
+  /// two ever diverge again.
   @override
   List<WorkflowState<WorkItemState>> get allowedTransitions => switch (value) {
-    WorkItemState.draft => [WorkItemWorkflowState.planning],
+    WorkItemState.draft => [
+      WorkItemWorkflowState.planning,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
     WorkItemState.planning => [
       WorkItemWorkflowState.planned,
       WorkItemWorkflowState.cancelled,
@@ -73,6 +87,7 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
     ],
     WorkItemState.agentFailed => [
       WorkItemWorkflowState.agentExecuting,
+      WorkItemWorkflowState.designNotRequired,
       WorkItemWorkflowState.cancelled,
       WorkItemWorkflowState.terminated,
     ],
@@ -87,7 +102,7 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
       WorkItemWorkflowState.terminated,
     ],
     WorkItemState.reviewRejected => [
-      WorkItemWorkflowState.agentExecuting,
+      WorkItemWorkflowState.designNotRequired,
       WorkItemWorkflowState.designInReview,
       WorkItemWorkflowState.cancelled,
       WorkItemWorkflowState.terminated,
@@ -116,6 +131,8 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
       WorkItemWorkflowState.reviewApproved,
       WorkItemWorkflowState.reviewRejected,
       WorkItemWorkflowState.agentExecuting,
+      WorkItemWorkflowState.designNotRequired,
+      WorkItemWorkflowState.planning,
       WorkItemWorkflowState.qaPassed,
       WorkItemWorkflowState.deployed,
       WorkItemWorkflowState.deploymentFailed,

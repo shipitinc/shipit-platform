@@ -287,38 +287,33 @@ void main() {
       );
     });
 
-    test('the retry transition itself renders as the existing timeline row', () {
-      // ## A DIVERGENCE THE REVIEWER SHOULD SEE, PINNED HONESTLY
+    test('the retry transition renders its own row, not the fallback', () {
+      // ## A DIVERGENCE THAT WAS REPORTED, AND IS NOW CLOSED
       //
       // design-brief.md §5.4 lists the retry's "Resulting timeline row" as
       // `Retrying after an error`, and cites `transition_copy.dart:40` for it.
       // That string IS bound there — to `('agent_failed', 'agent_executing')`,
       // the edge retry took BEFORE HD-4. HD-4 retargeted the retry to
       // `designNotRequired` (§6.5.1) and §5.2's binding was corrected, but
-      // §5.4's row was not re-derived and no longer fires.
+      // §5.4's row was not re-derived and the pair had no copy of its own, so
+      // an operator pressing "Try again" saw the generic fallback:
+      // "The work moved to a new stage."
       //
-      // So the row an operator actually sees after pressing "Try again" is the
-      // generic fallback. That is NOT WRONG and not a silent failure — the
-      // panel states the attempt position and the outcome out loud, and the
-      // durable reason is in `TechnicalDetails` — but it is less specific than
-      // the brief says it should be, and the fix is a one-line copy decision
-      // in a SHARED file (`transition_copy.dart`, outside this lane's declared
-      // OWNED_PATHS) that changes what every run-detail timeline renders.
-      //
-      // It is therefore NOT taken here. This test pins what the code actually
-      // does so the divergence is visible rather than latent; correcting it is
-      // reported to the Manager rather than decided by the implementer.
+      // The lane that made the retry land on `design_not_required` did not own
+      // `transition_copy.dart`, so it could not close this and pinned the
+      // fallback deliberately instead, reporting it to the Manager. This lane
+      // owns that file, so the divergence is CLOSED here and the row now says
+      // what actually happened.
       expect(
         plainTransitionMessage('agent_failed', 'design_not_required'),
-        'The work moved to a new stage.',
+        'Trying again after an error',
         reason:
-            'the retry row is the generic fallback today — see the note '
-            'above. If this ever changes, §5.4 and this test must change '
-            'together.',
+            'the retry pair must carry its own copy. §5.4 names the retry row; '
+            'if this string changes, §5.4 and this test change together.',
       );
 
-      // The string §5.4 names still exists and is still reachable — on the
-      // pre-HD-4 pair. Nothing was deleted to make the row above generic.
+      // The pre-HD-4 string is untouched and still reachable on its own pair.
+      // Nothing was re-bound to make the row above specific.
       expect(
         plainTransitionMessage('agent_failed', 'agent_executing'),
         'Retrying after an error',
