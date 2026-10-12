@@ -53,3 +53,51 @@ resolution:
         Set SHIPIT_OPERATOR_MAX_RETRIES=3 on the QA stack before the screen is exercised, or the
         retry action will correctly not appear and the screen will look broken.
       owner: orchestrator-main
+created_by: orchestrator-main
+created_at: 2026-10-11T00:00:00Z
+updated_at: 2026-10-12T00:00:00Z
+#
+## SUPERSEDED IN FULL — 2026-10-12
+#
+# Decision `8585491a-11a9-473e-ae4f-d66a210408f3` (HD-5) **supersedes this decision in full**, not in
+# part. Nothing above is deleted or rewritten: the resolution, its rationale and both follow-up actions
+# stand as the record of what was accepted on 2026-10-11 and of why.
+#
+# **What HD-3 decided, restated so this object can be read on its own:** 3 retries per work item, counted
+# per work item, and **fail closed** — if `SHIPIT_OPERATOR_MAX_RETRIES` is unset the retry action is not
+# offered at all rather than defaulting to a permissive value.
+#
+# **What HD-5 changed:** the default is now **uncounted**. An unset, blank, unparseable or negative value
+# resolves to unbounded and the action is offered; an explicit `0` still disables it; an explicit positive
+# integer still caps it. **AUTOMATIC retries are unaffected** and remain bounded by the job's own
+# `maxAttempts` via `RetryPolicy.canRetry`.
+#
+# **This decision was not wrong, and is not recorded as having been.** Its reasoning — *"an operator action
+# that spends real credits must never be armed by a missing configuration"* — was correct and is still
+# correct. It was applied to the wrong actor. HD-3 could bound the operator button only by refusing to
+# offer it when unconfigured, and that refusal is indistinguishable from a broken screen to the operator
+# the screen exists for; and the unbounded spend it feared was never reachable, because there is no
+# automation caller of that RPC.
+#
+# **Retained from this object, because it is still load-bearing:**
+#
+# - The **per-work-item count**, not per operator per day. The human rejected per-operator-per-day at the
+#   time and the reason stands: *"a per-operator-per-day cap is trivially reset and does not bound a single
+#   pathological item."* HD-5 keeps that shape for the explicit-cap case.
+# - **`0` as a valid configuration meaning "permanently disabled"**, not a failure. Preserved verbatim.
+# - **Counting from the `operator_action` audit ledger**, which is exact and append-only.
+#
+# **Now discharged, not merely dropped:** the follow-up *"the unset-means-unavailable behaviour must be
+# visible in the design and in the acceptance criteria"* has nothing left to make visible — under HD-5 the
+# action is offered when unset. The clauses that discharged it in
+# `docs/engineering/dispatch/tasks/design-failed-work-retry/design-brief.md` (§6.6 heading, §6.6 bullets,
+# §6.6.1, AC-15b/AC-15c/AC-15d, N14, A11, the §12 risk row, the §13.1 record and the L2 premises note) are
+# each marked **SUPERSEDED** in place with a pointer to `8585491a`.
+#
+# **Also discharged:** *"set `SHIPIT_OPERATOR_MAX_RETRIES=3` on the QA stack before the screen is
+# exercised."* Nothing needs setting. The QA stack's `:-3` was never committed — see HD-5.
+#
+# (This appendix is YAML-commented so the object above stays machine-parseable. It was parseable at HEAD
+# and this record does not make it otherwise; the prose above is the convention's `## SUPERSEDED` block,
+# carried as comments for that reason. `.decisions/30c00e6e` uses the un-commented form and therefore no
+# longer parses — noted rather than repeated.)

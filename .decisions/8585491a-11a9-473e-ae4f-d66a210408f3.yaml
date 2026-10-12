@@ -1,0 +1,165 @@
+# human-decision.yaml
+#
+# HD-5. Supersedes HD-3 (`5d9a1f62-8b37-4e50-a9c4-71f2d8b3e605`) in full.
+# Recorded 2026-10-12. See the `## SUPERSEDED` block appended to HD-3's own object.
+decision_id: 8585491a-11a9-473e-ae4f-d66a210408f3
+supersedes: 5d9a1f62-8b37-4e50-a9c4-71f2d8b3e605   # HD-3, in full, not in part
+type: POLICY
+status: RESOLVED
+question: >-
+  (HD-5) HD-3 made operator retry fail CLOSED — three retries per work item, and if
+  SHIPIT_OPERATOR_MAX_RETRIES is unset the retry action is not offered at all. The human reverses that:
+  operator retry is UNCUNTED by default, because the action is human-triggered through an authenticated
+  operator session whose only caller is the operator UI. The count stays where it was actually load-bearing,
+  on AUTOMATIC (agent-driven) retries, which remain bounded by the job's own maxAttempts.
+context:
+  summary: >-
+    Raised by the repository owner as a direct reversal request: "Ship IT restricts the number of times I
+    can retry a job. Can you revert that decision it's ok to retry a job unlimited times as long as the try
+    is human triggered and not automatic. We'd only want to limit the retries if it was an agent driven
+    process."
+    HD-3 was a real accepted decision and was implemented faithfully; this record does not retract it as
+    an error. It was defensible on the facts then known, and the reasons for reversing it are stated below
+    rather than implied.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: hdr-supersede-hd3
+    item_ref: >-
+      Documentation reconciliation for the DO_NOT_MERGE review of branch
+      fix/operator-retry-unbounded (commit 611f2cc), which reverses HD-3's fail-closed default while the
+      design brief still instructs the opposite.
+  evidence:
+    documents:
+      - type: OTHER
+        id: hd-3-superseded
+        url: .decisions/5d9a1f62-8b37-4e50-a9c4-71f2d8b3e605.yaml
+      - type: DESIGN
+        id: design-brief-failed-work-retry
+        url: docs/engineering/dispatch/tasks/design-failed-work-retry/design-brief.md
+      - type: OTHER
+        id: execution-limits-decision
+        url: .decisions/f8c8b67f-c455-4ffb-8fcd-e6e793244736.yaml
+      - type: OTHER
+        id: review-finding
+        url: >-
+          DO_NOT_MERGE finding on fix/operator-retry-unbounded (611f2cc): the design brief still carries
+          HD-3's fail-closed instruction, which is a CONTRADICTION between governance and code under
+          docs/engineering/LEARNING_POLICY.md.
+    measurements:
+      - "the QA stack's SHIPIT_OPERATOR_MAX_RETRIES ':-3' default existed ONLY as an uncommitted working-tree edit"
+      - "commits that ever set ':-3' under docker/: d41f2b6 (compose.yaml, compose.e2e.yaml, compose.test.yaml) and 8492dcb, which lowered those three to ':-' (empty)"
+      - "commits that ever touched SHIPIT_OPERATOR_MAX_RETRIES in docker/compose.qa.yaml: none, on any ref"
+      - "automatic retries: triage_defect is still maxAttempts: 2, enforced through RetryPolicy.canRetry"
+    qualitative_tradeoffs:
+      - dimension: Spend bound on the operator action
+        option_a: Fail closed, 3 per work item (HD-3)
+        option_b: Uncounted by default, explicit 0 disables, explicit N caps (this decision)
+        assessment: >-
+          HD-3's reasoning was sound: a retry mints a new job with a fresh attempt budget on a metered
+          free-tier model, so an unbounded button is an unbounded spend firehose, and "an operator action
+          that spends real credits must never be armed by a missing configuration" is a correct principle.
+          What HD-3 could not know is who the button belongs to. It now does: the only production caller is
+          the operator UI behind an authenticated session, there is no automation caller, and a test in
+          611f2cc pins that caller list by name so a future agent/cron/webhook path fails loudly. The bound
+          was aimed at automation and was landing on a human's own judgement instead — and the fail-closed
+          half had a live cost of its own: with the variable unset the button correctly never appeared, and
+          that correct behaviour reads as a broken screen to the operator it was meant to serve.
+      - dimension: Where the bound belongs
+        option_a: Keep the bound on the operator action
+        option_b: Keep the bound on automatic retries only
+        assessment: >-
+          These are not the same mechanism. AUTOMATIC retry is Job.maxAttempts via RetryPolicy.canRetry and
+          is untouched by this decision and by SHIPIT_OPERATOR_MAX_RETRIES. The human's stated intent —
+          "we'd only want to limit the retries if it was an agent driven process" — is satisfied exactly by
+          moving no bound and dropping the operator-side count.
+options_considered:
+  - option: UNCOUNTED_OPERATOR_BOUNDED_AUTOMATIC
+    description: >-
+      Unset/blank/unparseable SHIPIT_OPERATOR_MAX_RETRIES means UNCUNTED and the retry action is offered;
+      an explicit 0 still disables operator retry; an explicit positive integer still caps it. Automatic
+      retries unchanged.
+  - option: RAISE_THE_NUMBER
+    description: >-
+      Keep the fail-closed mechanism and simply raise 3. Rejected: it preserves the false-signal failure
+      mode and does not answer what the human actually asked.
+  - option: KEEP_HD_3
+    description: >-
+      Leave the decision as it stands. Not offered as a live option — the human has already reversed it.
+resolution:
+  outcome: UNCOUNTED_OPERATOR_BOUNDED_AUTOMATIC
+  decided_by: human-operator
+  decided_at: 2026-10-12
+  selected_option: "Record HUMAN_DECISION_RECORD superseding HD-3 (Recommended)"
+  rationale: >-
+    The human reversed HD-3's fail-closed operator-retry bound. The settled shape is:
+
+      - Operator retry is UNCUNTED by default. An unset, blank, unparseable or negative
+        SHIPIT_OPERATOR_MAX_RETRIES resolves to unbounded, and the retry action is offered.
+      - An explicit 0 still disables operator retry. It is a valid configuration meaning "permanently
+        disabled", not a failure and not a fallback.
+      - An explicit positive integer still caps it at that number, counted per work item as HD-3 counted
+        it. The counting mechanism is HD-3's and is retained.
+      - AUTOMATIC (agent-driven) retries are UNAFFECTED. They remain bounded by the job's own maxAttempts
+        through RetryPolicy.canRetry; triage_defect is still maxAttempts: 2. SHIPIT_OPERATOR_MAX_RETRIES
+        does not read or write that path.
+
+    The reasoning, in the human's terms: the action is human-triggered through an authenticated operator
+    session whose only caller is the operator UI, and an operator deciding whether to try again is the
+    person best placed to decide. The human wants to limit retries only where the retries are
+    agent-driven — and that limit already exists, one layer down, where it was never in doubt.
+
+    Recorded honestly about HD-3: it was not wrong. Its stated worry — a credit-spending action armed by
+    a missing configuration — was correct reasoning applied to the wrong actor. HD-3 could bound the
+    operator button only by refusing to offer it when unconfigured, and that refusal is indistinguishable
+    from a broken screen to the operator, who is the person the screen exists to serve. The firehose it
+    feared is not reachable: there is no automation caller. What this decision gives up is named rather
+    than argued away — a human who clicks retry repeatedly spends repeatedly, and nothing in the UI counts
+    it any more unless an operator sets an explicit cap. The human has priced that and accepted it.
+  residual_risk: >-
+    "Human-triggered" rests on the endpoint being reachable only through an authenticated operator
+    session. It is NOT enforced by a cryptographic identity claim: `requestedBy` on the retry action is a
+    client-supplied `String` parameter, written into the `operator_action` row as-is. Anything that can
+    reach the RPC with a session can therefore attribute a retry to any string it likes, and the audit
+    trail cannot distinguish a real operator from a caller naming itself one. The property that makes this
+    decision safe is the caller list, not the recorded identity — which is why 611f2cc pins the caller list
+    by name in a test instead of trusting it to stay small by inspection. If a second, non-UI caller is ever
+    added, this decision's premise is void and it must be reopened, not reimplemented.
+  follow_up_actions:
+    - action: >-
+        Every clause of the design brief that instructs HD-3's fail-closed behaviour is marked SUPERSEDED
+        in place, with a pointer to this record and a reason. No clause is deleted — the audit trail must
+        stay readable, and a reader must not be able to reach the opposite instruction by omission.
+      owner: orchestrator-main
+    - action: >-
+        Add a row to docs/engineering/dispatch/DECISIONS.md for this decision and for the supersession of
+        HD-3, so the index does not present two apparently current answers to one question.
+      owner: orchestrator-main
+    - action: >-
+        If a non-UI caller of the retry RPC is ever introduced — agent, cron, webhook, public endpoint —
+        reopen this decision rather than widening SHIPIT_OPERATOR_MAX_RETRIES to compensate.
+      owner: orchestrator-main
+    - action: >-
+        Nothing is required of the QA stack. HD-3's follow-up ("set SHIPIT_OPERATOR_MAX_RETRIES=3 on the
+        QA stack before the screen is exercised") is discharged by removal, not by configuration.
+      owner: orchestrator-main
+created_by: orchestrator-main
+created_at: 2026-10-12T00:00:00Z
+updated_at: 2026-10-12T00:00:00Z
+# ## QA-stack correction recorded here, because it is the operational half of this decision
+#
+# The review surfaced a fact that is worth stating precisely, because "no commit ever set it" is easy to
+# over-generalise from a single stack to all four:
+#
+# - `SHIPIT_OPERATOR_MAX_RETRIES: "${SHIPIT_OPERATOR_MAX_RETRIES:-3}"` **was committed** in
+#   `docker/compose.yaml`, `docker/compose.e2e.yaml` and `docker/compose.test.yaml` by `d41f2b6`, then
+#   lowered to `${SHIPIT_OPERATOR_MAX_RETRIES:-}` (empty) by `8492dcb`, which is an ancestor of `main`.
+# - `docker/compose.qa.yaml` is different, and the difference is the finding: **no commit on any ref has
+#   ever set that variable in the QA stack.** `git log --all -S 'SHIPIT_OPERATOR_MAX_RETRIES' --
+#   docker/compose.qa.yaml` returns nothing. The `:-3` the QA stack was running existed only as an
+#   **uncommitted working-tree edit**, which meant the cap the QA environment actually carried was invisible
+#   to review and to anyone reading the repository.
+#
+# That edit has been removed, and `docker/compose.qa.yaml` now carries a comment recording why the variable
+# is deliberately absent: QA matches the other three stacks, and operator retry is uncounted. Verified
+# independently by commit `611f2cc`, whose message records the same finding from the other side —
+# "compose.qa.yaml is untouched — it sets no operator-retry value at any commit".
