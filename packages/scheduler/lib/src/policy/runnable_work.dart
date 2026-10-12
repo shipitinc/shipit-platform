@@ -31,6 +31,7 @@ class JobDefinition {
     this.priority = JobPriority.normal,
     this.maxAttempts = 2,
     this.targetState = WorkItemState.agentExecuting,
+    this.entryProbeTargets = const {},
     this.skipWorkflowPolicyCheck = false,
   });
 
@@ -45,6 +46,44 @@ class JobDefinition {
   /// Defaults to [WorkItemState.agentExecuting] for standard agent jobs.
   final WorkItemState targetState;
 
+  /// Per-entry-state overrides for the far side of the legality probe, for
+  /// entry states whose route to execution is NOT a direct
+  /// `<entry> -> targetState` edge.
+  ///
+  /// [targetState] is not an executed transition. Nothing in the scheduler
+  /// transitions a work item; [RunnableWorkEvaluator] uses this value purely
+  /// as the far side of the QUESTION it puts to the workflow policy — "may an
+  /// execution begin from this state?" — and the answer comes from the policy,
+  /// never from a local copy of the graph. For most entry states the honest
+  /// question really is `agentExecuting`, which is what the default says.
+  ///
+  /// An entry state that cannot start an execution directly has to ask a
+  /// different question, and this map is how it asks it. `reviewRejected` is
+  /// the case that exists for: a human decided that a rejected engineering
+  /// review KEEPS its own state rather than collapsing into `designNotRequired`
+  /// (so the operator can see "you rejected this" as its own state), and that
+  /// state is still dispatchable so the rejection is not a dead end. Its only
+  /// legal hop toward execution is `reviewRejected -> designNotRequired` — an
+  /// ordinary orchestrator edge into an ordinary entry state — so that is the
+  /// hop named here and the hop the policy is asked about. The question is
+  /// still the policy's to answer; only its target is now precise.
+  ///
+  /// Overriding per entry state rather than widening [targetState] is
+  /// deliberate. [targetState] is ONE value for the whole definition, and it
+  /// cannot honestly mean both "start an execution directly"
+  /// (`designNotRequired`, `designApproved`) and "legally return to a
+  /// dispatchable entry state" (`reviewRejected`) at once. Collapsing the two
+  /// would either ask an illegal question or stop asking the question at all
+  /// (`skipWorkflowPolicyCheck`), and the second of those abandons the
+  /// "ask the policy, never a local copy of the graph" invariant for the
+  /// states that were getting it right.
+  final Map<WorkItemState, WorkItemState> entryProbeTargets;
+
+  /// The far side of the legality probe for [entryState]: its own override
+  /// when one is declared, and [targetState] otherwise.
+  WorkItemState probeTargetFor(WorkItemState entryState) =>
+      entryProbeTargets[entryState] ?? targetState;
+
   /// If true, skip the workflow policy check (for design/review jobs that
   /// don't map to standard agentExecuting transitions).
   final bool skipWorkflowPolicyCheck;
@@ -55,16 +94,26 @@ class JobDefinition {
 /// job type's scheduling-intent boundary.
 ///
 /// The scheduler owns only "what kinds of work the platform launches
-/// automatically". It does NOT duplicate the transition graph: legality of
-/// `state -> agentExecuting` is always verified through
-/// [WorkflowEngine.evaluateWorkItemTransition], so if the policy changes the
-/// scheduler can never enqueue something the policy forbids.
+/// automatically". It does NOT duplicate the transition graph: the legality of
+/// the hop an entry state takes toward execution is always verified through
+/// [WorkflowEngine.evaluateWorkItemTransition] — `agentExecuting` for an entry
+/// state that starts an execution directly, and the entry state's own declared
+/// hop otherwise (see [JobDefinition.entryProbeTargets]) — so if the policy
+/// changes the scheduler can never enqueue something the policy forbids.
 ///
 /// Entry-state intent is deliberately narrower than the workflow graph:
-/// `designNotRequired` and `designApproved` are "awaiting an execution".
-/// `agentFailed` and `reviewRejected` are NOT auto-enqueued: reworking a
-/// failed coding result routes through the workflow's correction/review gate,
-/// not an automatic LLM re-run.
+/// `designNotRequired`, `designApproved` and `reviewRejected` are "awaiting an
+/// execution". `agentFailed` is still NOT auto-enqueued: reworking a failed
+/// coding result routes through the workflow's correction/review gate, not an
+/// automatic LLM re-run.
+///
+/// `reviewRejected` used to be listed here as not auto-enqueued. That was
+/// true when the state was inert, and it stopped being true when a human chose
+/// to keep the state (rather than collapse a rejected review into
+/// `designNotRequired`) and make it dispatchable — a rejected engineering
+/// review has to re-enter triage, or the rejection is a dead end with the
+/// decision already answered. See [JobDefinition.entryProbeTargets] for why
+/// making it dispatchable needed more than adding the state to `entryStates`.
 class RunnableWorkEvaluator {
   const RunnableWorkEvaluator({required this.policy});
 
@@ -90,10 +139,14 @@ class RunnableWorkEvaluator {
       return RunnableWorkStatus.runnable;
     }
 
-    // Ask the policy, never a local copy of the graph.
+    // Ask the policy, never a local copy of the graph. The far side of the
+    // question is per entry state: `agentExecuting` for an entry state that
+    // starts an execution directly, and that entry state's own declared hop
+    // when the route to execution is not a direct edge (see
+    // [JobDefinition.entryProbeTargets]).
     final transition = policy.evaluateWorkItemTransition(
       from: item.state,
-      to: definition.targetState,
+      to: definition.probeTargetFor(item.state),
       trigger: TransitionTrigger.systemEvent,
       actor: _scheduler,
       context: const {'agentAvailable': true, 'capabilitiesMatch': true},

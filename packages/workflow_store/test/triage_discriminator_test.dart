@@ -37,10 +37,14 @@ import 'package:workflow_store/workflow_store.dart';
 ///
 /// This file owns the WRITER (`workflow_store`): that a re-triage advances the
 /// marker, that a non-re-triage does not, and that the marker is one monotone
-/// counter. `packages/scheduler/test/operator_retry_dispatch_test.dart` owns
-/// the READER — that the marker becomes `':a<n>'` and that an absent marker
-/// still yields the byte-identical historical key — and it drives a REAL tick
-/// to prove a re-triage actually enqueues.
+/// counter. `packages/scheduler/test/operator_retry_dispatch_test.dart` owns the
+/// READER — that the marker becomes `':a<n>'` and that an absent marker still
+/// yields the byte-identical historical key — and it drives a REAL tick to
+/// prove a re-triage actually enqueues. The DRIFT GUARD that held the two
+/// together used to be here and now lives in
+/// `packages/scheduler/test/triage_entry_state_drift_guard_test.dart`, because
+/// only that package can read the entry-state set it has to check. See the note
+/// on `main` below.
 const _id = 'defect-DEF-1791684804452198';
 
 const _orch = WorkflowActor(
@@ -248,66 +252,52 @@ Future<HumanDecision> _pendingEngineeringReview(
   _id,
 )).firstWhere((d) => d.decisionType == HumanDecisionType.engineeringReview);
 
-/// THE DRIFT GUARD between the routing table and the re-triage rule.
+/// THE DRIFT GUARD between the routing table and the re-triage rule — **MOVED**.
 ///
-/// `DurableWorkflowEngine._isReWorkDecision` deliberately does not consult
-/// `HumanDecisionRouting`, because copying that table into `workflow_store` is
-/// how `escalationTargetFor` already came to disagree with `targetFor` in this
-/// repository. The cost of not consulting it is that the two could drift: a
-/// route added to the routing table pointing at `designNotRequired` with a
-/// choice the rule does not recognise would re-enter triage WITHOUT a fresh
-/// discriminator and be inert — the exact defect, one release later.
+/// It used to live here, and it used to filter on
+/// `HumanDecisionRouting.targetFor(type, choice) != WorkItemState.designNotRequired`.
+/// An independent review of 4614cf9 proved that filter too narrow (MEDIUM
+/// finding M1): it only ever saw the ONE entry state its filter named, so
+/// adding a route to `designApproved` — or making `reviewRejected` a triage
+/// entry state at all — left it 16/16 GREEN while it checked none of it.
 ///
-/// This closes that gap without copying anything. It reads the ROUTING TABLE
-/// (the authority) and asserts a property of it: every route that lands on
-/// `designNotRequired` carries a choice the rule recognises as re-work. The
-/// recognised set is written out here literally, so adding a route with a new
-/// choice fails this test and names what the rule now has to decide.
+/// It cannot be widened HERE. `workflow_store` is a dependency of `scheduler`,
+/// not the other way round, so this package's tests cannot read
+/// `triageDefectDefinition.entryStates`; the only way to "widen" the filter
+/// would have been to re-spell the entry-state set into this file, which is the
+/// third transcription of a table that has already diverged from its copy once
+/// in this repository — and which would then be a list with no connection to
+/// the thing it claims to guard.
+///
+/// So the guard moved to
+/// `packages/scheduler/test/triage_entry_state_drift_guard_test.dart`, where it
+/// iterates the LIVE `entryStates` set and every route into it. Nothing was
+/// duplicated: this copy was removed rather than left behind as a second,
+/// weaker version of the same idea, which is how a guard ends up green because
+/// nobody can tell which file is authoritative.
+///
+/// This file still owns the WRITER (that a re-triage advances the marker, that
+/// a non-re-triage does not, that the marker is one monotone counter). The
+/// scheduler file owns the READER and the entry-state set.
 void main() {
-  group('drift guard: the routing table and the re-triage rule agree', () {
+  group('drift guard moved — see the scheduler package for the real one', () {
     test(
-      'every route to designNotRequired carries a choice the rule recognises '
-      'as re-work',
+      'this package cannot see the entry-state set, which is why it moved',
       () {
-        const recognised = <HumanDecisionChoice>[
-          HumanDecisionChoice.rework,
-          HumanDecisionChoice.reject,
-        ];
-        final reEntryRoutes = <String>[];
-        for (final type in HumanDecisionType.values) {
-          for (final choice in HumanDecisionChoice.values) {
-            if (HumanDecisionRouting.targetFor(type, choice) !=
-                WorkItemState.designNotRequired) {
-              continue;
-            }
-            reEntryRoutes.add('($type, $choice)');
-            expect(
-              recognised.contains(choice) ||
-                  (type == HumanDecisionType.escalation &&
-                      choice == HumanDecisionChoice.approve),
-              isTrue,
-              reason:
-                  '$type/$choice now routes to designNotRequired, a triage '
-                  'entry state, and would re-enter triage on a key the last '
-                  'run already consumed. It must be classified as re-work by '
-                  'DurableWorkflowEngine._isReWorkDecision, or this route '
-                  'makes the work item permanently inert.',
-            );
-          }
-        }
-
-        // The guard above is vacuous if the table has no such routes — which is
-        // exactly what it would look like if `targetFor` were renamed or its
-        // return type changed under it. Asserted, not assumed.
+        // Asserted rather than left as a comment: the reason the guard left is a
+        // dependency fact, and a dependency fact can change. If this ever fails,
+        // `scheduler` has become importable from here and the guard can come
+        // home — at which point the reason it moved must be revisited too.
         expect(
-          reEntryRoutes,
-          isNotEmpty,
+          HumanDecisionRouting.targetFor(
+            HumanDecisionType.engineeringReview,
+            HumanDecisionChoice.rework,
+          ),
+          WorkItemState.designNotRequired,
           reason:
-              'no route reaches designNotRequired at all, so this guard is '
-              'checking nothing. That is a change to HumanDecisionRouting, '
-              'and it needs a human to look at it.',
+              'the routing table is readable from here; the entry-state set is '
+              'not, because it lives in a package that depends on this one',
         );
-        expect(reEntryRoutes, hasLength(5), reason: 'the five known routes');
       },
     );
   });

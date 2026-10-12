@@ -578,6 +578,188 @@ void main() {
         },
       );
 
+      test('an engineering-review REJECT re-enters triage under a FRESH key and '
+          'runs, without collapsing the state', () async {
+        // THE REJECT HALF, end to end, on the same consumed-key history as the
+        // rework test above. This is the case the human's option-B decision
+        // is about: the item KEEPS `reviewRejected` as its own state (so the
+        // operator can see "you rejected this") and is still dispatchable, so
+        // the rejection is not a dead end with its decision already answered.
+        //
+        // Both halves are load-bearing and they pull in opposite directions,
+        // which is why neither is asserted on its own:
+        //   * the state must be `reviewRejected`, not `designNotRequired` —
+        //     collapsing them is option A, which the human did not choose;
+        //   * the state must still dispatch — `reviewRejected` is not in the
+        //     `entryStates` of any definition at base, which is the defect.
+        final host = await _Host.start(
+          seed: _seedDefectAtEngineeringReviewGate,
+          cap: 1,
+        );
+        // Every key a terminal job already holds, so the re-triage has to
+        // find a free one or enqueue nothing at all.
+        for (final key in <String>[
+          '${host.workItemId}:triage_defect',
+          '${host.workItemId}:triage_defect:a1',
+          '${host.workItemId}:triage_defect:a2',
+        ]) {
+          await _holdTerminalTriageJob(
+            host,
+            key,
+            key.endsWith(':a2') ? JobState.succeeded : JobState.failed,
+          );
+        }
+
+        // Before the decision: blocked on the gate, so nothing runs.
+        expect(
+          (await host.scheduler.tick()).enqueued,
+          isEmpty,
+          reason: 'a pending engineering review blocks the item',
+        );
+
+        // The human says "this is rejected".
+        final rejected = await host.engine.resolveHumanDecision(
+          decisionId:
+              (await host.store.readHumanDecisionsForWorkItem(host.workItemId))
+                  .firstWhere(
+                    (d) =>
+                        d.decisionType == HumanDecisionType.engineeringReview,
+                  )
+                  .decisionId,
+          choice: HumanDecisionChoice.reject,
+          decider: 'bob@example.com',
+          rationale: 'Rejected outright',
+          signature: DecisionSignature(
+            algorithm: 'Ed25519',
+            publicKey: 'key-1',
+            signature: 'sig-1',
+            signedAt: DateTime.now(),
+          ),
+        );
+
+        expect(
+          rejected.state,
+          WorkItemState.reviewRejected,
+          reason:
+              'option B: the state is PRESERVED so the operator sees "you '
+              'rejected this" as its own state, rather than collapsed into '
+              'designNotRequired',
+        );
+        expect(
+          rejected.metadata?['triageAttempt'],
+          3,
+          reason:
+              'the discriminator is keyed on the CHOICE, not the target. A '
+              'rule keyed on the landing state would stamp nothing here, '
+              'because reviewRejected was in no entryStates — and the item '
+              'would be inert the moment the state became dispatchable.',
+        );
+
+        host.parkRuns = true;
+        final tick = host.scheduler.tick();
+        await waitUntil(
+          () async =>
+              (await host.triageJobs()).any((j) => j.state == JobState.running),
+          because:
+              'the rejected item must dispatch from reviewRejected on the '
+              'ordinary tick',
+        );
+
+        final running = (await host.triageJobs()).singleWhere(
+          (j) => j.state == JobState.running,
+        );
+        expect(
+          running.dedupeKey,
+          '${host.workItemId}:triage_defect:a3',
+          reason:
+              'a new, unconsumed key — the acceptance criterion for this '
+              'change. Every suffixed key up to a2 is held by a TERMINAL job '
+              'above, so a reused key would have enqueued nothing at all',
+        );
+        expect(
+          host.dispatcher.started,
+          hasLength(1),
+          reason: 'exactly one execution, not a re-run loop',
+        );
+
+        host.releaseAll();
+        await tick;
+      });
+
+      test('a rejected item does NOT re-arm itself on the next tick', () async {
+        // The loop this change could have introduced. `reviewRejected` is
+        // dispatchable and the item stays there (nothing in the repository
+        // takes `reviewRejected -> designNotRequired` automatically), so the
+        // evaluator keeps calling it runnable for ever. What stops a second
+        // job is the DEDUPE KEY, not the state: the discriminator only
+        // advances on a fresh human intent, so the next tick computes the
+        // same `:a3`, which the terminal job now holds.
+        //
+        // Asserted because "dispatchable" is exactly the property that makes
+        // a self-re-arming loop possible, and an unbounded re-run is the one
+        // outcome worse than the inert item being fixed.
+        final host = await _Host.start(
+          seed: _seedDefectAtEngineeringReviewGate,
+          cap: 1,
+        );
+        for (final key in <String>[
+          '${host.workItemId}:triage_defect',
+          '${host.workItemId}:triage_defect:a1',
+          '${host.workItemId}:triage_defect:a2',
+        ]) {
+          await _holdTerminalTriageJob(
+            host,
+            key,
+            key.endsWith(':a2') ? JobState.succeeded : JobState.failed,
+          );
+        }
+
+        await host.engine.resolveHumanDecision(
+          decisionId:
+              (await host.store.readHumanDecisionsForWorkItem(host.workItemId))
+                  .firstWhere(
+                    (d) =>
+                        d.decisionType == HumanDecisionType.engineeringReview,
+                  )
+                  .decisionId,
+          choice: HumanDecisionChoice.reject,
+          decider: 'bob@example.com',
+          rationale: 'Rejected outright',
+          signature: DecisionSignature(
+            algorithm: 'Ed25519',
+            publicKey: 'key-1',
+            signature: 'sig-1',
+            signedAt: DateTime.now(),
+          ),
+        );
+
+        // Three ticks, because a tick only creates a job for a runnable item
+        // and this item stays runnable — the precise condition under which a
+        // loop would mint one job per tick.
+        for (var i = 0; i < 3; i++) {
+          await host.scheduler.tick();
+        }
+
+        final jobs = await host.triageJobs();
+        expect(
+          jobs.where((j) => j.dedupeKey.endsWith(':a3')),
+          hasLength(1),
+          reason: 'one rejected review, one spend',
+        );
+        expect(
+          jobs,
+          hasLength(4),
+          reason:
+              'the three seeded terminal holders plus the single re-triage. '
+              'An extra row here is the self-re-arming loop.',
+        );
+        expect(
+          (await host.engine.loadWorkItem(host.workItemId)).state,
+          WorkItemState.reviewRejected,
+          reason: 'the state is preserved; nothing moves it automatically',
+        );
+      });
+
       test('the re-entry dispatch does NOT disturb the queue\'s own rule: a '
           'terminal holder keeps its key', () async {
         // The control for the test above. The fix is in the DISCRIMINATOR,
