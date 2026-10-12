@@ -23,7 +23,7 @@ REPO_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 COMPOSE_TEST := $(REPO_ROOT)/docker/compose.test.yaml
 COMPOSE_E2E := $(REPO_ROOT)/docker/compose.e2e.yaml
 
-.PHONY: help qa-up qa-down qa-logs qa-restart qa-build qa-build-client test-env-up test-env-down test-env-test test-env-logs test-env-ps test-integration e2e-up e2e-down e2e-test clean
+.PHONY: help qa-up qa-down qa-logs qa-restart qa-build qa-build-client check-client-build test-env-up test-env-down test-env-test test-env-logs test-env-ps test-integration e2e-up e2e-down e2e-test clean
 
 # Default target
 help:
@@ -36,6 +36,10 @@ help:
 	@echo "  make qa-restart      Restart QA services"
 	@echo "  make qa-build        Build all QA images"
 	@echo "  make qa-build-client Build client image (includes Flutter build)"
+	@echo "  make check-client-build"
+	@echo "                       Assert docker/compose.qa.yaml is the ONLY place the"
+	@echo "                       QA client image is named (no Docker needed). Runs"
+	@echo "                       automatically before every qa-build-client."
 	@echo ""
 	@echo "Test Environment (Automated Testing - Isolated from QA):"
 	@echo "  make test-env-up          Start test stack (ephemeral DB, different ports)"
@@ -100,7 +104,29 @@ qa-build: qa-build-client
 	@echo "Building server image..."
 	docker compose -f docker/compose.qa.yaml build server
 
-qa-build-client:
+# EXECUTABLE GUARD for a defect that shipped stale UI to QA for a full day.
+#
+# `qa-build-client` used to run docker/build-client.sh, which tagged a SEPARATE
+# image (`shipit-client:local`), while docker/compose.qa.yaml builds the same
+# `client` service and Compose names it `docker-client`. `make qa-up` therefore
+# rebuilt an image nothing ran; Compose saw the image it actually runs unchanged
+# and did not recreate the client container. The server beside it WAS recreated
+# by the same command, so the two silently diverged and the browser served a
+# day's-stale Flutter build with a current API.
+#
+# The fix is ownership, not a flag: Compose declares the client image and the
+# build script no longer names one. This target is what keeps that true. It
+# fails if the script reintroduces a `docker build`, if the compose service stops
+# building its own image or starts pinning a foreign `image:` tag, or if the
+# Makefile stops routing client builds through the script and so stops running
+# this guard at all.
+#
+# It reads two files as text. No Docker, no Compose, no daemon, no network -- so
+# it is safe to run anywhere and cheap enough to gate every client build.
+check-client-build:
+	@./docker/build-client.sh --check
+
+qa-build-client: check-client-build
 	@echo "Building client image (with Flutter web build)..."
 	@./docker/build-client.sh
 
