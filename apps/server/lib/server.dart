@@ -13,7 +13,7 @@ import 'package:execution_coordinator/execution_coordinator.dart'
         VerificationPlan;
 import 'package:workflow_store/workflow_store.dart' show DurableWorkflowEngine;
 import 'package:platform_contracts/platform_contracts.dart'
-    show JobType, AgentRole;
+    show AgentRole, JobType;
 import 'package:product_registry/product_registry.dart'
     show ProductRegistryEngine;
 import 'package:scheduler/scheduler.dart'
@@ -76,6 +76,13 @@ import 'src/triage/defect_triage_sweep.dart';
 import 'src/triage/lane_i_tick_hook.dart' show drainTriageOutcomesFromTick;
 import 'src/triage/triage_processor.dart';
 import 'src/triage/work_entry.dart' show WorkEntryTrigger;
+import 'src/review/engineering_review_gate.dart';
+import 'package:scheduler/scheduler.dart'
+    show
+        engineeringReviewDefinition,
+        engineeringReviewDedupeKey,
+        engineeringReviewInstruction,
+        engineeringReviewRequest;
 
 /// The starting point of the ShipIt control plane server.
 ///
@@ -196,7 +203,18 @@ void run(List<String> args) async {
     workerStore: workerStore,
     platform: Platform.operatingSystem,
   );
-  final workerRegistry = WorkerRegistry()..register(triageWorker);
+  final reviewWorker = LocalWorker(
+    workerId: 'w-review-local',
+    poolId: 'review-pool',
+    capabilities: engineeringReviewDefinition.requiredCapabilities,
+    workspaceManager: GitWorktreeWorkspaceManager(workspaceRoot: workspaceRoot),
+    executionDriver: CoordinatorAgentExecutionDriver(coordinator),
+    workerStore: workerStore,
+    platform: Platform.operatingSystem,
+  );
+  final workerRegistry = WorkerRegistry()
+    ..register(triageWorker)
+    ..register(reviewWorker);
   final WorkerDispatch dispatch = WorkerDispatcherAdapter(
     WorkerDispatcher(registry: workerRegistry),
   );
@@ -293,6 +311,44 @@ void run(List<String> args) async {
       startingRevision: triageSource.startingRevision,
       timeoutSeconds: 300,
       // The id `OpencodeAdapter` is registered under above.
+      runtimeTypeId: triageRuntimeTypeId,
+    ),
+    clock: () => DateTime.now().toUtc(),
+    providerHealthMonitor: providerHealthMonitor,
+  );
+
+  final reviewScheduler = Scheduler(
+    schedulerId: 'sched-review',
+    workflowStore: workflowStore,
+    jobStore: jobStore,
+    workerStore: workerStore,
+    dispatch: dispatch,
+    definition: engineeringReviewDefinition,
+    modelSelection: modelSelection,
+    executionLiveness: executionLiveness,
+    dedupeKeyBuilder: engineeringReviewDedupeKey,
+    instructionBuilder: engineeringReviewInstruction,
+    requestBuilder: engineeringReviewRequest,
+    capacityGuard: capacityGuard,
+    // The review workload is NOT static. A reviewer must inspect the revision
+    // the IMPLEMENTER produced, which is recorded on the implementer's worker
+    // execution as `repositoryPath` + the artifact commit's `endingRevision`.
+    // When no artifact can be resolved the resolver returns null and the
+    // scheduler does NOT dispatch; the job surfaces in
+    // `SchedulerTickResult.blockedArtifactMissing`, where the review drain turns
+    // it into a blocking human decision (fail closed). Because null short-
+    // circuits dispatch, the static `workload` below is inert for review; it is
+    // kept only because it is a required constructor argument.
+    workloadResolver: engineeringReviewWorkloadResolver(
+      workerStore: workerStore,
+      runtimeTypeId: triageRuntimeTypeId,
+    ),
+    // Inert for review: the resolver above is authoritative and a null result
+    // prevents dispatch, so this static value never runs a reviewer.
+    workload: SchedulerWorkload(
+      repositoryPath: triageSource.path,
+      startingRevision: triageSource.startingRevision,
+      timeoutSeconds: 300,
       runtimeTypeId: triageRuntimeTypeId,
     ),
     clock: () => DateTime.now().toUtc(),
@@ -489,6 +545,11 @@ void run(List<String> args) async {
               job: job,
               logger: _log,
             ),
+            JobType.engineeringReview: engineeringReviewTickHandler(
+              workflowEngine: durableWorkflowEngine,
+              executionStore: coordinator.store,
+              logger: _log,
+            ),
           },
           logger: _log,
         );
@@ -520,6 +581,83 @@ void run(List<String> args) async {
       // fails must not prevent onboarding from running, and vice versa. They read
       // the same job store but answer different questions, and one of them
       // throwing says nothing about the other.
+      try {
+        final reviewTick = await reviewScheduler.tick();
+        final reviewDrain = await drainTriageOutcomesFromTick(
+          tickResult: reviewTick,
+          jobStore: jobStore,
+          triageProcessor: triageProcessor,
+          // The dispatch table must be as COMPLETE as the triage drain's above.
+          // `onboardProduct` jobs are product-scoped and claimed by
+          // `BaselineProductDispatcher`, so they never appear in this tick's
+          // result — the handler is registered anyway because the alternative is
+          // an `UnhandledJobTypeException`: `drainTriageOutcomesFromTick`
+          // dispatches BY TYPE and THROWS for any job it considers with no
+          // handler, which would fail this whole review section rather than just
+          // the one job. Registering it is how the triage drain already stays
+          // complete, and the two must not drift.
+          handlers: {
+            JobType.onboardProduct: (job) => observeCompletedOnboardingJob(
+              job: job,
+              logger: _log,
+            ),
+            JobType.engineeringReview: engineeringReviewTickHandler(
+              workflowEngine: durableWorkflowEngine,
+              executionStore: coordinator.store,
+              logger: _log,
+            ),
+          },
+          logger: _log,
+        );
+        if (reviewDrain.handedOff > 0) {
+          _log('review.tick.drained', {
+            'considered': reviewDrain.considered,
+            'skipped': reviewDrain.skipped,
+            'handedOff': reviewDrain.handedOff,
+          });
+        }
+
+        // Fail closed. A review job the scheduler could not resolve a produced
+        // artifact for was never dispatched (the resolver returned null), so no
+        // reviewer ran and the work item is still parked at `agentCompleted`.
+        // Turn each into a blocking human decision, entering `reviewInProgress`
+        // first because `agentCompleted` has no direct edge to the
+        // human-decision state. The scheduler re-surfaces the same job every
+        // tick until the item leaves `agentCompleted`, so this must be
+        // idempotent — the handler is.
+        for (final jobId in reviewTick.blockedArtifactMissing) {
+          try {
+            final job = await jobStore.readJob(jobId);
+            if (job == null) {
+              _log('review.missing-artifact.job-not-found', {'jobId': jobId});
+              continue;
+            }
+            await engineeringReviewMissingArtifact(
+              workflowEngine: durableWorkflowEngine,
+              executionStore: coordinator.store,
+              job: job,
+              logger: _log,
+            );
+          } catch (e, st) {
+            _log('review.missing-artifact.failed', {
+              'jobId': jobId,
+              'error': '$e',
+              'stack': st.toString(),
+              'action':
+                  'fail-closed decision is retried on the next tick; other lanes unaffected',
+            });
+          }
+        }
+      } catch (e, st) {
+        outcome.failedSections.add('review');
+        _log('review.tick.failed', {
+          'error': '$e',
+          'stack': st.toString(),
+          'action':
+              'review dispatch is retried on the next tick; other lanes unaffected',
+        });
+      }
+
       try {
         final baselinePass = await baselineRuntime.runOnce();
         _log('baseline.tick.completed', {

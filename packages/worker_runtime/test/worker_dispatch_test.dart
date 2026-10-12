@@ -60,7 +60,26 @@ void main() {
       expect(result.verificationPassed, isTrue);
       expect(result.failureCode, WorkerFailureCode.none);
       expect(result.cleanupStatus, WorkerCleanupStatus.removed);
-      expect(result.endingRevision, repo.startingRevision);
+
+      // The produced artifact is committed onto a durable branch, so the
+      // produced revision is that commit (built on the requested revision),
+      // not the worktree HEAD the agent left dirty.
+      expect(result.endingRevision, isNotNull);
+      final branchTip = Process.runSync('git', [
+        '-C',
+        repo.root.path,
+        'rev-parse',
+        'shipit/impl/wi-1',
+      ]).stdout.toString().trim();
+      expect(result.endingRevision, branchTip);
+      expect(branchTip, isNot(repo.startingRevision));
+      final branchParent = Process.runSync('git', [
+        '-C',
+        repo.root.path,
+        'rev-parse',
+        'shipit/impl/wi-1^',
+      ]).stdout.toString().trim();
+      expect(branchParent, repo.startingRevision);
 
       // The platform's git-observed view, not the agent's claim.
       final changed = result.changedFiles;
@@ -113,7 +132,17 @@ void main() {
       expect(result.status, WorkerExecutionStatus.executedPass);
       expect(result.verificationPassed, isTrue);
       expect(result.startingRevision, baseline);
-      expect(result.endingRevision, baseline);
+
+      // The produced artifact is committed on top of the pinned revision A, so
+      // the produced commit's parent is A — never spawn-time HEAD B.
+      expect(result.endingRevision, isNotNull);
+      final branchParent = Process.runSync('git', [
+        '-C',
+        repo.root.path,
+        'rev-parse',
+        'shipit/impl/wi-1^',
+      ]).stdout.toString().trim();
+      expect(branchParent, baseline);
     }, timeout: const Timeout(Duration(minutes: 3)));
 
     test('an unknown starting revision never starts the agent', () async {

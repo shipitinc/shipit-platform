@@ -7,6 +7,7 @@ import 'package:worker_protocol/worker_protocol.dart';
 import '../env/environment_policy.dart';
 import '../execution/agent_execution_driver.dart';
 import '../store/worker_store.dart';
+import '../workspace/artifact_committer.dart';
 import '../workspace/git_workspace_inspector.dart';
 import '../workspace/workspace_manager.dart';
 import 'worker.dart';
@@ -37,6 +38,7 @@ class LocalWorker implements Worker {
     this.platform,
     this.environmentPolicy = const EnvironmentPolicy(),
     this.inspector = const GitWorkspaceInspector(),
+    this.artifactCommitter = const ArtifactCommitter(),
     this.workerLeaseGrace = const Duration(seconds: 60),
     this.eventSink,
   }) : _capabilities = capabilities;
@@ -50,6 +52,11 @@ class LocalWorker implements Worker {
   final WorkerStore workerStore;
   final EnvironmentPolicy environmentPolicy;
   final GitWorkspaceInspector inspector;
+
+  /// Makes a non-reviewer execution's produced artifact durable (a branch + a
+  /// commit) before cleanup removes the worktree. Injecting it keeps the
+  /// worker's handoff testable without shelling out.
+  final ArtifactCommitter artifactCommitter;
   final Duration workerLeaseGrace;
 
   /// Optional observer for normalized worker events (used by tests/audit).
@@ -263,6 +270,38 @@ class LocalWorker implements Worker {
           finalStatus = WorkerExecutionStatus.executedFail;
           failureCode = WorkerFailureCode.agentFailed;
           failureDetail = 'execution never reached a terminal state';
+      }
+
+      // Commit the produced artifact onto a durable branch BEFORE cleanup
+      // removes the worktree. The worktree is detached and is destroyed on
+      // completion, so an uncommitted edit is not evidence anything downstream
+      // can inspect: the produced revision is the commit. A reviewer must NEVER
+      // commit — it inspects what the implementer produced — so this is skipped
+      // for the engineering-reviewer role.
+      if (request.role != AgentRole.engineeringReviewer) {
+        final committed = await artifactCommitter.commit(
+          worktreePath: descriptor.worktreePath,
+          workItemId: request.workItemId,
+          startingRevision: descriptor.startingRevision,
+          message:
+              'shipit artifact: ${request.workItemId} '
+              '(${request.role.wire}) ${request.workerExecutionId}',
+        );
+        if (committed.revision != null) {
+          endingRevision = committed.revision;
+        } else if (committed.failureDetail != null) {
+          // A commit failure must not abort an otherwise-successful run, but it
+          // MUST be visible: the run recorded an inspected revision that no
+          // downstream reviewer can resolve. Emit it rather than swallowing it.
+          await _event(
+            execution,
+            WorkerEventType.finalizing,
+            payload: {
+              'artifactCommitFailed': true,
+              'detail': committed.failureDetail,
+            },
+          );
+        }
       }
     } on Object catch (e) {
       failureCode = failureCode == WorkerFailureCode.none

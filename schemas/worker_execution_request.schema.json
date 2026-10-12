@@ -30,7 +30,7 @@
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["linux", "macos", "docker", "flutter", "web", "android", "ios", "xcode", "gpu", "penpotRead", "penpotWrite", "visualDesign", "designReview"]
+        "enum": ["linux", "macos", "docker", "flutter", "web", "android", "ios", "xcode", "gpu", "penpotRead", "penpotWrite", "visualDesign", "designReview", "engineeringReview"]
       },
       "uniqueItems": true
     },

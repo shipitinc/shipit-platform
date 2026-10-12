@@ -18,7 +18,12 @@ class DesignGateAgentSession implements AgentSession {
   DesignGateAgentSession({
     required this.executionId,
     this.sessionId = 'ses-design-gate',
+    this.writeArtifact = true,
   });
+
+  /// When false the session completes WITHOUT writing into its worktree, so the
+  /// worker produces no artifact commit (`endingRevision == startingRevision`).
+  final bool writeArtifact;
 
   @override
   final String executionId;
@@ -89,8 +94,10 @@ class DesignGateAgentSession implements AgentSession {
     await _releaseGate.future;
     if (_cancelled) return;
 
-    _writeTarget.parent.createSync(recursive: true);
-    _writeTarget.writeAsStringSync('int add(int a, int b) => a + b;\n');
+    if (writeArtifact) {
+      _writeTarget.parent.createSync(recursive: true);
+      _writeTarget.writeAsStringSync('int add(int a, int b) => a + b;\n');
+    }
     _status = AgentSessionStatus.completed;
     _events.add(
       SessionCompleted(

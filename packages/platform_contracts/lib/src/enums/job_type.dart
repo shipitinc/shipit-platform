@@ -12,6 +12,11 @@ enum JobType {
   /// Independently review a design revision produced by a different worker.
   designReview('design_review'),
 
+  /// Independently review a completed implementation before it leaves the
+  /// agent lane. The reviewer inspects the produced artifact and its verdict is
+  /// adjudicated at the engineering-review human gate, never by the scheduler.
+  engineeringReview('engineering_review'),
+
   /// Onboard a Product: clone repository at pinned revision, run baseline
   /// build + test, write WorkspaceDescriptor. Runs independently of any
   /// work item; scoped by productId via the onboarding record.

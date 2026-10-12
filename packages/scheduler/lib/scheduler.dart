@@ -26,10 +26,14 @@ export 'src/scheduler.dart'
     show
         designRevisionDefinition,
         designReviewDefinition,
+        engineeringReviewDefinition,
         designRevisionDedupeKey,
         designReviewDedupeKey,
+        engineeringReviewDedupeKey,
         designRevisionInstruction,
         designReviewInstruction,
+        engineeringReviewInstruction,
         designRevisionRequest,
         designReviewRequest,
+        engineeringReviewRequest,
         modelRuntimeConfig;

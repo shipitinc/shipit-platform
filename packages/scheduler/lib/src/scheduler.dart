@@ -130,6 +130,17 @@ typedef RequestBuilder =
       ModelSelectionService? modelSelection,
     );
 
+/// Resolves the [SchedulerWorkload] a job must operate on, per work item.
+///
+/// Most schedulers have ONE workload fixed at construction (the slice's
+/// repository). A review job does not: it must review the revision the
+/// IMPLEMENTER produced for THIS work item, which only the composition root can
+/// resolve from durable state. Returning `null` means no artifact could be
+/// resolved; the scheduler then fails closed and never dispatches against the
+/// construction-time default.
+typedef WorkloadResolver =
+    Future<SchedulerWorkload?> Function(Job job, WorkItem item);
+
 /// Resolves the per-role model policy into a request's runtime config.
 ///
 /// Model pinning is opt-in. Without a [ModelSelectionService] the returned map
@@ -223,6 +234,12 @@ class SchedulerTickResult {
     /// Defaults to empty so every existing construction site keeps compiling —
     /// adding a diagnostic must not force callers to know about it.
     this.reconcileFailed = const [],
+
+    /// Jobs this tick could not dispatch because their [WorkloadResolver]
+    /// returned null. Defaults to empty for the same reason as
+    /// [reconcileFailed]: this is a NEW diagnostic, and a scheduler without a
+    /// resolver never produces it.
+    this.blockedArtifactMissing = const [],
   });
 
   final List<String> reconciled;
@@ -244,6 +261,13 @@ class SchedulerTickResult {
   final List<String> cancelledQueued;
   final List<String> deferred;
   final List<String> terminal;
+
+  /// Jobs this tick could not dispatch because their [WorkloadResolver]
+  /// returned null — no artifact to operate on. Named and reported apart from
+  /// [deferred] because "there is nothing to review" is a FAIL-CLOSED signal
+  /// the composition root must act on (raise a blocking human decision), not
+  /// ordinary transient back-pressure to retry silently.
+  final List<String> blockedArtifactMissing;
 }
 
 /// The durable scheduler: derivation + enqueue + dispatch + outcome adoption
@@ -269,6 +293,7 @@ class Scheduler {
     DedupeKeyBuilder? dedupeKeyBuilder,
     InstructionBuilder? instructionBuilder,
     RequestBuilder? requestBuilder,
+    WorkloadResolver? workloadResolver,
     ProviderHealthMonitor? providerHealthMonitor,
     this.capacityGuard,
   }) : schedulerId = schedulerId,
@@ -298,6 +323,7 @@ class Scheduler {
        _instructionBuilder = instructionBuilder ?? _defaultInstruction,
        _modelSelection = modelSelection,
        _requestBuilder = requestBuilder ?? _defaultRequest,
+       _workloadResolver = workloadResolver,
        _executionLiveness = executionLiveness,
        _configuredZombieStaleness = zombieStalenessAfter,
        _providerHealthMonitor = providerHealthMonitor;
@@ -334,6 +360,10 @@ class Scheduler {
   final InstructionBuilder _instructionBuilder;
   final ModelSelectionService? _modelSelection;
   final RequestBuilder _requestBuilder;
+
+  /// Resolves a job's workload per work item. Null means this scheduler uses
+  /// the construction-time [_workload] for every job.
+  final WorkloadResolver? _workloadResolver;
   final ProviderHealthMonitor? _providerHealthMonitor;
 
   /// Observes whether the process behind a non-terminal execution is alive.
@@ -438,6 +468,7 @@ class Scheduler {
     final cancelledQueued = <String>[];
     final deferred = <String>[];
     final terminal = <String>[];
+    final blockedArtifactMissing = <String>[];
 
     // 1. Recover claims that outlived their lease without ever persisting a
     //    terminal outcome.
@@ -534,6 +565,12 @@ class Scheduler {
           dispatched.add(job.jobId);
         } else if (outcome.terminalJob != null) {
           terminal.add(outcome.terminalJob!.jobId);
+        } else if (outcome.blockedArtifactMissing) {
+          // Checked BEFORE the queued/retryWaiting deferral below: a job whose
+          // artifact could not be resolved is not ordinary back-pressure, it is
+          // a fail-closed condition the composition root must turn into a
+          // blocking human decision. Folding it into `deferred` would hide it.
+          blockedArtifactMissing.add(job.jobId);
         } else if (outcome.capacityDenied) {
           // Refused a slot by the global capacity budget. Reported through the
           // SAME `deferred` channel as "no worker was free" because it is the
@@ -563,6 +600,7 @@ class Scheduler {
       cancelledQueued: cancelledQueued,
       deferred: deferred,
       terminal: terminal,
+      blockedArtifactMissing: blockedArtifactMissing,
     );
   }
 
@@ -611,9 +649,23 @@ class Scheduler {
     }
 
     final item = await _workflowStore.readWorkItem(current.workItemId);
+
+    // Resolve the workload BEFORE building the request. A resolver that cannot
+    // vouch for an artifact (returns null) must fail closed: the job stays
+    // queued and this tick reports it, so the composition root can raise a
+    // blocking human decision. Building a request against the construction-time
+    // default would dispatch a reviewer at the WRONG revision, which is worse
+    // than not dispatching at all.
+    final workload = _workloadResolver == null
+        ? _workload
+        : await _workloadResolver(current, item);
+    if (workload == null) {
+      return const _DispatchOutcome(blockedArtifactMissing: true);
+    }
+
     final request = await _requestBuilder(
       current,
-      _workload,
+      workload,
       item,
       _modelSelection,
     );
@@ -1312,11 +1364,68 @@ Future<WorkerExecutionRequest> designReviewRequest(
   );
 }
 
+const JobDefinition engineeringReviewDefinition = JobDefinition(
+  jobType: JobType.engineeringReview,
+  requiredRole: AgentRole.engineeringReviewer,
+  requiredCapabilities: {WorkerCapability.engineeringReview},
+  entryStates: {WorkItemState.agentCompleted},
+  priority: JobPriority.high,
+  maxAttempts: 2,
+  // SKIP the local policy probe. `RunnableWorkEvaluator.evaluate` would ask the
+  // policy for `agentCompleted -> reviewInProgress` with a context that can
+  // only supply `{'agentAvailable': true, 'capabilitiesMatch': true}`, and that
+  // edge also carries `GuardConditions.agentResultValid()` — which needs the
+  // IMPLEMENTER's completed `AgentResult` under `context['agentResult']`. The
+  // scheduler has no execution of its own and cannot supply it, so the probe
+  // reports `noAction` and the job is never enqueued.
+  //
+  // The REAL transition is still enforced by the workflow engine, at the
+  // coordinator's `ExecutionCoordinator.execute` — which DOES supply the
+  // implementer's result (see the reviewer branch there). This is the same
+  // design-then-review split `designReviewDefinition` already relies on.
+  skipWorkflowPolicyCheck: true,
+  targetState: WorkItemState.reviewInProgress,
+);
+
+/// Builds a dedupe key for engineering review jobs: (workItemId, jobType).
+/// Only one active engineering review job per work item at a time.
+String engineeringReviewDedupeKey(WorkItem item, JobDefinition definition) =>
+    '${item.workItemId}:${definition.jobType.wire}';
+
+/// Builds an instruction for engineering review jobs.
+String engineeringReviewInstruction(WorkItem item, JobDefinition definition) =>
+    'Review the implementation for "${item.title}" (${item.workItemId}). '
+    'Provide independent assessment and return an engineering review verdict.';
+
+/// Builds a worker execution request for engineering review jobs.
+Future<WorkerExecutionRequest> engineeringReviewRequest(
+  Job job,
+  SchedulerWorkload workload,
+  WorkItem item,
+  ModelSelectionService? modelSelection,
+) async {
+  final runtimeConfig = await modelRuntimeConfig(job, item, modelSelection);
+  return WorkerExecutionRequest(
+    workerExecutionId: 'wx-${job.jobId}',
+    workItemId: job.workItemId,
+    repositoryPath: workload.repositoryPath,
+    startingRevision: workload.startingRevision,
+    requiredCapabilities: job.requiredCapabilities,
+    role: job.requiredRole,
+    instruction: job.instruction,
+    timeoutSeconds: workload.timeoutSeconds,
+    runtimeTypeId: workload.runtimeTypeId,
+    cleanupPolicy: workload.cleanupPolicy,
+    runtimeConfig: runtimeConfig,
+  );
+}
+
 class _DispatchOutcome {
   const _DispatchOutcome({
     this.dispatched = false,
     this.terminalJob,
     this.capacityDenied = false,
+    this.blockedArtifactMissing = false,
   });
 
   final bool dispatched;
@@ -1325,4 +1434,11 @@ class _DispatchOutcome {
   /// The global capacity budget was full, so this job was not attempted. The
   /// job is untouched and still queued.
   final bool capacityDenied;
+
+  /// The job's [WorkloadResolver] returned null: the artifact it must operate
+  /// on could not be resolved, so no request was built. The job is untouched
+  /// and still queued, and the tick surfaces it on
+  /// [SchedulerTickResult.blockedArtifactMissing] for the composition root to
+  /// turn into a blocking human decision.
+  final bool blockedArtifactMissing;
 }

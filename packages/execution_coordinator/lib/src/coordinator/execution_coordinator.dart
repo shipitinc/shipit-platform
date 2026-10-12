@@ -135,6 +135,32 @@ class ExecutionCoordinator {
   Future<AgentExecution?> latestExecutionFor(String workItemId) =>
       store.latestExecutionForWorkItem(workItemId);
 
+  /// The transition context for moving an item `agentCompleted -> reviewInProgress`.
+  ///
+  /// The edge is guarded by `agentResultValid()`, which requires the
+  /// IMPLEMENTER's completed [AgentResult] under `context['agentResult']`. The
+  /// reviewer has not run yet at entry, so the latest execution for the work
+  /// item IS the implementer's, and this hands over the very result the
+  /// completion path stamped ([_completeSuccess]) — never a synthesized one.
+  /// If the implementer's result is genuinely absent the map omits the key and
+  /// the engine rejects the transition, which is the honest outcome: the
+  /// `agentCompleted` state is not true without a completed result.
+  Future<Map<String, dynamic>> _reviewEntryTransitionContext(
+    String workItemId,
+  ) async {
+    final implementerExecution = await store.latestExecutionForWorkItem(
+      workItemId,
+    );
+    final implementerResult = implementerExecution == null
+        ? null
+        : await store.readResult(implementerExecution.executionId);
+    return <String, dynamic>{
+      'agentAvailable': true,
+      'capabilitiesMatch': true,
+      if (implementerResult != null) 'agentResult': implementerResult,
+    };
+  }
+
   /// Runs the single execution described by [request]. Re-running the same
   /// execution id after a terminal outcome returns the durable record.
   Future<AgentExecution> execute(AgentExecutionRequest request) async {
@@ -145,13 +171,25 @@ class ExecutionCoordinator {
     }
 
     final item = await workflowEngine.loadWorkItem(request.workItemId);
-    if (item.state != WorkItemState.agentExecuting) {
+    final isReviewer = request.role == AgentRole.engineeringReviewer;
+    final runningState = isReviewer
+        ? WorkItemState.reviewInProgress
+        : WorkItemState.agentExecuting;
+    if (item.state != runningState) {
       await workflowEngine.transition(
         workItemId: request.workItemId,
-        to: WorkItemState.agentExecuting,
+        to: runningState,
         trigger: TransitionTrigger.systemEvent,
         actor: _orchestrator,
-        context: const {'agentAvailable': true, 'capabilitiesMatch': true},
+        // The reviewer's `agentCompleted -> reviewInProgress` edge is guarded by
+        // `agentResultValid()`, which reads the IMPLEMENTER's completed result
+        // from `context['agentResult']`. The scheduler cannot supply it (which is
+        // why `engineeringReviewDefinition.skipWorkflowPolicyCheck` is true), but
+        // this transition runs against the durable engine, so it must. Every
+        // non-reviewer role keeps the original context byte for byte.
+        context: isReviewer
+            ? await _reviewEntryTransitionContext(request.workItemId)
+            : const {'agentAvailable': true, 'capabilitiesMatch': true},
       );
     }
 
@@ -629,16 +667,28 @@ class ExecutionCoordinator {
     }
 
     final item = await workflowEngine.loadWorkItem(request.workItemId);
-    await workflowEngine.transition(
-      workItemId: request.workItemId,
-      to: WorkItemState.agentCompleted,
-      trigger: TransitionTrigger.agentResult,
-      actor: _orchestrator,
-      context: {
-        'agentResult': stamped,
-        if (item.qaContractId != null) 'qaContractId': item.qaContractId,
-      },
-    );
+    if (request.role == AgentRole.engineeringReviewer) {
+      // For engineering reviewers, the coordinator must NOT transition out of
+      // reviewInProgress; the tick handler will raise a human decision instead.
+    } else {
+      await workflowEngine.transition(
+        workItemId: request.workItemId,
+        to: WorkItemState.agentCompleted,
+        trigger: TransitionTrigger.agentResult,
+        actor: _orchestrator,
+        context: {
+          'agentResult': stamped,
+          if (item.qaContractId != null) 'qaContractId': item.qaContractId,
+        },
+        // Record the producing execution as the work item's producer identity.
+        // The engineering-review gate's `actorIsNotSelf()` guard compares the
+        // reviewer's execution id against this, and WITHOUT a real producer the
+        // guard has only a literal to fall back on — a check that can never
+        // fail is not a check. `metadataMerge` is additive: it never replaces
+        // the rest of the metadata (defect payload, retry attempt, …).
+        metadataMerge: {'producerActorId': stamped.executionId},
+      );
+    }
 
     await _insertModelExecutionRecord(request, stamped, true, null);
 
@@ -665,13 +715,18 @@ class ExecutionCoordinator {
   ) async {
     final (status, eventType, reason) = _failureDetails(terminalEvent);
 
-    await workflowEngine.transition(
-      workItemId: request.workItemId,
-      to: WorkItemState.agentFailed,
-      trigger: TransitionTrigger.agentResult,
-      actor: _orchestrator,
-      context: {'agentResult': stamped, 'reason': reason},
-    );
+    if (request.role == AgentRole.engineeringReviewer) {
+      // Do not transition workflow state out of reviewInProgress for reviewer
+      // terminal outcomes; tick handler will create the human decision.
+    } else {
+      await workflowEngine.transition(
+        workItemId: request.workItemId,
+        to: WorkItemState.agentFailed,
+        trigger: TransitionTrigger.agentResult,
+        actor: _orchestrator,
+        context: {'agentResult': stamped, 'reason': reason},
+      );
+    }
 
     await _insertModelExecutionRecord(request, stamped, false, reason);
 
@@ -826,13 +881,17 @@ class ExecutionCoordinator {
     );
 
     try {
-      await workflowEngine.transition(
-        workItemId: request.workItemId,
-        to: WorkItemState.agentFailed,
-        trigger: TransitionTrigger.agentResult,
-        actor: _orchestrator,
-        context: {'agentResult': stamped, 'reason': reason},
-      );
+      if (request.role == AgentRole.engineeringReviewer) {
+        // Skip workflow transition for reviewer failures.
+      } else {
+        await workflowEngine.transition(
+          workItemId: request.workItemId,
+          to: WorkItemState.agentFailed,
+          trigger: TransitionTrigger.agentResult,
+          actor: _orchestrator,
+          context: {'agentResult': stamped, 'reason': reason},
+        );
+      }
     } on WorkflowTransitionRejectedException {
       // The work item may already be out of execution; the execution record
       // above is the durable source of truth.
