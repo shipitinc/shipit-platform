@@ -1,4 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../core/plain_language.dart';
 import '../../data/control_plane_repository.dart';
 import 'runs_event.dart';
 
@@ -55,7 +56,16 @@ class RunsBloc extends Bloc<RunsEvent, RunsState> {
     return switch (filter) {
       RunsFilter.all => runs,
       RunsFilter.workingOnIt =>
-        runs.where((r) => r.state == 'agent_executing').toList(),
+        runs
+            .where(
+              (r) =>
+                  PlainLanguage.statusFor(
+                    r.state,
+                    blocked: r.blockingHumanDecisionId != null,
+                  ) ==
+                  PlainStatus.workingOnIt,
+            )
+            .toList(),
       RunsFilter.needsYou =>
         runs
             .where(

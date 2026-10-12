@@ -6,12 +6,8 @@ import 'design_tokens.dart';
 /// How a durable state is presented to a human operator.
 ///
 /// The Penpot design is explicit about this: the surface never prints a raw
-/// state enum. `agent_executing` reads "Working on it";
-/// `waiting_for_human_decision` reads "Needs your approval". The raw wire value
-/// is only ever shown inside the collapsed "Show technical details" block.
-///
-/// The five labels, their text tones and their 2px tick colours are transcribed
-/// from the `BP · All work · Light` / `· Dark` boards:
+/// state enum. The raw wire value is only ever shown inside the collapsed
+/// "Show technical details" block.
 ///
 /// | label                 | text tone     | tick     |
 /// |-----------------------|---------------|----------|
@@ -20,6 +16,7 @@ import 'design_tokens.dart';
 /// | Needs you — it failed | negative      | red      |
 /// | Finished              | positive      | green    |
 /// | Waiting to start      | inkSecondary  | accent   |
+/// | Awaiting review       | inkSecondary  | inkTertiary|
 enum PlainStatus {
   /// The system is actively doing the work.
   workingOnIt('Working on it'),
@@ -37,7 +34,10 @@ enum PlainStatus {
   waitingToStart('Waiting to start'),
 
   /// Terminal but not successful, and not awaiting the operator.
-  stopped('Stopped');
+  stopped('Stopped'),
+
+  /// Waiting for review between steps.
+  awaitingReview('Awaiting review');
 
   const PlainStatus(this.label);
 
@@ -52,6 +52,7 @@ enum PlainStatus {
     PlainStatus.needsYouItFailed => palette.negative,
     PlainStatus.finished => palette.positive,
     PlainStatus.stopped => palette.inkTertiary,
+    PlainStatus.awaitingReview => palette.inkSecondary,
   };
 
   /// Colour of the 2px leading tick on the row.
@@ -62,12 +63,20 @@ enum PlainStatus {
     PlainStatus.needsYouItFailed => palette.negative,
     PlainStatus.finished => palette.positive,
     PlainStatus.stopped => palette.inkTertiary,
+    PlainStatus.awaitingReview => palette.inkTertiary,
   };
 
   /// True when this row is the operator's turn to act.
   bool get isOperatorTurn =>
       this == PlainStatus.needsYourApproval ||
       this == PlainStatus.needsYouItFailed;
+
+  /// Maps status to elapsed verb for display.
+  String get elapsedVerb => switch (this) {
+    workingOnIt => 'running',
+    finished || stopped => 'took',
+    _ => 'waiting',
+  };
 }
 
 /// Translates durable system vocabulary into the operator-facing wording the
@@ -103,17 +112,17 @@ class PlainLanguage {
       'planned' ||
       'design_not_required' => PlainStatus.waitingToStart,
       'planning' ||
+      'agent_executing' ||
+      'qa_in_progress' ||
+      'deploying' => PlainStatus.workingOnIt,
       'design_required' ||
       'design_in_review' ||
       'design_approved' ||
-      'agent_executing' ||
       'agent_completed' ||
       'review_in_progress' ||
       'review_approved' ||
-      'qa_in_progress' ||
       'qa_passed' ||
-      'deploying' ||
-      'deployed' => PlainStatus.workingOnIt,
+      'deployed' => PlainStatus.awaitingReview,
       'completed' || 'done' => PlainStatus.finished,
       'cancelled' || 'terminated' => PlainStatus.stopped,
       // An un-escalated failure is still the system's problem, not the
@@ -123,7 +132,7 @@ class PlainLanguage {
       'deployment_failed' ||
       'review_rejected' ||
       'design_rejected' => PlainStatus.needsYouItFailed,
-      _ => PlainStatus.workingOnIt,
+      _ => PlainStatus.awaitingReview,
     };
   }
 

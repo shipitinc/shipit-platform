@@ -209,6 +209,54 @@ void main() {
       expect(bloc.state.runs.first.id, 'wi-001');
     });
 
+    test(
+      'working-on-it filter keeps every active state and drops agent_completed',
+      () async {
+        // Every state that maps to PlainStatus.workingOnIt is returned; an
+        // `agent_completed` row is the review hand-off, so it must not appear
+        // under this filter even though it is not terminal.
+        repository.workItemsResponse = [
+          for (final state in [
+            'planning',
+            'agent_executing',
+            'qa_in_progress',
+            'deploying',
+          ])
+            WorkItemResponse(
+              workItemId: 'wi-$state',
+              title: 'Active $state',
+              state: state,
+              createdAt: DateTime(2026, 1, 1),
+              updatedAt: DateTime(2026, 1, 1),
+            ),
+          WorkItemResponse(
+            workItemId: 'wi-awaiting-review',
+            title: 'Finished its work, now awaiting review',
+            state: 'agent_completed',
+            createdAt: DateTime(2026, 1, 2),
+            updatedAt: DateTime(2026, 1, 2),
+          ),
+        ];
+
+        final bloc = RunsBloc(repository: repository)..add(RunsLoaded());
+        await bloc.stream.firstWhere((s) => !s.isLoading);
+
+        bloc.add(const RunsFilterChanged(RunsFilter.workingOnIt));
+        await bloc.stream.firstWhere((s) => s.filter == RunsFilter.workingOnIt);
+
+        expect(bloc.state.runs.map((r) => r.id).toSet(), {
+          'wi-planning',
+          'wi-agent_executing',
+          'wi-qa_in_progress',
+          'wi-deploying',
+        });
+        expect(
+          bloc.state.runs.map((r) => r.id),
+          isNot(contains('wi-awaiting-review')),
+        );
+      },
+    );
+
     test('needs-you filter only surfaces blocked items', () async {
       repository.workItemsResponse = [
         WorkItemResponse(

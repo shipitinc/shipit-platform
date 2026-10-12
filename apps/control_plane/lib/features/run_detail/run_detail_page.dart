@@ -127,7 +127,7 @@ class _RunDetailView extends StatelessWidget {
                         null,
                       ),
                     (
-                      '${status == PlainStatus.finished ? 'took' : 'running'} '
+                      '${status.elapsedVerb} '
                           '${PlainLanguage.elapsed(elapsed)}',
                       status.isOperatorTurn ? palette.attention : null,
                     ),

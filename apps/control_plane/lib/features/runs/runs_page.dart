@@ -63,7 +63,9 @@ enum WorkFilter {
   bool matches(PlainStatus status) => switch (this) {
     WorkFilter.all => true,
     WorkFilter.workingOnIt =>
-      status == PlainStatus.workingOnIt || status == PlainStatus.waitingToStart,
+      status == PlainStatus.workingOnIt ||
+          status == PlainStatus.awaitingReview ||
+          status == PlainStatus.waitingToStart,
     WorkFilter.needsYou => status.isOperatorTurn,
     WorkFilter.finished => status == PlainStatus.finished,
     WorkFilter.failed =>

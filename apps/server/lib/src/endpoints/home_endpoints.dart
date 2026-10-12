@@ -24,11 +24,17 @@ class HomeEndpoints extends Endpoint {
     final now = DateTime.now();
     final oneDayAgo = now.subtract(const Duration(hours: 24));
 
-    // Running: non-terminal states that aren't blocked
+    // Running: only actively executing states. This intentionally mirrors
+    // PlainStatus.workingOnIt in apps/control_plane/lib/core/plain_language.dart
+    // so the Overview metric and the row STATUS agree.
     final running = allItems
         .where(
           (item) =>
-              !item.state.isTerminal && item.blockingHumanDecisionId == null,
+              item.blockingHumanDecisionId == null &&
+              (item.state == WorkItemState.planning ||
+                  item.state == WorkItemState.agentExecuting ||
+                  item.state == WorkItemState.qaInProgress ||
+                  item.state == WorkItemState.deploying),
         )
         .length;
 

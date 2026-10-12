@@ -82,6 +82,24 @@ void main() {
         expect(overview.running, greaterThanOrEqualTo(1));
         expect(overview.waitingOnYou, greaterThanOrEqualTo(1));
         expect(overview.recentlyFinished, greaterThanOrEqualTo(1));
+
+        // Additional checks: parked at agent_completed must not count as running
+        await db.queryNoTransaction('''
+          INSERT INTO work_item ("workItemId", "productId", "category", "title",
+            "state", "createdAt", "updatedAt", "completedAt", "blockingHumanDecisionId", "version")
+          VALUES ('ui-ac', 'p', 'feature', 'Ac', 'agent_completed', '$ts', '$ts', NULL, NULL, 1)
+        ''');
+        // blocked active item must not count as running
+        await db.queryNoTransaction('''
+          INSERT INTO work_item ("workItemId", "productId", "category", "title",
+            "state", "createdAt", "updatedAt", "completedAt", "blockingHumanDecisionId", "version")
+          VALUES ('ui-ae-blocked', 'p', 'feature', 'BlockedActive', 'agent_executing', '$ts', '$ts', NULL, 'dec-blocked', 1)
+        ''');
+        final overview2 = await endpoints.homeEndpoints.overview(
+          sessionBuilder,
+        );
+        // ui-ac should not increase running; blocked active also doesn't
+        expect(overview2.running, overview.running);
       });
 
       test(
