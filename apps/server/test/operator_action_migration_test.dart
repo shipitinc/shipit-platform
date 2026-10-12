@@ -20,6 +20,10 @@ import 'package:test/test.dart';
 /// AC-14d is asserted by scanning the whole repository for an UPDATE or DELETE
 /// against the table, which is the form the criterion asks for: "a test that
 /// fails if any UPDATE/DELETE against the table is introduced".
+///
+/// The creator is identified by CONTENT — the migration whose SQL contains
+/// `CREATE TABLE "operator_action"` — not by its position in the registry. See
+/// the resolution note in `main` for why that distinction is load-bearing.
 void main() {
   final repoRoot = _findRepoRoot();
   final migrationsDir = Directory(p.join(repoRoot, 'apps/server/migrations'));
@@ -29,14 +33,6 @@ void main() {
       .map((l) => l.trim())
       .where((l) => l.isNotEmpty && !l.startsWith('#'))
       .toList();
-  final latest = registry.last;
-  final latestDir = Directory(p.join(migrationsDir.path, latest));
-  final migrationSql = File(
-    p.join(latestDir.path, 'migration.sql'),
-  ).readAsStringSync();
-  final definitionSql = File(
-    p.join(latestDir.path, 'definition.sql'),
-  ).readAsStringSync();
 
   /// Strips `--` comments so a section header that NAMES an object cannot
   /// satisfy a check that is supposed to find the DDL that CREATES it. The
@@ -46,28 +42,99 @@ void main() {
       .split('\n')
       .where((line) => !line.trimLeft().startsWith('--'))
       .join('\n');
+
+  /// Every migration that contains `CREATE TABLE "operator_action"`, found by
+  /// scanning the migration directories.
+  ///
+  /// This scan used to live inside the exclusivity test and pick
+  /// `registry.last` as its answer. That made the creator's identity a claim
+  /// about the registry's TAIL: true only while this migration was newest, and
+  /// broken by the registration of ANY later migration. When a data-repair
+  /// migration was added, six assertions here failed — the index checks, the
+  /// NOT NULL check, the fresh-database check — all of them reading a repair
+  /// migration's SQL and reporting it as damage to the audit ledger. The
+  /// breakage was pre-existing fragility rather than a property of the repair,
+  /// and the failure pointed at the wrong file entirely.
+  ///
+  /// Resolving the creator once, by content, makes every assertion below a
+  /// property of the migration that owns the table. It also costs nothing: the
+  /// scan was already being performed, once per run, by the test that enforces
+  /// exclusivity — so hoisting it proves the SAME property and stops the other
+  /// assertions from re-deriving an identity that registry position cannot
+  /// support.
+  final creators = <String>[
+    for (final entry in migrationsDir.listSync())
+      if (entry is Directory)
+        if (File(p.join(entry.path, 'migration.sql')).existsSync())
+          if (sqlBody(
+            File(p.join(entry.path, 'migration.sql')).readAsStringSync(),
+          ).contains('CREATE TABLE "operator_action"'))
+            p.basename(entry.path),
+  ]..sort();
+  if (creators.isEmpty) {
+    // Failing here is deliberate. With no creator, every assertion below would
+    // read nothing and pass for the wrong reason, so the whole file would go
+    // green while proving nothing about the table.
+    throw StateError(
+      'no migration under ${migrationsDir.path} creates '
+      'CREATE TABLE "operator_action". The assertions in this file resolve the '
+      'table by scanning migrations for the DDL that creates it; with no such '
+      'migration they cannot read anything and would pass vacuously.',
+    );
+  }
+  // Multiplicity is asserted by its own test, so a second creator is reported
+  // there — against the list of both offenders — rather than as an opaque
+  // `No element`/`Too many elements` crash before any test runs.
+  //
+  // Sorting is what keeps that report to a single failure. `listSync()` returns
+  // filesystem order, which is not alphabetical and is not stable across
+  // machines, so an unsorted `first` could hand the index and NOT NULL checks
+  // the WRONG creator and bury the one test that names the real defect under
+  // four failures that all read as "the audit ledger is broken".
+  final creator = creators.first;
+  final creatorDir = Directory(p.join(migrationsDir.path, creator));
+  final migrationSql = File(
+    p.join(creatorDir.path, 'migration.sql'),
+  ).readAsStringSync();
+  final definitionSql = File(
+    p.join(creatorDir.path, 'definition.sql'),
+  ).readAsStringSync();
   final body = sqlBody(migrationSql);
 
+  /// The definition the FRESH-database path is actually served by.
+  ///
+  /// This one subject is positional BY NATURE, and that is the opposite of the
+  /// creator: a fresh database is created from whatever definition.sql is
+  /// newest, so `registry.last` is not a fragile proxy for it, it is the
+  /// mechanism. It is resolved separately so the fresh-database assertions
+  /// keep proving that mechanism after the creator stopped being the newest
+  /// entry.
+  final freshDatabaseVersion = registry.last;
+  final freshDatabaseDefinition = File(
+    p.join(migrationsDir.path, freshDatabaseVersion, 'definition.sql'),
+  );
+
   group('AC-30 exactly one migration, exactly one table, no existing change', () {
-    test('the latest registered migration is the only one that creates it', () {
-      final creators = <String>[];
-      for (final entry in migrationsDir.listSync()) {
-        if (entry is! Directory) continue;
-        final sql = File(p.join(entry.path, 'migration.sql'));
-        if (!sql.existsSync()) continue;
-        if (sqlBody(
-          sql.readAsStringSync(),
-        ).contains('CREATE TABLE "operator_action"')) {
-          creators.add(p.basename(entry.path));
-        }
-      }
-      expect(creators, [latest]);
-      expect(
-        registry.where((e) => e == latest),
-        hasLength(1),
-        reason: 'the registry must list the version exactly once',
-      );
-    });
+    test(
+      'exactly one migration creates it, and the registry lists it once',
+      () {
+        expect(
+          creators,
+          hasLength(1),
+          reason:
+              'AC-30 is a mutual-exclusivity claim, so the count is the '
+              'assertion: every entry listed here contains '
+              'CREATE TABLE "operator_action". A second origin for the table '
+              'means the ledger has two creation paths and no single migration '
+              'whose SQL can be held to the checks below.',
+        );
+        expect(
+          registry.where((e) => e == creator),
+          hasLength(1),
+          reason: 'the registry must list the version exactly once',
+        );
+      },
+    );
 
     test('it creates EXACTLY ONE table, and it is operator_action', () {
       final created = RegExp(
@@ -102,11 +169,13 @@ void main() {
       );
     });
 
-    test('the registry gained exactly one version', () {
-      // The committed registry before this change listed every directory but
-      // one; the generator appends whatever is missing. What matters for AC-30
-      // is that THIS table is created once, which the first test proves.
-      expect(latestDir.existsSync(), isTrue);
+    test('the creating migration exists on disk and is registered', () {
+      // The committed registry lists every directory but one; the generator
+      // appends whatever is missing. That gap is not what AC-30 is about — what
+      // matters is that THIS table is created once, which the first test
+      // proves. What this test pins is that the creator the scan resolved is a
+      // real directory carrying the files the other assertions read.
+      expect(creatorDir.existsSync(), isTrue);
       expect(registry, isNotEmpty);
     });
 
@@ -115,9 +184,40 @@ void main() {
       // recorded migration version, and replays every migration.sql to a
       // chain-migrated one. Both paths must reach the table, or one of the two
       // databases this repository creates silently lacks the audit ledger.
+      //
+      // BOTH definitions are asserted, and neither substitutes for the other.
+      // The creator's proves the migration is self-consistent — the table is in
+      // the schema that the migration itself declares. The newest registered
+      // one's proves the path a fresh database actually takes. Asserting only
+      // the first would be a WEAKENING introduced by this refactor: it stays
+      // green if a later migration ships a definition.sql that omits the
+      // table, which is the exact defect this test exists to catch, and it
+      // would stay green precisely when that defect appears.
       expect(
         sqlBody(definitionSql).contains('CREATE TABLE "operator_action"'),
         isTrue,
+        reason:
+            'the creating migration must declare the table in its own '
+            'definition.sql, so the chain-migrated path reaches it too',
+      );
+      expect(
+        freshDatabaseDefinition.existsSync(),
+        isTrue,
+        reason:
+            '$freshDatabaseVersion is the newest registered version and the '
+            'fresh-database path applies its definition.sql',
+      );
+      expect(
+        sqlBody(freshDatabaseDefinition.readAsStringSync()).contains(
+          'CREATE TABLE "operator_action"',
+        ),
+        isTrue,
+        reason:
+            'a fresh database is built from the NEWEST registered '
+            'definition.sql, not from the creator\'s. A later migration '
+            'shipping a definition.sql without operator_action would leave '
+            'every freshly created database without an audit ledger while the '
+            'creator-scoped assertion above still passed.',
       );
     });
   });
