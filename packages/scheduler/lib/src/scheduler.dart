@@ -518,8 +518,10 @@ class Scheduler {
     };
 
     // 3. Terminal items: cancel any residual queued jobs. Runnable items:
-    //    enqueue the missing job idempotently. Blocked/no-action items: leave
-    //    every existing job untouched (never cancelled, never dispatched).
+    //    enqueue the missing job idempotently. No-action items: RETIRE the jobs
+    //    they superseded. Blocked items: leave every existing job untouched
+    //    (never cancelled, never dispatched) — a blocking gate is a pause the
+    //    work is expected to come back from.
     for (final item in items) {
       final status = statusOf[item.workItemId]!;
       switch (status) {
@@ -529,8 +531,21 @@ class Scheduler {
             reason: 'work item is ${item.state.wire}',
           );
           cancelledQueued.addAll(cancelled);
-        case RunnableWorkStatus.blocked:
         case RunnableWorkStatus.noAction:
+          // An item that has left this definition's entry states SUPERSEDES the
+          // jobs that were queued for it. Retiring them here — rather than
+          // letting the dispatch pass skip them forever — is what keeps a stale
+          // job from lingering as an inert row nobody can explain.
+          final retired = await _retireSupersededForItem(item);
+          cancelledQueued.addAll(retired);
+        case RunnableWorkStatus.blocked:
+          // Deliberately NOT retired. `blocked` means `waitingForHumanDecision`,
+          // which is a PAUSE that consumes no capacity and is expected to
+          // resolve back into an entry state — so a queued job here is work the
+          // platform still wants and intends to run. Cancelling it would destroy
+          // legitimate queued work. An item that resolves somewhere this
+          // definition cannot run is swept as `noAction` on a later tick, by
+          // which time it has left `waitingForHumanDecision`.
           break;
         case RunnableWorkStatus.runnable:
           final dedupeKey = _dedupeKeyBuilder(item, _definition);
@@ -628,6 +643,12 @@ class Scheduler {
       // Re-validate legality against today's item state at claim time so a
       // human decision that landed between enqueue and dispatch cannot slip
       // through.
+      //
+      // This `continue` is a dispatch-time guard on the SNAPSHOT taken in step
+      // 3, not the mechanism that retires a superseded job: step 3's
+      // `noAction` branch is what makes such a job terminal with a durable
+      // reason (`_retireSupersededForItem`), so it can no longer linger here
+      // indefinitely. What remains is an item that moved between the two reads.
       final legal = await _evaluator.isRunnable(job, item, _definition);
       if (!legal) continue;
       candidates.add(job);
@@ -1224,6 +1245,74 @@ class Scheduler {
       }
     }
     return cancelled;
+  }
+
+  /// Retires jobs that a non-terminal work item has SUPERSEDED: queued or
+  /// retry-waiting jobs whose item is no longer in a state this definition can
+  /// run from.
+  ///
+  /// ## Why this is the scheduler, and not the drain handler
+  ///
+  /// A superseded job is by definition a job that was never dispatched — there
+  /// is no worker execution, no drain event and no handler invocation for it.
+  /// The handler path only ever learns about jobs that DID start, so it cannot
+  /// be the place that notices one that never will. The scheduler is the only
+  /// component holding both halves of the fact (this job's state, and this
+  /// definition's entry states) and the only one that runs periodically enough
+  /// to notice. That it already performs the identical write for terminal
+  /// items — `_cancelQueuedForItem` — is the precedent, not a coincidence.
+  ///
+  /// ## Why `cancelled` and not `failed`
+  ///
+  /// These jobs were never attempted. `failed` would assert an execution that
+  /// never happened, and it would need a `JobFailure` — whose vocabulary has no
+  /// "superseded" code, because adding one is a `platform_contracts` change and
+  /// faking `executionFailed` is a lie an operator would act on. `cancelled`
+  /// with an explicit [Job.cancelReason] says exactly what happened: this job
+  /// was withdrawn because its work item no longer wants it. The reason is
+  /// durable on the job row AND on the `jobCancelled` scheduler event.
+  ///
+  /// ## The dedupe key
+  ///
+  /// Retiring frees the key, deliberately, and the rule for "freed" is
+  /// `JobQueue.enqueueIfAbsent`'s: a CANCELLED job holds no claim on a dedupe
+  /// key, because it records no attempt and consumed no retry budget, while a
+  /// succeeded or failed job keeps holding it. A fresh job is therefore
+  /// created only once the item is back in an entry state — i.e. only when the
+  /// work is genuinely wanted again — and never while this definition already
+  /// has an active or concluded job for it. No duplicate is reachable: while
+  /// the superseded job was queued the item was not runnable, so nothing was
+  /// ever being asked for twice.
+  ///
+  /// Claims, running jobs and terminal jobs are never touched: those converge
+  /// on a verdict through outcome adoption, reclaim or reconciliation, and
+  /// overriding them here would destroy a result that is still landing.
+  Future<List<String>> _retireSupersededForItem(WorkItem item) async {
+    // Re-check the boundary condition locally rather than trusting the
+    // caller's status: this method must be safe to call for any item, and
+    // `evaluate` maps a few distinct situations onto `noAction`.
+    if (_evaluator.evaluate(item, _definition) != RunnableWorkStatus.noAction) {
+      return const [];
+    }
+
+    final entryStates =
+        _definition.entryStates.map((state) => state.wire).toList()..sort();
+    final reason =
+        'superseded: work item ${item.workItemId} is ${item.state.wire}, '
+        'which is not an entry state for ${_definition.jobType.wire} '
+        '(${entryStates.join(', ')})';
+
+    final retired = <String>[];
+    for (final job in await _jobStore.listJobsForWorkItem(item.workItemId)) {
+      if (job.isTerminal) continue;
+      if (job.state != JobState.queued && job.state != JobState.retryWaiting) {
+        continue;
+      }
+      if (job.jobType != _definition.jobType) continue;
+      await _queue.cancelQueued(job: job, reason: reason);
+      retired.add(job.jobId);
+    }
+    return retired;
   }
 
   /// Public cancellation entrypoint: queued/retryWaiting jobs are cancelled

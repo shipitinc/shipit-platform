@@ -33,6 +33,54 @@ class ExecutionNotActiveException implements Exception {
       'Execution is not active in this coordinator: $executionId';
 }
 
+/// Thrown when an execution is dispatched for a work item that has since LEFT
+/// the state this role needs to run in.
+///
+/// ## Why this is its own type
+///
+/// The underlying cause is an ordinary [WorkflowTransitionRejectedException],
+/// and letting that escape produced a genuinely misleading outcome. Live QA
+/// caught it: a review job dispatched at 16:40 found its work item moved to
+/// `agentExecuting` by an operator, then to `designNotRequired` by a repair
+/// migration, and the attempt failed two hours later with
+///
+///     Workflow transition rejected: WorkItemState.designNotRequired ->
+///     WorkItemState.reviewInProgress (Transition ... is not allowed)
+///
+/// as a `permanent` `executionFailed`. That reads as a platform fault in the
+/// state machine. It is not: the state machine REFUSED correctly, and the
+/// condition is ordinary staleness — a completion that arrived after its work
+/// item moved on. Naming it makes the job's failure reason say what happened.
+///
+/// ## What it deliberately does NOT claim
+///
+/// Nothing was executed and nothing was produced, so there is no result to
+/// preserve and no work item to un-strand: the transition is attempted BEFORE
+/// the execution row and the session exist, and the work item belongs to
+/// whoever moved it. This is a classification, not a recovery — and it never
+/// relaxes the policy that rejected the transition.
+class WorkItemSupersededException implements Exception {
+  const WorkItemSupersededException({
+    required this.workItemId,
+    required this.observedState,
+    required this.requiredState,
+    required this.role,
+  });
+
+  final String workItemId;
+  final WorkItemState observedState;
+  final WorkItemState requiredState;
+  final AgentRole role;
+
+  @override
+  String toString() =>
+      'Superseded execution: work item $workItemId is '
+      '${observedState.wire} and no longer accepts a '
+      '${role.wire} run, which requires ${requiredState.wire}. '
+      'The work item moved on before this execution started, so nothing ran '
+      'and nothing was produced.';
+}
+
 /// How the platform independently verifies the agent's claimed result.
 @immutable
 class VerificationPlan {
@@ -176,21 +224,37 @@ class ExecutionCoordinator {
         ? WorkItemState.reviewInProgress
         : WorkItemState.agentExecuting;
     if (item.state != runningState) {
-      await workflowEngine.transition(
-        workItemId: request.workItemId,
-        to: runningState,
-        trigger: TransitionTrigger.systemEvent,
-        actor: _orchestrator,
-        // The reviewer's `agentCompleted -> reviewInProgress` edge is guarded by
-        // `agentResultValid()`, which reads the IMPLEMENTER's completed result
-        // from `context['agentResult']`. The scheduler cannot supply it (which is
-        // why `engineeringReviewDefinition.skipWorkflowPolicyCheck` is true), but
-        // this transition runs against the durable engine, so it must. Every
-        // non-reviewer role keeps the original context byte for byte.
-        context: isReviewer
-            ? await _reviewEntryTransitionContext(request.workItemId)
-            : const {'agentAvailable': true, 'capabilitiesMatch': true},
-      );
+      try {
+        await workflowEngine.transition(
+          workItemId: request.workItemId,
+          to: runningState,
+          trigger: TransitionTrigger.systemEvent,
+          actor: _orchestrator,
+          // The reviewer's `agentCompleted -> reviewInProgress` edge is guarded by
+          // `agentResultValid()`, which reads the IMPLEMENTER's completed result
+          // from `context['agentResult']`. The scheduler cannot supply it (which is
+          // why `engineeringReviewDefinition.skipWorkflowPolicyCheck` is true), but
+          // this transition runs against the durable engine, so it must. Every
+          // non-reviewer role keeps the original context byte for byte.
+          context: isReviewer
+              ? await _reviewEntryTransitionContext(request.workItemId)
+              : const {'agentAvailable': true, 'capabilitiesMatch': true},
+        );
+      } on WorkflowTransitionRejectedException {
+        // The item moved between the load above and this write — an operator
+        // action, a gate, a repair. That is staleness, not a platform fault, and
+        // the engine's raw "transition rejected ... is not allowed" string
+        // escapes into the job's permanent failure reason if it is allowed out
+        // of here. Re-raise it under the name that says what happened. No audit
+        // evidence is lost: the engine has already appended the rejected attempt
+        // to the transition history, which is where this is explained in full.
+        throw WorkItemSupersededException(
+          workItemId: request.workItemId,
+          observedState: item.state,
+          requiredState: runningState,
+          role: request.role,
+        );
+      }
     }
 
     await store.inTransaction((tx) async {
@@ -569,13 +633,29 @@ class ExecutionCoordinator {
     } catch (error) {
       await session?.close();
       _releaseExecution(executionId, error: error);
+      // A completion that could not be applied because the work item moved on
+      // is ordinary staleness, not a coordinator fault — but it still has to be
+      // REPORTED, because the execution did not achieve what it was for. Only
+      // the classification changes; the raw engine text is kept in the event
+      // payload so the audit trail loses nothing.
+      final stale = error is WorkflowTransitionRejectedException;
+      final detail = stale
+          ? 'late completion could not be applied: work item '
+                '${request.workItemId} moved on before this outcome was '
+                'recorded (${error.record.fromState.wire} -> '
+                '${error.record.toState.wire}); the result and any verification '
+                'are persisted under execution $executionId'
+          : 'coordinator finalize error: $error';
       try {
         await store.inTransaction((tx) async {
           await _appendEvent(
             executionId: executionId,
             workItemId: request.workItemId,
             type: AgentEventType.executionFailed,
-            payload: {'error': error.toString()},
+            payload: {
+              if (stale) 'kind': 'staleCompletion',
+              'error': error.toString(),
+            },
             via: tx,
           );
           final stalled = await tx.readExecutionOrNull(executionId);
@@ -583,7 +663,7 @@ class ExecutionCoordinator {
             await tx.saveExecution(
               stalled.copyWith(
                 status: AgentSessionStatus.failed,
-                reason: 'coordinator finalize error: $error',
+                reason: detail,
                 completedAt: DateTime.now(),
                 version: stalled.version + 1,
               ),
@@ -973,6 +1053,15 @@ class ExecutionCoordinator {
     final settled = _settledContracts.remove(executionId);
     if (settled != null && !settled.isCompleted) {
       if (error != null) {
+        // `cancelExecution` is the only reader of this contract, and on the
+        // ordinary failure path nobody is calling it. Completing with an error
+        // and no listener therefore reports the error to the ambient zone as
+        // UNHANDLED, which poisons whatever ran the drive — and it happens on
+        // exactly the late-completion path where the drive is already failing
+        // for a benign reason. Registering a listener marks the error handled;
+        // it does NOT consume it, so a `cancelExecution` awaiting the same
+        // future still receives it and still rejects.
+        unawaited(settled.future.then<void>((_) {}, onError: (Object _) {}));
         settled.completeError(error);
       } else if (record != null) {
         settled.complete(record);

@@ -34,15 +34,34 @@ class JobQueue {
   static String newJobId() => _newId('jb');
   static String newClaimId() => _newId('cl');
 
-  /// Creates the job if no job exists for [dedupeKey], otherwise returns the
-  /// existing job untouched. Re-evaluating UNCHANGED workflow state (same
-  /// dedupe key) never creates a second job and never emits a second
-  /// `jobQueued` event.
+  /// Creates the job if no job holds [dedupeKey] other than a CANCELLED one,
+  /// otherwise returns that holder untouched. Re-evaluating UNCHANGED workflow
+  /// state (same dedupe key) never creates a second job and never emits a second
+  /// `jobQueued` event, because the holder is still there.
   ///
-  /// Two processes evaluating the same state concurrently both perform the
-  /// check-then-insert inside one transaction; the store's active-dedupe
-  /// constraint arbitrates the race and [DuplicateActiveJobException] is
-  /// re-resolved to the winning job.
+  /// ## Only a CANCELLED job yields the key, and the line is principled
+  ///
+  /// A `succeeded` or `failed` job records an ATTEMPT against this (work item,
+  /// job type) pair and the retry budget that governed it. That attempt is the
+  /// thing the key exists to make idempotent — "one intent, one job, one
+  /// spend" — so it keeps holding the key even after it ends, and re-enqueueing
+  /// against it would turn every exhausted run into an unbounded automatic
+  /// re-run of exactly the kind [RetryPolicy] exists to prevent: a failed
+  /// coding RESULT is permanent and routes through the workflow's correction
+  /// gate, never through an LLM retry loop.
+  ///
+  /// A `cancelled` job records no attempt at all: it was withdrawn before
+  /// anything ran (`Job.attempt` is untouched, no execution reference is ever
+  /// set for a queued cancellation). There is no budget consumed and no
+  /// outcome to honour, so it has no claim on the key — and because
+  /// [DuplicateActiveJobException] and the production index
+  /// `job_active_dedupe_unique` both already treat a terminal holder as
+  /// non-blocking, letting one keep the key would contradict the constraint the
+  /// write path enforces.
+  ///
+  /// Concretely: an item sent back for changes, implemented again and completed
+  /// again is legitimately due a second review. With a cancelled job still
+  /// holding the key it could never be enqueued for one.
   Future<JobEnqueueResult> enqueueIfAbsent({
     required String workItemId,
     required JobDefinition definition,
@@ -54,7 +73,7 @@ class JobQueue {
     try {
       return await _store.inTransaction((tx) async {
         final existing = await tx.findLatestByDedupeKey(dedupeKey);
-        if (existing != null) {
+        if (existing != null && existing.state != JobState.cancelled) {
           return JobEnqueueResult(job: existing, created: false);
         }
         final job = Job(
@@ -84,6 +103,12 @@ class JobQueue {
     } on DuplicateActiveJobException {
       final existing = await _store.findLatestByDedupeKey(dedupeKey);
       if (existing != null) {
+        // A cancelled job is still a truthful answer here even though it is not
+        // a dedupe blocker: the newest-first lookup raced a concurrent insert,
+        // so the real holder that raised the violation is not necessarily the
+        // row this returns. Handing it back keeps the next tick honest — it
+        // re-reads, sees the real holder, and dispatches that — instead of
+        // crashing the tick over a row that is about to stop being newest.
         return JobEnqueueResult(job: existing, created: false);
       }
       rethrow;
