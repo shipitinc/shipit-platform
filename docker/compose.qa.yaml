@@ -74,6 +74,31 @@ services:
       # Default 2 for QA: two opencode sessions measure ~1.5 GB against the 7.65 GB
       # Docker VM ceiling. Tune only after observing real peak (decision f8c8b67f).
       SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS: "${SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS:-2}"
+      # SHIPIT_OPERATOR_MAX_RETRIES is deliberately ABSENT here, so QA matches
+      # the other three stacks and operator retry is UNCUNTED. This previously
+      # read "${SHIPIT_OPERATOR_MAX_RETRIES:-3}", in an uncommitted working-tree
+      # edit only; no commit ever set it, so the cap the running stack carried
+      # was invisible to review. Operator retry is a HUMAN-triggered action on an
+      # authenticated operator session, and its only caller is the operator UI, so
+      # it is no longer count-bounded. An explicit 0 still switches the action
+      # off, and a positive integer still caps it. AUTOMATIC (agent-driven) retries
+      # remain bounded by the job's own maxAttempts, which this variable does not
+      # affect. Reversed from decision 5d9a1f62 (HD-3); see the HUMAN_DECISION_RECORD
+      # superseding it.
+      #
+      # Custody substrate. Interpolated from docker/.env (the compose PROJECT
+      # directory), NOT the repository-root .env that `env_file:` reads -- Compose
+      # interpolation and env_file are different mechanisms, and putting these in
+      # docker/.env without interpolating them here means they never reach the
+      # container. That is why the baseline worker reported
+      # custodyRuntimeState=unavailable after the restart.
+      #
+      # ADR 0018's DOCUMENTED FALLBACK (local secret store, A1/A4): a recorded
+      # precondition, never a silent default. Unset resolves to empty and
+      # secret_provider_resolver.dart fails CLOSED at runtime.
+      SHIPIT_SECRET_PROVIDER: "${SHIPIT_SECRET_PROVIDER:-}"
+      # Container path; the host side is the bind mount below.
+      SHIPIT_LOCAL_SECRET_DIR: /var/lib/shipit/secrets
       SHIPIT_TRIAGE_WORKSPACE_ROOT: /triage-workspaces
     ports:
       - "8180:8080"
