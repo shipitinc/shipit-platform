@@ -112,19 +112,47 @@ services:
       # Default 2 for QA: two opencode sessions measure ~1.5 GB against the 7.65 GB
       # Docker VM ceiling. Tune only after observing real peak (decision f8c8b67f).
       SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS: "${SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS:-2}"
-      # Operator retry bound (design-brief.md §6.6, HD-3). Per WORK ITEM, and
-      # FAIL-CLOSED: unset means the retry action is never offered.
+      # Operator retry bound for the failed-work action panel. Per WORK ITEM.
       #
-      # There is deliberately NO `${...:-3}` here, and the contrast with the
-      # `${...:-2}` directly above is the whole point. That one defaults because
-      # the server needs SOME cap before it will boot and 2 is a safe number to
-      # assume. This one must not default, because a missing configuration must
-      # never arm an action that spends real model credits (decision 5d9a1f62).
-      # `${VAR:-}` interpolates to empty, which the server resolves as
-      # UNRESOLVED — the fail-closed answer.
+      # REVERSED 2026-10-12. This used to FAIL CLOSED: unset meant the retry
+      # action was never offered, because "an operator action that spends real
+      # credits must never be armed by a missing configuration" (decision
+      # 5d9a1f62, HD-3). A human asked for the opposite -- operator retries are
+      # uncounted unless a cap is chosen here. Do not reinstate the old
+      # rationale; it was reversed deliberately, not overlooked.
       #
-      # `0` is a valid configuration meaning "permanently disabled", and is not
-      # a failure. Set this to 3 to arm restarting (HD-3's value).
+      # WHY IT IS SAFE, which is the whole basis of the reversal:
+      #   * The action is HUMAN-TRIGGERED through an authenticated operator
+      #     session, and its only caller is the operator UI
+      #     (run_detail_bloc -> control_plane_repository -> the endpoint).
+      #     There is no automation, cron, webhook or agent-driven caller.
+      #   * Each press is a separate, deliberate, confirm-required spend with a
+      #     written reason, recorded in an append-only audit ledger.
+      #   * AUTOMATIC retries are a DIFFERENT mechanism and are STILL bounded:
+      #     the job's own maxAttempts, enforced by RetryPolicy.canRetry in the
+      #     scheduler's own tick. Uncounting a human's button does not uncount
+      #     an agent's retry loop -- `triage_defect` still has maxAttempts: 2.
+      #
+      # So `${VAR:-}` interpolating to empty now means NO COUNT BOUND, not
+      # "unconfigured". A positive N caps one work item at N retries; `0`
+      # switches operator retry off entirely and is the ONLY value that removes
+      # the action. An unreadable or negative value is ignored and leaves the
+      # uncounted default in place.
+      #
+      # The contrast with the `${...:-2}` directly above is still deliberate and
+      # still real. That cap defaults because the server REFUSES TO BOOT without
+      # one, and a host crash on 2026-10-10 came from unbounded AGENT work.
+      #
+      # Under the OLD policy this line's variable was the second one that "must
+      # not default", because a missing configuration must never arm an action
+      # that spends real model credits. The reversal REMOVED that duty rather
+      # than satisfying it: the action is available by default now, and this
+      # variable no longer arms anything, so there is nothing here for a default
+      # to arm. It is kept on the line all the same, because an operator who
+      # DOES want a cap needs one place to put it.
+      #
+      # The bound that must not default is still the agent-side one directly
+      # above -- that is the unbounded AGENT work that crashed the host.
       SHIPIT_OPERATOR_MAX_RETRIES: "${SHIPIT_OPERATOR_MAX_RETRIES:-}"
       SHIPIT_TRIAGE_WORKSPACE_ROOT: /triage-workspaces
     ports:

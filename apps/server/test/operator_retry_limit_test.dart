@@ -1,33 +1,64 @@
+import 'dart:io';
+
 import 'package:control_plane_server/src/endpoints/work_item_action_endpoints.dart';
 import 'package:platform_contracts/platform_contracts.dart';
+import 'package:scheduler/scheduler.dart'
+    show RetryPolicy, triageDefectDefinition;
 import 'package:test/test.dart';
 import 'package:workflow_engine/workflow_engine.dart' show WorkItemTransitions;
 import 'package:workflow_store/workflow_store.dart'
     show OperatorActionKind, OperatorActionRecord;
 
-/// §6.6 — the fail-closed retry bound, and the server-computed action set.
+/// §6.6 — the operator-retry resolution, and the server-computed action set.
 ///
-/// ## WHY THE RESOLUTION IS TESTED IN ITS OWN FILE
+/// ## REVERSED 2026-10-12 — READ THIS BEFORE CHANGING ANY EXPECTATION HERE
 ///
-/// It is the safety invariant of the whole surface: an operator action that
-/// spends real model credits must never be armed by a missing configuration.
-/// It is also the one piece of §6.6 an implementer is most likely to get
-/// subtly wrong — by reusing `ExecutionCapacityResolution`, which resolves
-/// `0` to UNRESOLVED with a failure-styled diagnostic. AC-15c is the criterion
-/// that catches exactly that, so it is asserted here directly rather than left
-/// to the panel tests to notice.
+/// This file previously asserted that an unset/unparseable retry limit **fails
+/// closed**: `retryIsAvailable` false, `limit` null, `isResolved` false, and
+/// the panel offering only `stop`. Every one of those expectations was a
+/// deliberate, reviewed decision (HD-3, `5d9a1f62`) and every one of them is
+/// now INVERTED by a human decision.
+///
+/// The new rule, in one sentence: **an unset, blank, unparseable or negative
+/// `SHIPIT_OPERATOR_MAX_RETRIES` means NO COUNT BOUND** — an operator may
+/// restart a work item any number of times — and it no longer means "the retry
+/// action is not available".
+///
+/// What did NOT change, and what the tests below still hold to:
+///
+///  * an explicit `0` still switches operator retry off entirely, and still
+///    resolves as a CONFIGURATION rather than a failure (AC-15c);
+///  * an explicit positive `N` still caps the retries at N;
+///  * **no input may ever resolve to a number the operator did not write** —
+///    there is still no fallback constant, and `0x3`/`+3`/`9999…` must not
+///    become a cap;
+///  * no input may THROW out of the resolver (HIGH-1);
+///  * the action set is still COMPUTED from the transition table (AC-1/N4).
+///
+/// The group names below are deliberately kept close to the originals so a
+/// reviewer diffing this file can see exactly which expectation moved and why.
 void main() {
   const envVar = operatorRetryLimitEnvVar;
 
-  group('§6.6 — an unset retry limit fails closed', () {
-    test('unset resolves to UNRESOLVED, never to a number', () {
+  group('REVERSED 2026-10-12 — an unset retry limit means NO COUNT BOUND', () {
+    test('unset resolves to UNBOUNDED — retry available, and no number', () {
       final resolution = OperatorRetryLimitResolution.fromEnvironment(
         const {},
       );
 
-      expect(resolution.isResolved, isFalse);
-      expect(resolution.retryIsAvailable, isFalse);
+      // The reversal, stated as the three predicates the RPC consults.
+      expect(resolution.retryIsAvailable, isTrue);
+      expect(resolution.unbounded, isTrue);
+      // …and still no invented number. "Uncounted" is not "3".
       expect(resolution.limit, isNull);
+      expect(resolution.wireAttemptLimit, 0);
+      // No count means no question of whether it has been spent.
+      expect(resolution.isCountBounded, isFalse);
+      // Resolved: the variable's MEANING is known exactly. Reporting the
+      // default state as unresolved is what would make a healthy machine look
+      // broken on screen.
+      expect(resolution.isResolved, isTrue);
+      expect(resolution.permanentlyDisabled, isFalse);
     });
 
     test('the diagnostic names the variable and is never blank', () {
@@ -39,38 +70,66 @@ void main() {
       expect(resolution.diagnostic.trim(), isNotEmpty);
     });
 
-    test('blank resolves to UNRESOLVED', () {
+    test('the unset diagnostic does NOT tell an operator to configure it', () {
+      // The reversal deletes the old default's central claim: that the action
+      // must be ARMED before an operator can use it. Copy that says "set this
+      // to 3 to arm restarting" about the DEFAULT state is precisely the lie
+      // this change exists to remove, and it is the one thing a future editor
+      // could reintroduce by copying the old string forward.
+      final diagnostic = resolution(const {}).diagnostic.toLowerCase();
+
+      expect(diagnostic, contains('unbounded'));
+      expect(diagnostic, isNot(contains('not available')));
+      expect(diagnostic, isNot(contains('refusing')));
+      expect(diagnostic, isNot(contains('before an operator can')));
+      // And it must say what the operator CAN still do, or be armed, rather
+      // than only what is wrong.
+      expect(diagnostic, contains('any number of times'));
+    });
+
+    test('blank resolves to UNBOUNDED', () {
       for (final blank in ['', '   ', '\t', '\n']) {
         final resolution = OperatorRetryLimitResolution.fromEnvironment({
           envVar: blank,
         });
         expect(
           resolution.retryIsAvailable,
-          isFalse,
-          reason: 'blank ${jsonish(blank)} must not arm a spend',
+          isTrue,
+          reason: 'blank ${jsonish(blank)} still means no count bound',
         );
+        expect(resolution.unbounded, isTrue);
+        expect(resolution.limit, isNull);
         expect(resolution.diagnostic, contains(envVar));
       }
     });
 
-    test('unparseable resolves to UNRESOLVED', () {
+    test('unparseable resolves to UNBOUNDED', () {
       for (final bad in ['three', '3.5', '3;', 'many', '', ' ']) {
         final resolution = OperatorRetryLimitResolution.fromEnvironment({
           envVar: bad,
         });
         expect(
           resolution.retryIsAvailable,
-          isFalse,
-          reason: '"$bad" must not arm a spend',
+          isTrue,
+          reason: '"$bad" is unreadable, which is not a cap and not a disable',
         );
+        expect(resolution.limit, isNull, reason: '"$bad" invents no number');
+        expect(resolution.diagnostic, contains(envVar));
       }
     });
 
-    test('NON-DECIMAL integer syntax must not arm a spend', () {
-      // The one that actually bit: `int.tryParse` reads `0x3` as 3 and `+3` as
-      // 3, so a value its typist would call a mistake would have silently
-      // ARMED the one action in this repository that spends real credits. The
-      // resolution is strict decimal, so both refuse instead.
+    test('NON-DECIMAL integer syntax must NOT become a cap', () {
+      // The direction of this test reversed along with the policy, and the
+      // reason matters. Before 2026-10-12 the failure was that `0x3` would
+      // silently ARM a credit-spending action. Now the action is armed by
+      // default and this variable cannot arm it, so the surviving hazard is the
+      // opposite one: a value its typist would call a mistake must not be
+      // honoured AS A CAP, because an operator who typed `0x3` and got a silent
+      // cap of 3 has been given a number they never wrote.
+      //
+      // It must therefore resolve to UNBOUNDED — same as unset — and never to
+      // `limit == 3`.
+      //
       // Surrounding whitespace is deliberately tolerated — an operator who
       // pads a compose file's value still configured a number — so it is NOT
       // in this list. `3 3` and `1-2` are: two operands is not an integer.
@@ -82,24 +141,25 @@ void main() {
           resolution.limit,
           isNull,
           reason:
-              '"$bad" is not an operator-written decimal integer and must '
-              'not resolve to a number that arms a spend',
+              '"$bad" is not an operator-written decimal integer and must not '
+              'resolve to a cap the operator never chose',
         );
+        expect(resolution.unbounded, isTrue, reason: '"$bad" means no count');
         expect(resolution.diagnostic, contains(envVar));
       }
     });
 
-    test('an OUT-OF-RANGE value must not THROW — it must fail closed', () {
-      // HIGH-1. A long run of digits passes the shape check and then
-      // `int.parse` THROWS ("Positive input exceeds the limit of integer").
-      // That exception escaped `resolveRetryLimit()` into BOTH `actionContext`
-      // and `retryFailedWorkItem`, so a mistyped configuration took down the
-      // READ path and handed the operator an unhandled 500. Money stayed safe
-      // — nothing was armed — but the surface whose whole job is to tell an
-      // operator the truth was itself the thing that broke.
+    test('an OUT-OF-RANGE value must not THROW — it resolves to no bound', () {
+      // HIGH-1, unchanged in substance. A long run of digits passes a shape
+      // check and then `int.parse` THROWS ("Positive input exceeds the limit
+      // of integer"). That exception would escape `resolveRetryLimit()` into
+      // BOTH `actionContext` and `retryFailedWorkItem`, so a mistyped
+      // configuration would take down the READ path and hand the operator an
+      // unhandled 500.
       //
-      // So the property is not "the right number"; it is "no input throws, and
-      // no unusable input arms anything".
+      // So the property is still "no input throws". The far side changed from
+      // "arms nothing" to "arms no COUNT", and this asserts the new far side
+      // so a revert to the old one cannot pass by accident.
       final overflow = [
         '99999999999999999999999',
         '9' * 64,
@@ -113,6 +173,7 @@ void main() {
         OperatorRetryLimitResolution resolution =
             const OperatorRetryLimitResolution(
               diagnostic: 'never assigned',
+              unbounded: true,
             );
         // The assertion is the absence of a throw. If this throws, the test
         // FAILS with the FormatException rather than reporting a wrong value.
@@ -121,16 +182,17 @@ void main() {
             envVar: bad,
           }),
           returnsNormally,
-          reason: '"$bad" must fail closed, not throw out of the resolver',
+          reason: '"$bad" must not throw out of the resolver',
         );
-        expect(resolution.limit, isNull, reason: '"$bad" must arm nothing');
-        expect(resolution.retryIsAvailable, isFalse);
-        expect(resolution.isResolved, isFalse);
+        expect(resolution.limit, isNull, reason: '"$bad" must invent no cap');
+        expect(resolution.unbounded, isTrue);
+        expect(resolution.isCountBounded, isFalse);
         expect(resolution.diagnostic, contains(envVar));
       }
     });
 
-    test('every probed input is either a usable number or fails CLOSED', () {
+    test('every probed input resolves to a usable answer, and none to a cap '
+        'it did not earn', () {
       // The reviewer probed 30 inputs and found exactly one — out-of-range
       // digits — that did not fail closed. This pins the whole family rather
       // than only the one that broke, so the next one is already covered.
@@ -171,38 +233,87 @@ void main() {
         expect(
           resolution.limit,
           isNull,
-          reason: '"$bad" must never resolve to a number that arms a spend',
+          reason:
+              '"$bad" must never resolve to a cap the operator did not '
+              'write, and must never disable the action either',
         );
-        expect(resolution.retryIsAvailable, isFalse);
+        expect(resolution.retryIsAvailable, isTrue);
+        expect(resolution.unbounded, isTrue);
       }
 
-      // And the ones that ARE numbers stay numbers — this sweep must not
-      // become "refuse everything", which is fail-closed in the useless
-      // direction (HD-3's value must remain configurable).
-      for (final good in ['3', ' 3 ', '007', '0', '10', '99']) {
+      // And the ones that ARE numbers stay numbers — this sweep must not become
+      // "treat everything as uncounted", which would quietly discard a
+      // deliberate cap and silently re-arm an unbounded retry on a machine
+      // whose operator had chosen otherwise.
+      for (final good in ['3', ' 3 ', '007', '10', '99']) {
         final resolution = OperatorRetryLimitResolution.fromEnvironment({
           envVar: good,
         });
         expect(
-          resolution.isResolved,
-          isTrue,
-          reason: '"$good" is an operator-written integer and must resolve',
+          resolution.limit,
+          isNotNull,
+          reason:
+              '"$good" is an operator-written integer and must resolve to '
+              'a cap',
         );
+        expect(resolution.unbounded, isFalse);
+        expect(resolution.isCountBounded, isTrue);
       }
+
+      // `0` is deliberately absent from BOTH lists above: it is the one value
+      // that resolves to a third shape, and it has its own group below.
     });
 
-    test('a negative value resolves to UNRESOLVED', () {
+    test('a negative value resolves to UNBOUNDED, not to a refusal', () {
       for (final negative in [-1, -3, -100]) {
         final resolution = OperatorRetryLimitResolution.fromEnvironment({
           envVar: '$negative',
         });
-        expect(resolution.retryIsAvailable, isFalse);
+        expect(resolution.retryIsAvailable, isTrue);
+        expect(resolution.unbounded, isTrue);
+        expect(resolution.limit, isNull);
+        // The diagnostic still NAMES the offending value — an ignored value
+        // that leaves no trace is how a typo becomes a mystery.
         expect(resolution.diagnostic, contains('$negative'));
+        expect(resolution.diagnostic, contains('negative'));
       }
+    });
+
+    test('a NEGATIVE ZERO is not the disable — `-0` means no count', () {
+      // The subtle one, and it is here because it was a live bug in the first
+      // draft of this change: `int.tryParse('-0')` returns `0`, so a check on
+      // the parsed NUMBER alone let `-0` fall through into the branch that
+      // switches operator retry off. A stray minus sign in a compose file
+      // would have removed the operator's only way to restart work — the very
+      // "a broken configuration silently disarms the action" failure the
+      // 2026-10-12 reversal was made to delete.
+      //
+      // So the ONLY spelling that disables is a bare `0`.
+      for (final spelling in ['-0', '-00', '-0 ', ' -0']) {
+        final resolved = OperatorRetryLimitResolution.fromEnvironment({
+          envVar: spelling,
+        });
+
+        expect(
+          resolved.permanentlyDisabled,
+          isFalse,
+          reason: '"$spelling" is not a bare 0 and must not switch retry off',
+        );
+        expect(resolved.retryIsAvailable, isTrue);
+        expect(resolved.unbounded, isTrue);
+      }
+
+      // …and the bare zero still does what it always did.
+      expect(
+        OperatorRetryLimitResolution.fromEnvironment({
+          envVar: '0',
+        }).permanentlyDisabled,
+        isTrue,
+      );
     });
   });
 
-  group('§6.6 / AC-15c — "0" is a CONFIGURATION, not a failure', () {
+  group('AC-15c — "0" is still the ONLY setting that switches retry off', () {
     test('zero RESOLVES, as a valid configuration meaning disabled', () {
       final resolution = OperatorRetryLimitResolution.fromEnvironment({
         envVar: '0',
@@ -210,8 +321,11 @@ void main() {
 
       // RESOLVED: a configuration was read.
       expect(resolution.isResolved, isTrue);
-      // …but it arms nothing, because the operator decided nothing may restart.
+      // …and it arms nothing, because the operator decided nothing may restart.
       expect(resolution.retryIsAvailable, isFalse);
+      expect(resolution.unbounded, isFalse);
+      expect(resolution.limit, isNull);
+      expect(resolution.isCountBounded, isFalse);
     });
 
     test(
@@ -236,25 +350,53 @@ void main() {
       },
     );
 
+    test('the zero diagnostic does NOT reuse the old default\'s language', () {
+      // The reversal moved the default from "armed by nothing" to "armed with
+      // no count", so the OLD zero diagnostic's closing advice — "Set this to 3
+      // to arm restarting (HD-3's value)" — became inverted. An operator who
+      // switched retrying OFF would have been told how to switch it back on,
+      // and the "no fallback / must be configured" framing no longer describes
+      // what the variable does.
+      //
+      // This asserts the inversion is not present, and that the replacement
+      // says the two states apart explicitly.
+      final diagnostic = OperatorRetryLimitResolution.fromEnvironment({
+        envVar: '0',
+      }).diagnostic.toLowerCase();
+
+      expect(diagnostic, isNot(contains('to 3 to arm')));
+      expect(diagnostic, isNot(contains('arm restarting')));
+      expect(diagnostic, isNot(contains('h d-3')));
+      // It must instead say that UNSET is a different thing from disabled —
+      // otherwise an operator reading the log cannot tell "I turned this off"
+      // from "nobody ever set this".
+      expect(diagnostic, contains('unset'));
+      expect(diagnostic, contains('uncounted'));
+    });
+
     test(
       'zero and unset are different ANSWERS, not the same absence',
       () {
         final disabled = OperatorRetryLimitResolution.fromEnvironment({
           envVar: '0',
         });
-        final unset = OperatorRetryLimitResolution.fromEnvironment(const {});
+        final unset = resolution(const {});
 
-        // Both refuse the retry, but only one of them is a working
-        // configuration. Collapsing them would tell an operator their machine
-        // is misconfigured when they deliberately switched retrying off.
+        // They are opposites, and that is the whole point of keeping them
+        // apart: one removes the action, the other removes only the count.
+        expect(disabled.retryIsAvailable, isFalse);
+        expect(unset.retryIsAvailable, isTrue);
+        expect(disabled.unbounded, isFalse);
+        expect(unset.unbounded, isTrue);
+        // Both are resolved, because both are understood.
         expect(disabled.isResolved, isTrue);
-        expect(unset.isResolved, isFalse);
+        expect(unset.isResolved, isTrue);
         expect(disabled.diagnostic, isNot(unset.diagnostic));
       },
     );
   });
 
-  group('§6.6 / AC-15b — only an explicit value arms the retry', () {
+  group('an explicit positive N still CAPS the retries', () {
     test('an explicit 3 resolves to 3 and says so in the startup line', () {
       final resolution = OperatorRetryLimitResolution.fromEnvironment({
         envVar: '3',
@@ -262,6 +404,8 @@ void main() {
 
       expect(resolution.isResolved, isTrue);
       expect(resolution.retryIsAvailable, isTrue);
+      expect(resolution.unbounded, isFalse);
+      expect(resolution.isCountBounded, isTrue);
       expect(resolution.limit!.maximumRetriesPerWorkItem, 3);
       expect(resolution.diagnostic, contains('$envVar=3'));
     });
@@ -274,27 +418,44 @@ void main() {
       expect(resolution.limit!.maximumRetriesPerWorkItem, 3);
     });
 
+    test('an explicit cap is named as a cap, and as NOT the default', () {
+      // The same "don't reuse the old default's language" requirement as the
+      // zero case, in the other direction: a configured 3 must not read like
+      // the outcome of forgetting to configure anything, or an operator
+      // comparing two stacks cannot tell which one they capped.
+      final diagnostic = OperatorRetryLimitResolution.fromEnvironment({
+        envVar: '3',
+      }).diagnostic.toLowerCase();
+
+      expect(diagnostic, contains('explicit cap'));
+      expect(diagnostic, contains('unset'));
+      expect(diagnostic, isNot(contains('not available')));
+    });
+
     test(
-      'THERE IS NO FALLBACK CONSTANT — unset never becomes 3, or any number',
+      'THERE IS NO FALLBACK CONSTANT — nothing absent becomes a number',
       () {
         // Stated as a property of the whole family, not of one input, because
         // the failure mode is "absent ⇒ 3" and a single case would not catch
-        // a default applied further down the chain.
+        // a default applied further down the chain. The reversal did NOT
+        // reintroduce this: "no count bound" is its own resolved state, not a
+        // number standing in for one.
         for (final environment in <Map<String, String>>[
           const {},
           {envVar: ''},
           {envVar: 'nonsense'},
           {envVar: '-2'},
         ]) {
-          final resolution = OperatorRetryLimitResolution.fromEnvironment(
+          final resolved = OperatorRetryLimitResolution.fromEnvironment(
             environment,
           );
           expect(
-            resolution.limit,
+            resolved.limit,
             isNull,
             reason: 'no fallback may be substituted for $environment',
           );
-          expect(resolution.diagnostic, isNot(contains('=3 ')));
+          expect(resolved.unbounded, isTrue);
+          expect(resolved.diagnostic, isNot(contains('$envVar=3 ')));
         }
       },
     );
@@ -572,12 +733,14 @@ void main() {
     () {
       final endpoints = WorkItemActionEndpoints();
 
-      test('the third retry is the last one offered', () {
+      test('an explicit 3 still makes the third retry the last one offered', () {
         final limit = OperatorRetryLimitResolution.fromEnvironment({
           envVar: '3',
         });
         // §6.6: "When attemptNumber >= attemptLimit the server returns
         // notConfigured and the client does not render the retry button at all."
+        // UNCHANGED by the reversal — an operator who configured a cap still
+        // gets that cap.
         for (final (used, expectRetry) in [
           (0, true),
           (1, true),
@@ -617,21 +780,39 @@ void main() {
       });
 
       test(
-        'an UNSET limit withholds the retry but STILL offers stop (AC-15d)',
+        'an UNCONFIGURED limit now withholds NOTHING — retry is always '
+        'offered, however many retries this item already has',
         () {
-          final actions = endpoints.actionsFor(
-            WorkItemState.agentFailed,
-            retryCount: 0,
-            limit: OperatorRetryLimitResolution.fromEnvironment(const {}),
-          );
+          // The reversal, seen from the panel. Before it, the UNSET case
+          // withheld retry and the zero case did the same thing for the same
+          // reason; now they are opposites, and this asserts the new one.
+          final uncapped = resolution(const {});
 
-          expect(actions.map((a) => a.action), ['stop']);
-          expect(
-            actions.single.destructive,
-            isTrue,
-            reason:
-                'the only exit left must still be the reversible-worded one',
-          );
+          for (final used in [0, 1, 3, 17, 250, 100000]) {
+            final actions = endpoints.actionsFor(
+              WorkItemState.agentFailed,
+              retryCount: used,
+              limit: uncapped,
+            );
+
+            expect(
+              actions.map((a) => a.action),
+              ['retry', 'stop'],
+              reason:
+                  'after $used uncounted retries the retry button must still be '
+                  'offered — this is the entire point of the reversal',
+            );
+            // …and the position is still a truthful 1-based count of what the
+            // operator has actually done, so the panel can say "this will be
+            // attempt 250" rather than pretending it is the first.
+            expect(
+              actions.first.attemptNumber,
+              used + 1,
+              reason:
+                  'the attempt position must not reset when the count is '
+                  'uncounted',
+            );
+          }
         },
       );
 
@@ -647,8 +828,8 @@ void main() {
           );
 
           expect(actions.map((a) => a.action), ['stop']);
-          // `attemptLimit: 0` is the wire signal for "not configured"; the
-          // client must not render it as a real budget of zero retries.
+          // `attemptLimit: 0` is the wire signal for "no count"; the client
+          // must not render it as a real budget of zero retries.
           expect(actions.single.attemptLimit, 0);
           expect(actions.single.attemptNumber, isNull);
         },
@@ -680,6 +861,9 @@ void main() {
           final retry = actions.firstWhere((a) => a.action == 'retry');
           expect(retry.toState, WorkItemState.designNotRequired.wire);
           expect(retry.destructive, isFalse);
+          // Unchanged and load-bearing under the reversal: an uncounted retry
+          // is still ONE deliberate, confirmed spend per press. This is the
+          // property that makes unbounded a policy rather than a hole.
           expect(retry.confirmRequired, isTrue);
 
           final stop = actions.firstWhere((a) => a.action == 'stop');
@@ -688,6 +872,166 @@ void main() {
           expect(stop.confirmRequired, isTrue);
           // A stop consumes no attempt, so it must not claim one.
           expect(stop.attemptNumber, isNull);
+        },
+      );
+    },
+  );
+
+  // ==================================================================
+  // THE DISTINCTION THIS WHOLE CHANGE IS ABOUT.
+  //
+  // "Unlimited operator retries" and "unlimited automatic retries" are
+  // opposite decisions. Only the first one was made. These two groups are what
+  // stop a future change from quietly turning the second into the first.
+  // ==================================================================
+
+  group('SEPARATION — the ONLY caller of the retry is a human', () {
+    // Read from disk rather than restated from memory, because the safety
+    // argument for unbounded operator retries is entirely a claim about the
+    // call graph. A comment asserting "there is no automation" is worth
+    // nothing; a test that fails when an automation caller appears is worth
+    // something.
+    //
+    // PRODUCTION callers only. Test files legitimately call the endpoint
+    // directly — they are how the guards are exercised — and the generated
+    // client necessarily names the method.
+    test(
+      'no production code outside the operator UI calls retryFailedWorkItem',
+      () {
+        // `dart test` runs with the package root as the working directory, so
+        // the repository root is two levels up (`apps/server` -> `apps` -> `.`).
+        const repoRoot = '../..';
+        final callers = <String>[];
+
+        for (final dir in ['apps', 'packages', 'cli', 'tools']) {
+          final path = Directory('$repoRoot/$dir');
+          if (!path.existsSync()) continue;
+          for (final entity in path.listSync(recursive: true)) {
+            if (entity is! File || !entity.path.endsWith('.dart')) continue;
+            // Generated protocol clients are the transport, not a caller.
+            if (entity.path.contains('.g.dart') ||
+                entity.path.contains('/generated/') ||
+                entity.path.contains('/protocol/')) {
+              continue;
+            }
+            // The endpoint declares it; that is the definition, not a use.
+            if (entity.path.endsWith(
+              'endpoints/work_item_action_endpoints.dart',
+            )) {
+              continue;
+            }
+            // PRODUCTION callers only. Tests legitimately call the endpoint
+            // directly — they are how the guards are exercised — so tests are
+            // excluded by path and a caller must sit under a `lib/` directory
+            // to count at all. A new automation path written under an
+            // unexpected folder therefore still fails here rather than passing
+            // unseen.
+            if (!entity.path.contains('/lib/')) continue;
+            if (!_codeOnly(entity.readAsStringSync()).contains(
+              'retryFailedWorkItem',
+            )) {
+              continue;
+            }
+            callers.add(entity.path.replaceFirst('$repoRoot/', ''));
+          }
+        }
+
+        expect(
+          callers,
+          unorderedEquals([
+            'apps/control_plane/lib/data/control_plane_repository.dart',
+            'apps/control_plane/lib/features/run_detail/run_detail_bloc.dart',
+          ]),
+          reason:
+              'retryFailedWorkItem now permits an UNBOUNDED number of '
+              'credit-spending restarts. That is only safe while every caller '
+              'is a human behind an authenticated session. A new caller here — '
+              'an agent, a cron, a webhook, a bulk tool — turns the reversal '
+              'into unbounded UNSOLICITED spend, and must be a human decision '
+              'rather than a merge. Review the new path before adding it to '
+              'this list.',
+        );
+      },
+    );
+
+    test('the UI caller is reached through an explicit confirm step', () {
+      // The bloc only submits on `RunDetailActionSubmitted`, and the panel
+      // requires `confirmRequired` plus a non-blank reason. Asserted as a
+      // source property rather than as behaviour so a refactor that inlines
+      // the RPC into the page — losing the confirm strip — fails here.
+      final bloc = File(
+        '../control_plane/lib/features/run_detail/run_detail_bloc.dart',
+      );
+      expect(bloc.existsSync(), isTrue, reason: 'the operator UI must exist');
+
+      final source = bloc.readAsStringSync();
+      expect(source, contains('RunDetailActionSubmitted'));
+      expect(source, contains('retryFailedWorkItem'));
+    });
+  });
+
+  group(
+    'SEPARATION — AUTOMATIC retries stay bounded by the job\'s maxAttempts',
+    () {
+      test('triage jobs are still capped at maxAttempts: 2', () {
+        // The concrete number, asserted. If this ever rises, the "automatic
+        // retries are still bounded" claim needs re-examining on its own
+        // merits — it is not made true by the operator-side reversal.
+        expect(triageDefectDefinition.maxAttempts, 2);
+      });
+
+      test('a transient failure cannot be retried past maxAttempts', () {
+        // This is the REAL policy the scheduler's own tick consults
+        // (`scheduler.dart:790`) and the one `baseline_dispatch.dart` mirrors
+        // at line 670. Driving it directly is what makes the claim "automatic
+        // retries remain bounded" evidence rather than an assertion.
+        const policy = RetryPolicy();
+        final at = DateTime.utc(2026);
+
+        Job jobAt(int attempt) => Job(
+          jobId: 'jb-auto',
+          workItemId: 'defect-DEF-1',
+          jobType: triageDefectDefinition.jobType,
+          requiredRole: triageDefectDefinition.requiredRole,
+          requiredCapabilities: triageDefectDefinition.requiredCapabilities,
+          priority: triageDefectDefinition.priority,
+          state: JobState.retryWaiting,
+          dedupeKey: 'defect-DEF-1:triage_defect:a1',
+          createdAt: at,
+          instruction: 'triage this defect',
+          attempt: attempt,
+          maxAttempts: triageDefectDefinition.maxAttempts,
+          version: 1,
+        );
+
+        expect(policy.canRetry(jobAt(1)), isTrue);
+        // The bound: attempt 2 of 2 is spent, and nothing retries beyond it.
+        expect(policy.canRetry(jobAt(2)), isFalse);
+        expect(policy.canRetry(jobAt(3)), isFalse);
+        expect(policy.canRetry(jobAt(9)), isFalse);
+      });
+
+      test(
+        'the operator count and the automatic bound are different numbers',
+        () {
+          // The pair, side by side. An operator may restart a work item
+          // without limit; each job THAT PRODUCES still dies after
+          // `maxAttempts` automatic retries. Neither number is derived from
+          // the other, and `retryFailedWorkItem` never reads either — it
+          // enqueues nothing.
+          final automatic = triageDefectDefinition.maxAttempts;
+          final operatorUncapped = resolution(const {});
+
+          expect(automatic, 2);
+          expect(operatorUncapped.unbounded, isTrue);
+          expect(operatorUncapped.wireAttemptLimit, 0);
+          expect(
+            operatorUncapped.isCountBounded,
+            isFalse,
+            reason:
+                'the operator bound and the job bound are unrelated; the '
+                'endpoint must not acquire one from the scheduler by accident',
+          );
         },
       );
     },
@@ -725,3 +1069,34 @@ void main() {
 
 String jsonish(String s) =>
     '"${s.replaceAll('\n', r'\n').replaceAll('\t', r'\t')}"';
+
+/// The resolution for an environment where the operator configured NOTHING —
+/// the state every stack is in by default since 2026-10-12.
+///
+/// A named helper rather than a repeated literal, because this exact state is
+/// now the DEFAULT and the reversal's whole subject: every expectation phrased
+/// in terms of it should be visibly about "no configuration", not about one
+/// particular spelling of it.
+OperatorRetryLimitResolution resolution(Map<String, String> environment) =>
+    OperatorRetryLimitResolution.fromEnvironment(environment);
+
+/// Strips `/* … */` blocks and `//` line comments, so a file that merely NAMES
+/// `retryFailedWorkItem` in prose is not counted as a caller of it.
+///
+/// Needed because two server-side files reference the method in doc comments
+/// only (`workflow_endpoints.dart`, `control_plane_service.dart`), and a caller
+/// audit that counted those would either fail forever or — worse — be edited
+/// to tolerate them, at which point it detects nothing.
+///
+/// The `//` handling is crude about a `//` inside a string literal, but it errs
+/// in the safe direction here: stripping can only REMOVE a candidate caller,
+/// never invent one, and a real call site in this repository is never preceded
+/// by a bare `//` on its own line.
+String _codeOnly(String source) => source
+    .replaceAll(RegExp(r'/\*[\s\S]*?\*/'), '')
+    .split('\n')
+    .map((line) {
+      final i = line.indexOf('//');
+      return i < 0 ? line : line.substring(0, i);
+    })
+    .join('\n');
