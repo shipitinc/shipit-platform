@@ -1,6 +1,8 @@
 import 'package:control_plane_server/src/endpoints/work_item_action_endpoints.dart';
 import 'package:control_plane_server/src/services/control_plane_service.dart';
 import 'package:platform_contracts/platform_contracts.dart';
+import 'package:scheduler/scheduler.dart'
+    show triageDefectDedupeKey, triageDefectDefinition;
 import 'package:serverpod/serverpod.dart';
 import 'package:test/test.dart';
 import 'package:workflow_store/workflow_store.dart'
@@ -494,72 +496,100 @@ void main() {
   // ==================================================================
 
   group('§6.6 — the bound refuses at the RPC, not only in the offer', () {
-    test('an unset limit refuses the write and writes NO row', () async {
-      final id = await seedFailed();
-      endpoints.limit = OperatorRetryLimitResolution.fromEnvironment(const {});
+    test(
+      'REVERSED: an UNSET limit no longer refuses — it writes the row',
+      () async {
+        // This test USED to assert the opposite: that an unset limit returns
+        // `notConfigured` and writes nothing. That was HD-3's fail-closed
+        // default, and it is deliberately inverted as of 2026-10-12: a human
+        // asked for operator retries to be uncounted unless a cap is chosen.
+        //
+        // The shape of the old test is kept deliberately, because it is the
+        // shape that catches a partial revert — an implementation that flipped
+        // the resolver but not the RPC (or the reverse) changes the outcome
+        // string here while leaving every other assertion intact.
+        final id = await seedFailed();
+        endpoints.limit = OperatorRetryLimitResolution.fromEnvironment(
+          const {},
+        );
 
-      final result = await endpoints.retryFailedWorkItem(
-        session,
-        workItemId: id,
-        requestId: 'req-unset',
-        requestedBy: 'dana',
-        reason: 'transient infra failure',
-      );
-
-      expect(result.outcome, 'notConfigured');
-      expect(await ledger(id), isEmpty);
-      expect((await store.readWorkItem(id)).state, WorkItemState.agentFailed);
-    });
-
-    test('a SPENT limit refuses the fourth retry and writes NO row', () async {
-      final id = await seedFailed();
-      endpoints.limit = OperatorRetryLimitResolution.fromEnvironment({
-        envVar: '3',
-      });
-      final engine = DurableWorkflowEngine(store: store);
-
-      // Three accepted retries, each preceded by failing the item again.
-      for (var i = 1; i <= 3; i++) {
         final result = await endpoints.retryFailedWorkItem(
           session,
           workItemId: id,
-          requestId: 'req-$i',
+          requestId: 'req-unset',
           requestedBy: 'dana',
-          reason: 'attempt $i',
+          reason: 'transient infra failure',
         );
+
+        expect(result.outcome, 'accepted');
+        // It is not a no-op: a real audit row, and a real state change.
+        final rows = await ledger(id);
+        expect(rows, hasLength(1));
+        expect(rows.single.action, OperatorActionKind.retry.wire);
+        expect(rows.single.attemptNumber, 1);
         expect(
-          result.outcome,
-          'accepted',
-          reason: 'retry $i should be allowed',
+          (await store.readWorkItem(id)).state,
+          WorkItemState.designNotRequired,
         );
-        await engine.transition(
-          workItemId: id,
-          to: WorkItemState.agentExecuting,
-          trigger: TransitionTrigger.systemEvent,
-          context: const {'agentAvailable': true, 'capabilitiesMatch': true},
-        );
-        await engine.transition(
-          workItemId: id,
-          to: WorkItemState.agentFailed,
-          trigger: TransitionTrigger.systemEvent,
-        );
-      }
+        // The operator is told the truth: the variable resolved, and to "no
+        // count" rather than to a number.
+        expect(result.retryLimitResolved, isTrue);
+        expect(result.attemptLimit, 0);
+      },
+    );
 
-      final fourth = await endpoints.retryFailedWorkItem(
-        session,
-        workItemId: id,
-        requestId: 'req-4',
-        requestedBy: 'dana',
-        reason: 'attempt 4',
-      );
+    test(
+      'a SPENT limit still refuses the fourth retry and writes NO row',
+      () async {
+        final id = await seedFailed();
+        endpoints.limit = OperatorRetryLimitResolution.fromEnvironment({
+          envVar: '3',
+        });
+        final engine = DurableWorkflowEngine(store: store);
 
-      expect(fourth.outcome, 'notConfigured');
-      expect(
-        await ledger(id),
-        hasLength(3),
-        reason: 'the fourth wrote nothing',
-      );
-    });
+        // Three accepted retries, each preceded by failing the item again.
+        for (var i = 1; i <= 3; i++) {
+          final result = await endpoints.retryFailedWorkItem(
+            session,
+            workItemId: id,
+            requestId: 'req-$i',
+            requestedBy: 'dana',
+            reason: 'attempt $i',
+          );
+          expect(
+            result.outcome,
+            'accepted',
+            reason: 'retry $i should be allowed',
+          );
+          await engine.transition(
+            workItemId: id,
+            to: WorkItemState.agentExecuting,
+            trigger: TransitionTrigger.systemEvent,
+            context: const {'agentAvailable': true, 'capabilitiesMatch': true},
+          );
+          await engine.transition(
+            workItemId: id,
+            to: WorkItemState.agentFailed,
+            trigger: TransitionTrigger.systemEvent,
+          );
+        }
+
+        final fourth = await endpoints.retryFailedWorkItem(
+          session,
+          workItemId: id,
+          requestId: 'req-4',
+          requestedBy: 'dana',
+          reason: 'attempt 4',
+        );
+
+        expect(fourth.outcome, 'notConfigured');
+        expect(
+          await ledger(id),
+          hasLength(3),
+          reason: 'the fourth wrote nothing',
+        );
+      },
+    );
 
     test(
       'the refusal is distinguished by `retryLimitResolved` on the wire',
@@ -570,19 +600,30 @@ void main() {
         // — collapsing it would make a misconfigured machine look like an
         // exhausted item.
 
-        // Case 1: never configured.
-        endpoints.limit = OperatorRetryLimitResolution.fromEnvironment(
-          const {},
-        );
-        final unset = await endpoints.retryFailedWorkItem(
+        // Case 1: an EXPLICIT ZERO — switched off on purpose. This is the one
+        // remaining `notConfigured` that is not about a spent count, and it is
+        // what the flag now distinguishes. (Before 2026-10-12 this case used
+        // "unset", which no longer refuses at all.)
+        final zeroedId = await seedFailed();
+        endpoints.limit = OperatorRetryLimitResolution.fromEnvironment({
+          envVar: '0',
+        });
+        final disabled = await endpoints.retryFailedWorkItem(
           session,
-          workItemId: await seedFailed(),
+          workItemId: zeroedId,
           requestId: 'req-u',
           requestedBy: 'dana',
           reason: 'because',
         );
-        expect(unset.outcome, 'notConfigured');
-        expect(unset.retryLimitResolved, isFalse);
+        expect(disabled.outcome, 'notConfigured');
+        // Resolved: a working configuration that deliberately disables retry,
+        // NOT a machine that is missing one.
+        expect(disabled.retryLimitResolved, isTrue);
+        expect(
+          await ledger(zeroedId),
+          isEmpty,
+          reason: 'a disabled retry writes nothing',
+        );
 
         // Case 2: a working configuration that has been USED UP. This one earns
         // its three retries first and asks for a fourth, because a fresh item
@@ -633,6 +674,346 @@ void main() {
               'as "this machine has no configuration"',
         );
         expect(spent.attemptLimit, 3);
+      },
+    );
+  });
+
+  // ==================================================================
+  // THE REVERSAL, driven end to end: the operator may press the button
+  // any number of times, and each press really does enqueue a NEW job.
+  // ==================================================================
+
+  group('REVERSED — operator retry is UNBOUNDED, and each press is real', () {
+    test(
+      'thirty consecutive retries are all accepted, and each one writes its '
+      'own audit row',
+      () async {
+        // Thirty is deliberately far past every number this feature has ever
+        // used (the old default of 3, HD-3's proposed cap, the handful of
+        // fixtures). The property under test is "no ceiling", so a test at 30
+        // would also pass at 10^9; the loop is written as a loop rather than a
+        // fixed script precisely so there is no hand-written 31st call for a
+        // future bound to be quietly added to.
+        const presses = 30;
+        final id = await seedFailed();
+        endpoints.limit = OperatorRetryLimitResolution.fromEnvironment(
+          const {},
+        );
+        final engine = DurableWorkflowEngine(store: store);
+
+        for (var i = 1; i <= presses; i++) {
+          final result = await endpoints.retryFailedWorkItem(
+            session,
+            workItemId: id,
+            requestId: 'req-$i',
+            requestedBy: 'dana',
+            reason: 'deliberate restart $i',
+          );
+
+          expect(
+            result.outcome,
+            'accepted',
+            reason:
+                'press $i of $presses must be allowed — operator retry is '
+                'uncounted unless an operator configured a cap',
+          );
+
+          // Park it again, the way a real agent run would, so the next press
+          // has something to act on. Every press is a full round trip, not a
+          // loop over a cached state.
+          await engine.transition(
+            workItemId: id,
+            to: WorkItemState.agentExecuting,
+            trigger: TransitionTrigger.systemEvent,
+            context: const {'agentAvailable': true, 'capabilitiesMatch': true},
+          );
+          await engine.transition(
+            workItemId: id,
+            to: WorkItemState.agentFailed,
+            trigger: TransitionTrigger.systemEvent,
+          );
+        }
+
+        final rows = await ledger(id);
+        expect(rows, hasLength(presses), reason: 'one audit row per press');
+        // The attempt numbers are a dense 1..N, which is what proves each press
+        // was counted from the LEDGER rather than from a capped counter.
+        expect(
+          rows.map((r) => r.attemptNumber).toList(),
+          [for (var i = 1; i <= presses; i++) i],
+        );
+        // Each press is attributed to the human who pressed it.
+        expect(rows.every((r) => r.requestedBy == 'dana'), isTrue);
+
+        // Each press is a REAL durable transition, not just a ledger row: 30
+        // distinct operator-retry transitions, one per press. The item's final
+        // state is asserted from the history rather than from the item, because
+        // the loop re-parks the item after the last press and reading the item
+        // would therefore be asserting the test's own fixture rather than the
+        // endpoint's behaviour.
+        final history = await store.readTransitionHistory(id);
+        final operatorMoves = history
+            .where(
+              (t) =>
+                  t.idempotencyKey != null &&
+                  t.idempotencyKey!.startsWith(
+                    operatorRetryIdempotencyKeyPrefix,
+                  ),
+            )
+            .toList();
+        expect(
+          operatorMoves,
+          hasLength(presses),
+          reason: 'one durable transition per press',
+        );
+        expect(
+          operatorMoves.map((t) => t.idempotencyKey).toSet(),
+          hasLength(presses),
+          reason:
+              'every press carried its own requestId, so none of them '
+              'collapsed into another',
+        );
+      },
+    );
+
+    test(
+      'every press increments the dedupe discriminator, so no two presses '
+      'collide on one job key',
+      () async {
+        // This is the property that makes "unbounded" mean "a new job each
+        // time" rather than "the same job over and over". The scheduler builds
+        // a triage job's dedupe key from the item's durable `triageAttempt`
+        // marker (`triageDefectDedupeKey`), and `enqueueIfAbsent` returns the
+        // EXISTING job for any key it already holds. So if the marker did not
+        // advance, press N+1 would silently enqueue nothing and the operator
+        // would watch "Try again" do nothing — the exact silent-no-op class
+        // this feature was built to close, and the one an unbounded retry
+        // would hit on its second press.
+        final id = await seedFailed();
+        endpoints.limit = OperatorRetryLimitResolution.fromEnvironment(
+          const {},
+        );
+        final engine = DurableWorkflowEngine(store: store);
+
+        final keys = <String>[];
+        for (var i = 0; i < 6; i++) {
+          await endpoints.retryFailedWorkItem(
+            session,
+            workItemId: id,
+            requestId: 'req-$i',
+            requestedBy: 'dana',
+            reason: 'restart $i',
+          );
+
+          final item = await store.readWorkItem(id);
+          keys.add(triageDefectDedupeKey(item, triageDefectDefinition));
+
+          await engine.transition(
+            workItemId: id,
+            to: WorkItemState.agentExecuting,
+            trigger: TransitionTrigger.systemEvent,
+            context: const {'agentAvailable': true, 'capabilitiesMatch': true},
+          );
+          await engine.transition(
+            workItemId: id,
+            to: WorkItemState.agentFailed,
+            trigger: TransitionTrigger.systemEvent,
+          );
+        }
+
+        expect(
+          keys.toSet(),
+          hasLength(keys.length),
+          reason:
+              'every operator retry must enqueue a DISTINCT job; two presses '
+              'sharing a dedupe key means the second one silently did nothing',
+        );
+        // Spelled out, because "all different" would also pass if the keys were
+        // random noise rather than the attempt-suffixed form the scheduler
+        // expects.
+        expect(keys.first, '$id:${triageDefectDefinition.jobType.wire}:a1');
+        expect(keys.last, '$id:${triageDefectDefinition.jobType.wire}:a6');
+        expect((await store.readWorkItem(id)).metadata?['triageAttempt'], 6);
+      },
+    );
+
+    test(
+      'the LAST press is not special-cased — there is no terminal press',
+      () async {
+        // A cheap guard against a future "well, except when the count gets
+        // silly" branch: the 100th press is ordinary. Kept separate from the
+        // 30-press loop so the failure message points at the right property.
+        final id = await seedFailed();
+        endpoints.limit = OperatorRetryLimitResolution.fromEnvironment(
+          const {},
+        );
+        final engine = DurableWorkflowEngine(store: store);
+
+        for (var i = 1; i <= 100; i++) {
+          final result = await endpoints.retryFailedWorkItem(
+            session,
+            workItemId: id,
+            requestId: 'r$i',
+            requestedBy: 'dana',
+            reason: 'restart $i',
+          );
+          expect(result.outcome, 'accepted', reason: 'press $i');
+          await engine.transition(
+            workItemId: id,
+            to: WorkItemState.agentExecuting,
+            trigger: TransitionTrigger.systemEvent,
+            context: const {'agentAvailable': true, 'capabilitiesMatch': true},
+          );
+          await engine.transition(
+            workItemId: id,
+            to: WorkItemState.agentFailed,
+            trigger: TransitionTrigger.systemEvent,
+          );
+        }
+
+        expect(await ledger(id), hasLength(100));
+      },
+    );
+
+    test(
+      'every OTHER guard still refuses on the hundredth press — being '
+      'uncounted is not being unguarded',
+      () async {
+        // The reversal removed ONE guard's default. It did not remove the
+        // guards, and this is the test that says so on the very press where a
+        // "we relaxed it" implementation would be most likely to have relaxed
+        // something else by accident.
+        final id = await seedFailed();
+        endpoints.limit = OperatorRetryLimitResolution.fromEnvironment(
+          const {},
+        );
+        final engine = DurableWorkflowEngine(store: store);
+
+        // Build a history of 100 accepted, deliberate retries.
+        for (var i = 1; i <= 100; i++) {
+          expect(
+            (await endpoints.retryFailedWorkItem(
+              session,
+              workItemId: id,
+              requestId: 'r$i',
+              requestedBy: 'dana',
+              reason: 'restart $i',
+            )).outcome,
+            'accepted',
+          );
+          await engine.transition(
+            workItemId: id,
+            to: WorkItemState.agentExecuting,
+            trigger: TransitionTrigger.systemEvent,
+            context: const {'agentAvailable': true, 'capabilitiesMatch': true},
+          );
+          await engine.transition(
+            workItemId: id,
+            to: WorkItemState.agentFailed,
+            trigger: TransitionTrigger.systemEvent,
+          );
+        }
+        final before = (await ledger(id)).length;
+
+        // (a) A BLANK REASON is still refused, and still writes nothing.
+        final blank = await endpoints.retryFailedWorkItem(
+          session,
+          workItemId: id,
+          requestId: 'r-blank',
+          requestedBy: 'dana',
+          reason: '   ',
+        );
+        expect(blank.outcome, 'invalidRequest');
+
+        // (b) A LIVE ATTEMPT is still refused, and still writes nothing.
+        endpoints.jobs = [_job(id, JobState.running)];
+        final running = await endpoints.retryFailedWorkItem(
+          session,
+          workItemId: id,
+          requestId: 'r-live',
+          requestedBy: 'dana',
+          reason: 'restart onto a live attempt',
+        );
+        expect(running.outcome, 'alreadyRunning');
+        endpoints.jobs = const [];
+
+        // (c) An ITEM THAT IS NOT agent_failed is still not applicable.
+        final engine2 = DurableWorkflowEngine(store: store);
+        await engine2.transition(
+          workItemId: id,
+          to: WorkItemState.agentExecuting,
+          trigger: TransitionTrigger.systemEvent,
+          context: const {'agentAvailable': true, 'capabilitiesMatch': true},
+        );
+        final notParked = await endpoints.retryFailedWorkItem(
+          session,
+          workItemId: id,
+          requestId: 'r-live2',
+          requestedBy: 'dana',
+          reason: 'not parked',
+        );
+        expect(notParked.outcome, 'notApplicable');
+
+        expect(
+          (await ledger(id)).length,
+          before,
+          reason:
+              'all three refusals wrote nothing, however many retries came '
+              'before them',
+        );
+      },
+    );
+
+    test(
+      'a replay still spends nothing twice, however many retries came before',
+      () async {
+        // The idempotency guard is the one most at risk from this change: an
+        // unbounded count is exactly the situation where a client retries its
+        // HTTP call, and a lost response must not mint a second spend.
+        final id = await seedFailed();
+        endpoints.limit = OperatorRetryLimitResolution.fromEnvironment(
+          const {},
+        );
+        final engine = DurableWorkflowEngine(store: store);
+
+        for (var i = 1; i <= 5; i++) {
+          await endpoints.retryFailedWorkItem(
+            session,
+            workItemId: id,
+            requestId: 'r$i',
+            requestedBy: 'dana',
+            reason: 'restart $i',
+          );
+          await engine.transition(
+            workItemId: id,
+            to: WorkItemState.agentExecuting,
+            trigger: TransitionTrigger.systemEvent,
+            context: const {'agentAvailable': true, 'capabilitiesMatch': true},
+          );
+          await engine.transition(
+            workItemId: id,
+            to: WorkItemState.agentFailed,
+            trigger: TransitionTrigger.systemEvent,
+          );
+        }
+        final before = (await ledger(id)).length;
+
+        // Replay the very first intent. It is answered from the ledger, long
+        // after the item has moved on five more times.
+        final replay = await endpoints.retryFailedWorkItem(
+          session,
+          workItemId: id,
+          requestId: 'r1',
+          requestedBy: 'dana',
+          reason: 'restart 1',
+        );
+
+        expect(replay.outcome, 'accepted');
+        expect(
+          (await ledger(id)).length,
+          before,
+          reason: 'a replay of an old requestId writes no seventh row',
+        );
       },
     );
   });
@@ -782,14 +1163,16 @@ class _TestEndpoints extends WorkItemActionEndpoints {
   ControlPlaneService serviceFor(Session session) =>
       _TestService(session, _store, this);
 
-  /// The limit a test has not set is the generous one, so an unset-limit test
-  /// is explicit rather than accidental.
+  /// The limit a test has not set is the UNCAPPED one, so it is the same
+  /// default production runs with since 2026-10-12 and every guard test below
+  /// is exercised under real conditions rather than under a convenient cap.
+  ///
+  /// It was `'3'` before the reversal — the old default cap — so any test that
+  /// depended on it having a ceiling would now fail loudly rather than pass
+  /// quietly against a bound production no longer applies.
   @override
   OperatorRetryLimitResolution resolveRetryLimit() =>
-      limit ??
-      OperatorRetryLimitResolution.fromEnvironment({
-        operatorRetryLimitEnvVar: '3',
-      });
+      limit ?? OperatorRetryLimitResolution.fromEnvironment(const {});
 }
 
 /// The real service, with its Postgres-backed stores replaced by in-memory
