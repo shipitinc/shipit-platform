@@ -138,8 +138,10 @@ guard A by construction**, and this file previously let a reader believe otherwi
 things it does and does not establish:
 
 - **DOES establish:** `DurableWorkspaceRuntime.provision()` has no guard of its own. It
-  re-materialises into the same root and rewrites the record. True at every HEAD from
-  `e82a120` onward.
+  re-materialises into the same root and rewrites the record. That was true before
+  `e82a120` and is true after it — `e82a120` changed the layer below, not this one.
+  That is exactly why the row is worth keeping while the first half of the claim it
+  used to carry had to go.
 - **DOES NOT establish:** anything about `SshDurableWorkspaceMaterializer`. The
   materialiser is a double, so a guard added there can never turn this test red. The
   earlier version of this row carried an explicit contract — *this test is expected to go
