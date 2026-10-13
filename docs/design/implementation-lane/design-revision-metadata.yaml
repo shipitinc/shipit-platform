@@ -1,0 +1,310 @@
+# Design Revision metadata — design/implementation-lane
+# Required fields per docs/engineering/DESIGN_GOVERNANCE.md ("Design Revision",
+# "Required Metadata (design-revision-metadata.yaml)").
+#
+# Companion artifact:
+#   design-brief.md   the brief itself (this directory's single design artifact)
+#
+# ID convention: brief_id / revision_id are UUIDs, matching every current
+# dispatch-task brief and both briefs under docs/design/**. Open decisions use the
+# `OD-` prefix because `HD-1`..`HD-7` are already taken
+# (docs/engineering/dispatch/DECISIONS.md:372,402,424).
+
+revision_id: "45EFF1E2-E39F-46AE-98C9-D417EEF5BF0E"
+brief_id: "B4D91D4A-CF4A-4415-864A-E0700D893367"
+revision_number: 1
+status: "UNDER_REVIEW"
+risk_level: 3
+
+risk_rationale: >
+  Level 3 -- Major Workflow change. Four independent grounds, each stated so a
+  reviewer can disagree with one without discarding the rest. (1) A state is added to
+  WorkItemState, the enum every component obeys -- the scheduler's entry sets, the
+  coordinator's edges, the workflow store, the control-plane API and the operator UI
+  (platform_contracts/lib/src/enums/workflow_state.dart:1-30). (2) The transition table
+  every other component must obey gains an edge (work_item_transitions.dart); the
+  scheduler asks that table and never reimplements it (runnable_work.dart:152-163).
+  (3) Human-decision routes are retargeted across five (type, choice) pairs spanning four
+  decision types (human_decision_routing.dart:55-56,59-60,61-62,71-72,79-80) plus a
+  transition-guard change (work_item_transitions.dart:256-284), which changes what
+  "rework" and "reject" mean to a human resolving a gate. (4) The escalation audit trail
+  changes shape, and getting it wrong is SILENT: escalationTargetFor "does not error --
+  it silently stops the escalation index advancing" (human_decision_routing.dart:105-109).
+  Level 2 was considered and rejected: the change is to the governance model every future
+  feature inherits, not to one feature's flow. Level 2 is a defensible alternative
+  reading and is invited rather than defended against. Per DESIGN_GOVERNANCE.md:99 this
+  requires product/design/architecture approval; the approval request is brief section 12.3.
+
+changelog:
+  - "revision 1 on base 84be979, superseding IMPL-LANE-001-R1 (5d7c276, base 5cb2817)
+     decision-by-decision rather than by deletion. Section 1.3 is the ledger; nothing was
+     merged from the stale branch, so nothing is retracted."
+  - "RESOLVED OD-1 (mOOT). cc9317c landed; the design still needs no performed hop, and
+     that is now enforced by entry_hop_drift_guard_test.dart rather than asserted.
+     Section 1.2."
+  - "WITHDREW OD-2 (credential custody). The premise was false: the private half is
+     materialised per acquisition and destroyed FIRST AND UNCONDITIONALLY at release
+     (repository_snapshot_acquirer.dart:867-882), and a durable clone carries no
+     credential. Custody is solved and out of scope."
+  - "DELETED the stale brief's core step. Its workspace resolution derived the workspace
+     from `currentBaselineRevision`, an int SEQUENCE COUNTER (onboarding_record.dart:71-74;
+     product_registry_store.dart:150-151), and fed it to `git rev-parse --verify
+     <n>^{commit}`. It would have failed closed every time. Section 1.3, D-2."
+  - "ADOPTED the corrected framing: durable workspaces have never been built because no
+     lane has needed one; workspace CREATION is a prerequisite of implementation, not a
+     derivation from the baseline. Section 2, with the evidence for each clause."
+  - "SPLIT the design into exactly two implementation units, A1 (durable workspace
+     creation) and A2 (implementation scheduler), and answered whether they are genuinely
+     concurrent-safe. Sections 6, 7, 8."
+  - "ANSWERED the durable-workspace location question explicitly, with three options and
+     what each actually buys; recommended a Docker named volume, recorded W-B as the
+     production variant, and REJECTED container-ephemeral because it destroys the artifact.
+     Section 6.3, D-4, D-5, OD-7."
+  - "ANSWERED snapshot-vs-durable-clone coexistence: three distinct objects with three
+     distinct reclaimer responsibilities; A1 neither inherits nor fixes the unbounded,
+     unowned retained-tree leak. Section 6.5, D-8, OD-9."
+  - "VERIFIED the A1/A2 collision argument still holds against cc9317c, and recorded WHY:
+     RunnableWorkEvaluator rejects a non-entry state BEFORE the probe
+     (runnable_work.dart:142-144) and EntryHopper is only reached inside the runnable arm
+     and may only land on its own definition's entry states (entry_hop.dart:288-297), so
+     a hop can never carry an item between lanes. Sections 1.2, 7.4."
+  - "ADDED three paths neither candidate list covered: packages/platform_contracts/
+     lib/src/enums/workflow_state.dart (where WorkItemState actually lives),
+     apps/server/lib/src/implementation/** (A2's resolver must not live in an
+     A1-owned directory), and conditionally the descriptor schema per OD-8. Section 8.4."
+  - "CORRECTED two errors in the stale brief, both load-bearing. (a) Only TWO of the five
+     rework pairs need escalationTargetFor lockstep, not five: escalationTargetFor returns
+     null unless the choice is reject/rework (human_decision_routing.dart:135-138;
+     durable_workflow_engine.dart:979-993). (b) The stale brief missed the
+     waitingForHumanDecision -> implementationReady edge and its guard set entirely.
+     D-13, D-14, section 7.5."
+  - "ADDED findings the stale brief did not have: WorkspaceDescriptor is per-EXECUTION and
+     three of its required fields have no meaning for a product-scoped durable clone
+     (OD-8); the new state's UI mapping silently defaults to 'awaiting review'
+     (section 8.5); the dispatch's named composition file apps/server/lib/src/scheduler.dart
+     DOES NOT EXIST (section 8.2)."
+  - "RECORDED the composition-root ownership collision plainly: as dispatched, A1 and A2
+     are NOT disjoint, because both must write apps/server/lib/server.dart. Resolved by
+     assigning that file exclusively to A2 with two stated conditions. Sections 8.2, 8.3,
+     D-16. This is the direct answer to the question asked."
+  - "PRESERVED the still-valid prior content: the manufactured-artifact analysis, the
+     review-resolver anchoring argument, the collision candidate analysis, the refusal to
+     retrofit stranded items, and the review-ability matrix. Section 1.4 and the matrix at
+     section 7.10."
+  - "SIX open decisions escalated, none decided: OD-3 (rework semantics), OD-4 (deferred vs
+     blocked), OD-5 (QA-contract precondition), OD-7 (workspace location, lifetime and
+     reclaimer), OD-8 (descriptor shape), OD-9 (retained-tree reclamation, pre-existing),
+     OD-10 (what routes into implementationReady)."
+
+traceability:
+  requirements_covered:
+    - "IMPL-001 — an implementation lane exists and is wired: sections 7.1-7.3, 7.8 (A2). Stated blockers: OD-5, OD-10."
+    - "IMPL-002 — the workspace is real, durable and credential-mediated: sections 2.2-2.4, 6.1-6.4, 6.7 (A1). Product-agnostic with a MECHANICAL gate (section 6.7)."
+    - "IMPL-003 — engineering review dispatches instead of failing closed: section 3, verified end to end at section 9.1."
+    - "IMPL-004 — no concurrent double-dispatch onto one work item: sections 7.4, 8.1-8.3."
+    - "IMPL-005 — no artifact is manufactured: sections 4.2 (hazard), 7.7 (guard), 9.2 row 1 (negative control), 9.4 (backlog refusal)."
+  requirements_gaps:
+    - "OD-7 unanswered: IMPL-002's storage location is a recommendation, not a decision. A1's compose change should not be implemented before it is answered."
+    - "OD-8 unanswered: IMPL-002 cannot be PERSISTED without either fabricating three descriptor fields or changing a published JSON Schema. Blocks A1's write path."
+    - "OD-5 unanswered: IMPL-003 cannot complete end to end; an item A2 dispatches without a qaContractId is refused on agentExecuting -> agentCompleted for ever (work_item_transitions.dart:102; guard_conditions.dart:247; execution_coordinator.dart:830)."
+    - "OD-10 unanswered: IMPL-001 may build a scheduler that never dispatches. Safe, but the requirement is unmet."
+    - "OD-3 and OD-4 unanswered: lifecycle completeness and the deferral shape. IMPL-004 is safe under any answer."
+    - "apps/control_plane/** not granted to either unit: the new state renders 'awaiting review' because that file's switch defaults unknown states to awaitingReview (plain_language.dart:110-135). Section 8.5."
+    - "Retained-tree reclamation has no owner anywhere in the repository (OD-9). PRE-EXISTING; not a gap this design introduces, and deliberately not one it closes."
+    - "No qa_architect lane assumed (OD-5, from the other side)."
+
+design_system_compliance: "PARTIAL"
+design_system_compliance_note: >
+  Recorded as PARTIAL rather than PASS, and a reviewer may reasonably read it as FAIL for A2.
+  No token, component or pattern is added or changed by either unit. But the new state reaches
+  an existing UI as an unlabelled String (control_plane_client/lib/src/protocol/work_item_view.dart:35,76)
+  and apps/control_plane/lib/core/plain_language.dart:110-135 defaults an unknown state to
+  PlainStatus.awaitingReview, so an item at implementation_ready renders "awaiting review".
+  transition_copy.dart:26-95 renders every transition into and out of it as the neutral
+  default. apps/control_plane/** is READ-ONLY for both units, so the gap is escalated in
+  section 8.5 and named in the approval request rather than absorbed.
+
+ux_accessibility_score: "PARTIAL"
+ux_accessibility_note: >
+  PARTIAL by non-applicability. No new focusable element, input, or navigation; no WCAG criterion
+  is engaged by the design itself. The one user-visible change is the mislabelled state above,
+  which is a correctness defect on an existing screen with listeners rather than an accessibility
+  one. The brief does not claim PASS by non-applicability, because an operator being told an
+  unbuilt item is awaiting review is a false statement about the system.
+
+implementation_feasibility: "HIGH"
+implementation_feasibility_rationale: >
+  Every mechanism already exists: JobType.implementFeature and AgentRole.implementer
+  (job_type.dart:7, agent_role.dart:2); Scheduler + workloadResolver + EntryHopper
+  (scheduler.dart:314-336); RunnableWorkEvaluator unchanged (runnable_work.dart:137-167);
+  LocalWorker, WorkerRegistry, WorkerDispatcherAdapter (server.dart:195-220); ArtifactCommitter
+  (artifact_committer.dart:98-158); GitWorktreeWorkspaceManager; the whole credential/host-key
+  trust chain (repository_snapshot_acquirer.dart:504-600); recordWorkspace and completeOnboarding
+  (product_registry_engine.dart:1917, :1976); PostgresProductRegistryStore's onboarding read and
+  write, unchanged (section 6.9); and the UnavailableBaselineLaneRunner fail-closed pattern
+  (baseline_runtime.dart:72-97). The only new production artefacts are one enum value, one edge,
+  one const JobDefinition, one registration in an existing test, and A1's lane plus materialiser.
+  No migration, no generated code, no new dependency. The one reservation is OD-8, and it is a
+  shape question, not a feasibility one.
+
+created_by: design-agent
+created_at: "2026-10-13"
+reviewed_by: null
+reviewed_at: null
+approved_by: null
+approved_at: null
+
+provenance:
+  worktree: "/Users/alkebut/air/.aef-lanes/impl-lane-design-rev2"
+  branch: "design/implementation-lane-rev2"
+  base_sha: "84be9794f83ee258664842cd2c9f73f562b0d5f7"
+  tree_clean_before_writing: true
+  files_modified_outside_owned_paths: 0
+  production_files_written: 0
+  migrations_written: 0
+  docker_or_compose_commands_issued: 0
+  database_connections: 0
+  psql_invocations: 0
+  git_stash_amend_rebase_forcepush_merge_push: "none"
+  ancestry_verified_at_base:
+    cc9317c: "ancestor of 84be979"
+    f164d40: "ancestor of 84be979"
+    1f39a05: "ancestor of 84be979"
+    5cb2817: "ancestor of 84be979"
+  attributed_not_rederived:
+    - "`onboarding_record` has 0 rows — Manager-verified against the running QA stack."
+    - "the deploy key private half is present at the container path
+       /var/lib/shipit/secrets/GIT_REPOSITORY_shipit-platform_SSH as a 0600 regular file;
+       product_credential reads status=verified, hostKeyStatus=confirmed,
+       lastVerifiedBy=lane:baseline-production — Manager-verified."
+    - "no durable clone exists on disk anywhere — Manager-verified."
+    - "Re-deriving any of these would have required a database connection this lane is
+       forbidden to make. They are inputs, not claims."
+
+supersedes:
+  brief_id: "IMPL-LANE-001"
+  revision_id: "IMPL-LANE-001-R1"
+  commit: "5d7c27606a0e9ff2d5afa65ac628b0632ac4d84c"
+  base_sha: "5cb28179a6fc23c68e0e9d1307123b6682e82c31"
+  note: >
+    The stale branch was never merged, so nothing is retracted. Section 1.3 of the brief is the
+    per-decision ledger: OD-1 resolved as moot (cc9317c), OD-2 withdrawn (premise false),
+    OD-3 retained and sharpened, OD-4 retained, OD-5 retained and now blocking, OD-6 downgraded
+    to a composition-root obligation. Section 1.4 records the prior content carried forward
+    unchanged.
+
+implementation_units:
+  A1:
+    name: "durable workspace creation"
+    changes_lifecycle: false
+    owns:
+      - "apps/server/lib/src/baseline/**"
+      - "apps/server/lib/src/credentials/**"
+      - "docker/**"
+      - "conditionally per OD-8: packages/platform_contracts/lib/src/types/workspace_descriptor.dart, schemas/workspace_descriptor.schema.json, schemas/onboarding_record.schema.json"
+    does_not_own:
+      - "apps/server/lib/src/persistence/** — provisionally, because the store already round-trips all three columns (brief section 6.9); re-scoped through review if implementation finds a gap, not taken silently"
+      - "apps/server/lib/server.dart — see condition C-1"
+    condition_c2: >
+      A1's runtime MUST be constructible without apps/server/lib/server.dart -- a
+      resolve(...)-shaped factory taking its dependencies as parameters, modelled on
+      BaselineProductionRuntime (baseline_runtime.dart:62-134) and integration-tested the way
+      that one is (baseline_dispatch_integration_test.dart:57, :749).
+  A2:
+    name: "implementation scheduler"
+    changes_lifecycle: true
+    owns:
+      - "packages/scheduler/**"
+      - "packages/workflow_engine/**"
+      - "packages/workflow_store/**"
+      - "packages/platform_contracts/lib/src/enums/workflow_state.dart"
+      - "apps/server/lib/src/implementation/**"
+      - "apps/server/lib/server.dart  (EXCLUSIVELY -- condition C-1)"
+    runtime_depends_on: "A1's OnboardingRecord write. Data dependency only: readOnboardingForProduct already exists, so A2 compiles and passes its own tests without A1's code existing."
+  neither:
+    - "apps/control_plane/** — READ-ONLY for both units; gap recorded in section 8.5 and in the approval request."
+  concurrency_verdict: >
+    GENUINELY CONCURRENT-SAFE, subject to C-1 (apps/server/lib/server.dart assigned exclusively
+    to A2, which adds A1's wiring lines after A1's factory exists) and C-2 (A1's runtime is
+    constructible without server.dart). Concurrent code authoring and concurrent independent
+    review: YES. Concurrent DISPATCH without a durable workspace: NO and must not happen --
+    the readiness probe defers instead (section 7.7), which is runtime ordering, not a build
+    constraint. The one shared file is serialized, at a cost of roughly two call lines.
+    As dispatched, before C-1, the answer was NO: the named composition file
+    apps/server/lib/src/scheduler.dart does not exist, and both units must write
+    apps/server/lib/server.dart.
+
+human_decisions_requested:
+  - id: "OD-3"
+    question: >
+      Which of the five routes into designNotRequired mean "re-do the work" rather than
+      "re-classify"? Recommended: (engineeringReview, rework) and (qaRework, reject) stay in
+      triage; (qaWaiver, reject), (humanQaApproval, reject) and (escalation, approve) go to
+      implementationReady. Only the first of the retargeted pairs and (humanQaApproval,
+      reject) need escalationTargetFor lockstep.
+    resolved: false
+    blocks: "A2's routing edits only"
+  - id: "OD-4"
+    question: >
+      How does the implementation lane express "deferred, not blocked"? null from
+      WorkloadResolver currently means exactly blockedArtifactMissing. Recommended: widen the
+      typedef to a sealed WorkloadResolution {resolved, deferred, blocked}; a per-definition
+      flag is acceptable; folding into the existing deferred channel is rejected.
+    resolved: false
+    blocks: "A2's composition only"
+  - id: "OD-5"
+    question: >
+      Must the implementation lane provision a QA contract before dispatching, or refuse to
+      dispatch items without one? An item with qaContractId IS NULL is refused on
+      agentExecuting -> agentCompleted for ever with nothing repairing it, and
+      createFeatureWorkItem produces items with no contract at all. The dependency nobody
+      should discover late: a qa_architect lane must exist to produce one.
+    resolved: false
+    blocks: "A2's dispatch behaviour"
+  - id: "OD-7"
+    question: >
+      Where does the durable clone live, how long does it live, and who deletes it? Most
+      consequential open question in the revision. Recommended: a Docker named volume for
+      compose-managed stacks, a host bind mount as the documented production variant, and a
+      reclamation bound tied to the product leaving `governed` for `archived` -- pressed by a
+      human, not a sweep.
+    resolved: false
+    blocks: "A1's compose change and its reclamation path"
+  - id: "OD-8"
+    question: >
+      WorkspaceDescriptor is per-EXECUTION; a durable clone is per-PRODUCT. workerExecutionId,
+      workerId and worktreePath are all required -- in the type AND in both JSON Schemas -- and
+      none of them has a meaning here. Recommended: an explicit `kind` discriminator with a
+      per-kind validation rule. Escalated rather than decided because it changes a published
+      schema and a published contract suite, and AGENTS.md section 12 is the section that makes
+      a baseline's own claims independently checkable.
+    resolved: false
+    blocks: "A1's persistence writes"
+  - id: "OD-9"
+    question: >
+      Who reclaims a retained snapshot tree, and when? treeRetainedForArtifact says in bold that
+      the caller owns reclaiming it; verified that nothing does. Recommended: do NOT fix it
+      here -- file it against the snapshot lifecycle as its own lane with its own bound.
+    resolved: false
+    blocks: "nothing; recorded because A1 must not inherit it silently"
+  - id: "OD-10"
+    question: >
+      What puts a work item into implementationReady? A state nothing routes into is inert, and
+      WorkEntryTrigger currently parks a feature at planned with no consumer runtime -- which an
+      implementation lane would be. Recommended: route only from resolved human decisions and
+      add no autonomous producer, keeping the first code-writing lane supervised by
+      construction.
+    resolved: false
+    blocks: "whether A2 dispatches anything at all"
+
+gate_D1_design_brief_review: "this artifact"
+gate_D2_human_decision_review: "the seven questions above"
+gate_D3_independent_design_review: "not started"
+gate_D4_human_approval: "REQUIRED -- risk level 3; the request is brief section 12.3"
+
+self_approval: >
+  NONE. This revision has not been reviewed by its author. It is UNDER_REVIEW and is offered to
+  independent design review, which must return APPROVED, CHANGES_REQUIRED or
+  HUMAN_DECISION_REQUIRED. The author takes no position on its own acceptance.
+
+READY_FOR_INDEPENDENT_DESIGN_REVIEW: YES
