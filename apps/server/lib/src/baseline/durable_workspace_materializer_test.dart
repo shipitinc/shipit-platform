@@ -142,6 +142,72 @@ typedef _Invocation = ({
   Map<String, String> environment,
 });
 
+/// The absolute path of the REAL `git`, or `null` when there is none.
+///
+/// Resolved rather than assumed: the shim below has to exec git by absolute
+/// path, because a shim that ran `exec git` would resolve through the pinned
+/// `PATH` and find itself.
+String? _realGitPath() {
+  for (final probe in ['which', 'command']) {
+    final ProcessResult result;
+    try {
+      result = Process.runSync(probe, ['git']);
+    } on Object {
+      continue;
+    }
+    if (result.exitCode != 0) continue;
+    final path = (result.stdout as String).trim();
+    if (path.isEmpty) continue;
+    if (File(path).existsSync()) return path;
+  }
+  return null;
+}
+
+/// A `git` that IS the real one, recording every invocation first.
+///
+/// The R-9 suite above needs a stub because its subject is what this class
+/// writes around the clone. The suite below needs the opposite: its subject is
+/// what real git DOES to an existing tree, and a stub would be asserting the
+/// stub's behaviour. So this delegates — `git init` is genuinely idempotent and
+/// `git remote add origin` genuinely exits 3 on a second call, and that is the
+/// defect being reproduced rather than simulated.
+void _writeRealGitShim(Directory bin, String realGit, String report) {
+  _writeStub(
+    bin,
+    'git',
+    '''
+#!/bin/sh
+printf 'REALGIT\\t%s\\n' "\$*" >> "$report"
+exec "$realGit" "\$@"
+''',
+  );
+}
+
+/// Runs real git in [directory] and returns stdout, for assertions ABOUT a tree.
+///
+/// Identity is supplied on the command line rather than through any config
+/// file, so the fixture cannot accidentally depend on an ambient global
+/// gitconfig to make a commit.
+String _gitIn(String directory, List<String> arguments) {
+  final result = Process.runSync(_realGitPath() ?? 'git', [
+    '-C',
+    directory,
+    '-c',
+    'user.email=fixture@example.test',
+    '-c',
+    'user.name=Fixture',
+    '-c',
+    'commit.gpgsign=false',
+    ...arguments,
+  ]);
+  if (result.exitCode != 0) {
+    throw StateError(
+      'git ${arguments.first} failed in $directory: ${result.stderr}',
+    );
+  }
+  return (result.stdout as String).trim();
+}
+
 List<_Invocation> _readInvocations(String report) {
   if (!File(report).existsSync()) return const [];
   final calls = <_Invocation>[];
@@ -223,6 +289,18 @@ void main() {
       localConfigExtra: localConfigExtra,
     ),
   );
+
+  /// The real `git`, behind a shim that still records what it was asked.
+  ///
+  /// Separate from [writeGit] rather than a parameter of it: the stub's value
+  /// is that it answers the three config/rev-parse questions a credential-free
+  /// clone depends on, and making it optionally real would put those answers
+  /// behind a flag that could be set wrongly without anything noticing.
+  void writeRealGit() {
+    final realGit = _realGitPath();
+    if (realGit == null) skipIfNoRealGit();
+    _writeRealGitShim(bin, realGit, report);
+  }
 
   Future<DurableWorkspaceClone> materialize({
     String? pinnedRevision,
@@ -468,4 +546,401 @@ void main() {
       },
     );
   });
+
+  // =====================================================================
+  // Destroy provenance: a product root is removed only when THIS CALL
+  // created it.
+  //
+  // The defect: `on Object` called `_destroy(root)` unconditionally, so any
+  // failed git command took the product checkout with it. Reachable in
+  // ordinary operation — `git init` on an existing repo exits 0, so a second
+  // provisioning reaches `git remote add origin`, which exits 3, and that exit
+  // used to destroy a tree holding unreviewed commits.
+  //
+  // These run against REAL git. The claim under test is a claim about git.
+  // =====================================================================
+  group('a product root this call did not create is never destroyed', () {
+    /// A product checkout with a commit nobody has reviewed yet.
+    ///
+    /// Real `git init`, real commit, real object store — so "the commit
+    /// survived" can be asserted by asking the repository rather than by
+    /// checking that some files are still lying about.
+    Directory seedUnreviewedCheckout({bool withCommitGuard = true}) {
+      final checkout = Directory(
+        '$productRoot/checkout',
+      )..createSync(recursive: true);
+      _gitIn(checkout.path, ['init', '--quiet', '.']);
+      File('${checkout.path}/UNREVIEWED.md').writeAsStringSync(
+        'work in progress that no review has seen',
+      );
+      _gitIn(checkout.path, ['add', '-A']);
+      _gitIn(checkout.path, ['commit', '--quiet', '-m', 'unreviewed work']);
+      if (withCommitGuard) {
+        File('$productRoot/.gitignore').writeAsStringSync('*\n');
+      }
+      return checkout;
+    }
+
+    test(
+      'a second provisioning is REFUSED, and the unreviewed commits are STILL '
+      'THERE afterwards',
+      () async {
+        // ---- The whole point, in one test. ----
+        //
+        // Before the fix this call reached `git remote add origin` (exit 3,
+        // "remote origin already exists") and the failure handler deleted
+        // `$productRoot` recursively — the clone, its object store, and the
+        // commit in it. The assertion is therefore about CONTENT, not about an
+        // exception being thrown: a fix that refused loudly while still
+        // deleting the tree would satisfy every other assertion in this file.
+        final checkout = seedUnreviewedCheckout();
+        final before = _gitIn(checkout.path, ['rev-parse', 'HEAD']);
+        expect(
+          _gitIn(checkout.path, ['log', '--oneline']),
+          contains('unreviewed work'),
+          reason: 'the fixture must really hold an unreviewed commit',
+        );
+
+        writeRealGit();
+        await expectLater(
+          materialize(),
+          throwsA(isA<DurableWorkspaceRootCollisionException>()),
+        );
+
+        // ---- The commit survived, and the tree is still a working repository. ----
+        expect(
+          _gitIn(checkout.path, ['rev-parse', 'HEAD']),
+          before,
+          reason:
+              'the HEAD moved. A materialisation that destroyed nothing but '
+              'still reset the tree would lose the same work',
+        );
+        expect(
+          _gitIn(checkout.path, ['log', '--oneline']),
+          contains('unreviewed work'),
+          reason:
+              'the unreviewed commit is gone. This is the data loss the '
+              'provenance check exists to prevent: the clone holds every commit '
+              'an implementation lane has made and no review has seen',
+        );
+        expect(
+          File('${checkout.path}/UNREVIEWED.md').readAsStringSync(),
+          'work in progress that no review has seen',
+          reason: 'the working tree itself was removed or rewritten',
+        );
+        expect(
+          checkout.existsSync(),
+          isTrue,
+          reason: 'the checkout directory is gone',
+        );
+      },
+    );
+
+    test('the refusal happens BEFORE any git command is spawned', () async {
+      // The mechanism, and the non-vacuity for the test above.
+      //
+      // Without the guard the sequence is `git init` (exit 0, idempotent) then
+      // `git remote add origin` (exit 3). So an EMPTY call log proves the
+      // refusal short-circuited before the destructive path existed — it is not
+      // a call that ran git, failed, and then declined to delete.
+      seedUnreviewedCheckout();
+      writeRealGit();
+
+      await expectLater(
+        materialize(),
+        throwsA(isA<DurableWorkspaceRootCollisionException>()),
+      );
+
+      expect(
+        File(report).existsSync() ? File(report).readAsStringSync() : '',
+        isEmpty,
+        reason:
+            'git was spawned on the collision path. The refusal has to precede '
+            'the clone sequence, because the clone sequence is what fails and '
+            'what used to trigger the delete',
+      );
+    });
+
+    test(
+      'the refusal writes NOTHING into the root — the pre-existing .gitignore '
+      'is not even overwritten',
+      () async {
+        // The commit guard is written BEFORE the identity, `known_hosts` and
+        // wrapper, so it is the earliest write this class makes and therefore
+        // the earliest witness to one. A collision that overwrote it would be a
+        // collision that had already written into somebody else's directory.
+        seedUnreviewedCheckout();
+        File('$productRoot/.gitignore').writeAsStringSync(
+          '# somebody else\'s content\nkeep-me\n',
+        );
+
+        writeRealGit();
+        await expectLater(
+          materialize(),
+          throwsA(isA<DurableWorkspaceRootCollisionException>()),
+        );
+
+        expect(
+          File('$productRoot/.gitignore').readAsStringSync(),
+          '# somebody else\'s content\nkeep-me\n',
+          reason:
+              'the commit guard was rewritten. It is the first thing this class '
+              'writes, so this means the refusal did not precede the writes',
+        );
+        for (final name in [
+          SshDurableWorkspaceMaterializer.identityFileName,
+          SshDurableWorkspaceMaterializer.knownHostsFileName,
+          SshDurableWorkspaceMaterializer.sshWrapperFileName,
+        ]) {
+          expect(
+            File('$productRoot/$name').existsSync(),
+            isFalse,
+            reason:
+                '$name was written into a colliding root. Keeping the TREE must '
+                'never become a reason to keep the CREDENTIAL — these are '
+                'separate obligations and both still hold on this path',
+          );
+        }
+      },
+    );
+
+    test(
+      'keeping the tree does not keep the credential — R-9 holds on the '
+      'refusal path too',
+      () async {
+        // Obligation 6 says the credential material is destroyed FIRST and
+        // UNCONDITIONALLY, before anything is decided about the repository's
+        // fate. The fix adds a path that decides the repository's fate and then
+        // keeps it, so the obligation needs re-asserting on that path
+        // specifically — a guard that protects the tree by declining to clean up
+        // would satisfy the tree test and break R-9.
+        seedUnreviewedCheckout();
+        writeRealGit();
+
+        await expectLater(
+          materialize(),
+          throwsA(isA<DurableWorkspaceRootCollisionException>()),
+        );
+
+        for (final name in [
+          SshDurableWorkspaceMaterializer.identityFileName,
+          SshDurableWorkspaceMaterializer.knownHostsFileName,
+          SshDurableWorkspaceMaterializer.sshWrapperFileName,
+        ]) {
+          expect(
+            File('$productRoot/$name').existsSync(),
+            isFalse,
+            reason:
+                '$name survived the refusal. A tree that outlives a failed '
+                'provisioning must not become a reason for a deploy-key '
+                'identity to outlive it',
+          );
+        }
+        // And nothing that could authenticate: no identity reference in the
+        // existing tree's own config either.
+        final localConfig = _gitIn(
+          '$productRoot/checkout',
+          ['config', '--list', '--local'],
+        );
+        expect(
+          localConfig.toLowerCase(),
+          isNot(contains('sshcommand')),
+        );
+        expect(
+          localConfig.toLowerCase(),
+          isNot(contains('identityfile')),
+        );
+      },
+    );
+
+    test(
+      'a root that pre-exists for NO related reason — an empty directory '
+      'somebody made — is refused and left alone too',
+      () async {
+        // The case the review named explicitly: a root that exists for some
+        // other reason. There is nothing to recognise it by, and that is
+        // precisely why the guard asks a question about PROVENANCE instead of
+        // about content: an empty directory is not a broken clone, it is a
+        // directory somebody owns.
+        Directory(productRoot).createSync(recursive: true);
+        File('$productRoot/OPERATOR-NOTES.md').writeAsStringSync('not ours');
+
+        writeRealGit();
+        await expectLater(
+          materialize(),
+          throwsA(isA<DurableWorkspaceRootCollisionException>()),
+        );
+
+        expect(
+          File('$productRoot/OPERATOR-NOTES.md').existsSync(),
+          isTrue,
+          reason:
+              'a directory this call did not create was emptied. The '
+              'materialiser has no way to know what that directory is for, so '
+              'it does not get to decide',
+        );
+        expect(
+          Directory(productRoot).listSync().map((e) => e.path.split('/').last),
+          ['OPERATOR-NOTES.md'],
+          reason: 'the collision refusal wrote something into the root',
+        );
+      },
+    );
+
+    test(
+      'an EMPTY pre-existing root is refused as well, not adopted',
+      () async {
+        Directory(productRoot).createSync(recursive: true);
+        writeRealGit();
+        await expectLater(
+          materialize(),
+          throwsA(isA<DurableWorkspaceRootCollisionException>()),
+        );
+        expect(Directory(productRoot).existsSync(), isTrue);
+        expect(
+          Directory(productRoot).listSync(),
+          isEmpty,
+          reason: 'the refusal adopted the directory rather than refusing it',
+        );
+      },
+    );
+
+    test(
+      'the orphan-tree case: a complete clone with no record is refused, not '
+      'deleted on the way past',
+      () async {
+        // `provision()` materialises and THEN writes the onboarding record, so
+        // a record write that fails after a successful clone leaves a tree with
+        // no record pointing at it. The next instruction used to reach
+        // `git remote add origin`, exit 3, and destroy it.
+        //
+        // The materialiser deliberately does NOT try to tell an orphan from a
+        // live clone — "is there a record" is not a fact about the filesystem
+        // it is asked about, the record lives in the database, and a guard that
+        // guessed would be the same bug wearing a different hat. So the orphan
+        // and the live checkout take the same path: refused, intact.
+        final checkout = seedUnreviewedCheckout(withCommitGuard: false);
+        final before = _gitIn(checkout.path, ['rev-parse', 'HEAD']);
+
+        writeRealGit();
+        await expectLater(
+          materialize(),
+          throwsA(isA<DurableWorkspaceRootCollisionException>()),
+        );
+
+        expect(_gitIn(checkout.path, ['rev-parse', 'HEAD']), before);
+        expect(
+          File('${checkout.path}/UNREVIEWED.md').existsSync(),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'the collision names the root and what was found in it, so an operator '
+      'can act on it',
+      () async {
+        seedUnreviewedCheckout();
+        writeRealGit();
+
+        Object? caught;
+        try {
+          await materialize();
+        } on Object catch (error) {
+          caught = error;
+        }
+
+        expect(caught, isA<DurableWorkspaceRootCollisionException>());
+        final collision = caught! as DurableWorkspaceRootCollisionException;
+        expect(collision.productRoot, productRoot);
+        expect(collision.productId, 'p1');
+        expect(collision.repositoryId, 'repo1');
+        expect(
+          collision.findings.join(' '),
+          allOf(
+            contains('object store'),
+            // The count, so an operator can tell "one thing" from "a workspace
+            // I did not expect to find here" without listing the directory.
+            matches(RegExp(r'holds \d+ entr')),
+          ),
+          reason:
+              'the operator is told what they are looking at. "Something is '
+              'there" is not actionable; "an existing clone with its own git '
+              'object store" is',
+        );
+        final text = collision.toString();
+        expect(text, contains(productRoot));
+        expect(text, contains('did not create it'));
+        expect(
+          text.toUpperCase(),
+          isNot(contains('PRIVATE KEY')),
+          reason: 'this text is logged and persisted; it must carry no secret',
+        );
+      },
+    );
+
+    test(
+      'the COUNTERPART: a root THIS call created is still removed when its '
+      'provisioning fails',
+      () async {
+        // The negative control, and the reason the fix is not simply "stop
+        // deleting". A partial clone written by this call is litter this class
+        // created and this class removes; nothing here may regress it. The
+        // existing R-9 refusals above assert the same outcome, and they still
+        // pass — but they assert a side effect, and this asserts the policy.
+        writeGit(localConfigExtra: 'core.sshIdentity=$productRoot/identity');
+        await expectLater(
+          materialize(),
+          throwsA(isA<DurableWorkspaceMaterializationException>()),
+        );
+        expect(
+          Directory(productRoot).existsSync(),
+          isFalse,
+          reason:
+              'a root created by this call and left half-built is exactly what '
+              'the destroy exists for. Refusing to delete pre-existing state '
+              'must not become refusing to clean up its own',
+        );
+      },
+    );
+
+    test(
+      'the refusal is not about the HOST KEY: a colliding root with a perfectly '
+      'matching host key is refused for the collision alone',
+      () async {
+        // Both refusals are live at once here. The host key matches, so the
+        // refusal can only have come from the root check — which is what makes
+        // this a test of the new guard rather than of the existing one.
+        seedUnreviewedCheckout();
+        writeRealGit();
+        await expectLater(
+          materialize(),
+          throwsA(
+            isA<DurableWorkspaceRootCollisionException>().having(
+              (e) => e.toString(),
+              'message',
+              isNot(contains('host key')),
+            ),
+          ),
+        );
+      },
+    );
+  });
+}
+
+/// Marks the suite skipped when the host has no real `git`.
+///
+/// Named rather than inlined so the skip is a single deliberate statement
+/// about a missing prerequisite, instead of `?? null` turning every assertion
+/// into a `NoSuchMethodError` that reads like a defect in the guard.
+Never skipIfNoRealGit() {
+  // ignore: only_throw_errors
+  throw _NoRealGitOnThisHost();
+}
+
+class _NoRealGitOnThisHost implements Exception {
+  @override
+  String toString() =>
+      'no real git on PATH; the destroy-provenance suite asserts real git '
+      'behaviour and will not simulate it';
 }
