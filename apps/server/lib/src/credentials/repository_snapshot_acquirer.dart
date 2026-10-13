@@ -22,6 +22,16 @@ import 'ssh_remote.dart';
 /// named rather than inlined.
 const String _pathListSeparator = ':';
 
+/// The file that explains why a snapshot tree is still on disk after release.
+///
+/// Written **beside** the checkout, never inside it: a file inside the working
+/// tree is untracked residue, and `ArtifactCommitter` stages the tree with
+/// `git add -A`, so a marker kept there would be swept into the artifact commit
+/// it is meant to describe. Named rather than inlined so the thing that reclaims
+/// a retained tree and the thing that writes one cannot disagree about its
+/// name.
+const String retainedArtifactMarkerName = 'RETAINED_ARTIFACT.json';
+
 /// Raised when a product's repository cannot be acquired, and the reason is
 /// something outside this process.
 ///
@@ -148,6 +158,31 @@ class BaselineSnapshotCleanupException implements Exception {
       '$path';
 }
 
+/// What [RepositorySnapshot.release] did with the snapshot's tree.
+///
+/// Returned rather than logged, because the two cases put the worker's next
+/// step in different hands and a caller that cannot tell them apart has to
+/// assume the worse one.
+enum SnapshotReleaseDisposition {
+  /// The tree was removed. Nothing survives the release and the caller owns no
+  /// reclamation — the ordinary case for a snapshot that was only read.
+  treeDestroyed,
+
+  /// The tree carried a committed artifact and was KEPT, because the
+  /// platform's artifact committer commits the agent's produced change INTO the
+  /// very directory this snapshot handed out and deletes nothing itself. The
+  /// tree is a live repository whose object store holds the artifact commit and
+  /// whose local refs still name it, so a downstream reviewer can resolve and
+  /// check out that revision after the execution is over.
+  /// **The caller owns reclaiming it.**
+  ///
+  /// This is not a leak hidden behind a comment: it is the only way a committed
+  /// artifact can stay reachable once its execution ends. Anything that bounds
+  /// it — how long, and who reclaims — has to be a decision made by whoever owns
+  /// the artifact's lifecycle, not by the object that happens to clone it.
+  treeRetainedForArtifact,
+}
+
 /// A pinned, read-only checkout of one repository at one committed revision.
 ///
 /// ## What this object deliberately does not carry
@@ -184,6 +219,7 @@ class RepositorySnapshot {
     required this.acquiredAt,
     required Directory root,
     required void Function() onRelease,
+    this.describeRelease,
   }) : _root = root,
        _onRelease = onRelease,
        _released = false;
@@ -205,33 +241,95 @@ class RepositorySnapshot {
 
   final Directory _root;
   final void Function() _onRelease;
+
+  /// Optional: how the releaser disposed of the tree.
+  ///
+  /// Consulted **only after** [release]'s releaser has run, because only then is
+  /// the answer a fact rather than a prediction. Null — the default — means the
+  /// releaser only ever destroys, which is every snapshot a caller merely reads.
+  final SnapshotReleaseDisposition Function()? describeRelease;
+
   bool _released;
+  SnapshotReleaseDisposition _disposition =
+      SnapshotReleaseDisposition.treeDestroyed;
 
   /// The checkout itself.
   ///
   /// Handed to `ReadOnlyRepositoryReader`, which never writes to it. Callers
   /// must not write to it either — a derivation that mutates its own input is
   /// not re-derivable.
+  ///
+  /// Released snapshots refuse it whether or not the tree survived: [release]
+  /// ends the snapshot's claim, and a retained tree is now owned by whoever
+  /// accepted its [SnapshotReleaseDisposition]. Re-derive against a new
+  /// acquisition rather than reaching back for it.
   Directory get root {
     if (_released) {
       throw StateError(
-        'snapshot $repositoryId@$revision was already released; its tree is '
-        'gone and re-derive against a new acquisition',
+        'snapshot $repositoryId@$revision was already released and is no longer '
+        "this object's to hand out; its tree was "
+        '${_disposition == SnapshotReleaseDisposition.treeRetainedForArtifact ? 'retained for its artifact' : 'removed'}'
+        ' — re-derive against a new acquisition',
       );
     }
     return _root;
   }
 
-  /// Removes the tree, at most once.
+  /// Retires the snapshot, and reports what happened to the tree.
   ///
-  /// Idempotent by construction: a second call is a no-op rather than an error,
-  /// because the lane releases in a `finally` and a crash between the derivation
-  /// and the release must not turn into a second attempt at deleting a
-  /// directory that is already gone.
-  void release() {
-    if (_released) return;
+  /// ## What release is, and what it is not
+  ///
+  /// Release ends this object's claim on the tree and removes whatever in it is
+  /// private to the acquisition. It does **not** unconditionally delete the
+  /// directory.
+  ///
+  /// It used to. That was a defect, and the defect is that the tree is not only
+  /// a checkout: the artifact committer runs `checkout -B <prefix>/<workItemId>`
+  /// and commits the agent's produced change **into** the very directory this
+  /// object handed out, because that directory is what a
+  /// `GitWorktreeWorkspaceManager` forked its worktree from and what
+  /// `WorkerExecution.repositoryPath` then records. `GitWorktreeWorkspaceManager`
+  /// removes only the linked worktree — the object store, and therefore the
+  /// branch and the commit, belong to [root] — and `engineeringReviewWorkloadResolver`
+  /// resolves a review workload as exactly `repositoryPath` + `endingRevision`,
+  /// the pair the committer produced. So a per-execution snapshot that deleted
+  /// its tree on release deleted the review target, and the review would either
+  /// fail closed or, worse, resolve something that is no longer there.
+  ///
+  /// ## What it guarantees instead
+  ///
+  ///  * **Credential material is destroyed, unconditionally, first.** The
+  ///    private half exists only for the duration of the clone. A failure to
+  ///    remove it is [BaselineSnapshotCleanupException] — never a silent success
+  ///    and never deferred behind an artifact, because an artifact's value never
+  ///    justifies a live deploy key.
+  ///  * **A tree with no committed artifact is removed**, exactly as before. A
+  ///    snapshot that was only read leaves nothing behind.
+  ///  * **A tree that carries a committed artifact is kept** and the caller is
+  ///    told, through the returned [SnapshotReleaseDisposition]. Retaining is
+  ///    reported, never silent, because the alternative — deleting a reviewable
+  ///    artifact — fails a gate, while retaining one is a cost an operator can
+  ///    see.
+  ///
+  /// ## Idempotence, and what a throwing releaser means
+  ///
+  /// At most once, and idempotent by construction: a second call is a no-op
+  /// rather than an error, because the lane releases in a `finally` and a crash
+  /// between the derivation and the release must not turn into a second attempt
+  /// at deleting a directory that is already gone. A second call reports the
+  /// FIRST call's disposition, so a caller that retries cannot see a different
+  /// answer for the same release.
+  ///
+  /// If the releaser throws — the credential material could not be removed —
+  /// there is no disposition to report, because nothing was disposed of. That is
+  /// an incident the caller must handle, and `release` does not run twice.
+  SnapshotReleaseDisposition release() {
+    if (_released) return _disposition;
     _released = true;
     _onRelease();
+    _disposition =
+        describeRelease?.call() ?? SnapshotReleaseDisposition.treeDestroyed;
+    return _disposition;
   }
 
   @override
@@ -677,6 +775,13 @@ class SshPinnedSnapshotMaterializer implements RepositorySnapshotMaterializer {
         );
       }
 
+      // Whether this tree came to carry an artifact commit. Decided at RELEASE
+      // time and nowhere else: at the moment this object is constructed nothing
+      // can have committed into it yet — `ArtifactCommitter` runs much later,
+      // against the tree a `GitWorktreeWorkspaceManager` forked from it — so
+      // asking anything earlier would be asking about a tree that did not exist
+      // yet.
+      var retainedForArtifact = false;
       return RepositorySnapshot(
         productId: productId,
         repositoryId: repositoryId,
@@ -688,19 +793,223 @@ class SshPinnedSnapshotMaterializer implements RepositorySnapshotMaterializer {
         acquiredAt: DateTime.now().toUtc(),
         root: Directory(clonePath),
         onRelease: () {
-          if (!_destroy(scratch)) {
+          // ---- 1. The private half, first, always, and never deferred. ----
+          //
+          // Ordering is the whole point. The deploy key's identity file is what
+          // authenticated the clone, and it exists for the duration of the
+          // clone and no longer. An artifact is not a reason to keep a live key
+          // on disk, so the credential material goes first and the repository's
+          // fate is decided afterwards. A tree this process could not strip is
+          // [BaselineSnapshotCleanupException] — the same rule the whole class
+          // holds on every other path.
+          if (!_destroyCredentialMaterial(
+            identityPath,
+            knownHostsPath,
+            wrapperPath,
+          )) {
             throw BaselineSnapshotCleanupException(scratch.path);
           }
+
+          // ---- 2. Did anything commit INTO this tree? ----
+          //
+          // `null` means git could not answer, which is treated as "yes". The
+          // asymmetry is deliberate and it is the safe direction: a false
+          // "yes" costs disk, which the retained marker makes visible and a
+          // caller is told about in the returned disposition, while a false "no"
+          // deletes the commit an engineering review is about to resolve and
+          // fails a gate.
+          final artifactRefs = _localBranchRefs(clonePath);
+          if (artifactRefs != null && artifactRefs.isEmpty) {
+            // Read-only tree: nothing was ever committed into it, so there is
+            // nothing downstream needs. This is the pre-existing behaviour,
+            // unchanged, and it is what keeps a snapshot-per-derivation from
+            // accumulating.
+            if (!_destroy(scratch)) {
+              throw BaselineSnapshotCleanupException(scratch.path);
+            }
+            return;
+          }
+
+          // ---- 3. Retained, and marked. ----
+          //
+          // Not silent. A retained tree that looks exactly like an abandoned
+          // scratch tree is how this defect would come back, so the reason it
+          // survived is written beside it, in a directory that is NOT the git
+          // working tree — a marker inside the checkout would be untracked
+          // residue that `ArtifactCommitter`'s `git add -A` would sweep into
+          // the artifact commit itself.
+          _writeRetainedArtifactMarker(
+            scratch: scratch,
+            clonePath: clonePath,
+            productId: productId,
+            repositoryId: repositoryId,
+            sourceRef: remote.toSshUrl(),
+            pinnedRevision: pinnedRevision,
+            artifactRefs: artifactRefs,
+          );
+          retainedForArtifact = true;
         },
+        describeRelease: () => retainedForArtifact
+            ? SnapshotReleaseDisposition.treeRetainedForArtifact
+            : SnapshotReleaseDisposition.treeDestroyed,
       );
     } on Object {
       // Every failure path removes the tree, including the success path's own
-      // throws. A tree this process could not remove is an incident, not a
-      // result.
+      // throws. Nothing has been handed to a caller on any of them, so there is
+      // no artifact commit to preserve and no reason to keep anything. A tree
+      // this process could not remove is an incident, not a result.
       if (!_destroy(scratch)) {
         throw BaselineSnapshotCleanupException(scratch.path);
       }
       rethrow;
+    }
+  }
+
+  /// Local branch refs in the clone, or `null` when git could not answer.
+  ///
+  /// ## Why "a local branch exists" is the artifact test, and it is exact
+  ///
+  /// The acquisition is `init` → `remote add` → `fetch --depth 1 <pin>` →
+  /// `checkout --detach FETCH_HEAD`, and that sequence provably leaves **zero**
+  /// local heads: `git init` creates `refs/heads/<default>` unborn and no ref at
+  /// all until something writes one, and a detached checkout of `FETCH_HEAD`
+  /// writes none. `ArtifactCommitter` then runs `checkout -B <prefix>/<id>`,
+  /// which creates exactly one. So "the clone has a local head" is not a
+  /// heuristic fitted to this code — it is the boundary between a tree that was
+  /// only read and a tree something was committed into.
+  ///
+  /// The test deliberately does not hard-code the committer's branch prefix,
+  /// which is its own and may be configured per call; a local head of any name
+  /// means the same thing here, and the names are reported to the caller so it
+  /// can see which ref the artifact is reachable by.
+  ///
+  /// ## Why this is synchronous when every other git call here is bounded
+  ///
+  /// `release` is synchronous — it runs in a `finally` on paths whose callers
+  /// are synchronous — and it is called from code this file does not own, so
+  /// making it `Future`-shaped would break its callers. What it runs instead is
+  /// a pure local object-store read: `for-each-ref` opens no socket, contacts no
+  /// remote and prompts for nothing, so there is no transport here to outlive a
+  /// timeout. It is spawned with the same redacted environment as the clone
+  /// (no ambient gitconfig, no ambient `HOME`, no terminal prompt) so a hostile
+  /// ambient configuration cannot make it report something other than what this
+  /// clone actually contains.
+  List<String>? _localBranchRefs(String clonePath) {
+    final ProcessResult result;
+    try {
+      result = Process.runSync(
+        gitExecutable,
+        [
+          '--no-pager',
+          '-C',
+          clonePath,
+          'for-each-ref',
+          '--format=%(refname)',
+          'refs/heads/',
+        ],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+        environment: {
+          'GIT_TERMINAL_PROMPT': '0',
+          'GIT_ASKPASS': '',
+          'HOME': Directory(clonePath).parent.path,
+          'GIT_CONFIG_GLOBAL': '/dev/null',
+          'GIT_CONFIG_SYSTEM': '/dev/null',
+          if (pathPrefix != null) 'PATH': _pinnedPath,
+        },
+      );
+    } on Object {
+      return null;
+    }
+    if (result.exitCode != 0) return null;
+    return (result.stdout as String)
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+  }
+
+  /// Removes the identity, `known_hosts` and ssh wrapper the clone needed.
+  ///
+  /// The verdict is `existsSync`, checked after the attempt rather than taken
+  /// from it, and retried once for the reason [_destroy] gives. Unverified is
+  /// treated as undeleted: the private half outliving its release is the one
+  /// outcome this class must never report as a success.
+  bool _destroyCredentialMaterial(
+    String identityPath,
+    String knownHostsPath,
+    String wrapperPath,
+  ) {
+    final paths = [identityPath, knownHostsPath, wrapperPath];
+    for (var attempt = 0; attempt < 2; attempt++) {
+      var remaining = false;
+      for (final path in paths) {
+        try {
+          final file = File(path);
+          if (file.existsSync()) file.deleteSync();
+        } on Object {
+          // The check below decides; this is only a reason to retry.
+        }
+        if (File(path).existsSync()) remaining = true;
+      }
+      if (!remaining) return true;
+    }
+    return false;
+  }
+
+  /// Records WHY a snapshot tree outlived its release.
+  ///
+  /// The fields are the ones a reclaiming component needs and no others: which
+  /// product and repository, which revision it was pinned to, the source URL
+  /// this snapshot object already carries, and the refs the artifact is
+  /// reachable by. No credential reference name, no fingerprint, no host key —
+  /// ADR 0018 A3 / gap G-7 apply to a file an operator can read exactly as they
+  /// apply to an object that flows into logs.
+  ///
+  /// ## Why a failed write here does not throw
+  ///
+  /// Because `release` is called from `finally` blocks in callers this file does
+  /// not own, a throw from inside it replaces whatever the caller was about to
+  /// return with a bookkeeping failure — turning a produced baseline into a
+  /// failed one over a marker. And it would be thrown for the wrong thing: the
+  /// tree was *retained*, so reporting a cleanup exception would assert the
+  /// opposite of what happened. The marker exists to make a retained tree
+  /// findable by a future reclaimer; the caller already holds the path and is
+  /// already told the disposition, so a marker that could not be written costs
+  /// discoverability and nothing else.
+  void _writeRetainedArtifactMarker({
+    required Directory scratch,
+    required String clonePath,
+    required String productId,
+    required String repositoryId,
+    required String sourceRef,
+    required String pinnedRevision,
+    required List<String>? artifactRefs,
+  }) {
+    final marker = File('${scratch.path}/$retainedArtifactMarkerName');
+    final body = const JsonEncoder.withIndent('  ').convert({
+      'whyRetained':
+          'a commit exists in this repository, so its object store and refs are '
+          'the only thing a downstream reviewer can resolve it from',
+      'productId': productId,
+      'repositoryId': repositoryId,
+      'pinnedRevision': pinnedRevision,
+      'sourceRef': sourceRef,
+      'repositoryPath': clonePath,
+      // `null` rather than an empty list when git could not answer: "there are
+      // no refs" and "nobody could tell" must not read the same.
+      'artifactRefs': artifactRefs,
+      'retainedAt': DateTime.now().toUtc().toIso8601String(),
+      'reclaim':
+          'delete this directory once no consumer still resolves a revision out '
+          'of it. The snapshot that created it has already been released and '
+          'will not remove it; this marker is the only record that it is '
+          'intentional.',
+    });
+    try {
+      PosixFileModes.writeOwnerOnlyFile(marker.path, utf8.encode('$body\n'));
+    } on Object {
+      // See above: retention still happened, and it is still reported.
     }
   }
 
