@@ -681,18 +681,82 @@ void main() {
     );
 
     test(
-      'there is no destructive path in this lane to reach deliberately',
+      'there is no destructive path in this lane to reach deliberately — as a '
+      'CLOSED SET of calls the trigger may make, not a list of forbidden names',
       () async {
         // Obligation: if any code path here can delete or overwrite a durable
         // clone it must be reachable only from an explicitly named operator
-        // action. There is none, so the guarantee is total rather than
-        // procedural — and this is what makes it checkable.
+        // action. There is none.
+        //
+        // WHY AN ALLOW-LIST AND NOT A BLOCK-LIST. The previous form of this gate
+        // grepped the trigger for seven verb NAMES — `delete(`, `remove(`,
+        // `force(`, `recreate(`, `overwrite(` — and that is not a guarantee,
+        // because it only sees names someone thought to forbid. A helper called
+        // `_purgeRecord` that receives the record and destroys the tree compiles,
+        // analyses clean, and passes the gate: the reviewer proved exactly that.
+        // Three of the seven were not Dart APIs at all, which is the tell — a
+        // block-list is a list of guesses.
+        //
+        // So this is call-shaped. Every `runtime.…` / `provisioner.…` the trigger
+        // can reach is enumerated, and a NEW call of any name fails the gate. A
+        // wrapper cannot hide behind a different identifier because it still has
+        // to be invoked ON one of these two objects.
+        //
+        // WHAT IT DOES NOT PROVE, stated rather than left implied: it governs the
+        // trigger's own surface, and it says nothing about a helper defined
+        // inside `control_plane_service.dart` and called from code the trigger
+        // does not. The capability gate below covers the wider lane. Neither
+        // replaces review of a destructive change.
         final source = File(
           'lib/src/services/control_plane_service.dart',
         ).readAsStringSync();
+        final start = source.indexOf('class DurableWorkspaceProvisionTrigger');
+        // Bounded at the next top-level class rather than at end-of-file, so this
+        // is the trigger's own body and not every declaration printed after it.
+        final nextClass = source.indexOf('\nclass ', start + 1);
         final body = source.substring(
-          source.indexOf('class DurableWorkspaceProvisionTrigger'),
+          start,
+          nextClass == -1 ? null : nextClass,
         );
+
+        // The complete set of runtime surface this trigger is allowed to touch:
+        // three reads for guard #3, `provision` for guard #6, and A1's own
+        // completion, whose acceptance re-check is deliberately kept.
+        const allowed = <String>{
+          'isAvailable',
+          'availableReason',
+          'provisioner',
+          'provision',
+          'completeOnboarding',
+        };
+        final invoked = RegExp(
+          r'\b(?:runtime|provisioner)\.([A-Za-z_]\w*)',
+        ).allMatches(body).map((m) => m.group(1)!).toSet().difference(allowed);
+
+        expect(
+          invoked,
+          isEmpty,
+          reason:
+              'the trigger reached the runtime through an allow-listed call it '
+              'does not own: ${invoked.join(', ')}. Every call it is allowed to '
+              'make is enumerated above — a new one needs a decision recorded '
+              'here, not a name that happens not to be on a forbidden list',
+        );
+
+        // The narrower first layer, kept because it catches something the
+        // allow-list cannot see: a DIRECT filesystem or collaborator call in the
+        // trigger's own body, which reaches no `runtime.` member at all. It is a
+        // heuristic and nothing more — it sees only names someone thought to
+        // list — so it is stated as the cheap check it is, and the allow-list
+        // above is what actually holds.
+        //
+        // The list is unchanged from what was there before this correction, and
+        // that is deliberate: dropping the three that are not Dart APIs
+        // (`recreate(`, `force(`, `overwrite(`) would have been a quiet
+        // narrowing of coverage in a correction whose whole subject is
+        // misattributed guarantees. They match no standard API, so they catch
+        // only a lane-defined method of that name — which is exactly what this
+        // layer is for, and they cost nothing.
         for (final verb in const [
           'delete',
           'deleteSync',
@@ -706,10 +770,115 @@ void main() {
             body.contains('$verb('),
             isFalse,
             reason:
-                'the trigger must contain no `$verb(` call. Found one — which '
-                'means a durable clone became reachable to a side effect',
+                'the trigger\'s own body contains a direct `$verb(` call. A '
+                'durable clone became reachable to a side effect of the '
+                'trigger rather than to a named operator action',
           );
         }
+      },
+    );
+
+    test(
+      'the destructive CAPABILITY is named outside the mechanism only by the '
+      'trigger — a direct `runtime.provision(` is caught wherever it appears',
+      () async {
+        // The guard above governs what the TRIGGER calls. This governs who may
+        // reach the capability at all, which is the gap the previous gate left
+        // open in the direction that actually destroys a clone.
+        //
+        // `DurableWorkspaceProvisionTrigger` is the only place guard #5 lives.
+        // `DurableWorkspaceRuntime.provision()` and
+        // `SshDurableWorkspaceMaterializer.materialize()` have no idempotence
+        // guard of their own, so a production call site that reaches either
+        // directly bypasses every one of the trigger's five checks — and on a
+        // product that already has a clone, that bypass IS the deletion.
+        //
+        // This is the path the persisted learning
+        // (`docs/engineering/learning/a-second-clone-attempt-is-a-clone-deletion.md`)
+        // used to describe as safe, which is why it is checked mechanically
+        // rather than trusted to prose.
+        const capabilityTokens = <String>[
+          'DurableWorkspaceRuntime',
+          'DurableWorkspaceProvisioner',
+          'DurableWorkspaceMaterializer',
+        ];
+
+        // A1's own mechanism modules. They DEFINE the capability, and
+        // `lib/src/baseline/**` is owned by another lane — this gate must never
+        // be the reason that lane's tests go red.
+        const mechanismModules = <String>{
+          'lib/src/baseline/durable_workspace_runtime.dart',
+          'lib/src/baseline/durable_workspace_materializer.dart',
+        };
+
+        // Where guard #5 lives. This file may name the capability; nothing else
+        // outside the mechanism may.
+        const triggerFile = 'lib/src/services/control_plane_service.dart';
+
+        // The composition root. It is allowed to CONSTRUCT the runtime — that is
+        // how `_durableWorkspaceRoot()` is resolved and passed down — and is
+        // allowed to hold the type. It may not CALL it.
+        const compositionRoot = 'lib/server.dart';
+
+        final offenders = <String, String>{};
+        for (final entity in Directory('lib').listSync(recursive: true)) {
+          if (entity is! File || !entity.path.endsWith('.dart')) continue;
+          final path = entity.path.replaceAll(r'\', '/');
+          if (mechanismModules.contains(path)) continue;
+          // A test may exercise the mechanism directly, and A1's own does. This
+          // gate is about PRODUCTION call sites, and a failing A1 test would be
+          // reported against the wrong lane.
+          if (path.endsWith('_test.dart')) continue;
+          if (path == triggerFile) continue;
+
+          final text = entity.readAsStringSync();
+          final named = capabilityTokens
+              .where((t) => text.contains(t))
+              .toList();
+          if (named.isEmpty) continue;
+
+          if (path != compositionRoot) {
+            offenders[path] =
+                'names ${named.join(', ')}. Durable provisioning must stay '
+                'behind DurableWorkspaceProvisionTrigger, which is the only '
+                'place the refuse-always guard lives — a direct call here skips '
+                'all five of its checks.';
+            continue;
+          }
+
+          // Call-shaped, because `server.dart` legitimately names the type AND
+          // legitimately calls `trigger.provision(`. Naming is not the thing to
+          // forbid here; CALLING THE CAPABILITY is.
+          final provisionCalls = RegExp(
+            r'(\w+)\.provision\(',
+          ).allMatches(text).map((m) => m.group(1)!).toSet();
+          final bypassesTrigger = provisionCalls.difference({'trigger'});
+          if (bypassesTrigger.isNotEmpty) {
+            offenders[path] =
+                'calls `.provision(` on ${bypassesTrigger.join(', ')}. The '
+                'composition root may construct the runtime and call the '
+                'trigger; anything else reaches the capability without guard #5.';
+          } else if (text.contains('.materialize(')) {
+            offenders[path] =
+                'calls `.materialize(` directly. Materialising into an existing '
+                'product root is the destructive path itself.';
+          } else if (named.any((t) => t != 'DurableWorkspaceRuntime')) {
+            offenders[path] =
+                'names ${named.where((t) => t != 'DurableWorkspaceRuntime').join(', ')}. '
+                'The composition root may hold DurableWorkspaceRuntime to '
+                'construct it; the provisioner and the materialiser belong '
+                'behind the trigger.';
+          }
+        }
+
+        expect(
+          offenders,
+          isEmpty,
+          reason:
+              'durable provisioning became reachable outside '
+              'DurableWorkspaceProvisionTrigger:\n'
+              '${offenders.entries.map((e) => '  ${e.key} — ${e.value}').join('\n')}',
+        );
       },
     );
   });

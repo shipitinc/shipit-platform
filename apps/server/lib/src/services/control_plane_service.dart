@@ -2268,9 +2268,21 @@ class ControlPlaneService {
 /// tick, a sweep or a probe, and `run()` in `server.dart` is its single
 /// production caller — an explicit boot-time instruction. A lane that "also calls
 /// it from the onboarding sweep" would run unattended against a governed
-/// product's repository, so the guarantee is mechanical:
-/// `test/durable_workspace_provision_trigger_test.dart` greps `lib/` and fails
-/// if this class is named anywhere but this file and `server.dart`.
+/// product's repository.
+///
+/// Two gates check that mechanically, and they check DIFFERENT things, which is
+/// why there are two. `test/durable_workspace_provision_trigger_test.dart` greps
+/// `lib/` and fails if this class is named anywhere but this file and
+/// `server.dart` — which catches a second named caller. The same file separately
+/// greps for the provisioning CAPABILITY (`DurableWorkspaceRuntime`,
+/// `DurableWorkspaceProvisioner`, `DurableWorkspaceMaterializer`) and fails if
+/// anything outside the mechanism's own modules and this file names it — which
+/// catches a direct `runtime.provision(` that bypasses this class entirely.
+///
+/// What neither gate proves: a helper written in `control_plane_service.dart` and
+/// called from code this class does not reach. That is review's job, and the
+/// gates are here so that the ordinary accident — a new lane calling the runtime
+/// because it is the obvious API to call — fails CI instead.
 ///
 /// ## A request is not a fact, and nothing here records one
 ///
@@ -2375,6 +2387,14 @@ class DurableWorkspaceProvisionTrigger {
   /// **A product that already has a durable clone is refused, always. There is
   /// no re-provision, no force, and no replacement path in this lane.**
   ///
+  /// **THE GUARD IS HERE AND ONLY HERE.** `DurableWorkspaceRuntime.provision()`
+  /// and `SshDurableWorkspaceMaterializer.materialize()` have no idempotence
+  /// guard of their own — neither asks whether a clone already exists. This
+  /// check is the only thing standing between a caller and that fact, so a caller
+  /// that reaches the runtime directly has not merely opted out of the refusal;
+  /// it has walked onto the path below. Never call either of them from outside
+  /// this class.
+  ///
   /// Not only is that the safe default, it is the only safe one. A second
   /// provisioner run materialises into the SAME `$workspaceRoot/$productId`
   /// tree that already holds the clone: `git init` succeeds against the existing
@@ -2388,9 +2408,13 @@ class DurableWorkspaceProvisionTrigger {
   /// Re-pinning to a newer commit is a real need and is explicitly NOT what
   /// this trigger does. It is OD-7.2 / OD-7.3 — how long a clone lives and who
   /// presses it — both still open, and A1's own startup banner says so:
-  /// `reclamationPolicy: none`. Nothing in this lane deletes or overwrites a
-  /// durable clone, so there is no destructive path here to name and reach
-  /// deliberately: the answer is always "refused", on every call.
+  /// `reclamationPolicy: none`.
+  ///
+  /// What this class does NOT do is delete or overwrite a durable clone, so
+  /// there is no destructive path *here* to name and reach deliberately: the
+  /// answer is always "refused", on every call. That is a statement about this
+  /// class's own code, and the two gates described on it are what check the
+  /// surrounding lane — not a proof about code no gate reads.
   Future<DurableWorkspaceProvisioned> provision({
     required String productId,
     required String repositoryId,

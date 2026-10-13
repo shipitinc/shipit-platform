@@ -7,7 +7,12 @@ import 'package:control_plane_server/src/credentials/secret_material.dart'
 import 'package:control_plane_server/src/credentials/ssh_remote.dart'
     show SshRemote;
 import 'package:platform_contracts/platform_contracts.dart'
-    show ProductBaseline, ProductBaselineStatus;
+    show
+        OnboardingRecord,
+        Product,
+        ProductBaseline,
+        ProductBaselineStatus,
+        RepositoryReference;
 import 'package:product_registry/product_registry.dart'
     show InMemoryProductRegistryStore, ProductRegistryEngine;
 import 'package:test/test.dart';
@@ -312,6 +317,245 @@ void main() {
       },
     );
   });
+
+  group('THE RESTART TRAP — the instruction re-presented after it succeeded', () {
+    // The case no test covered, and the one that would have bitten immediately.
+    //
+    // Three facts interact. The variable is re-read on EVERY start
+    // (`server.dart` resolves it from `Platform.environment` each boot);
+    // `WORKSPACE_ALREADY_PROVISIONED` used to come back as `provisioned: false`;
+    // and a failed instruction calls `exit(1)` in `_runDurableWorkspaceProvision`.
+    //
+    // So: provision once, restart for any routine reason with the variable still
+    // exported, and the control plane does not start. An operator who set the
+    // variable once was never told to unset it, and nothing in the failure names
+    // it. "Honoured once, and never again by anything automatic" was implemented
+    // as "honoured once, then failed forever".
+    test(
+      'the second presentation is a SATISFIED outcome, not a failure',
+      () async {
+        final events = <String, Map<String, dynamic>>{};
+        final armed = await _armedRuntime();
+        final instruction = DurableWorkspaceProvisionInstruction(
+          productId: _productId,
+          repositoryId: _repositoryId,
+          startingRevision: _revision,
+        );
+
+        final first = await runOperatorDurableWorkspaceProvision(
+          instruction,
+          store: armed.store,
+          engine: armed.engine,
+          runtime: armed.runtime,
+          log: (event, data) => events[event] = data,
+        );
+        expect(first['provisioned'], isTrue);
+        expect(first.containsKey('alreadyProvisioned'), isFalse);
+
+        // The restart: same environment, same instruction, new start.
+        final second = await runOperatorDurableWorkspaceProvision(
+          instruction,
+          store: armed.store,
+          engine: armed.engine,
+          runtime: armed.runtime,
+          log: (event, data) => events[event] = data,
+        );
+
+        expect(
+          second['provisioned'],
+          isTrue,
+          reason:
+              'the desired end state already holds — the instruction named a '
+              'durable clone and the durable clone is there. Reporting this as '
+              'a failure is what made the control plane refuse to START on any '
+              'restart of an already-provisioned deployment',
+        );
+        expect(second['alreadyProvisioned'], isTrue);
+        expect(
+          second['code'],
+          isNull,
+          reason:
+              'no refusal was raised, so there is no refusal code to report',
+        );
+
+        // And it kept serving: `_runDurableWorkspaceProvision` exits non-zero on
+        // `requested == true && provisioned != true`, so this field is the whole
+        // difference between a boot and a dead process.
+        expect(
+          second['requested'] == true && second['provisioned'] != true,
+          isFalse,
+          reason:
+              'this predicate is the whole of the exit(1) condition in '
+              '_runDurableWorkspaceProvision. It MUST be false here, or the '
+              'control plane does not start',
+        );
+      },
+    );
+
+    test('and it clones nothing, records nothing, and changes nothing', () async {
+      final armed = await _armedRuntime();
+      final instruction = DurableWorkspaceProvisionInstruction(
+        productId: _productId,
+        repositoryId: _repositoryId,
+        startingRevision: _revision,
+      );
+
+      await runOperatorDurableWorkspaceProvision(
+        instruction,
+        store: armed.store,
+        engine: armed.engine,
+        runtime: armed.runtime,
+        log: _discard,
+      );
+      final afterFirst = await armed.store.readOnboardingForProduct(_productId);
+      final secretReadsAfterFirst = armed.custody.reads.length;
+
+      await runOperatorDurableWorkspaceProvision(
+        instruction,
+        store: armed.store,
+        engine: armed.engine,
+        runtime: armed.runtime,
+        log: _discard,
+      );
+
+      expect(
+        armed.materializer.materializations,
+        1,
+        reason:
+            'one clone, ever. A second materialisation into the same product '
+            'root is the destructive path — it fails on its own `git remote add '
+            'origin` and the handler destroys the tree',
+      );
+      expect(armed.custody.reads.length, secretReadsAfterFirst);
+      expect(
+        await armed.store.readOnboardingForProduct(_productId),
+        afterFirst,
+        reason:
+            'the record is byte-identical; a satisfied outcome writes nothing',
+      );
+    });
+
+    test(
+      'the banner tells the operator the variable may be cleared',
+      () async {
+        final armed = await _armedRuntime();
+        final instruction = DurableWorkspaceProvisionInstruction(
+          productId: _productId,
+          repositoryId: _repositoryId,
+          startingRevision: _revision,
+        );
+        await runOperatorDurableWorkspaceProvision(
+          instruction,
+          store: armed.store,
+          engine: armed.engine,
+          runtime: armed.runtime,
+          log: _discard,
+        );
+
+        final events = <String, Map<String, dynamic>>{};
+        final outcome = await runOperatorDurableWorkspaceProvision(
+          instruction,
+          store: armed.store,
+          engine: armed.engine,
+          runtime: armed.runtime,
+          log: (event, data) => events[event] = data,
+        );
+
+        expect(
+          outcome['note'],
+          allOf(contains(_envName), contains('cleared')),
+          reason:
+              'the operator is the one who exported this variable and nobody '
+              'told them they could remove it. Leaving it set is SAFE, but it '
+              'is state that outlives whoever set it, so the one line that '
+              'reports the situation is where that has to be said',
+        );
+        expect(
+          events['durable_workspace.provision.already_provisioned'],
+          isNotNull,
+          reason:
+              'and it is a logged event, not a field the operator has to know '
+              'to grep for. It must not be an ABORT — nothing failed',
+        );
+        expect(events['durable_workspace.provision.aborted'], isNull);
+        expect(
+          events['durable_workspace.provision.already_provisioned']!['action'] ??
+              events['durable_workspace.provision.already_provisioned']!['note'],
+          isNotNull,
+        );
+      },
+    );
+
+    test(
+      'a guard that says "already provisioned" and a record that disagrees is '
+      'NOT reported as satisfied — it fails loudly',
+      () async {
+        // The read-back is the whole reason this branch is more than an echo.
+        // `provisioned: true` is the field a monitoring rule acts on, so it is
+        // confirmed against the record rather than taken from the refusal that
+        // produced it.
+        final armed = await _armedRuntime();
+        final events = <String, Map<String, dynamic>>{};
+
+        final outcome = await runOperatorDurableWorkspaceProvision(
+          DurableWorkspaceProvisionInstruction(
+            productId: _productId,
+            repositoryId: _repositoryId,
+            startingRevision: _revision,
+          ),
+          store: armed.store,
+          engine: armed.engine,
+          runtime: armed.runtime,
+          log: (event, data) => events[event] = data,
+        );
+        expect(outcome['provisioned'], isTrue);
+
+        // The contradiction: the record that proves the clone exists disappears
+        // between the trigger's guard and the read-back that confirms it.
+        final vanishing = _VanishingOnboardingStore(armed.store);
+        final contradicted = await runOperatorDurableWorkspaceProvision(
+          DurableWorkspaceProvisionInstruction(
+            productId: _productId,
+            repositoryId: _repositoryId,
+            startingRevision: _revision,
+          ),
+          store: vanishing,
+          engine: armed.engine,
+          runtime: armed.runtime,
+          log: (event, data) => events[event] = data,
+        );
+
+        expect(
+          contradicted['provisioned'],
+          isFalse,
+          reason:
+              'a guard and a record that disagree are a contradiction, and the '
+              'honest outcome for one is a failed boot — not a success nobody '
+              'can find the evidence for',
+        );
+        expect(
+          vanishing.confirmationReads,
+          greaterThan(0),
+          reason:
+              'the branch is only reached because the satisfied-outcome path '
+              'READ THE RECORD BACK rather than believing the refusal. Without '
+              'this the test would pass for the wrong reason',
+        );
+        expect(
+          events['durable_workspace.provision.already_provisioned'],
+          isNull,
+        );
+        expect(
+          events['durable_workspace.provision.already_provisioned.unconfirmed'],
+          isNotNull,
+          reason:
+              'the unconfirmed read is its own event. Folding it into a generic '
+              'abort would leave an operator with a code that does not name the '
+              'thing that was actually odd',
+        );
+      },
+    );
+  });
 }
 
 void _discard(String event, Map<String, dynamic> data) {}
@@ -346,15 +590,17 @@ Future<_Armed> _armedRuntime() async {
     ),
   );
   final materializer = _StubMaterializer();
+  final custody = RecordingSecretProvider();
   return _Armed(
     store: registry.store,
     engine: registry.engine,
     materializer: materializer,
+    custody: custody,
     runtime: DurableWorkspaceRuntime.resolve(
       engine: registry.engine,
       durableWorkspaceRoot: '/tmp/durable-workspace-instruction-test-root',
       log: _discard,
-      custodyProvider: RecordingSecretProvider(),
+      custodyProvider: custody,
       accessVerifier: ScriptedAccessVerifier(committedRevision: _revision),
       materializer: materializer,
     ),
@@ -365,7 +611,7 @@ Future<_Armed> _armedRuntime() async {
       engine: registry.engine,
       durableWorkspaceRoot: '',
       log: _discard,
-      custodyProvider: RecordingSecretProvider(),
+      custodyProvider: custody,
       accessVerifier: ScriptedAccessVerifier(),
       materializer: materializer,
     ),
@@ -379,17 +625,68 @@ class _Armed {
     required this.runtime,
     required this.unavailableRuntime,
     required this.materializer,
+    required this.custody,
   });
 
   final InMemoryProductRegistryStore store;
   final ProductRegistryEngine engine;
   final DurableWorkspaceRuntime runtime;
 
+  /// The secret substrate, held so a test can count how many times the private
+  /// half was READ. A satisfied outcome must not re-acquire it: the credential
+  /// is one read per provisioning, and a second one would mean the second start
+  /// did work rather than reporting on work already done.
+  final RecordingSecretProvider custody;
+
   /// The same composition with no workspace root: `isAvailable` is false and
   /// `availableReason` names it.
   final DurableWorkspaceRuntime unavailableRuntime;
 
   final _StubMaterializer materializer;
+}
+
+/// A store whose onboarding record VANISHES between the trigger's guard and the
+/// read-back that confirms it.
+///
+/// The trigger reads the record to DECIDE (guard #5 — refuse, it is already
+/// provisioned), and the satisfied-outcome branch reads it again to CONFIRM.
+/// This answers the first read from the real store and null to the second, so
+/// the disagreement those two can reach is exercised deterministically instead
+/// of by racing a real deletion.
+///
+/// Three methods are forwarded and nothing else, because those are the only
+/// three the trigger asks a `ProductRegistryStore` for. Everything else in this
+/// instruction's path goes through the engine, which is built over the real
+/// inner store.
+class _VanishingOnboardingStore extends InMemoryProductRegistryStore {
+  _VanishingOnboardingStore(this._inner);
+
+  final InMemoryProductRegistryStore _inner;
+
+  /// How many reads reached the confirmation path specifically — that is, the
+  /// reads after the trigger's guard had already decided.
+  int confirmationReads = 0;
+
+  @override
+  Future<Product> readProduct(String productId) =>
+      _inner.readProduct(productId);
+
+  @override
+  Future<RepositoryReference> readRepositoryReference(String repositoryId) =>
+      _inner.readRepositoryReference(repositoryId);
+
+  @override
+  Future<OnboardingRecord?> readOnboardingForProduct(String productId) async {
+    // Read #1 is guard #5's. Every read after it is a confirmation.
+    if (confirmationReads > 0 || _decisionMade) {
+      confirmationReads++;
+      return null;
+    }
+    _decisionMade = true;
+    return _inner.readOnboardingForProduct(productId);
+  }
+
+  bool _decisionMade = false;
 }
 
 class _StubMaterializer implements DurableWorkspaceMaterializer {
