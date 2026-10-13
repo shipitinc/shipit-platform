@@ -1,5 +1,6 @@
 import 'dart:async' show Timer, unawaited;
-import 'dart:io' show Directory, File, Platform, Process, stdout;
+import 'dart:convert' show jsonDecode;
+import 'dart:io' show Directory, File, Platform, Process, exit, stdout;
 
 import 'package:serverpod/serverpod.dart';
 import 'package:agent_runtime/agent_runtime.dart'
@@ -15,7 +16,7 @@ import 'package:workflow_store/workflow_store.dart' show DurableWorkflowEngine;
 import 'package:platform_contracts/platform_contracts.dart'
     show AgentRole, JobType;
 import 'package:product_registry/product_registry.dart'
-    show ProductRegistryEngine;
+    show ProductRegistryEngine, ProductRegistryStore;
 import 'package:scheduler/scheduler.dart'
     show
         Scheduler,
@@ -79,7 +80,14 @@ import 'src/baseline/baseline_runtime.dart' show BaselineProductionRuntime;
 // A1's durable-workspace runtime, wired here because C-1 assigns this file
 // exclusively to the implementation lane (A2). See `_durableWorkspaceRoot`.
 import 'src/baseline/durable_workspace_runtime.dart'
-    show DurableWorkspaceRuntime;
+    show
+        DurableWorkspaceRuntime,
+        DurableWorkspaceRuntimeUnavailableException,
+        DurableWorkspaceUnavailableException;
+// A3's operator trigger. Its only production caller is the boot-time operator
+// instruction below — see `runOperatorDurableWorkspaceProvision`.
+import 'src/services/control_plane_service.dart'
+    show DurableWorkspaceProvisionRefused, DurableWorkspaceProvisionTrigger;
 // The readiness probe that decides whether an implementation job may dispatch
 // at all. It lives outside `lib/src/baseline/**` on purpose: that directory is
 // covered by the product-agnosticism gate, which refuses every product name —
@@ -148,6 +156,19 @@ void run(List<String> args) async {
   // refuses it and records a named reason, which is the fail-closed posture the
   // durable-workspace runtime was built around.
   final durableWorkspaceRoot = _durableWorkspaceRoot();
+
+  // ---- A3's operator instruction: the ONLY production caller of provisioning. ----
+  //
+  // Resolved HERE, before the server is constructed, for the same reason the
+  // triage source and the dispatch cap are: a malformed instruction must refuse
+  // before a port is bound, not after a clone has half been made.
+  //
+  // There is no default and no inference. Unset means nobody asked, and the
+  // whole of the implementation lane keeps deferring until a human says
+  // otherwise — which is the state the readiness probe already reports, loudly,
+  // rather than one anything here papers over.
+  final durableProvisionInstruction =
+      resolveDurableWorkspaceProvisionInstruction(Platform.environment);
 
   // Also resolved BEFORE the server starts, and for a heavier reason: a server
   // with no cap dispatches as many agent executions as the queue offers, which
@@ -485,6 +506,31 @@ void run(List<String> args) async {
     log: _log,
   );
 
+  // ---- A3: run the operator instruction, ONCE, before anything can act on it. ----
+  //
+  // `DurableWorkspaceRuntime.provision` had zero production callers until this
+  // line, which is why `ImplementationReadinessProbe` below defers every
+  // implementation item: there was no clone to resolve. This is the caller.
+  //
+  // WHY A BOOT-TIME INSTRUCTION, and not an endpoint or a timer. The HTTP
+  // endpoint surface is `src/endpoints/**`, which this lane does not own, and a
+  // timer is precisely the thing this must not be: provisioning runs unattended
+  // against a governed product's repository with a deploy key, and an operator
+  // has to be the one who asked. A variable a human sets, and a start a human
+  // initiates, is exactly that — and it is a shape nothing can reach by
+  // accident, because no tick, sweep, probe or request can set an environment
+  // variable.
+  //
+  // It runs BEFORE `implScheduler` is built, so a clone that exists is a clone
+  // the scheduler can see from its first tick, and a trigger that failed is a
+  // failed boot rather than a deployment left half-provisioned.
+  final durableProvisionOutcome = await _runDurableWorkspaceProvision(
+    durableProvisionInstruction,
+    store: baselineRegistryStore,
+    engine: productRegistryEngine,
+    runtime: durableWorkspaceRuntime,
+  );
+
   // ---- The IMPLEMENTATION scheduler: `sched-impl`. ----
   //
   // Its entry state is `implementationReady` and nothing else, which is what
@@ -626,6 +672,11 @@ void run(List<String> args) async {
     // remove — and a lane that is constructed but silently refusing every call
     // looks exactly like a lane that does not exist.
     'durableWorkspace': durableWorkspaceRuntime.describe(),
+    // What this START did about it. Absence is a state and it is printed, the
+    // same way `work_entry.sweep.disabled` is: an operator reading one line can
+    // tell "nobody asked for a durable clone" from "we asked and it failed",
+    // without grepping for something that is not there.
+    'durableWorkspaceProvision': durableProvisionOutcome,
     // The implementation lane, in the same spirit. `schedulerId` and the
     // definition's own entry states, so an operator can see from the banner that
     // the lane exists AND that nothing reaches it yet: no `HumanDecisionRouting`
@@ -1553,6 +1604,519 @@ const String _durableWorkspaceRootEnv = 'SHIPIT_DURABLE_WORKSPACE_ROOT';
 /// start.
 String _durableWorkspaceRoot() =>
     Platform.environment[_durableWorkspaceRootEnv]?.trim() ?? '';
+
+/// Environment variable carrying an OPERATOR's one-shot instruction to create a
+/// product's durable clone.
+///
+/// ## What setting it does
+///
+/// A JSON object with exactly three keys:
+///
+/// ```json
+/// {"productId": "…", "repositoryId": "…", "startingRevision": "<40-hex SHA>"}
+/// ```
+///
+/// It is honoured at the first start that sees it, and never again by anything
+/// automatic. Nothing in this process re-reads it, nothing retries it, and no
+/// timer, sweep or scheduler tick can set it.
+///
+/// ## The variable is re-read on EVERY start, and leaving it set is safe
+///
+/// The honest reading of "honoured once" is "honoured once by anything
+/// AUTOMATIC". The variable is read from the environment again on every single
+/// start, so an operator who exported it and never unset it will see it
+/// re-presented on every restart of the deployment. That is safe, and it is
+/// deliberately so: `WORKSPACE_ALREADY_PROVISIONED` is a SATISFIED outcome here
+/// (`provisioned: true, alreadyProvisioned: true`), the process keeps serving,
+/// and nothing is cloned, recorded or changed. See
+/// [runOperatorDurableWorkspaceProvision].
+///
+/// An operator MAY clear it once the clone exists — the startup banner says so
+/// on the line that reports it — and should, because leaving a live instruction
+/// in a deployment's environment is the kind of state that outlives the person
+/// who set it. Clearing it is housekeeping, not a precondition.
+///
+/// ## The cost of this shape: ONE PRODUCT PER RESTART
+///
+/// **This is the real price of a boot-time instruction, and it is not small.**
+/// One instruction names one product, and a start consumes it, so provisioning
+/// the Nth product costs N restarts. Each restart is a deployment event with its
+/// own risk, and the second one is no cheaper than the first.
+///
+/// That is a deliberate trade, not an oversight: the alternative — a timer, or a
+/// sweep — is unattended provisioning against a governed product's repository
+/// with a deploy key, which is precisely what an operator has to be present for.
+/// The endpoint surface is the shape that fixes this, and it is not close at
+/// hand: `ProductRegistryEndpoints` does not hold a `DurableWorkspaceRuntime`
+/// today, so adding the call is a CONSTRUCTOR CHANGE through the composition
+/// root before it is a line in the endpoints file. Anyone taking that lane
+/// should treat it as a BATCH surface — one request naming several products —
+/// rather than reproducing the one-product-per-restart behaviour behind an HTTP
+/// verb, because the restart is what the endpoint removes, not the API shape.
+///
+/// ## Why `startingRevision` must be a SHA and not a ref
+///
+/// Because that is what a pin IS. `OnboardingRecord.gitRevisionPattern` is
+/// `^[0-9a-f]{40}$` — "a pin that cannot be resolved to exactly one commit is
+/// not a pin" — and `recordWorkspace` writes the value straight into that
+/// column. An operator who writes `main` here gets a refusal that says how to
+/// turn it into a commit, not a clone recorded at a revision that does not
+/// exist. See `DurableWorkspaceProvisionTrigger.provision` for why the trigger
+/// cannot resolve the ref for them.
+///
+/// ## Why UNSET is the normal state and not a missing feature
+///
+/// Until a human runs this, the implementation lane has no product checkout to
+/// dispatch into and `ImplementationReadinessProbe` defers every item, with the
+/// reason in its own log. That is the correct posture — a scheduler that
+/// materialised governed products' repositories on its own would be doing the
+/// one thing this variable exists to keep human-initiated — so there is no
+/// default, no inference, and no "helpful" second path.
+const String _provisionDurableWorkspaceEnv =
+    'SHIPIT_PROVISION_DURABLE_WORKSPACE';
+
+/// One operator's instruction, parsed and validated.
+class DurableWorkspaceProvisionInstruction {
+  const DurableWorkspaceProvisionInstruction({
+    required this.productId,
+    required this.repositoryId,
+    required this.startingRevision,
+  });
+
+  final String productId;
+  final String repositoryId;
+
+  /// What the operator asked for. Validated as a commit SHA by
+  /// [DurableWorkspaceProvisionTrigger], which is the one place that decides
+  /// what a pin may be — this class only refuses input that is not even a
+  /// non-empty string.
+  final String startingRevision;
+
+  @override
+  String toString() =>
+      'DurableWorkspaceProvisionInstruction($productId/$repositoryId@'
+      '$startingRevision)';
+}
+
+/// Parses and validates [_provisionDurableWorkspaceEnv], or returns `null` when
+/// it is unset or blank.
+///
+/// Returns `null` rather than throwing for absence, and THROWS for anything
+/// present-but-wrong. That asymmetry is the whole point: "nobody asked" is the
+/// normal state of a deployment and must not be a fault, while a typo is a
+/// fault that is invisible unless it is refused — a misspelled key would
+/// otherwise leave a server that starts, provisions nothing, and looks fine.
+///
+/// The caller runs this BEFORE the server is constructed, so a bad instruction
+/// never binds a port.
+///
+/// The three keys are required and NO OTHERS ARE ACCEPTED. An unknown key is a
+/// refusal rather than a shrug for the reason above: `{"productId": "p",
+/// "repository": "r"}` is a plausible typo that would otherwise provision
+/// against a default, or against nothing, with no error anywhere.
+DurableWorkspaceProvisionInstruction?
+resolveDurableWorkspaceProvisionInstruction(
+  Map<String, String> environment,
+) {
+  final raw = environment[_provisionDurableWorkspaceEnv]?.trim();
+  if (raw == null || raw.isEmpty) return null;
+
+  const required = <String>['productId', 'repositoryId', 'startingRevision'];
+  Object? decoded;
+  try {
+    decoded = jsonDecode(raw);
+  } on FormatException catch (error) {
+    throw StateError(
+      'CONFIG_ERROR $_provisionDurableWorkspaceEnv is set but is not valid '
+      'JSON (${error.message}). It must be an object with exactly '
+      '${required.join(', ')}.',
+    );
+  }
+  if (decoded is! Map<String, dynamic>) {
+    throw StateError(
+      'CONFIG_ERROR $_provisionDurableWorkspaceEnv must be a JSON OBJECT with '
+      'keys ${required.join(', ')}, not ${decoded.runtimeType}.',
+    );
+  }
+  final unexpected =
+      decoded.keys.where((key) => !required.contains(key)).toList()..sort();
+  if (unexpected.isNotEmpty) {
+    throw StateError(
+      'CONFIG_ERROR $_provisionDurableWorkspaceEnv carries unknown key(s) '
+      '${unexpected.join(', ')}. Only ${required.join(', ')} are accepted; an '
+      'unrecognised key is refused rather than ignored, because a typo that is '
+      'ignored provisions nothing and reports nothing.',
+    );
+  }
+  final fields = <String, String>{};
+  for (final key in required) {
+    final value = decoded[key];
+    if (value is! String || value.trim().isEmpty) {
+      throw StateError(
+        'CONFIG_ERROR $_provisionDurableWorkspaceEnv.$key must be a non-empty '
+        'string.',
+      );
+    }
+    fields[key] = value.trim();
+  }
+  return DurableWorkspaceProvisionInstruction(
+    productId: fields['productId']!,
+    repositoryId: fields['repositoryId']!,
+    startingRevision: fields['startingRevision']!,
+  );
+}
+
+/// Runs [instruction] if there is one, and reports what happened as banner
+/// fields.
+///
+/// ## Why a REFUSAL is returned rather than thrown
+///
+/// The caller has to decide whether to keep serving, and it cannot decide that
+/// without seeing the reason. So the decision is returned, shaped for the
+/// startup banner, and the reason is logged here — not swallowed: `run()` turns
+/// a non-provisioned instruction into a non-zero exit, so the outcome is a
+/// failed boot an operator cannot miss.
+///
+/// That is a different posture from an unconfigured durable-workspace runtime,
+/// which does NOT stop the boot. The runtime being absent is an ambient
+/// configuration fact about a process that also serves triage, and A1's own doc
+/// is right that refusing to serve would be worse. An operator instruction that
+/// FAILED is not that: the operator asked for a specific durable action, it did
+/// not happen, and continuing to serve would leave the deployment in the exact
+/// state they asked to leave while reporting itself healthy.
+///
+/// ## …AND the one refusal that is NOT a failure
+///
+/// `WORKSPACE_ALREADY_PROVISIONED` is the exception, and it is handled before
+/// the abort path: the instruction named a durable clone, and the durable clone
+/// is there. Refusing to clone a second time is right — see
+/// `DurableWorkspaceProvisionTrigger` for why a second clone attempt is a clone
+/// deletion — but the guard's refusal is about the CLONE, and the clone already
+/// exists. Counting that as a fault made every restart of an already-provisioned
+/// deployment exit non-zero, so the control plane refused to start over a
+/// variable the operator had no reason to know they had to unset. It keeps
+/// serving, and says in the banner that the variable may now be cleared.
+///
+/// The claim is read back from the record rather than taken from the refusal —
+/// see [_alreadyProvisionedOutcome] — so "already provisioned" is confirmed to
+/// be true rather than repeated.
+///
+/// Returns `{'requested': false, ...}` when [instruction] is null, so absence is
+/// a printed state rather than an omitted field.
+Future<Map<String, dynamic>> runOperatorDurableWorkspaceProvision(
+  DurableWorkspaceProvisionInstruction? instruction, {
+  required ProductRegistryStore store,
+  required ProductRegistryEngine engine,
+  required DurableWorkspaceRuntime runtime,
+  void Function(String event, Map<String, dynamic> data)? log,
+}) async {
+  final emit = log ?? _log;
+  if (instruction == null) {
+    return const <String, dynamic>{
+      'requested': false,
+      'provisioned': false,
+      'triggeredBy': 'nobody — an operator instruction is required',
+      'note':
+          'no product has a durable clone unless an operator set '
+          '$_provisionDurableWorkspaceEnv on a start. Nothing in this process '
+          'creates one automatically, and the implementation lane keeps '
+          'deferring every item until it exists',
+    };
+  }
+
+  emit('durable_workspace.provision.requested', {
+    'productId': instruction.productId,
+    'repositoryId': instruction.repositoryId,
+    'startingRevision': instruction.startingRevision,
+    'triggeredBy': 'the $_provisionDurableWorkspaceEnv operator instruction',
+  });
+
+  final trigger = DurableWorkspaceProvisionTrigger(
+    store: store,
+    engine: engine,
+    runtime: runtime,
+    log: emit,
+  );
+  try {
+    final provisioned = await trigger.provision(
+      productId: instruction.productId,
+      repositoryId: instruction.repositoryId,
+      startingRevision: instruction.startingRevision,
+    );
+    return <String, dynamic>{
+      'requested': true,
+      'provisioned': true,
+      'productId': provisioned.productId,
+      'repositoryId': provisioned.repositoryId,
+      'pinnedRevision': provisioned.pinnedRevision,
+      'repositoryPath': provisioned.workspace.repositoryPath,
+      'onboardingId': provisioned.onboardingId,
+      'completedBaselineId': provisioned.completedBaselineId,
+      'triggeredBy': 'the $_provisionDurableWorkspaceEnv operator instruction',
+    };
+  } on Object catch (error) {
+    // THE RESTART TRAP, handled before anything is called a failure.
+    //
+    // This variable is re-read on every start, `alreadyProvisioned` used to land
+    // in the abort branch below, and `_runDurableWorkspaceProvision` turns a
+    // non-provisioned instruction into `exit(1)`. Those three together meant a
+    // successful provision followed by any routine restart — a deploy, a crash,
+    // a container recreated by compose — had the control plane refuse to start,
+    // with nothing on screen naming the variable as the reason. The instruction
+    // is satisfied, so the process serves.
+    if (error is DurableWorkspaceProvisionRefused &&
+        error.code == DurableWorkspaceProvisionRefused.alreadyProvisioned) {
+      final satisfied = await _alreadyProvisionedOutcome(
+        instruction,
+        store: store,
+        emit: emit,
+      );
+      // `null` means the read-back could not CONFIRM the clone the guard named.
+      // Falling through to the abort path is then the honest outcome: a guard
+      // saying "already provisioned" and a record saying otherwise is a
+      // contradiction, and a contradiction is a fault.
+      if (satisfied != null) return satisfied;
+    }
+
+    // The reason is surfaced, never swallowed: A1's own wording when A1
+    // refused (an unconfirmed host key, an unusable credential, a baseline
+    // that is not accepted), this lane's code and wording when the refusal was
+    // this lane's, and the underlying text when it was neither — a missing
+    // product, or a repository that belongs to another one.
+    final code = switch (error) {
+      DurableWorkspaceProvisionRefused() => error.code,
+      DurableWorkspaceUnavailableException() => 'DURABLE_WORKSPACE_REFUSED',
+      DurableWorkspaceRuntimeUnavailableException() =>
+        'DURABLE_RUNTIME_UNAVAILABLE',
+      _ => 'PROVISIONING_FAILED',
+    };
+    final reason = switch (error) {
+      DurableWorkspaceProvisionRefused() => error.reason,
+      DurableWorkspaceUnavailableException() => error.reason,
+      DurableWorkspaceRuntimeUnavailableException() => error.reason,
+      _ => error.toString(),
+    };
+    emit('durable_workspace.provision.aborted', <String, dynamic>{
+      'code': code,
+      'productId': instruction.productId,
+      'repositoryId': instruction.repositoryId,
+      'error': reason,
+      'action':
+          'no clone was recorded as this instruction\'s outcome and this '
+          'process will NOT continue serving: the operator asked for a durable '
+          'clone, it did not happen, and starting anyway would leave the '
+          'deployment looking healthy in exactly the state the instruction was '
+          'meant to leave it',
+    });
+    return <String, dynamic>{
+      'requested': true,
+      'provisioned': false,
+      'code': code,
+      'reason': reason,
+      'productId': instruction.productId,
+      'repositoryId': instruction.repositoryId,
+    };
+  }
+}
+
+/// The `WORKSPACE_ALREADY_PROVISIONED` branch, as a SATISFIED outcome: the
+/// desired end state already holds, so the process keeps serving.
+///
+/// Returns the banner fields, or `null` when the durable clone the guard named
+/// cannot be CONFIRMED by reading the record back.
+///
+/// ## Why it is not a failure
+///
+/// The instruction is re-read on every start, and an operator who exported it
+/// once has no reason to know they must unset it. Routing this refusal into the
+/// abort branch — and `_runDurableWorkspaceProvision` turns an abort into
+/// `exit(1)` — meant the second start of an already-provisioned deployment took
+/// the control plane down, for a restart the operator had every reason to make.
+/// The refusal is about the CLONE; the clone is already there.
+///
+/// ## Why the claim is read back rather than believed
+///
+/// `provisioned: true` asserts that a durable product clone exists. That is the
+/// one field in this outcome a monitoring rule might act on, so it is not taken
+/// from the refusal that produced it — a guard saying "already provisioned" and a
+/// record saying otherwise must not report a success. `hasDurableProductClone`
+/// is the only read that proves the recorded workspace IS the product's clone,
+/// and every cell in which it is true is a record whose `requireDurable()`
+/// succeeds, so this cannot throw; the `try` is here for the read itself.
+Future<Map<String, dynamic>?> _alreadyProvisionedOutcome(
+  DurableWorkspaceProvisionInstruction instruction, {
+  required ProductRegistryStore store,
+  required void Function(String event, Map<String, dynamic> data) emit,
+}) async {
+  const triggeredBy = 'the $_provisionDurableWorkspaceEnv operator instruction';
+  try {
+    final record = await store.readOnboardingForProduct(instruction.productId);
+    final durable = record != null && record.hasDurableProductClone
+        ? record.workspace!.requireDurable()
+        : null;
+
+    if (record == null || durable == null) {
+      emit('durable_workspace.provision.already_provisioned.unconfirmed', {
+        'productId': instruction.productId,
+        'repositoryId': instruction.repositoryId,
+        'action':
+            'the trigger reported an existing durable clone and the record does '
+            'not hold one, so this is NOT reported as satisfied. This process '
+            'will NOT continue serving: a guard and a record that disagree are '
+            'a contradiction, and the honest outcome for one is a failed boot',
+      });
+      return null;
+    }
+
+    emit('durable_workspace.provision.already_provisioned', {
+      'productId': record.productId,
+      'repositoryId': instruction.repositoryId,
+      'pinnedRevision': record.pinnedRevision,
+      'repositoryPath': durable.repositoryPath,
+      'workspaceId': durable.workspaceId,
+      'onboardingId': record.onboardingId,
+      'triggeredBy': triggeredBy,
+      'note':
+          'NOTHING WAS CLONED, NOTHING WAS RECORDED AND NOTHING WAS CHANGED. '
+          'The clone this instruction asked for already existed, so the desired '
+          'end state holds and this process continues to serve. Re-provisioning '
+          'is refused because a second materialisation into the same tree would '
+          'destroy the existing one, not because this start failed. '
+          '$_provisionDurableWorkspaceEnv MAY NOW BE CLEARED from the '
+          'deployment environment: leaving it set is safe (this is the outcome '
+          'every later start reports) but it is state that outlives whoever set '
+          'it. Note the cost of this shape — one product per instruction, so '
+          'provisioning the Nth product costs N restarts.',
+    });
+
+    return <String, dynamic>{
+      'requested': true,
+      'provisioned': true,
+      'alreadyProvisioned': true,
+      'productId': record.productId,
+      'repositoryId': instruction.repositoryId,
+      'pinnedRevision': record.pinnedRevision,
+      'repositoryPath': durable.repositoryPath,
+      'workspaceId': durable.workspaceId,
+      'onboardingId': record.onboardingId,
+      'triggeredBy': triggeredBy,
+      'note':
+          'satisfied by the clone that was already here. Nothing was cloned, '
+          'recorded or changed, and $_provisionDurableWorkspaceEnv may be '
+          'cleared from the environment',
+    };
+  } on Object catch (error) {
+    emit('durable_workspace.provision.already_provisioned.unconfirmed', {
+      'productId': instruction.productId,
+      'repositoryId': instruction.repositoryId,
+      'error': '$error',
+      'action':
+          'the record could not be read back to confirm the existing clone, so '
+          'this is NOT reported as satisfied and this process will NOT continue '
+          'serving',
+    });
+    return null;
+  }
+}
+
+/// [runOperatorDurableWorkspaceProvision] with this file's composition-root
+/// logger and the process exit, so `run()` reads as a sequence of decisions
+/// rather than a try/catch.
+Future<Map<String, dynamic>> _runDurableWorkspaceProvision(
+  DurableWorkspaceProvisionInstruction? instruction, {
+  required ProductRegistryStore store,
+  required ProductRegistryEngine engine,
+  required DurableWorkspaceRuntime runtime,
+}) async {
+  final outcome = await runOperatorDurableWorkspaceProvision(
+    instruction,
+    store: store,
+    engine: engine,
+    runtime: runtime,
+    log: _log,
+  );
+  if (outcome['requested'] == true && outcome['provisioned'] != true) {
+    // Non-zero, immediately, and loudly enough that an operator running this by
+    // hand sees it in the shell that asked for it. A durable clone is created
+    // outside the repository tree with a deploy key; an operator who asked for
+    // one and did not get it must not be left believing the deployment is
+    // provisioned.
+    //
+    // ---- WHAT THIS EXIT DEPENDS ON. Read off `run()`, not assumed. ----
+    //
+    // A previous version of this comment claimed the exit was safe here "because
+    // this call site is still inside run()'s composition, BEFORE `Serverpod` is
+    // constructed and before any session, engine or scheduler exists". That was
+    // false, and it is worth being exact about why: `run()` is ONE continuous
+    // body, and by the time control reaches this call the composition has long
+    // since started. `pod.start()` has run, so `Endpoints()` is listening and
+    // answering requests; two `Session`s exist (`session`, and the separate
+    // `baselineSession`); the Postgres stores, `DurableWorkflowEngine`,
+    // `ProviderHealthMonitor` (already started) and the triage and review
+    // `Scheduler`s are all constructed.
+    //
+    // The properties that ARE true here, and that this exit actually depends on,
+    // are these two:
+    //
+    //  * NO SCHEDULER TICK HAS EVER FIRED. `TickSingleFlight` and the
+    //    `Timer.periodic` that drives it are both constructed after this call,
+    //    `sched-impl` does not exist yet at all, and
+    //    `BaselineProductionRuntime.runOnce()` only ever runs from inside a tick.
+    //    Nothing has been dispatched, claimed or leased. This is the property
+    //    this location genuinely has, and it is the one the comment at the call
+    //    site already names correctly ("It runs BEFORE `implScheduler` is
+    //    built").
+    //  * NOTHING IS HALF-WRITTEN. Every await before this line has returned, so
+    //    there is no pending write to abandon. `_seedModelPolicy`'s row, if it
+    //    wrote one, is committed and idempotent on the next start.
+    //
+    // ---- WHAT IT COSTS. Not "nothing to lose" — an HTTP request. ----
+    //
+    //  * `exit` runs no `finally`. Checked rather than assumed: a `try` whose
+    //    `finally` writes a marker never reaches it. So `Serverpod.shutdown()` is
+    //    never called and neither `Session` is closed gracefully. Process death
+    //    closes the sockets and the database reaps the backends, so this is
+    //    untidiness, not data loss.
+    //  * `exit` DOES flush stdout. Also checked rather than assumed, because the
+    //    previous version of this comment claimed the opposite: dart:io flushes
+    //    stdio before terminating, and a 200 kB pending `stdout.write` reaches the
+    //    pipe ahead of `exit(1)`. `_log` writes through `stdout`, so every line
+    //    above — including `durable_workspace.provision.aborted` — reaches the
+    //    operator's terminal.
+    //  * THE REAL COST IS AN IN-FLIGHT REQUEST. The port was bound by
+    //    `pod.start()`, provisioning is a real `git clone` over SSH and can take
+    //    minutes, and `exit` cuts an arriving or in-flight request off mid
+    //    response. The process is listening for exactly as long as provisioning
+    //    runs. That window cannot be closed by moving this call later; it can
+    //    only be closed by not binding the port first, which is a restructuring
+    //    of the boot sequence rather than a move (the store this runs on is built
+    //    over a `Session` created after `pod.start()`).
+    //  * A pending `ProviderHealthMonitor` check is dropped. Harmless: it is a
+    //    five-minute `Timer.periodic`, the first check is five minutes out, and
+    //    the next start runs it again.
+    //
+    // ---- WHY IT STAYS HERE. ----
+    //
+    // Not because it is safe everywhere else, but because this is the LAST point
+    // at which the instruction's outcome can still stop the process. Past it the
+    // deployment serves as though it were healthy while the instruction went
+    // unfulfilled, which is the exact state the operator asked it not to be left
+    // in.
+    //
+    // "Defer it to the end of `run()`" is not available: `run()` never returns to
+    // a place that could act on a flag — its last statement is the
+    // `Timer.periodic` that keeps ticking. Serverpod does offer a graceful path
+    // (`Serverpod.shutdown`), and it was NOT adopted here for two reasons a future
+    // lane must know before "improving" this: with `exitProcess: true` it exits
+    // **0**, which inverts the deliberate non-zero signal this whole branch
+    // exists to give; and with `exitProcess: false` it awaits in-flight requests,
+    // trading the immediacy this path is for on the one failure an operator is
+    // watching a shell for. Tidy-but-slower is a product decision, not a
+    // correction.
+    exit(1);
+  }
+  return outcome;
+}
 
 /// Resolves and VALIDATES the triage source repository, or throws.
 ///
