@@ -1,0 +1,70 @@
+# human-decision.yaml
+decision_id: c04f6a8d-abcc-4a63-ab42-04b969a63b9a
+type: ARCHITECTURE
+status: PENDING
+title: OD-8 — WorkspaceDescriptor is per-execution; a durable product clone is not
+question: >-
+  WorkspaceDescriptor requires workerExecutionId, workerId and worktreePath, all of which are
+  meaningless for a product-scoped durable clone. Relax the existing type, or add a second one?
+context:
+  summary: >-
+    Flagged by the design lane as an ARCHITECTURE_DISCOVERY above its own authority, and independently
+    confirmed by review. It changes a PUBLISHED JSON Schema
+    (schemas/workspace_descriptor.schema.json) and a conformance-tested contract suite, and AGENTS.md
+    §12 is the section that makes a baseline's own claims checkable — so this is escalated, not decided
+    in a design artifact.
+
+  verified_current_state:
+    - "7 required fields: workspaceId, workerExecutionId, workerId, repositoryPath, startingRevision, worktreePath, createdAt (workspace_descriptor.dart:15-23)."
+    - "workerExecutionId, workerId, worktreePath are all per-EXECUTION concepts. A product-scoped durable clone has none of them."
+    - "Consumed in the worker/reconcile HOT PATH: worker_reconciler.dart, local_worker.dart, onboarding_worker.dart, control_plane_service.dart."
+    - "And in the safety-critical artifact resolution chain: engineering_review_gate.dart:71-76 re-reads producer.repositoryPath and re-validates the revision."
+
+  what_is_at_stake: >-
+    The two fields A1 actually needs are repositoryPath and startingRevision — both ALREADY REQUIRED on
+    the existing type. The three that are meaningless for a durable clone are exactly the three the
+    per-execution consumers depend on.
+recommendation: >-
+  OPTION_A — a SECOND TYPE, DurableWorkspaceDescriptor, stored in the OnboardingRecord.workspace JSON
+  column; leave WorkspaceDescriptor untouched.
+  Rationale: the blocker is a type-shape conflict, not a missing field. Making the three fields
+  nullable would push null-handling into worker_reconciler, local_worker, onboarding_worker AND the
+  review resolver — the exact chain that must fail closed on a missing artifact. Weakening a safety
+  critical path's type to accommodate a second use case is the wrong trade; a parallel type costs one
+  schema and zero churn on the hot path. The JSON column already accepts arbitrary JSON, so no
+  migration is required either way.
+options:
+  - id: A
+    label: Add DurableWorkspaceDescriptor as a separate type + schema — RECOMMENDED
+    implications: >-
+      Zero change to the per-execution consumers and to the review resolver. One new published schema.
+      Two types to distinguish semantically at read time. No migration needed (the column is JsonValue?).
+    effort: low
+    risk: Low. Slight conceptual duplication.
+  - id: B
+    label: Make workerExecutionId/workerId/worktreePath nullable on the existing type
+    implications: >-
+      One type, one schema. But every consumer listed above must gain null handling, including the
+      artifact resolution chain that currently fails closed. A missing workspacePath must be handled
+      as a HARD failure everywhere it now becomes representable.
+    effort: medium — touches the hot path
+    risk: Medium. Widens the representable state of a safety-critical type to make one field optional.
+  - id: C
+    label: Reuse WorkspaceDescriptor as-is; store a sentinel per-execution id on the durable clone
+    implications: >-
+      No schema change. But it asserts a false identity — the clone would claim to belong to some
+      worker execution that never owned it — and any future reader could resolve it as one.
+    effort: lowest
+    risk: Medium. Fabricated provenance is precisely the class of defect this repository already
+      caught once (a review lane applied a migration it had no authority for).
+  - id: D
+    label: Split differently — a ProductWorkspace descriptor keyed by product, no execution fields
+    implications: >-
+      Semantically the cleanest long-term shape, and arguably what A1 needs. But it overlaps heavily
+      with option A while also implying an ownership migration of the existing per-execution concept.
+    effort: medium
+    risk: Low, but larger scope than A1 requires.
+impact_if_not_resolved: >-
+  A1 cannot write its persistence path. Its lane, materialiser and agnosticism test are NOT blocked by
+  this and could proceed, but A1 cannot complete.
+linked_decisions: [fb3c3485-4359-4823-980f-8a83cd5181f5, 9bfe2d09-881e-4df4-9939-3883cf45b0d5]

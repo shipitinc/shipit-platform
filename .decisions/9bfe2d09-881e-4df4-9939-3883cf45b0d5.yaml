@@ -1,0 +1,75 @@
+# human-decision.yaml
+decision_id: 9bfe2d09-881e-4df4-9939-3883cf45b0d5
+type: ARCHITECTURE
+status: PENDING
+title: OD-7 — Where does a product's durable implementation workspace live?
+question: >-
+  A product-scoped clone must survive container restart so products do not re-clone on every
+  `make qa-up`. Where should it live?
+context:
+  summary: >-
+    The brief's single most important open question, escalated rather than resolved. A1 cannot ship its
+    compose change without it.
+
+  verified_current_state:
+    - "compose.qa.yaml mounts ONE host bind today: ${SHIPIT_HOST_SECRET_DIR:-/tmp/shipit-secrets-NOT-CONFIGURED}:/var/lib/shipit/secrets (line 119)."
+    - "SHIPIT_TRIAGE_WORKSPACE_ROOT: /triage-workspaces (line 102) is an env var only — /triage-workspaces is NOT a volume, so it is container-local and does not survive a rebuild."
+    - "Confirmed live: /triage-workspaces holds only descriptor JSON, and no checkout/ clone exists anywhere on disk."
+    - "Repo precedent is therefore a HOST BIND MOUNT with a fail-closed default sentinel."
+
+  durability_required: >-
+    The review gate re-reads `producer.repositoryPath` and re-validates the revision in it
+    (engineering_review_gate.dart:71-76, git_worktree_workspace_manager.dart:85-92). The clone must
+    therefore persist at minimum until review completes.
+  hazard: >-
+    AGENTS.md records that compose derives the project name from the directory holding the compose
+    file, and that a gitignored local .env is auto-loaded — so a single untracked line can redirect
+    every up/down in the repository. This is why `make clean` was disarmed. Any option must name its
+    compose project explicitly and must not rely on the default project name.
+recommendation: >-
+  OPTION_B — a HOST BIND MOUNT, matching the repo's existing custody precedent.
+  Rationale: it is the only option that reuses a pattern already proven in this repository
+  (${SHIPIT_HOST_SECRET_DIR}), it is directly inspectable on the host during review — which matters
+  because reviewers must read the artifact repository — and it is immune to the compose-project
+  default-name hazard that produced the destroyed-QA-database incident. Use the same fail-closed
+  sentinel as the secret dir so an unconfigured deployment fails loudly rather than writing into
+  container-local state that silently loses work.
+options:
+  - id: A
+    label: Docker named volume (e.g. shipit_workspaces) declared in compose.qa.yaml
+    implications: >-
+      Docker manages uid/gid and permissions; survives `up --build`; isolated from the host filesystem.
+      NOT destroyed by `down` (only `down -v`). Downside: less directly inspectable than a host path,
+      and adds a second persistence mechanism alongside the existing secret bind, so the repo ends up
+      with two different durability idioms.
+    effort: low
+    risk: Low, but a second idiom.
+  - id: B
+    label: Host bind mount ${SHIPIT_HOST_WORKSPACE_DIR} — RECOMMENDED
+    implications: >-
+      Matches ${SHIPIT_HOST_SECRET_DIR} exactly. Host-inspectable, so a reviewer can read
+      producer.repositoryPath without entering the container. Survives `down` and `down -v`.
+      Downside: host path coupling; requires an explicit .gitignore entry and a documented uid/gid
+      expectation. Requires an explicit -p <project> or a named project to stay clear of the scoping defect.
+    effort: low
+    risk: Low. One idiom for all durable platform state.
+  - id: C
+    label: Container-local path, recreate the clone on demand
+    implications: >-
+      No compose change at all. But the clone is lost on every `make qa-up`, so the platform re-clones
+      a governed product's repository on each deploy. Does not meet the durability requirement, and
+      makes the review gate's repositoryPath re-read fragile.
+    effort: lowest
+    risk: Does not satisfy the requirement. Listed for completeness.
+  - id: D
+    label: Git host as the source of truth; no durable clone, fetch per execution
+    implications: >-
+      Keeps the ephemeral-scratch model already proven by the baseline lane. But then there is no
+      stable repositoryPath for the review gate to re-read, and the artifact commits accumulate only
+      in retained scratch trees — which currently have NO bound and NO reclaiming owner (OD-9).
+    effort: medium
+    risk: Re-introduces the unbounded-retention problem this repository already has.
+impact_if_not_resolved: >-
+  A1 cannot write its compose change. Its lane, materialiser and agnosticism test are NOT blocked by
+  this and could proceed, but A1 cannot complete.
+linked_decisions: [fb3c3485-4359-4823-980f-8a83cd5181f5, c04f6a8d-abcc-4a63-ab42-04b969a63b9a]

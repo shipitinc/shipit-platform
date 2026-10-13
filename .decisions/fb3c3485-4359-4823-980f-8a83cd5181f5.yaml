@@ -1,0 +1,92 @@
+# human-decision.yaml
+decision_id: fb3c3485-4359-4823-980f-8a83cd5181f5
+type: DESIGN
+status: PENDING
+title: Level 3 approval — implementation lane (A2) + durable workspace creation (A1)
+question: >-
+  Approve the revised implementation-lane design brief (8ad9985) at Risk Level 3, and authorise A1
+  and A2 to be implemented CONCURRENTLY on disjoint paths, with reviewer findings M1-M5 folded into
+  a single follow-up revision pass alongside your OD-7 and OD-8 answers?
+context:
+  summary: >-
+    The implementation lane is the missing link: without it every dispatched defect fails review
+    closed with "no implementation artifact". Five work items are currently stranded (4 at
+    agent_completed, 1 at design_not_required), all on consumed dedupe keys — a symptom, not the cause.
+
+    The prior brief was superseded because its core step was unexecutable: it derived the workspace
+    from `currentBaselineRevision`, which is an integer SEQUENCE COUNTER
+    (onboarding_record.dart:71-74), so `git rev-parse --verify <n>^{commit}` fails closed every time.
+    Independent review confirmed the deletion was correct.
+
+    The revision reframes workspace CREATION as a prerequisite of implementation. Current verified
+    state: onboarding_record is 0 rows; the acquirer clones to SCRATCH (ephemeral, released after use);
+    no durable clone exists on disk; triage descriptors point at /triage-repo (README-only) with a
+    meaningless revision. Credential custody is NOT a problem — the custody file is a 600 regular
+    file with a present, parseable private half, status=verified, hostKeyStatus=confirmed.
+
+  reviewer_verdict: >-
+    DESIGN_REVIEW_HUMAN_DECISION_REQUIRED. Risk Level 3 independently confirmed and NOT available for
+    downgrade: this adds a value to WorkItemState (the single platform-wide enum the scheduler entry
+    sets, the coordinator's edges, the workflow store, the control-plane API and the operator UI all
+    consume), adds a transition edge, and retargets five human-decision routes across four decision
+    types. DESIGN_GOVERNANCE.md:99 reserves that for HUMAN_DECISION_REQUIRED.
+    No blockers, no highs. Five mediums (M1-M5), all entangled with decisions only the human can make.
+
+  what_is_actually_safe_to_parallel: >-
+    SAFE_PARALLEL_WORK: YES. With C-1 (server.dart owned exclusively by A2) and C-2 (A1's runtime
+    constructible without server.dart, modelled on BaselineProductionRuntime.resolve), ownership is
+    genuinely disjoint and neither unit's product code waits on the other's. Concurrent authoring AND
+    concurrent independent review are safe.
+    Concurrent DISPATCH without a durable workspace is NOT safe, and must be prevented by the §7.7
+    readiness probe (defer, never dispatch).
+
+  honest_limits: >-
+    Neither IMPL-001 nor IMPL-002 completes on approval alone. OD-7 gates A1's compose change, OD-8
+    gates A1's persistence write path, OD-5/OD-10 determine whether A2 dispatches at all. Approving
+    authorises BUILDING, not landing both requirements. Reviewer MEDIUM-4 flagged that §12.3 does not
+    partition this, so the correction pass adds a dispatchable-now vs gated table.
+recommendation: >-
+  APPROVE, with M1-M5 folded into one revision pass alongside your OD-7/OD-8 answers.
+  Rationale: the brief's central correction is verified against the code, traceability is strong
+  (~40 references spot-checked, all resolving), and the agnosticism gate passes 7/7. The five mediums
+  are corrections, not redesign, and each is entangled with an OD answer — splitting them into a
+  separate correction lane would re-block the design on the same questions.
+options:
+  - id: A
+    label: Approve Level 3; A1+A2 concurrent; fold M1-M5 with the OD answers
+    implications: >-
+      A single revision pass produces a Level-3-clean, approval-ready artifact. Then A1 and A2 are
+      dispatched as two implementer lanes with disjoint OWNED_PATHS, then reviewed independently.
+      Work items still cannot complete until the durable workspace lands and the readiness probe
+      passes.
+    effort: revision pass, then two implementation lanes
+    risk: Low. No production code is written before the artifact is clean.
+  - id: B
+    label: Approve Level 3, but require OD-7/OD-8 resolved before ANY implementation begins
+    implications: >-
+      Serialises the revision behind the two architecture answers. A1's lane and materialiser — which
+      are NOT blocked by OD-7/OD-8 — are held back even though they could proceed.
+    effort: one extra round-trip
+    risk: Low, but wastes a legitimately unblocked chunk of work.
+  - id: C
+    label: Request a further design revision before deciding
+    implications: >-
+      Use this to demand changes to the brief itself (e.g. narrow A1's credentials/** grant first,
+      or resolve OD-3/4/5/10 in the artifact rather than by decision). Nothing dispatches until it returns.
+    effort: another design+review cycle
+    risk: Delays everything; the reviewer found no blocker or high justifying it.
+  - id: D
+    label: Decline; do not build an implementation lane
+    implications: >-
+      All dispatched defects continue to fail review closed. The five stranded items stay stranded and
+      the triage-only pipeline remains the ceiling on what the platform can complete.
+    effort: none
+    risk: The backlog never drains. This is the current de-facto state.
+impact_if_not_resolved: >-
+  A1, A2 and the Chain-B dedupe-key repair all remain blocked. No defect can reach human QA.
+paused_lanes:
+  - A1 durable workspace creation
+  - A2 implementation scheduler
+  - Chain-B repair of 5 consumed dedupe keys
+safe_work_continuing:
+  - "none — A4 is complete and reviewed; A1 and A2 are both gated on this"
