@@ -65,7 +65,17 @@ enum WorkFilter {
     WorkFilter.workingOnIt =>
       status == PlainStatus.workingOnIt ||
           status == PlainStatus.awaitingReview ||
-          status == PlainStatus.waitingToStart,
+          status == PlainStatus.waitingToStart ||
+          // A row that says "Ready to build" IS work in flight from the
+          // operator's side: the system is about to start on it by itself and
+          // nobody is being waited on. Leaving it out made an
+          // `implementation_ready` item appear only under "All", so an operator
+          // asking "what is working on it?" was silently not shown the queue
+          // the implementation lane is about to drain — the filter answered a
+          // different question than the one asked, with no empty state to say
+          // so. `readyToBuild` reads as work-in-progress here for the same
+          // reason it takes an accent tick in `PlainStatus.tickColor`.
+          status == PlainStatus.readyToBuild,
     WorkFilter.needsYou => status.isOperatorTurn,
     WorkFilter.finished => status == PlainStatus.finished,
     WorkFilter.failed =>

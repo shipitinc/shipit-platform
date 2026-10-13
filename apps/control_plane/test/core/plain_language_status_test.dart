@@ -158,6 +158,7 @@ void main() {
         PlainStatus.stopped: 'took',
         PlainStatus.waitingToStart: 'waiting',
         PlainStatus.awaitingReview: 'waiting',
+        PlainStatus.readyToBuild: 'waiting',
         PlainStatus.needsYourApproval: 'waiting',
         PlainStatus.needsYouItFailed: 'waiting',
       };

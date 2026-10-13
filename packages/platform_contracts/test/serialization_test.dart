@@ -417,7 +417,7 @@ void main() {
     });
 
     test('WorkItemState has expected values', () {
-      expect(WorkItemState.values.length, equals(25));
+      expect(WorkItemState.values.length, equals(26));
       expect(WorkItemState.draft.name, equals('draft'));
       expect(WorkItemState.completed.isTerminal, isTrue);
       expect(WorkItemState.cancelled.isTerminal, isTrue);

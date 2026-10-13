@@ -257,6 +257,15 @@ void run(List<String> args) async {
   // with only `linux` would never be selected for an implementation job and the
   // scheduler would defer for ever while reporting itself healthy — the same
   // silent no-dispatch the empty registry produced, one level down.
+  //
+  // READER WARNING — this worker inherits the TRIAGE verification plan. All
+  // three roles share one coordinator, whose single `verificationPlan` is
+  // `git rev-parse --verify 'HEAD^{commit}'`: it cannot fail on a real
+  // checkout, so NOTHING here verifies an implementation. Design §7.8 / `OD-6`
+  // is open and awaits a role-scoped plan at the landing gate; the full
+  // argument, and why a green implementation run must not be read as coverage,
+  // is on [buildTriageExecutionCoordinator]. No second coordinator is created
+  // here on purpose — that choice is `OD-6`'s, not this lane's.
   final implementWorker = LocalWorker(
     workerId: 'w-impl-local',
     poolId: 'impl-pool',
@@ -987,6 +996,41 @@ const VerificationPlan triageVerificationPlan = VerificationPlan(
 ///
 /// [run] supplies a Postgres-backed [ModelExecutionRecordStore]; a test may
 /// omit it, exactly as a coordinator without one behaves in [run]'s absence.
+///
+/// ## The implementer inherits this plan, and this plan cannot fail
+///
+/// [ExecutionCoordinator] carries ONE [VerificationPlan] for every job it runs,
+/// and all three roles in [run] — triage, review, implement — drive the same
+/// coordinator (`CoordinatorAgentExecutionDriver(coordinator)`, `:229-278`).
+/// So an implementation run is verified by
+/// `git rev-parse --verify 'HEAD^{commit}'`, which succeeds for any checkout
+/// that has a commit. That is a liveness check on the worktree; it verifies
+/// nothing the implementer wrote.
+///
+/// **This is a known, unfilled gap — not a plan that is working.** Design §7.8
+/// requires "a dedicated [VerificationPlan], pinned deliberately", and §9.3 row
+/// 7 requires that plan's FAILURE land at `agentFailed` with no
+/// `producerActorId` (`execution_coordinator.dart:782-812`; the failure branch
+/// omits the `metadataMerge` at `:796` while success sets it at `:838`).
+/// With this plan attached, that branch is UNREACHABLE for implementation jobs:
+/// no implementation execution can ever be settled `executedFail` by
+/// verification. §9.3's contract is therefore untested in production for the one
+/// role it is written about.
+///
+/// **Do not read a green implementation execution as evidence that verification
+/// ran.** Nothing here verifies it, and the absence of verification failures is
+/// the absence of a test, not a passing one. The independent gate it enables is
+/// §9.2 row 5 (`endingRevision` null ⇒ review fails closed), which is a real
+/// check on the artefact — not on the code's behaviour.
+///
+/// TODO(design §7.8 / `OD-6`, OPEN at the landing gate): give the implementation
+/// lane a verification plan of its own. HOW is an architecture decision this
+/// lane must not make on its own — `ExecutionCoordinator` exposes a single
+/// `verificationPlan` field for all roles, so a role-scoped plan needs either a
+/// per-role coordinator or a plan resolved from the job's role, and `OD-6` is
+/// where that decision belongs. Deliberately NOT chosen here: no second
+/// `ExecutionCoordinator` is added and nothing under
+/// `packages/execution_coordinator/` is touched.
 ExecutionCoordinator buildTriageExecutionCoordinator({
   required ExecutionStore store,
   required DurableWorkflowEngine workflowEngine,
