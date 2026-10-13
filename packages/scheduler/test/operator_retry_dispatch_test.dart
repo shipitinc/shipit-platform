@@ -579,7 +579,7 @@ void main() {
       );
 
       test('an engineering-review REJECT re-enters triage under a FRESH key and '
-          'runs, without collapsing the state', () async {
+          'DISPATCHES, without collapsing the state', () async {
         // THE REJECT HALF, end to end, on the same consumed-key history as the
         // rework test above. This is the case the human's option-B decision
         // is about: the item KEEPS `reviewRejected` as its own state (so the
@@ -592,6 +592,17 @@ void main() {
         //     collapsing them is option A, which the human did not choose;
         //   * the state must still dispatch — `reviewRejected` is not in the
         //     `entryStates` of any definition at base, which is the defect.
+        //
+        // WHAT THIS DOES NOT PROVE, and what a previous version of this test
+        // claimed it did: the worker here is a stub that parks, so the
+        // coordinator is never invoked and "runs" was never established. That
+        // gap is how a scheduler which re-queued the same job for ever could
+        // pass this file. The RUN is proven at full stack realism — real
+        // `ExecutionCoordinator`, real `LocalWorker`, real git worktree, real
+        // agent result — in `test/entry_hop_test.dart` ("a rejected
+        // engineering review hops to the state it can execute from and a real
+        // agent produces a real result on it"). This test owns the key
+        // semantics; that one owns the run.
         final host = await _Host.start(
           seed: _seedDefectAtEngineeringReviewGate,
           cap: 1,
@@ -688,16 +699,22 @@ void main() {
 
       test('a rejected item does NOT re-arm itself on the next tick', () async {
         // The loop this change could have introduced. `reviewRejected` is
-        // dispatchable and the item stays there (nothing in the repository
-        // takes `reviewRejected -> designNotRequired` automatically), so the
-        // evaluator keeps calling it runnable for ever. What stops a second
-        // job is the DEDUPE KEY, not the state: the discriminator only
-        // advances on a fresh human intent, so the next tick computes the
-        // same `:a3`, which the terminal job now holds.
+        // dispatchable, and the evaluator kept calling it runnable for ever
+        // while the coordinator refused every attempt against it. Two separate
+        // things now stop a re-run, and this test asserts BOTH:
         //
-        // Asserted because "dispatchable" is exactly the property that makes
-        // a self-re-arming loop possible, and an unbounded re-run is the one
-        // outcome worse than the inert item being fixed.
+        //   * the scheduler takes the single intermediate hop the definition
+        //     declares for that state, once, and the item is then somewhere
+        //     ordinary that no longer needs a hop; and
+        //   * the DEDUPE KEY stops a second job, not the state: the
+        //     discriminator only advances on a fresh human intent, so the next
+        //     tick computes the same `:a3`, which the terminal job now holds.
+        //
+        // Asserted because "dispatchable" is exactly the property that makes a
+        // self-re-arming loop possible, and an unbounded re-run is the one
+        // outcome worse than the inert item being fixed. The reviewed head
+        // passed the job-count half of this while burning a worker execution
+        // per tick, which is what a count alone cannot see.
         final host = await _Host.start(
           seed: _seedDefectAtEngineeringReviewGate,
           cap: 1,
@@ -755,8 +772,23 @@ void main() {
         );
         expect(
           (await host.engine.loadWorkItem(host.workItemId)).state,
-          WorkItemState.reviewRejected,
-          reason: 'the state is preserved; nothing moves it automatically',
+          WorkItemState.designNotRequired,
+          reason:
+              'the state has MOVED ONCE, by the single hop the definition '
+              'declares for it, and then stopped. The rejection is no longer a '
+              'dead end, and a hop repeated per tick would be the very loop '
+              'this test exists to catch',
+        );
+        final hops = (await host.store.readTransitionHistory(host.workItemId))
+            .where(
+              (r) =>
+                  r.fromState == WorkItemState.reviewRejected &&
+                  r.toState == WorkItemState.designNotRequired,
+            );
+        expect(
+          hops,
+          hasLength(1),
+          reason: 'taken exactly once across all three ticks',
         );
       });
 

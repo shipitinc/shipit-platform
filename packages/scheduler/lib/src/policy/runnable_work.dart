@@ -2,6 +2,19 @@ import 'package:meta/meta.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:workflow_engine/workflow_engine.dart';
 
+/// The one actor the scheduler acts as everywhere it writes workflow state:
+/// the runnability probe's `orchestrator`, the zombie reclaim's `orchestrator`,
+/// and the intermediate-hop transition's `orchestrator`.
+///
+/// Declared once because the transition table guards these writes by actor
+/// identity. Three separately-spelled copies of the same actor would be three
+/// chances to drift, and a drift here is invisible until a transition the
+/// platform depends on is refused for a reason no log explains.
+const WorkflowActor schedulerOrchestratorActor = WorkflowActor(
+  actorId: 'scheduler',
+  actorType: ActorType.orchestrator,
+);
+
 /// What the scheduler may do with a work item on the current tick.
 enum RunnableWorkStatus {
   /// The item may start a bounded agent execution right now.
@@ -119,10 +132,7 @@ class RunnableWorkEvaluator {
 
   final WorkflowEngine policy;
 
-  static const WorkflowActor _scheduler = WorkflowActor(
-    actorId: 'scheduler',
-    actorType: ActorType.orchestrator,
-  );
+  static const WorkflowActor _scheduler = schedulerOrchestratorActor;
 
   RunnableWorkStatus evaluate(WorkItem item, JobDefinition definition) {
     if (item.isTerminal) return RunnableWorkStatus.terminal;
