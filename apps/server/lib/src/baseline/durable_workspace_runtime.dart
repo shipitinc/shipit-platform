@@ -459,6 +459,23 @@ class DurableWorkspaceProvisioner {
     // deliberately NOT the way in: it MINTS a new deploy key and stores it,
     // which is credential lifecycle, not materialisation, and it would replace
     // a key a human had already installed on the host.
+    //
+    // **Do not "fix" this into a `generate` call.** Design brief §6.4
+    // obligation 1 reads, literally, as "materialises the private half
+    // afresh", and "afresh" is what invites the mint. That literal reading was
+    // raised, reviewed and REJECTED against §6.4's own text: the same section
+    // states that the durable clone "has no credential configured on it", and
+    // a mint is how one gets configured. The obligation is about the private
+    // half arriving fresh into THIS call's memory — never cached in a field,
+    // never reused across acquisitions, wiped before return — not about
+    // there being a brand-new key. §6.4's wording is the defect; this read is
+    // the correct reading of it.
+    //
+    // Minting would also exceed what the operator approved: OD-7 decided
+    // where the clone lives, custody was verified already working, and
+    // credential lifecycle was explicitly OUT of scope. A materialiser that
+    // silently begins minting deploy keys would be doing credential work
+    // nobody authorised.
     final material = await credentialKeyService.secretProvider.read(
       referenceName: credential.referenceName,
     );

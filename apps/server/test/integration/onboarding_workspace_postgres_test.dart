@@ -103,6 +103,22 @@ WorkspaceDescriptor _workspace({
   cleanedAt: cleanedAt,
 );
 
+/// The shape `recordWorkspace` / `completeOnboarding` take.
+///
+/// The per-execution [_workspace] is still a legal value for
+/// `OnboardingRecord.workspace` and is exercised above; these two engine
+/// methods are the PRODUCT-scoped answer, and a worker's worktree is not the
+/// product's, so their parameters are typed `DurableWorkspaceDescriptor`.
+DurableWorkspaceDescriptor _durableWorkspace({
+  String startingRevision = _sha,
+}) => DurableWorkspaceDescriptor(
+  workspaceId: 'dws-onbws-1',
+  productId: _productId,
+  repositoryPath: '/var/shipit/workspaces/shipit-platform-dws-onbws-1',
+  startingRevision: startingRevision,
+  createdAt: _t,
+);
+
 /// The pre-migration document: exactly the eight keys a row written before
 /// `20261012213045000` carries, and nothing else.
 Map<String, dynamic> _preMigrationRowJson() => {
@@ -185,19 +201,29 @@ void main() {
           final ws = (await store.readOnboardingForProduct(
             _productId,
           ))!.workspace!;
-          expect(ws.workspaceId, 'ws-onbws-1');
-          expect(ws.workerExecutionId, 'we-onbws-1');
-          expect(ws.workerId, 'wk-local-1');
-          expect(ws.repositoryPath, '/var/shipit/repos/shipit-platform');
-          expect(ws.startingRevision, _sha);
+          // The column carries TWO wire shapes now (OD-8): a per-execution
+          // `WorkspaceDescriptor` and a product-scoped
+          // `DurableWorkspaceDescriptor`. They are told apart by the durable
+          // shape's constant `kind` literal and are never interchangeable, so
+          // this read discriminates rather than coercing.
+          expect(ws.kind, 'execution');
+          final descriptor = ws.requireExecution();
+          expect(descriptor.workspaceId, 'ws-onbws-1');
+          expect(descriptor.workerExecutionId, 'we-onbws-1');
+          expect(descriptor.workerId, 'wk-local-1');
           expect(
-            ws.worktreePath,
+            descriptor.repositoryPath,
+            '/var/shipit/repos/shipit-platform',
+          );
+          expect(descriptor.startingRevision, _sha);
+          expect(
+            descriptor.worktreePath,
             '/var/shipit/workspaces/shipit-platform-ws-onbws-1',
           );
-          expect(ws.detached, isTrue);
-          expect(ws.branch, isNull);
-          expect(ws.createdAt, _t);
-          expect(ws.cleanedAt, _t.add(const Duration(days: 2)));
+          expect(descriptor.detached, isTrue);
+          expect(descriptor.branch, isNull);
+          expect(descriptor.createdAt, _t);
+          expect(descriptor.cleanedAt, _t.add(const Duration(days: 2)));
           expect(ws.isCleaned, isTrue);
         },
       );
@@ -311,14 +337,14 @@ void main() {
         final engine = await _engine();
         await engine.recordWorkspace(
           productId: _productId,
-          workspace: _workspace(),
+          workspace: _durableWorkspace(),
           pinnedRevision: _sha,
           now: _t,
         );
         final completed = await engine.completeOnboarding(
           productId: _productId,
           pinnedRevision: _sha,
-          workspace: _workspace(),
+          workspace: _durableWorkspace(),
           completedBaselineId: 'bl-onbws-1',
           now: _t.add(const Duration(hours: 1)),
         );

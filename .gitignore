@@ -19,3 +19,31 @@ build/
 
 # IDE-local workspace state (per developer, not per project).
 .idea/
+
+# Durable product CLONES (OD-7 / decision 9bfe2d09).
+#
+# `${SHIPIT_HOST_WORKSPACE_DIR}` is host-backed on purpose, so an independent
+# reviewer can re-read `producer.repositoryPath` from the host without entering
+# the container. The cost of that choice is named in the design brief's own
+# W-B row: host path coupling, "an explicit `.gitignore` entry", and a uid/gid
+# expectation. This block is that entry.
+#
+# What it prevents: an operator who points `SHIPIT_HOST_WORKSPACE_DIR` INSIDE
+# the working tree gets one real clone per governed product, each with its own
+# `.git`. Git treats that as an EMBEDDED REPOSITORY, so `git status` shows it
+# as untracked and `git add -A` stages it as a gitlink — one keystroke from
+# committing another project's history (and, with it, its `.env`) into this
+# repository. This repository has already been bitten by a scratch path being
+# swept into a commit, which is why the golden-failure directory above carries
+# the same warning about its own 80 accidental entries.
+#
+# These are in-tree names only. The default and the fail-closed sentinel live
+# under /tmp and never enter this tree at all; listing them here costs nothing
+# and catches the case where a developer exports a repo-relative path instead.
+#
+# This is the SECOND layer, not the only one. The first is that each product's
+# clone root contains a `*` sentinel file, so a root nested in a work tree
+# contributes nothing even where none of these patterns matches.
+/shipit-workspaces/
+/shipit-workspaces-*/
+/workspaces/
