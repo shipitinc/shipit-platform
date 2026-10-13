@@ -239,26 +239,50 @@ class ImplementationReadinessProbe {
   ///
   /// ## What makes it total, and why it is stated as more than a promise
   ///
-  /// There are four injected ports and each one is separately able to fail, so
-  /// totality here is four guards rather than one claim:
+  /// There are **five** injected function ports — the constructor takes exactly
+  /// [readProductState], [readOnboarding], [_repositoryExists], [_resolveCommit]
+  /// and [_log] — and each one is separately able to fail, so totality here is
+  /// five guards rather than one claim:
   ///
-  /// | Port | How it fails | What the deferral says |
-  /// |---|---|---|
-  /// | [readProductState] | throws (store down) | `product_state_unreadable` |
-  /// | [readOnboarding] | throws (store down) | `onboarding_unreadable` |
-  /// | the record's workspace shape | not durable | `workspace_shape_unknown` |
-  /// | [_resolveCommit] — `Process.runSync` **throws** `ProcessException` when the process cannot start | throws | `pin_unresolvable`, carrying the exception verbatim |
+  /// | # | Injected port | How it fails | What the deferral says |
+  /// |---|---|---|---|
+  /// | 1 | [readProductState] | throws (store down) | `product_state_unreadable` |
+  /// | 2 | [readOnboarding] | throws (store down) | `onboarding_unreadable` |
+  /// | 3 | [_repositoryExists] — `Directory.existsSync()` **throws** `FileSystemException` when a path component denies traversal; it does not answer `false` | throws | `workspace_unreadable`, deliberately distinct from `workspace_missing` |
+  /// | 4 | [_resolveCommit] — `Process.runSync` **throws** `ProcessException` when the process cannot start | throws | `pin_unresolvable`, carrying the exception verbatim |
+  /// | 5 | [_log] — the composition root's is `stdout.writeln`, which raises on a closed pipe | throws | swallowed; the deferral is still returned, unlogged |
   ///
-  /// The last row is the one that is not obvious, and the reason this method
-  /// carries the list rather than a single sentence: a shell-out that fails to
-  /// *start* does not return a non-zero exit code, it throws, and uncaught it
-  /// leaves `probe`, crosses `toWorkloadResolver`, crosses the unguarded
-  /// `await _workloadResolver(...)` in `Scheduler._dispatchOne`, and aborts
-  /// `tick()` — which costs the whole dispatch pass, not the one bad item.
+  /// Two further reads are guarded but are **not ports**, and are not counted in the
+  /// five: `record.hasDurableProductClone` (a value, answering `false` → `no_durable_workspace`)
+  /// and `record.workspace!.requireDurable()` (a *method on a record that port 2
+  /// already returned*, which throws on a record of the wrong shape →
+  /// `workspace_shape_unknown`). They are listed here because the earlier version of
+  /// this table counted one of them as a port, which is what made the total wrong.
   ///
-  /// Totality is asserted by `implementation_readiness_probe_test.dart`, both at
-  /// the probe and end to end through a real `Scheduler` tick carrying two jobs
-  /// where one clone's git cannot be started. A contract with no test is a
+  /// Two rows above are not obvious, and they are the reason this method carries the
+  /// list rather than a single sentence.
+  ///
+  /// The first is that **ports 3 and 4 throw rather than returning a value that
+  /// encodes failure**. A shell-out that fails to *start* does not return a
+  /// non-zero exit code, it throws; and neither does `existsSync` on a
+  /// permission fault. A reader who expects ports to report failure in their
+  /// return type will not see either.
+  ///
+  /// The second is that **the old count was wrong, and being wrong was the
+  /// defect**. An earlier revision of this table said "four ports and four
+  /// guards" while counting `requireDurable()` — a method on a returned record,
+  /// not a port — and omitting [_repositoryExists], which had no guard at all.
+  /// The claim read as verified and was not: it gave a reader a reason to stop
+  /// counting at four. An enumeration that is *specific and wrong* is worse than
+  /// a promise that is *vague*, because the specificity is what invites trust.
+  ///
+  /// Totality is asserted by `implementation_readiness_probe_test.dart`, which
+  /// raises each port's own failure — one test per row, so no port can be quietly
+  /// dropped from this table without a test failing to match it. Rows 3 and 4 are
+  /// additionally asserted end to end through a real `Scheduler` tick carrying a
+  /// second healthy job, because (a) the probe returning a deferral is a property
+  /// of one method and (b) the healthy job still dispatching is the property of
+  /// the chain that the contract is actually about. A contract with no test is a
   /// comment.
   Future<ImplementationReadiness> probe(WorkItem item) async {
     if (!durableRuntimeAvailable) {
@@ -361,7 +385,37 @@ class ImplementationReadinessProbe {
     }
 
     final repositoryPath = descriptor.repositoryPath;
-    if (!_repositoryExists(repositoryPath)) {
+    final bool repositoryOnDisk;
+    try {
+      repositoryOnDisk = _repositoryExists(repositoryPath);
+    } on Object catch (error) {
+      // `_directoryExists` is `Directory(path).existsSync()`, and that THROWS
+      // `FileSystemException` (`OS Error: Permission denied, errno = 13`) when a
+      // component of the path denies traversal — it does not answer `false`. A
+      // host bind mounted with the wrong ownership, a directory removed out from
+      // under an open handle, a path through a vanished network mount: all
+      // ordinary, and all invisible to an `exitCode`-shaped mental model.
+      //
+      // So "cannot be read" is its own deferral and not a flavour of
+      // `workspace_missing`. They send an operator to different places:
+      // re-creating a clone that merely cannot be read discards the only copy
+      // of the product's provenance over a mount fault.
+      return _deferred(
+        item,
+        'the recorded durable clone for $productId could not be examined at '
+        'all, because $repositoryPath could not be read ($error). That is not '
+        'the same as the clone being gone: it may be present and intact behind '
+        'a permission or mount fault, so nothing has been established either '
+        'way and nothing is dispatched. Not re-creating it either — recreating '
+        'a clone whose provenance cannot be read would discard it',
+        event: 'implementation.deferred.workspace_unreadable',
+        details: {
+          'repositoryPath': repositoryPath,
+          'pinnedRevision': record.pinnedRevision,
+        },
+      );
+    }
+    if (!repositoryOnDisk) {
       return _deferred(
         item,
         'the recorded durable clone for $productId is not on disk at '
@@ -436,6 +490,20 @@ class ImplementationReadinessProbe {
   /// because "the implementation lane is silently never dispatching" is the
   /// failure mode this whole mechanism has to avoid being mistaken for: a
   /// scheduler that does nothing looks exactly like a healthy one.
+  ///
+  /// ## Why the logging itself is guarded
+  ///
+  /// `log` is the fifth injected port and it is called from inside `catch`
+  /// blocks, so a throw from it is the worst kind: it escapes the very handler
+  /// that was recording why the work was refused. The default cannot throw, but
+  /// an injected one can, and the composition root's `_log` is
+  /// `stdout.writeln` — which raises on a closed or broken pipe, ordinary for a
+  /// service whose parent went away.
+  ///
+  /// A deferral is already the safe outcome, and it is returned to the caller
+  /// whether or not it could be written down. Losing the log line is a real
+  /// loss, but converting a deferral into a throw that leaves `tick()` is a
+  /// strictly larger one: it costs every OTHER job in the pass.
   ImplementationWorkspaceDeferred _deferred(
     WorkItem item,
     String reason, {
@@ -448,17 +516,24 @@ class ImplementationReadinessProbe {
       productId: item.productId,
       gitOutput: gitOutput,
     );
-    _log(event, {
-      'workItemId': item.workItemId,
-      'productId': item.productId,
-      'state': item.state.wire,
-      'reason': reason,
-      if (gitOutput != null) 'git': gitOutput,
-      ...details,
-      'action':
-          'deferred. Not dispatched, not failed, no human decision raised and '
-          'no retry consumed: the next tick asks again',
-    });
+    try {
+      _log(event, {
+        'workItemId': item.workItemId,
+        'productId': item.productId,
+        'state': item.state.wire,
+        'reason': reason,
+        if (gitOutput != null) 'git': gitOutput,
+        ...details,
+        'action':
+            'deferred. Not dispatched, not failed, no human decision raised and '
+            'no retry consumed: the next tick asks again',
+      });
+    } on Object {
+      // Swallowed deliberately, and only the fault is swallowed: the deferral
+      // below is still returned. There is nowhere better to send this. The
+      // alternative — rethrowing — is the exact escape path this class exists
+      // to close.
+    }
     return deferred;
   }
 }

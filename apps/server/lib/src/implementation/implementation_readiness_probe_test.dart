@@ -1,5 +1,13 @@
 import 'dart:io'
-    show Directory, File, Platform, Process, ProcessException, ProcessResult;
+    show
+        Directory,
+        File,
+        FileSystemException,
+        OSError,
+        Platform,
+        Process,
+        ProcessException,
+        ProcessResult;
 
 import 'package:control_plane_server/src/implementation/implementation_readiness_probe.dart';
 import 'package:platform_contracts/platform_contracts.dart'
@@ -82,6 +90,63 @@ void main() {
   tearDownAll(() {
     if (repoRoot.existsSync()) repoRoot.deleteSync(recursive: true);
   });
+
+  // Roots holding a mode-000 directory, restored before removal. A directory
+  // nobody may enter cannot be deleted either, so leaving one behind turns this
+  // fixture into a developer's problem later.
+  final lockedRoots = <Directory>[];
+
+  tearDown(() {
+    for (final root in lockedRoots) {
+      for (final child in root.listSync(recursive: false, followLinks: false)) {
+        if (child is Directory) {
+          Process.runSync('chmod', ['755', child.path]);
+        }
+      }
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    }
+    lockedRoots.clear();
+  });
+
+  /// A clone path this process genuinely cannot reach, and whether the
+  /// filesystem actually produced that condition.
+  ///
+  /// ## Why this needs a real directory rather than a mocked throw
+  ///
+  /// `Directory.existsSync()` **THROWS** `FileSystemException` (`OS Error:
+  /// Permission denied, errno = 13`) when a component of the path denies
+  /// traversal. It does not answer `false`. That is the entire difference
+  /// between the `repositoryExists` port failing and answering, and it is why
+  /// the port needs a `try` and not merely a `false` branch. A mocked throw
+  /// would prove the guard exists; only this proves anything raises it.
+  ///
+  /// The precondition is asked of the OS via `test -d`, never via `existsSync`,
+  /// because `existsSync` is the very call under test — a fixture that used it
+  /// to check its own precondition could not fail, and could therefore not tell
+  /// anyone the precondition was missing.
+  ({String path, bool unreadable}) lockedClone() {
+    final root = Directory.systemTemp.createTempSync('impl-probe-locked');
+    lockedRoots.add(root);
+    final locked = Directory('${root.path}/locked')..createSync();
+    final clone = Directory('${locked.path}/repo')..createSync();
+
+    final chmod = Process.runSync('chmod', ['000', locked.path]);
+    if (chmod.exitCode != 0) {
+      return (path: clone.path, unreadable: false);
+    }
+
+    bool reachable(String path) =>
+        Process.runSync('test', ['-d', path]).exitCode == 0;
+
+    // `locked` itself is still stat-able through its own parent; `clone` beneath
+    // it is not, because reaching it needs traverse permission that 000 denies.
+    // Both were created, so "reachable(parent) && !reachable(child)" can only be
+    // the permission fault.
+    return (
+      path: clone.path,
+      unreadable: reachable(locked.path) && !reachable(clone.path),
+    );
+  }
 
   WorkItem item() {
     final now = DateTime.utc(2026);
@@ -444,7 +509,7 @@ void main() {
   // tick. These tests are the contract, and the last one is the contract's whole
   // point: a bad clone must cost exactly ONE job, not the tick.
   // ---------------------------------------------------------------------------
-  group('no injected port can throw out of the probe', () {
+  group('every injected port is guarded separately — none throws out', () {
     test(
       'a throwing readOnboarding defers rather than crashing the tick',
       () async {
@@ -529,6 +594,103 @@ void main() {
               'binary is missing',
         );
         expect(events, ['implementation.deferred.pin_unresolvable']);
+      },
+    );
+
+    test(
+      'a repositoryExists that THROWS defers rather than escaping the probe',
+      () async {
+        // `_directoryExists` is `Directory(path).existsSync()`, and that call
+        // **throws** rather than answering `false` when a component of the path
+        // denies traversal — `OS Error: Permission denied, errno = 13`. A host
+        // bind that was mounted with the wrong ownership does exactly this.
+        //
+        // This port was deliberately left outside the `_resolveCommit` guard,
+        // with the reasoning "the guard belongs at the port that shells out".
+        // That reasoning does not transfer to a port that touches the
+        // filesystem directly: this one can fail for a reason no exit code
+        // describes, and it sits on the same unguarded path to `tick()`.
+        final events = <String>[];
+        final probe = ImplementationReadinessProbe(
+          readProductState: (_) async => ProductState.governed,
+          readOnboarding: (_) async =>
+              durableRecord(repositoryPath: '/unreadable/clone'),
+          repositoryExists: (_) => throw FileSystemException(
+            'Exists failed',
+            '/unreadable/clone',
+            OSError('Permission denied', 13),
+          ),
+          runtimeTypeId: 'probe-runtime',
+          timeoutSeconds: 1800,
+          log: (event, data) => events.add(event),
+        );
+
+        final readiness = await probe.probe(item());
+
+        expect(
+          readiness,
+          isA<ImplementationWorkspaceDeferred>(),
+          reason:
+              'a throw here does not merely fail one probe: `toWorkloadResolver` '
+              'and `_dispatchOne` both await this bare, so it leaves `tick()` '
+              'and aborts the dispatch pass for every OTHER job in the tick',
+        );
+        final deferred = readiness as ImplementationWorkspaceDeferred;
+        expect(
+          deferred.reason,
+          contains('Permission denied'),
+          reason:
+              'the operator\'s next move depends on WHICH fault this is. "the '
+              'clone is gone" sends someone to re-create it; "the clone cannot '
+              'be read" sends them to a mount or an ownership problem, and '
+              're-creating it would silently discard the only copy',
+        );
+        expect(
+          events,
+          ['implementation.deferred.workspace_unreadable'],
+          reason:
+              'a refusal that is logged nowhere looks like an idle scheduler. '
+              'Also: this event must be DISTINCT from `workspace_missing`, '
+              'because the two send an operator to different places',
+        );
+      },
+    );
+
+    test(
+      'a log that THROWS does not convert a deferral into a crash',
+      () async {
+        // The fifth injected port, and the one most likely to be forgotten
+        // because the default cannot throw. The default cannot; an INJECTED one
+        // can. The composition root's `_log` is `stdout.writeln`, which raises
+        // `StdoutException` / `OSError` on a broken or closed stdout — ordinary
+        // for a service whose parent closed the pipe.
+        //
+        // The hazard is specific to `_deferred`: it is called from inside `catch`
+        // blocks, so a throw from the log does not merely escape the probe, it
+        // escapes the very handler that was recording why the work was refused.
+        final probe = ImplementationReadinessProbe(
+          readProductState: (_) async => ProductState.paused,
+          readOnboarding: (_) async => null,
+          runtimeTypeId: 'probe-runtime',
+          timeoutSeconds: 1800,
+          log: (event, data) => throw const _BrokenLog(),
+        );
+
+        final readiness = await probe.probe(item());
+
+        expect(
+          readiness,
+          isA<ImplementationWorkspaceDeferred>(),
+          reason:
+              'a deferral is already the safe outcome; a failing sink must not '
+              'upgrade it into a throw that leaves `tick()`. The refusal is '
+              'returned to the caller regardless of whether it could be written '
+              'down',
+        );
+        expect(
+          (readiness as ImplementationWorkspaceDeferred).productId,
+          'product-a',
+        );
       },
     );
 
@@ -677,6 +839,157 @@ void main() {
         );
       },
     );
+
+    test(
+      'an UNREADABLE clone costs that job ALONE — the next job in the same '
+      'tick still dispatches',
+      () async {
+        // The same property, arrived at through the SECOND unguarded port and
+        // through the REAL default `_directoryExists` rather than an injected
+        // stand-in. Nothing is stubbed here: the healthy product's clone is the
+        // real git fixture, its pin is its real commit, and `resolveCommit` is
+        // the production shell-out. The only hostile element is a directory the
+        // process genuinely cannot traverse — which is what a host bind with the
+        // wrong ownership looks like from inside the probe.
+        final locked = lockedClone();
+        if (!locked.unreadable) {
+          // The fixture needs permission bits that actually deny traversal, which
+          // a process running as root simply cannot be given. Reported rather
+          // than silently dropped — the repo's convention for a declared
+          // limitation, per `WorkflowStoreContractDeviations`.
+          //
+          // No coverage is lost by this: the GUARD is covered unconditionally by
+          // the injected-port test above, which raises the identical
+          // `FileSystemException` on every platform. What this test alone proves
+          // is that the PRODUCTION default `_directoryExists` really raises it.
+          printOnFailure(
+            'DECLARED LIMITATION: this process cannot create a directory it is '
+            'denied access to (root ignores mode bits), so the real-filesystem '
+            'proof that `_directoryExists` throws did not run here. The guard '
+            'itself is still covered by the injected-port test in this group.',
+          );
+          return;
+        }
+
+        final workflowStore = InMemoryWorkflowStore();
+        final jobStore = InMemoryJobStore();
+        final engine = DurableWorkflowEngine(store: workflowStore);
+
+        for (final id in [unreadableCloneItem, healthyCloneItem]) {
+          await engine.createWorkItem(
+            workItemId: id,
+            productId: 'product-$id',
+            category: WorkItemCategory.feature,
+            title: 'Fixture item $id',
+            description:
+                'A fixture used to ask what one unreadable clone costs',
+          );
+          await _parkAtImplementationReady(workflowStore, id);
+        }
+
+        // NO `repositoryExists:` override and NO `resolveCommit:` override. The
+        // ports are the production defaults, which is the whole point: the fault
+        // has to arrive through the code the composition root actually runs.
+        final inner = toWorkloadResolver(
+          ImplementationReadinessProbe(
+            readProductState: (_) async => ProductState.governed,
+            readOnboarding: (productId) async => OnboardingRecord(
+              onboardingId: 'onb-$productId',
+              productId: productId,
+              // The healthy clone is pinned at its REAL commit so the real
+              // `_gitRevParse` resolves it.
+              pinnedRevision: realCommit,
+              workspace: OnboardingWorkspace.durable(
+                DurableWorkspaceDescriptor(
+                  workspaceId: 'dws-$productId',
+                  productId: productId,
+                  repositoryPath: productId == 'product-$unreadableCloneItem'
+                      ? locked.path
+                      : repoRoot.path,
+                  startingRevision: realCommit,
+                  createdAt: DateTime.utc(2026),
+                ),
+              ),
+              createdAt: DateTime.utc(2026),
+              updatedAt: DateTime.utc(2026),
+            ),
+            runtimeTypeId: 'probe-runtime',
+            timeoutSeconds: 1800,
+          ),
+        );
+
+        final attempted = <String>[];
+        final requests = <WorkerExecutionRequest>[];
+
+        final result = await Scheduler(
+          schedulerId: 'sched-impl',
+          workflowStore: workflowStore,
+          jobStore: jobStore,
+          workerStore: InMemoryWorkerStore(),
+          dispatch: _RecordingDispatch(requests),
+          definition: implementFeatureDefinition,
+          dedupeKeyBuilder: implementFeatureDedupeKey,
+          instructionBuilder: implementFeatureInstruction,
+          requestBuilder: implementFeatureRequest,
+          workloadResolver: (job, item) {
+            attempted.add(item.workItemId);
+            return inner(job, item);
+          },
+          workload: SchedulerWorkload(
+            repositoryPath: 'a-triage-only-checkout',
+            startingRevision: 'a' * 40,
+            timeoutSeconds: 1800,
+            runtimeTypeId: 'fake-runtime',
+          ),
+          clock: () => DateTime.utc(2026, 1, 1),
+        ).tick();
+
+        expect(
+          attempted,
+          containsAll([unreadableCloneItem, healthyCloneItem]),
+          reason:
+              'NON-VACUITY. Both jobs must have been dispatch-attempted in THIS '
+              'tick, or the assertion below proves nothing. Order is not '
+              'asserted and does not need to be: a throw from EITHER position '
+              'aborts the pass equally',
+        );
+
+        expect(
+          requests.map((r) => r.workItemId),
+          [healthyCloneItem],
+          reason:
+              'this is the finding, and it is the same escape the '
+              '`resolveCommit` test covers, reached through the filesystem '
+              'instead of through `Process`. `Directory.existsSync()` throws '
+              '`FileSystemException` on a permission fault, nothing between '
+              'there and the unguarded `await _workloadResolver(...)` in '
+              '`_dispatchOne` catches it, and the healthy job after it is never '
+              'looked at',
+        );
+        expect(requests.single.repositoryPath, repoRoot.path);
+        expect(requests.single.startingRevision, realCommit);
+        expect(
+          result.blockedArtifactMissing,
+          hasLength(1),
+          reason:
+              'the unreadable job\'s refusal must be VISIBLE on the tick, and '
+              'must be exactly one job\'s worth',
+        );
+        expect(result.terminal, isEmpty);
+        expect(result.cancelledQueued, isEmpty);
+
+        // Same non-burn rule as the sibling test: "cannot read" is not "failed".
+        final stranded = (await jobStore.listJobsForWorkItem(
+          unreadableCloneItem,
+        )).single;
+        expect(stranded.state, JobState.queued);
+        expect(
+          stranded.attempt,
+          1,
+          reason: 'an unreadable clone must not burn the job\'s retry budget',
+        );
+      },
+    );
   });
 }
 
@@ -707,6 +1020,11 @@ Future<void> _parkAtImplementationReady(
 const badCloneItem = 'wi-broken-clone';
 const goodCloneItem = 'wi-healthy-clone';
 
+/// The two work items in the "one unreadable clone costs one job" test. Kept
+/// distinct from the pair above so a failure names WHICH port escaped.
+const unreadableCloneItem = 'wi-unreadable-clone';
+const healthyCloneItem = 'wi-healthy-clone-2';
+
 /// A [WorkerDispatch] that records every request it was asked about and selects
 /// no worker.
 ///
@@ -732,6 +1050,15 @@ class _RecordingDispatch implements WorkerDispatch {
 
   @override
   Future<void> cancel(String workerId, String reason) async {}
+}
+
+/// A log sink that raises, standing in for a closed stdout.
+///
+/// A distinct type rather than a `StateError` so a failure here cannot be
+/// mistaken for one of the store faults the other totality tests raise — the
+/// point of that test is that the *log* is what failed.
+class _BrokenLog implements Exception {
+  const _BrokenLog();
 }
 
 /// A minimal job. Only its id is read by the resolver adapter.
