@@ -24,6 +24,10 @@ import 'package:scheduler/scheduler.dart'
         triageDefectDedupeKey,
         triageDefectInstruction,
         triageDefectRequest,
+        implementFeatureDefinition,
+        implementFeatureDedupeKey,
+        implementFeatureInstruction,
+        implementFeatureRequest,
         SchedulerWorkload,
         WorkerDispatch,
         WorkerDispatcherAdapter,
@@ -72,6 +76,17 @@ import 'src/persistence/postgres_product_registry_store.dart';
 import 'src/baseline/baseline_lane_runner.dart'
     show observeCompletedOnboardingJob;
 import 'src/baseline/baseline_runtime.dart' show BaselineProductionRuntime;
+// A1's durable-workspace runtime, wired here because C-1 assigns this file
+// exclusively to the implementation lane (A2). See `_durableWorkspaceRoot`.
+import 'src/baseline/durable_workspace_runtime.dart'
+    show DurableWorkspaceRuntime;
+// The readiness probe that decides whether an implementation job may dispatch
+// at all. It lives outside `lib/src/baseline/**` on purpose: that directory is
+// covered by the product-agnosticism gate, which refuses every product name —
+// and the gate's own file belongs to A1, so a resolver placed there would have
+// meant editing a test this lane does not own.
+import 'src/implementation/implementation_readiness_probe.dart'
+    show ImplementationReadinessProbe, toWorkloadResolver;
 import 'src/triage/defect_triage_sweep.dart';
 import 'src/triage/lane_i_tick_hook.dart' show drainTriageOutcomesFromTick;
 import 'src/triage/triage_processor.dart';
@@ -114,6 +129,25 @@ void run(List<String> args) async {
   // defect reports, durably queues them, and never classifies any of them.
   final triageSource = _resolveTriageSource();
   final workspaceRoot = _triageWorkspaceRoot();
+
+  // ---- A2's obligation under C-1: the durable-workspace root read. ----
+  //
+  // `DurableWorkspaceRuntime.resolve` takes its root as a REQUIRED parameter and
+  // has no default, deliberately: a root it cannot name is a runtime that would
+  // write into whatever directory the process considers writable, which is the
+  // container-local state the host-bind decision exists to prevent. The read
+  // lives HERE for two independent reasons, and it needs both:
+  //
+  //  * the product-agnosticism gate forbids every product name in
+  //    `lib/src/baseline/**`, and the variable is named after the product;
+  //  * C-1 gives this file exclusively to this lane, so there is no second
+  //    writer.
+  //
+  // Resolved BEFORE the server starts, like the triage source, and with no
+  // fallback of its own. An unset variable is not patched here: `resolve`
+  // refuses it and records a named reason, which is the fail-closed posture the
+  // durable-workspace runtime was built around.
+  final durableWorkspaceRoot = _durableWorkspaceRoot();
 
   // Also resolved BEFORE the server starts, and for a heavier reason: a server
   // with no cap dispatches as many agent executions as the queue offers, which
@@ -212,9 +246,41 @@ void run(List<String> args) async {
     workerStore: workerStore,
     platform: Platform.operatingSystem,
   );
+  // THE IMPLEMENTER. A distinct worker id, so it holds its own lease and its own
+  // role identity: a worker id is what distinguishes one lease from another, and
+  // sharing one would mean the implementer and the reviewer could contend for
+  // the same slot.
+  //
+  // Capabilities come from the DEFINITION, not from a list copied by hand. The
+  // implementer lane genuinely commits (`ArtifactCommitter` runs `rev-parse`,
+  // `checkout -B`, `add -A`, `commit`), so it needs `git`; a worker registered
+  // with only `linux` would never be selected for an implementation job and the
+  // scheduler would defer for ever while reporting itself healthy — the same
+  // silent no-dispatch the empty registry produced, one level down.
+  //
+  // READER WARNING — this worker inherits the TRIAGE verification plan. All
+  // three roles share one coordinator, whose single `verificationPlan` is
+  // `git rev-parse --verify 'HEAD^{commit}'`: it cannot fail on a real
+  // checkout, so NOTHING here verifies an implementation. Design §7.8 / `OD-6`
+  // is open and awaits a role-scoped plan at the landing gate; the full
+  // argument, and why a green implementation run must not be read as coverage,
+  // is on [buildTriageExecutionCoordinator]. No second coordinator is created
+  // here on purpose — that choice is `OD-6`'s, not this lane's.
+  final implementWorker = LocalWorker(
+    workerId: 'w-impl-local',
+    poolId: 'impl-pool',
+    capabilities: implementFeatureDefinition.requiredCapabilities,
+    // Never the source repository itself: the agent runs in a detached
+    // worktree, and cleanup only ever removes worktrees this platform created.
+    workspaceManager: GitWorktreeWorkspaceManager(workspaceRoot: workspaceRoot),
+    executionDriver: CoordinatorAgentExecutionDriver(coordinator),
+    workerStore: workerStore,
+    platform: Platform.operatingSystem,
+  );
   final workerRegistry = WorkerRegistry()
     ..register(triageWorker)
-    ..register(reviewWorker);
+    ..register(reviewWorker)
+    ..register(implementWorker);
   final WorkerDispatch dispatch = WorkerDispatcherAdapter(
     WorkerDispatcher(registry: workerRegistry),
   );
@@ -405,6 +471,89 @@ void run(List<String> args) async {
     log: _log,
   );
 
+  // ---- A1's wiring, discharged here by A2 under C-1. ----
+  //
+  // The durable-workspace runtime creates and records a product's DURABLE clone.
+  // A1 deliberately did not touch this file — C-1 gives it exclusively to this
+  // lane — so its runtime had zero production callers until this line. It is
+  // built over the SAME [productRegistryEngine] the baseline runtime uses, so
+  // there is one registry engine in this process and two places to change if its
+  // construction ever does.
+  final durableWorkspaceRuntime = DurableWorkspaceRuntime.resolve(
+    engine: productRegistryEngine,
+    durableWorkspaceRoot: durableWorkspaceRoot,
+    log: _log,
+  );
+
+  // ---- The IMPLEMENTATION scheduler: `sched-impl`. ----
+  //
+  // Its entry state is `implementationReady` and nothing else, which is what
+  // makes it structurally unable to contend with `sched-triage`: the evaluator
+  // rejects any item outside its own `entryStates` before it asks the policy
+  // anything, and the entry hopper may only land a hop on its own definition's
+  // entry states. No guard has to be remembered for that to hold.
+  //
+  // THE RESOLVER IS AUTHORITATIVE AND THE STATIC WORKLOAD BELOW IS INERT. That
+  // is the single most dangerous line in this composition and it is called out
+  // here for that reason: `Scheduler` requires a `workload`, so this one names
+  // the TRIAGE repository — a README-only scratch checkout. The readiness probe
+  // resolves the product's durable clone or returns null, and a null means NO
+  // DISPATCH: no request is built, the job stays queued with its retry budget
+  // untouched, and nothing runs. If the probe ever fell through to the static
+  // value, the implementer would commit into the triage repository and produce
+  // an artefact a reviewer could find — a green review of a fabrication, which
+  // is strictly worse than the stranded items this lane exists to fix.
+  final implementationProbe = ImplementationReadinessProbe(
+    readProductState: (productId) async {
+      try {
+        return (await productRegistryEngine.readProduct(productId)).state;
+      } on Object {
+        // A product that does not exist is a null answer, not a crash: the
+        // probe defers either way, and the two produce the same operator-facing
+        // outcome.
+        return null;
+      }
+    },
+    readOnboarding: baselineRegistryStore.readOnboardingForProduct,
+    runtimeTypeId: triageRuntimeTypeId,
+    // 1800, not the 300 both shipped schedulers use. An implementation run is
+    // not a five-minute classification, and this value also sets
+    // `Scheduler.zombieStalenessBound` (`timeoutSeconds * 4 + claimLease`), so
+    // getting it wrong is how an execution outlives its lease for hours.
+    timeoutSeconds: 1800,
+    durableRuntimeAvailable: durableWorkspaceRuntime.isAvailable,
+    durableRuntimeUnavailableReason: durableWorkspaceRuntime.availableReason,
+    log: _log,
+  );
+
+  final implScheduler = Scheduler(
+    schedulerId: 'sched-impl',
+    workflowStore: workflowStore,
+    jobStore: jobStore,
+    workerStore: workerStore,
+    dispatch: dispatch,
+    definition: implementFeatureDefinition,
+    modelSelection: modelSelection,
+    executionLiveness: executionLiveness,
+    dedupeKeyBuilder: implementFeatureDedupeKey,
+    instructionBuilder: implementFeatureInstruction,
+    requestBuilder: implementFeatureRequest,
+    capacityGuard: capacityGuard,
+    workloadResolver: toWorkloadResolver(
+      implementationProbe,
+      log: _log,
+    ),
+    // Required constructor argument. INERT — see above.
+    workload: SchedulerWorkload(
+      repositoryPath: triageSource.path,
+      startingRevision: triageSource.startingRevision,
+      timeoutSeconds: 1800,
+      runtimeTypeId: triageRuntimeTypeId,
+    ),
+    clock: () => DateTime.now().toUtc(),
+    providerHealthMonitor: providerHealthMonitor,
+  );
+
   // ---- The work-entry sweep: the RECOVERY half of an intake-only trigger. ----
   //
   // `createDefect` enqueues triage at intake. That path has no retry, so any
@@ -471,6 +620,38 @@ void run(List<String> args) async {
     'providerHealthMonitor': true,
     'providerHealthCheckIntervalMinutes': 5,
     'baseline': baselineRuntime.describe(),
+    // A1's durable-workspace runtime. Its STATE, in both directions: an
+    // unavailable runtime names why and says every call is refused, because
+    // "the field is absent" is the ambiguity this entry point exists to
+    // remove — and a lane that is constructed but silently refusing every call
+    // looks exactly like a lane that does not exist.
+    'durableWorkspace': durableWorkspaceRuntime.describe(),
+    // The implementation lane, in the same spirit. `schedulerId` and the
+    // definition's own entry states, so an operator can see from the banner that
+    // the lane exists AND that nothing reaches it yet: no `HumanDecisionRouting`
+    // entry targets `implementation_ready` today, because which rework pairs
+    // move there is an open decision (OD-3). A lane that is wired and inert must
+    // not be able to read as a lane that is wired and idle-because-broken.
+    'implementation': {
+      'schedulerId': implScheduler.schedulerId,
+      'definition': implementFeatureDefinition.jobType.wire,
+      'entryStates':
+          implementFeatureDefinition.entryStates.map((s) => s.wire).toList()
+            ..sort(),
+      'workerId': implementWorker.workerId,
+      'capabilities':
+          implementFeatureDefinition.requiredCapabilities
+              .map((c) => c.name)
+              .toList()
+            ..sort(),
+      'capacity': implScheduler.capacitySummary,
+      'producers':
+          'none yet — no resolved human decision routes into '
+          'implementation_ready (OD-3 is open). The lane is wired and '
+          'deliberately unreachable; a work item at that state would be '
+          'deferred, never dispatched, until a durable product workspace '
+          'resolves for it',
+    },
     // The cap IN FORCE, not the cap that was requested. Read back off the
     // scheduler rather than off the local `capacity` variable so that this line
     // and the object actually dispatching can never disagree — `capacitySummary`
@@ -658,6 +839,56 @@ void run(List<String> args) async {
         });
       }
 
+      // ---- The implementation lane's tick. ----
+      //
+      // In its OWN try, like triage and review: a lane that throws must not take
+      // the others down, and they read the same job store while answering three
+      // different questions.
+      //
+      // NO `blockedArtifactMissing` HANDLER, deliberately. For review that
+      // channel means "there is nothing to review", and `engineeringReview-
+      // MissingArtifact` turns it into a blocking human decision. Applying a
+      // review action to an implementation job would move a work item through a
+      // gate it never entered and raise a decision about "no artifact was
+      // produced" for an item that never started. For implementation the same
+      // channel currently carries DEFERMENTS — no product is governed yet, no
+      // durable workspace exists yet, the recorded clone is stale — and those
+      // resolve themselves. Which channel a deferral SHOULD travel on is an
+      // open design decision, so this section reports and logs and stops.
+      try {
+        final implTick = await implScheduler.tick();
+        outcome.implDispatched = implTick.dispatched.length;
+
+        for (final jobId in implTick.blockedArtifactMissing) {
+          _log('implementation.deferred', {
+            'jobId': jobId,
+            'reason':
+                'the readiness probe could not resolve a durable product '
+                'workspace for this job, so nothing was dispatched. Not '
+                'failed, no human decision raised, no retry consumed',
+            'action':
+                'resolved automatically once the product is governed and its '
+                'durable clone exists at its recorded pin. If this repeats for '
+                'a governed product, read the probe\'s own '
+                'implementation.deferred.* reason for the specific gate',
+          });
+        }
+        if (implTick.dispatched.isNotEmpty) {
+          _log('implementation.tick.dispatched', {
+            'jobIds': implTick.dispatched,
+          });
+        }
+      } catch (e, st) {
+        outcome.failedSections.add('implementation');
+        _log('implementation.tick.failed', {
+          'error': '$e',
+          'stack': st.toString(),
+          'action':
+              'implementation dispatch is retried on the next tick; other lanes '
+              'unaffected',
+        });
+      }
+
       try {
         final baselinePass = await baselineRuntime.runOnce();
         _log('baseline.tick.completed', {
@@ -765,6 +996,41 @@ const VerificationPlan triageVerificationPlan = VerificationPlan(
 ///
 /// [run] supplies a Postgres-backed [ModelExecutionRecordStore]; a test may
 /// omit it, exactly as a coordinator without one behaves in [run]'s absence.
+///
+/// ## The implementer inherits this plan, and this plan cannot fail
+///
+/// [ExecutionCoordinator] carries ONE [VerificationPlan] for every job it runs,
+/// and all three roles in [run] — triage, review, implement — drive the same
+/// coordinator (`CoordinatorAgentExecutionDriver(coordinator)`, `:229-278`).
+/// So an implementation run is verified by
+/// `git rev-parse --verify 'HEAD^{commit}'`, which succeeds for any checkout
+/// that has a commit. That is a liveness check on the worktree; it verifies
+/// nothing the implementer wrote.
+///
+/// **This is a known, unfilled gap — not a plan that is working.** Design §7.8
+/// requires "a dedicated [VerificationPlan], pinned deliberately", and §9.3 row
+/// 7 requires that plan's FAILURE land at `agentFailed` with no
+/// `producerActorId` (`execution_coordinator.dart:782-812`; the failure branch
+/// omits the `metadataMerge` at `:796` while success sets it at `:838`).
+/// With this plan attached, that branch is UNREACHABLE for implementation jobs:
+/// no implementation execution can ever be settled `executedFail` by
+/// verification. §9.3's contract is therefore untested in production for the one
+/// role it is written about.
+///
+/// **Do not read a green implementation execution as evidence that verification
+/// ran.** Nothing here verifies it, and the absence of verification failures is
+/// the absence of a test, not a passing one. The independent gate it enables is
+/// §9.2 row 5 (`endingRevision` null ⇒ review fails closed), which is a real
+/// check on the artefact — not on the code's behaviour.
+///
+/// TODO(design §7.8 / `OD-6`, OPEN at the landing gate): give the implementation
+/// lane a verification plan of its own. HOW is an architecture decision this
+/// lane must not make on its own — `ExecutionCoordinator` exposes a single
+/// `verificationPlan` field for all roles, so a role-scoped plan needs either a
+/// per-role coordinator or a plan resolved from the job's role, and `OD-6` is
+/// where that decision belongs. Deliberately NOT chosen here: no second
+/// `ExecutionCoordinator` is added and nothing under
+/// `packages/execution_coordinator/` is touched.
 ExecutionCoordinator buildTriageExecutionCoordinator({
   required ExecutionStore store,
   required DurableWorkflowEngine workflowEngine,
@@ -812,6 +1078,15 @@ class TickOutcome {
   /// work-entry sweep gate is on.
   int sweepEnqueued = 0;
 
+  /// Jobs this tick started an implementation execution for.
+  ///
+  /// Separate from [dispatched] rather than folded into it, because the two
+  /// answer different questions and conflating them hides a lane that stopped
+  /// working. `dispatched` is the TRIAGE tick's count; this is the
+  /// implementation lane's. A reader who wants "did anything get built" reads
+  /// this, and a reader who wants "did triage run" reads the other.
+  int implDispatched = 0;
+
   /// Jobs this tick could not reconcile, with the reason each one failed.
   ///
   /// Separate from [failedSections] on purpose: a failed SECTION is a half of
@@ -836,6 +1111,7 @@ class TickOutcome {
   @override
   String toString() =>
       'dispatched: $dispatched, handledOff: $handledOff, '
+      'implDispatched: $implDispatched, '
       'sweepEnqueued: $sweepEnqueued, failedSections: $failedSections, '
       'reconcileFailed: $reconcileFailed';
 }
@@ -1243,6 +1519,40 @@ const String _triageRepositoryPathEnv = 'SHIPIT_TRIAGE_REPOSITORY_PATH';
 /// to a durable path to keep workspace descriptors across restarts, since that
 /// is how stranded worktrees are discovered.
 const String _triageWorkspaceRootEnv = 'SHIPIT_TRIAGE_WORKSPACE_ROOT';
+
+/// Environment variable naming where durable PRODUCT clones are created.
+///
+/// Deliberately a different variable from [_triageWorkspaceRootEnv], and
+/// deliberately read with NO default. The triage root has a system-temp default
+/// because a triage worktree is ephemeral by definition and the fallback is
+/// harmless. A durable clone is the opposite: it is supposed to survive a
+/// container restart, so a system-temp fallback would quietly give a product a
+/// checkout that vanishes on the next rebuild, which is the exact failure the
+/// host-bind decision (`9bfe2d09`) exists to prevent.
+///
+/// An unset value is therefore passed through as an empty string, and
+/// `DurableWorkspaceRuntime.resolve` refuses it with its own named reason. That
+/// is the shape of the refusal the triage source uses for the same class of
+/// mistake: a configuration fact reported once at startup, rather than a
+/// placeholder path that makes every later step look like it worked.
+///
+/// The name is spelled out here, in the composition root, for the same reason
+/// every other one is: the product-agnosticism gate refuses this literal
+/// anywhere under `lib/src/baseline/**`, and the lane's own factory must stay
+/// free of it.
+const String _durableWorkspaceRootEnv = 'SHIPIT_DURABLE_WORKSPACE_ROOT';
+
+/// Reads the durable product-clone root, or `''` when it is not configured.
+///
+/// Returns the empty string rather than throwing: the durable-workspace runtime
+/// is ONE lane of four, and refusing to boot this process because a product
+/// clone root is unset would take triage, review and baseline down with it. The
+/// runtime's own factory then reports the refusal by name on every call, which
+/// is the correct visibility — an operator sees it in the startup banner and in
+/// the readiness probe's deferral reason, rather than as a process that will not
+/// start.
+String _durableWorkspaceRoot() =>
+    Platform.environment[_durableWorkspaceRootEnv]?.trim() ?? '';
 
 /// Resolves and VALIDATES the triage source repository, or throws.
 ///

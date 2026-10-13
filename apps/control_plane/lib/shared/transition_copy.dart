@@ -46,6 +46,17 @@ String? knownTransitionMessage(String from, String to) => switch ((from, to)) {
   ('design_rejected', 'design_in_review') =>
     'Design updated, waiting on review',
   ('design_not_required', 'agent_executing') => 'Agent started work',
+  // The implementation lane's own entry and exit. Two pairs, both spelled out,
+  // because both would otherwise fall through to `_ => null` and render as
+  // "The work moved to a new stage." — which is the one message that says
+  // nothing at all, on a screen where the operator is trying to see whether the
+  // build started.
+  ('implementation_ready', 'agent_executing') => 'Agent started building it',
+  // Inbound, from the human gate. The same "queued to start again" promise the
+  // `-> design_not_required` copy above makes, because that is exactly what a
+  // rework resolution does; only the lane is different.
+  ('waiting_for_human_decision', 'implementation_ready') =>
+    'Changes asked for, work queued to build again',
   ('agent_executing', 'agent_completed') => 'Agent finished its work',
   ('agent_executing', 'agent_failed') => "Agent's work hit an error",
   ('agent_failed', 'agent_executing') => 'Retrying after an error',

@@ -47,32 +47,6 @@ class RunsPage extends StatelessWidget {
   }
 }
 
-/// The filters the design exposes, in board order.
-enum WorkFilter {
-  all('All work'),
-  workingOnIt('Working on it'),
-  needsYou('Needs you'),
-  finished('Finished'),
-  failed('Failed');
-
-  const WorkFilter(this.label);
-
-  final String label;
-
-  /// True when a row belongs under this filter.
-  bool matches(PlainStatus status) => switch (this) {
-    WorkFilter.all => true,
-    WorkFilter.workingOnIt =>
-      status == PlainStatus.workingOnIt ||
-          status == PlainStatus.awaitingReview ||
-          status == PlainStatus.waitingToStart,
-    WorkFilter.needsYou => status.isOperatorTurn,
-    WorkFilter.finished => status == PlainStatus.finished,
-    WorkFilter.failed =>
-      status == PlainStatus.needsYouItFailed || status == PlainStatus.stopped,
-  };
-}
-
 class _RunsView extends StatefulWidget {
   const _RunsView({this.clock});
 

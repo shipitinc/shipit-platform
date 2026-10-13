@@ -49,6 +49,7 @@ void main() {
   /// would be unconstrained.
   const productionDefinitions = <JobDefinition>[
     defaultImplementFeatureDefinition,
+    implementFeatureDefinition,
     triageDefectDefinition,
     designRevisionDefinition,
     designReviewDefinition,
@@ -323,6 +324,46 @@ Future<WorkItem> placeIn(
   switch (state) {
     case WorkItemState.designNotRequired:
       await step(WorkItemState.designNotRequired);
+    // The implementation lane's own entry state. Reached the way production
+    // reaches it — through the `waitingForHumanDecision ->
+    // implementationReady` edge a resolved human decision takes — rather than
+    // faked by writing the state onto the row. A guard that fakes a state would
+    // be checking its own fixture instead of the table, which is the one thing
+    // this file exists to prevent.
+    //
+    // It has to walk the full gate because the item starts at `draft`: the
+    // transition into it carries `blockingHumanDecisionResolved` and
+    // `decisionActorIsHuman()`, so a walk that skipped the gate would be
+    // asserting against a transition the engine would refuse.
+    case WorkItemState.implementationReady:
+      await step(WorkItemState.designRequired, context: designContract);
+      await step(WorkItemState.designInReview, context: underReview);
+      await _resolveDesign(workflow, HumanDecisionChoice.approve);
+      await step(WorkItemState.agentExecuting, context: executing);
+      await step(
+        WorkItemState.agentCompleted,
+        trigger: TransitionTrigger.agentResult,
+        context: {'qaContractId': 'qa-1', 'agentResult': agentResult},
+      );
+      await step(
+        WorkItemState.reviewInProgress,
+        trigger: TransitionTrigger.agentResult,
+        context: {'agentResult': agentResult},
+      );
+      final review = await workflow.requestHumanDecision(
+        workItemId: 'wi-1',
+        decisionType: HumanDecisionType.engineeringReview,
+        actor: const WorkflowActor(
+          actorId: 'reviewer-2',
+          actorType: ActorType.engineeringReviewer,
+        ),
+        extraContext: const {'producerActorId': 'agent-1'},
+      );
+      await _resolveDecision(
+        workflow,
+        review.decisionId,
+        HumanDecisionChoice.rework,
+      );
     case WorkItemState.agentFailed:
       await step(WorkItemState.designNotRequired);
       await step(WorkItemState.agentExecuting, context: executing);

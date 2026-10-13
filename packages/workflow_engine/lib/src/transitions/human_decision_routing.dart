@@ -34,6 +34,47 @@ import 'package:platform_contracts/platform_contracts.dart';
 /// `implementFeatureDefinition`'s `entryStates`, and it is the state the
 /// already-shipped operator retry returns a failed item to (`be75ba1`,
 /// `agentFailed -> designNotRequired`).
+///
+/// ## `implementationReady` EXISTS AND IS DELIBERATELY UNCLAIMED HERE
+///
+/// The implementation lane has its own entry state,
+/// [WorkItemState.implementationReady], and the transition table already
+/// carries a `waitingForHumanDecision -> implementationReady` edge with this
+/// gate's full guard set. **No route in [targetFor] targets it**, and that is a
+/// decision that has not been made rather than an oversight: five routes
+/// currently point at [WorkItemState.designNotRequired], and whether
+/// `(engineeringReview, rework)` and `(qaRework, reject)` mean "re-classify"
+/// (re-triage, unchanged) while `(qaWaiver, reject)`,
+/// `(humanQaApproval, reject)` and `(escalation, approve)` mean "re-do the
+/// work" (implementation) is a product decision about what rework MEANS. It is
+/// recorded as `OD-3` in the design brief and it is unanswered.
+///
+/// The edge exists anyway, and deliberately, for one reason: [targetFor] is the
+/// only thing that decides where a resolved decision lands, so a retarget with
+/// no matching edge would move an item into a state nothing leaves and the
+/// engine would throw on resolution. Declaring the route now means answering
+/// `OD-3` later is a routing-table edit; leaving the edge out would make it an
+/// engine change too.
+///
+/// ## WHICH RETARGETS NEED `escalationTargetFor` MOVED WITH THEM
+///
+/// [escalationTargetFor] short-circuits to `null` for any choice that is not
+/// `reject` or `rework`, and `DurableWorkflowEngine._isEscalationTransition`
+/// short-circuits on the same condition before it ever calls it. So of the five
+/// candidate pairs, exactly TWO are lockstep arms and three are not:
+///
+/// | Pair | Needs `escalationTargetFor` moved? |
+/// |---|---|
+/// | `(engineeringReview, rework)` | **YES** — a live arm at `:182-183` |
+/// | `(humanQaApproval, reject)` | **YES** — a live arm at `:184-185` |
+/// | `(qaWaiver, reject)` | no — no arm; the short-circuit makes it inert |
+/// | `(qaRework, reject)` | no — no arm; `_ => null` |
+/// | `(escalation, approve)` | no — `approve`, so the short-circuit returns `null` first |
+///
+/// The two live arms are asserted by name in
+/// `test/implementation_ready_edge_test.dart`, because a divergence between
+/// the two tables does not error: it silently stops the escalation index
+/// advancing and changes the shape of the audit trail.
 class HumanDecisionRouting {
   const HumanDecisionRouting._();
 
@@ -98,7 +139,7 @@ class HumanDecisionRouting {
   /// ## WHY THIS MUST NOT DIVERGE FROM [targetFor]
   ///
   /// `DurableWorkflowEngine._isEscalationTransition`
-  /// (packages/workflow_store/.../durable_workflow_engine.dart:761) computes
+  /// (packages/workflow_store/.../durable_workflow_engine.dart:979) computes
   /// escalation as `escalationTargetFor(type, choice) == target`, where
   /// `target` is the value [targetFor] just returned. The comparison is the
   /// ONLY thing this method does at runtime: it gates the
