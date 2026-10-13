@@ -2190,6 +2190,15 @@ class ControlPlaneService {
     // restarted process can read it from: the `WorkerStore` lookup below needs
     // a live job whose execution reference is still resolvable, which a
     // product whose onboarding job has been reaped cannot satisfy.
+    //
+    // It is an `OnboardingWorkspace` and not a bare `WorkspaceDescriptor`,
+    // because the column legitimately carries TWO shapes now: a per-execution
+    // descriptor and a product-scoped `DurableWorkspaceDescriptor`. They are
+    // told apart by the durable shape's constant `kind` discriminator and are
+    // never interchangeable, so the `kind` is logged next to the id below —
+    // an id alone would read as though the two were the same kind of thing,
+    // which is exactly the confusion this two-line neighbourhood exists to
+    // prevent.
     final workspace = onboarding?.workspace;
 
     if (latestJob != null && latestJob.state == JobState.succeeded) {
@@ -2206,7 +2215,9 @@ class ControlPlaneService {
         logger.debug('product_registry.onboarding.workspace', {
           'productId': productId,
           'executionWorkspaceId': result.workspaceId,
+          'recordedWorkspaceKind': workspace?.kind,
           'recordedWorkspaceId': workspace?.workspaceId,
+          'recordedWorkspaceRepositoryPath': workspace?.repositoryPath,
         });
       }
     }
@@ -2312,5 +2323,17 @@ class OnboardingStatus {
   final String productId;
   final OnboardingRecord? onboarding;
   final Job? latestJob;
-  final WorkspaceDescriptor? workspaceDescriptor;
+
+  /// The workspace named by the onboarding record, in whichever of the two
+  /// shapes the column carries.
+  ///
+  /// An [OnboardingWorkspace] and not a bare `WorkspaceDescriptor`, because the
+  /// column now legitimately holds either a per-execution descriptor or a
+  /// product-scoped [DurableWorkspaceDescriptor]. A consumer that needs a
+  /// checkout path reads `workspaceDescriptor?.repositoryPath`, which is
+  /// defined for both shapes; a consumer that needs to know WHICH shape it got
+  /// reads `workspaceDescriptor?.kind`, and the two are never interchangeable —
+  /// there is no accessor that hands back a descriptor without the caller
+  /// having discriminated for it.
+  final OnboardingWorkspace? workspaceDescriptor;
 }

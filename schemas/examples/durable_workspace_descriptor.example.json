@@ -1,0 +1,8 @@
+{
+  "kind": "durable",
+  "workspaceId": "dws-product-b-1",
+  "productId": "product-b",
+  "repositoryPath": "/srv/product-workspaces/product-b/checkout",
+  "startingRevision": "f0f3494957bb90df0a1c15a9fb4734ca6e49634d",
+  "createdAt": "2026-09-16T12:00:01Z"
+}

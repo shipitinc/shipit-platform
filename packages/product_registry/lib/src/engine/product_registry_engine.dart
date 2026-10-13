@@ -1895,9 +1895,16 @@ class ProductRegistryEngine {
   ///
   /// This does NOT complete onboarding, does NOT clone anything and does NOT
   /// enqueue any work: it only writes down an answer the caller has already
-  /// established. The caller that has a clone in hand (the worker that created
-  /// the workspace) passes what it knows; this method's job is to put that
-  /// answer in the one place every later reader looks.
+  /// established. The caller that has a clone in hand passes what it knows; this
+  /// method's job is to put that answer in the one place every later reader
+  /// looks.
+  ///
+  /// [workspace] is a [DurableWorkspaceDescriptor] — a PRODUCT-scoped clone —
+  /// and deliberately not a `WorkspaceDescriptor`. A per-execution workspace
+  /// belongs to one worker execution and is not the product's; writing one here
+  /// would record a checkout that the next execution cannot find and the review
+  /// gate cannot resolve an artifact out of. The two shapes are never
+  /// interchangeable, which is why they are two types.
   ///
   /// [workspace] MAY be supplied on its own, to record a workspace before the
   /// pin that created it is known to be durable, and [pinnedRevision] MAY be
@@ -1909,14 +1916,15 @@ class ProductRegistryEngine {
   /// being re-pinned to a newer commit, and the record answers "where is it
   /// NOW". The history of pins is the audit log's job, not this column's.
   ///
-  /// A CLEANED workspace is recorded by passing `workspace.markCleaned(at)`,
-  /// not by clearing the field — the record keeps naming the workspace the
-  /// product was last materialised in, and `hasLiveWorkspace` reports that it
-  /// no longer exists. Deleting the column instead would erase the only
-  /// statement that a workspace was ever created for this product.
+  /// A workspace that no longer exists is recorded by REPLACING [workspace],
+  /// not by clearing the field: the record keeps naming the workspace the
+  /// product was last materialised in. `hasLiveWorkspace` reports whether a
+  /// durable clone still exists — always true today, because nothing deletes a
+  /// product's only checkout yet (who presses it is an open decision, and a
+  /// durable descriptor deliberately has no cleaned state to record).
   Future<OnboardingRecord> recordWorkspace({
     required String productId,
-    WorkspaceDescriptor? workspace,
+    DurableWorkspaceDescriptor? workspace,
     String? pinnedRevision,
     DateTime? now,
   }) async {
@@ -1960,6 +1968,10 @@ class ProductRegistryEngine {
   /// was performed in, and naming the baseline whose human acceptance made the
   /// completion meaningful.
   ///
+  /// [workspace] is the product's DURABLE clone, the same type
+  /// [recordWorkspace] takes; see that method for why a per-execution
+  /// `WorkspaceDescriptor` is not what this column holds.
+  ///
   /// This is the ONE write that records the answer AND flips [OnboardingRecord]
   /// `.completed`, so a completed record cannot exist without the commit and
   /// workspace it was completed against. It performs no discovery and no
@@ -1976,7 +1988,7 @@ class ProductRegistryEngine {
   Future<OnboardingRecord> completeOnboarding({
     required String productId,
     required String pinnedRevision,
-    required WorkspaceDescriptor workspace,
+    required DurableWorkspaceDescriptor workspace,
     required String completedBaselineId,
     DateTime? now,
   }) async {
@@ -2036,7 +2048,7 @@ class ProductRegistryEngine {
     String productId, {
     DateTime? now,
     String? pinnedRevision,
-    WorkspaceDescriptor? workspace,
+    DurableWorkspaceDescriptor? workspace,
   }) async {
     final existing = await _store.readOnboardingForProduct(productId);
     if (existing != null) return existing;

@@ -97,6 +97,16 @@ Future<List<File>> _laneSources() async {
     // registry engine and the job store, so it could name a product just as
     // easily as any of the above.
     File('${root.path}/lib/src/baseline/baseline_runtime.dart'),
+    // The durable product clone: its materialiser and the runtime that composes
+    // it with the credential primitives. Both are here rather than under
+    // `credentials/**` precisely so this gate covers them — the newest and most
+    // security-sensitive code in the lane is the code most likely to be checked
+    // for a hardcoded path or a product name. It is also why neither may read
+    // the workspace root from the environment: the variable is named after the
+    // product, and the composition root resolves it and passes a plain `String`
+    // in. See `DurableWorkspaceRuntime.resolve`.
+    File('${root.path}/lib/src/baseline/durable_workspace_materializer.dart'),
+    File('${root.path}/lib/src/baseline/durable_workspace_runtime.dart'),
     // Compiled into the package like any other `lib/` source and able to name a
     // product or a host just as easily — so it is covered by this gate on the
     // same terms as the three above, not exempted as "only a test".
