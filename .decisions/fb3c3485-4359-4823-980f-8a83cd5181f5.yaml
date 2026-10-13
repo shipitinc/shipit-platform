@@ -1,7 +1,25 @@
 # human-decision.yaml
 decision_id: fb3c3485-4359-4823-980f-8a83cd5181f5
 type: DESIGN
-status: PENDING
+status: RESOLVED
+resolution:
+  selected: A
+  label: Approve Level 3; A1+A2 concurrent; fold M1-M5 with the OD answers
+  decided_by: operator
+  granted_paths_beyond_brief:
+    - apps/control_plane/lib/core/plain_language.dart
+    - apps/control_plane/lib/shared/transition_copy.dart
+    - apps/server/lib/src/implementation/**
+    - packages/platform_contracts/lib/src/enums/workflow_state.dart
+  why_control_plane_is_granted: >-
+    Reviewer confirmed the UI render gap: plain_language.dart's switch defaults an unknown
+    WorkItemState to PlainStatus.awaitingReview, so implementation_ready would render falsely.
+    Without these two files an item at the new state is misreported as awaiting review.
+  binds: >-
+    Concurrent DISPATCH without a durable workspace is NOT authorised. The §7.7 readiness probe must
+    defer rather than dispatch. Approval authorises BUILDING A1 and A2, not landing IMPL-001/IMPL-002:
+    OD-7 gates A1's compose change and OD-8 gates its write path; both are now answered, so A1 is
+    unblocked in full.
 title: Level 3 approval — implementation lane (A2) + durable workspace creation (A1)
 question: >-
   Approve the revised implementation-lane design brief (8ad9985) at Risk Level 3, and authorise A1

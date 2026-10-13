@@ -1,7 +1,17 @@
 # human-decision.yaml
 decision_id: 9bfe2d09-881e-4df4-9939-3883cf45b0d5
 type: ARCHITECTURE
-status: PENDING
+status: RESOLVED
+resolution:
+  selected: B
+  label: Host bind ${SHIPIT_HOST_WORKSPACE_DIR}
+  decided_by: operator
+  rationale_given: Matches the existing ${SHIPIT_HOST_SECRET_DIR} custody precedent; host-inspectable for review; immune to the compose default-project-name hazard.
+  binds: >-
+    A1's compose change is unblocked. The workspace dir MUST use an explicit fail-closed sentinel
+    (same shape as ${SHIPIT_HOST_SECRET_DIR:-/tmp/shipit-secrets-NOT-CONFIGURED}) so an unconfigured
+    deployment fails loudly rather than writing container-local state that silently loses work, and
+    the teardown/compose project must be named explicitly with -p, never derived from the default.
 title: OD-7 — Where does a product's durable implementation workspace live?
 question: >-
   A product-scoped clone must survive container restart so products do not re-clone on every

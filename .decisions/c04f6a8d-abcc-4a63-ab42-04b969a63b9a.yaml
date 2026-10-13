@@ -1,7 +1,19 @@
 # human-decision.yaml
 decision_id: c04f6a8d-abcc-4a63-ab42-04b969a63b9a
 type: ARCHITECTURE
-status: PENDING
+status: RESOLVED
+resolution:
+  selected: A
+  label: Add DurableWorkspaceDescriptor as a separate type + schema
+  decided_by: operator
+  rationale_given: The blocker is a type-shape conflict, not a missing field. Weakening the per-execution type would push null-handling into the artifact resolution chain that must fail closed.
+  binds: >-
+    WorkspaceDescriptor is NOT modified. A1 adds DurableWorkspaceDescriptor (own schema) and writes it
+    to OnboardingRecord.workspace. The per-execution consumers (worker_reconciler, local_worker,
+    onboarding_worker, engineering_review_gate) must remain byte-identical in behaviour — no new null
+    branches anywhere in that chain. No migration is required; the column is already JsonValue?.
+    Note: this answer makes reviewer MEDIUM-5 (narrow A1's credentials/** grant) independent of M1,
+    since A1 no longer needs the descriptor's per-execution fields anywhere.
 title: OD-8 — WorkspaceDescriptor is per-execution; a durable product clone is not
 question: >-
   WorkspaceDescriptor requires workerExecutionId, workerId and worktreePath, all of which are
