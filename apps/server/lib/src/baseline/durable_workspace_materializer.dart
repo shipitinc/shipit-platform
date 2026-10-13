@@ -87,6 +87,23 @@ abstract interface class DurableWorkspaceMaterializer {
   /// itself is credential material and must be gone by the time this returns —
   /// successfully or not. See the six obligations on
   /// [SshDurableWorkspaceMaterializer].
+  ///
+  /// ## The contract on a product root that ALREADY EXISTS
+  ///
+  /// An implementation MUST refuse, and MUST NOT destroy it.
+  ///
+  /// The root is derived from `$workspaceRoot/$productId` and nothing else, so
+  /// it can already hold state this call did not make: a previous run's clone
+  /// with its object store and whatever an implementation lane has committed
+  /// into it, or a tree someone put there by hand. A call that treats such a
+  /// root as its own on the failure path is deleting somebody's work to report
+  /// its own error — so the refusal is what "owning" this path has to mean.
+  ///
+  /// The consequence worth stating plainly: **this is not re-entrant, and that
+  /// is deliberate.** A second `materialize` into the same root fails loudly and
+  /// destroys nothing. A caller that wants a re-provision to succeed has to
+  /// decide what happens to the existing tree first — that is an operator's
+  /// decision, and the state is unreviewed work until they make it.
   Future<DurableWorkspaceClone> materialize({
     required String productId,
     required String repositoryId,
@@ -157,8 +174,30 @@ abstract interface class DurableWorkspaceMaterializer {
 ///  6. **Destroys the credential material first and unconditionally**, before
 ///     deciding anything about the repository's fate. On success the identity,
 ///     `known_hosts` and wrapper are removed and only the clone remains; on
-///     failure the product root is removed entirely and the caller is told the
-///     cleanup failed rather than being handed a half-built tree.
+///     failure the product root is removed entirely — **but only when this call
+///     created it** — and the caller is told the cleanup failed rather than
+///     being handed a half-built tree.
+///
+/// ## Why the destroy is scoped to provenance, and not to "nothing was returned"
+///
+/// Obligation 6 used to end "on failure the product root is removed entirely",
+/// and that clause was the defect. It made a failed `git` call — any failed
+/// `git` call — a delete of `$workspaceRoot/$productId`, which is a governed
+/// product's checkout with its object store and every unreviewed commit in it.
+///
+/// The distinction the fix turns on is not whether a descriptor was handed back.
+/// It is whether **this call created the root**. Those come apart constantly:
+/// `provision()` materialises at :485 and writes the onboarding record at :500+,
+/// so a record write that fails after a successful clone leaves an orphan tree
+/// that the next instruction then destroys on its way to the same error. And the
+/// ordinary case is worse: `git init` is idempotent, so a second `provision()`
+/// fails at `git remote add origin` (exit 3, "remote origin already exists") and
+/// used to take the whole clone with it.
+///
+/// A refusal keeps the tree and names the collision; it never keeps the
+/// CREDENTIAL. Those are separate obligations and both still hold — see the
+/// `finally` in [materialize], which destroys the identity, `known_hosts` and
+/// wrapper on the collision path too, having written none of them.
 ///
 /// ## Why the clone is writable and still has no key
 ///
@@ -233,6 +272,23 @@ class SshDurableWorkspaceMaterializer implements DurableWorkspaceMaterializer {
     final clonePath = '${root.path}/$cloneDirectoryName';
 
     var cloneVerified = false;
+
+    // ---- DESTROY PROVENANCE, decided once and before anything is written. ----
+    //
+    // These two facts together are the whole fix, and they are read HERE rather
+    // than recovered later, because the question "did this call create that
+    // root?" is only answerable while this call is still the only thing that has
+    // touched it. Ask it after a `git remote add` has already exited 3 and the
+    // answer has been overwritten by whatever the directory holds — and the
+    // tempting reading of that is "it is full of my own half-built clone, so it
+    // is mine", which is precisely the bug.
+    //
+    // `createdRoot` is the authority for the destructive path below and nothing
+    // else. `rootPreExisted` is captured before the first byte is written and
+    // answers only the one question the refusal needs.
+    final rootPreExisted = root.existsSync();
+    var createdRoot = false;
+
     try {
       // Host key BEFORE the private half, and before anything is written: a
       // call that is about to refuse has no reason to have touched key
@@ -250,11 +306,31 @@ class SshDurableWorkspaceMaterializer implements DurableWorkspaceMaterializer {
         );
       }
 
-      if (!root.existsSync()) {
-        PosixFileModes.createOwnerOnlyDirectory(root.path);
-      } else {
-        PosixFileModes.applyStrict(root.path, PosixFileModes.directory);
+      if (rootPreExisted) {
+        // Refuse BEFORE the root is touched, so "do not destroy it" is not a
+        // promise made by a cleanup path — it is a consequence of never having
+        // written into it. Every write below this line would otherwise be a
+        // byte added to somebody else's directory.
+        //
+        // A filesystem existence check, not a probe of the tree's contents and
+        // not a marker this class left last time. See
+        // [DurableWorkspaceRootCollisionException] for why each alternative
+        // answers a weaker question.
+        throw DurableWorkspaceRootCollisionException(
+          productId: productId,
+          repositoryId: repositoryId,
+          productRoot: root.path,
+          findings: _describeExistingRoot(root.path, clonePath),
+        );
       }
+
+      // Ownership is claimed BEFORE the create, not after it returns.
+      // `createOwnerOnlyDirectory` creates and then chmods, so a permission
+      // failure leaves a real directory behind and throws; claiming afterwards
+      // would hand that directory to nobody — no destroy, no owner, and a
+      // directory holding nothing but a failed provisioning's residue.
+      createdRoot = true;
+      PosixFileModes.createOwnerOnlyDirectory(root.path);
 
       // The guard against a misconfigured root, written where the root is
       // created rather than by a caller.
@@ -370,12 +446,28 @@ class SshDurableWorkspaceMaterializer implements DurableWorkspaceMaterializer {
         materializedAt: DateTime.now().toUtc(),
       );
     } on Object {
-      // Nothing has been handed to a caller on any failure path, so there is
-      // nothing to preserve. A tree this process could not remove is an
-      // incident, not a result — and it is raised rather than swallowed,
-      // because a leftover `identity` file next to a product directory is
-      // exactly what obligation 6 exists to prevent.
-      if (!_destroy(root)) {
+      // ---- The destroy is scoped to what THIS CALL created. ----
+      //
+      // The previous code destroyed `root` unconditionally, on the strength of
+      // "nothing has been handed to a caller, so there is nothing to preserve".
+      // That justification was about the DESCRIPTOR and was silently used to
+      // license destroying a TREE, which are different objects: no descriptor
+      // exists on the failure path, but the product root holds a clone with its
+      // object store and every unreviewed commit in it, and none of that was
+      // this call's to delete.
+      //
+      // It is reachable in ordinary operation, not only in theory. `git init`
+      // against an existing repository exits 0 — it is idempotent — so a second
+      // provisioning reaches `git remote add origin`, which exits 3 with
+      // "remote origin already exists", and that non-zero exit used to take the
+      // clone with it. "Re-provision" read as a harmless verb and destroyed a
+      // product checkout holding unreviewed commits.
+      //
+      // So the rule is narrow and absolute: **this class removes a product root
+      // only when it created that root in this call.** A pre-existing root is
+      // left exactly as found, and the reason it collided travels with the
+      // refusal — see [DurableWorkspaceRootCollisionException].
+      if (createdRoot && !_destroy(root)) {
         throw DurableWorkspaceCleanupException(root.path);
       }
       rethrow;
@@ -758,6 +850,128 @@ exec ssh \\
     }
     return false;
   }
+}
+
+/// Raised when the product root already exists, so this call does not own it.
+///
+/// ## Why a refusal and not a cleanup
+///
+/// The alternative — materialise into it and remove it if anything goes wrong —
+/// makes "the git command failed" mean "this product's checkout is gone". The
+/// root is derived from `$workspaceRoot/$productId` and nothing else, so it can
+/// hold a previous run's clone with its object store and whatever an
+/// implementation lane has committed into it. Nothing has been handed to a
+/// caller on a failure path, which is true, and which is why the previous code
+/// believed it had nothing to preserve — but that is an argument about the
+/// DESCRIPTOR being absent, and it was used to license destroying a TREE.
+///
+/// So the root is left exactly as found and the operator decides what happens to
+/// it. Nothing is written into it on this path, so there is nothing to undo and
+/// nothing to clean up.
+///
+/// ## Why the alternatives were worse
+///
+/// This is where a class has to choose what "mine" means, and every weaker
+/// definition loses in the same direction — toward deleting state somebody else
+/// put there:
+///
+///  * **A marker file** this class writes into the root, and trusts as proof of
+///    ownership. It answers "did *some* call, ever, create this" instead of "did
+///    *this* call", and the two differ exactly where it matters: a tree an
+///    implementation lane has since committed into still carries its class's
+///    marker, so a marker-based destroy removes that work. It is also absent
+///    precisely when a root pre-existed for an unrelated reason — an operator's
+///    directory, a restored backup, a version of this code from before the
+///    marker existed — which is the case the guard is for.
+///  * **`git rev-parse --git-dir` on the existing tree.** It answers "is there a
+///    repository here", which is a different question, and it answers it in the
+///    wrong direction: a real product checkout IS a repository, so the probe
+///    classifies the most valuable thing under this root as the thing to delete.
+///    It also cannot describe an empty pre-existing directory at all, and it
+///    spends a spawned process to re-derive a fact `Directory.existsSync` states
+///    exactly.
+///  * **Deleting only `$root/checkout` and keeping the root.** Better than the
+///    recursive delete, and still wrong: once the entry guard refuses, there is
+///    nothing to delete, and without the refusal this would delete the clone a
+///    previous run made — which is the data loss being prevented.
+///
+/// A plain existence check is the strongest of these because it is the only one
+/// that cannot be fooled by the contents of the thing being judged. It is also
+/// the cheapest: no process, no network, no trust in state this class wrote on
+/// an earlier run.
+class DurableWorkspaceRootCollisionException implements Exception {
+  const DurableWorkspaceRootCollisionException({
+    required this.productId,
+    required this.repositoryId,
+    required this.productRoot,
+    required this.findings,
+  });
+
+  final String productId;
+  final String repositoryId;
+
+  /// The root that was found already present. Nothing was written into it and
+  /// nothing was removed from it.
+  final String productRoot;
+
+  /// What was already there, so the operator is told what they are looking at
+  /// rather than only that something is.
+  ///
+  /// Diagnostic, and deliberately not a verdict: it describes the collision so
+  /// it can be recognised, and never says whether the contents are safe to
+  /// delete. This class has no way to know that — they may be unreviewed work.
+  final List<String> findings;
+
+  @override
+  String toString() =>
+      'DurableWorkspaceRootCollisionException: the product root '
+      '$productRoot for $productId/$repositoryId already exists '
+      '(${findings.isEmpty ? 'it is not empty and could not be enumerated' : findings.join("; ")}). '
+      'This call did not create it, so it did not remove it: a durable clone '
+      'holds an object store and any unreviewed commits made into it, and '
+      'deciding whether those survive is an operator\'s call, not a side effect '
+      'of a failed git command. Nothing was written into the root.';
+}
+
+/// What is already under a colliding product root, as short readable phrases.
+///
+/// Best effort, and it MUST stay that way: a refusal is raised with this text
+/// attached, so failing to ENUMERATE the collision must never turn a safe
+/// refusal into a different failure. An unreadable directory reports itself as
+/// unreadable, which is still true and still actionable.
+List<String> _describeExistingRoot(String productRoot, String clonePath) {
+  final findings = <String>[];
+  try {
+    if (Directory(clonePath).existsSync()) {
+      final hasObjects = Directory('$clonePath/.git/objects').existsSync();
+      findings.add(
+        hasObjects
+            ? 'an existing clone with its own git object store is already at '
+                  '${SshDurableWorkspaceMaterializer.cloneDirectoryName}/'
+            : 'a directory named '
+                  '${SshDurableWorkspaceMaterializer.cloneDirectoryName}/ '
+                  'that is not a git working tree',
+      );
+    }
+    if (File('$productRoot/.gitignore').existsSync()) {
+      findings.add('the commit guard this class writes is already present');
+    }
+    final entries = Directory(
+      productRoot,
+    ).listSync().map((e) => e.path.split('/').last).toList();
+    if (entries.isNotEmpty) {
+      findings.add(
+        'it holds ${entries.length} ${entries.length == 1 ? "entry" : "entries"}',
+      );
+    } else {
+      findings.add('it is empty');
+    }
+  } on Object {
+    if (findings.isEmpty) {
+      findings.add('its contents could not be read');
+    }
+  }
+  return findings;
 }
 
 /// Writes the ignore guard into a product root.
