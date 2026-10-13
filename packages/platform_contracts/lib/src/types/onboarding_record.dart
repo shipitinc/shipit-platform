@@ -36,9 +36,13 @@ part 'onboarding_record.g.dart';
 /// Both are NULLABLE, and that is deliberate. A Product exists in the registry
 /// long before anyone clones it, so "not yet pinned" is a real, common state
 /// and not a defect; making the columns NOT NULL would force onboarding to
-/// fabricate an answer it does not have. Read [hasDurableWorkspace] rather
+/// fabricate an answer it does not have. Read [hasDurableProductClone] rather
 /// than testing the fields for null — it is the single place that says whether
-/// the full answer exists.
+/// the full answer exists, in the SHAPE that answer actually has.
+///
+/// [hasDurableWorkspace] was the read for that job before this record could hold
+/// two shapes, and its name no longer matches what it answers; it is deprecated
+/// and its own docs carry the difference.
 ///
 /// ## Why the pin is a String and not an extension of [currentBaselineRevision]
 ///
@@ -212,7 +216,78 @@ class OnboardingRecord extends Equatable {
   ///
   /// This — not a null check on either field — is what "which commit is this
   /// product at, and where does it live?" should be read against.
+  ///
+  /// ## DEPRECATED, and the name is the reason — use
+  /// [hasDurableProductClone]
+  ///
+  /// This predicate is SHAPE-BLIND and its name is not. `true` here means "a
+  /// pin and a live workspace", which a record holding a **per-execution**
+  /// `WorkspaceDescriptor` satisfies just as well as one holding the product's
+  /// durable clone — and that is not a theoretical state.
+  /// `contract_schemas_test.dart` constructs exactly that record, and so does
+  /// the store contract suite, because it is a legal record: the column has
+  /// always been writable with a per-execution descriptor.
+  ///
+  /// So a reader who gates on this and then reads
+  /// `workspace!.repositoryPath` expecting the product's clone is handed, with
+  /// no error, a per-execution path — `/triage-repo` where a
+  /// `dws-<productId>` checkout was assumed. The engineering review gate
+  /// resolves review artifacts out of that path. Nothing throws; the read is
+  /// wrong by one whole shape.
+  ///
+  /// The throw from [OnboardingWorkspace.requireDurable] on the same record is
+  /// loud and fail-closed, and is NOT the hazard — the hazard is the path that
+  /// answers with the wrong string instead of refusing.
+  ///
+  /// It is deprecated rather than changed because its meaning is load-bearing
+  /// for the published store contract suite and for other packages' tests, and
+  /// redefining it to be shape-aware would flip their expectations without
+  /// their owners' decision. The behaviour is unchanged; what changes is that
+  /// every use of it outside this package is now flagged by the analyzer at the
+  /// call site, naming the read to use instead.
+  @Deprecated(
+    'This predicate is shape-blind: a record holding a PER-EXECUTION '
+    'WorkspaceDescriptor answers true to it, so gating on it and reading '
+    'workspace.repositoryPath silently yields a worker execution\'s checkout '
+    'rather than the product\'s durable clone. Use hasDurableProductClone, '
+    'which additionally requires the durable shape. Use hasLiveWorkspace if '
+    'you genuinely mean "a workspace is recorded and not cleaned", whatever '
+    'its shape.',
+  )
   bool get hasDurableWorkspace => pinnedRevision != null && hasLiveWorkspace;
+
+  /// True when this record names the PRODUCT'S durable clone, pinned and live.
+  ///
+  /// ## The read that means what its name says
+  ///
+  /// [hasDurableWorkspace] answers "are both halves of an answer present?",
+  /// which — since [workspace] became a two-shape union — is not the same
+  /// question as "does this record name the product's clone?". A record can
+  /// carry a pin and a per-execution worktree and satisfy the first while
+  /// failing the second, and the difference is invisible at the call site: one
+  /// boolean and one `repositoryPath` read either way.
+  ///
+  /// So this predicate adds the conjunct the old one left out, the SHAPE:
+  /// [pinnedRevision] present AND [workspace] holding a
+  /// [DurableWorkspaceDescriptor] AND that workspace not cleaned. Every cell in
+  /// which it is `true` is a record whose
+  /// `workspace!.requireDurable()` succeeds and whose
+  /// `requireDurable().repositoryPath` is the product clone. That is the
+  /// property the name promises, and it is what makes this the only read a
+  /// caller may safely gate on before asking where the product's code lives.
+  ///
+  /// The [isCleaned] conjunct is redundant today — a durable descriptor has no
+  /// `cleanedAt` and so is never cleaned (OD-7.2 / OD-7.3 are open). It is
+  /// written anyway because `isCleaned` is a property of the HOLDER, not of one
+  /// shape, and a conjunct that is currently unreachable is cheaper than a
+  /// conjunct that becomes true silently when OD-7.2 is decided.
+  bool get hasDurableProductClone {
+    final held = workspace;
+    return pinnedRevision != null &&
+        held != null &&
+        held.kind == kDurableWorkspaceKind &&
+        !held.isCleaned;
+  }
 
   /// True when [completed] is accompanied by the baseline that earned it.
   ///

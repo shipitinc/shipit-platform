@@ -1,12 +1,16 @@
+import 'package:control_plane_server/src/baseline/baseline_test_fixtures.dart';
+import 'package:control_plane_server/src/baseline/durable_workspace_materializer.dart';
 import 'package:control_plane_server/src/baseline/durable_workspace_runtime.dart';
 import 'package:control_plane_server/src/credentials/secret_material.dart';
 import 'package:control_plane_server/src/credentials/secret_provider.dart';
+import 'package:control_plane_server/src/credentials/ssh_remote.dart';
 import 'package:platform_contracts/platform_contracts.dart'
     show
         BaselineFact,
         BaselineMaturity,
         BaselineSectionKey,
         DurableWorkspaceDescriptor,
+        OnboardingRecord,
         ProductBaselineStatus,
         Provenance,
         RepositoryKind;
@@ -311,6 +315,175 @@ void main() {
     );
   });
 
+  group(
+    'R-9 — the private half is gone from memory before the clone\'s fate is decided',
+    () {
+      // Bytes 1..32. NOT ONE OF THEM IS ZERO, on purpose: `everyElement(0)` after
+      // the wipe must be satisfiable only by a wipe, never by the fixture. A
+      // material whose bytes were already zero would let this whole group pass
+      // against a provisioner that never wiped anything.
+      final material = List<int>.generate(32, (i) => i + 1);
+
+      test(
+        'provision() zeroes the SecretBytes it read, and the decision point saw '
+        'them ALREADY zero',
+        () async {
+          // ## What this is, and why it had to be written
+          //
+          // R-9's last clause — "the private half is gone from memory before the
+          // clone's fate is decided" — was the one obligation of §6.4 with no
+          // assertion anywhere. Obligations 3–5 (files on disk, clone config) are
+          // covered by `durable_workspace_materializer_test.dart`; the in-memory
+          // one was not, and deleting `material.wipe()` from
+          // `DurableWorkspaceProvisioner.provision` left every other test in the
+          // repository green. That is the same blind spot the materialiser's own
+          // doc names: the obligation is invisible on every success path.
+          //
+          // `SecretBytes.wipe()` zero-fills `_bytes` behind a public `bytes`
+          // getter, so the wipe is directly observable to a caller that RETAINS
+          // the object. That is what the fake below does — not by inspecting
+          // production state, but by holding the reference it was already handed.
+          final registry = RegistryFixture();
+          await registry.registerProduct(
+            productId: 'p-1',
+            repositoryId: 'repo-1',
+          );
+          final custody = _RetainingSecretProvider(material);
+          final durableMaterializer = _RetainingDurableMaterializer();
+
+          // The decision point itself, observed rather than inferred.
+          // `recordWorkspace` IS "the clone's fate is decided" — it is the one
+          // durable write, and the one that decides the recorded path. The
+          // witness extends the real engine and overrides only that call, so
+          // the trust chain above it runs untouched and the sample is taken at
+          // the exact instant R-9 talks about.
+          //
+          // A `finally` placed AFTER `recordWorkspace` satisfies "the bytes are
+          // zero when provision() returns" perfectly and still breaks the
+          // obligation. Only a sample taken here can tell those two apart.
+          final witness =
+              _WorkspaceWriteWitnessEngine(
+                  store: registry.store,
+                  humanDecisionStore: registry.decisions,
+                )
+                ..sample = () => custody.handouts
+                    .map((secret) => List<int>.from(secret.bytes))
+                    .toList();
+
+          await seedCredential(
+            witness,
+            productId: 'p-1',
+            repositoryId: 'repo-1',
+          );
+
+          final runtime = DurableWorkspaceRuntime.resolve(
+            engine: witness,
+            durableWorkspaceRoot: '/tmp/durable-workspace-r9-root',
+            log: log,
+            custodyProvider: custody,
+            accessVerifier: ScriptedAccessVerifier(
+              committedRevision: kTestRevision,
+            ),
+            materializer: durableMaterializer,
+          );
+
+          final descriptor = await runtime.provision(
+            productId: 'p-1',
+            repositoryId: 'repo-1',
+            pinnedRevision: kTestRevision,
+          );
+
+          // ---- The success path really ran. ----
+          //
+          // Without this, a provisioner that refused before reading any secret
+          // would satisfy every assertion below vacuously: no bytes were ever
+          // handed out, so there were none to find un-wiped.
+          expect(
+            durableMaterializer.materializations,
+            1,
+            reason:
+                'the materialiser was never reached, so nothing below can say '
+                'anything about a secret that was in memory',
+          );
+          expect(descriptor.startingRevision, kTestRevision);
+          expect(custody.handouts, isNotEmpty);
+          final record = await registry.store.readOnboardingForProduct('p-1');
+          expect(record, isNotNull);
+          expect(record!.workspace!.requireDurable().workspaceId, 'dws-p-1');
+
+          // ---- Non-vacuity: the key WAS there, and it was needed. ----
+          //
+          // The clone had to be made from real material, so the zeros asserted
+          // below are a wipe rather than a fixture that started out empty.
+          expect(
+            durableMaterializer.bytesAsHandedOver,
+            material,
+            reason:
+                'the materialiser was handed something other than the fixture '
+                'material, so a zeroed buffer afterwards would prove nothing',
+          );
+          expect(
+            durableMaterializer.bytesAsHandedOver,
+            isNot(everyElement(0)),
+            reason:
+                'the fixture material contains no zero byte, so this can only '
+                'fail if the buffer was already zero when the clone was made',
+          );
+
+          // ---- THE ASSERTION: the private half is gone from memory. ----
+          for (final secret in custody.handouts) {
+            expect(
+              secret.bytes,
+              everyElement(0),
+              reason:
+                  'a SecretBytes this provisioning read still holds key material '
+                  'after provision() returned. §6.4 obligation 6 / R-9: the '
+                  'private half does not outlive the call.',
+            );
+          }
+          // And the exact object the CLONE was made from — not merely "some read
+          // on this call" — so a future refactor cannot satisfy this by wiping a
+          // different instance than the one the materialiser received.
+          expect(
+            durableMaterializer.received!.bytes,
+            everyElement(0),
+            reason:
+                'the SecretBytes handed to the materialiser still holds key '
+                'material after provision() returned',
+          );
+
+          // ---- The ORDERING: gone BEFORE the clone's fate was decided. ----
+          //
+          // Sampled INSIDE `recordWorkspace`, which is the decision point and
+          // not a proxy for it. This is the assertion the end state cannot
+          // make: a `finally` moved to after the durable write leaves the
+          // buffer zeroed on return and still breaks R-9, and this fails.
+          expect(
+            witness.workspaceWrites,
+            1,
+            reason: 'the durable write never happened, so nothing was observed',
+          );
+          expect(
+            witness.bytesAtDecisionPoint,
+            isNotNull,
+            reason: 'the witness never sampled the retained secret',
+          );
+          expect(witness.bytesAtDecisionPoint, isNotEmpty);
+          for (final bytes in witness.bytesAtDecisionPoint!) {
+            expect(
+              bytes,
+              everyElement(0),
+              reason:
+                  'the private half was still in memory at the instant '
+                  'recordWorkspace decided the clone\'s fate. R-9 requires it '
+                  'gone BEFORE, not merely before the method returns.',
+            );
+          }
+        },
+      );
+    },
+  );
+
   group('the completion path waits for a human', () {
     test(
       'completing against a baseline that was never accepted is refused, and '
@@ -423,3 +596,145 @@ DurableWorkspaceDescriptor _durableDescriptor() => DurableWorkspaceDescriptor(
   startingRevision: _sha,
   createdAt: DateTime.utc(2026, 10, 13, 9),
 );
+
+/// A [ProductRegistryEngine] that samples the private half at the exact instant
+/// the clone's fate is decided.
+///
+/// ## Why the engine and not the log
+///
+/// R-9's obligation is an ORDERING one — "gone from memory **before** the
+/// clone's fate is decided" — and `recordWorkspace` is the decision: it is the
+/// one durable write and it chooses the recorded path. Sampling anywhere else
+/// cannot distinguish a correct `finally` from one moved a few lines too late,
+/// because both leave the buffer zeroed by the time the caller holds the
+/// descriptor.
+///
+/// It EXTENDS the real engine and overrides only this call, then delegates, for
+/// the same reason `ScriptedAccessVerifier` extends the real verifier: the trust
+/// chain above it must be the production one, or the sample is taken in a
+/// system nobody runs.
+class _WorkspaceWriteWitnessEngine extends ProductRegistryEngine {
+  _WorkspaceWriteWitnessEngine({
+    required super.store,
+    required super.humanDecisionStore,
+  });
+
+  /// Set by the test to read whatever it is holding, at sample time.
+  List<List<int>> Function()? sample;
+
+  /// How many times a workspace was recorded through this engine.
+  int workspaceWrites = 0;
+
+  /// The sample taken on the most recent [recordWorkspace] call, or `null`.
+  List<List<int>>? bytesAtDecisionPoint;
+
+  @override
+  Future<OnboardingRecord> recordWorkspace({
+    required String productId,
+    DurableWorkspaceDescriptor? workspace,
+    String? pinnedRevision,
+    DateTime? now,
+  }) {
+    workspaceWrites++;
+    bytesAtDecisionPoint = sample?.call();
+    return super.recordWorkspace(
+      productId: productId,
+      workspace: workspace,
+      pinnedRevision: pinnedRevision,
+      now: now,
+    );
+  }
+}
+
+/// A custody substrate that RETAINS every [SecretBytes] it hands out, by
+/// reference.
+///
+/// ## Why retaining is the whole trick
+///
+/// `SecretBytes.wipe()` zero-fills the buffer behind a public `bytes` getter,
+/// so a caller that kept the object can read the wipe directly — no production
+/// state is inspected, no instrumentation is added, and nothing the provisioner
+/// does can change what this provider is able to observe. It was handed the
+/// object; holding it is not a probe.
+///
+/// This is what makes §6.4 obligation 6 testable at all. Without a retained
+/// reference the only evidence the private half ever existed is the material on
+/// disk, which a different test already covers; the in-memory half was
+/// invisible to the whole suite.
+class _RetainingSecretProvider implements SecretProvider {
+  _RetainingSecretProvider(this.material);
+
+  /// Copied into a fresh [SecretBytes] per read, exactly as a real provider
+  /// would. Never stored: this provider stores nothing and mints nothing.
+  final List<int> material;
+
+  /// Every [SecretBytes] handed out, held by reference.
+  final List<SecretBytes> handouts = [];
+
+  @override
+  String get providerId => 'retaining-test-provider';
+
+  @override
+  bool get isDocumentedFallback => false;
+
+  @override
+  Map<String, String> describe() => const {
+    'providerId': 'retaining-test-provider',
+  };
+
+  @override
+  Future<void> destroy({required String referenceName}) async {}
+
+  @override
+  Future<SecretBytes> read({required String referenceName}) async {
+    final secret = SecretBytes(material);
+    handouts.add(secret);
+    return secret;
+  }
+
+  @override
+  Future<String> store({
+    required String referenceName,
+    required SecretBytes secret,
+  }) async => throw StateError('this provider never stores key material');
+}
+
+/// A materialiser that keeps the [SecretBytes] it was handed, and a COPY of its
+/// bytes as they stood at hand-over.
+///
+/// The copy is the negative control: it is what proves the buffer really did
+/// contain key material when the clone was made, so the post-call all-zero
+/// assertion is a wipe and not an empty fixture.
+class _RetainingDurableMaterializer implements DurableWorkspaceMaterializer {
+  /// How many times a clone was requested.
+  int materializations = 0;
+
+  /// The exact object the provisioner handed to `materialize`, retained.
+  SecretBytes? received;
+
+  /// A copy of [received]'s bytes at the moment of hand-over.
+  List<int>? bytesAsHandedOver;
+
+  @override
+  Future<DurableWorkspaceClone> materialize({
+    required String productId,
+    required String repositoryId,
+    required SshRemote remote,
+    required SecretBytes privateKeyPem,
+    required String confirmedHostKeyFingerprint,
+    required String pinnedRevision,
+    required String productRoot,
+  }) async {
+    materializations++;
+    received = privateKeyPem;
+    bytesAsHandedOver = List<int>.from(privateKeyPem.bytes);
+    return DurableWorkspaceClone(
+      productId: productId,
+      repositoryId: repositoryId,
+      repositoryPath: '$productRoot/checkout',
+      revision: pinnedRevision,
+      sourceRef: remote.toSshUrl(),
+      materializedAt: DateTime.utc(2026, 10, 13, 10),
+    );
+  }
+}
