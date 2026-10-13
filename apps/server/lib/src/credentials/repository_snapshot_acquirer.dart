@@ -250,8 +250,25 @@ class RepositorySnapshot {
   final SnapshotReleaseDisposition Function()? describeRelease;
 
   bool _released;
-  SnapshotReleaseDisposition _disposition =
-      SnapshotReleaseDisposition.treeDestroyed;
+
+  /// What the releaser did with the tree, or `null` while no disposition has
+  /// been established.
+  ///
+  /// Nullable on purpose, and that nullability is load-bearing: this field used
+  /// to default to [SnapshotReleaseDisposition.treeDestroyed], so a release
+  /// whose releaser THREW answered the next caller with `treeDestroyed` —
+  /// asserting the tree is gone while a live deploy key and its checkout are
+  /// still on disk. That is the one outcome this class must never report, and
+  /// the only way to avoid reporting it is for "no disposition yet" to be a
+  /// state this object can actually be in.
+  SnapshotReleaseDisposition? _disposition;
+
+  /// The failure that ended the first release, kept so that a later call can
+  /// raise it again instead of inventing a disposition. Null unless that release
+  /// threw. Mutually exclusive with [_disposition] being set: the try in
+  /// [release] either assigns the disposition or records the failure.
+  Object? _releaseFailure;
+  StackTrace? _releaseFailureTrace;
 
   /// The checkout itself.
   ///
@@ -267,13 +284,28 @@ class RepositorySnapshot {
     if (_released) {
       throw StateError(
         'snapshot $repositoryId@$revision was already released and is no longer '
-        "this object's to hand out; its tree was "
-        '${_disposition == SnapshotReleaseDisposition.treeRetainedForArtifact ? 'retained for its artifact' : 'removed'}'
-        ' — re-derive against a new acquisition',
+        "this object's to hand out; ${_whatReleaseDid()} — re-derive against a "
+        'new acquisition',
       );
     }
     return _root;
   }
+
+  /// What release can honestly be said to have done, in words.
+  ///
+  /// Three cases rather than two, because "the releaser threw" is not the same
+  /// fact as either disposition: nothing was disposed of, and whether the tree
+  /// and the deploy key's identity file are still on disk is exactly what is
+  /// unknown. Printing "removed" for that case would put the false success
+  /// [release] is written not to produce into a diagnostic as well.
+  String _whatReleaseDid() => switch (_disposition) {
+    SnapshotReleaseDisposition.treeRetainedForArtifact =>
+      'its tree was retained for its artifact',
+    SnapshotReleaseDisposition.treeDestroyed => 'its tree was removed',
+    null =>
+      'nothing was disposed of, because its releaser threw — whether the tree '
+          'and the credential material are still on disk is unknown',
+  };
 
   /// Retires the snapshot, and reports what happened to the tree.
   ///
@@ -313,23 +345,62 @@ class RepositorySnapshot {
   ///
   /// ## Idempotence, and what a throwing releaser means
   ///
-  /// At most once, and idempotent by construction: a second call is a no-op
-  /// rather than an error, because the lane releases in a `finally` and a crash
-  /// between the derivation and the release must not turn into a second attempt
-  /// at deleting a directory that is already gone. A second call reports the
-  /// FIRST call's disposition, so a caller that retries cannot see a different
-  /// answer for the same release.
+  /// The releaser runs at most once: the lane releases in a `finally` and a
+  /// crash between the derivation and the release must not turn into a second
+  /// attempt at deleting a directory that is already gone. A second call after a
+  /// SUCCESSFUL release reports the first call's disposition, so a caller that
+  /// retries cannot see a different answer for the same release.
   ///
   /// If the releaser throws — the credential material could not be removed —
   /// there is no disposition to report, because nothing was disposed of. That is
-  /// an incident the caller must handle, and `release` does not run twice.
+  /// an incident the caller must handle, and the throw is therefore RECORDED and
+  /// REPLAYED on every later call rather than answered with a disposition.
+  ///
+  /// "Released" and "a disposition was established" are two different facts, and
+  /// collapsing them is the defect this section describes: a snapshot whose
+  /// releaser failed has been released and has no disposition, and answering that
+  /// second call with a default would tell the one caller still in a position to
+  /// act — that the tree is gone — while a live deploy key and its checkout are
+  /// on disk. So the second call raises the original failure again. It is still
+  /// idempotent in the sense that matters: no second attempt is made to delete
+  /// anything, and no new answer is invented.
   SnapshotReleaseDisposition release() {
-    if (_released) return _disposition;
+    if (_released) {
+      final failure = _releaseFailure;
+      if (failure != null) {
+        // Structural: the catch below always captures a trace alongside the
+        // error, so this cannot be null while an error is recorded.
+        Error.throwWithStackTrace(failure, _releaseFailureTrace!);
+      }
+      final disposition = _disposition;
+      if (disposition == null) {
+        // Unreachable by construction — the try below either assigns a
+        // disposition or records a failure. Refused rather than defaulted,
+        // because a default value here is precisely the defect being fixed.
+        throw StateError(
+          'snapshot $repositoryId@$revision was released without a recorded '
+          'disposition and without a recorded failure, so there is nothing '
+          'honest to report; that is a defect in RepositorySnapshot, not a '
+          'clean release',
+        );
+      }
+      return disposition;
+    }
     _released = true;
-    _onRelease();
-    _disposition =
-        describeRelease?.call() ?? SnapshotReleaseDisposition.treeDestroyed;
-    return _disposition;
+    try {
+      _onRelease();
+      final disposition =
+          describeRelease?.call() ?? SnapshotReleaseDisposition.treeDestroyed;
+      _disposition = disposition;
+      return disposition;
+    } on Object catch (error, trace) {
+      // Note what is NOT set here: `_disposition` stays null, so neither this
+      // call nor any later one can report a disposition for a release that
+      // disposed of nothing.
+      _releaseFailure = error;
+      _releaseFailureTrace = trace;
+      rethrow;
+    }
   }
 
   @override

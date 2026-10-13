@@ -358,6 +358,141 @@ void main() {
     );
   });
 
+  group('a git that cannot answer retains, because the two errors differ', () {
+    // `release` asks exactly one question — "does this clone have local heads?"
+    // — and only an empty ANSWER destroys the tree. An unanswered question must
+    // retain, and that asymmetry is the entire safety argument: a false DESTROY
+    // deletes the commit an engineering review is about to resolve and fails a
+    // gate, while a false RETAIN costs disk, is written down in the marker, and
+    // is told to the caller. Nothing in production makes `for-each-ref` fail, so
+    // without the stub below this branch is unreachable by any test.
+
+    test('a committed artifact survives a ref read that failed', () async {
+      _writeStub(
+        bin,
+        'git',
+        _delegatingGitStub(
+          realGit: realGit,
+          origin: origin.path,
+          forEachRefFails: true,
+        ),
+      );
+      Process.runSync('chmod', ['755', '${bin.path}/git']);
+
+      final snapshot = await acquire();
+      final checkout = snapshot.root.path;
+      final scratch = Directory(checkout).parent;
+
+      // A real artifact commit, made with the REAL git, so the assertion below
+      // cannot pass for the wrong reason: the retain decision here has to come
+      // from the failed ref read, not from this tree being empty.
+      _git(checkout, ['checkout', '--quiet', '-B', 'shipit/impl/WI-4']);
+      File('$checkout/shipped.txt').writeAsStringSync('x\n');
+      _git(checkout, ['add', '-A']);
+      _git(
+        checkout,
+        [
+          '-c',
+          'user.name=p',
+          '-c',
+          'user.email=p@p',
+          'commit',
+          '--quiet',
+          '-m',
+          'artifact',
+        ],
+      );
+
+      expect(
+        snapshot.release(),
+        SnapshotReleaseDisposition.treeRetainedForArtifact,
+        reason:
+            'git could not answer, so the tree is kept: unknown must never be '
+            'read as empty',
+      );
+      expect(
+        Directory(checkout).existsSync(),
+        isTrue,
+        reason: 'a ref read that failed must not delete anything',
+      );
+      expect(
+        _git(checkout, [
+          'rev-parse',
+          '--verify',
+          'shipit/impl/WI-4^{commit}',
+        ]).stdout.trim(),
+        isNotEmpty,
+        reason:
+            'the artifact commit is still reachable by the ref the committer '
+            'created — this is what a review workload resolves',
+      );
+
+      final marker = File('${scratch.path}/$retainedArtifactMarkerName');
+      expect(
+        marker.existsSync(),
+        isTrue,
+        reason:
+            'a tree kept because nobody could tell must not be kept silently — '
+            'the marker is the only thing that says so',
+      );
+      final body =
+          jsonDecode(marker.readAsStringSync()) as Map<String, dynamic>;
+      expect(
+        body.containsKey('artifactRefs'),
+        isTrue,
+        reason: 'the key is present either way; what it holds is the claim',
+      );
+      expect(
+        body['artifactRefs'],
+        isNull,
+        reason:
+            '"nobody could tell" and "there are no refs" must not read the same '
+            'in the file a reclaimer reads, or the marker asserts a fact git '
+            'never gave',
+      );
+    });
+
+    test('an unread tree is retained rather than deleted on a guess', () async {
+      // The same branch with nothing committed into it. This one costs disk and
+      // buys nothing, which is exactly the trade the asymmetry accepts — and it
+      // is worth pinning, because it is the case a future reader is most likely
+      // to "optimise" back into a DESTROY.
+      _writeStub(
+        bin,
+        'git',
+        _delegatingGitStub(
+          realGit: realGit,
+          origin: origin.path,
+          forEachRefFails: true,
+        ),
+      );
+      Process.runSync('chmod', ['755', '${bin.path}/git']);
+
+      final snapshot = await acquire();
+      final checkout = snapshot.root.path;
+      final scratch = Directory(checkout).parent;
+
+      expect(
+        snapshot.release(),
+        SnapshotReleaseDisposition.treeRetainedForArtifact,
+      );
+      expect(
+        Directory(checkout).existsSync(),
+        isTrue,
+        reason:
+            'the destroy condition is `artifactRefs != null && '
+            'artifactRefs.isEmpty`, and a failed ref read never satisfies it',
+      );
+
+      final marker = File('${scratch.path}/$retainedArtifactMarkerName');
+      final body =
+          jsonDecode(marker.readAsStringSync()) as Map<String, dynamic>;
+      expect(body['artifactRefs'], isNull);
+      expect(body['repositoryPath'], checkout);
+      expect(body['whyRetained'], isNotEmpty);
+    });
+  });
+
   group('release still removes a snapshot nobody committed into', () {
     test('an unused snapshot leaves nothing behind', () async {
       final snapshot = await acquire();
@@ -455,6 +590,130 @@ void main() {
       },
     );
   });
+
+  group('a releaser that threw is never reported as a clean release', () {
+    // `release` used to answer a second call with a `_disposition` that
+    // defaulted to `treeDestroyed`. When the FIRST call's releaser threw, the
+    // second call therefore reported that the tree was gone while the tree and
+    // the deploy key's identity file were both still on disk — the one outcome
+    // this class is written against, and the one a caller in a position to act
+    // on it would most want to believe.
+    //
+    // Driven through the constructor rather than through a materializer,
+    // because that is where the releaser is injectable and because the thing
+    // under test IS this state machine: "released" and "a disposition was
+    // established" are separate facts, and no materializer decides between
+    // them. The scratch tree below is real and the file inside it stands in for
+    // the identity file, so "nothing was disposed of" is an observation rather
+    // than a restatement of the comment.
+
+    RepositorySnapshot snapshotWhoseReleaserThrows(
+      Directory scratch,
+      void Function() onRelease,
+    ) => RepositorySnapshot(
+      productId: 'product-a',
+      repositoryId: 'repo',
+      revision: originRevision,
+      sourceRef: 'git@127.0.0.1:acme/x.git',
+      acquiredAt: DateTime.utc(2026, 1, 1),
+      root: Directory('${scratch.path}/checkout'),
+      onRelease: onRelease,
+      // Named explicitly rather than left null, so this pins the regression
+      // rather than the absence of a describeRelease: a releaser that cannot
+      // answer could still have answered `treeDestroyed` by default.
+      describeRelease: () => SnapshotReleaseDisposition.treeDestroyed,
+    );
+
+    test('a second release rethrows instead of reporting a disposition', () {
+      final scratch = Directory.systemTemp.createTempSync(_scratchPrefix);
+      addTearDown(() {
+        if (scratch.existsSync()) scratch.deleteSync(recursive: true);
+      });
+      final identity = File('${scratch.path}/identity')
+        ..writeAsStringSync('a private key that outlived its release\n');
+
+      final failure = BaselineSnapshotCleanupException(scratch.path);
+      var releaserCalls = 0;
+      final snapshot = snapshotWhoseReleaserThrows(scratch, () {
+        releaserCalls++;
+        throw failure;
+      });
+
+      // First call: the original failure, so the callers that catch
+      // `BaselineSnapshotCleanupException` still see exactly what they saw
+      // before this change.
+      expect(
+        () => snapshot.release(),
+        throwsA(same(failure)),
+        reason: 'the first release disposes of nothing and must say so',
+      );
+      expect(
+        identity.existsSync(),
+        isTrue,
+        reason:
+            'nothing was disposed of — the credential material is still '
+            'there, which is the whole reason this is an exception',
+      );
+
+      // THE REGRESSION. This used to return `treeDestroyed`.
+      expect(
+        () => snapshot.release(),
+        throwsA(same(failure)),
+        reason:
+            'there is no disposition for a release that disposed of nothing; '
+            'answering treeDestroyed asserts the tree and its deploy key are '
+            'gone while both are still on disk',
+      );
+      expect(
+        () => snapshot.release(),
+        throwsA(same(failure)),
+        reason: 'and it must not start succeeding on the third attempt',
+      );
+      expect(
+        releaserCalls,
+        1,
+        reason:
+            'the releaser is still attempted at most once: a retry that ran it '
+            'again would be a second attempt to delete something already gone',
+      );
+    });
+
+    test('the root refusal does not describe it as a removal', () {
+      final scratch = Directory.systemTemp.createTempSync(_scratchPrefix);
+      addTearDown(() {
+        if (scratch.existsSync()) scratch.deleteSync(recursive: true);
+      });
+
+      final snapshot = snapshotWhoseReleaserThrows(
+        scratch,
+        () => throw BaselineSnapshotCleanupException(scratch.path),
+      );
+      expect(
+        () => snapshot.release(),
+        throwsA(isA<BaselineSnapshotCleanupException>()),
+      );
+
+      // The same false success, in a diagnostic: a caller reading this error
+      // would conclude the tree was removed, which is precisely the fact nobody
+      // established.
+      expect(
+        () => snapshot.root,
+        throwsA(
+          isA<StateError>().having(
+            (error) => '$error',
+            'message',
+            allOf(
+              contains('nothing was disposed of'),
+              isNot(contains('its tree was removed')),
+            ),
+          ),
+        ),
+        reason:
+            'an unestablished disposition must not be reported in words '
+            'either — here as a claim, there as an enum value',
+      );
+    });
+  });
 }
 
 /// A materializer that clones for real, then reports a revision the acquirer
@@ -502,6 +761,7 @@ String _delegatingGitStub({
   required String realGit,
   required String origin,
   String? fetchTargetOverride,
+  bool forEachRefFails = false,
 }) {
   final override = fetchTargetOverride == null
       ? ''
@@ -514,6 +774,18 @@ if [ "\$1" = "fetch" ]; then
   exec "$realGit" -C "\$dir" fetch --depth 1 --no-tags --quiet origin "$fetchTargetOverride"
 fi
 ''';
+  final refRead = forEachRefFails
+      ? '''
+if [ "\$1" = "for-each-ref" ]; then
+  # The ref read is the ONLY question whose answer can decide DESTROY, and
+  # nothing in production makes it fail — so without this the branch where git
+  # cannot answer is a branch no test can reach. It exits non-zero with no
+  # stdout, which is what a git that cannot open the object store looks like.
+  echo "fatal: could not enumerate refs" >&2
+  exit 128
+fi
+'''
+      : '';
   return '''
 #!/bin/sh
 # Test stub. Delegates to the real git binary against a local `file://` origin.
@@ -524,7 +796,7 @@ while [ \$# -gt 0 ]; do
   if [ "\$1" = "-C" ]; then shift; dir="\$1"; shift; continue; fi
   case "\$1" in -*) shift; continue ;; *) break ;; esac
 done
-$override
+$override$refRead
 if [ "\$1" = "remote" ]; then
   exec "$realGit" -C "\$dir" remote add origin "file://$origin"
 fi
