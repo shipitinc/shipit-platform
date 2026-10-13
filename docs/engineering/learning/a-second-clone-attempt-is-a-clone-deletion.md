@@ -9,9 +9,9 @@
 > that `SshDurableWorkspaceMaterializer.materialize()` had **no idempotence guard of its
 > own**. A parallel lane added one while this file was being reviewed. The hazard chain
 > below is still the reason the guards exist and is unchanged; the claim about what the
-> code does about it was false at the next HEAD and nobody noticed for one full merge
-> cycle. The title is in the past tense now because that is the only tense the tree
-> supports.
+> code does about it was false at the next HEAD, and no gate turns red when a claim like
+> that goes stale. The title is in the past tense now because that is the only tense the
+> tree supports.
 
 ---
 
@@ -74,9 +74,11 @@ and names what it found in it.
 **B owns the cost and the diagnosis property.** A's refusal happens *after* the runtime
 has read the active credential, scanned and matched the confirmed host key, and handed
 the private half into the materialiser. B's refusal happens before any of that. So a
-refused re-provision through the trigger is free and says *"this product is already
-provisioned at `<sha>`, clear the variable"*; the same attempt as a direct
-`materialize()` is a credential acquisition that ends in a collision exception.
+refused re-provision through the trigger is free and is reported as *"already provisioned
+at `<sha>`"* (`control_plane_service.dart:2425`), with the operator told that
+`$_provisionDurableWorkspaceEnv` *"MAY NOW BE CLEARED from the deployment environment"*
+(`server.dart:1985`); the same attempt as a direct `materialize()` is a credential
+acquisition that ends in a collision exception.
 
 ## The hazard chain — why any of this exists (unchanged, and still true of `git`)
 
