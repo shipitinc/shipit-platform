@@ -1371,7 +1371,7 @@ updated accordingly.
 `C-2` exist to guarantee, and review-matrix row **R-7** is how the Manager checks it before
 dispatch.
 
-**Six paths in this map are new in revision 2**, for two different reasons, and they should not
+**Nine paths in this map are new in revision 2**, for two different reasons, and they should not
 be conflated: four were **granted by the operator** (`fb3c3485`) and five under `products/` and
 `services/` are the **verified consequence of `OD-8` = option A** (§8.6). The second group is
 flagged for a path grant — see §8.6's closing note.
@@ -1447,11 +1447,22 @@ covered by the gate either (only `baseline_product.dart` and `baseline_dispatch.
 | Property | Holds? | Why |
 |---|---|---|
 | Disjoint owned paths | **Yes**, after `C-1`, after the six granted/new rows in §8.1, and after `OD-8`'s consequence in §8.6 | §8.1 |
-| **Product code is independently compilable in either direction** | **Yes** | A1 calls `recordWorkspace`/`completeOnboarding`, which already exist (`f164d40`). A2 reads `readOnboardingForProduct`, which already exists (`postgres_product_registry_store.dart:1062-1071`). **Neither unit's own product code waits for the other's code to exist.** |
+| **Product code is independently compilable in either direction** | **Yes** | A1 calls `recordWorkspace`/`completeOnboarding`, which already exist (`f164d40`). A2 reads `readOnboardingForProduct`, which already exists (`postgres_product_registry_store.dart:1062-1071`). **Neither unit's own product code waits for the other's code to exist** — and since revision 2 granted A1 `packages/store_contract_tests/**`, A1's owned suite *does* transitively compile A2's `scheduler` and `workflow_store` at the base revision (`job_store_suite.dart:5` imports `package:scheduler/scheduler.dart`; `fixtures.dart:3` imports `package:workflow_store/workflow_store.dart` and builds `WorkItemState` values at `:13,103-104,145-146`), but it requires **no NEW declaration from A2**. The edge is one-directional — A1's → A2's — and it is satisfied by what already exists at base. |
 | **The ONE-FILE composition-root integration is serialized** | **Yes, and it is not optional** | Once `C-1` is discharged, `server.dart` **references A1's runtime class** — so A2's composition cannot compile until A1's factory declaration is visible. **This is a compile-time dependency in exactly one direction, in exactly one file.** It is the accepted cost of `C-1` and it is two call lines. |
 | A runtime dependency exists | **Yes — deliberately** | A2's readiness probe reads a record A1 writes (§7.7). |
 | Concurrent **dispatch** without the workspace | **No, and must not happen** | The probe must defer, never dispatch (§7.7). This is a *runtime* ordering requirement, satisfied by the probe and testable by review-matrix row R-3. |
 | Independent review of each unit is possible | **Yes** | A1: lane + materialiser + descriptor + gate + compose. A2: state + edge + definition + routing + probe + UI + compose. |
+
+> **Operational consequence of the `store_contract_tests` edge — do not read one lane's green as
+> evidence about the other.** The row above is about *compilation order*, and it holds. It is not a
+> statement that the two lanes are independent *evidence*. Because A1's owned conformance suite
+> compiles A2's `scheduler` and `workflow_store`, **a green A1 lane says nothing about A2's code** —
+> it exercised A2 exactly as it stands at base, and A2's `WorkItemState.implementationReady` value
+> and its new edge do not exist there. Two consequences for the Manager: **a passing A1 lane is not
+> evidence about A2**, and **if A2 rebases onto A1 (or A1 onto A2), the rebase must re-run
+> `packages/store_contract_tests/**`**, because that suite is where the two units' signatures meet.
+> The same suite is the place a rebase conflict in either direction would surface as a compile
+> failure rather than as a silently-wrong assertion.
 
 > #### The correction (M2) — and why the wrong version was in the operator-facing field
 >
@@ -1542,6 +1553,7 @@ each was checked for whether it binds `.workspace` to a typed value:
 | `…/onboarding_record.g.dart` | generated serialisation | **YES** — regenerated |
 | `packages/product_registry/…/product_registry_engine.dart` | `recordWorkspace({ … WorkspaceDescriptor? workspace … })` at **`:1917-1922`**, and `copyWith(workspace: …)` at `:1950` | **YES** — the parameter type must change. **Revision 1 listed `packages/product_registry/**` as READ-ONLY for A1.** |
 | `packages/product_registry/…/in_memory_product_registry_store.dart` | round-trips through the same type | **YES** |
+| `packages/product_registry/…/product_registry_store.dart` | the **abstract** store interface — `saveOnboarding(OnboardingRecord record)` at **`:184`** and `readOnboardingForProduct(String productId)` at **`:186`**. It names the record as a type and hands it on; it never reads `.workspace` | **NO** — the abstract store names the record, never `.workspace` |
 | `packages/store_contract_tests/…/product_registry_store_suite.dart` | constructs `WorkspaceDescriptor(…)` at `:224-230` and asserts `.workspaceId` / `.startingRevision` / `.worktreePath` at `:246-266` | **YES** — the shared conformance suite |
 | `apps/server/lib/src/persistence/postgres_product_registry_store.dart` | reads the column as text and decodes it (`:1147`, `:1156-1166`) | **YES** — one binding |
 | `apps/server/lib/src/services/control_plane_service.dart` | `final workspace = onboarding?.workspace;` (`:2193`) and `workspace?.workspaceId` (`:2209`, inside a `logger.debug`) | **YES** — one line |
@@ -1564,11 +1576,15 @@ best documentation of the confusion this whole design exists to resolve.
 
 > #### ⚠ Escalation to the Manager — a path grant is needed, and it is NOT self-granted
 >
-> The five paths above — `packages/product_registry/**`, `packages/store_contract_tests/**`,
-> `apps/server/lib/src/persistence/postgres_product_registry_store.dart`,
-> `apps/server/lib/src/services/control_plane_service.dart`, and the `onboarding_record`
-> type/schema trio — **are not in the operator's `granted_paths_beyond_brief` list**, and A1
-> cannot compile or pass its own tests without them.
+> The four new paths above — `packages/product_registry/**`, `packages/store_contract_tests/**`,
+> `apps/server/lib/src/persistence/postgres_product_registry_store.dart` and
+> `apps/server/lib/src/services/control_plane_service.dart` — plus the already-mapped
+> `onboarding_record` type/schema trio **are not in the operator's
+> `granted_paths_beyond_brief` list**, and A1 cannot compile or pass its own tests without them.
+> The distinction is stated because it changes what the amendment is: the trio was **already A1's
+> conditional map entry in revision 1** (§8.4's `OD-8` row, which anticipated that the cost would
+> "move to a new schema file"), so it needs no new decision — only the **four** genuinely new paths
+> do.
 >
 > **Ownership is granted by the Manager or the operator, never by the designer.** This lane
 > therefore records the requirement and the recommendation and **takes nothing**. Extending the
@@ -1982,7 +1998,12 @@ this document. Approval authorises BUILDING. It does not deliver `IMPL-001` or `
 > **Neither `IMPL-001` nor `IMPL-002` completes on approval alone.** Revision 1 did not partition
 > this, so an approval could reasonably be misread as *"both requirements land"*. They do not.
 > The table is per-unit and per-work-item, and the status column is derived **only** from the
-> decisions actually recorded in §11 — never from an inference about intent.
+> decisions actually recorded in §11 **and §8.6's recorded ungranted-path status** — never from an
+> inference about intent. Exactly one row consults the second source: *"the field-type change and
+> every reader it breaks"*, gated on a **path grant**, not on a decision in §11. The divergence is
+> in the safe direction — §11 alone would read `YES`, §8.6's recorded status reads `NO — cannot
+> start` — and the row names its own gate in the "Still gated on" column. §13.2 records the same
+> row, so the two cannot drift apart unnoticed.
 
 **A1 — durable workspace creation**
 
@@ -2271,7 +2292,7 @@ treating it as permission to stop checking. Each of these was re-derived from so
 | **C-10** — the product-agnosticism gate covers A1 | `kForbidden` at `product_agnosticism_test.dart:30`; `_laneSources` `:84-113`; `_laneDirectorySources` `:120-127`, cross-checked so a mismatch **fails** | ✅ |
 | **C-11** — traceability holds | ~40 citations re-checked by grep/sed at this base, including `runnable_work.dart:142-144`, `entry_hop.dart:288-297`, `engineering_review_gate.dart:69-77`, `git_worktree_workspace_manager.dart:85-92`, `guard_conditions.dart:247`, `scheduler.dart:322` and `:1698-1702`, `workflow_state.dart:36-39`, `human_decision_routing.dart:55-80`, `plain_language.dart:110-135`, `transition_copy.dart:94`, `compose.qa.yaml:113-119` | ✅ |
 | **Risk Level 3 justification** | §12.1's four grounds each re-read; the operator independently confirmed Level 3 against `DESIGN_GOVERNANCE.md:99` and **declined a downgrade** | ✅ |
-| **Dispatchable-vs-gated honesty** | §12.3.1's table is derived **only** from §11's recorded decision status | ✅ |
+| **Dispatchable-vs-gated honesty** | §12.3.1's table is derived **only** from §11's recorded decision status **and §8.6's recorded ungranted-path status** — the two sources §12.3.1 now names explicitly, so this row and that section state one rule | ✅ |
 | **`OD-8` = option A is viable as stated** | All four named per-execution consumers confirmed to contain **no reference to `OnboardingRecord`**, so the byte-identical binding holds | ✅ |
 | **`OD-7` is only partly answered** | The decision's own `title` and `binds` field scope it to location; its `binds` says *"A1's compose change is unblocked"* while revision 1 said `OD-7` blocks *"the compose change **and its reclamation path**"* | ✅ — gap found and recorded |
 | **`compose.qa.yaml` has no top-level `name:`** | Confirmed by grep — so every project resolves to `docker`, which is why `-p` is a binding obligation (§6.3.2) and not a style preference | ✅ |
