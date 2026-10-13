@@ -58,8 +58,9 @@ context:
           not exist in the running container. The agent's own diagnostics (exit code, tool calls,
           errors), its result summary, and its session event stream are therefore stored NOWHERE.
     analysis:
-      - The real triage failure `AcpRequestException(-32603) ... Invalid credential` reached the UI as
-        nothing at all — the run page rendered only "Stopped - stopped N times".
+      - >-
+        The real triage failure `AcpRequestException(-32603) ... Invalid credential` reached the UI as
+        nothing at all — the run page rendered only the words "Stopped - stopped N times".
       - `JobRecordView` carries no `failure` field, so the API is physically incapable of telling an
         operator why a job failed, independently of where the records live.
       - `ExecutionEndpoints.inspect` reads the execution store, so with an empty store it has nothing
