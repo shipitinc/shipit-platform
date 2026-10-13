@@ -107,6 +107,46 @@ services:
       # resolved string is passed in as an argument (see `_triageWorkspaceRoot`,
       # which is the existing pattern for the same thing).
       SHIPIT_DURABLE_WORKSPACE_ROOT: /workspace-repo
+      # The A3 OPERATOR SURFACE: a boot-time instruction telling the server to
+      # clone ONE product's repository into the root above, once, under human
+      # initiation. server.dart reads it BEFORE Serverpod is constructed, so a
+      # bad instruction refuses to boot rather than serving half-provisioned.
+      #
+      # It was UNREACHABLE until this line existed. Compose hands a container
+      # only the variables its service DECLARES, so an operator's instruction in
+      # docker/.env never arrived even though the sibling value on the line above
+      # did -- same file, same block, one declared and one not. Measured in the
+      # running container, `docker exec docker-server-1 sh -c 'echo
+      # "${SHIPIT_PROVISION_DURABLE_WORKSPACE:-<unset>}"'` printed <unset> while
+      # SHIPIT_DURABLE_WORKSPACE_ROOT was present.
+      #
+      # Interpolated from docker/.env, NOT the repository-root .env that
+      # `env_file:` reads -- the same distinction spelled out at
+      # SHIPIT_SECRET_PROVIDER above. Putting the instruction in docker/.env
+      # without declaring it here is exactly the trap that comment describes.
+      #
+      # UNSET IS THE NORMAL STATE AND IS A NO-OP. `${...:-}` renders an absent
+      # variable to the empty string -- never to a literal "${SHIPIT_...}"
+      # placeholder -- and the parser reads empty as "nobody asked", which is a
+      # state and not a fault. A stack with nothing to provision therefore boots
+      # exactly as it does without this line: no instruction, no log line, no
+      # behaviour change. That is the everyday case; keep it boring. Do not give
+      # this a default, and do not use a required "${VAR:?...}" -- Compose
+      # interpolates the whole file before it filters services, so one mandatory
+      # variable would break every command that reads this file, read-only ones
+      # included.
+      #
+      # The value is JSON and carries `{`, `}` and `"`; a `/` is possible in
+      # any field. Compose substitutes it into a scalar it has already parsed
+      # and never re-lexes the result, so it arrives byte-for-byte -- asserted
+      # end to end, against the real parser, by
+      # apps/server/test/compose_provision_passthrough_test.dart.
+      #
+      # CLEAR IT once the clone exists; the startup banner says so on the line
+      # that reports the provision. A3 made a re-presentation a satisfied outcome
+      # rather than a failure, so leaving it set is safe -- but a live instruction
+      # in a deployment's environment is state that outlives whoever set it.
+      SHIPIT_PROVISION_DURABLE_WORKSPACE: "${SHIPIT_PROVISION_DURABLE_WORKSPACE:-}"
     ports:
       - "8180:8080"
     depends_on:
