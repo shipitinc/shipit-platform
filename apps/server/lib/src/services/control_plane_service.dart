@@ -2313,9 +2313,9 @@ class ControlPlaneService {
 /// ## Idempotence: a product that already has a clone is REFUSED, never
 /// re-provisioned
 ///
-/// See [DurableWorkspaceProvisionTrigger.provision] for why re-provisioning is
-/// not merely forbidden here but would be actively destructive if it were
-/// allowed.
+/// See [DurableWorkspaceProvisionTrigger.provision] for the hazard behind that
+/// refusal and for why it is still the right layer to enforce it, now that the
+/// materialiser enforces a second, independent guard of its own.
 class DurableWorkspaceProvisionTrigger {
   const DurableWorkspaceProvisionTrigger({
     required this.store,
@@ -2398,22 +2398,58 @@ class DurableWorkspaceProvisionTrigger {
   /// **A product that already has a durable clone is refused, always. There is
   /// no re-provision, no force, and no replacement path in this lane.**
   ///
-  /// **THE GUARD IS HERE AND ONLY HERE.** `DurableWorkspaceRuntime.provision()`
-  /// and `SshDurableWorkspaceMaterializer.materialize()` have no idempotence
-  /// guard of their own — neither asks whether a clone already exists. This
-  /// check is the only thing standing between a caller and that fact, so a caller
-  /// that reaches the runtime directly has not merely opted out of the refusal;
-  /// it has walked onto the path below. Never call either of them from outside
-  /// this class.
+  /// **TWO GUARDS, NOT ONE. THIS IS THE OUTER ONE.**
   ///
-  /// Not only is that the safe default, it is the only safe one. A second
-  /// provisioner run materialises into the SAME `$workspaceRoot/$productId`
-  /// tree that already holds the clone: `git init` succeeds against the existing
-  /// repository and `git remote add origin` then FAILS, because `origin` is
-  /// already there. A1's materialiser treats any failed git command as a
-  /// provisioning failure and destroys the product root — deleting the existing
-  /// clone and every unreviewed commit in it. "Just re-provision it" is not a
-  /// gentler path; it is the destructive one, and it is the shape of the
+  /// This check decides from the RECORD: `readOnboardingForProduct`, then
+  /// `hasDurableProductClone`, before A1 is asked for anything at all. The
+  /// materialiser has an independent guard of its own — `SshDurableWorkspaceMaterializer.materialize()`
+  /// refuses a product root that pre-existed, and its `on Object` handler now
+  /// destroys a root only when THIS call created it. That is `A1B`'s fix
+  /// (`e82a120`), and it means the claim this section used to make — that the
+  /// guard is here and ONLY here, and that reaching the runtime directly "is
+  /// the deletion" — is **false and has been since that merge**.
+  ///
+  /// The two are defence in depth, and each covers a case the other cannot see.
+  /// It would be wrong to say that removing either one alone still deletes the
+  /// tree: the materialiser's own entry refusal holds the filesystem property on
+  /// every path, including a direct call, and this check holds it on the
+  /// production path without costing a credential. What is true is narrower and
+  /// is what A1B actually measured — within the materialiser, TWO guards are
+  /// independently load-bearing, and removing either still deletes the tree:
+  /// remove the entry refusal and the run reaches `git remote add` and destroys;
+  /// remove only the `createdRoot &&` condition on the destroy, keep the entry
+  /// refusal, and the refusal throws inside the `try`, is caught by `on Object`,
+  /// and destroys. **Refusing became the deletion.** So keeping this check is
+  /// not redundant — it refuses **before** the credential is read and the
+  /// confirmed host key is matched, so a refused re-provision through this class
+  /// is free and is reported as *"already provisioned at `<sha>`"* rather than as
+  /// a collision; the materialiser's refusal costs a full credential
+  /// acquisition and arrives as `DurableWorkspaceRootCollisionException`. This
+  /// guard also owns a case the materialiser's cannot see — a record write that
+  /// fails after a successful clone leaves an orphan tree with nothing recorded —
+  /// while the materialiser's owns a case this one cannot: any caller at all, in
+  /// any order, against any root it did not create. One precondition on the
+  /// materialiser's side is not stated here and is not this class's to hold: a
+  /// SINGLE WRITER per product root. Two concurrent `materialize()` calls both
+  /// observe `rootPreExisted == false`, both claim the root, and the loser's
+  /// destroy takes the winner's tree — measured 6/6. See
+  /// `docs/engineering/learning/a-second-clone-attempt-is-a-clone-deletion.md`.
+  ///
+  /// Never call `DurableWorkspaceRuntime.provision()` or
+  /// `SshDurableWorkspaceMaterializer.materialize()` from outside this class.
+  /// The reason is no longer "you will delete a clone"; it is that you will
+  /// acquire a credential, re-materialise into a root that already exists,
+  /// rewrite the onboarding row without noticing, and be handed a collision error
+  /// instead of the answer. `DurableWorkspaceRuntime.provision()` still reads no
+  /// onboarding record of its own, so "the runtime has no idempotence guard" is
+  /// still true of it and only of it.
+  ///
+  /// The hazard itself, unchanged and still the reason both guards exist: a
+  /// second provisioner run materialises into the SAME
+  /// `$workspaceRoot/$productId` tree that already holds the clone. `git init`
+  /// succeeds against the existing repository and `git remote add origin` then
+  /// FAILS, because `origin` is already there. That is why the second run was
+  /// the destructive one before the provenance fix, and it is the shape of the
   /// `docker_postgres_data_qa` incident this repository already has.
   ///
   /// Re-pinning to a newer commit is a real need and is explicitly NOT what
@@ -2549,7 +2585,9 @@ class DurableWorkspaceProvisionTrigger {
             '(workspace ${recorded.workspaceId}). It was NOT re-provisioned and '
             'NOT replaced: a clone may hold unreviewed commits, and a second '
             'materialisation into the same tree would fail on its own `git '
-            'remote add origin` and destroy it. Re-pinning a product is a '
+            'remote add origin`. This trigger refuses before any of that starts — '
+            'the materialiser would refuse the colliding root too, but only '
+            'after acquiring the credential. Re-pinning a product is a '
             'decision about how long a clone lives and who presses it (OD-7.2 / '
             'OD-7.3), and both are still open.',
         log: log,

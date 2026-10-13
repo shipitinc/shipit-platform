@@ -32,11 +32,17 @@ import 'package:test/test.dart';
 /// credential material and no onboarding record behind.
 ///
 /// The runtime under the trigger is A1's real one, built through its real
-/// factory, with only the two network seams substituted (`SecretProvider` and
+/// factory. THREE of its inputs are substituted, and naming all three matters
+/// because the third one is where a whole guard lives: `SecretProvider` and
 /// `RepositoryAccessVerifier` are composition-root inputs by A1's own design,
-/// and the materialiser is a declared port). The trust chain above them is
-/// production code, because a trigger tested against a fake runtime would prove
-/// nothing about the trigger.
+/// and the MATERIALISER is a declared port — this file uses
+/// `_RecordingDurableMaterializer`, which writes nothing and never reaches
+/// `SshDurableWorkspaceMaterializer`. So the trust chain above the port is
+/// production code, but nothing below it is, and no test in this file can say
+/// anything about what the real materialiser does. A trigger tested against a
+/// fake runtime would prove nothing about the trigger; equally, a claim about
+/// the materialiser that pointed here would prove nothing about the
+/// materialiser.
 void main() {
   const productId = 'p-1';
   const repositoryId = 'repo-1';
@@ -624,16 +630,25 @@ void main() {
       () async {
         // The safety argument above, executed rather than asserted.
         //
-        // A1's materialiser runs `git init` then `git remote add origin` in the
-        // product root, and treats a non-zero exit from either as a failed
-        // provisioning — after which its `on Object` handler destroys the whole
-        // product root. On a SECOND run `origin` is already there, so the add
-        // fails. That is the deletion of a clone that may hold unreviewed
-        // commits, arrived at through a path that reads as the helpful one.
+        // THE PREMISE, AND IT IS STILL A PROPERTY OF `git`. A materialisation
+        // runs `git init` then `git remote add origin` in the product root, and
+        // a non-zero exit from either is a failed provisioning. On a SECOND run
+        // `origin` is already there, so the add fails. Before `e82a120` that
+        // non-zero exit was enough: the materialiser's `on Object` handler
+        // destroyed the whole product root, taking the clone and every
+        // unreviewed commit in it. That is the deletion this refusal was written
+        // against, arrived at through a path that reads as the helpful one.
         //
-        // This test uses the real `git` and a temporary directory. No network,
-        // no ssh, no product data: it establishes the premise the refusal rests
-        // on, so a future reader can check it instead of believing it.
+        // It is now ALSO why two guards exist rather than one. A1B's fix made
+        // the destroy provenance-conditioned, so a second run through the real
+        // materialiser is refused before it writes a byte — but the `git`
+        // behaviour asserted below is unchanged and is still the mechanical
+        // reason both guards are load-bearing rather than decorative.
+        //
+        // This test runs the real `git` binary in a temporary directory and
+        // touches no materialiser and no runtime at all. No network, no ssh, no
+        // product data: it establishes the premise the refusal rests on, so a
+        // future reader can check it instead of believing it.
         final dir = Directory.systemTemp.createTempSync(
           'durable-workspace-reprovision-hazard.',
         );
@@ -786,21 +801,29 @@ void main() {
       'trigger — a direct `runtime.provision(` is caught wherever it appears',
       () async {
         // The guard above governs what the TRIGGER calls. This governs who may
-        // reach the capability at all, which is the gap the previous gate left
-        // open in the direction that actually destroys a clone.
+        // reach the capability at all.
         //
         // `DurableWorkspaceProvisionTrigger` is the only place guard #5 lives.
-        // `DurableWorkspaceRuntime.provision()` and
-        // `SshDurableWorkspaceMaterializer.materialize()` have no idempotence
-        // guard of their own, so a production call site that reaches either
-        // directly bypasses every one of the trigger's five checks — and on a
-        // product that already has a clone, that bypass IS the deletion. That
-        // attribution is itself pinned by a test in this file, which calls the
-        // runtime twice and asserts the materialiser ran twice.
+        // `DurableWorkspaceRuntime.provision()` still has no idempotence guard
+        // of its own, and `SshDurableWorkspaceMaterializer.materialize()` has
+        // one since `e82a120` (a pre-existing root is refused, and the destroy
+        // is conditioned on this call having created it). So a production call
+        // site that reaches either directly still bypasses all five of the
+        // trigger's checks — it re-materialises, rewrites the onboarding row,
+        // and buys a collision error for a full credential acquisition instead
+        // of a refusal that costs nothing.
+        //
+        // It is NOT "the deletion" any more, and a gate whose stated reason is
+        // falsified should be deleted rather than re-justified — but this one is
+        // kept because the rule it enforces is still the right one: one owner of
+        // the operator action, one refusal with one message, and no lane able to
+        // invent a second way in. The attribution that remains is pinned by a
+        // test in this file, which calls the runtime twice and asserts the
+        // materialiser ran twice.
         //
         // This is the path the persisted learning
         // (`docs/engineering/learning/a-second-clone-attempt-is-a-clone-deletion.md`)
-        // used to describe as safe, which is why it is checked mechanically
+        // used to describe as destroying, which is why it is checked mechanically
         // rather than trusted to prose.
         const capabilityTokens = <String>[
           'DurableWorkspaceRuntime',
@@ -871,9 +894,11 @@ void main() {
             offenders[path] =
                 'calls `.provision(` on ${provisionCalls.join(', ')} outside '
                 'DurableWorkspaceProvisionTrigger. That skips all five of its '
-                'checks, and on a product that already has a clone the skip IS '
-                'the deletion. If this receiver is some unrelated API, rename it: '
-                'the gate is call-shaped on purpose and cannot tell the two apart.';
+                'checks, so an already-provisioned product is re-materialised and '
+                'its onboarding row rewritten, and the operator is handed a '
+                'collision instead of a refusal. If this receiver is some '
+                'unrelated API, rename it: the gate is call-shaped on purpose and '
+                'cannot tell the two apart.';
             continue;
           }
           if (named.isEmpty) continue;
@@ -881,9 +906,10 @@ void main() {
           if (path != compositionRoot) {
             offenders[path] =
                 'names ${named.join(', ')}. Durable provisioning must stay '
-                'behind DurableWorkspaceProvisionTrigger, which is the only '
-                'place the refuse-always guard lives — a direct call here skips '
-                'all five of its checks.';
+                'behind DurableWorkspaceProvisionTrigger, which is where the '
+                'refuse-always guard lives and the only place that can refuse '
+                'before acquiring a credential — a direct call here skips all '
+                'five of its checks.';
             continue;
           }
 
@@ -893,7 +919,10 @@ void main() {
           if (scanned.contains('.materialize(')) {
             offenders[path] =
                 'calls `.materialize(` directly. Materialising into an existing '
-                'product root is the destructive path itself.';
+                'product root is refused by the materialiser since e82a120, so '
+                'this is not a deletion — but it is a collision an operator will '
+                'read as a broken machine, bought with a credential '
+                'acquisition, instead of a refusal that costs nothing.';
             continue;
           }
           if (named.any((t) => t != 'DurableWorkspaceRuntime')) {
@@ -927,47 +956,64 @@ void main() {
     );
   });
 
-  group('THE ATTRIBUTION, PINNED — the runtime has no guard of its own', () {
+  group('THE ATTRIBUTION, PINNED — the RUNTIME has no guard of its own', () {
     test(
       'called directly a second time, `runtime.provision()` materialises AGAIN '
-      'into the same product root — and THIS TEST IS EXPECTED TO GO RED WHEN '
-      'THE GUARD LANDS',
+      'into the same product root and REWRITES the record — and it CANNOT see '
+      'the materialiser\'s guard, because the materialiser here is a test double',
       () async {
         // WHY THIS TEST EXISTS. The persisted learning
         // (`docs/engineering/learning/a-second-clone-attempt-is-a-clone-deletion.md`)
-        // attributes the refuse-always guard to `DurableWorkspaceProvisionTrigger`
-        // and says of the runtime and the materialiser: "no idempotence guard of
-        // their own … called directly a second time, it materialises again into
-        // the product root that already holds the clone". Every other row in
-        // that file's evidence table points at a test. This one did not: the
-        // claim was true, it had been reproduced by hand, and nothing in the
-        // repository held it. A claim like that goes stale silently the moment
-        // the behaviour changes, which is exactly how it was wrong the first
-        // time.
+        // once attributed the refuse-always guard to `DurableWorkspaceProvisionTrigger`
+        // alone and said of the runtime AND the materialiser: "no idempotence guard
+        // of their own … called directly a second time, it materialises again into
+        // the product root that already holds the clone". Every other row in that
+        // file's evidence table points at a test. This one did not: the claim was
+        // true, it had been reproduced by hand, and nothing in the repository held
+        // it. A claim like that goes stale silently the moment the behaviour
+        // changes, which is exactly how it was wrong the first time — and then
+        // wrong a second time, when `e82a120` added a guard to the materialiser
+        // and the file kept asserting its absence.
+        //
+        // WHAT IS PINNED NOW IS THE HALF THAT IS STILL TRUE. `e82a120` gave
+        // `SshDurableWorkspaceMaterializer.materialize()` its own guard: a
+        // pre-existing product root is refused before a byte is written, and the
+        // `on Object` handler destroys a root only when THIS call created it.
+        // `DurableWorkspaceRuntime.provision()` still reads no onboarding record
+        // of its own — it re-materialises into the same `$workspaceRoot/$productId`
+        // and `engine.recordWorkspace` rewrites the one row and bumps its version.
+        // THAT is what this test holds.
+        //
+        // ---- WHAT THIS TEST CANNOT SEE, STATED PLAINLY. ----
+        //
+        // The materialiser here is `_RecordingDurableMaterializer`. It writes
+        // nothing, spawns no `git`, and never reaches
+        // `SshDurableWorkspaceMaterializer` — so a guard added or removed THERE
+        // can never turn this test red. The previous version of this test
+        // carried an explicit contract ("THIS TEST IS EXPECTED TO GO RED WHEN THE
+        // GUARD LANDS"). The guard landed at exactly the layer this test
+        // replaces, so the contract was a promise nothing could keep. It is
+        // removed rather than left standing: a red test that never goes red
+        // teaches a reader that the pins here are live.
+        //
+        // The materialiser's guard is pinned where it can actually fail —
+        // `apps/server/lib/src/baseline/durable_workspace_materializer_test.dart`,
+        // group `a product root this call did not create is never destroyed`,
+        // against real git. Two layers, two files, neither pretending to be the
+        // other.
         //
         // It is pinned here by calling the runtime twice with the trigger — and
         // so guard #5 — nowhere in the path. The runtime is A1's real one, built
-        // through its real factory, with the same two network seams substituted
-        // that the rest of this file substitutes. Nothing about the trust chain
-        // is simulated; only the socket is.
+        // through its real factory, with THREE inputs substituted: the two
+        // network seams the rest of this file substitutes, and the materialiser
+        // port. The trust chain above the port is production code; nothing below
+        // it is.
         //
-        // ---- THIS TEST IS EXPECTED TO FAIL, BY DESIGN. A FUTURE READER MUST
-        // ---- NOT "FIX" IT. ----
-        //
-        // The guard this attribution says is missing is being added to the
-        // runtime / materializer by another lane. The moment it lands, the
-        // second `provision()` below is refused, `materializations` stays at 1,
-        // and this test goes red. That red is the whole point of committing it:
-        // it is the signal that the persisted attribution has become FALSE and
-        // has to be rewritten in the same commit that falsified it. Repairing
-        // the assertion to expect `1` would leave the learning file asserting,
-        // forever, that a second call re-materialises — for a runtime that no
-        // longer does it. That is the failure mode this test was committed to
-        // prevent.
-        //
-        // IF YOU ARE HERE BECAUSE CI IS RED ON THIS TEST: the guard moved.
-        // Rewrite the learning file's summary and its evidence row FIRST, then
-        // this number, in that order, in one commit.
+        // Non-vacuity is mechanical, not a courtesy: the count below is asserted
+        // as `2` with a reason that tells the reader to rewrite the learning file
+        // FIRST and then the number. A future change that makes the runtime
+        // refuse turns this red with instructions attached, instead of passing
+        // silently.
         final registry = RegistryFixture();
         await registry.registerProduct(
           productId: productId,
@@ -1013,40 +1059,49 @@ void main() {
         }
         final whatHappened =
             secondCallFailure?.toString() ??
-            'the second call returned normally, so nothing in the runtime, the '
-                'provisioner or the materializer refused it';
+            'the second call returned normally, so nothing in the runtime '
+                'refused it and nothing in the materializer port could';
 
         expect(
           materializer.materializations,
           2,
           reason:
-              'the runtime materialised a SECOND time into a tree that already '
-              'holds a clone ($whatHappened). That is the destructive path, and '
-              'it is why the learning file says never to call either directly. '
-              'IF THIS ASSERTION IS THE ONLY THING THAT WENT RED, THE GUARD HAS '
-              'MOVED INTO THE RUNTIME — rewrite that file first, then this '
-              'number.',
+              'the runtime materialised a SECOND time into a root that already '
+              'holds a clone ($whatHappened). It read no onboarding record, so '
+              'guard #5 was never reached and there was nothing to refuse it. '
+              'Through the trigger this call is refused before a credential is '
+              'acquired; called directly it re-materialises and rewrites the '
+              'record. THAT is the half of the attribution that is still true, '
+              'and it is why the learning file says to go through the trigger. '
+              'IF THIS ASSERTION IS THE ONLY THING THAT WENT RED, THE RUNTIME '
+              'GREW AN IDEMPOTENCE GUARD — rewrite that file first, then this '
+              'number. Note that this assertion CANNOT go red from a change to '
+              '`SshDurableWorkspaceMaterializer`: the materializer here is a '
+              'double that never reaches it.',
         );
         expect(
           materializer.requestedRoots,
           <String>['$root/$productId', '$root/$productId'],
           reason:
-              'both calls targeted the SAME product root, and that is what makes '
-              'the second one a deletion rather than a second checkout: the '
-              'materialiser runs `git init` (idempotent against an existing '
-              'repository) and then `git remote add origin`, which fails on the '
-              'second run and takes the whole root — the existing clone, its '
-              '`.git`, and every unreviewed commit in it — with it. A count of '
-              'two would satisfy the assertion above without ever showing WHICH '
-              'tree',
+              'both calls targeted the SAME product root. A count of two would '
+              'satisfy the assertion above without ever showing WHICH tree, and '
+              'the tree is the thing being contended over: the runtime derives '
+              'the root from the product id and nothing else, so a second call '
+              'has nowhere else to go. This is also the root the real '
+              'materialiser now refuses — `rootPreExisted` — rather than one it '
+              'destroys, which is the property pinned in '
+              '`durable_workspace_materializer_test.dart` and NOT here',
         );
         expect(
           secondCallFailure,
           isNull,
           reason:
-              'nothing in `DurableWorkspaceRuntime.provision()` or in the '
-              'materializer refuses a second call today. A guard appearing here '
-              'is the change this test exists to notice',
+              'nothing in `DurableWorkspaceRuntime.provision()` refuses a second '
+              'call today, and nothing in the materializer PORT can: the port is '
+              'a double. The guard that does exist sits one layer below this '
+              'test, in `SshDurableWorkspaceMaterializer`, and is unreachable '
+              'from here by construction. A guard appearing in the RUNTIME is '
+              'the change this test exists to notice',
         );
         final afterSecond = await registry.store.readOnboardingForProduct(
           productId,
@@ -1067,8 +1122,9 @@ void main() {
           reason:
               'and it REWRITES that row: `engine.recordWorkspace` merges the '
               'descriptor and bumps the version on every call. The second '
-              'materialisation leaves no trace in the record, which is exactly '
-              'why the guard cannot live there and has to live in the trigger',
+              'materialisation leaves no trace in the record, so a record cannot '
+              'be the layer that notices it — which is why there are now two '
+              'guards below and above this one rather than one',
         );
       },
     );
@@ -1334,6 +1390,13 @@ String _withoutDirectives(String source) {
 /// Counts calls rather than cloning: the clone is A1's own subject under test
 /// elsewhere, and a real one here would need a git host, a deploy key and a
 /// confirmed host key — none of which is what this lane is about.
+///
+/// IT IS A DOUBLE, AND THAT IS A BOUNDARY, NOT A SHORTCUT. Nothing any test in
+/// this file says about `SshDurableWorkspaceMaterializer` is established by
+/// this class: it writes no bytes, spawns no `git`, and its `on Object` guard
+/// (`rootPreExisted` / `createdRoot`, since `e82a120`) is therefore not
+/// reachable from here. The materialiser's own behaviour is pinned in
+/// `lib/src/baseline/durable_workspace_materializer_test.dart`.
 class _RecordingDurableMaterializer implements DurableWorkspaceMaterializer {
   int materializations = 0;
 
@@ -1346,8 +1409,8 @@ class _RecordingDurableMaterializer implements DurableWorkspaceMaterializer {
   ///
   /// Recorded because "a second call materialises into the same tree" is the
   /// premise of the whole hazard chain: a COUNT would satisfy an assertion about
-  /// re-materialisation without ever showing WHICH tree, and the tree is the
-  /// thing being destroyed.
+  /// re-materialisation without ever showing WHICH tree, and the tree is what
+  /// both guards are contending over.
   final List<String> requestedRoots = <String>[];
 
   @override

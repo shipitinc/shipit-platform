@@ -392,48 +392,54 @@ void main() {
       },
     );
 
-    test('and it clones nothing, records nothing, and changes nothing', () async {
-      final armed = await _armedRuntime();
-      final instruction = DurableWorkspaceProvisionInstruction(
-        productId: _productId,
-        repositoryId: _repositoryId,
-        startingRevision: _revision,
-      );
+    test(
+      'and it clones nothing, records nothing, and changes nothing',
+      () async {
+        final armed = await _armedRuntime();
+        final instruction = DurableWorkspaceProvisionInstruction(
+          productId: _productId,
+          repositoryId: _repositoryId,
+          startingRevision: _revision,
+        );
 
-      await runOperatorDurableWorkspaceProvision(
-        instruction,
-        store: armed.store,
-        engine: armed.engine,
-        runtime: armed.runtime,
-        log: _discard,
-      );
-      final afterFirst = await armed.store.readOnboardingForProduct(_productId);
-      final secretReadsAfterFirst = armed.custody.reads.length;
+        await runOperatorDurableWorkspaceProvision(
+          instruction,
+          store: armed.store,
+          engine: armed.engine,
+          runtime: armed.runtime,
+          log: _discard,
+        );
+        final afterFirst = await armed.store.readOnboardingForProduct(
+          _productId,
+        );
+        final secretReadsAfterFirst = armed.custody.reads.length;
 
-      await runOperatorDurableWorkspaceProvision(
-        instruction,
-        store: armed.store,
-        engine: armed.engine,
-        runtime: armed.runtime,
-        log: _discard,
-      );
+        await runOperatorDurableWorkspaceProvision(
+          instruction,
+          store: armed.store,
+          engine: armed.engine,
+          runtime: armed.runtime,
+          log: _discard,
+        );
 
-      expect(
-        armed.materializer.materializations,
-        1,
-        reason:
-            'one clone, ever. A second materialisation into the same product '
-            'root is the destructive path — it fails on its own `git remote add '
-            'origin` and the handler destroys the tree',
-      );
-      expect(armed.custody.reads.length, secretReadsAfterFirst);
-      expect(
-        await armed.store.readOnboardingForProduct(_productId),
-        afterFirst,
-        reason:
-            'the record is byte-identical; a satisfied outcome writes nothing',
-      );
-    });
+        expect(
+          armed.materializer.materializations,
+          1,
+          reason:
+              'one clone, ever. A second materialisation into the same product '
+              'root is refused here before a credential is acquired — which is '
+              'the point: the materialiser\'s own guard would catch it only '
+              'afterwards, and only as a collision',
+        );
+        expect(armed.custody.reads.length, secretReadsAfterFirst);
+        expect(
+          await armed.store.readOnboardingForProduct(_productId),
+          afterFirst,
+          reason:
+              'the record is byte-identical; a satisfied outcome writes nothing',
+        );
+      },
+    );
 
     test(
       'the banner tells the operator the variable may be cleared',
@@ -652,7 +658,13 @@ class _Armed {
 /// provisioned), and the satisfied-outcome branch reads it again to CONFIRM.
 /// This answers the first read from the real store and null to the second, so
 /// the disagreement those two can reach is exercised deterministically instead
-/// of by racing a real deletion.
+/// of by racing a record that really does disappear between two reads.
+///
+/// The consequence of that disagreement is a FAILURE (refuse and do not serve),
+/// not a deletion: guard #5 letting a second attempt through now ends in
+/// `DurableWorkspaceRootCollisionException` with the tree intact, not in a
+/// destroyed product root. What must not happen either way is a boot that
+/// reports itself healthy while the record and the clone disagree.
 ///
 /// Three methods are forwarded and nothing else, because those are the only
 /// three the trigger asks a `ProductRegistryStore` for. Everything else in this
