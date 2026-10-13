@@ -11,6 +11,19 @@ fields:
   currentBaselineRevision: int
   pendingClarifications: int
   completed: bool
+  # The pinned git revision and the workspace descriptor, both TEXT. The
+  # `Json` suffix that `agent_execution` uses is a Dart-side naming habit for a
+  # column named `workspaceJson`, NOT a distinct type: that field is declared
+  # `String` and lands as `"workspaceJson" text NOT NULL`. Here the deployed
+  # column is literally `"workspace" text` (see
+  # migrations/20261012213045000/definition.sql), and Serverpod diffs columns
+  # BY NAME (serverpod_cli migration.dart:189-213), so naming the field
+  # `workspaceJson` would put the real `workspace` column into `deleteColumns`
+  # as `destructive: true` and drop the pin. Plain `String?` therefore — which
+  # is what `columnType: 0` (ColumnType.text) in definition.json already says.
+  pinnedRevision: String?
+  workspace: String?
+  completedBaselineId: String?
   createdAt: DateTime
   updatedAt: DateTime
   version: int

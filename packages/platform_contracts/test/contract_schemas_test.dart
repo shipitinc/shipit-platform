@@ -1116,6 +1116,64 @@ void main() {
       );
       _expectValid(_loadSchema('product_context'), configuration.toJson());
     });
+
+    // OnboardingRecord carries the durable pin. These cases exist because the
+    // record's PRIMARY OUTPUT — a record that actually carries a
+    // `pinnedRevision`/`workspace` — was REJECTED by its own published schema:
+    // the schema declared `additionalProperties: false` with only the original
+    // eight properties, so the state this type exists to represent could not
+    // be serialised into the contract. `toJson()` uses `includeIfNull: false`,
+    // which is why an UNPOPULATED record still validated and the gap was
+    // invisible. Three cases pin both halves of that: the populated record, the
+    // empty record, and the weaker completed-without-evidence state that the
+    // store contract writes.
+    test('OnboardingRecord.toJson() carrying the pin conforms to '
+        'onboarding_record.schema.json', () {
+      final record = OnboardingRecord(
+        onboardingId: 'ob-1',
+        productId: '123e4567-e89b-12d3-a456-426614174000',
+        currentBaselineRevision: 3,
+        pendingClarifications: 0,
+        pinnedRevision: 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+        workspace: WorkspaceDescriptor(
+          workspaceId: 'ws-001',
+          workerExecutionId: '123e4567-e89b-12d3-a456-426614174020',
+          workerId: 'worker-local-1',
+          repositoryPath: '/home/ci/checkouts/shipit-platform',
+          startingRevision: 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+          worktreePath: '/workspaces/ws-001',
+          detached: true,
+          createdAt: DateTime.parse('2024-01-02T12:00:01Z'),
+        ),
+        completedBaselineId: 'pb-1',
+        createdAt: DateTime.parse('2024-01-02T12:00:00Z'),
+        updatedAt: DateTime.parse('2024-01-02T12:05:00Z'),
+        version: 4,
+      );
+
+      _expectValid(_loadSchema('onboarding_record'), record.toJson());
+    });
+
+    test(
+      'OnboardingRecord.toJson() with all three pin fields ABSENT conforms to '
+      'onboarding_record.schema.json',
+      () {
+        final record = OnboardingRecord(
+          onboardingId: 'ob-1',
+          productId: '123e4567-e89b-12d3-a456-426614174000',
+          createdAt: DateTime.parse('2024-01-02T12:00:00Z'),
+          updatedAt: DateTime.parse('2024-01-02T12:00:00Z'),
+        );
+
+        // The weaker completed-without-evidence state stays representable: none
+        // of the three is required, because `completed` is a bare bool that the
+        // published store contract writes on its own.
+        _expectValid(
+          _loadSchema('onboarding_record'),
+          record.copyWith(completed: true, currentBaselineRevision: 2).toJson(),
+        );
+      },
+    );
   });
 
   group('Design Governance enum rejection', () {
