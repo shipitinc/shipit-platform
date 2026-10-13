@@ -47,42 +47,6 @@ class RunsPage extends StatelessWidget {
   }
 }
 
-/// The filters the design exposes, in board order.
-enum WorkFilter {
-  all('All work'),
-  workingOnIt('Working on it'),
-  needsYou('Needs you'),
-  finished('Finished'),
-  failed('Failed');
-
-  const WorkFilter(this.label);
-
-  final String label;
-
-  /// True when a row belongs under this filter.
-  bool matches(PlainStatus status) => switch (this) {
-    WorkFilter.all => true,
-    WorkFilter.workingOnIt =>
-      status == PlainStatus.workingOnIt ||
-          status == PlainStatus.awaitingReview ||
-          status == PlainStatus.waitingToStart ||
-          // A row that says "Ready to build" IS work in flight from the
-          // operator's side: the system is about to start on it by itself and
-          // nobody is being waited on. Leaving it out made an
-          // `implementation_ready` item appear only under "All", so an operator
-          // asking "what is working on it?" was silently not shown the queue
-          // the implementation lane is about to drain — the filter answered a
-          // different question than the one asked, with no empty state to say
-          // so. `readyToBuild` reads as work-in-progress here for the same
-          // reason it takes an accent tick in `PlainStatus.tickColor`.
-          status == PlainStatus.readyToBuild,
-    WorkFilter.needsYou => status.isOperatorTurn,
-    WorkFilter.finished => status == PlainStatus.finished,
-    WorkFilter.failed =>
-      status == PlainStatus.needsYouItFailed || status == PlainStatus.stopped,
-  };
-}
-
 class _RunsView extends StatefulWidget {
   const _RunsView({this.clock});
 

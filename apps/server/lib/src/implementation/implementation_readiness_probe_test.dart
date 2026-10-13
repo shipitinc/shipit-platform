@@ -1,4 +1,5 @@
-import 'dart:io' show Directory, File, Platform, Process, ProcessResult;
+import 'dart:io'
+    show Directory, File, Platform, Process, ProcessException, ProcessResult;
 
 import 'package:control_plane_server/src/implementation/implementation_readiness_probe.dart';
 import 'package:platform_contracts/platform_contracts.dart'
@@ -15,7 +16,23 @@ import 'package:platform_contracts/platform_contracts.dart'
         WorkItem,
         WorkItemCategory,
         WorkItemState,
+        WorkerExecutionRequest,
+        WorkerExecutionResult,
         WorkspaceDescriptor;
+import 'package:scheduler/scheduler.dart'
+    show
+        InMemoryJobStore,
+        Scheduler,
+        SchedulerWorkload,
+        WorkerDispatch,
+        implementFeatureDedupeKey,
+        implementFeatureDefinition,
+        implementFeatureInstruction,
+        implementFeatureRequest;
+import 'package:worker_protocol/worker_protocol.dart' show WorkerSelection;
+import 'package:worker_runtime/worker_runtime.dart' show InMemoryWorkerStore;
+import 'package:workflow_store/workflow_store.dart'
+    show DurableWorkflowEngine, InMemoryWorkflowStore, WorkflowStore;
 // ignore: depend_on_referenced_packages
 import 'package:test/test.dart';
 
@@ -411,6 +428,310 @@ void main() {
       );
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // TOTALITY: no injected port may throw out of the probe.
+  //
+  // `probe` is documented as "it never throws — a probe that throws would abort
+  // the scheduler's tick for one bad item". That contract is only worth
+  // something if it is EXERCISED, and the port that most obviously could break
+  // it is the one that was missing a guard: `_gitRevParse` runs
+  // `Process.runSync`, which THROWS `ProcessException` when the process cannot
+  // start at all (git not installed, PATH broken, fork denied). Nothing
+  // between that throw and `implScheduler.tick()` catches it — `toWorkloadResolver`
+  // awaits `probe` bare, and `_dispatchOne` awaits the resolver bare — so one
+  // product's broken clone would abort the dispatch pass for EVERY job in that
+  // tick. These tests are the contract, and the last one is the contract's whole
+  // point: a bad clone must cost exactly ONE job, not the tick.
+  // ---------------------------------------------------------------------------
+  group('no injected port can throw out of the probe', () {
+    test(
+      'a throwing readOnboarding defers rather than crashing the tick',
+      () async {
+        // The asymmetry this closes: `readProductState` had a guard and a test,
+        // `readOnboarding` had a guard and NO test. A guard nobody exercises is
+        // a guard one edit away from being deleted.
+        final events = <String>[];
+        final probe = ImplementationReadinessProbe(
+          readProductState: (_) async => ProductState.governed,
+          readOnboarding: (_) async =>
+              throw StateError('onboarding store down'),
+          runtimeTypeId: 'probe-runtime',
+          timeoutSeconds: 1800,
+          log: (event, data) => events.add(event),
+        );
+
+        final readiness = await probe.probe(item());
+
+        expect(readiness, isA<ImplementationWorkspaceDeferred>());
+        final deferred = readiness as ImplementationWorkspaceDeferred;
+        expect(deferred.reason, contains('could not be read'));
+        expect(
+          deferred.reason,
+          contains('onboarding store down'),
+          reason:
+              'the exception\'s own text is the only thing that says WHICH store '
+              'is down. "could not be read" alone sends the operator to the '
+              'wrong system',
+        );
+        expect(
+          events,
+          ['implementation.deferred.onboarding_unreadable'],
+          reason:
+              'a refusal that is logged nowhere looks like an idle scheduler',
+        );
+      },
+    );
+
+    test(
+      'a commit resolver that THROWS defers instead of escaping the probe',
+      () async {
+        // The exact failure `_gitRevParse` produces when the process cannot
+        // start — `Process.runSync` throws rather than returning a non-zero
+        // exit code — raised here through the same port the composition root
+        // leaves at its default.
+        final events = <String>[];
+        final probe = ImplementationReadinessProbe(
+          readProductState: (_) async => ProductState.governed,
+          readOnboarding: (_) async => durableRecord(
+            repositoryPath: repoRoot.path,
+          ),
+          repositoryExists: (_) => true,
+          resolveCommit: (path, revision) => throw ProcessException(
+            'git',
+            ['-C', path, 'rev-parse', '--verify', '$revision^{commit}'],
+            'No such file or directory',
+          ),
+          runtimeTypeId: 'probe-runtime',
+          timeoutSeconds: 1800,
+          log: (event, data) => events.add(event),
+        );
+
+        final readiness = await probe.probe(item());
+
+        expect(
+          readiness,
+          isA<ImplementationWorkspaceDeferred>(),
+          reason:
+              'a throw here does not merely fail one probe: `toWorkloadResolver` '
+              'and `_dispatchOne` both await this bare, so it leaves `tick()` '
+              'and aborts the dispatch pass for every OTHER job in the tick',
+        );
+        final deferred = readiness as ImplementationWorkspaceDeferred;
+        expect(deferred.reason, contains(pin));
+        expect(
+          deferred.gitOutput,
+          contains('No such file or directory'),
+          reason:
+              'the operator needs the sentence git could not give them. A '
+              'deferral that says only "could not resolve" reads as "the pin is '
+              'wrong", and the fix is in the wrong place — the pin is fine; the '
+              'binary is missing',
+        );
+        expect(events, ['implementation.deferred.pin_unresolvable']);
+      },
+    );
+
+    test(
+      'one job\'s broken clone costs that job ALONE — the next job in the same '
+      'tick still dispatches',
+      () async {
+        // The end-to-end form of the same property, through a REAL `Scheduler`
+        // over real in-memory stores and the REAL `toWorkloadResolver`
+        // adapter. Asserting on `probe()` alone would pass while the tick still
+        // died, because the tick's behaviour is a property of the chain, not of
+        // the probe.
+        final workflowStore = InMemoryWorkflowStore();
+        final jobStore = InMemoryJobStore();
+        final engine = DurableWorkflowEngine(store: workflowStore);
+
+        for (final id in [badCloneItem, goodCloneItem]) {
+          await engine.createWorkItem(
+            workItemId: id,
+            productId: 'product-$id',
+            category: WorkItemCategory.feature,
+            title: 'Fixture item $id',
+            description: 'A fixture used to ask what one bad clone costs',
+          );
+          await _parkAtImplementationReady(workflowStore, id);
+        }
+
+        const badClonePath = '/a/clone/whose/git/cannot/start';
+        const goodClonePath = '/a/clone/at/its/pin';
+        final goodPin = 'c' * 40;
+
+        // The production adapter, unmodified, over a probe whose commit port
+        // raises for ONE product's clone and answers for the other's.
+        final inner = toWorkloadResolver(
+          ImplementationReadinessProbe(
+            readProductState: (_) async => ProductState.governed,
+            readOnboarding: (productId) async => OnboardingRecord(
+              onboardingId: 'onb-$productId',
+              productId: productId,
+              pinnedRevision: goodPin,
+              workspace: OnboardingWorkspace.durable(
+                DurableWorkspaceDescriptor(
+                  workspaceId: 'dws-$productId',
+                  productId: productId,
+                  repositoryPath: productId == 'product-$badCloneItem'
+                      ? badClonePath
+                      : goodClonePath,
+                  startingRevision: goodPin,
+                  createdAt: DateTime.utc(2026),
+                ),
+              ),
+              createdAt: DateTime.utc(2026),
+              updatedAt: DateTime.utc(2026),
+            ),
+            repositoryExists: (_) => true,
+            resolveCommit: (path, revision) {
+              if (path == badClonePath) {
+                throw ProcessException(
+                  'git',
+                  const ['rev-parse'],
+                  'No such file or directory',
+                );
+              }
+              return (commit: revision, output: null);
+            },
+            runtimeTypeId: 'probe-runtime',
+            timeoutSeconds: 1800,
+          ),
+        );
+
+        // Records the ORDER jobs were dispatched-attempted in. Without this the
+        // test could pass vacuously — e.g. if the broken job were never reached
+        // at all, "the healthy job dispatched" would prove nothing.
+        final attempted = <String>[];
+        final requests = <WorkerExecutionRequest>[];
+
+        final result = await Scheduler(
+          schedulerId: 'sched-impl',
+          workflowStore: workflowStore,
+          jobStore: jobStore,
+          workerStore: InMemoryWorkerStore(),
+          dispatch: _RecordingDispatch(requests),
+          definition: implementFeatureDefinition,
+          dedupeKeyBuilder: implementFeatureDedupeKey,
+          instructionBuilder: implementFeatureInstruction,
+          requestBuilder: implementFeatureRequest,
+          workloadResolver: (job, item) {
+            attempted.add(item.workItemId);
+            return inner(job, item);
+          },
+          // INERT. Named so a request carrying it is identifiable: nothing may
+          // ever fall through to it.
+          workload: SchedulerWorkload(
+            repositoryPath: 'a-triage-only-checkout',
+            startingRevision: 'a' * 40,
+            timeoutSeconds: 1800,
+            runtimeTypeId: 'fake-runtime',
+          ),
+          clock: () => DateTime.utc(2026, 1, 1),
+        ).tick();
+
+        expect(
+          attempted,
+          containsAll([badCloneItem, goodCloneItem]),
+          reason:
+              'NON-VACUITY. Both jobs must have been dispatch-attempted in THIS '
+              'tick. If the broken one was never reached, the assertion below '
+              'says nothing about whether one bad clone can take the others '
+              'down with it. Order is not asserted and does not need to be: a '
+              'throw from EITHER position aborts the pass equally',
+        );
+
+        expect(
+          requests.map((r) => r.workItemId),
+          [goodCloneItem],
+          reason:
+              'this is the finding. The healthy job must have had its request '
+              'BUILT in the same tick that the other job\'s commit resolver '
+              'threw. Before the probe caught the throw, this exception '
+              'propagated through `toWorkloadResolver` and the unguarded '
+              '`await _workloadResolver(...)` in `_dispatchOne`, out of '
+              '`tick()`, and no job after the bad one was ever looked at',
+        );
+        expect(requests.single.repositoryPath, goodClonePath);
+        expect(requests.single.repositoryPath, isNot('a-triage-only-checkout'));
+        expect(
+          result.blockedArtifactMissing,
+          hasLength(1),
+          reason:
+              'the broken job\'s refusal must be VISIBLE on the tick, and must '
+              'be exactly one job\'s worth',
+        );
+        expect(result.terminal, isEmpty);
+        expect(result.cancelledQueued, isEmpty);
+
+        // A deferral is not a failure: the broken job is still queued, with its
+        // retry budget untouched, so the next tick asks again.
+        final stranded = (await jobStore.listJobsForWorkItem(
+          badCloneItem,
+        )).single;
+        expect(stranded.state, JobState.queued);
+        expect(
+          stranded.attempt,
+          1,
+          reason: 'a bad clone must not burn the job\'s retry budget',
+        );
+      },
+    );
+  });
+}
+
+/// Puts [workItemId] at `implementationReady` by writing the row.
+///
+/// Same honesty note as the scheduler package's own fixtures: no production
+/// route reaches the entry state yet (`OD-3` is open), so the only way to ask
+/// the scheduler what it does with an item AT that state is to put one there.
+/// The property under test is what happens AFTER the entry state, which is the
+/// only part this file has anything to say about.
+Future<void> _parkAtImplementationReady(
+  WorkflowStore store,
+  String workItemId,
+) async {
+  final current = await store.readWorkItem(workItemId);
+  await store.saveWorkItem(
+    current.copyWith(
+      state: WorkItemState.implementationReady,
+      version: current.version + 1,
+      updatedAt: DateTime.utc(2026),
+    ),
+    expectedVersion: current.version,
+  );
+}
+
+/// The two work items in the "one bad clone costs one job" test. Named so the
+/// assertions below read as prose and so a failure names which side broke.
+const badCloneItem = 'wi-broken-clone';
+const goodCloneItem = 'wi-healthy-clone';
+
+/// A [WorkerDispatch] that records every request it was asked about and selects
+/// no worker.
+///
+/// No worker is registered, so a request is built and then refused at selection.
+/// That ordering is the point: "the healthy job's request was BUILT" is
+/// observable here, before any placement happens.
+class _RecordingDispatch implements WorkerDispatch {
+  _RecordingDispatch(this.requests);
+
+  final List<WorkerExecutionRequest> requests;
+
+  @override
+  WorkerSelection select(WorkerExecutionRequest request) {
+    requests.add(request);
+    return WorkerSelection.noCompatibleWorker();
+  }
+
+  @override
+  Future<WorkerExecutionResult> run(WorkerExecutionRequest request) async {
+    requests.add(request);
+    throw StateError('run() is not reachable: no worker is ever selected here');
+  }
+
+  @override
+  Future<void> cancel(String workerId, String reason) async {}
 }
 
 /// A minimal job. Only its id is read by the resolver adapter.

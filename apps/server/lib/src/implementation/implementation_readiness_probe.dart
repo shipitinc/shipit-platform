@@ -31,6 +31,11 @@ typedef RepositoryExistsProbe = bool Function(String path);
 /// "not a git repository" and "ambiguous argument" are three different problems
 /// with three different fixes, and a deferral that collapses them into one
 /// "could not resolve" sends the operator to the wrong place.
+///
+/// [output] is also where a process that could not be STARTED at all is
+/// reported — `Process.runSync` throws instead of returning an exit code, and
+/// the throw is caught and recorded here as the failure output. So this record
+/// covers both "git ran and said no" and "git never ran".
 typedef CommitProbeResult = ({String? commit, String? output});
 
 /// Resolves [revision] inside the repository at [repositoryPath] to a commit id.
@@ -231,6 +236,30 @@ class ImplementationReadinessProbe {
   /// [ImplementationWorkspaceDeferred]. It never throws — a probe that throws
   /// would abort the scheduler's tick for one bad item, and a throw is not a
   /// way of saying "not yet".
+  ///
+  /// ## What makes it total, and why it is stated as more than a promise
+  ///
+  /// There are four injected ports and each one is separately able to fail, so
+  /// totality here is four guards rather than one claim:
+  ///
+  /// | Port | How it fails | What the deferral says |
+  /// |---|---|---|
+  /// | [readProductState] | throws (store down) | `product_state_unreadable` |
+  /// | [readOnboarding] | throws (store down) | `onboarding_unreadable` |
+  /// | the record's workspace shape | not durable | `workspace_shape_unknown` |
+  /// | [_resolveCommit] — `Process.runSync` **throws** `ProcessException` when the process cannot start | throws | `pin_unresolvable`, carrying the exception verbatim |
+  ///
+  /// The last row is the one that is not obvious, and the reason this method
+  /// carries the list rather than a single sentence: a shell-out that fails to
+  /// *start* does not return a non-zero exit code, it throws, and uncaught it
+  /// leaves `probe`, crosses `toWorkloadResolver`, crosses the unguarded
+  /// `await _workloadResolver(...)` in `Scheduler._dispatchOne`, and aborts
+  /// `tick()` — which costs the whole dispatch pass, not the one bad item.
+  ///
+  /// Totality is asserted by `implementation_readiness_probe_test.dart`, both at
+  /// the probe and end to end through a real `Scheduler` tick carrying two jobs
+  /// where one clone's git cannot be started. A contract with no test is a
+  /// comment.
   Future<ImplementationReadiness> probe(WorkItem item) async {
     if (!durableRuntimeAvailable) {
       return _deferred(
@@ -347,14 +376,43 @@ class ImplementationReadinessProbe {
     }
 
     final pin = record.pinnedRevision!;
-    final CommitProbeResult resolution = _resolveCommit(repositoryPath, pin);
+    // `late final`, and not `final`, because the two assignments below are in a
+    // `try` and its `catch`: the analyser cannot prove the try never completed
+    // normally on the path that reaches the catch. Exactly one runs.
+    late final CommitProbeResult resolution;
+    String? resolverFault;
+    try {
+      resolution = _resolveCommit(repositoryPath, pin);
+    } on Object catch (error) {
+      // The default port shells out — `Process.runSync` THROWS
+      // `ProcessException` when the process cannot start at all (git absent,
+      // PATH broken, fork denied), and it throws rather than returning a
+      // non-zero exit code. Nothing between here and the scheduler catches it:
+      // `toWorkloadResolver` awaits `probe` bare and `_dispatchOne` awaits the
+      // resolver bare, so an uncaught one leaves `tick()` and takes the whole
+      // dispatch pass with it — every OTHER job in the tick, not this one. A
+      // throw is not a way of saying "not yet", and "not yet" is the truth:
+      // the clone may be perfectly fine and the machine may simply have no git.
+      //
+      // So the fault is reported AS a failed resolution, which lands on the
+      // pin-unresolvable deferral below — deferred, visible, no retry burned.
+      resolverFault = '$error';
+      resolution = (commit: null, output: '$error');
+    }
     if (resolution.commit == null) {
       return _deferred(
         item,
-        'the durable clone at $repositoryPath does not resolve commit $pin, '
-        'so the pin this implementation would start from cannot be '
-        'verified. Not substituting HEAD: a moving reference is not a pin, '
-        'and a lane that accepts one cannot say which code was reviewed',
+        resolverFault == null
+            ? 'the durable clone at $repositoryPath does not resolve commit '
+                  '$pin, so the pin this implementation would start from cannot '
+                  'be verified. Not substituting HEAD: a moving reference is '
+                  'not a pin, and a lane that accepts one cannot say which code '
+                  'was reviewed'
+            : 'the pin $pin of the durable clone at $repositoryPath could not '
+                  'be checked at all, because git could not be run against it '
+                  '($resolverFault). The pin may well be present; nothing has '
+                  'been established either way, so nothing is dispatched. Not '
+                  'substituting HEAD: a moving reference is not a pin',
         event: 'implementation.deferred.pin_unresolvable',
         details: {'repositoryPath': repositoryPath, 'pinnedRevision': pin},
         gitOutput: resolution.output,
@@ -466,6 +524,16 @@ bool _directoryExists(String path) => Directory(path).existsSync();
 /// makes the `^{commit}` suffix meaningful: git dereferences a tag to the
 /// commit it points at and refuses a tree or a blob, so a pin that is not a
 /// commit is refused rather than used.
+///
+/// ## It can THROW, and that is a fact about `Process`, not about this function
+///
+/// `Process.runSync` throws `ProcessException` when the process cannot be
+/// started at all — git not installed, `PATH` broken, fork denied. It does NOT
+/// come back with a non-zero exit code in that case, so there is no `exitCode`
+/// here to inspect. Every caller must therefore treat this port as throwing;
+/// `ImplementationReadinessProbe.probe` is the one that does, and it converts
+/// the throw into the same `(commit: null, output: …)` record a refused
+/// revision produces. Do not move this call out of that `try`.
 CommitProbeResult _gitRevParse(String repositoryPath, String revision) {
   final result = Process.runSync('git', [
     '-C',

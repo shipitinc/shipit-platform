@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:control_plane/core/plain_language.dart';
 import 'package:control_plane/data/control_plane_repository.dart';
 import 'package:control_plane/features/runs/runs_bloc.dart';
 import 'package:control_plane/features/runs/runs_event.dart';
@@ -210,11 +211,14 @@ void main() {
     });
 
     test(
-      'working-on-it filter keeps every active state and drops agent_completed',
+      'working-on-it keeps every status the operator reads as work in flight',
       () async {
-        // Every state that maps to PlainStatus.workingOnIt is returned; an
-        // `agent_completed` row is the review hand-off, so it must not appear
-        // under this filter even though it is not terminal.
+        // This test used to assert the OPPOSITE for `agent_completed`, and it
+        // was pinning the defect rather than the intent. The bloc had its own
+        // `workingOnIt` — a strict `== PlainStatus.workingOnIt` — which excluded
+        // `awaitingReview`, `waitingToStart` and `readyToBuild`, all of which
+        // the filter the page actually applies includes. The bloc's copy is
+        // gone; there is one implementation now, and this states what it says.
         repository.workItemsResponse = [
           for (final state in [
             'planning',
@@ -236,6 +240,20 @@ void main() {
             createdAt: DateTime(2026, 1, 2),
             updatedAt: DateTime(2026, 1, 2),
           ),
+          WorkItemResponse(
+            workItemId: 'wi-ready-to-build',
+            title: 'Queued for the implementation lane',
+            state: 'implementation_ready',
+            createdAt: DateTime(2026, 1, 3),
+            updatedAt: DateTime(2026, 1, 3),
+          ),
+          WorkItemResponse(
+            workItemId: 'wi-waiting-to-start',
+            title: 'Accepted, not picked up yet',
+            state: 'draft',
+            createdAt: DateTime(2026, 1, 4),
+            updatedAt: DateTime(2026, 1, 4),
+          ),
         ];
 
         final bloc = RunsBloc(repository: repository)..add(RunsLoaded());
@@ -249,11 +267,10 @@ void main() {
           'wi-agent_executing',
           'wi-qa_in_progress',
           'wi-deploying',
+          'wi-awaiting-review',
+          'wi-ready-to-build',
+          'wi-waiting-to-start',
         });
-        expect(
-          bloc.state.runs.map((r) => r.id),
-          isNot(contains('wi-awaiting-review')),
-        );
       },
     );
 
@@ -309,5 +326,134 @@ void main() {
         'No description here',
       );
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // THE FILTER TRUTH TABLE — the executable form of the duplication finding.
+  //
+  // `RunsBloc` once answered "which rows belong under Working on it?" with a
+  // switch of its own, over a separate `RunsFilter` enum, and it disagreed with
+  // the `WorkFilter` the page applies. It disagreed SILENTLY, and it disagreed
+  // safely: the page re-filters what it renders, so the wrong answer was
+  // overwritten before it reached a screen, and `state.filter` is always
+  // `RunsFilter.all` in production, so the wrong arms were unreachable. Two
+  // predicates, one invisible, one unused — which is exactly the shape a defect
+  // hides in until somebody wires the unused one up.
+  //
+  // There is now one implementation, `WorkFilter.matches`. Asserting "the bloc
+  // calls WorkFilter" would prove nothing — it would pass just as happily
+  // against a second switch that also happens to be right. What stops the
+  // duplication regrowing is the table below: it states, for EVERY status, which
+  // filters a row belongs under, written out independently of
+  // `WorkFilter.matches`. A predicate reintroduced in the bloc diverges from
+  // this table and the test fails; a new `PlainStatus` that no row of the table
+  // mentions fails too, so the domain cannot grow a status that silently lands
+  // in no bucket at all.
+  // ---------------------------------------------------------------------------
+  group('the bloc filters by exactly the statuses each tab claims', () {
+    late MockControlPlaneRepository repository;
+
+    /// Which filters a row of each status appears under.
+    ///
+    /// `all` is omitted because every row is under it; that is checked
+    /// separately rather than asserted here for all eight statuses.
+    const Map<PlainStatus, Set<String>> includedIn = {
+      PlainStatus.workingOnIt: {'workingOnIt'},
+      PlainStatus.awaitingReview: {'workingOnIt'},
+      PlainStatus.waitingToStart: {'workingOnIt'},
+      PlainStatus.readyToBuild: {'workingOnIt'},
+      PlainStatus.needsYourApproval: {'needsYou'},
+      PlainStatus.needsYouItFailed: {'needsYou', 'failed'},
+      PlainStatus.finished: {'finished'},
+      PlainStatus.stopped: {'failed'},
+    };
+
+    /// One fixture wire value per status, so the table above is exercised by
+    /// real rows rather than by a fabricated `RunItem` list.
+    const List<({String id, String state, bool blocked})> fixtures = [
+      (id: 'wi-working', state: 'agent_executing', blocked: false),
+      (id: 'wi-awaiting', state: 'agent_completed', blocked: false),
+      (id: 'wi-waiting', state: 'draft', blocked: false),
+      (id: 'wi-ready', state: 'implementation_ready', blocked: false),
+      (id: 'wi-approval', state: 'waiting_for_human_decision', blocked: true),
+      (id: 'wi-failed-blocked', state: 'agent_failed', blocked: true),
+      (id: 'wi-failed', state: 'agent_failed', blocked: false),
+      (id: 'wi-finished', state: 'completed', blocked: false),
+      (id: 'wi-stopped', state: 'cancelled', blocked: false),
+    ];
+
+    setUp(() {
+      repository = MockControlPlaneRepository(
+        workItemsResponse: [
+          for (final f in fixtures)
+            WorkItemResponse(
+              workItemId: f.id,
+              title: 'Fixture ${f.id}',
+              state: f.state,
+              blockingHumanDecisionId: f.blocked ? 'dec-1' : null,
+              createdAt: DateTime(2026, 1, 1),
+              updatedAt: DateTime(2026, 1, 1),
+            ),
+        ],
+      );
+    });
+
+    test(
+      'the table covers every PlainStatus, so none can fall into no bucket',
+      () {
+        expect(
+          includedIn.keys.toSet(),
+          PlainStatus.values.toSet(),
+          reason:
+              'a new PlainStatus with no row here would appear under no tab at '
+              'all, silently. Adding it must mean deciding which tabs it belongs '
+              'under — which is the decision the duplication used to make twice',
+        );
+      },
+    );
+
+    test('the three statuses that made the trap are under Working on it', () {
+      expect(
+        includedIn[PlainStatus.readyToBuild],
+        {'workingOnIt'},
+        reason:
+            'an `implementation_ready` row IS work in flight from the operator\'s '
+            'side: the system is about to start on it by itself and nobody is '
+            'being waited on. The duplicate predicate here excluded it, which '
+            'is the whole finding',
+      );
+      expect(includedIn[PlainStatus.awaitingReview], {'workingOnIt'});
+      expect(includedIn[PlainStatus.waitingToStart], {'workingOnIt'});
+    });
+
+    for (final filter in RunsFilter.values) {
+      test('the bloc agrees with the table under ${filter.name}', () async {
+        final bloc = RunsBloc(repository: repository)..add(RunsLoaded());
+        await bloc.stream.firstWhere((s) => !s.isLoading);
+
+        bloc.add(RunsFilterChanged(filter));
+        await bloc.stream.firstWhere((s) => s.filter == filter);
+
+        final expected = <String>{
+          for (final f in fixtures)
+            if (filter == RunsFilter.all ||
+                includedIn[PlainLanguage.statusFor(
+                      f.state,
+                      blocked: f.blocked,
+                    )]!
+                    .contains(filter.name))
+              f.id,
+        };
+
+        expect(
+          bloc.state.runs.map((r) => r.id).toSet(),
+          expected,
+          reason:
+              'under "${filter.label}" the bloc must return exactly the rows the '
+              'table above says belong there. A disagreement means a second '
+              'predicate has grown next to `WorkFilter.matches`',
+        );
+      });
+    }
   });
 }

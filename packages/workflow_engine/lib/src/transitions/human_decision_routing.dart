@@ -65,8 +65,8 @@ import 'package:platform_contracts/platform_contracts.dart';
 ///
 /// | Pair | Needs `escalationTargetFor` moved? |
 /// |---|---|
-/// | `(engineeringReview, rework)` | **YES** — a live arm at `:141-142` |
-/// | `(humanQaApproval, reject)` | **YES** — a live arm at `:143-144` |
+/// | `(engineeringReview, rework)` | **YES** — a live arm at `:182-183` |
+/// | `(humanQaApproval, reject)` | **YES** — a live arm at `:184-185` |
 /// | `(qaWaiver, reject)` | no — no arm; the short-circuit makes it inert |
 /// | `(qaRework, reject)` | no — no arm; `_ => null` |
 /// | `(escalation, approve)` | no — `approve`, so the short-circuit returns `null` first |
@@ -139,7 +139,7 @@ class HumanDecisionRouting {
   /// ## WHY THIS MUST NOT DIVERGE FROM [targetFor]
   ///
   /// `DurableWorkflowEngine._isEscalationTransition`
-  /// (packages/workflow_store/.../durable_workflow_engine.dart:761) computes
+  /// (packages/workflow_store/.../durable_workflow_engine.dart:979) computes
   /// escalation as `escalationTargetFor(type, choice) == target`, where
   /// `target` is the value [targetFor] just returned. The comparison is the
   /// ONLY thing this method does at runtime: it gates the
