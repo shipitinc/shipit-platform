@@ -10,6 +10,7 @@ import 'dispatch/worker_dispatch.dart';
 import 'health/provider_health_monitor.dart';
 import 'policy/retry_policy.dart';
 import 'policy/runnable_work.dart';
+import 'policy/superseded_execution.dart';
 import 'queue/job_queue.dart';
 import 'store/job_store.dart';
 
@@ -776,9 +777,53 @@ class Scheduler {
     }
   }
 
+  /// How many times a job may be returned to the queue by a supersession
+  /// before the scheduler stops deferring and retires it instead.
+  ///
+  /// ## Why this exists at all
+  ///
+  /// A supersession re-check answers "does this definition still want the item?"
+  /// by asking the SAME policy probe scheduling uses. The coordinator, meanwhile,
+  /// got its supersession by attempting a REAL transition. Those two can
+  /// disagree, and then a requeue is a loop: the probe says runnable, the
+  /// transition is refused, the job is requeued, the next tick repeats it —
+  /// once per tick, forever, each pass spending a real worker execution.
+  ///
+  /// That is not hypothetical. `triageDefectDefinition` lists `reviewRejected`
+  /// as an entry state, reached by a human rejecting an engineering review. Its
+  /// only legal hop toward execution is `reviewRejected -> designNotRequired`,
+  /// so the probe asks about THAT edge — while the coordinator asks for the
+  /// direct `reviewRejected -> agentExecuting`, which is not in the table. Every
+  /// dispatch of a `reviewRejected` item is therefore superseded while the probe
+  /// calls it runnable. The deferral is still the RIGHT outcome there — nothing
+  /// ran, and a `failed` would be a lie — but it cannot be the only outcome, or
+  /// the scheduler becomes the load generator.
+  ///
+  /// ## Why a cap on DEFERRALS and not on retries
+  ///
+  /// It cannot be `Job.attempt`, which is the whole contract of this change: no
+  /// execution started, so no budget is spent and nothing may be charged. So the
+  /// bound is counted separately, from the durable event log, under a key of
+  /// its own.
+  ///
+  /// ## What it costs when it fires
+  ///
+  /// The job ends `cancelled` — not `failed` — with a reason that says it was
+  /// deferred repeatedly and that a human should look. That is a visible,
+  /// explained outcome instead of a hot loop, and it records the very thing the
+  /// item is stuck on. It is deliberately the same terminal state the
+  /// already-shipped retirement sweep uses, so there is one vocabulary for "this
+  /// job is not wanted".
+  static const int _maxSupersessionDeferrals = 3;
+
   /// Adopts a worker execution's terminal outcome onto its job: merges the
   /// reported agent execution id into the job's execution reference, then lets
   /// the retry policy pick the resulting state.
+  ///
+  /// A supersession never reaches [RetryPolicy]: it is not a failure of the
+  /// execution but a statement that no execution happened, so [RetryPolicy] has
+  /// no opinion about it and the `failed` it would otherwise produce is the
+  /// defect. See [_adoptSupersession].
   Future<Job> _adopt(
     Job prior,
     WorkerExecutionResult result,
@@ -786,6 +831,9 @@ class Scheduler {
   ) async {
     final current = (await _jobStore.readJob(prior.jobId)) ?? prior;
     if (current.isTerminal) return current;
+    if (isSupersededExecution(result.failureDetail, status: result.status)) {
+      return _adoptSupersession(current, result, now);
+    }
     final failure = _retryPolicy.classify(result.status, result.failureDetail);
     // Null when the outcome adds nothing to the chain, in which case the queue
     // preserves whatever the job already holds.
@@ -834,6 +882,148 @@ class Scheduler {
           executionReference: adopted,
         );
     }
+  }
+
+  /// Decides what a supersession means for [job], and records it.
+  ///
+  /// ## The judgement, and why it lives here
+  ///
+  /// Two facts are needed and only the scheduler holds both:
+  ///
+  ///  * that nothing ran — which only the coordinator can attest, and which
+  ///    arrives as [supersededExecutionMarker] on the failure detail, having
+  ///    been flattened to a string by a worker this lane does not own; and
+  ///  * whether this job's DEFINITION still wants the item — which lives in
+  ///    [_definition]'s entry states and in the workflow policy probe.
+  ///
+  /// Carrying the verdict on the outcome instead would mean the coordinator
+  /// deciding (a) from (b), which forces it to know the entry states: a second
+  /// copy of a slice of the graph, in the one package whose job is to obey it
+  /// rather than to enumerate it. Re-reading the item alone would mean treating
+  /// ANY failure on a still-runnable item as a deferral, and that requeues a
+  /// genuine agent failure forever — an unbounded automatic LLM retry loop,
+  /// the exact thing [RetryPolicy] exists to prevent. So it takes both: the
+  /// marker to know this was a supersession, and the re-check to know what to
+  /// do about it.
+  ///
+  /// The (a)/(b) split is the point and is not collapsed:
+  ///
+  ///  * **(a) still accepted** — the item moved to a state this definition can
+  ///    still run from, so the job is wanted and simply arrived at the wrong
+  ///    moment. [JobQueue.requeueSuperseded] returns it to `queued` with no
+  ///    attempt charged, and a later tick dispatches it against the new state.
+  ///  * **(b) no longer accepted** — the item has left this definition's entry
+  ///    states entirely, which is what [_retireSupersededForItem] already
+  ///    ships for a job that never started. The same terminal state and the same
+  ///    reason vocabulary are used, because it IS the same condition.
+  ///
+  /// ## If the item moves between this re-check and the requeue
+  ///
+  /// Nothing bad, and that is structural rather than a matter of timing. The
+  /// requeue writes `queued`; it never dispatches and never commits to running.
+  /// The next tick rebuilds its runnability map from a fresh
+  /// `readAllWorkItems()`, `_eligibleRunnableJobs` re-checks legality against
+  /// that fresh item before claiming, and step 3's `noAction` branch retires a
+  /// `queued` job whose item no longer wants it. So the requeue is only ever a
+  /// DECISION NOT TO FAIL — the moment it stops being correct, ordinary
+  /// machinery stops it from doing any harm.
+  ///
+  /// The work item is never moved here: it belongs to whoever moved it.
+  Future<Job> _adoptSupersession(
+    Job job,
+    WorkerExecutionResult result,
+    DateTime now,
+  ) async {
+    final detail = result.failureDetail ?? '';
+    final workItem = await _readWorkItemForAdoption(job.workItemId);
+
+    // Fail CLOSED. An item that cannot be read cannot be shown to still want
+    // this job, and "cannot prove (a)" is not evidence for (a): the one thing
+    // this change must never do is requeue on a guess.
+    if (workItem == null) {
+      return _queue.cancelQueued(
+        job: job,
+        reason:
+            'superseded: work item ${job.workItemId} could not be read, so '
+            'nothing can confirm this job is still wanted. $detail',
+        now: now,
+      );
+    }
+
+    final status = _evaluator.evaluate(workItem, _definition);
+    if (status != RunnableWorkStatus.runnable) {
+      return _queue.cancelQueued(
+        job: job,
+        reason: _supersededReason(workItem),
+        now: now,
+      );
+    }
+
+    final deferrals = await _supersessionDeferrals(job);
+    if (deferrals >= _maxSupersessionDeferrals) {
+      return _queue.cancelQueued(
+        job: job,
+        reason:
+            'superseded: deferred $_maxSupersessionDeferrals times because the '
+            'work item kept moving before this execution started, and it is '
+            'still ${workItem.state.wire} now. Stopping rather than spinning — '
+            'a human should check why this item cannot complete an execution. '
+            'No attempt was consumed.',
+        now: now,
+      );
+    }
+    return _queue.requeueSuperseded(
+      job: job,
+      reason:
+          'requeued without an attempt: the work item moved to '
+          '${workItem.state.wire} before this execution started, and it still '
+          'accepts a ${_definition.jobType.wire} run. Nothing ran and nothing '
+          'was produced, so no retry budget was consumed; the job returns to '
+          'the queue and a later tick retries it against the new state.',
+      now: now,
+    );
+  }
+
+  /// The work item as it is RIGHT NOW, or null when it cannot be read.
+  ///
+  /// A read fault must not escape and abort the tick: it would leave this job
+  /// claimed and this item's other rows unreached. It is answered as "cannot
+  /// confirm", which [_adoptSupersession] resolves by retiring rather than
+  /// requeueing.
+  Future<WorkItem?> _readWorkItemForAdoption(String workItemId) async {
+    try {
+      return await _workflowStore.readWorkItem(workItemId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// How many times this job has already been requeued by a supersession.
+  ///
+  /// Counted from the durable event log rather than from a counter on the row,
+  /// because [Job] has no field for it and `platform_contracts` cannot grow one
+  /// in this lane. The log is the same record an operator reads, so the bound
+  /// and the explanation cannot disagree.
+  Future<int> _supersessionDeferrals(Job job) async {
+    final events = await _jobStore.readEvents(job.jobId);
+    return events
+        .where(
+          (e) =>
+              e.type == SchedulerEventType.jobQueued &&
+              e.payload?['supersessionDeferred'] == true,
+        )
+        .length;
+  }
+
+  /// Why this item is no longer something [_definition] can run — the same
+  /// vocabulary [_retireSupersededForItem] uses, because a job superseded after
+  /// dispatch and one superseded before it are the same condition.
+  String _supersededReason(WorkItem item) {
+    final entryStates =
+        _definition.entryStates.map((state) => state.wire).toList()..sort();
+    return 'superseded: work item ${item.workItemId} is ${item.state.wire}, '
+        'which is not an entry state for ${_definition.jobType.wire} '
+        '(${entryStates.join(', ')}). Nothing ran and nothing was produced.';
   }
 
   /// The job's execution reference with [WorkerExecutionResult.agentExecutionId]
@@ -1295,12 +1485,10 @@ class Scheduler {
       return const [];
     }
 
-    final entryStates =
-        _definition.entryStates.map((state) => state.wire).toList()..sort();
-    final reason =
-        'superseded: work item ${item.workItemId} is ${item.state.wire}, '
-        'which is not an entry state for ${_definition.jobType.wire} '
-        '(${entryStates.join(', ')})';
+    // One vocabulary, shared with [_adoptSupersession]: a job superseded
+    // before it was dispatched and one superseded after are the same condition,
+    // and an operator must not have to learn two phrasings for it.
+    final reason = _supersededReason(item);
 
     final retired = <String>[];
     for (final job in await _jobStore.listJobsForWorkItem(item.workItemId)) {

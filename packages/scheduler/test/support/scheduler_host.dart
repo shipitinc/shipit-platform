@@ -23,6 +23,11 @@ class SchedulerHost {
     SchedulerWorkload? workload,
     JobDefinition definition = defaultImplementFeatureDefinition,
     Duration claimLease = const Duration(minutes: 10),
+    Set<WorkerCapability> workerCapabilities = const {
+      WorkerCapability.linux,
+      WorkerCapability.docker,
+      WorkerCapability.flutter,
+    },
   }) {
     workflowStore = InMemoryWorkflowStore();
     workflowEngine = DurableWorkflowEngine(store: workflowStore);
@@ -50,11 +55,7 @@ class SchedulerHost {
     worker = LocalWorker(
       workerId: 'w-linux-1',
       poolId: 'linux-pool',
-      capabilities: const {
-        WorkerCapability.linux,
-        WorkerCapability.docker,
-        WorkerCapability.flutter,
-      },
+      capabilities: workerCapabilities,
       workspaceManager: workspaceManager,
       executionDriver: driver,
       workerStore: workerStore,

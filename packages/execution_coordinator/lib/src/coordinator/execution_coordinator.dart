@@ -59,6 +59,24 @@ class ExecutionNotActiveException implements Exception {
 /// the execution row and the session exist, and the work item belongs to
 /// whoever moved it. This is a classification, not a recovery — and it never
 /// relaxes the policy that rejected the transition.
+///
+/// ## [marker] is a wire contract, not decoration
+///
+/// This exception does not reach a human: `WorkerDispatch` catches it as a
+/// plain `Object`, the worker records `toString()` as a generic
+/// `executedFail` / `agentFailed` detail, and the scheduler is what has to
+/// decide what that failure MEANS for the job. The prose alone cannot carry
+/// that decision, because the worker flattens every thrown value to one
+/// string — so [toString] leads with a fixed, machine-readable [marker] the
+/// scheduler recognises.
+///
+/// It is a string and not a typed field because the only channel between this
+/// package and the scheduler that neither of them owns is
+/// `WorkerExecutionResult.failureDetail`: `WorkerFailureCode` is an enum in
+/// `platform_contracts` and cannot grow a value here. The cost is that the
+/// marker is matched literally on the other side; the mitigation is that BOTH
+/// ends pin it with a test, so a change to either one is a build failure
+/// rather than a silent loss of supersession detection.
 class WorkItemSupersededException implements Exception {
   const WorkItemSupersededException({
     required this.workItemId,
@@ -67,6 +85,14 @@ class WorkItemSupersededException implements Exception {
     required this.role,
   });
 
+  /// Fixed prefix of [toString], recognised by the scheduler.
+  ///
+  /// MUST stay byte-identical to `supersededExecutionMarker` in
+  /// `packages/scheduler/lib/src/policy/superseded_execution.dart`, which is
+  /// the consumer. `stale_completion_test.dart` pins this side and
+  /// `supersession_requeue_test.dart` pins that side.
+  static const String marker = 'work_item_superseded:';
+
   final String workItemId;
   final WorkItemState observedState;
   final WorkItemState requiredState;
@@ -74,7 +100,7 @@ class WorkItemSupersededException implements Exception {
 
   @override
   String toString() =>
-      'Superseded execution: work item $workItemId is '
+      '$marker Superseded execution: work item $workItemId is '
       '${observedState.wire} and no longer accepts a '
       '${role.wire} run, which requires ${requiredState.wire}. '
       'The work item moved on before this execution started, so nothing ran '

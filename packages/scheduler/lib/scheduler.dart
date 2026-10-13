@@ -9,6 +9,7 @@ export 'src/baseline_product.dart';
 export 'src/dispatch/worker_dispatch.dart';
 export 'src/policy/retry_policy.dart';
 export 'src/policy/runnable_work.dart';
+export 'src/policy/superseded_execution.dart';
 export 'src/queue/job_queue.dart';
 export 'src/scheduler.dart';
 export 'src/triage_defect.dart';

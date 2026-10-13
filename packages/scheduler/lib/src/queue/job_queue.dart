@@ -386,6 +386,80 @@ class JobQueue {
     });
   }
 
+  /// Returns a job whose execution was superseded — the work item moved before
+  /// the execution started, so nothing ran and nothing was produced — to the
+  /// queue, to be retried against whatever state the item holds later.
+  ///
+  /// ## What this deliberately does NOT do
+  ///
+  /// It does NOT increment [Job.attempt]. That is the whole point, and it is
+  /// the reason this is a separate method rather than a call to
+  /// [scheduleRetry]: an attempt is "this job started an execution", and this
+  /// job did not. Charging it would make [RetryPolicy.canRetry] decrement
+  /// against a spend that never happened, and an item whose executions are
+  /// repeatedly superseded would exhaust its budget and go terminally `failed`
+  /// on the deferral rather than on a result — the precise defect this exists
+  /// to remove. The budget therefore still reflects only real executions.
+  ///
+  /// It also clears [Job.executionReference], [Job.workerId] and
+  /// [Job.availableAt]. The reference names a worker execution that ended
+  /// without producing anything, and leaving it would make
+  /// [Scheduler._reconcileClaim] chase a run that will never settle again;
+  /// `availableAt` is any back-off window a PREVIOUS real failure earned, which
+  /// is not this outcome's to inherit.
+  ///
+  /// ## Duplicate safety
+  ///
+  /// The SAME job row is returned to `queued` with its dedupe key untouched, so
+  /// `enqueueIfAbsent` finds this job as the key's holder and mints nothing —
+  /// there is no second job and no second key. And the requeue commits to
+  /// nothing: it never dispatches. The next tick re-derives runnability from a
+  /// FRESH read of the work item and re-checks legality before claiming, so a
+  /// requeue into a state that has since moved again is skipped rather than
+  /// run, and a `queued` job whose item no longer wants it is retired by the
+  /// ordinary supersession sweep.
+  ///
+  /// The [reason] is written to the `jobQueued` event payload and NOT onto the
+  /// job row: the row says `queued`, and a reader who saw "superseded" written
+  /// on a job that is still queued would reasonably conclude it was parked.
+  /// The event is the durable audit record of why the job went back.
+  Future<Job> requeueSuperseded({
+    required Job job,
+    required String reason,
+    DateTime? now,
+  }) {
+    return _store.inTransaction((tx) async {
+      final current = await tx.readJob(job.jobId);
+      if (current == null || current.isTerminal) return current ?? job;
+      final updated = current.copyWith(
+        state: JobState.queued,
+        // `attempt` is intentionally NOT named: `Job.copyWith` reads an absent
+        // argument as "keep", which is exactly the required behaviour here.
+        executionReference: null,
+        workerId: null,
+        availableAt: null,
+        version: current.version + 1,
+      );
+      try {
+        await tx.saveJob(updated, expectedVersion: current.version);
+      } on ConcurrentJobModificationException {
+        return current;
+      }
+      await tx.deleteClaim(job.jobId);
+      await _event(
+        tx,
+        current,
+        SchedulerEventType.jobQueued,
+        payload: {
+          'reason': reason,
+          'supersessionDeferred': true,
+          'attemptUnchanged': updated.attempt,
+        },
+      );
+      return updated;
+    });
+  }
+
   /// Terminal transition. [terminal] must be succeeded/failed/cancelled.
   ///
   /// [executionReference] records a reference the job does not yet hold; when
