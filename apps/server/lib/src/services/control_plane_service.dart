@@ -2274,15 +2274,26 @@ class ControlPlaneService {
 /// why there are two. `test/durable_workspace_provision_trigger_test.dart` greps
 /// `lib/` and fails if this class is named anywhere but this file and
 /// `server.dart` — which catches a second named caller. The same file separately
-/// greps for the provisioning CAPABILITY (`DurableWorkspaceRuntime`,
-/// `DurableWorkspaceProvisioner`, `DurableWorkspaceMaterializer`) and fails if
-/// anything outside the mechanism's own modules and this file names it — which
-/// catches a direct `runtime.provision(` that bypasses this class entirely.
+/// scans for the provisioning CAPABILITY (`DurableWorkspaceRuntime`,
+/// `DurableWorkspaceProvisioner`, `DurableWorkspaceMaterializer`) and for a
+/// `.provision(` call on any receiver other than `trigger`, which catches a
+/// direct call that bypasses this class entirely.
 ///
-/// What neither gate proves: a helper written in `control_plane_service.dart` and
-/// called from code this class does not reach. That is review's job, and the
-/// gates are here so that the ordinary accident — a new lane calling the runtime
-/// because it is the obvious API to call — fails CI instead.
+/// THE CAPABILITY GATE'S EXEMPTION IS THIS CLASS, NOT THIS FILE. It was the
+/// whole file, and a file this size is not a boundary a reader can hold in their
+/// head: a direct `runtime.provision(` planted in a private helper anywhere else
+/// in here passed both gates and every test in the suite. Only the class, the
+/// doc comment that documents it, and the file's own import of the capability
+/// type (which this class's field requires, and which is what put the type in
+/// scope everywhere) are exempt; every other declaration in the file is scanned
+/// like any other file in `lib/`.
+///
+/// What neither gate proves: a call that reaches the capability without naming
+/// any of the three types and without spelling `.provision(` on a recognisable
+/// receiver — an object handed in from elsewhere in the process, say. That is
+/// review's job, and the gates are here so that the ordinary accident — a new
+/// lane calling the runtime because it is the obvious API to call — fails CI
+/// instead.
 ///
 /// ## A request is not a fact, and nothing here records one
 ///

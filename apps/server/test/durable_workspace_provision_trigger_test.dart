@@ -705,19 +705,13 @@ void main() {
         // WHAT IT DOES NOT PROVE, stated rather than left implied: it governs the
         // trigger's own surface, and it says nothing about a helper defined
         // inside `control_plane_service.dart` and called from code the trigger
-        // does not. The capability gate below covers the wider lane. Neither
-        // replaces review of a destructive change.
+        // does not — that is what the capability gate below is for, and it scans
+        // the whole file outside this class. Neither replaces review of a
+        // destructive change.
         final source = File(
           'lib/src/services/control_plane_service.dart',
         ).readAsStringSync();
-        final start = source.indexOf('class DurableWorkspaceProvisionTrigger');
-        // Bounded at the next top-level class rather than at end-of-file, so this
-        // is the trigger's own body and not every declaration printed after it.
-        final nextClass = source.indexOf('\nclass ', start + 1);
-        final body = source.substring(
-          start,
-          nextClass == -1 ? null : nextClass,
-        );
+        final body = _splitAtTrigger(source).exempt;
 
         // The complete set of runtime surface this trigger is allowed to touch:
         // three reads for guard #3, `provision` for guard #6, and A1's own
@@ -733,6 +727,15 @@ void main() {
           r'\b(?:runtime|provisioner)\.([A-Za-z_]\w*)',
         ).allMatches(body).map((m) => m.group(1)!).toSet().difference(allowed);
 
+        expect(
+          body,
+          isNotEmpty,
+          reason:
+              'the trigger class was not found in control_plane_service.dart, so '
+              'this gate examined nothing and passed vacuously. The file has been '
+              'renamed or restructured; the exemption below must be pointed at '
+              'whatever replaced it rather than quietly matching nothing',
+        );
         expect(
           invoked,
           isEmpty,
@@ -791,7 +794,9 @@ void main() {
         // `SshDurableWorkspaceMaterializer.materialize()` have no idempotence
         // guard of their own, so a production call site that reaches either
         // directly bypasses every one of the trigger's five checks — and on a
-        // product that already has a clone, that bypass IS the deletion.
+        // product that already has a clone, that bypass IS the deletion. That
+        // attribution is itself pinned by a test in this file, which calls the
+        // runtime twice and asserts the materialiser ran twice.
         //
         // This is the path the persisted learning
         // (`docs/engineering/learning/a-second-clone-attempt-is-a-clone-deletion.md`)
@@ -811,8 +816,13 @@ void main() {
           'lib/src/baseline/durable_workspace_materializer.dart',
         };
 
-        // Where guard #5 lives. This file may name the capability; nothing else
-        // outside the mechanism may.
+        // Where guard #5 lives. THE EXEMPTION IS THE TRIGGER CLASS, NOT THE
+        // FILE — and that distinction is the correction this gate needed. It
+        // previously skipped all of `control_plane_service.dart`, so a direct
+        // `runtime.provision(` planted in a helper anywhere else in that file
+        // passed both gates and every test in the suite: staying inside one file
+        // was enough to weaponise it. Everything outside the class and its doc
+        // comment is now scanned like any other file.
         const triggerFile = 'lib/src/services/control_plane_service.dart';
 
         // The composition root. It is allowed to CONSTRUCT the runtime — that is
@@ -821,6 +831,7 @@ void main() {
         const compositionRoot = 'lib/server.dart';
 
         final offenders = <String, String>{};
+        var triggerFileSeen = false;
         for (final entity in Directory('lib').listSync(recursive: true)) {
           if (entity is! File || !entity.path.endsWith('.dart')) continue;
           final path = entity.path.replaceAll(r'\', '/');
@@ -829,12 +840,42 @@ void main() {
           // gate is about PRODUCTION call sites, and a failing A1 test would be
           // reported against the wrong lane.
           if (path.endsWith('_test.dart')) continue;
-          if (path == triggerFile) continue;
 
           final text = entity.readAsStringSync();
+          final isTriggerFile = path == triggerFile;
+          triggerFileSeen |= isTriggerFile;
+          final scanned = isTriggerFile
+              // The trigger's own field is typed `DurableWorkspaceRuntime`, so
+              // the file must import it — and that import puts the type in scope
+              // for the WHOLE file, which is the mechanism the exemption used to
+              // hide behind. Only the directives go; code outside the class that
+              // *uses* the type is still caught.
+              ? _withoutDirectives(_splitAtTrigger(text).outside)
+              : text;
+
           final named = capabilityTokens
-              .where((t) => text.contains(t))
+              .where((t) => scanned.contains(t))
               .toList();
+          // Call-shaped, for the same reason the allow-list above is: a helper
+          // that reaches the runtime without spelling the type is still a
+          // bypass, and a block-list of names would not see it. `trigger` is the
+          // one receiver that is allowed to call `.provision(` — it is the
+          // class guard #5 lives in.
+          final provisionCalls =
+              RegExp(
+                r'(\w+)\.provision\(',
+              ).allMatches(scanned).map((m) => m.group(1)!).toSet().difference({
+                'trigger',
+              });
+          if (provisionCalls.isNotEmpty) {
+            offenders[path] =
+                'calls `.provision(` on ${provisionCalls.join(', ')} outside '
+                'DurableWorkspaceProvisionTrigger. That skips all five of its '
+                'checks, and on a product that already has a clone the skip IS '
+                'the deletion. If this receiver is some unrelated API, rename it: '
+                'the gate is call-shaped on purpose and cannot tell the two apart.';
+            continue;
+          }
           if (named.isEmpty) continue;
 
           if (path != compositionRoot) {
@@ -849,28 +890,31 @@ void main() {
           // Call-shaped, because `server.dart` legitimately names the type AND
           // legitimately calls `trigger.provision(`. Naming is not the thing to
           // forbid here; CALLING THE CAPABILITY is.
-          final provisionCalls = RegExp(
-            r'(\w+)\.provision\(',
-          ).allMatches(text).map((m) => m.group(1)!).toSet();
-          final bypassesTrigger = provisionCalls.difference({'trigger'});
-          if (bypassesTrigger.isNotEmpty) {
-            offenders[path] =
-                'calls `.provision(` on ${bypassesTrigger.join(', ')}. The '
-                'composition root may construct the runtime and call the '
-                'trigger; anything else reaches the capability without guard #5.';
-          } else if (text.contains('.materialize(')) {
+          if (scanned.contains('.materialize(')) {
             offenders[path] =
                 'calls `.materialize(` directly. Materialising into an existing '
                 'product root is the destructive path itself.';
-          } else if (named.any((t) => t != 'DurableWorkspaceRuntime')) {
+            continue;
+          }
+          if (named.any((t) => t != 'DurableWorkspaceRuntime')) {
             offenders[path] =
                 'names ${named.where((t) => t != 'DurableWorkspaceRuntime').join(', ')}. '
                 'The composition root may hold DurableWorkspaceRuntime to '
                 'construct it; the provisioner and the materialiser belong '
                 'behind the trigger.';
+            continue;
           }
         }
 
+        expect(
+          triggerFileSeen,
+          isTrue,
+          reason:
+              '$triggerFile was never reached by this gate, so it examined no '
+              'file at all and passed vacuously. The file has been moved or '
+              'renamed; point the exemption at whatever holds the trigger now '
+              'rather than letting it match nothing',
+        );
         expect(
           offenders,
           isEmpty,
@@ -878,6 +922,153 @@ void main() {
               'durable provisioning became reachable outside '
               'DurableWorkspaceProvisionTrigger:\n'
               '${offenders.entries.map((e) => '  ${e.key} — ${e.value}').join('\n')}',
+        );
+      },
+    );
+  });
+
+  group('THE ATTRIBUTION, PINNED — the runtime has no guard of its own', () {
+    test(
+      'called directly a second time, `runtime.provision()` materialises AGAIN '
+      'into the same product root — and THIS TEST IS EXPECTED TO GO RED WHEN '
+      'THE GUARD LANDS',
+      () async {
+        // WHY THIS TEST EXISTS. The persisted learning
+        // (`docs/engineering/learning/a-second-clone-attempt-is-a-clone-deletion.md`)
+        // attributes the refuse-always guard to `DurableWorkspaceProvisionTrigger`
+        // and says of the runtime and the materialiser: "no idempotence guard of
+        // their own … called directly a second time, it materialises again into
+        // the product root that already holds the clone". Every other row in
+        // that file's evidence table points at a test. This one did not: the
+        // claim was true, it had been reproduced by hand, and nothing in the
+        // repository held it. A claim like that goes stale silently the moment
+        // the behaviour changes, which is exactly how it was wrong the first
+        // time.
+        //
+        // It is pinned here by calling the runtime twice with the trigger — and
+        // so guard #5 — nowhere in the path. The runtime is A1's real one, built
+        // through its real factory, with the same two network seams substituted
+        // that the rest of this file substitutes. Nothing about the trust chain
+        // is simulated; only the socket is.
+        //
+        // ---- THIS TEST IS EXPECTED TO FAIL, BY DESIGN. A FUTURE READER MUST
+        // ---- NOT "FIX" IT. ----
+        //
+        // The guard this attribution says is missing is being added to the
+        // runtime / materializer by another lane. The moment it lands, the
+        // second `provision()` below is refused, `materializations` stays at 1,
+        // and this test goes red. That red is the whole point of committing it:
+        // it is the signal that the persisted attribution has become FALSE and
+        // has to be rewritten in the same commit that falsified it. Repairing
+        // the assertion to expect `1` would leave the learning file asserting,
+        // forever, that a second call re-materialises — for a runtime that no
+        // longer does it. That is the failure mode this test was committed to
+        // prevent.
+        //
+        // IF YOU ARE HERE BECAUSE CI IS RED ON THIS TEST: the guard moved.
+        // Rewrite the learning file's summary and its evidence row FIRST, then
+        // this number, in that order, in one commit.
+        final registry = RegistryFixture();
+        await registry.registerProduct(
+          productId: productId,
+          repositoryId: repositoryId,
+        );
+        await seedCredential(
+          registry.engine,
+          productId: productId,
+          repositoryId: repositoryId,
+        );
+        final materializer = _RecordingDurableMaterializer();
+        final runtime = DurableWorkspaceRuntime.resolve(
+          engine: registry.engine,
+          durableWorkspaceRoot: root,
+          log: (event, data) {},
+          custodyProvider: RecordingSecretProvider(),
+          accessVerifier: ScriptedAccessVerifier(committedRevision: revision),
+          materializer: materializer,
+        );
+
+        await runtime.provision(
+          productId: productId,
+          repositoryId: repositoryId,
+          pinnedRevision: revision,
+        );
+        expect(materializer.materializations, 1);
+        final afterFirst = await registry.store.readOnboardingForProduct(
+          productId,
+        );
+
+        // The second call, with `DurableWorkspaceProvisionTrigger` nowhere in
+        // the path. Whether it THROWS is not what is under test — what is under
+        // test is what the runtime DID while deciding.
+        Object? secondCallFailure;
+        try {
+          await runtime.provision(
+            productId: productId,
+            repositoryId: repositoryId,
+            pinnedRevision: revision,
+          );
+        } on Object catch (error) {
+          secondCallFailure = error;
+        }
+        final whatHappened =
+            secondCallFailure?.toString() ??
+            'the second call returned normally, so nothing in the runtime, the '
+                'provisioner or the materializer refused it';
+
+        expect(
+          materializer.materializations,
+          2,
+          reason:
+              'the runtime materialised a SECOND time into a tree that already '
+              'holds a clone ($whatHappened). That is the destructive path, and '
+              'it is why the learning file says never to call either directly. '
+              'IF THIS ASSERTION IS THE ONLY THING THAT WENT RED, THE GUARD HAS '
+              'MOVED INTO THE RUNTIME — rewrite that file first, then this '
+              'number.',
+        );
+        expect(
+          materializer.requestedRoots,
+          <String>['$root/$productId', '$root/$productId'],
+          reason:
+              'both calls targeted the SAME product root, and that is what makes '
+              'the second one a deletion rather than a second checkout: the '
+              'materialiser runs `git init` (idempotent against an existing '
+              'repository) and then `git remote add origin`, which fails on the '
+              'second run and takes the whole root — the existing clone, its '
+              '`.git`, and every unreviewed commit in it — with it. A count of '
+              'two would satisfy the assertion above without ever showing WHICH '
+              'tree',
+        );
+        expect(
+          secondCallFailure,
+          isNull,
+          reason:
+              'nothing in `DurableWorkspaceRuntime.provision()` or in the '
+              'materializer refuses a second call today. A guard appearing here '
+              'is the change this test exists to notice',
+        );
+        final afterSecond = await registry.store.readOnboardingForProduct(
+          productId,
+        );
+        expect(afterSecond!.hasDurableProductClone, isTrue);
+        expect(
+          afterSecond.onboardingId,
+          afterFirst!.onboardingId,
+          reason:
+              'the second call reuses the ONE onboarding row rather than '
+              'appending a second, so nothing downstream has two records to '
+              'disagree with — there is nothing to notice that a clone was '
+              'replaced',
+        );
+        expect(
+          afterSecond.version,
+          greaterThan(afterFirst.version),
+          reason:
+              'and it REWRITES that row: `engine.recordWorkspace` merges the '
+              'descriptor and bumps the version on every call. The second '
+              'materialisation leaves no trace in the record, which is exactly '
+              'why the guard cannot live there and has to live in the trigger',
         );
       },
     );
@@ -1063,6 +1254,81 @@ void main() {
   });
 }
 
+/// The trigger class — its declaration, the doc comment that documents it, and
+/// its body — and everything else in `control_plane_service.dart`.
+///
+/// The two destructive-path gates divide that one file between them: the
+/// allow-list governs what the class may CALL, and the capability gate governs
+/// what the rest of the file may not reach at all. They must never disagree
+/// about where the class ends, so the division is computed once, here, and both
+/// read it.
+///
+/// [exempt] runs from the start of the `///` run immediately above the
+/// declaration — a gate that failed on the class's own warning about itself
+/// would be a gate to delete rather than to satisfy — to the next top-level
+/// `class`, or end of file. Bounding it there rather than at end of file is
+/// what keeps the next declaration's code out of the exemption.
+///
+/// [outside] is the rest of the file, which is what the capability gate scans.
+/// If the class is absent, [exempt] is empty and [outside] is the whole file —
+/// so the allow-list gate, which asserts on the emptiness, fails loudly, and the
+/// capability gate fails SAFE in the same state: it scans more, not less.
+({String exempt, String outside}) _splitAtTrigger(String source) {
+  // Matched with a WORD BOUNDARY rather than as a literal substring, so a
+  // renamed `…ProvisionTriggerSomethingElse` is not mistaken for the trigger and
+  // silently exempted.
+  final declaration = RegExp(
+    r'class\s+DurableWorkspaceProvisionTrigger\b',
+  ).firstMatch(source);
+  if (declaration == null) return (exempt: '', outside: source);
+  final start = declaration.start;
+
+  var exemptStart = start;
+  final preceding = source.substring(0, start).split('\n');
+  // `split` leaves a trailing '' for the newline that ends the last line before
+  // the declaration. That is not a line of text, and treating it as one would
+  // stop the walk before it began.
+  if (preceding.isNotEmpty && preceding.last.isEmpty) preceding.removeLast();
+  for (final line in preceding.reversed) {
+    if (!line.trimLeft().startsWith('///')) break;
+    exemptStart -= line.length + 1;
+  }
+
+  final nextDeclaration = source.indexOf('\nclass ', start + 1);
+  final exemptEnd = nextDeclaration == -1 ? source.length : nextDeclaration;
+  return (
+    exempt: source.substring(exemptStart, exemptEnd),
+    outside: source.substring(0, exemptStart) + source.substring(exemptEnd),
+  );
+}
+
+/// [source] with every `import` / `export` / `part` directive removed.
+///
+/// Applied only to the part of `control_plane_service.dart` that is NOT the
+/// trigger class, and only because the trigger's own field is typed
+/// `DurableWorkspaceRuntime`: the file has to import it, and one import makes
+/// the type reachable from every declaration in the file. Removing just the
+/// directives keeps the name check meaningful — code outside the class that
+/// *uses* the type still fails the gate — where excusing the whole file would
+/// have thrown the check away.
+///
+/// A directive with no terminating `;` is left in place rather than guessed at,
+/// so an unterminated import makes the gate report the file rather than letting
+/// it scan less than it claims to.
+String _withoutDirectives(String source) {
+  final buffer = StringBuffer();
+  var offset = 0;
+  final directive = RegExp(r'^\s*(?:import|export|part)\s', multiLine: true);
+  for (final match in directive.allMatches(source)) {
+    final terminator = source.indexOf(';', match.end);
+    if (terminator == -1) continue;
+    buffer.write(source.substring(offset, match.start));
+    offset = terminator + 1;
+  }
+  buffer.write(source.substring(offset));
+  return buffer.toString();
+}
+
 /// A materialiser that writes nothing and records what it was asked to pin.
 ///
 /// Counts calls rather than cloning: the clone is A1's own subject under test
@@ -1076,6 +1342,14 @@ class _RecordingDurableMaterializer implements DurableWorkspaceMaterializer {
   /// never the operator's ref.
   final List<String> requestedPins = <String>[];
 
+  /// The product roots this materialiser was asked to write into, in order.
+  ///
+  /// Recorded because "a second call materialises into the same tree" is the
+  /// premise of the whole hazard chain: a COUNT would satisfy an assertion about
+  /// re-materialisation without ever showing WHICH tree, and the tree is the
+  /// thing being destroyed.
+  final List<String> requestedRoots = <String>[];
+
   @override
   Future<DurableWorkspaceClone> materialize({
     required String productId,
@@ -1088,6 +1362,7 @@ class _RecordingDurableMaterializer implements DurableWorkspaceMaterializer {
   }) async {
     materializations++;
     requestedPins.add(pinnedRevision);
+    requestedRoots.add(productRoot);
     return DurableWorkspaceClone(
       productId: productId,
       repositoryId: repositoryId,

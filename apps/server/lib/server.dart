@@ -2042,18 +2042,77 @@ Future<Map<String, dynamic>> _runDurableWorkspaceProvision(
     // one and did not get it must not be left believing the deployment is
     // provisioned.
     //
-    // PRECONDITION FOR THIS EXIT — do not move this call without re-reading
-    // this. `exit` is process-wide and immediate: it runs no `finally`, flushes
-    // no stream and drains no pending write, so it is only safe HERE because
-    // this call site is still inside `run()`'s composition, BEFORE `Serverpod`
-    // is constructed and before any session, engine or scheduler exists. There
-    // is nothing to lose and nothing half-written at this point. A future lane
-    // that moves this call after `pod.start()` — which is the obvious "log the
-    // banner first" refactor, and which this comment exists to catch — would
-    // abandon open database sessions and drop buffered log lines on every failed
-    // instruction. If the instruction ever has to be run later than this, it
-    // needs a different termination strategy (a flag + a shutdown path), not a
-    // moved `exit`.
+    // ---- WHAT THIS EXIT DEPENDS ON. Read off `run()`, not assumed. ----
+    //
+    // A previous version of this comment claimed the exit was safe here "because
+    // this call site is still inside run()'s composition, BEFORE `Serverpod` is
+    // constructed and before any session, engine or scheduler exists". That was
+    // false, and it is worth being exact about why: `run()` is ONE continuous
+    // body, and by the time control reaches this call the composition has long
+    // since started. `pod.start()` has run, so `Endpoints()` is listening and
+    // answering requests; two `Session`s exist (`session`, and the separate
+    // `baselineSession`); the Postgres stores, `DurableWorkflowEngine`,
+    // `ProviderHealthMonitor` (already started) and the triage and review
+    // `Scheduler`s are all constructed.
+    //
+    // The properties that ARE true here, and that this exit actually depends on,
+    // are these two:
+    //
+    //  * NO SCHEDULER TICK HAS EVER FIRED. `TickSingleFlight` and the
+    //    `Timer.periodic` that drives it are both constructed after this call,
+    //    `sched-impl` does not exist yet at all, and
+    //    `BaselineProductionRuntime.runOnce()` only ever runs from inside a tick.
+    //    Nothing has been dispatched, claimed or leased. This is the property
+    //    this location genuinely has, and it is the one the comment at the call
+    //    site already names correctly ("It runs BEFORE `implScheduler` is
+    //    built").
+    //  * NOTHING IS HALF-WRITTEN. Every await before this line has returned, so
+    //    there is no pending write to abandon. `_seedModelPolicy`'s row, if it
+    //    wrote one, is committed and idempotent on the next start.
+    //
+    // ---- WHAT IT COSTS. Not "nothing to lose" — an HTTP request. ----
+    //
+    //  * `exit` runs no `finally`. Checked rather than assumed: a `try` whose
+    //    `finally` writes a marker never reaches it. So `Serverpod.shutdown()` is
+    //    never called and neither `Session` is closed gracefully. Process death
+    //    closes the sockets and the database reaps the backends, so this is
+    //    untidiness, not data loss.
+    //  * `exit` DOES flush stdout. Also checked rather than assumed, because the
+    //    previous version of this comment claimed the opposite: dart:io flushes
+    //    stdio before terminating, and a 200 kB pending `stdout.write` reaches the
+    //    pipe ahead of `exit(1)`. `_log` writes through `stdout`, so every line
+    //    above — including `durable_workspace.provision.aborted` — reaches the
+    //    operator's terminal.
+    //  * THE REAL COST IS AN IN-FLIGHT REQUEST. The port was bound by
+    //    `pod.start()`, provisioning is a real `git clone` over SSH and can take
+    //    minutes, and `exit` cuts an arriving or in-flight request off mid
+    //    response. The process is listening for exactly as long as provisioning
+    //    runs. That window cannot be closed by moving this call later; it can
+    //    only be closed by not binding the port first, which is a restructuring
+    //    of the boot sequence rather than a move (the store this runs on is built
+    //    over a `Session` created after `pod.start()`).
+    //  * A pending `ProviderHealthMonitor` check is dropped. Harmless: it is a
+    //    five-minute `Timer.periodic`, the first check is five minutes out, and
+    //    the next start runs it again.
+    //
+    // ---- WHY IT STAYS HERE. ----
+    //
+    // Not because it is safe everywhere else, but because this is the LAST point
+    // at which the instruction's outcome can still stop the process. Past it the
+    // deployment serves as though it were healthy while the instruction went
+    // unfulfilled, which is the exact state the operator asked it not to be left
+    // in.
+    //
+    // "Defer it to the end of `run()`" is not available: `run()` never returns to
+    // a place that could act on a flag — its last statement is the
+    // `Timer.periodic` that keeps ticking. Serverpod does offer a graceful path
+    // (`Serverpod.shutdown`), and it was NOT adopted here for two reasons a future
+    // lane must know before "improving" this: with `exitProcess: true` it exits
+    // **0**, which inverts the deliberate non-zero signal this whole branch
+    // exists to give; and with `exitProcess: false` it awaits in-flight requests,
+    // trading the immediacy this path is for on the one failure an operator is
+    // watching a shell for. Tidy-but-slower is a product decision, not a
+    // correction.
     exit(1);
   }
   return outcome;
