@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:product_registry/product_registry.dart';
 import 'package:serverpod/database.dart';
@@ -10,7 +12,8 @@ import 'util/db_row_util.dart';
 ///
 /// Scope-carrying keys (`productId`, `baselineId`, `repositoryId`,
 /// `clarificationId`) are real columns — never JSON. Only nested
-/// structures (baseline facts) are stored as JSON documents. Optimistic
+/// structures (baseline facts, and `onboarding_record.workspace`) are stored
+/// as JSON documents. Optimistic
 /// concurrency uses the same `version` + `ON CONFLICT` CAS pattern as the
 /// workflow/job stores (checkpoint 006 §persistence, §3.3).
 class PostgresProductRegistryStore implements ProductRegistryStore {
@@ -1022,14 +1025,22 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
 
   @override
   Future<void> saveOnboarding(OnboardingRecord record) async {
+    // Validated BEFORE the statement is sent, for the same reason the
+    // in-memory tier validates before touching its map: a refused record must
+    // leave the stored row exactly as it was, which is only true if nothing
+    // has been written by the time the throw happens. The check itself lives
+    // on the type so both tiers enforce one definition.
+    record.validate();
     await _db.execute(
       '''INSERT INTO "onboarding_record" (
              "onboardingId", "productId", "currentBaselineRevision",
-             "pendingClarifications", "completed", "createdAt",
+             "pendingClarifications", "completed", "pinnedRevision",
+             "workspace", "completedBaselineId", "createdAt",
              "updatedAt", "version"
            ) VALUES (
              @onboardingId, @productId, @currentBaselineRevision,
-             @pendingClarifications, @completed, @createdAt,
+             @pendingClarifications, @completed, @pinnedRevision,
+             @workspace, @completedBaselineId, @createdAt,
              @updatedAt, @version
            )
            ON CONFLICT ("productId") DO UPDATE SET
@@ -1037,6 +1048,9 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
              "currentBaselineRevision" = EXCLUDED."currentBaselineRevision",
              "pendingClarifications" = EXCLUDED."pendingClarifications",
              "completed" = EXCLUDED."completed",
+             "pinnedRevision" = EXCLUDED."pinnedRevision",
+             "workspace" = EXCLUDED."workspace",
+             "completedBaselineId" = EXCLUDED."completedBaselineId",
              "createdAt" = EXCLUDED."createdAt",
              "updatedAt" = EXCLUDED."updatedAt",
              "version" = EXCLUDED."version"''',
@@ -1130,12 +1144,27 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
 
   OnboardingRecord _onboardingFromRow(DatabaseResultRow row) {
     final m = row.toColumnMap();
+    // `workspace` is stored as JSON text and read back through the same
+    // `WorkspaceDescriptor.fromJson` that produced it, so the two halves of
+    // the record agree by construction rather than by convention.
+    //
+    // Both new columns are read with `?? null` rather than assumed present: a
+    // database whose `serverpod_migrations` row already reads as this version
+    // — because an operator applied the definition directly — has the columns,
+    // but a row written BEFORE the columns existed is only reachable here if
+    // the schema was widened in place. Both cases must load.
+    final workspaceJson = m['workspace'] as String?;
     return OnboardingRecord.fromJson({
       'onboardingId': m['onboardingId'],
       'productId': m['productId'],
       'currentBaselineRevision': m['currentBaselineRevision'],
       'pendingClarifications': m['pendingClarifications'],
       'completed': m['completed'],
+      'pinnedRevision': m['pinnedRevision'] as String?,
+      'workspace': workspaceJson == null
+          ? null
+          : jsonDecode(workspaceJson) as Map<String, dynamic>,
+      'completedBaselineId': m['completedBaselineId'] as String?,
       'createdAt': decodeUtc(m['createdAt'])?.toIso8601String(),
       'updatedAt': decodeUtc(m['updatedAt'])?.toIso8601String(),
       'version': m['version'],
@@ -1216,12 +1245,19 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
 
   Map<String, Object?> _onboardingParams(OnboardingRecord record) {
     final json = record.toJson();
+    // `record.toJson()` is asked, rather than the fields being read one by one,
+    // so the JSON column is byte-identical to what `OnboardingRecord.fromJson`
+    // reads back. Re-encoding the descriptor by hand here is how the two drift.
+    final workspaceJson = json['workspace'];
     return {
       'onboardingId': json['onboardingId'],
       'productId': json['productId'],
       'currentBaselineRevision': json['currentBaselineRevision'],
       'pendingClarifications': json['pendingClarifications'],
       'completed': json['completed'],
+      'pinnedRevision': json['pinnedRevision'],
+      'workspace': workspaceJson == null ? null : jsonEncode(workspaceJson),
+      'completedBaselineId': json['completedBaselineId'],
       'createdAt': PersistenceDatabase.toUtc(record.createdAt),
       'updatedAt': PersistenceDatabase.toUtc(record.updatedAt),
       'version': record.version,
