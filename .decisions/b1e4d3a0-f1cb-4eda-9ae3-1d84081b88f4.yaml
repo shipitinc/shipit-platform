@@ -1,0 +1,105 @@
+# human-decision.yaml
+#
+# HD-7. OPEN. Recorded 2026-10-12, deferred by the human for later addressing.
+# This is the PREREQUISITE the human was asked TWICE and has not yet answered.
+# It gates option B of the human's own chosen remediation order for agent failure detail.
+decision_id: b1e4d3a0-f1cb-4eda-9ae3-1d84081b88f4
+type: ARCHITECTURE
+status: PENDING
+question: >-
+  (HD-7) Was `FileJsonExecutionStore` chosen DELIBERATELY for the ExecutionCoordinator's agent
+  execution records? If yes, Option B of the agent-failure-detail remediation order is a product
+  decision rather than a bug fix, and must be re-argued rather than simply implemented. If it was a
+  default or oversight, Option B is a straightforward persistence fix and should proceed.
+context:
+  summary: >-
+    The human chose the remediation order **B -> A -> C** for "more detail as to why an agent fails",
+    recorded in `docs/engineering/WORK_STATE.md` under "Agent failure detail — human-chosen
+    remediation order". **B is the root fix** and the other two depend on it:
+
+      - **B (root).** Switch `ExecutionCoordinator`'s store from `FileJsonExecutionStore`
+        (`apps/server/lib/server.dart`) to the existing `PostgresExecutionStore`. The
+        `agent_execution`, `agent_result`, `agent_event` and `platform_verification` tables ALREADY
+        EXIST and are already migrated — but they are EMPTY.
+      - **A.** Persist the concrete failure cause onto `Job.failure` and map `failure` through
+        `JobRecordView`, which currently has no failure field at all.
+      - **C.** Operator-facing failure detail panel on the run-detail page.
+
+    Option B was explicitly flagged as blocked on this record's question at the time the order was
+    chosen.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: agent-failure-detail-b
+    item_ref: "Remediation option B: move agent execution records to Postgres."
+  evidence:
+    documents:
+      - type: OTHER
+        id: composition-site
+        url: apps/server/lib/server.dart
+      - type: OTHER
+        id: postgres-store
+        url: apps/server/lib/src/persistence/postgres_execution_store.dart
+      - type: OTHER
+        id: file-store
+        url: packages/execution_coordinator/lib/src/store/file_json_execution_store.dart
+      - type: OTHER
+        id: observed-failure
+        url: docs/engineering/WORK_STATE.md
+    data:
+      - kind: QA_READ_ONLY_OBSERVATION
+        id: tables-empty
+        value: >-
+          `agent_execution`, `agent_execution_request`, `agent_event`, `agent_result` and
+          `platform_verification` all hold 0 rows while 14 `worker_execution` rows exist.
+      - kind: QA_READ_ONLY_OBSERVATION
+        id: store-path-absent
+        value: >-
+          The file store writes to `${TMPDIR}/execution_coordinator/store.json`; that directory does
+          not exist in the running container. The agent's own diagnostics (exit code, tool calls,
+          errors), its result summary, and its session event stream are therefore stored NOWHERE.
+    analysis:
+      - The real triage failure `AcpRequestException(-32603) ... Invalid credential` reached the UI as
+        nothing at all — the run page rendered only "Stopped - stopped N times".
+      - `JobRecordView` carries no `failure` field, so the API is physically incapable of telling an
+        operator why a job failed, independently of where the records live.
+      - `ExecutionEndpoints.inspect` reads the execution store, so with an empty store it has nothing
+        to inspect even though the endpoint exists.
+options_considered:
+  - option: DELIBERATE_FILE_STORE
+    description: >-
+      Keeping agent execution records off Postgres was intentional — for example to keep the
+      `agent_*` tables empty, to avoid a hot, high-churn write path, or because records are treated as
+      disposable. If so, Option B needs re-arguing on its merits and a different design.
+  - option: OVERSIGHT_OR_DEFAULT
+    description: >-
+      The store was a default or a leftover. The Postgres tables and the `PostgresExecutionStore`
+      implementation exist and are already migrated, which reads as intent that was never wired.
+      Option B is then a straightforward fix: durable, inspectable agent outcomes.
+  - option: HYBRID
+    description: >-
+      Keep the file store but promote the specific failure cause onto `Job.failure` (part of option A
+      alone), so the operator learns why a job failed without moving the whole execution store.
+      Smaller blast radius; loses agent-level diagnostics.
+recommendation: >-
+  None until the human answers. The orchestrator has no basis to recommend between a deliberate design
+  and an oversight, and both readings are consistent with the evidence in the repository.
+resolution:
+  outcome: null
+  decided_by: null
+  decided_at: null
+  selected_option: null
+  rationale: null
+follow_up_actions:
+  - action: >-
+      Ask the human this question directly before implementing Option B. It was asked twice in session
+      and remains unanswered; do not infer an answer from silence.
+    owner: engineering-manager
+  - action: >-
+      If `OVERSIGHT_OR_DEFAULT`, dispatch Option B as a bounded persistence change with its own
+      independent review, and note that it changes a persistence boundary.
+    owner: engineering-manager
+  - action: >-
+      Option A's API half (mapping `failure` through `JobRecordView`) is valuable REGARDLESS of this
+      answer and could proceed independently if the human prefers.
+    owner: engineering-manager
+related_records: []

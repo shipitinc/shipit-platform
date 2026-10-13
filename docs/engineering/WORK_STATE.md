@@ -1260,3 +1260,22 @@ deliberately. If so, moving to Postgres is a product decision, not a bug fix.
 `AcpRequestException(-32603) ... Invalid credential {service: session, errorName: APIError}`,
 surfacing only via `[triage.execution_not_successful]` in container stdout. It reached the UI as
 nothing at all — the run page rendered only "Stopped · stopped N times".
+
+## OPEN — deferred by the human (recorded 2026-10-12)
+
+Two consequential decisions are recorded as durable Human Decision objects and deferred. Neither has
+been actioned; neither has been worked around.
+
+- **HD-6** `67ec3b62-cd34-4a4a-b0cf-26b5b1422189` — does a design approval count as a re-triage?
+  Pre-existing inert path: an already-triaged item receiving a design approval re-requests a consumed
+  dedupe key and is inert forever. Escalated by two lanes, endorsed by two reviews, declared in the
+  drift guard's closed list. Recommended when raised: `APPROVE_MEANS_AGAIN_FOR_DESIGN`.
+- **HD-7** `b1e4d3a0-f1cb-4eda-9ae3-1d84081b88f4` — was `FileJsonExecutionStore` deliberate? Gates
+  **Option B** of the human's chosen **B → A → C** agent-failure-detail order. Asked twice in session
+  and unanswered; must not be inferred from silence.
+
+Also unverified and explicitly NOT a decision: **the Flutter changes have never been confirmed in a
+browser.** Every claim this session was proven by database and container logs, because no GUI was
+available. The client-build fix is structurally sound (Compose now owns the image, so the container
+recreates — verified: recreated 19:28 and again on the final deploy, versus 22 hours stale before the
+fix), but rendering itself is unconfirmed and needs a human to look.

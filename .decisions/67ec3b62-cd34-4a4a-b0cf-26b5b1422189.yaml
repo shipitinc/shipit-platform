@@ -1,0 +1,104 @@
+# human-decision.yaml
+#
+# HD-6. OPEN. Recorded 2026-10-12, deferred by the human for later addressing.
+# Escalated independently by TWO implement lanes and endorsed by TWO independent reviews.
+# Nothing has been changed on the basis of either option; the inert path is left intact and declared.
+decision_id: 67ec3b62-cd34-4a4a-b0cf-26b5b1422189
+type: ARCHITECTURE
+status: PENDING
+question: >-
+  (HD-6) Should a DESIGN APPROVAL count as a re-triage for the purposes of the triage dedupe
+  discriminator? Today `(designApproval, approve) -> designApproved` does NOT advance
+  `metadata['triageAttempt']`. `designApproved` is in `triageDefectDefinition.entryStates`, so an
+  item that was already triaged — and therefore already holds the bare key
+  `<workItemId>:triage_defect` through its first triage job — re-requests that SAME consumed key
+  after approval, and `enqueueIfAbsent` returns `created: false` for ever. The item is inert.
+context:
+  summary: >-
+    Surfaced by widening the triage entry-state drift guard in lane REVIEW-REJECTED-DISPATCHABLE
+    (commit 2acb7fc, merged 0dbb241). The widened guard immediately failed on
+    `(designApproval, approve) -> designApproved` — precisely the counterfactual the guard existed to
+    detect. This is the MEDIUM finding that guard was written to close, found one route early.
+
+    It is PRE-EXISTING and neither introduced nor worsened by any change in this series. It is
+    triggered by a design approval on an ALREADY-TRIAGED item; a straight
+    `planned -> designApproved` item holds no consumed bare key and mints fine.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: review-rejected-dispatchable
+    item_ref: >-
+      Escalation from lane REVIEW-REJECTED-DISPATCHABLE; endorsed by its independent review, which
+      judged it "a product decision, not an implementation fix" and "already biting at base".
+  evidence:
+    documents:
+      - type: OTHER
+        id: drift-guard
+        url: packages/scheduler/test/triage_entry_state_drift_guard_test.dart
+      - type: OTHER
+        id: routing-table
+        url: packages/workflow_engine/lib/src/transitions/human_decision_routing.dart
+      - type: OTHER
+        id: discriminator
+        url: packages/workflow_store/lib/src/durable_workflow_engine.dart
+      - type: OTHER
+        id: triage-definition
+        url: packages/scheduler/lib/src/triage_defect.dart
+    data:
+      - kind: QA_READ_ONLY_OBSERVATION
+        id: inert-since
+        value: >-
+          No QA row currently exercises the path (10 items absent-marker, 3 int, 0 unreadable as of
+          2026-10-12). The defect is latent here and would bite on the first already-triaged item to
+          receive a design approval.
+    analysis:
+      - The base rule "an APPROVE must not inflate the counter" is separately pinned by tests.
+      - The new guard's rule "every route into a triage entry state must advance the discriminator"
+        conflicts with it on exactly one pair.
+      - Which rule yields changes what "approve a design" MEANS to the queue — hence a human call,
+        not a patch. Both reviewers declined to decide it, correctly.
+options_considered:
+  - option: APPROVE_MEANS_AGAIN_FOR_DESIGN
+    description: >-
+      Add a per-(type, choice) rework exception so `(designApproval, approve)` stamps the
+      discriminator, mirroring the existing `(escalation, approve)` shape.
+      Closes the inert path WITHOUT inflating the counter on `(engineeringReview, approve)`, which is
+      separately pinned. This is both reviewers' recommended narrowest correct fix.
+  - option: REMOVE_DESIGN_APPROVED_FROM_ENTRY_STATES
+    description: >-
+      Drop `designApproved` from `triageDefectDefinition.entryStates`, so an approved design is not
+      auto-triaged at all. Removes the conflict at its source, but changes what design approval does
+      for every future item.
+  - option: LEAVE_DECLARED
+    description: >-
+      Keep the inert path and the closed-list declaration that names it. Honest, and already shipped —
+      but the defect is real and will bite.
+    recommendation: >-
+      NOT recommended as a resting state. The reviewers both judged it acceptable as an INTERIM state
+      only, and explicitly flagged that it "will bite".
+recommendation: >-
+  Prefer `APPROVE_MEANS_AGAIN_FOR_DESIGN` as its own change with its own decision record. It is the
+  narrowest fix, it is the one both independent reviews recommended, and it does not disturb the
+  separately-pinned "approve must not inflate the counter" rule for engineering review.
+risk:
+  - >-
+    Doing nothing leaves a KNOWN-INERT path: an already-triaged item that receives a design approval
+    can never be enqueued again, and the failure is silent (`dispatched: 0`, `failedSections: []`).
+  - >-
+    Choosing option 2 changes the meaning of design approval platform-wide; it is not a local fix.
+resolution:
+  outcome: null
+  decided_by: null
+  decided_at: null
+  selected_option: null
+  rationale: null
+follow_up_actions:
+  - action: >-
+      Raise this record with the human when the design-approval flow is next in scope. Do not fold the
+      fix into an unrelated lane.
+    owner: engineering-manager
+  - action: >-
+      If resolved as APPROVE_MEANS_AGAIN_FOR_DESIGN, the change belongs to
+      `packages/workflow_store/lib/src/durable_workflow_engine.dart` (the `_isReWorkDecision`
+      predicate) plus the drift guard's closed list, and needs its own independent review.
+    owner: engineering-manager
+related_records: []

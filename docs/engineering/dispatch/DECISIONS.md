@@ -398,3 +398,46 @@ The reviewer's `DO_NOT_MERGE` on `fix/operator-retry-unbounded` (`611f2cc`) was 
 
 - **Nothing was deleted.** HD-3's object carries a `## SUPERSEDED IN FULL` block appended below its own unchanged resolution, and every affected clause of `design-failed-work-retry/design-brief.md` is marked **SUPERSEDED in place** with a pointer and a reason. The audit trail shows the reversal rather than two apparently current answers to one question.
 - Both decisions are readable in order, each with its own reasoning intact.
+
+## HD-6 — `67ec3b62-cd34-4a4a-b0cf-26b5b1422189` — OPEN (deferred by the human)
+
+**Does a design approval count as a re-triage for the dedupe discriminator?**
+
+`(designApproval, approve) -> designApproved` does **not** advance `metadata['triageAttempt']`.
+`designApproved` is a `triageDefectDefinition` entry state, so an item already triaged — already
+holding the bare key `<workItemId>:triage_defect` through its first triage job — re-requests that
+consumed key after approval, and `enqueueIfAbsent` returns `created: false` for ever. Inert, and the
+failure is silent (`dispatched: 0`, `failedSections: []`).
+
+**Pre-existing.** Surfaced by widening the entry-state drift guard in `2acb7fc`; escalated by that lane
+and independently endorsed by its review, which judged it "a product decision, not an implementation
+fix" and "already biting at base". Nothing was changed — the route is closed-listed and declared.
+
+The conflict is between two individually-deliberate rules that meet on exactly one pair: "an approve
+must not inflate the counter" (separately pinned by tests) and "every route into a triage entry state
+must advance the discriminator". Which one yields changes what *approve a design* means to the queue.
+
+**Recommended when raised:** `APPROVE_MEANS_AGAIN_FOR_DESIGN` — a per-`(type, choice)` rework
+exception mirroring the existing `(escalation, approve)` shape. Closes the path without disturbing the
+pinned engineering-review rule. Both reviews recommended it. Not to be folded into an unrelated lane.
+
+## HD-7 — `b1e4d3a0-f1cb-4eda-9ae3-1d84081b88f4` — OPEN (deferred by the human)
+
+**Was `FileJsonExecutionStore` chosen deliberately for agent execution records?**
+
+This is the prerequisite the human was asked **twice** and has not answered, and it gates **Option B**
+of their own chosen **B → A → C** order for agent failure detail. The human chose that order knowing
+this question was open; it is recorded here so the answer is not lost.
+
+If **deliberate**, Option B is a product decision to re-argue, not a bug fix. If **oversight**, it is
+a straightforward persistence fix — and the evidence leans that way: `PostgresExecutionStore` exists,
+`agent_execution` / `agent_result` / `agent_event` / `platform_verification` are already migrated, and
+all four are empty while 14 `worker_execution` rows exist.
+
+The concrete cost of leaving it: the triage failure
+`AcpRequestException(-32603) ... Invalid credential` reached the operator as **nothing** — the run
+page rendered only "Stopped · stopped N times" — and `JobRecordView` carries no `failure` field, so the
+API is physically incapable of saying why a job failed.
+
+**Note:** option A's API half (mapping `failure` through `JobRecordView`) is valuable regardless of
+this answer and could proceed independently.
