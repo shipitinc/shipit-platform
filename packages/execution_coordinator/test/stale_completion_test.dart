@@ -162,6 +162,44 @@ void main() {
   );
 
   test(
+    'the message carries the machine-readable MARKER the scheduler acts on',
+    () async {
+      const superseded = WorkItemSupersededException(
+        workItemId: 'wi-1',
+        observedState: WorkItemState.designNotRequired,
+        requiredState: WorkItemState.reviewInProgress,
+        role: AgentRole.engineeringReviewer,
+      );
+
+      // The exception never reaches the scheduler as a TYPE. `WorkerDispatch`
+      // catches it as a plain `Object`, the worker flattens `toString()` into
+      // `WorkerExecutionResult.failureDetail`, and the only positively
+      // identifying signal left is this prefix. If it moves, supersession
+      // detection silently reverts to a terminal `failed` and nothing raises.
+      //
+      // So this pins the PRODUCER half of a contract whose CONSUMER half is
+      // pinned by `supersession_requeue_test.dart` in packages/scheduler.
+      // Either side changing alone breaks a test rather than the behaviour.
+      expect(
+        WorkItemSupersededException.marker,
+        'work_item_superseded:',
+        reason: 'this literal is a wire contract, not a message',
+      );
+      expect(
+        superseded.toString(),
+        startsWith(WorkItemSupersededException.marker),
+      );
+      expect(
+        superseded.toString(),
+        contains('Superseded execution'),
+        reason:
+            'the marker is a prefix, not a replacement — the prose is still '
+            'what a human reads',
+      );
+    },
+  );
+
+  test(
     'a superseded dispatch writes no execution row and starts no session',
     () async {
       await itemAtDesignNotRequired();

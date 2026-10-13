@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:scheduler/scheduler.dart';
 import 'package:worker_protocol/worker_protocol.dart';
@@ -27,6 +29,18 @@ class ControlledDispatcher implements WorkerDispatch {
   /// When true, a run is accepted and completes; otherwise the "pool" is busy
   /// (no acquirable worker) and selection reports [WorkerDispatchOutcome.workerBusy].
   int capacity = 1;
+
+  /// When set, `run` resolves to exactly what this returns instead of building
+  /// the default [WorkerExecutionStatus.executedPass] result.
+  ///
+  /// Lets a test hand the scheduler a PRECISE terminal outcome — in particular a
+  /// supersession, whose entire identity is a string on `failureDetail` — plus
+  /// whatever durable state must have moved by the time adoption reads it. The
+  /// hook is awaited, so it may itself move a work item: that is the only
+  /// deterministic way to reproduce "the item moved between dispatch and
+  /// adoption", which against the real stack is a race with no fixed schedule.
+  FutureOr<WorkerExecutionResult> Function(WorkerExecutionRequest request)?
+  resultBuilder;
 
   /// What each accepted run resolves to. Defaults to executedPass.
   Iterable<WorkerExecutionStatus> Function() statusSeries = () => const [
@@ -75,6 +89,13 @@ class ControlledDispatcher implements WorkerDispatch {
     _inFlight = true;
     _runsStarted++;
     if (urgentError != null) throw urgentError!;
+    final builder = resultBuilder;
+    if (builder != null) {
+      final scripted = await builder(request);
+      _resultsByWorkerExecutionId[request.workerExecutionId] = scripted;
+      _inFlight = false;
+      return scripted;
+    }
     final series = statusSeries();
     final status = series.length == 1
         ? series.first

@@ -8,8 +8,10 @@ import 'capacity/execution_capacity.dart';
 import 'capacity/job_capacity_guard.dart';
 import 'dispatch/worker_dispatch.dart';
 import 'health/provider_health_monitor.dart';
+import 'policy/entry_hop.dart';
 import 'policy/retry_policy.dart';
 import 'policy/runnable_work.dart';
+import 'policy/superseded_execution.dart';
 import 'queue/job_queue.dart';
 import 'store/job_store.dart';
 
@@ -220,6 +222,27 @@ class ReconcileFailure {
   String toString() => '$jobId: $error';
 }
 
+/// One item the workflow policy called runnable that the scheduler refused to
+/// dispatch, and why.
+@immutable
+class EntryHopRefusal {
+  const EntryHopRefusal({
+    required this.workItemId,
+    required this.state,
+    required this.reason,
+  });
+
+  final String workItemId;
+  final String state;
+
+  /// `toString()` of whatever was refused, in operator-facing words. Never a
+  /// credential.
+  final String reason;
+
+  @override
+  String toString() => '$workItemId ($state): $reason';
+}
+
 /// What one [Scheduler.tick] did, for tests and for the audit tail.
 @immutable
 class SchedulerTickResult {
@@ -240,6 +263,16 @@ class SchedulerTickResult {
     /// [reconcileFailed]: this is a NEW diagnostic, and a scheduler without a
     /// resolver never produces it.
     this.blockedArtifactMissing = const [],
+
+    /// Items the workflow policy called `runnable` that the scheduler could not
+    /// make startable — no declared hop, or a declared hop the policy will not
+    /// let the scheduler take. Reported apart from [deferred] because nothing
+    /// about it resolves itself: the item is not back-pressured, it is parked
+    /// against a route the transition table does not offer, and an operator is
+    /// the only one who can change that. Folding it into [deferred] would
+    /// report a permanent structural gap as ordinary transient noise, which is
+    /// how this whole defect stayed invisible.
+    this.entryHopRefused = const [],
   });
 
   final List<String> reconciled;
@@ -268,6 +301,9 @@ class SchedulerTickResult {
   /// the composition root must act on (raise a blocking human decision), not
   /// ordinary transient back-pressure to retry silently.
   final List<String> blockedArtifactMissing;
+
+  /// Items refused a dispatch by [EntryHopper] this tick, with the reason.
+  final List<EntryHopRefusal> entryHopRefused;
 }
 
 /// The durable scheduler: derivation + enqueue + dispatch + outcome adoption
@@ -318,6 +354,14 @@ class Scheduler {
          store: workflowStore,
          policy: policy,
        ),
+       // The second component that has to move a work item, for the same reason
+       // and over the same policy: an entry state whose route to execution is
+       // not a direct edge is dispatched only after the hop the DEFINITION
+       // declares for it has been taken. Built over the same store, the same
+       // policy object and the same actor as everything else this scheduler
+       // writes, so there is one store, one policy and one actor behind every
+       // workflow write it makes. Assigned in the BODY because it is built over
+       // `_reclaimEngine`, which this initializer list has just finished making.
        _queue = JobQueue(store: jobStore, clock: clock),
        _dedupeKeyBuilder = dedupeKeyBuilder ?? _defaultDedupeKey,
        _instructionBuilder = instructionBuilder ?? _defaultInstruction,
@@ -326,7 +370,13 @@ class Scheduler {
        _workloadResolver = workloadResolver,
        _executionLiveness = executionLiveness,
        _configuredZombieStaleness = zombieStalenessAfter,
-       _providerHealthMonitor = providerHealthMonitor;
+       _providerHealthMonitor = providerHealthMonitor {
+    _entryHopper = EntryHopper(
+      policy: policy ?? const WorkflowEngine(),
+      engine: _reclaimEngine,
+      definition: definition,
+    );
+  }
 
   final String schedulerId;
   final Duration claimLease;
@@ -341,6 +391,12 @@ class Scheduler {
   final RunnableWorkEvaluator _evaluator;
   final DurableWorkflowEngine _reclaimEngine;
 
+  /// Performs the intermediate hop an entry state declares when it cannot
+  /// reach this definition's running state in one edge. See
+  /// [EntryHopper] for why this is the scheduler's job and not the
+  /// coordinator's.
+  late final EntryHopper _entryHopper;
+
   /// How many times a reclaim re-reads the work item and retries after losing
   /// the store's compare-and-swap. Bounded on purpose: a reclaim must converge
   /// against ordinary contention without spinning against a writer that is
@@ -349,11 +405,10 @@ class Scheduler {
 
   /// The actor a reclaim transitions as. [ActorType.orchestrator] is what the
   /// `agentExecuting -> agentFailed` edge permits, and it is what the scheduler
-  /// already acts as everywhere else in the transition graph.
-  static const WorkflowActor _reclaimActor = WorkflowActor(
-    actorId: 'scheduler',
-    actorType: ActorType.orchestrator,
-  );
+  /// already acts as everywhere else in the transition graph — including the
+  /// intermediate hop it takes in [EntryHopper], which is the SAME constant so
+  /// two scheduler writes cannot disagree about who the scheduler is.
+  static const WorkflowActor _reclaimActor = schedulerOrchestratorActor;
   final JobQueue _queue;
   final RetryPolicy _retryPolicy = const RetryPolicy();
   final DedupeKeyBuilder _dedupeKeyBuilder;
@@ -469,6 +524,7 @@ class Scheduler {
     final deferred = <String>[];
     final terminal = <String>[];
     final blockedArtifactMissing = <String>[];
+    final entryHopRefused = <EntryHopRefusal>[];
 
     // 1. Recover claims that outlived their lease without ever persisting a
     //    terminal outcome.
@@ -548,10 +604,36 @@ class Scheduler {
           // which time it has left `waitingForHumanDecision`.
           break;
         case RunnableWorkStatus.runnable:
-          final dedupeKey = _dedupeKeyBuilder(item, _definition);
-          final instruction = _instructionBuilder(item, _definition);
+          // An item can be runnable and still not STARTABLE: the probe may be
+          // asking about a legal intermediate hop rather than about beginning
+          // an execution right here. The hop is taken here — before the dedupe
+          // key is built — so the key, the instruction and the job all describe
+          // the state the work is actually in, and a job minted for the
+          // pre-hop state can never be dispatched beside the one minted after
+          // it. `EntryHopper` refuses rather than dispatching into the
+          // coordinator's refusal, so a runnable-but-unstartable item is
+          // reported rather than burned.
+          final prepared = await _entryHopper.prepare(item);
+          if (!prepared.dispatchable) {
+            entryHopRefused.add(
+              EntryHopRefusal(
+                workItemId: item.workItemId,
+                state: item.state.wire,
+                reason: prepared.reason ?? 'not dispatchable',
+              ),
+            );
+            continue;
+          }
+          final ready = prepared.item;
+          final dedupeKey = _dedupeKeyBuilder(ready, _definition);
+          if (prepared.status == EntryHopStatus.performed) {
+            cancelledQueued.addAll(
+              await _retireJobsKeyedForPriorState(ready, dedupeKey),
+            );
+          }
+          final instruction = _instructionBuilder(ready, _definition);
           final result = await _queue.enqueueIfAbsent(
-            workItemId: item.workItemId,
+            workItemId: ready.workItemId,
             definition: _definition,
             dedupeKey: dedupeKey,
             instruction: instruction,
@@ -616,6 +698,7 @@ class Scheduler {
       deferred: deferred,
       terminal: terminal,
       blockedArtifactMissing: blockedArtifactMissing,
+      entryHopRefused: entryHopRefused,
     );
   }
 
@@ -776,9 +859,53 @@ class Scheduler {
     }
   }
 
+  /// How many times a job may be returned to the queue by a supersession
+  /// before the scheduler stops deferring and retires it instead.
+  ///
+  /// ## Why this exists at all
+  ///
+  /// A supersession re-check answers "does this definition still want the item?"
+  /// by asking the SAME policy probe scheduling uses. The coordinator, meanwhile,
+  /// got its supersession by attempting a REAL transition. Those two can
+  /// disagree, and then a requeue is a loop: the probe says runnable, the
+  /// transition is refused, the job is requeued, the next tick repeats it —
+  /// once per tick, forever, each pass spending a real worker execution.
+  ///
+  /// That is not hypothetical. `triageDefectDefinition` lists `reviewRejected`
+  /// as an entry state, reached by a human rejecting an engineering review. Its
+  /// only legal hop toward execution is `reviewRejected -> designNotRequired`,
+  /// so the probe asks about THAT edge — while the coordinator asks for the
+  /// direct `reviewRejected -> agentExecuting`, which is not in the table. Every
+  /// dispatch of a `reviewRejected` item is therefore superseded while the probe
+  /// calls it runnable. The deferral is still the RIGHT outcome there — nothing
+  /// ran, and a `failed` would be a lie — but it cannot be the only outcome, or
+  /// the scheduler becomes the load generator.
+  ///
+  /// ## Why a cap on DEFERRALS and not on retries
+  ///
+  /// It cannot be `Job.attempt`, which is the whole contract of this change: no
+  /// execution started, so no budget is spent and nothing may be charged. So the
+  /// bound is counted separately, from the durable event log, under a key of
+  /// its own.
+  ///
+  /// ## What it costs when it fires
+  ///
+  /// The job ends `cancelled` — not `failed` — with a reason that says it was
+  /// deferred repeatedly and that a human should look. That is a visible,
+  /// explained outcome instead of a hot loop, and it records the very thing the
+  /// item is stuck on. It is deliberately the same terminal state the
+  /// already-shipped retirement sweep uses, so there is one vocabulary for "this
+  /// job is not wanted".
+  static const int _maxSupersessionDeferrals = 3;
+
   /// Adopts a worker execution's terminal outcome onto its job: merges the
   /// reported agent execution id into the job's execution reference, then lets
   /// the retry policy pick the resulting state.
+  ///
+  /// A supersession never reaches [RetryPolicy]: it is not a failure of the
+  /// execution but a statement that no execution happened, so [RetryPolicy] has
+  /// no opinion about it and the `failed` it would otherwise produce is the
+  /// defect. See [_adoptSupersession].
   Future<Job> _adopt(
     Job prior,
     WorkerExecutionResult result,
@@ -786,6 +913,9 @@ class Scheduler {
   ) async {
     final current = (await _jobStore.readJob(prior.jobId)) ?? prior;
     if (current.isTerminal) return current;
+    if (isSupersededExecution(result.failureDetail, status: result.status)) {
+      return _adoptSupersession(current, result, now);
+    }
     final failure = _retryPolicy.classify(result.status, result.failureDetail);
     // Null when the outcome adds nothing to the chain, in which case the queue
     // preserves whatever the job already holds.
@@ -834,6 +964,233 @@ class Scheduler {
           executionReference: adopted,
         );
     }
+  }
+
+  /// Decides what a supersession means for [job], and records it.
+  ///
+  /// ## The judgement, and why it lives here
+  ///
+  /// Two facts are needed and only the scheduler holds both:
+  ///
+  ///  * that nothing ran — which only the coordinator can attest, and which
+  ///    arrives as [supersededExecutionMarker] on the failure detail, having
+  ///    been flattened to a string by a worker this lane does not own; and
+  ///  * whether this job's DEFINITION still wants the item — which lives in
+  ///    [_definition]'s entry states and in the workflow policy probe.
+  ///
+  /// Carrying the verdict on the outcome instead would mean the coordinator
+  /// deciding (a) from (b), which forces it to know the entry states: a second
+  /// copy of a slice of the graph, in the one package whose job is to obey it
+  /// rather than to enumerate it. Re-reading the item alone would mean treating
+  /// ANY failure on a still-runnable item as a deferral, and that requeues a
+  /// genuine agent failure forever — an unbounded automatic LLM retry loop,
+  /// the exact thing [RetryPolicy] exists to prevent. So it takes both: the
+  /// marker to know this was a supersession, and the re-check to know what to
+  /// do about it.
+  ///
+  /// The (a)/(b) split is the point and is not collapsed:
+  ///
+  ///  * **(a) still accepted** — the item moved to a state this definition can
+  ///    still run from, so the job is wanted and simply arrived at the wrong
+  ///    moment. [JobQueue.requeueSuperseded] returns it to `queued` with no
+  ///    attempt charged, and a later tick dispatches it against the new state.
+  ///  * **(b) no longer accepted** — the item has left this definition's entry
+  ///    states entirely, which is what [_retireSupersededForItem] already
+  ///    ships for a job that never started. The same terminal state and the same
+  ///    reason vocabulary are used, because it IS the same condition.
+  ///
+  /// ## If the item moves between this re-check and the requeue
+  ///
+  /// Nothing bad, and that is structural rather than a matter of timing. The
+  /// requeue writes `queued`; it never dispatches and never commits to running.
+  /// The next tick rebuilds its runnability map from a fresh
+  /// `readAllWorkItems()`, `_eligibleRunnableJobs` re-checks legality against
+  /// that fresh item before claiming, and step 3's `noAction` branch retires a
+  /// `queued` job whose item no longer wants it. So the requeue is only ever a
+  /// DECISION NOT TO FAIL — the moment it stops being correct, ordinary
+  /// machinery stops it from doing any harm.
+  ///
+  /// The work item is never moved here: it belongs to whoever moved it.
+  Future<Job> _adoptSupersession(
+    Job job,
+    WorkerExecutionResult result,
+    DateTime now,
+  ) async {
+    final detail = result.failureDetail ?? '';
+    final workItem = await _readWorkItemForAdoption(job.workItemId);
+
+    // Fail CLOSED. An item that cannot be read cannot be shown to still want
+    // this job, and "cannot prove (a)" is not evidence for (a): the one thing
+    // this change must never do is requeue on a guess.
+    if (workItem == null) {
+      return _queue.cancelQueued(
+        job: job,
+        reason:
+            'superseded: work item ${job.workItemId} could not be read, so '
+            'nothing can confirm this job is still wanted. $detail',
+        now: now,
+      );
+    }
+
+    final status = _evaluator.evaluate(workItem, _definition);
+    if (status != RunnableWorkStatus.runnable) {
+      return _queue.cancelQueued(
+        job: job,
+        reason: _supersededReason(workItem),
+        now: now,
+      );
+    }
+
+    final deferrals = await _supersessionDeferrals(job);
+    if (deferrals >= _maxSupersessionDeferrals) {
+      return _queue.cancelQueued(
+        job: job,
+        reason:
+            'superseded: this work item has now been deferred '
+            '$_maxSupersessionDeferrals times because it kept moving before an '
+            'execution started, and it is still ${workItem.state.wire}. '
+            'Stopping rather than spinning — a human should check why this item '
+            'cannot complete an execution. The count spans every job this item '
+            'has held, including ones re-minted after an earlier cancellation, '
+            'so re-minting cannot reset it. No attempt was consumed.',
+        now: now,
+      );
+    }
+    return _queue.requeueSuperseded(
+      job: job,
+      reason:
+          'requeued without an attempt: the work item moved to '
+          '${workItem.state.wire} before this execution started, and it still '
+          'accepts a ${_definition.jobType.wire} run. Nothing ran and nothing '
+          'was produced, so no retry budget was consumed; the job returns to '
+          'the queue and a later tick retries it against the new state.',
+      now: now,
+    );
+  }
+
+  /// The work item as it is RIGHT NOW, or null when it cannot be read.
+  ///
+  /// A read fault must not escape and abort the tick: it would leave this job
+  /// claimed and this item's other rows unreached. It is answered as "cannot
+  /// confirm", which [_adoptSupersession] resolves by retiring rather than
+  /// requeueing.
+  Future<WorkItem?> _readWorkItemForAdoption(String workItemId) async {
+    try {
+      return await _workflowStore.readWorkItem(workItemId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// How many times the WORK ITEM this job belongs to has already been deferred
+  /// by a supersession.
+  ///
+  /// ## Why the count is per WORK ITEM and not per job row
+  ///
+  /// Because the dedupe key a requeue eventually yields is not stable across a
+  /// cycle. `JobQueue.enqueueIfAbsent` hands the key back the moment its holder
+  /// is `cancelled` (job_queue.dart:76) — and [_maxSupersessionDeferrals]
+  /// firing IS a cancellation — so the next tick mints a FRESH job for the same
+  /// work, with a fresh row and a fresh, empty event log. A counter that reads
+  /// one row therefore restarts at zero on every remint, and the cap it bounds
+  /// is one LAP of the queue rather than the cycle that actually spins. The
+  /// measured consequence was unbounded: seven worker executions in twenty-five
+  /// ticks instead of the three the cap claims to allow.
+  ///
+  /// So the count is taken over EVERY job this work item has held for this job
+  /// type, which is exactly the set of remints the cycle is made of. It is
+  /// scoped by job type because a `Scheduler` only ever mints jobs of its own
+  /// definition's [JobType] — so within one scheduler this is the whole set of
+  /// the item's remints — while a shared job store may hold another definition's
+  /// jobs for the same item, and their deferrals are a different fact.
+  ///
+  /// Counted from the durable event log rather than from a counter on the row,
+  /// because [Job] has no field for it and `platform_contracts` cannot grow one
+  /// in this lane. The log is the same record an operator reads, so the bound
+  /// and the explanation cannot disagree.
+  Future<int> _supersessionDeferrals(Job job) async {
+    var deferrals = 0;
+    for (final row in await _jobStore.listJobsForWorkItem(job.workItemId)) {
+      if (row.jobType != job.jobType) continue;
+      deferrals += (await _jobStore.readEvents(row.jobId))
+          .where(
+            (e) =>
+                e.type == SchedulerEventType.jobQueued &&
+                e.payload?['supersessionDeferred'] == true,
+          )
+          .length;
+    }
+    return deferrals;
+  }
+
+  /// Why this item is no longer something [_definition] can run — the same
+  /// vocabulary [_retireSupersededForItem] uses, because a job superseded after
+  /// dispatch and one superseded before it are the same condition.
+  ///
+  /// The two reasons below are NOT interchangeable and the difference is the
+  /// whole diagnosis. `RunnableWorkStatus.noAction` covers both "this
+  /// definition does not serve that state" and "it does, but the policy refuses
+  /// the route out of it", and telling an operator the second is the first
+  /// sends them to look for a state-list entry that is already there.
+  String _supersededReason(WorkItem item) {
+    final entryStates =
+        _definition.entryStates.map((state) => state.wire).toList()..sort();
+    if (_definition.entryStates.contains(item.state)) {
+      final target = _definition.probeTargetFor(item.state);
+      return 'superseded: work item ${item.workItemId} is ${item.state.wire}, '
+          'which IS an entry state for ${_definition.jobType.wire}, but the '
+          'workflow policy refuses ${item.state.wire} -> ${target.wire}, so this '
+          'definition cannot start an execution from it. No agent has run and '
+          'nothing was produced.';
+    }
+    return 'superseded: work item ${item.workItemId} is ${item.state.wire}, '
+        'which is not an entry state for ${_definition.jobType.wire} '
+        '(${entryStates.join(', ')}). Nothing ran and nothing was produced.';
+  }
+
+  /// Retires jobs this work item still holds under a DIFFERENT dedupe key, after
+  /// [EntryHopper] moved the item to the state it will now be dispatched from.
+  ///
+  /// ## Why this is needed at all
+  ///
+  /// A hop happens once, on the tick that first notices the item, and the hop
+  /// is taken BEFORE the dedupe key is built — so every job this code mints is
+  /// keyed on the post-hop state and the steady state has nothing to retire. The
+  /// rows this reaches are the ones an EARLIER build minted against the
+  /// pre-hop state: a job queued while the item sat in the state that is about
+  /// to be hopped. Left alone, that row stays queued, stays eligible (the item
+  /// is runnable after the hop, just at a different key) and is dispatched
+  /// beside the job the same tick mints — two agent executions for one work
+  /// item, which is the duplicate the dedupe key exists to make impossible.
+  ///
+  /// Only non-terminal jobs are touched, only for this item, only for this job
+  /// type, and only when their key differs from the one being minted. Claims,
+  /// running jobs and terminal jobs converge on a verdict elsewhere and are
+  /// never overridden from here.
+  Future<List<String>> _retireJobsKeyedForPriorState(
+    WorkItem item,
+    String currentDedupeKey,
+  ) async {
+    final retired = <String>[];
+    for (final job in await _jobStore.listJobsForWorkItem(item.workItemId)) {
+      if (job.isTerminal) continue;
+      if (job.jobType != _definition.jobType) continue;
+      if (job.dedupeKey == currentDedupeKey) continue;
+      if (job.state != JobState.queued && job.state != JobState.retryWaiting) {
+        continue;
+      }
+      await _queue.cancelQueued(
+        job: job,
+        reason:
+            'superseded: work item ${item.workItemId} advanced to '
+            '${item.state.wire} before this job started, and '
+            '${_definition.jobType.wire} jobs are now keyed on that state. '
+            'This row was minted for an earlier state of the same item. Nothing '
+            'ran and nothing was produced.',
+      );
+      retired.add(job.jobId);
+    }
+    return retired;
   }
 
   /// The job's execution reference with [WorkerExecutionResult.agentExecutionId]
@@ -1295,12 +1652,10 @@ class Scheduler {
       return const [];
     }
 
-    final entryStates =
-        _definition.entryStates.map((state) => state.wire).toList()..sort();
-    final reason =
-        'superseded: work item ${item.workItemId} is ${item.state.wire}, '
-        'which is not an entry state for ${_definition.jobType.wire} '
-        '(${entryStates.join(', ')})';
+    // One vocabulary, shared with [_adoptSupersession]: a job superseded
+    // before it was dispatched and one superseded after are the same condition,
+    // and an operator must not have to learn two phrasings for it.
+    final reason = _supersededReason(item);
 
     final retired = <String>[];
     for (final job in await _jobStore.listJobsForWorkItem(item.workItemId)) {
@@ -1350,6 +1705,55 @@ const JobDefinition defaultImplementFeatureDefinition = JobDefinition(
 );
 
 /// Design revision job: produces a design revision in Penpot.
+///
+/// ## Why the policy probe is NOT skipped here
+///
+/// It used to be, and that bypass is what let this definition join the defect
+/// class this file's [EntryHopper] exists to close: with the probe skipped,
+/// [RunnableWorkEvaluator] answered "runnable" for EVERY state in
+/// [JobDefinition.entryStates] without asking the policy anything, including
+/// `designRejected` — and `designRejected -> agentExecuting` is not an edge in
+/// the transition table, so the coordinator refused every attempt. Each refusal
+/// burned a real worktree prepare before it was even reached, and the scheduler
+/// (correctly, as a supersession) put the job straight back in the queue. The
+/// definition declared a route the graph does not have, and the bypass is how a
+/// declaration can disagree with the graph without anything noticing.
+///
+/// With the probe live the disagreement cannot be expressed: `designRequired`
+/// still probes `designRequired -> agentExecuting`, which the policy accepts,
+/// and `designRejected` probes `designRejected -> agentExecuting`, which it
+/// refuses — so a rejected design is `noAction` and is never enqueued at all.
+///
+/// ## And `designRejected` stays an entry state, but the probe is live
+///
+/// `designRejected` is named and unreachable at once: the table gives it
+/// exactly one out-edge, to `designInReview`, which is the design REVIEWER's
+/// entry state, so there is no route from a rejected design to an execution
+/// this job type could dispatch. Under the old `skipWorkflowPolicyCheck` the
+/// probe answered "runnable" regardless and that contradiction reached the
+/// coordinator on every tick — five jobs and five worker executions for one
+/// item, measured.
+///
+/// With the probe live the contradiction is inert: `RunnableWorkEvaluator`
+/// asks the policy about `designRejected -> agentExecuting`, the policy
+/// refuses, and the state is `noAction`. Nothing is enqueued, nothing is
+/// dispatched, nothing is burned.
+///
+/// The state is KEPT rather than deleted on purpose. It is a declared route
+/// waiting for its edge: the moment `workflow_engine` grows a
+/// `designRejected -> designRequired` edge — the design agent's own entry
+/// state, which is where a re-design belongs — the probe accepts it and design
+/// revision resumes with no change here. Deleting it would take that with it.
+///
+/// ## And it is not made dispatchable by declaring a hop
+///
+/// The only edge `designRejected` has leads to `designInReview`, which is in no
+/// entry set of THIS definition. Declaring that hop would leave the item in a
+/// state nothing dispatches, so the next tick would retire the job as
+/// superseded and the work would be stranded having moved for nothing.
+/// [EntryHopper] refuses such a hop by construction rather than by this
+/// definition's restraint, and `entry_hop_drift_guard_test.dart` fails on the
+/// declaration by name.
 const JobDefinition designRevisionDefinition = JobDefinition(
   jobType: JobType.designRevision,
   requiredRole: AgentRole.designAgent,
@@ -1360,7 +1764,6 @@ const JobDefinition designRevisionDefinition = JobDefinition(
   entryStates: {WorkItemState.designRequired, WorkItemState.designRejected},
   priority: JobPriority.normal,
   maxAttempts: 3,
-  skipWorkflowPolicyCheck: true,
 );
 
 /// Design review job: independently reviews a design revision produced by
