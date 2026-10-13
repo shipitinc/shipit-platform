@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://shipit.platform/schemas/onboarding_record.schema.json",
   "title": "OnboardingRecord",
-  "description": "Durable onboarding progress for one Product; the bounded bootstrap record resumed by a restarted execution (checkpoint 006). Product lifecycle stays on the existing ProductState enum. `pinnedRevision` (full lowercase 40-hex), `workspace` (the WorkspaceDescriptor the pin was materialised in) and `completedBaselineId` (the ProductBaseline whose human acceptance set `completed`) are OPTIONAL and are omitted when absent, because a Product is registered long before anything pins or completes it. They are deliberately not required: `completed` is a bare bool that the published store contract writes without completion evidence, and forbidding that weaker state in the contract would break a contract test to enforce an invariant nothing needs.",
+  "description": "Durable onboarding progress for one Product; the bounded bootstrap record resumed by a restarted execution (checkpoint 006). Product lifecycle stays on the existing ProductState enum. `pinnedRevision` (full lowercase 40-hex), `workspace` (EITHER a per-execution WorkspaceDescriptor OR a product-scoped DurableWorkspaceDescriptor — the two are distinguished by the durable shape's constant `kind` discriminator and are never interchangeable) and `completedBaselineId` (the ProductBaseline whose human acceptance set `completed`) are OPTIONAL and are omitted when absent, because a Product is registered long before anything pins or completes it. They are deliberately not required: `completed` is a bare bool that the published store contract writes without completion evidence, and forbidding that weaker state in the contract would break a contract test to enforce an invariant nothing needs.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -29,7 +29,13 @@
       "type": "string",
       "pattern": "^[0-9a-f]{40}$"
     },
-    "workspace": { "$ref": "#/definitions/WorkspaceDescriptor" },
+    "workspace": {
+      "description": "Exactly one of the two descriptor shapes. `oneOf`, not a permissive object: the two are disjoint (the durable branch requires `kind`, which the per-execution schema forbids, and both are `additionalProperties: false`), so exactly one branch matches a well-formed document and a document matching neither is refused. A reader that guesses which shape it was handed would be resolving a product's durable clone as a worker execution's worktree.",
+      "oneOf": [
+        { "$ref": "#/definitions/WorkspaceDescriptor" },
+        { "$ref": "#/definitions/DurableWorkspaceDescriptor" }
+      ]
+    },
     "completedBaselineId": { "type": "string", "minLength": 1 }
   },
   "definitions": {
@@ -57,6 +63,27 @@
         "detached": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" },
         "cleanedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "DurableWorkspaceDescriptor": {
+      "description": "Inlined copy of durable_workspace_descriptor.schema.json. Inlined rather than `$ref`-ed across files for the same reason WorkspaceDescriptor is inlined: this repository's schemas are each self-contained so one can be read, and conformance-tested, on its own.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "workspaceId",
+        "productId",
+        "repositoryPath",
+        "startingRevision",
+        "createdAt"
+      ],
+      "properties": {
+        "kind": { "type": "string", "const": "durable" },
+        "workspaceId": { "type": "string", "minLength": 1 },
+        "productId": { "type": "string", "minLength": 1 },
+        "repositoryPath": { "type": "string", "minLength": 1 },
+        "startingRevision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "createdAt": { "type": "string", "format": "date-time" }
       }
     }
   }

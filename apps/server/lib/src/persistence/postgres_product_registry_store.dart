@@ -1145,8 +1145,21 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
   OnboardingRecord _onboardingFromRow(DatabaseResultRow row) {
     final m = row.toColumnMap();
     // `workspace` is stored as JSON text and read back through the same
-    // `WorkspaceDescriptor.fromJson` that produced it, so the two halves of
-    // the record agree by construction rather than by convention.
+    // discriminator that produced it. The column legitimately carries TWO wire
+    // shapes — a per-execution `WorkspaceDescriptor` and a product-scoped
+    // `DurableWorkspaceDescriptor` — so the decode is
+    // `OnboardingWorkspace.fromJson`, which tells them apart on the durable
+    // shape's constant `kind` literal and refuses anything it cannot identify.
+    // The two halves of the record therefore agree by construction rather than
+    // by convention, and this binding is the ONLY place in the database tier
+    // that names either shape: a document of an unknown shape fails HERE, at
+    // the boundary where it would otherwise enter a store, rather than at some
+    // later reader that would have to guess which shape it was handed.
+    //
+    // No SQL or column changes with that: the column was already `JsonValue?`
+    // and already read as text, so a second descriptor shape needed no
+    // `ALTER`. That is the whole reason `create-migration` still reports
+    // `No changes detected` — the shape lives in the JSON, never in the DDL.
     //
     // Both new columns are read with `?? null` rather than assumed present: a
     // database whose `serverpod_migrations` row already reads as this version

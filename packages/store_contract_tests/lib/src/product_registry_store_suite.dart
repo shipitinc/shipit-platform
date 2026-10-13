@@ -244,9 +244,13 @@ void runProductRegistryStoreSuite({
         // mismatch nobody can read.
         expect(stored!.pinnedRevision, pin);
         expect(stored.workspace, isNotNull);
-        expect(stored.workspace!.workspaceId, 'ws-shipit');
-        expect(stored.workspace!.startingRevision, pin);
-        expect(stored.workspace!.worktreePath, '/workspaces/ws-shipit');
+        expect(stored.workspace!.kind, 'execution');
+        expect(stored.workspace!.requireExecution().workspaceId, 'ws-shipit');
+        expect(stored.workspace!.requireExecution().startingRevision, pin);
+        expect(
+          stored.workspace!.requireExecution().worktreePath,
+          '/workspaces/ws-shipit',
+        );
         expect(stored.hasDurableWorkspace, isTrue);
 
         await store.saveOnboarding(
@@ -263,11 +267,70 @@ void runProductRegistryStoreSuite({
         expect(reloaded.pendingClarifications, 0);
         // The pin survives the completing update, not just the initial write.
         expect(reloaded.pinnedRevision, pin);
-        expect(reloaded.workspace!.workspaceId, 'ws-shipit');
+        expect(reloaded.workspace!.requireExecution().workspaceId, 'ws-shipit');
         expect(reloaded.completedBaselineId, 'pb-shipit-1');
         expect(reloaded.hasCompletionEvidence, isTrue);
 
         expect(await store.readOnboardingForProduct('missing'), isNull);
+      },
+    );
+
+    test(
+      'a DURABLE workspace descriptor round-trips and keeps its own shape',
+      () async {
+        final store = await createStore();
+        final t = DateTime.utc(2026, 9, 16, 12);
+        final pin = 'b1c2d3e4f50617283940a1b2c3d4e5f607182930';
+        // The second shape the column is allowed to carry. It is in the shared
+        // suite rather than a tier's own package because the whole point of
+        // `oneOf` on `onboarding_record.schema.json` is that a tier stores
+        // whichever shape it is given and comes back with THAT shape — and the
+        // only way every tier is obliged to do that is for every tier to run
+        // this case.
+        //
+        // The `kind` discriminator is asserted end to end because it is the one
+        // thing that stops a durable clone being resolved as a worker
+        // execution's worktree. A tier that dropped it on write, or that read
+        // the document back as the per-execution shape, fails here rather than
+        // somewhere downstream with no error at all.
+        final record = OnboardingRecord(
+          onboardingId: 'ob-durable',
+          productId: 'durable-product',
+          currentBaselineRevision: 1,
+          pendingClarifications: 0,
+          completed: false,
+          pinnedRevision: pin,
+          workspace: DurableWorkspaceDescriptor(
+            workspaceId: 'dws-durable-product',
+            productId: 'durable-product',
+            repositoryPath: '/srv/durable-workspaces/durable-product/checkout',
+            startingRevision: pin,
+            createdAt: t,
+          ),
+          createdAt: t,
+          updatedAt: t,
+          version: 1,
+        );
+        await store.saveOnboarding(record);
+
+        final loaded = await store.readOnboardingForProduct('durable-product');
+        expect(loaded, record);
+        expect(loaded!.hasDurableWorkspace, isTrue);
+        expect(loaded.workspace!.kind, kDurableWorkspaceKind);
+        final durable = loaded.workspace!.requireDurable();
+        expect(durable.workspaceId, 'dws-durable-product');
+        expect(durable.productId, 'durable-product');
+        expect(durable.startingRevision, pin);
+        expect(
+          durable.repositoryPath,
+          '/srv/durable-workspaces/durable-product/checkout',
+        );
+
+        // And it is NOT quietly interchangeable with the other shape.
+        expect(
+          () => loaded.workspace!.requireExecution(),
+          throwsA(isA<FormatException>()),
+        );
       },
     );
 

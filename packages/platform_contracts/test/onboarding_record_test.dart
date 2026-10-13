@@ -58,7 +58,10 @@ void main() {
     test('a pinned record with a live workspace answers both questions', () {
       final r = record(pinnedRevision: sha, workspaceOverride: workspace());
       expect(r.pinnedRevision, sha);
-      expect(r.workspace!.worktreePath, contains('shipit-platform'));
+      expect(
+        r.workspace!.requireExecution().worktreePath,
+        contains('shipit-platform'),
+      );
       expect(r.hasLiveWorkspace, isTrue);
       expect(r.hasDurableWorkspace, isTrue);
       r.validate();
@@ -217,14 +220,15 @@ void main() {
     test('a populated workspace round-trips through its embedded JSON', () {
       final r = record(pinnedRevision: sha, workspaceOverride: workspace());
       final decoded = OnboardingRecord.fromJson(r.toJson());
-      expect(decoded.workspace!.workspaceId, 'ws-shipit-1');
+      expect(decoded.workspace!.kind, 'execution');
+      expect(decoded.workspace!.requireExecution().workspaceId, 'ws-shipit-1');
       expect(
         decoded.workspace!.repositoryPath,
         '/var/shipit/repos/shipit-platform',
       );
-      expect(decoded.workspace!.detached, isTrue);
-      expect(decoded.workspace!.branch, isNull);
-      expect(decoded.workspace!.cleanedAt, isNull);
+      expect(decoded.workspace!.requireExecution().detached, isTrue);
+      expect(decoded.workspace!.requireExecution().branch, isNull);
+      expect(decoded.workspace!.requireExecution().cleanedAt, isNull);
       expect(decoded.workspace, r.workspace);
     });
 
@@ -235,7 +239,7 @@ void main() {
         workspaceOverride: workspace().markCleaned(at),
       );
       final decoded = OnboardingRecord.fromJson(r.toJson());
-      expect(decoded.workspace!.cleanedAt, at);
+      expect(decoded.workspace!.requireExecution().cleanedAt, at);
       expect(decoded.workspace!.isCleaned, isTrue);
       expect(decoded.hasLiveWorkspace, isFalse);
     });

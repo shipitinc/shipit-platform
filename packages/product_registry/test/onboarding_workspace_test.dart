@@ -32,6 +32,25 @@ void main() {
     cleanedAt: cleanedAt,
   );
 
+  /// The shape `recordWorkspace` / `completeOnboarding` take.
+  ///
+  /// The per-execution [WorkspaceDescriptor] above is still a legal value for
+  /// `OnboardingRecord.workspace` and is exercised by [record]; these two
+  /// engine methods are the PRODUCT-scoped answer ("where does this product's
+  /// code live"), and a worker's worktree is not the product's. The engine's
+  /// parameters are therefore typed `DurableWorkspaceDescriptor`, so a
+  /// per-execution descriptor is not merely discouraged there — it does not
+  /// typecheck.
+  DurableWorkspaceDescriptor durableWorkspace({
+    String startingRevision = sha,
+  }) => DurableWorkspaceDescriptor(
+    workspaceId: 'dws-shipit-1',
+    productId: 'shipit',
+    repositoryPath: '/var/shipit/workspaces/shipit-platform-dws-1',
+    startingRevision: startingRevision,
+    createdAt: t,
+  );
+
   BaselineFact _fact() => BaselineFact(
     factId: 'f-1',
     section: BaselineSectionKey.repository,
@@ -42,7 +61,7 @@ void main() {
 
   OnboardingRecord record({
     String? pinnedRevision,
-    WorkspaceDescriptor? workspaceOverride,
+    Object? workspaceOverride,
     String? completedBaselineId,
     bool completed = false,
   }) => OnboardingRecord(
@@ -101,7 +120,7 @@ void main() {
       );
       await store.saveOnboarding(r);
       final loaded = await store.readOnboardingForProduct('shipit');
-      expect(loaded!.workspace!.cleanedAt, at);
+      expect(loaded!.workspace!.requireExecution().cleanedAt, at);
       expect(loaded.workspace!.isCleaned, isTrue);
       expect(loaded.pinnedRevision, sha);
       expect(loaded.hasLiveWorkspace, isFalse);
@@ -179,9 +198,46 @@ void main() {
         ..restore(onboardings: snapshot);
       final loaded = await restored.readOnboardingForProduct('shipit');
       expect(loaded!.pinnedRevision, sha);
-      expect(loaded.workspace, workspace());
+      expect(loaded.workspace!.kind, 'execution');
+      expect(loaded.workspace!.requireExecution(), workspace());
       expect(loaded.hasDurableWorkspace, isTrue);
     });
+
+    test(
+      'the DURABLE shape survives a SNAPSHOT/RESTART cycle intact too',
+      () async {
+        // The same claim for the shape a product's own clone is recorded in,
+        // because the column holds one JSON document carrying TWO wire shapes and
+        // a restore replays `toJson()` through `fromJson` — the closest
+        // in-memory analogue of a process restart. A durable clone that did not
+        // survive this would be lost on every redeploy, which is the exact
+        // failure the host bind in `docker/compose.qa.yaml` exists to prevent.
+        final durable = DurableWorkspaceDescriptor(
+          workspaceId: 'dws-shipit-1',
+          productId: 'shipit',
+          repositoryPath: '/var/shipit/workspaces/shipit-platform-dws-1',
+          startingRevision: sha,
+          createdAt: t,
+        );
+        store.saveOnboarding(
+          record(pinnedRevision: sha, workspaceOverride: durable),
+        );
+
+        final restored = InMemoryProductRegistryStore()
+          ..restore(onboardings: store.snapshotOnboardings());
+        final loaded = await restored.readOnboardingForProduct('shipit');
+
+        expect(loaded!.pinnedRevision, sha);
+        expect(loaded.workspace!.kind, kDurableWorkspaceKind);
+        expect(loaded.workspace!.requireDurable(), durable);
+        expect(loaded.hasDurableWorkspace, isTrue);
+        // And it is still not the per-execution shape.
+        expect(
+          () => loaded.workspace!.requireExecution(),
+          throwsA(isA<FormatException>()),
+        );
+      },
+    );
   });
 
   group('engine: the record is able to carry the answer', () {
@@ -230,15 +286,16 @@ void main() {
         );
         final r = await engine.recordWorkspace(
           productId: 'shipit',
-          workspace: workspace(),
+          workspace: durableWorkspace(),
           pinnedRevision: sha,
           now: t.add(const Duration(hours: 1)),
         );
         expect(r.pinnedRevision, sha);
         expect(
-          r.workspace!.worktreePath,
-          '/var/shipit/workspaces/shipit-platform-ws-shipit-1',
+          r.workspace!.requireDurable().repositoryPath,
+          '/var/shipit/workspaces/shipit-platform-dws-1',
         );
+        expect(r.workspace!.kind, kDurableWorkspaceKind);
         expect(
           r.completed,
           isFalse,
@@ -255,7 +312,7 @@ void main() {
     test('recordWorkspace creates the record when none exists yet', () async {
       final r = await engine.recordWorkspace(
         productId: 'shipit',
-        workspace: workspace(),
+        workspace: durableWorkspace(),
         pinnedRevision: sha,
         now: t,
       );
@@ -281,7 +338,7 @@ void main() {
       () async {
         await engine.recordWorkspace(
           productId: 'shipit',
-          workspace: workspace(),
+          workspace: durableWorkspace(),
           pinnedRevision: sha,
           now: t,
         );
@@ -305,20 +362,26 @@ void main() {
     test('a cleanup is RECORDED, not erased', () async {
       await engine.recordWorkspace(
         productId: 'shipit',
-        workspace: workspace(),
+        workspace: durableWorkspace(),
         pinnedRevision: sha,
         now: t,
       );
       final at = t.add(const Duration(days: 1));
       final r = await engine.recordWorkspace(
         productId: 'shipit',
-        workspace: workspace(cleanedAt: at),
+        workspace: durableWorkspace(),
         pinnedRevision: sha,
         now: at,
       );
-      expect(r.workspace!.isCleaned, isTrue);
-      expect(r.hasLiveWorkspace, isFalse);
-      expect(r.hasDurableWorkspace, isFalse);
+      // The durable shape has NO cleaned state: nothing deletes a product's only
+      // checkout yet, because who presses it is an open decision (OD-7.2 /
+      // OD-7.3). So the read reports the clone as live, and a deletion that
+      // does eventually happen is recorded by REPLACING the descriptor rather
+      // than by marking this one.
+      expect(r.workspace!.isCleaned, isFalse);
+      expect(r.hasLiveWorkspace, isTrue);
+      expect(r.workspace!.requireDurable().workspaceId, 'dws-shipit-1');
+      expect(r.hasDurableWorkspace, isTrue);
       expect(r.pinnedRevision, sha);
     });
 
@@ -326,7 +389,7 @@ void main() {
       await expectLater(
         engine.recordWorkspace(
           productId: 'not-a-product',
-          workspace: workspace(),
+          workspace: durableWorkspace(),
           pinnedRevision: sha,
           now: t,
         ),
@@ -339,7 +402,7 @@ void main() {
         engine.completeOnboarding(
           productId: 'shipit',
           pinnedRevision: sha,
-          workspace: workspace(),
+          workspace: durableWorkspace(),
           completedBaselineId: 'bl-shipit-1',
           now: t,
         ),
@@ -352,14 +415,14 @@ void main() {
       () async {
         await engine.recordWorkspace(
           productId: 'shipit',
-          workspace: workspace(),
+          workspace: durableWorkspace(),
           pinnedRevision: sha,
           now: t,
         );
         final r = await engine.completeOnboarding(
           productId: 'shipit',
           pinnedRevision: sha,
-          workspace: workspace(),
+          workspace: durableWorkspace(),
           completedBaselineId: 'bl-shipit-1',
           now: t.add(const Duration(hours: 2)),
         );
@@ -392,7 +455,7 @@ void main() {
       // onboarding completed.
       await engine.recordWorkspace(
         productId: 'shipit',
-        workspace: workspace(),
+        workspace: durableWorkspace(),
         pinnedRevision: sha,
         now: t,
       );
@@ -418,7 +481,7 @@ void main() {
       final completed = await engine.completeOnboarding(
         productId: 'shipit',
         pinnedRevision: sha,
-        workspace: workspace(),
+        workspace: durableWorkspace(),
         completedBaselineId: b.baselineId,
         now: t.add(const Duration(hours: 1)),
       );

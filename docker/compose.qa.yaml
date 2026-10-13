@@ -100,6 +100,13 @@ services:
       # Container path; the host side is the bind mount below.
       SHIPIT_LOCAL_SECRET_DIR: /var/lib/shipit/secrets
       SHIPIT_TRIAGE_WORKSPACE_ROOT: /triage-workspaces
+      # The durable PRODUCT clone root, and the root the server's composition
+      # passes into DurableWorkspaceRuntime.resolve. A1 does NOT read this: its
+      # code sits under the product-agnosticism gate, which refuses every
+      # product name in that directory, so the read belongs here and the
+      # resolved string is passed in as an argument (see `_triageWorkspaceRoot`,
+      # which is the existing pattern for the same thing).
+      SHIPIT_DURABLE_WORKSPACE_ROOT: /workspace-repo
     ports:
       - "8180:8080"
     depends_on:
@@ -117,6 +124,28 @@ services:
       # survive container destruction. Sentinel default is deliberately a bad path so a
       # lost variable lands somewhere obviously wrong rather than in the writable layer.
       - ${SHIPIT_HOST_SECRET_DIR:-/tmp/shipit-secrets-NOT-CONFIGURED}:/var/lib/shipit/secrets
+      # Durable, host-backed PRODUCT CLONE (decision 9bfe2d09, OD-7 question 1).
+      # Same shape and same rationale as the custody bind directly above it: a
+      # host path is not Docker's to delete, so the clone survives `down`,
+      # `down -v` and volume pruning -- and, the reason this was chosen over a
+      # named volume, an independent reviewer can re-read
+      # producer.repositoryPath from the HOST without entering the container to
+      # check it. That is a review property, not an operational nicety: the
+      # engineering review gate resolves an artifact out of that path, and a
+      # reviewer who cannot reach the evidence either trusts this file's account
+      # of it or enters the container to check. Sentinel default is deliberately
+      # a bad path, for exactly the reason the secret dir above uses one: a lost
+      # variable must land somewhere obviously wrong rather than in the writable
+      # layer, where it would silently lose every governed product's checkout on
+      # the next rebuild.
+      #
+      # NO reclamation policy ships with this mount, and none is implied by it.
+      # How long a product's clone lives (OD-7.2) and who deletes it (OD-7.3)
+      # are both OPEN, so nothing in the platform removes one: not `qa-down`,
+      # not a sweep, not this comment. One clone per product, unbounded, is the
+      # honest state of it and is recorded as such in the startup banner's
+      # `reclamationPolicy`.
+      - ${SHIPIT_HOST_WORKSPACE_DIR:-/tmp/shipit-workspaces-NOT-CONFIGURED}:/workspace-repo
 
   client:
     build:

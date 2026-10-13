@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/durable_workspace_descriptor.schema.json",
+  "title": "DurableWorkspaceDescriptor",
+  "description": "A product-scoped, durable, writable clone at an exact pinned commit. A SECOND type rather than a relaxed WorkspaceDescriptor: workerExecutionId, workerId and worktreePath are per-execution concepts a product's durable clone has none of, and making them nullable would push null-handling into the artifact-resolution chain that must fail closed. `kind` is a constant, non-optional discriminator because `onboarding_record.workspace` carries both shapes in one JSON column and nothing else tells them apart; a reader that cannot tell them apart would resolve a durable clone as if it belonged to a worker execution that never owned it. There is deliberately no `cleanedAt`: who deletes a product's only checkout is an open decision, and a field no writer produces is a capability a reader could believe in.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "workspaceId",
+    "productId",
+    "repositoryPath",
+    "startingRevision",
+    "createdAt"
+  ],
+  "properties": {
+    "kind": { "type": "string", "const": "durable" },
+    "workspaceId": { "type": "string", "minLength": 1 },
+    "productId": { "type": "string", "minLength": 1 },
+    "repositoryPath": { "type": "string", "minLength": 1 },
+    "startingRevision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}

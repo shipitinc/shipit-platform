@@ -34,6 +34,7 @@ void main() {
       'worker_execution',
       'worker_execution_result',
       'workspace_descriptor',
+      'durable_workspace_descriptor',
       'worker_event_record',
       'work_item',
       'qa_evidence',
@@ -309,6 +310,45 @@ void main() {
       );
 
       _expectValid(_loadSchema('workspace_descriptor'), descriptor.toJson());
+    });
+
+    test('DurableWorkspaceDescriptor.toJson() conforms to '
+        'durable_workspace_descriptor.schema.json', () {
+      // The second shape the onboarding record's `workspace` column carries
+      // (OD-8). It gets the same conformance assertion as the per-execution
+      // shape because it is a PUBLISHED type with its own schema, and a
+      // published schema nothing validates is a schema nothing is bound by.
+      final descriptor = DurableWorkspaceDescriptor(
+        workspaceId: 'dws-001',
+        productId: '123e4567-e89b-12d3-a456-426614174000',
+        repositoryPath: '/srv/product-workspaces/p-1/checkout',
+        startingRevision: 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+        createdAt: DateTime.parse('2024-01-02T12:00:01Z'),
+      );
+
+      _expectValid(
+        _loadSchema('durable_workspace_descriptor'),
+        descriptor.toJson(),
+      );
+    });
+
+    test('the durable shape always serialises its kind discriminator', () {
+      // The discriminator is a getter, not a field, so there is no way to
+      // construct a `DurableWorkspaceDescriptor` that does not carry it — and
+      // therefore no way for a reader to be handed a document it cannot
+      // discriminate. Asserted because the schema cannot: `const: "durable"`
+      // would reject a wrong value but a missing key entirely.
+      final json = DurableWorkspaceDescriptor(
+        workspaceId: 'dws-001',
+        productId: '123e4567-e89b-12d3-a456-426614174000',
+        repositoryPath: '/srv/product-workspaces/p-1/checkout',
+        startingRevision: 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+        createdAt: DateTime.parse('2024-01-02T12:00:01Z'),
+      ).toJson();
+
+      expect(json['kind'], kDurableWorkspaceKind);
+      expect(json['kind'], 'durable');
+      expect(json.containsKey('cleanedAt'), isFalse);
     });
 
     test('PlatformVerification.toJson() conforms to '
@@ -1171,6 +1211,132 @@ void main() {
         _expectValid(
           _loadSchema('onboarding_record'),
           record.copyWith(completed: true, currentBaselineRevision: 2).toJson(),
+        );
+      },
+    );
+
+    // ---- Review row R-10: the two shapes are distinguishable, and a record of
+    // the wrong kind is a fail-closed error rather than a fallback. ----
+    //
+    // These cases exist because `onboarding_record.workspace` is ONE JSON column
+    // carrying TWO documents. Nothing but the `kind` discriminator tells them
+    // apart, so the discriminator has to be load-bearing in BOTH directions: a
+    // durable clone must never be readable as a worker execution's worktree, and
+    // a per-execution worktree must never be readable as a product's clone.
+    test(
+      'OnboardingRecord carrying a DURABLE workspace round-trips its own shape',
+      () {
+        final record = OnboardingRecord(
+          onboardingId: 'ob-1',
+          productId: '123e4567-e89b-12d3-a456-426614174000',
+          pinnedRevision: 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+          workspace: DurableWorkspaceDescriptor(
+            workspaceId: 'dws-001',
+            productId: '123e4567-e89b-12d3-a456-426614174000',
+            repositoryPath: '/srv/product-workspaces/p-1/checkout',
+            startingRevision: 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+            createdAt: DateTime.parse('2024-01-02T12:00:01Z'),
+          ),
+          createdAt: DateTime.parse('2024-01-02T12:00:00Z'),
+          updatedAt: DateTime.parse('2024-01-02T12:05:00Z'),
+        );
+
+        // The schema admits it — the column is a `oneOf`, and exactly one
+        // branch may match — and it round-trips AS ITSELF.
+        _expectValid(_loadSchema('onboarding_record'), record.toJson());
+
+        final decoded = OnboardingRecord.fromJson(record.toJson());
+        expect(decoded.workspace!.kind, kDurableWorkspaceKind);
+        expect(decoded.workspace!.requireDurable().workspaceId, 'dws-001');
+
+        // And the other shape is REFUSED, not coerced.
+        expect(
+          () => decoded.workspace!.requireExecution(),
+          throwsA(isA<FormatException>()),
+        );
+        // The pin/workspace pairing still holds across the union.
+        decoded.validate();
+      },
+    );
+
+    test('a per-execution workspace is still readable, and is NOT a clone', () {
+      final record = OnboardingRecord(
+        onboardingId: 'ob-1',
+        productId: '123e4567-e89b-12d3-a456-426614174000',
+        pinnedRevision: 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+        workspace: WorkspaceDescriptor(
+          workspaceId: 'ws-001',
+          workerExecutionId: '123e4567-e89b-12d3-a456-426614174020',
+          workerId: 'worker-local-1',
+          repositoryPath: '/home/ci/checkouts/shipit-platform',
+          startingRevision: 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+          worktreePath: '/workspaces/ws-001',
+          detached: true,
+          createdAt: DateTime.parse('2024-01-02T12:00:01Z'),
+        ),
+        createdAt: DateTime.parse('2024-01-02T12:00:00Z'),
+        updatedAt: DateTime.parse('2024-01-02T12:05:00Z'),
+      );
+
+      final decoded = OnboardingRecord.fromJson(record.toJson());
+      expect(decoded.workspace!.kind, 'execution');
+      expect(decoded.workspace!.requireExecution().workspaceId, 'ws-001');
+      expect(
+        () => decoded.workspace!.requireDurable(),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test(
+      'a workspace document that identifies as NEITHER shape is refused at the '
+      'decode, not guessed at by a reader',
+      () {
+        // A wrong `kind`, and a document with no `kind` and none of the
+        // per-execution fields. Both are documents whose shape is unknown, and
+        // the refusal belongs at the decode — the boundary where a wrong-kind
+        // record would otherwise enter a store — rather than at some later
+        // reader that would have to guess which shape it was handed.
+        final base = <String, Object?>{
+          'onboardingId': 'ob-1',
+          'productId': '123e4567-e89b-12d3-a456-426614174000',
+          'createdAt': '2024-01-02T12:00:00Z',
+          'updatedAt': '2024-01-02T12:05:00Z',
+        };
+
+        expect(
+          () => OnboardingRecord.fromJson({
+            ...base,
+            'workspace': {
+              'kind': 'execution',
+              'workspaceId': 'ws-001',
+              'repositoryPath': '/somewhere',
+              'startingRevision': 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+              'createdAt': '2024-01-02T12:00:01Z',
+            },
+          }),
+          throwsFormatException,
+        );
+
+        expect(
+          () => OnboardingRecord.fromJson({
+            ...base,
+            'workspace': {'repositoryPath': '/somewhere'},
+          }),
+          throwsFormatException,
+        );
+
+        // And the durable shape refuses to be read without its literal, so a
+        // reader holding a durable document can never have silently accepted a
+        // per-execution one.
+        expect(
+          () => DurableWorkspaceDescriptor.fromJson({
+            'workspaceId': 'dws-001',
+            'productId': 'p-1',
+            'repositoryPath': '/somewhere',
+            'startingRevision': 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d',
+            'createdAt': '2024-01-02T12:00:01Z',
+          }),
+          throwsFormatException,
         );
       },
     );
