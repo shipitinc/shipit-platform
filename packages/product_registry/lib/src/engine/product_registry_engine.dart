@@ -596,8 +596,16 @@ class ProductRegistryEngine {
 
     final onboarding = await _store.readOnboardingForProduct(productId);
     if (onboarding != null) {
+      // `completed` is a bare bool, so the acceptance that earned it is named
+      // here as well: `completedBaselineId` is the evidence pointer, and
+      // `hasCompletionEvidence` is the read a consumer must use instead of the
+      // flag alone. `currentBaselineRevision` stays the SEQUENCE COUNTER it has
+      // always been — the commit this baseline was derived from is
+      // `pinnedRevision`, and it is `recordWorkspace` / `completeOnboarding`
+      // that sets it, because only they know the workspace it was read in.
       final done = onboarding.copyWith(
         completed: true,
+        completedBaselineId: baseline.baselineId,
         currentBaselineRevision: baseline.revision,
         updatedAt: t,
         version: onboarding.version + 1,
@@ -1874,6 +1882,126 @@ class ProductRegistryEngine {
   }
 
   // ---------------------------------------------------------------------
+  // Pinned revision + workspace (the durable "where is this product?")
+  // ---------------------------------------------------------------------
+  //
+  // These two are the ONLY engine methods that write `pinnedRevision` or
+  // `workspace`. Keeping them together is what makes the invariant on
+  // `OnboardingRecord.validate` holdable by inspection: the two fields are
+  // written by one code path, in one write, so a record carrying two different
+  // commits cannot be produced by this engine at all.
+
+  /// Records WHERE a Product's code lives on disk and WHICH commit it is at.
+  ///
+  /// This does NOT complete onboarding, does NOT clone anything and does NOT
+  /// enqueue any work: it only writes down an answer the caller has already
+  /// established. The caller that has a clone in hand (the worker that created
+  /// the workspace) passes what it knows; this method's job is to put that
+  /// answer in the one place every later reader looks.
+  ///
+  /// [workspace] MAY be supplied on its own, to record a workspace before the
+  /// pin that created it is known to be durable, and [pinnedRevision] MAY be
+  /// supplied on its own for the reverse. Supplying both is the normal case and
+  /// the two must agree — `workspace.startingRevision` IS the pin, which is
+  /// why [OnboardingRecord.validate] refuses a pair that contradicts.
+  ///
+  /// RE-PINNING IS ALLOWED and is the point: a Product is moved forward by
+  /// being re-pinned to a newer commit, and the record answers "where is it
+  /// NOW". The history of pins is the audit log's job, not this column's.
+  ///
+  /// A CLEANED workspace is recorded by passing `workspace.markCleaned(at)`,
+  /// not by clearing the field — the record keeps naming the workspace the
+  /// product was last materialised in, and `hasLiveWorkspace` reports that it
+  /// no longer exists. Deleting the column instead would erase the only
+  /// statement that a workspace was ever created for this product.
+  Future<OnboardingRecord> recordWorkspace({
+    required String productId,
+    WorkspaceDescriptor? workspace,
+    String? pinnedRevision,
+    DateTime? now,
+  }) async {
+    if (workspace == null && pinnedRevision == null) {
+      throw ArgumentError(
+        'recordWorkspace was called for $productId with neither a workspace '
+        'nor a pinnedRevision, so it would write a new version of the record '
+        'while recording nothing',
+      );
+    }
+    await _store.readProduct(productId);
+    final t = now ?? DateTime.now().toUtc();
+    final record = await _ensureOnboarding(
+      productId,
+      now: t,
+      pinnedRevision: pinnedRevision,
+      workspace: workspace,
+    );
+    // `_ensureOnboarding` returns the EXISTING record untouched when one is
+    // already there, so an existing product's pin is never overwritten with
+    // this call's arguments by accident.
+    //
+    // `copyWith` FALLS BACK TO THE CURRENT VALUE on a null argument, so
+    // passing one of the two on a record that already holds the other merges
+    // rather than replaces — and `OnboardingRecord.validate`, which runs
+    // inside `saveOnboarding`, then refuses the merge if the two halves name
+    // different commits. That refusal is the intended behaviour, not a
+    // limitation to work around: re-pinning a product whose workspace is
+    // still pinned to the old commit is a call that has to pass BOTH.
+    final updated = record.copyWith(
+      workspace: workspace,
+      pinnedRevision: pinnedRevision,
+      updatedAt: t,
+      version: record.version + 1,
+    );
+    await _store.saveOnboarding(updated);
+    return updated;
+  }
+
+  /// Completes onboarding by binding the record to the commit and workspace it
+  /// was performed in, and naming the baseline whose human acceptance made the
+  /// completion meaningful.
+  ///
+  /// This is the ONE write that records the answer AND flips [OnboardingRecord]
+  /// `.completed`, so a completed record cannot exist without the commit and
+  /// workspace it was completed against. It performs no discovery and no
+  /// verification: [pinnedRevision] and [workspace] are facts the caller
+  /// established, and [completedBaselineId] is an artifact a human already
+  /// accepted through `approveBaseline`.
+  ///
+  /// [completedBaselineId] is REQUIRED here even though the store does not
+  /// require it of a record. That asymmetry is deliberate: the store contract
+  /// suite writes a `completed: true` record with no evidence pointer and must
+  /// keep working, so the weaker state has to remain writable — which means
+  /// the path that produces the STRONG state has to demand it of itself. See
+  /// `OnboardingRecord.hasCompletionEvidence`.
+  Future<OnboardingRecord> completeOnboarding({
+    required String productId,
+    required String pinnedRevision,
+    required WorkspaceDescriptor workspace,
+    required String completedBaselineId,
+    DateTime? now,
+  }) async {
+    await _store.readProduct(productId);
+    final t = now ?? DateTime.now().toUtc();
+    final record = await _store.readOnboardingForProduct(productId);
+    if (record == null) {
+      throw ProductLifecycleException(
+        'product $productId has no onboarding record to complete; run '
+        'onboarding before completing it',
+      );
+    }
+    final updated = record.copyWith(
+      completed: true,
+      pinnedRevision: pinnedRevision,
+      workspace: workspace,
+      completedBaselineId: completedBaselineId,
+      updatedAt: t,
+      version: record.version + 1,
+    );
+    await _store.saveOnboarding(updated);
+    return updated;
+  }
+
+  // ---------------------------------------------------------------------
   // Derived product scope (helpers so scope derivation isn't duplicated)
   // ---------------------------------------------------------------------
 
@@ -1907,16 +2035,27 @@ class ProductRegistryEngine {
   Future<OnboardingRecord> _ensureOnboarding(
     String productId, {
     DateTime? now,
+    String? pinnedRevision,
+    WorkspaceDescriptor? workspace,
   }) async {
     final existing = await _store.readOnboardingForProduct(productId);
     if (existing != null) return existing;
     final t = now ?? DateTime.now().toUtc();
+    // `currentBaselineRevision: 0` is a COUNTER saying "no baseline yet", not
+    // a claim about which commit the product is on: at this point nothing has
+    // been cloned, so there is no commit to name. The commit and the workspace
+    // that will carry it are `pinnedRevision` / `workspace`, carried when the
+    // caller already knows them and left NULL otherwise — a record that
+    // answers "where is this product?" honestly ("not pinned yet") rather than
+    // one that has to invent a value to fill a NOT NULL column.
     final record = OnboardingRecord(
       onboardingId: 'ob-$productId',
       productId: productId,
       currentBaselineRevision: 0,
       pendingClarifications: 0,
       completed: false,
+      pinnedRevision: pinnedRevision,
+      workspace: workspace,
       createdAt: t,
       updatedAt: t,
       version: 1,

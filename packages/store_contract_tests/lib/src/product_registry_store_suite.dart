@@ -204,23 +204,56 @@ void runProductRegistryStoreSuite({
       () async {
         final store = await createStore();
         final t = DateTime.utc(2026, 9, 16, 12);
+        // A record CARRYING THE PIN is the state this lane exists to produce.
+        // It is written here so every store tier is obliged to persist the
+        // durable answer, rather than leaving "does the store keep the pin?"
+        // to each tier's own package-local tests — which is how a third tier
+        // could satisfy ProductRegistryStore without implementing it at all.
+        //
+        // The pin and `startingRevision` MUST be the same commit: both tiers
+        // call `OnboardingRecord.validate()` before writing, and it refuses a
+        // record whose two stored revisions disagree.
+        final pin = 'f0f3494957bb90df0a1c15a9fb4734ca6e49634d';
         final record = OnboardingRecord(
           onboardingId: 'ob-shipit',
           productId: 'shipit',
           currentBaselineRevision: 1,
           pendingClarifications: 1,
           completed: false,
+          pinnedRevision: pin,
+          workspace: WorkspaceDescriptor(
+            workspaceId: 'ws-shipit',
+            workerExecutionId: '123e4567-e89b-12d3-a456-426614174020',
+            workerId: 'worker-local-1',
+            repositoryPath: '/home/ci/checkouts/shipit-platform',
+            startingRevision: pin,
+            worktreePath: '/workspaces/ws-shipit',
+            detached: true,
+            createdAt: t,
+          ),
           createdAt: t,
           updatedAt: t,
           version: 1,
         );
         await store.saveOnboarding(record);
-        expect(await store.readOnboardingForProduct('shipit'), record);
+        final stored = await store.readOnboardingForProduct('shipit');
+        expect(stored, record);
+
+        // Asserted explicitly as well as by the equality above, so a tier that
+        // silently drops the pin fails on the pin rather than on a whole-object
+        // mismatch nobody can read.
+        expect(stored!.pinnedRevision, pin);
+        expect(stored.workspace, isNotNull);
+        expect(stored.workspace!.workspaceId, 'ws-shipit');
+        expect(stored.workspace!.startingRevision, pin);
+        expect(stored.workspace!.worktreePath, '/workspaces/ws-shipit');
+        expect(stored.hasDurableWorkspace, isTrue);
 
         await store.saveOnboarding(
           record.copyWith(
             pendingClarifications: 0,
             completed: true,
+            completedBaselineId: 'pb-shipit-1',
             updatedAt: t.add(const Duration(hours: 1)),
             version: 2,
           ),
@@ -228,8 +261,44 @@ void runProductRegistryStoreSuite({
         final reloaded = await store.readOnboardingForProduct('shipit');
         expect(reloaded!.completed, isTrue);
         expect(reloaded.pendingClarifications, 0);
+        // The pin survives the completing update, not just the initial write.
+        expect(reloaded.pinnedRevision, pin);
+        expect(reloaded.workspace!.workspaceId, 'ws-shipit');
+        expect(reloaded.completedBaselineId, 'pb-shipit-1');
+        expect(reloaded.hasCompletionEvidence, isTrue);
 
         expect(await store.readOnboardingForProduct('missing'), isNull);
+      },
+    );
+
+    test(
+      'onboarding records with all three pin fields NULL still load',
+      () async {
+        final store = await createStore();
+        final t = DateTime.utc(2026, 9, 16, 12);
+        // The other half of the contract. A Product is registered long before
+        // anything pins or completes it, so "not yet pinned" is an ordinary
+        // state and every tier must store and return it unchanged rather than
+        // rejecting it or inventing a value.
+        final record = OnboardingRecord(
+          onboardingId: 'ob-unpinned',
+          productId: 'shipit-unpinned',
+          currentBaselineRevision: 0,
+          pendingClarifications: 2,
+          completed: false,
+          createdAt: t,
+          updatedAt: t,
+          version: 1,
+        );
+        await store.saveOnboarding(record);
+
+        final loaded = await store.readOnboardingForProduct('shipit-unpinned');
+        expect(loaded, record);
+        expect(loaded!.pinnedRevision, isNull);
+        expect(loaded.workspace, isNull);
+        expect(loaded.completedBaselineId, isNull);
+        expect(loaded.hasDurableWorkspace, isFalse);
+        expect(loaded.hasCompletionEvidence, isFalse);
       },
     );
 

@@ -22,6 +22,9 @@ abstract class OnboardingRecordRow
     required this.currentBaselineRevision,
     required this.pendingClarifications,
     required this.completed,
+    this.pinnedRevision,
+    this.workspace,
+    this.completedBaselineId,
     required this.createdAt,
     required this.updatedAt,
     required this.version,
@@ -34,6 +37,9 @@ abstract class OnboardingRecordRow
     required int currentBaselineRevision,
     required int pendingClarifications,
     required bool completed,
+    String? pinnedRevision,
+    String? workspace,
+    String? completedBaselineId,
     required DateTime createdAt,
     required DateTime updatedAt,
     required int version,
@@ -48,6 +54,9 @@ abstract class OnboardingRecordRow
           jsonSerialization['currentBaselineRevision'] as int,
       pendingClarifications: jsonSerialization['pendingClarifications'] as int,
       completed: _i1.BoolJsonExtension.fromJson(jsonSerialization['completed']),
+      pinnedRevision: jsonSerialization['pinnedRevision'] as String?,
+      workspace: jsonSerialization['workspace'] as String?,
+      completedBaselineId: jsonSerialization['completedBaselineId'] as String?,
       createdAt: _i1.DateTimeJsonExtension.fromJson(
         jsonSerialization['createdAt'],
       ),
@@ -75,6 +84,12 @@ abstract class OnboardingRecordRow
 
   bool completed;
 
+  String? pinnedRevision;
+
+  String? workspace;
+
+  String? completedBaselineId;
+
   DateTime createdAt;
 
   DateTime updatedAt;
@@ -94,6 +109,9 @@ abstract class OnboardingRecordRow
     int? currentBaselineRevision,
     int? pendingClarifications,
     bool? completed,
+    String? pinnedRevision,
+    String? workspace,
+    String? completedBaselineId,
     DateTime? createdAt,
     DateTime? updatedAt,
     int? version,
@@ -108,6 +126,10 @@ abstract class OnboardingRecordRow
       'currentBaselineRevision': currentBaselineRevision,
       'pendingClarifications': pendingClarifications,
       'completed': completed,
+      if (pinnedRevision != null) 'pinnedRevision': pinnedRevision,
+      if (workspace != null) 'workspace': workspace,
+      if (completedBaselineId != null)
+        'completedBaselineId': completedBaselineId,
       'createdAt': createdAt.toJson(),
       'updatedAt': updatedAt.toJson(),
       'version': version,
@@ -159,6 +181,9 @@ class _OnboardingRecordRowImpl extends OnboardingRecordRow {
     required int currentBaselineRevision,
     required int pendingClarifications,
     required bool completed,
+    String? pinnedRevision,
+    String? workspace,
+    String? completedBaselineId,
     required DateTime createdAt,
     required DateTime updatedAt,
     required int version,
@@ -169,6 +194,9 @@ class _OnboardingRecordRowImpl extends OnboardingRecordRow {
          currentBaselineRevision: currentBaselineRevision,
          pendingClarifications: pendingClarifications,
          completed: completed,
+         pinnedRevision: pinnedRevision,
+         workspace: workspace,
+         completedBaselineId: completedBaselineId,
          createdAt: createdAt,
          updatedAt: updatedAt,
          version: version,
@@ -185,6 +213,9 @@ class _OnboardingRecordRowImpl extends OnboardingRecordRow {
     int? currentBaselineRevision,
     int? pendingClarifications,
     bool? completed,
+    Object? pinnedRevision = _Undefined,
+    Object? workspace = _Undefined,
+    Object? completedBaselineId = _Undefined,
     DateTime? createdAt,
     DateTime? updatedAt,
     int? version,
@@ -198,6 +229,13 @@ class _OnboardingRecordRowImpl extends OnboardingRecordRow {
       pendingClarifications:
           pendingClarifications ?? this.pendingClarifications,
       completed: completed ?? this.completed,
+      pinnedRevision: pinnedRevision is String?
+          ? pinnedRevision
+          : this.pinnedRevision,
+      workspace: workspace is String? ? workspace : this.workspace,
+      completedBaselineId: completedBaselineId is String?
+          ? completedBaselineId
+          : this.completedBaselineId,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       version: version ?? this.version,
@@ -234,6 +272,23 @@ class OnboardingRecordRowUpdateTable
     table.completed,
     value,
   );
+
+  _i1.ColumnValue<String, String> pinnedRevision(String? value) =>
+      _i1.ColumnValue(
+        table.pinnedRevision,
+        value,
+      );
+
+  _i1.ColumnValue<String, String> workspace(String? value) => _i1.ColumnValue(
+    table.workspace,
+    value,
+  );
+
+  _i1.ColumnValue<String, String> completedBaselineId(String? value) =>
+      _i1.ColumnValue(
+        table.completedBaselineId,
+        value,
+      );
 
   _i1.ColumnValue<DateTime, DateTime> createdAt(DateTime value) =>
       _i1.ColumnValue(
@@ -277,6 +332,18 @@ class OnboardingRecordRowTable extends _i1.Table<int?> {
       'completed',
       this,
     );
+    pinnedRevision = _i1.ColumnString(
+      'pinnedRevision',
+      this,
+    );
+    workspace = _i1.ColumnString(
+      'workspace',
+      this,
+    );
+    completedBaselineId = _i1.ColumnString(
+      'completedBaselineId',
+      this,
+    );
     createdAt = _i1.ColumnDateTime(
       'createdAt',
       this,
@@ -303,6 +370,12 @@ class OnboardingRecordRowTable extends _i1.Table<int?> {
 
   late final _i1.ColumnBool completed;
 
+  late final _i1.ColumnString pinnedRevision;
+
+  late final _i1.ColumnString workspace;
+
+  late final _i1.ColumnString completedBaselineId;
+
   late final _i1.ColumnDateTime createdAt;
 
   late final _i1.ColumnDateTime updatedAt;
@@ -317,6 +390,9 @@ class OnboardingRecordRowTable extends _i1.Table<int?> {
     currentBaselineRevision,
     pendingClarifications,
     completed,
+    pinnedRevision,
+    workspace,
+    completedBaselineId,
     createdAt,
     updatedAt,
     version,

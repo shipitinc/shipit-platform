@@ -2082,6 +2082,16 @@ class ControlPlaneService {
   ///
   /// Creates an onboarding job that clones the repository at the pinned
   /// revision, runs baseline build + test, and writes a WorkspaceDescriptor.
+  ///
+  /// [startingRevision] is what the operator ASKS the run to start from, and
+  /// this method deliberately does NOT persist it as the product's
+  /// `pinnedRevision`. A request is not a fact: nothing has been cloned yet,
+  /// so writing it here would make `OnboardingRecord.hasDurableWorkspace`
+  /// answer "yes" for a product that has no workspace, and would make the
+  /// record name a commit that may never have been materialised. The run that
+  /// actually creates the workspace is what calls
+  /// `ProductRegistryEngine.completeOnboarding`, and that write is the one that
+  /// makes the pin durable.
   Future<Job> triggerOnboarding({
     required String productId,
     required String repositoryId,
@@ -2168,14 +2178,36 @@ class ControlPlaneService {
 
     final latestJob = onboardingJobs.isNotEmpty ? onboardingJobs.first : null;
 
-    WorkspaceDescriptor? workspace;
+    // The workspace is READ FROM THE ONBOARDING RECORD, which is where it is
+    // persisted. It used to be declared here and never assigned — the branch
+    // below looked the job's `workspaceId` up, found the result, and then
+    // stopped at a comment, so `OnboardingStatus.workspaceDescriptor` was
+    // structurally always null and the only descriptor in the system
+    // (`WorkspaceDescriptor`) had no persisted home to be read from.
+    //
+    // The record is the authoritative answer for the PRODUCT-scoped question
+    // "where does this product's code live", and it is the one place a
+    // restarted process can read it from: the `WorkerStore` lookup below needs
+    // a live job whose execution reference is still resolvable, which a
+    // product whose onboarding job has been reaped cannot satisfy.
+    final workspace = onboarding?.workspace;
+
     if (latestJob != null && latestJob.state == JobState.succeeded) {
       final result = await workerStore.readResult(
         latestJob.executionReference?.workerExecutionId ?? '',
       );
       if (result != null && result.workspaceId.isNotEmpty) {
-        // Try to read workspace descriptor from worker store
-        // In practice, the descriptor is written by the workspace manager
+        // `result.workspaceId` identifies the EXECUTION-scoped workspace. It
+        // is not used to answer the product-scoped question above, because
+        // the product's workspace is recorded on the onboarding record by the
+        // run that created it, and an execution's workspace is not the
+        // product's — a product is materialised by many executions and only
+        // one of them is the onboarding run.
+        logger.debug('product_registry.onboarding.workspace', {
+          'productId': productId,
+          'executionWorkspaceId': result.workspaceId,
+          'recordedWorkspaceId': workspace?.workspaceId,
+        });
       }
     }
 

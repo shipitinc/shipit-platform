@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://shipit.platform/schemas/onboarding_record.schema.json",
   "title": "OnboardingRecord",
-  "description": "Durable onboarding progress for one Product; the bounded bootstrap record resumed by a restarted execution (checkpoint 006). Product lifecycle stays on the existing ProductState enum.",
+  "description": "Durable onboarding progress for one Product; the bounded bootstrap record resumed by a restarted execution (checkpoint 006). Product lifecycle stays on the existing ProductState enum. `pinnedRevision` (full lowercase 40-hex), `workspace` (the WorkspaceDescriptor the pin was materialised in) and `completedBaselineId` (the ProductBaseline whose human acceptance set `completed`) are OPTIONAL and are omitted when absent, because a Product is registered long before anything pins or completes it. They are deliberately not required: `completed` is a bare bool that the published store contract writes without completion evidence, and forbidding that weaker state in the contract would break a contract test to enforce an invariant nothing needs.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,6 +23,41 @@
     "completed": { "type": "boolean" },
     "createdAt": { "type": "string", "format": "date-time" },
     "updatedAt": { "type": "string", "format": "date-time" },
-    "version": { "type": "integer", "minimum": 1 }
+    "version": { "type": "integer", "minimum": 1 },
+
+    "pinnedRevision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "workspace": { "$ref": "#/definitions/WorkspaceDescriptor" },
+    "completedBaselineId": { "type": "string", "minLength": 1 }
+  },
+  "definitions": {
+    "WorkspaceDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceId",
+        "workerExecutionId",
+        "workerId",
+        "repositoryPath",
+        "startingRevision",
+        "worktreePath",
+        "detached",
+        "createdAt"
+      ],
+      "properties": {
+        "workspaceId": { "type": "string" },
+        "workerExecutionId": { "type": "string" },
+        "workerId": { "type": "string" },
+        "repositoryPath": { "type": "string" },
+        "startingRevision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "worktreePath": { "type": "string" },
+        "branch": { "type": "string" },
+        "detached": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "cleanedAt": { "type": "string", "format": "date-time" }
+      }
+    }
   }
 }

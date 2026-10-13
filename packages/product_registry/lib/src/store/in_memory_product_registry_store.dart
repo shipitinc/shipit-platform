@@ -459,6 +459,10 @@ class InMemoryProductRegistryStore implements ProductRegistryStore {
 
   @override
   Future<void> saveOnboarding(OnboardingRecord record) async {
+    // Same check the Postgres tier runs, BEFORE the map is touched: a
+    // rejected record must leave the stored row exactly as it was, so this
+    // cannot move `_onboardings` first and validate afterwards.
+    record.validate();
     _onboardings[record.productId] = record;
   }
 
