@@ -1279,3 +1279,11 @@ browser.** Every claim this session was proven by database and container logs, b
 available. The client-build fix is structurally sound (Compose now owns the image, so the container
 recreates — verified: recreated 19:28 and again on the final deploy, versus 22 hours stale before the
 fix), but rendering itself is unconfirmed and needs a human to look.
+A1 additionally owns, per fb3c3485's approved design §8.1/§8.6:
+  packages/product_registry/**
+  packages/store_contract_tests/**
+  apps/server/lib/src/persistence/postgres_product_registry_store.dart
+  apps/server/lib/src/services/control_plane_service.dart
+
+Granted by the Manager 2026-10-13 to discharge design precondition P1. These were
+escalated by the design lane rather than self-taken. Verified no overlap with A2's map.
