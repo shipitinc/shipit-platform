@@ -1,5 +1,6 @@
 import 'dart:async' show Timer, unawaited;
-import 'dart:io' show Directory, File, Platform, Process, stdout;
+import 'dart:convert' show jsonDecode;
+import 'dart:io' show Directory, File, Platform, Process, exit, stdout;
 
 import 'package:serverpod/serverpod.dart';
 import 'package:agent_runtime/agent_runtime.dart'
@@ -15,7 +16,7 @@ import 'package:workflow_store/workflow_store.dart' show DurableWorkflowEngine;
 import 'package:platform_contracts/platform_contracts.dart'
     show AgentRole, JobType;
 import 'package:product_registry/product_registry.dart'
-    show ProductRegistryEngine;
+    show ProductRegistryEngine, ProductRegistryStore;
 import 'package:scheduler/scheduler.dart'
     show
         Scheduler,
@@ -79,7 +80,14 @@ import 'src/baseline/baseline_runtime.dart' show BaselineProductionRuntime;
 // A1's durable-workspace runtime, wired here because C-1 assigns this file
 // exclusively to the implementation lane (A2). See `_durableWorkspaceRoot`.
 import 'src/baseline/durable_workspace_runtime.dart'
-    show DurableWorkspaceRuntime;
+    show
+        DurableWorkspaceRuntime,
+        DurableWorkspaceRuntimeUnavailableException,
+        DurableWorkspaceUnavailableException;
+// A3's operator trigger. Its only production caller is the boot-time operator
+// instruction below — see `runOperatorDurableWorkspaceProvision`.
+import 'src/services/control_plane_service.dart'
+    show DurableWorkspaceProvisionRefused, DurableWorkspaceProvisionTrigger;
 // The readiness probe that decides whether an implementation job may dispatch
 // at all. It lives outside `lib/src/baseline/**` on purpose: that directory is
 // covered by the product-agnosticism gate, which refuses every product name —
@@ -148,6 +156,19 @@ void run(List<String> args) async {
   // refuses it and records a named reason, which is the fail-closed posture the
   // durable-workspace runtime was built around.
   final durableWorkspaceRoot = _durableWorkspaceRoot();
+
+  // ---- A3's operator instruction: the ONLY production caller of provisioning. ----
+  //
+  // Resolved HERE, before the server is constructed, for the same reason the
+  // triage source and the dispatch cap are: a malformed instruction must refuse
+  // before a port is bound, not after a clone has half been made.
+  //
+  // There is no default and no inference. Unset means nobody asked, and the
+  // whole of the implementation lane keeps deferring until a human says
+  // otherwise — which is the state the readiness probe already reports, loudly,
+  // rather than one anything here papers over.
+  final durableProvisionInstruction =
+      resolveDurableWorkspaceProvisionInstruction(Platform.environment);
 
   // Also resolved BEFORE the server starts, and for a heavier reason: a server
   // with no cap dispatches as many agent executions as the queue offers, which
@@ -485,6 +506,31 @@ void run(List<String> args) async {
     log: _log,
   );
 
+  // ---- A3: run the operator instruction, ONCE, before anything can act on it. ----
+  //
+  // `DurableWorkspaceRuntime.provision` had zero production callers until this
+  // line, which is why `ImplementationReadinessProbe` below defers every
+  // implementation item: there was no clone to resolve. This is the caller.
+  //
+  // WHY A BOOT-TIME INSTRUCTION, and not an endpoint or a timer. The HTTP
+  // endpoint surface is `src/endpoints/**`, which this lane does not own, and a
+  // timer is precisely the thing this must not be: provisioning runs unattended
+  // against a governed product's repository with a deploy key, and an operator
+  // has to be the one who asked. A variable a human sets, and a start a human
+  // initiates, is exactly that — and it is a shape nothing can reach by
+  // accident, because no tick, sweep, probe or request can set an environment
+  // variable.
+  //
+  // It runs BEFORE `implScheduler` is built, so a clone that exists is a clone
+  // the scheduler can see from its first tick, and a trigger that failed is a
+  // failed boot rather than a deployment left half-provisioned.
+  final durableProvisionOutcome = await _runDurableWorkspaceProvision(
+    durableProvisionInstruction,
+    store: baselineRegistryStore,
+    engine: productRegistryEngine,
+    runtime: durableWorkspaceRuntime,
+  );
+
   // ---- The IMPLEMENTATION scheduler: `sched-impl`. ----
   //
   // Its entry state is `implementationReady` and nothing else, which is what
@@ -626,6 +672,11 @@ void run(List<String> args) async {
     // remove — and a lane that is constructed but silently refusing every call
     // looks exactly like a lane that does not exist.
     'durableWorkspace': durableWorkspaceRuntime.describe(),
+    // What this START did about it. Absence is a state and it is printed, the
+    // same way `work_entry.sweep.disabled` is: an operator reading one line can
+    // tell "nobody asked for a durable clone" from "we asked and it failed",
+    // without grepping for something that is not there.
+    'durableWorkspaceProvision': durableProvisionOutcome,
     // The implementation lane, in the same spirit. `schedulerId` and the
     // definition's own entry states, so an operator can see from the banner that
     // the lane exists AND that nothing reaches it yet: no `HumanDecisionRouting`
@@ -1553,6 +1604,274 @@ const String _durableWorkspaceRootEnv = 'SHIPIT_DURABLE_WORKSPACE_ROOT';
 /// start.
 String _durableWorkspaceRoot() =>
     Platform.environment[_durableWorkspaceRootEnv]?.trim() ?? '';
+
+/// Environment variable carrying an OPERATOR's one-shot instruction to create a
+/// product's durable clone.
+///
+/// ## What setting it does
+///
+/// A JSON object with exactly three keys:
+///
+/// ```json
+/// {"productId": "…", "repositoryId": "…", "startingRevision": "<40-hex SHA>"}
+/// ```
+///
+/// It is honoured once, at the first start that sees it, and never again by
+/// anything automatic. Nothing in this process re-reads it, nothing retries it,
+/// and no timer, sweep or scheduler tick can set it.
+///
+/// ## Why `startingRevision` must be a SHA and not a ref
+///
+/// Because that is what a pin IS. `OnboardingRecord.gitRevisionPattern` is
+/// `^[0-9a-f]{40}$` — "a pin that cannot be resolved to exactly one commit is
+/// not a pin" — and `recordWorkspace` writes the value straight into that
+/// column. An operator who writes `main` here gets a refusal that says how to
+/// turn it into a commit, not a clone recorded at a revision that does not
+/// exist. See `DurableWorkspaceProvisionTrigger.provision` for why the trigger
+/// cannot resolve the ref for them.
+///
+/// ## Why UNSET is the normal state and not a missing feature
+///
+/// Until a human runs this, the implementation lane has no product checkout to
+/// dispatch into and `ImplementationReadinessProbe` defers every item, with the
+/// reason in its own log. That is the correct posture — a scheduler that
+/// materialised governed products' repositories on its own would be doing the
+/// one thing this variable exists to keep human-initiated — so there is no
+/// default, no inference, and no "helpful" second path.
+const String _provisionDurableWorkspaceEnv =
+    'SHIPIT_PROVISION_DURABLE_WORKSPACE';
+
+/// One operator's instruction, parsed and validated.
+class DurableWorkspaceProvisionInstruction {
+  const DurableWorkspaceProvisionInstruction({
+    required this.productId,
+    required this.repositoryId,
+    required this.startingRevision,
+  });
+
+  final String productId;
+  final String repositoryId;
+
+  /// What the operator asked for. Validated as a commit SHA by
+  /// [DurableWorkspaceProvisionTrigger], which is the one place that decides
+  /// what a pin may be — this class only refuses input that is not even a
+  /// non-empty string.
+  final String startingRevision;
+
+  @override
+  String toString() =>
+      'DurableWorkspaceProvisionInstruction($productId/$repositoryId@'
+      '$startingRevision)';
+}
+
+/// Parses and validates [_provisionDurableWorkspaceEnv], or returns `null` when
+/// it is unset or blank.
+///
+/// Returns `null` rather than throwing for absence, and THROWS for anything
+/// present-but-wrong. That asymmetry is the whole point: "nobody asked" is the
+/// normal state of a deployment and must not be a fault, while a typo is a
+/// fault that is invisible unless it is refused — a misspelled key would
+/// otherwise leave a server that starts, provisions nothing, and looks fine.
+///
+/// The caller runs this BEFORE the server is constructed, so a bad instruction
+/// never binds a port.
+///
+/// The three keys are required and NO OTHERS ARE ACCEPTED. An unknown key is a
+/// refusal rather than a shrug for the reason above: `{"productId": "p",
+/// "repository": "r"}` is a plausible typo that would otherwise provision
+/// against a default, or against nothing, with no error anywhere.
+DurableWorkspaceProvisionInstruction?
+resolveDurableWorkspaceProvisionInstruction(
+  Map<String, String> environment,
+) {
+  final raw = environment[_provisionDurableWorkspaceEnv]?.trim();
+  if (raw == null || raw.isEmpty) return null;
+
+  const required = <String>['productId', 'repositoryId', 'startingRevision'];
+  Object? decoded;
+  try {
+    decoded = jsonDecode(raw);
+  } on FormatException catch (error) {
+    throw StateError(
+      'CONFIG_ERROR $_provisionDurableWorkspaceEnv is set but is not valid '
+      'JSON (${error.message}). It must be an object with exactly '
+      '${required.join(', ')}.',
+    );
+  }
+  if (decoded is! Map<String, dynamic>) {
+    throw StateError(
+      'CONFIG_ERROR $_provisionDurableWorkspaceEnv must be a JSON OBJECT with '
+      'keys ${required.join(', ')}, not ${decoded.runtimeType}.',
+    );
+  }
+  final unexpected =
+      decoded.keys.where((key) => !required.contains(key)).toList()..sort();
+  if (unexpected.isNotEmpty) {
+    throw StateError(
+      'CONFIG_ERROR $_provisionDurableWorkspaceEnv carries unknown key(s) '
+      '${unexpected.join(', ')}. Only ${required.join(', ')} are accepted; an '
+      'unrecognised key is refused rather than ignored, because a typo that is '
+      'ignored provisions nothing and reports nothing.',
+    );
+  }
+  final fields = <String, String>{};
+  for (final key in required) {
+    final value = decoded[key];
+    if (value is! String || value.trim().isEmpty) {
+      throw StateError(
+        'CONFIG_ERROR $_provisionDurableWorkspaceEnv.$key must be a non-empty '
+        'string.',
+      );
+    }
+    fields[key] = value.trim();
+  }
+  return DurableWorkspaceProvisionInstruction(
+    productId: fields['productId']!,
+    repositoryId: fields['repositoryId']!,
+    startingRevision: fields['startingRevision']!,
+  );
+}
+
+/// Runs [instruction] if there is one, and reports what happened as banner
+/// fields.
+///
+/// ## Why a REFUSAL is returned rather than thrown
+///
+/// The caller has to decide whether to keep serving, and it cannot decide that
+/// without seeing the reason. So the decision is returned, shaped for the
+/// startup banner, and the reason is logged here — not swallowed: `run()` turns
+/// a non-provisioned instruction into a non-zero exit, so the outcome is a
+/// failed boot an operator cannot miss.
+///
+/// That is a different posture from an unconfigured durable-workspace runtime,
+/// which does NOT stop the boot. The runtime being absent is an ambient
+/// configuration fact about a process that also serves triage, and A1's own doc
+/// is right that refusing to serve would be worse. An operator instruction that
+/// FAILED is not that: the operator asked for a specific durable action, it did
+/// not happen, and continuing to serve would leave the deployment in the exact
+/// state they asked to leave while reporting itself healthy.
+///
+/// Returns `{'requested': false, ...}` when [instruction] is null, so absence is
+/// a printed state rather than an omitted field.
+Future<Map<String, dynamic>> runOperatorDurableWorkspaceProvision(
+  DurableWorkspaceProvisionInstruction? instruction, {
+  required ProductRegistryStore store,
+  required ProductRegistryEngine engine,
+  required DurableWorkspaceRuntime runtime,
+  void Function(String event, Map<String, dynamic> data)? log,
+}) async {
+  final emit = log ?? _log;
+  if (instruction == null) {
+    return const <String, dynamic>{
+      'requested': false,
+      'provisioned': false,
+      'triggeredBy': 'nobody — an operator instruction is required',
+      'note':
+          'no product has a durable clone unless an operator set '
+          '$_provisionDurableWorkspaceEnv on a start. Nothing in this process '
+          'creates one automatically, and the implementation lane keeps '
+          'deferring every item until it exists',
+    };
+  }
+
+  emit('durable_workspace.provision.requested', {
+    'productId': instruction.productId,
+    'repositoryId': instruction.repositoryId,
+    'startingRevision': instruction.startingRevision,
+    'triggeredBy': 'the $_provisionDurableWorkspaceEnv operator instruction',
+  });
+
+  final trigger = DurableWorkspaceProvisionTrigger(
+    store: store,
+    engine: engine,
+    runtime: runtime,
+    log: emit,
+  );
+  try {
+    final provisioned = await trigger.provision(
+      productId: instruction.productId,
+      repositoryId: instruction.repositoryId,
+      startingRevision: instruction.startingRevision,
+    );
+    return <String, dynamic>{
+      'requested': true,
+      'provisioned': true,
+      'productId': provisioned.productId,
+      'repositoryId': provisioned.repositoryId,
+      'pinnedRevision': provisioned.pinnedRevision,
+      'repositoryPath': provisioned.workspace.repositoryPath,
+      'onboardingId': provisioned.onboardingId,
+      'completedBaselineId': provisioned.completedBaselineId,
+      'triggeredBy': 'the $_provisionDurableWorkspaceEnv operator instruction',
+    };
+  } on Object catch (error) {
+    // The reason is surfaced, never swallowed: A1's own wording when A1
+    // refused (an unconfirmed host key, an unusable credential, a baseline
+    // that is not accepted), this lane's code and wording when the refusal was
+    // this lane's, and the underlying text when it was neither — a missing
+    // product, or a repository that belongs to another one.
+    final code = switch (error) {
+      DurableWorkspaceProvisionRefused() => error.code,
+      DurableWorkspaceUnavailableException() => 'DURABLE_WORKSPACE_REFUSED',
+      DurableWorkspaceRuntimeUnavailableException() =>
+        'DURABLE_RUNTIME_UNAVAILABLE',
+      _ => 'PROVISIONING_FAILED',
+    };
+    final reason = switch (error) {
+      DurableWorkspaceProvisionRefused() => error.reason,
+      DurableWorkspaceUnavailableException() => error.reason,
+      DurableWorkspaceRuntimeUnavailableException() => error.reason,
+      _ => error.toString(),
+    };
+    emit('durable_workspace.provision.aborted', <String, dynamic>{
+      'code': code,
+      'productId': instruction.productId,
+      'repositoryId': instruction.repositoryId,
+      'error': reason,
+      'action':
+          'no clone was recorded as this instruction\'s outcome and this '
+          'process will NOT continue serving: the operator asked for a durable '
+          'clone, it did not happen, and starting anyway would leave the '
+          'deployment looking healthy in exactly the state the instruction was '
+          'meant to leave it',
+    });
+    return <String, dynamic>{
+      'requested': true,
+      'provisioned': false,
+      'code': code,
+      'reason': reason,
+      'productId': instruction.productId,
+      'repositoryId': instruction.repositoryId,
+    };
+  }
+}
+
+/// [runOperatorDurableWorkspaceProvision] with this file's composition-root
+/// logger and the process exit, so `run()` reads as a sequence of decisions
+/// rather than a try/catch.
+Future<Map<String, dynamic>> _runDurableWorkspaceProvision(
+  DurableWorkspaceProvisionInstruction? instruction, {
+  required ProductRegistryStore store,
+  required ProductRegistryEngine engine,
+  required DurableWorkspaceRuntime runtime,
+}) async {
+  final outcome = await runOperatorDurableWorkspaceProvision(
+    instruction,
+    store: store,
+    engine: engine,
+    runtime: runtime,
+    log: _log,
+  );
+  if (outcome['requested'] == true && outcome['provisioned'] != true) {
+    // Non-zero, immediately, and loudly enough that an operator running this by
+    // hand sees it in the shell that asked for it. A durable clone is created
+    // outside the repository tree with a deploy key; an operator who asked for
+    // one and did not get it must not be left believing the deployment is
+    // provisioned.
+    exit(1);
+  }
+  return outcome;
+}
 
 /// Resolves and VALIDATES the triage source repository, or throws.
 ///

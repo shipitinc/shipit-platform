@@ -22,6 +22,8 @@ import 'package:worker_runtime/worker_runtime.dart'
     show WorkerRegistrationStore, WorkerStore;
 import 'package:worker_protocol/worker_protocol.dart' show WorkerRegistration;
 
+import '../baseline/durable_workspace_runtime.dart'
+    show DurableWorkspaceRuntime;
 import '../generated/feature_request_summary_view.dart';
 import '../persistence/persistence_database.dart';
 import '../persistence/postgres_defect_store.dart'
@@ -2235,6 +2237,462 @@ class ControlPlaneService {
       workspaceDescriptor: workspace,
     );
   }
+}
+
+// ---------------------------------------------------------------------
+// A3 — the OPERATOR-TRIGGERED durable-workspace provision
+// ---------------------------------------------------------------------
+
+/// Creates a governed product's DURABLE clone because an operator asked for it,
+/// and records where it now lives.
+///
+/// ## What this is, and what it is not
+///
+/// `DurableWorkspaceRuntime.provision` has been merged, reviewed, and reachable
+/// from nowhere in production. This is the caller it was written for. Until a
+/// clone exists, `ImplementationReadinessProbe` correctly DEFERs every
+/// implementation work item for want of a checkout to run in, and no amount of
+/// scheduler work changes that.
+///
+/// It is NOT a job, a sweep, or a repair. It creates the product's writable
+/// checkout once, on an explicit human action, and writes down the answer. The
+/// clone itself, the credential trust chain, and the six obligations that keep
+/// key material off the disk are A1's — this class decides only whether to ask,
+/// at what commit, and whether the record may be written.
+///
+/// ## OPERATOR-TRIGGERED, and that is structural rather than a promise
+///
+/// Provisioning authenticates to a git host with a deploy key and writes a
+/// writable checkout outside the repository tree. It is therefore reachable only
+/// from an action a human took. Nothing here is called by a timer, a scheduler
+/// tick, a sweep or a probe, and `run()` in `server.dart` is its single
+/// production caller — an explicit boot-time instruction. A lane that "also calls
+/// it from the onboarding sweep" would run unattended against a governed
+/// product's repository, so the guarantee is mechanical:
+/// `test/durable_workspace_provision_trigger_test.dart` greps `lib/` and fails
+/// if this class is named anywhere but this file and `server.dart`.
+///
+/// ## A request is not a fact, and nothing here records one
+///
+/// [ControlPlaneService.triggerOnboarding] establishes the principle for the job
+/// lane: the operator's requested starting point is a REQUEST, so it is carried
+/// in a job definition and never written to the product's `pinnedRevision`,
+/// because nothing has been cloned yet and a record naming a commit that may
+/// never have been materialised would make `hasDurableWorkspace` answer "yes"
+/// for a product with no workspace.
+///
+/// This class is the other half of that principle. Here something IS cloned, so
+/// the pin is written — but it is written by `DurableWorkspaceRuntime`, in the
+/// one call that also creates the tree, and it is written as the RESOLVED COMMIT
+/// and never as the operator's word for it. Nothing in this file writes an
+/// onboarding record.
+///
+/// ## Idempotence: a product that already has a clone is REFUSED, never
+/// re-provisioned
+///
+/// See [DurableWorkspaceProvisionTrigger.provision] for why re-provisioning is
+/// not merely forbidden here but would be actively destructive if it were
+/// allowed.
+class DurableWorkspaceProvisionTrigger {
+  const DurableWorkspaceProvisionTrigger({
+    required this.store,
+    required this.engine,
+    required this.runtime,
+    required this.log,
+  });
+
+  /// The registry store, used for the existence, ownership and
+  /// already-provisioned reads. The same store the engine writes through, so a
+  /// read here and a write one line later cannot disagree about a transaction
+  /// this process never opened.
+  final ProductRegistryStore store;
+
+  /// The ONE registry engine for this process. Injected rather than rebuilt so
+  /// there is no second place to change if its construction ever does.
+  final ProductRegistryEngine engine;
+
+  /// A1's runtime. Never reimplemented, never reconfigured, and never handed a
+  /// substitute materialiser: the six credential obligations ride on it.
+  final DurableWorkspaceRuntime runtime;
+
+  final void Function(String event, Map<String, dynamic> data) log;
+
+  /// Clones [productId]'s [repositoryId] at [startingRevision] and records it.
+  ///
+  /// ## The order of the checks, and why it is this order
+  ///
+  /// Every refusal below happens BEFORE anything is cloned, so a refused
+  /// trigger leaves no tree, no credential material and no record behind. The
+  /// order is cheapest-and-most-absolute first, because each one names a
+  /// different mistake:
+  ///
+  ///  1. the product exists, and the repository is THIS product's — the same
+  ///     ownership check [ControlPlaneService.triggerOnboarding] makes, so a
+  ///     product id cannot be used to reach another product's repository;
+  ///  2. [startingRevision] is a commit, not a ref;
+  ///  3. the durable-workspace runtime exists in this deployment at all;
+  ///  4. a human has ACCEPTED a baseline for this product;
+  ///  5. the product has no durable clone yet.
+  ///
+  /// ## 2 — why a ref cannot be resolved here
+  ///
+  /// Pinning `main` would record a revision that does not exist:
+  /// `OnboardingRecord.gitRevisionPattern` is `^[0-9a-f]{40}$` precisely because
+  /// "a pin that cannot be resolved to exactly one commit is not a pin", and
+  /// `recordWorkspace` writes this argument straight into that column.
+  ///
+  /// Resolving a ref needs an authenticated `git ls-remote` against the product's
+  /// own deploy key, behind its confirmed host key. That trust chain is A1's,
+  /// and it is deliberately not reachable from a caller standing in front of it:
+  /// a caller with custody in hand is a caller who can skip the host-key
+  /// decision, which is the one thing ADR 0018 A2 was closed to prevent. The one
+  /// authenticated resolver that exists (`PinnedRevisionResolver`) resolves
+  /// `HEAD`, and using it here would substitute the remote's default branch for
+  /// whatever the operator named — the exact fallback this must not do.
+  ///
+  /// So a non-commit is refused BY NAME and told how to become one. The runtime
+  /// is not a workaround either: its materialiser fetches the ref, reads a SHA
+  /// off `HEAD`, finds it is not the pin it was given, and destroys the tree.
+  /// Refusing here is faster and says something true.
+  ///
+  /// ## 4 — the accepted baseline is a PRECONDITION, checked before the clone
+  ///
+  /// `DurableWorkspaceProvisioner.completeOnboarding` re-checks the same fact
+  /// against the stored baseline's own status and refuses a mismatch; that check
+  /// is the §6.6 prohibition made mechanical and it is kept, not routed around.
+  /// This class checks it EARLIER for the same reason it checks everything else
+  /// early: completing onboarding names a baseline as the human acceptance that
+  /// made the product's state meaningful, and a clone made only to be thrown
+  /// away by that refusal is a checkout an operator never asked for. A product
+  /// whose baseline is still `proposed` is a product whose human has not
+  /// finished, and the trigger waits for them.
+  ///
+  /// Its reason is SURFACED, not swallowed: this class adds no catch around the
+  /// call, so A1's own wording reaches the operator.
+  ///
+  /// ## 5 — the idempotence decision, and the hazard behind it
+  ///
+  /// **A product that already has a durable clone is refused, always. There is
+  /// no re-provision, no force, and no replacement path in this lane.**
+  ///
+  /// Not only is that the safe default, it is the only safe one. A second
+  /// provisioner run materialises into the SAME `$workspaceRoot/$productId`
+  /// tree that already holds the clone: `git init` succeeds against the existing
+  /// repository and `git remote add origin` then FAILS, because `origin` is
+  /// already there. A1's materialiser treats any failed git command as a
+  /// provisioning failure and destroys the product root — deleting the existing
+  /// clone and every unreviewed commit in it. "Just re-provision it" is not a
+  /// gentler path; it is the destructive one, and it is the shape of the
+  /// `docker_postgres_data_qa` incident this repository already has.
+  ///
+  /// Re-pinning to a newer commit is a real need and is explicitly NOT what
+  /// this trigger does. It is OD-7.2 / OD-7.3 — how long a clone lives and who
+  /// presses it — both still open, and A1's own startup banner says so:
+  /// `reclamationPolicy: none`. Nothing in this lane deletes or overwrites a
+  /// durable clone, so there is no destructive path here to name and reach
+  /// deliberately: the answer is always "refused", on every call.
+  Future<DurableWorkspaceProvisioned> provision({
+    required String productId,
+    required String repositoryId,
+    required String startingRevision,
+  }) async {
+    final pin = startingRevision.trim();
+
+    // ---- 1. Existence and ownership. ----
+    //
+    // The same shape `triggerOnboarding` uses, deliberately: knowing a
+    // repository id is NOT authorisation to use it for another product.
+    await store.readProduct(productId);
+    final repository = await store.readRepositoryReference(repositoryId);
+    if (repository.productId != productId) {
+      throw CrossProductAccessException(
+        'repository $repositoryId belongs to product '
+        '${repository.productId}, not $productId',
+      );
+    }
+
+    // ---- 2. The pin is a commit, not a ref. ----
+    //
+    // Checked against the platform's OWN definition of a pin rather than a
+    // pattern written here, so this trigger and the column it writes cannot
+    // drift apart.
+    if (!OnboardingRecord.gitRevisionPattern.hasMatch(pin)) {
+      throw _refuse(
+        code: DurableWorkspaceProvisionRefused.unresolvableRevision,
+        reason:
+            'the starting point ${_safeToEcho(pin) ?? '<unprintable>'} is not a '
+            'full 40-character commit SHA, so it cannot be the pin a durable '
+            'clone is recorded at. This trigger does not resolve refs for you '
+            'and will not fall back to a branch or a default: resolving one '
+            'means an authenticated `git ls-remote` with the product\'s deploy '
+            'key behind its confirmed host key, and that trust chain belongs to '
+            'the durable-workspace runtime rather than to a caller in front of '
+            'it. Read the commit out of band — `git ls-remote <repository uri> '
+            '<ref>` with your own operator credentials — and pass the SHA.',
+        log: log,
+        productId: productId,
+        repositoryId: repositoryId,
+      );
+    }
+
+    // ---- 3. The runtime exists in this deployment. ----
+    //
+    // `provisioner != null` and `isAvailable` are the same fact read two ways;
+    // both are checked so that a runtime whose fields ever disagree fails
+    // closed instead of being believed on one of them.
+    final provisioner = runtime.provisioner;
+    if (!runtime.isAvailable || provisioner == null) {
+      throw _refuse(
+        code: DurableWorkspaceProvisionRefused.runtimeUnavailable,
+        reason:
+            runtime.availableReason ??
+            'the durable-workspace runtime is not available in this '
+                'deployment and named no reason. Nothing was cloned and '
+                'nothing was recorded; no substitute root or credential was '
+                'used.',
+        log: log,
+        productId: productId,
+        repositoryId: repositoryId,
+      );
+    }
+
+    // ---- 4. A human accepted a baseline. ----
+    final baselines = await engine.readBaselines(productId);
+    final accepted =
+        baselines
+            .where(
+              (baseline) => baseline.status == ProductBaselineStatus.accepted,
+            )
+            .toList()
+          ..sort((a, b) => a.baselineId.compareTo(b.baselineId));
+    if (accepted.isEmpty) {
+      throw _refuse(
+        code: DurableWorkspaceProvisionRefused.baselineNotAccepted,
+        reason:
+            'no baseline of $productId has been accepted by a human'
+            '${baselines.isEmpty ? ' (the product has none at all)' : ''}, so '
+            'there is nothing for onboarding to be completed against. '
+            'Onboarding waits for the approval; it does not pre-empt it. '
+            'Baselines found: ${_describeBaselines(baselines)}.',
+        log: log,
+        productId: productId,
+        repositoryId: repositoryId,
+      );
+    }
+    if (accepted.length > 1) {
+      // Deterministic rather than arbitrary. Accepting a baseline supersedes the
+      // previous one, so two accepted rows mean the data is not what this
+      // engine produces — and picking "the first" would bind the product's
+      // completion to whichever row sorted first.
+      throw _refuse(
+        code: DurableWorkspaceProvisionRefused.baselineAmbiguous,
+        reason:
+            '$productId has ${accepted.length} accepted baselines '
+            '(${accepted.map((b) => b.baselineId).join(', ')}), so the '
+            'acceptance this clone would be completed against is not '
+            'determinable. Nothing was cloned and nothing was recorded.',
+        log: log,
+        productId: productId,
+        repositoryId: repositoryId,
+      );
+    }
+    final baseline = accepted.single;
+
+    // ---- 5. Idempotence. ----
+    final existing = await store.readOnboardingForProduct(productId);
+    if (existing != null && existing.hasDurableProductClone) {
+      // `requireDurable`, not a cast and not the deprecated shape-blind
+      // `hasDurableWorkspace`: `hasDurableProductClone` is the read that proves
+      // the recorded workspace IS the product's clone, so this can only ever
+      // yield the durable shape.
+      final recorded = existing.workspace!.requireDurable();
+      throw _refuse(
+        code: DurableWorkspaceProvisionRefused.alreadyProvisioned,
+        reason:
+            'product $productId already has a durable clone, recorded at '
+            '${existing.pinnedRevision} in ${recorded.repositoryPath} '
+            '(workspace ${recorded.workspaceId}). It was NOT re-provisioned and '
+            'NOT replaced: a clone may hold unreviewed commits, and a second '
+            'materialisation into the same tree would fail on its own `git '
+            'remote add origin` and destroy it. Re-pinning a product is a '
+            'decision about how long a clone lives and who presses it (OD-7.2 / '
+            'OD-7.3), and both are still open.',
+        log: log,
+        productId: productId,
+        repositoryId: repositoryId,
+      );
+    }
+
+    // ---- 6. Ask A1, and write down what it established. ----
+    //
+    // `provision` is the ONLY call here that clones, reads a secret, or records
+    // anything. This class never touches the engine's workspace write itself.
+    final descriptor = await runtime.provision(
+      productId: productId,
+      repositoryId: repositoryId,
+      pinnedRevision: pin,
+    );
+
+    // A1's own completion, which re-checks the acceptance above against the
+    // stored baseline's status and refuses a mismatch. Called through the
+    // provisioner rather than the engine so that check is never bypassed, and
+    // not wrapped in a catch, so its refusal reaches the operator in its own
+    // words.
+    final record = await provisioner.completeOnboarding(
+      productId: productId,
+      pinnedRevision: pin,
+      workspace: descriptor,
+      completedBaselineId: baseline.baselineId,
+    );
+
+    log('durable_workspace.provision.triggered', {
+      'productId': productId,
+      'repositoryId': repositoryId,
+      'pinnedRevision': pin,
+      'requestedStartingPoint': pin,
+      'repositoryPath': descriptor.repositoryPath,
+      'workspaceId': descriptor.workspaceId,
+      'onboardingId': record.onboardingId,
+      'completedBaselineId': baseline.baselineId,
+      'completedBaselineRevision': baseline.revision,
+      'triggeredBy': 'an explicit operator action',
+      'note':
+          'the recorded pin is the commit the clone was verified to be at, '
+          'read back off the tree — never the string the operator typed',
+    });
+
+    return DurableWorkspaceProvisioned(
+      productId: productId,
+      repositoryId: repositoryId,
+      pinnedRevision: pin,
+      workspace: descriptor,
+      onboardingId: record.onboardingId,
+      completedBaselineId: baseline.baselineId,
+    );
+  }
+
+  /// Logs a refusal and returns it, so the throw below is one statement and the
+  /// operator log always has the code even when a caller catches.
+  static DurableWorkspaceProvisionRefused _refuse({
+    required String code,
+    required String reason,
+    required void Function(String event, Map<String, dynamic> data) log,
+    required String productId,
+    required String repositoryId,
+  }) {
+    final refusal = DurableWorkspaceProvisionRefused(
+      code: code,
+      reason: reason,
+    );
+    log('durable_workspace.provision.refused', {
+      'code': refusal.code,
+      'productId': productId,
+      'repositoryId': repositoryId,
+      'reason': refusal.reason,
+      'action':
+          'nothing was cloned, no credential was read, and no onboarding '
+          'record was written',
+    });
+    return refusal;
+  }
+
+  /// A refusal reason's baseline list, in a form safe to log and to show.
+  static String _describeBaselines(List<ProductBaseline> baselines) {
+    if (baselines.isEmpty) return 'none';
+    final described =
+        baselines
+            .map(
+              (b) =>
+                  '${_safeToEcho(b.baselineId) ?? '<unnamed>'} '
+                  '(${b.status.wire})',
+            )
+            .toList()
+          ..sort();
+    return described.join(', ');
+  }
+
+  /// The operator's own words, or `null` when they are not safe to repeat.
+  ///
+  /// An allow-list of one shape — short, single-line, no spaces — rather than a
+  /// block-list of key markers. A PEM private key contains newlines, spaces and
+  /// `-----BEGIN`, so it cannot match; the check does not have to know what key
+  /// material looks like, and it cannot be defeated by a marker this file never
+  /// heard of. These reasons are logged and shown, so repeating the input must
+  /// be a decision rather than an accident.
+  static String? _safeToEcho(String value) =>
+      RegExp(r'^[A-Za-z0-9._/@:+-]{1,80}$').hasMatch(value) ? value : null;
+}
+
+/// What one successful [DurableWorkspaceProvisionTrigger.provision] call
+/// established, read back from the record it wrote.
+class DurableWorkspaceProvisioned {
+  const DurableWorkspaceProvisioned({
+    required this.productId,
+    required this.repositoryId,
+    required this.pinnedRevision,
+    required this.workspace,
+    required this.onboardingId,
+    required this.completedBaselineId,
+  });
+
+  final String productId;
+  final String repositoryId;
+
+  /// The commit the clone was verified to be at. Forty hex characters, because
+  /// `recordWorkspace` will not have accepted anything else.
+  final String pinnedRevision;
+
+  final DurableWorkspaceDescriptor workspace;
+  final String onboardingId;
+
+  /// The baseline whose human acceptance named this completion.
+  final String completedBaselineId;
+
+  @override
+  String toString() =>
+      'DurableWorkspaceProvisioned($productId/$repositoryId@$pinnedRevision in '
+      '${workspace.repositoryPath}, completed against $completedBaselineId)';
+}
+
+/// A refusal to provision, as a code an operator can act on plus a reason they
+/// can read.
+///
+/// A code and not only a sentence, because the sentences are long by design and
+/// an operator triaging a log line needs something short and stable to match on.
+/// Every code is named here, once, and no code is ever reused for a second
+/// meaning — the failure mode this exists to prevent is a monitoring rule that
+/// fires on one mistake and silently misses the next.
+class DurableWorkspaceProvisionRefused implements Exception {
+  const DurableWorkspaceProvisionRefused({
+    required this.code,
+    required this.reason,
+  });
+
+  /// No durable-workspace runtime exists in this deployment — no resolved root,
+  /// or no custody substrate. The reason is the runtime's own.
+  static const String runtimeUnavailable = 'DURABLE_RUNTIME_UNAVAILABLE';
+
+  /// The requested starting point is not a commit SHA, so it cannot be pinned.
+  static const String unresolvableRevision = 'REVISION_NOT_A_COMMIT_SHA';
+
+  /// No baseline of this product has been accepted by a human.
+  static const String baselineNotAccepted = 'NO_ACCEPTED_BASELINE';
+
+  /// More than one baseline is accepted, so the completion target is ambiguous.
+  static const String baselineAmbiguous = 'AMBIGUOUS_ACCEPTED_BASELINE';
+
+  /// The product already has a durable clone. Nothing was changed.
+  static const String alreadyProvisioned = 'WORKSPACE_ALREADY_PROVISIONED';
+
+  final String code;
+
+  /// Safe to log and to show: every value interpolated into it is operator
+  /// input, a configuration fact or a refusal reason — never key material. The
+  /// only operator input repeated back is filtered to a shape a key cannot take.
+  final String reason;
+
+  @override
+  String toString() => 'DurableWorkspaceProvisionRefused($code): $reason';
 }
 
 /// Durable state backing one row of the Products list.
