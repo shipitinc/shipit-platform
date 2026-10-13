@@ -93,6 +93,26 @@ class WorkItemTransitions {
       GuardConditions.actorAllowed([ActorType.orchestrator]),
     ],
     /*** Execution ***/
+    // THE IMPLEMENTATION LANE'S ENTRY EDGE.
+    //
+    // The guards are copied from `designNotRequired -> agentExecuting` below,
+    // which is this table's own convention for an edge INTO `agentExecuting`:
+    // such an edge asserts that an agent is starting RIGHT NOW, and capacity is
+    // enforced at claim time by `JobCapacityGuard`, not by a guard here.
+    //
+    // `qaContractExists()` is deliberately ABSENT, and its absence is load-
+    // bearing rather than an oversight. That guard belongs on the EXIT edge
+    // (`agentExecuting -> agentCompleted`), where the work item carries a
+    // `qaContractId`. Putting it here would make this edge unreachable from the
+    // scheduler, which has no `AgentResult` and no `qaContractId` to supply —
+    // the scheduler would enqueue and the coordinator would refuse every
+    // attempt at the cost of a real worker execution. Whether an item MAY be
+    // dispatched without a QA contract is `OD-5`; this edge does not decide it,
+    // it only refuses to lie about an execution already happening.
+    (WorkItemState.implementationReady, WorkItemState.agentExecuting): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+      GuardConditions.agentAvailable(),
+    ],
     (WorkItemState.designNotRequired, WorkItemState.agentExecuting): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
       GuardConditions.agentAvailable(),
@@ -282,6 +302,74 @@ class WorkItemTransitions {
       // are deliberately not added: the generic edge does not bound them
       // either, and inventing a bound here would be new policy rather than a
       // lockstep move.
+      GuardConditions.escalationIndexWithinLimitForDecisionTypes(
+        escalationDecisionTypes: {
+          HumanDecisionType.engineeringReview,
+          HumanDecisionType.humanQaApproval,
+        },
+      ),
+    ],
+    // THE SAME REWORK GATE, LANDING IN THE IMPLEMENTATION LANE.
+    //
+    // Design brief §7.5 Obligation A / D-14. `HumanDecisionRouting.targetFor`
+    // is the SOLE determinant of where a resolved human decision lands
+    // (`DurableWorkflowEngine.resolveHumanDecision` takes no caller-supplied
+    // state), so retargeting any of the five "do the work again" pairs to
+    // `implementationReady` REQUIRES this edge to exist. Without it the routing
+    // table would move a work item to a state nothing leaves, and the engine
+    // would throw on resolution — the decision would be answered and the item
+    // would sit at its gate with nothing running.
+    //
+    // The guard set is DELIBERATELY IDENTICAL to
+    // `waitingForHumanDecision -> designNotRequired` above: the same
+    // `actorAllowed([orchestrator])`, the same six-pair
+    // `blockingHumanDecisionResolved` membership list, the same
+    // `decisionActorIsHuman()`, and the same `escalationIndexWithinLimitFor
+    // DecisionTypes` bound for exactly the two types the other edge bounds.
+    // Nothing is relaxed and nothing is added. That is the point: this edge is
+    // the landing site a routing retarget will use, so it must already carry
+    // the gate that retarget would have to carry — and
+    // `implementation_ready_edge_test.dart` fails by name if it ever drifts
+    // from the edge it shadows.
+    //
+    // `agentAvailable()` is absent for the same reason it is absent on every
+    // edge that is not `-> agentExecuting`: this edge asserts no execution is
+    // starting, only that a resolved human decision may put the item back in
+    // the queue. Capacity is `JobCapacityGuard`'s job.
+    //
+    // WHAT THIS EDGE DOES NOT DO: no `HumanDecisionRouting` entry targets
+    // `implementationReady` yet. WHICH of the five pairs move here is `OD-3`,
+    // an open product decision, so this lane declares the route and
+    // deliberately leaves it unclaimed rather than guessing which rejections
+    // mean "re-classify" and which mean "re-do the work".
+    (WorkItemState.waitingForHumanDecision, WorkItemState.implementationReady): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+      GuardConditions.blockingHumanDecisionResolved({
+        (
+          type: HumanDecisionType.engineeringReview,
+          choice: HumanDecisionChoice.rework,
+        ),
+        (
+          type: HumanDecisionType.engineeringReview,
+          choice: HumanDecisionChoice.reject,
+        ),
+        (type: HumanDecisionType.qaWaiver, choice: HumanDecisionChoice.reject),
+        (type: HumanDecisionType.qaRework, choice: HumanDecisionChoice.reject),
+        (
+          type: HumanDecisionType.humanQaApproval,
+          choice: HumanDecisionChoice.reject,
+        ),
+        (
+          type: HumanDecisionType.escalation,
+          choice: HumanDecisionChoice.approve,
+        ),
+      }),
+      GuardConditions.decisionActorIsHuman(),
+      // The same bound, MOVED with the edge rather than invented for it.
+      // `qaRework`, `qaWaiver` and `escalation` are deliberately NOT added: the
+      // edge this one shadows does not bound them either, and inventing a bound
+      // here would be new policy rather than a lockstep move. Dropping
+      // `humanQaApproval` would be a silent RELAXATION of a bound it has.
       GuardConditions.escalationIndexWithinLimitForDecisionTypes(
         escalationDecisionTypes: {
           HumanDecisionType.engineeringReview,

@@ -73,6 +73,11 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
       WorkItemWorkflowState.cancelled,
       WorkItemWorkflowState.terminated,
     ],
+    WorkItemState.implementationReady => [
+      WorkItemWorkflowState.agentExecuting,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
     WorkItemState.agentExecuting => [
       WorkItemWorkflowState.agentCompleted,
       WorkItemWorkflowState.agentFailed,
@@ -132,6 +137,7 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
       WorkItemWorkflowState.reviewRejected,
       WorkItemWorkflowState.agentExecuting,
       WorkItemWorkflowState.designNotRequired,
+      WorkItemWorkflowState.implementationReady,
       WorkItemWorkflowState.planning,
       WorkItemWorkflowState.qaPassed,
       WorkItemWorkflowState.deployed,
@@ -180,6 +186,9 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
   );
   static const designRejected = WorkItemWorkflowState(
     WorkItemState.designRejected,
+  );
+  static const implementationReady = WorkItemWorkflowState(
+    WorkItemState.implementationReady,
   );
   static const agentExecuting = WorkItemWorkflowState(
     WorkItemState.agentExecuting,

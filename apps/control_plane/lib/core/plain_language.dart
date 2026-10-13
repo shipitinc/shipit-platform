@@ -16,6 +16,7 @@ import 'design_tokens.dart';
 /// | Needs you — it failed | negative      | red      |
 /// | Finished              | positive      | green    |
 /// | Waiting to start      | inkSecondary  | accent   |
+/// | Ready to build        | inkSecondary  | accent   |
 /// | Awaiting review       | inkSecondary  | inkTertiary|
 enum PlainStatus {
   /// The system is actively doing the work.
@@ -37,7 +38,27 @@ enum PlainStatus {
   stopped('Stopped'),
 
   /// Waiting for review between steps.
-  awaitingReview('Awaiting review');
+  awaitingReview('Awaiting review'),
+
+  /// Queued to be implemented, and nothing has been built yet.
+  ///
+  /// Its OWN status rather than a fold into [awaitingReview]. An item at
+  /// `implementation_ready` is waiting for a developer agent to run, not for a
+  /// reviewer to look: it is upstream of review, not downstream of it. The
+  /// `awaitingReview` bucket also holds `design_required`,
+  /// `design_in_review` and `qa_passed`, none of which is the same statement, so
+  /// adding it there would have made three different waits indistinguishable.
+  ///
+  /// ## Why it exists at all rather than arriving in `_ =>`
+  ///
+  /// `statusFor`'s switch defaults an unrecognised wire value to
+  /// [awaitingReview]. That default is a reasonable last resort for a value the
+  /// domain grew and this file has not caught up with — but `implementation_ready`
+  /// is not one, and it is the one case where the default is not merely
+  /// imprecise but FALSE: the row would read "Awaiting review" for an item no
+  /// implementation has touched. On a screen an operator reads to decide whether
+  /// to intervene, that is a wrong statement about the system's own state.
+  readyToBuild('Ready to build');
 
   const PlainStatus(this.label);
 
@@ -53,6 +74,7 @@ enum PlainStatus {
     PlainStatus.finished => palette.positive,
     PlainStatus.stopped => palette.inkTertiary,
     PlainStatus.awaitingReview => palette.inkSecondary,
+    PlainStatus.readyToBuild => palette.inkSecondary,
   };
 
   /// Colour of the 2px leading tick on the row.
@@ -64,6 +86,10 @@ enum PlainStatus {
     PlainStatus.finished => palette.positive,
     PlainStatus.stopped => palette.inkTertiary,
     PlainStatus.awaitingReview => palette.inkTertiary,
+    // The accent tick, not the tertiary one: nothing is waiting ON a human
+    // here. The system is about to start work by itself, which is the same
+    // "the machine has it" reading `workingOnIt` and `waitingToStart` carry.
+    PlainStatus.readyToBuild => palette.accentTick,
   };
 
   /// True when this row is the operator's turn to act.
@@ -123,6 +149,11 @@ class PlainLanguage {
       'review_approved' ||
       'qa_passed' ||
       'deployed' => PlainStatus.awaitingReview,
+      // Deliberately its own arm, and NOT folded into the group above. This
+      // state means "queued to be implemented"; the group above means "an
+      // artefact exists and is waiting to be looked at". See [PlainStatus
+      // .readyToBuild].
+      'implementation_ready' => PlainStatus.readyToBuild,
       'completed' || 'done' => PlainStatus.finished,
       'cancelled' || 'terminated' => PlainStatus.stopped,
       // An un-escalated failure is still the system's problem, not the
