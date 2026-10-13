@@ -3,17 +3,17 @@
 | Field | Value |
 |---|---|
 | `brief_id` | `B4D91D4A-CF4A-4415-864A-E0700D893367` |
-| `revision_id` | `F35D3433-779B-4E82-868F-0A618280AFEA` |
-| `revision_number` | `2` of this brief (revision 1 was `45EFF1E2-E39F-46AE-98C9-D417EEF5BF0E`) |
-| `version` | `2.0.0` |
+| `revision_id` | `97F50350-C9F1-485C-8F63-A8999D73C55D` |
+| `revision_number` | `3` of this brief (revision 2 was `F35D3433-779B-4E82-868F-0A618280AFEA`; revision 1 was `45EFF1E2-E39F-46AE-98C9-D417EEF5BF0E`) |
+| `version` | `3.0.0` |
 | `status` | `UNDER_REVIEW` |
 | `risk_level` | **3** — Major Workflow change; see §12. **Unchanged by this revision and independently confirmed by the operator at decision `fb3c3485`.** |
 | `branch` | `design/implementation-lane-rev2` |
 | `worktree` | `/Users/alkebut/air/.aef-lanes/impl-lane-design-rev2` |
-| `base_sha` | `84be9794f83ee258664842cd2c9f73f562b0d5f7` (unchanged — revision 2 amends revision 1; the base did not move) |
-| `supersedes` | revision 1 of this brief (`45EFF1E2`, commit `8ad9985`). Revision 1's own supersession of `IMPL-LANE-001` / `IMPL-LANE-001-R1` @ `5d7c276`, base `5cb2817`, stands unchanged — ledger in §1.3; nothing was merged, so nothing is retracted |
+| `base_sha` | `84be9794f83ee258664842cd2c9f73f562b0d5f7` (unchanged — revisions 2 and 3 both amend revision 1; the base did not move) |
+| `supersedes` | revision 2 of this brief (`F35D3433`, commits `381b552`, `9bd8f6d`), on which revision 2 superseded revision 1 (`45EFF1E2`, commit `8ad9985`). Revision 1's own supersession of `IMPL-LANE-001` / `IMPL-LANE-001-R1` @ `5d7c276`, base `5cb2817`, stands unchanged — ledger in §1.3; nothing was merged, so nothing is retracted |
 | `created_by` | `design-agent` |
-| `created_at` | `2026-10-13` (rev 1) · `2026-10-13` (rev 2, this pass) |
+| `created_at` | `2026-10-13` (rev 1) · `2026-10-13` (rev 2) · `2026-10-13` (rev 3, this pass) |
 | `decisions_in_force` | `fb3c3485` (DESIGN, RESOLVED, option A) · `9bfe2d09` (ARCHITECTURE, RESOLVED, `OD-7` = option B) · `c04f6a8d` (ARCHITECTURE, RESOLVED, `OD-8` = option A). **Authoritative over any conflicting prose in this brief.** |
 | `requirements_refs` | `IMPL-001`..`IMPL-005` (§13) — **no source-of-truth artifact exists in this repository; see the traceability limitation in §13.2** |
 | `architecture_refs` | `docs/adr/0018-per-product-git-credentials.md`, `docs/adr/0019-standing-policy-authorisations.md`, `docs/adr/0020-defect-domain-model.md`, `docs/adr/0021-design-defect-routing.md`, `AGENTS.md §13a/§13b`, `docs/engineering/DESIGN_GOVERNANCE.md` |
@@ -54,6 +54,26 @@ confirms `cc9317c`, `f164d40`, `1f39a05` and `5cb2817` are all ancestors of this
 > as a new finding rather than absorbed: `OD-8` = option A changes a Dart field type, and its
 > verified blast radius is materially wider than revision 1's conditional grant (§8.6). It is
 > flagged for a path grant; it does not block this revision.
+
+> ### What revision 3 is, and what it is not
+>
+> **A bookkeeping consolidation pass. It changes no design.** No unit's `OWNED_PATHS` moved, no
+> ownership cell in §8.1 changed, no gate, obligation, prohibition, decision or `C-1`/`C-2`
+> condition changed, and the §8.3 concurrency verdict is untouched. The substantive design passed
+> two independent reviews with no blockers and no highs and is carried forward as it stood.
+>
+> **What it does change is how ownership is *stated*.** Earlier revisions described ownership as
+> arithmetic over §8.1's row set — "nine rows new in revision 2", "the four plus five",
+> "§8.6's five paths". That row set is **not a partition**: it mixes paths that do not exist at
+> the base with rows whose *owner* changed, so every total over it meant one thing to its author
+> and another to its reader, and successive correction passes kept chasing the symptom.
+> Ownership is now stated **directly, as paths**, and §8.1 carries a `Revision 2` column that
+> labels every row `NEW PATH`, `FLIP` or `same owner` so a reader can verify disjointness by
+> reading the two ownership columns rather than by doing subtraction.
+>
+> **Two defects were corrected with it:** a decision ID that did not exist (D-E) and a count that
+> contradicted §8.6's own enumeration (D-B). The decisions, paths, findings and open items are
+> unchanged — only their bookkeeping.
 
 **Not done by this lane, and stated so a reviewer does not have to infer it:** no production
 file modified; no migration written; no Docker or Compose command issued (compose files were
@@ -1341,40 +1361,62 @@ updated accordingly.
 
 ### 8.1 Path map — as revised
 
-| Path | A1 | A2 | Note |
-|---|:--:|:--:|---|
-| `apps/server/lib/src/baseline/**` | **OWN** | — | lane + `resolve(...)` factory + **its own materialiser** + gate update (§6.7, §6.8) |
-| `apps/server/lib/src/credentials/**` | **READ-ONLY** | **READ-ONLY** | **all 13 files** (M5). `repository_snapshot_acquirer.dart` named explicitly. §6.8 |
-| `packages/platform_contracts/lib/src/types/durable_workspace_descriptor.dart` | **OWN** *(NEW)* | — | `OD-8` = option A |
-| `packages/platform_contracts/lib/src/types/onboarding_record.dart` + `.g.dart` | **OWN** | — | the field type + `validate()`; §6.2.1 |
-| `packages/platform_contracts/lib/src/types/workspace_descriptor.dart` | **READ-ONLY** | **READ-ONLY** | **`OD-8` binds it unmodified for both** |
-| `packages/platform_contracts/test/contract_schemas_test.dart` | **OWN** | — | register the new schema |
-| `schemas/durable_workspace_descriptor.schema.json` + `examples/…` | **OWN** *(NEW)* | — | `OD-8` = option A |
-| `schemas/workspace_descriptor.schema.json` | **READ-ONLY** | **READ-ONLY** | `OD-8` binds it unmodified for both |
-| `schemas/onboarding_record.schema.json` | **OWN** | — | the inlined shape changes; §8.6 |
-| `packages/product_registry/**` | **OWN** | — | `recordWorkspace`'s parameter type (§8.6). **Was READ-ONLY in revision 1** |
-| `packages/store_contract_tests/**` | **OWN** | — | the shared conformance suite constructs `WorkspaceDescriptor` (§8.6) |
-| `apps/server/lib/src/persistence/**` | **one file only** | — | `postgres_product_registry_store.dart` (§6.9, §8.6) |
-| `apps/server/lib/src/services/control_plane_service.dart` | **OWN** | — | one debug-log reader (§8.6) |
-| `docker/**` | **OWN** | — | the host bind (§6.3) |
-| `packages/platform_contracts/lib/src/enums/workflow_state.dart` | — | **OWN** | granted by `fb3c3485`; required (§8.4) |
-| `packages/scheduler/**` | — | **OWN** | new definition + drift-guard registration |
-| `packages/workflow_engine/**` | — | **OWN** | new state mirror, new edge, routing retargets |
-| `packages/workflow_store/**` | — | **OWN** | only if the escalation/rework reader changes |
-| `apps/server/lib/src/implementation/**` | — | **OWN** *(NEW)* | granted by `fb3c3585`; §8.2/collision 3 |
-| `apps/control_plane/lib/core/plain_language.dart` | — | **OWN** | **granted by `fb3c3485`**; §7.1 |
-| `apps/control_plane/lib/shared/transition_copy.dart` | — | **OWN** | **granted by `fb3c3485`**; §7.1 |
-| **`apps/server/lib/server.dart`** | **—** | **OWN** | **the single shared seam; §8.3.** Also carries the env-var read A1 needs (M3) |
-| `packages/platform_contracts/lib/src/types/workspace_descriptor.dart` | — | — | *(listed above — READ-ONLY for both)* |
+| Path | A1 | A2 | Revision 2 | Note |
+|---|:--:|:--:|---|---|
+| `apps/server/lib/src/baseline/**` | **OWN** | — | same owner | lane + `resolve(...)` factory + **its own materialiser** + gate update (§6.7, §6.8) |
+| `apps/server/lib/src/credentials/**` | **READ-ONLY** | **READ-ONLY** | **FLIP** — A1 OWN → read-only for **both** | **all 13 files** (M5). `repository_snapshot_acquirer.dart` named explicitly. §6.8 |
+| `packages/platform_contracts/lib/src/types/durable_workspace_descriptor.dart` | **OWN** *(NEW PATH)* | — | **NEW PATH** | `OD-8` = option A. Does not exist at `84be979` |
+| `packages/platform_contracts/lib/src/types/onboarding_record.dart` + `.g.dart` | **OWN** | — | **FLIP** — unmapped → A1 OWN | the field type + `validate()`; §6.2.1 |
+| `packages/platform_contracts/lib/src/types/workspace_descriptor.dart` | **READ-ONLY** | **READ-ONLY** | **FLIP** — conditional A1 OWN → read-only for **both** | **`OD-8` binds it unmodified for both** |
+| `packages/platform_contracts/test/contract_schemas_test.dart` | **OWN** | — | **FLIP** — unmapped → A1 OWN | register the new schema |
+| `schemas/durable_workspace_descriptor.schema.json` + `examples/…` | **OWN** *(NEW PATH)* | — | **NEW PATH** | `OD-8` = option A. Does not exist at `84be979` |
+| `schemas/workspace_descriptor.schema.json` | **READ-ONLY** | **READ-ONLY** | **FLIP** — conditional A1 OWN → read-only for **both** | `OD-8` binds it unmodified for both |
+| `schemas/onboarding_record.schema.json` | **OWN** | — | **FLIP** — conditional → **unconditional** A1 OWN | the inlined shape changes; §8.6 |
+| `packages/product_registry/**` | **OWN** | — | **FLIP** — A1 read-only → A1 OWN | `recordWorkspace`'s parameter type (§8.6). **Was READ-ONLY in revision 1** |
+| `packages/store_contract_tests/**` | **OWN** | — | **FLIP** — unmapped → A1 OWN | the shared conformance suite constructs `WorkspaceDescriptor` (§8.6) |
+| `apps/server/lib/src/persistence/**` | **one file only** | — | **FLIP** — provisionally none → one file | `postgres_product_registry_store.dart` (§6.9, §8.6) |
+| `apps/server/lib/src/services/control_plane_service.dart` | **OWN** | — | **FLIP** — unmapped → A1 OWN | one debug-log reader (§8.6) |
+| `docker/**` | **OWN** | — | same owner | the host bind (§6.3) |
+| `packages/platform_contracts/lib/src/enums/workflow_state.dart` | — | **OWN** | same owner, **formalised by grant** | granted by `fb3c3485`; required (§8.4) |
+| `packages/scheduler/**` | — | **OWN** | same owner | new definition + drift-guard registration |
+| `packages/workflow_engine/**` | — | **OWN** | same owner | new state mirror, new edge, routing retargets |
+| `packages/workflow_store/**` | — | **OWN** | same owner | only if the escalation/rework reader changes |
+| `apps/server/lib/src/implementation/**` | — | **OWN** *(NEW PATH)* | **NEW PATH** | granted by `fb3c3485`; §8.2/collision 3. Does not exist at `84be979` |
+| `apps/control_plane/lib/core/plain_language.dart` | — | **OWN** | **FLIP** — carved out of the `apps/control_plane/**` read-only row → A2 OWN | **granted by `fb3c3485`**; §7.1 |
+| `apps/control_plane/lib/shared/transition_copy.dart` | — | **OWN** | **FLIP** — carved out of the `apps/control_plane/**` read-only row → A2 OWN | **granted by `fb3c3485`**; §7.1 |
+| **`apps/server/lib/server.dart`** | **—** | **OWN** | same owner | **the single shared seam; §8.3.** Also carries the env-var read A1 needs (M3) |
+| `packages/platform_contracts/lib/src/types/workspace_descriptor.dart` | — | — | *(listed above)* | *(listed above — READ-ONLY for both)* |
+
+**Legend for the `Revision 2` column — three values, and they mean different things:**
+`NEW PATH` is a path that **does not exist at `84be979`** and that a unit will create.
+`FLIP` is a path that **already existed** and whose **owner or reader-access changed** in revision
+2 — sometimes into A1's ownership, sometimes out of it. `same owner` is a row revision 2 did not
+move; the unit may still change what is *inside* it.
 
 **Every `OWN` row above is disjoint between the two columns.** That is the property `C-1` and
 `C-2` exist to guarantee, and review-matrix row **R-7** is how the Manager checks it before
-dispatch.
+dispatch. **Check it by reading the two ownership columns row by row. Do not check it by
+counting**, and do not add the `NEW PATH` rows to the `FLIP` rows: the row set is the union of two
+overlapping concerns — *does this path exist* and *who owns it* — so any total over it means one
+thing when a reader assumes the other.
 
-**Nine paths in this map are new in revision 2**, for two different reasons, and they should not
-be conflated: four were **granted by the operator** (`fb3c3485`) and five under `products/` and
-`services/` are the **verified consequence of `OD-8` = option A** (§8.6). The second group is
-flagged for a path grant — see §8.6's closing note.
+**Ownership is stated here as paths, and each is named rather than counted.** For reference:
+
+- **Paths that do not exist at `84be979`** (`NEW PATH`): `durable_workspace_descriptor.dart`,
+  `schemas/durable_workspace_descriptor.schema.json` + `schemas/examples/…`
+  (both from `OD-8` = option A, §8.6), and `apps/server/lib/src/implementation/**`
+  (the `fb3c3485` grant, §8.2/collision 3).
+- **Paths whose ownership moved** (`FLIP`): into A1 — `packages/product_registry/**` (was A1
+  read-only), `packages/store_contract_tests/**`, `apps/server/lib/src/services/control_plane_service.dart`,
+  `apps/server/lib/src/persistence/**` (was provisionally none), `onboarding_record.dart` + `.g.dart`,
+  `contract_schemas_test.dart`, `schemas/onboarding_record.schema.json` (was conditional);
+  out of A1 — `apps/server/lib/src/credentials/**` (was A1 OWN, now read-only for both, M5) and
+  `workspace_descriptor.dart` + its schema (were conditional A1 OWN, now read-only for both under
+  `OD-8`); into A2 — `apps/control_plane/lib/core/plain_language.dart` and
+  `apps/control_plane/lib/shared/transition_copy.dart` (both carved out of the single
+  `apps/control_plane/**` row that was read-only for both).
+- **The paths whose grant is still pending** are enumerated where they are escalated — §8.6's
+  closing note — not summarised by a number here.
 
 ### 8.2 The three candidate collisions, tested one at a time
 
@@ -1446,7 +1488,7 @@ covered by the gate either (only `baseline_product.dart` and `baseline_dispatch.
 
 | Property | Holds? | Why |
 |---|---|---|
-| Disjoint owned paths | **Yes**, after `C-1`, and after the nine rows §8.1 records as new in revision 2 — the four paths granted beyond the brief by `fb3c3485` plus five that follow from `OD-8` = option A (§8.6) | §8.1 |
+| Disjoint owned paths | **Yes**, after `C-1` — and it is checked by reading §8.1's two ownership columns row by row, **not** by counting rows, because §8.1's row set mixes paths that do not exist yet (`NEW PATH`) with rows whose owner changed (`FLIP`), and the two do not partition it | §8.1 |
 | **Product code is independently compilable in either direction** | **Yes** | A1 calls `recordWorkspace`/`completeOnboarding`, which already exist (`f164d40`). A2 reads `readOnboardingForProduct`, which already exists (`postgres_product_registry_store.dart:1062-1071`). **Neither unit's own product code waits for the other's code to exist** — and since revision 2 granted A1 `packages/store_contract_tests/**`, A1's owned suite *does* transitively compile A2's `scheduler` and `workflow_store` at the base revision (`job_store_suite.dart:5` imports `package:scheduler/scheduler.dart`; `fixtures.dart:3` imports `package:workflow_store/workflow_store.dart` and builds `WorkItemState` values at `:13,103-104,145-146`), but it requires **no NEW declaration from A2**. The edge is one-directional — A1's → A2's — and it is satisfied by what already exists at base. |
 | **The ONE-FILE composition-root integration is serialized** | **Yes, and it is not optional** | Once `C-1` is discharged, `server.dart` **references A1's runtime class** — so A2's composition cannot compile until A1's factory declaration is visible. **This is a compile-time dependency in exactly one direction, in exactly one file.** It is the accepted cost of `C-1` and it is two call lines. |
 | A runtime dependency exists | **Yes — deliberately** | A2's readiness probe reads a record A1 writes (§7.7). |
@@ -1589,7 +1631,7 @@ best documentation of the confusion this whole design exists to resolve.
 > **Ownership is granted by the Manager or the operator, never by the designer.** This lane
 > therefore records the requirement and the recommendation and **takes nothing**. Extending the
 > grant is a one-line amendment to a decision object, and it is the same class of action as the
-> four grants already made in `fb3c3485` — recorded there for exactly this reason: *"Without these
+> grants already made in `fb3c3485` — recorded there for exactly this reason: *"Without these
 > two files an item at the new state is misreported as awaiting review."*
 >
 > **This does not block this revision.** The design is complete and reviewable; the grant is a
@@ -1957,7 +1999,7 @@ rest.
 > durable workspace is NOT authorised. The §7.7 readiness probe must defer rather than dispatch.
 > Approval authorises BUILDING A1 and A2, not landing IMPL-001/IMPL-002."*
 >
-> **Four paths were granted beyond the brief**, all four now reflected in §8.1:
+> **The paths granted beyond the brief are these, and each is now reflected in §8.1**:
 > `apps/control_plane/lib/core/plain_language.dart`,
 > `apps/control_plane/lib/shared/transition_copy.dart`,
 > `apps/server/lib/src/implementation/**`,
@@ -2013,7 +2055,7 @@ this document. Approval authorises BUILDING. It does not deliver `IMPL-001` or `
 | Lane, `resolve(...)` factory, agnosticism-gate update (§6.7, §6.8) | ✅ UNBLOCKED | **YES** | — |
 | Own materialiser + the six credential obligations (§6.4, M1) | ✅ UNBLOCKED | **YES** | — |
 | `DurableWorkspaceDescriptor` type + schema + `kind` discriminator (§6.2.1, D-21) | ✅ **UNBLOCKED** (`c04f6a8d`) | **YES** | — |
-| The field-type change and every reader it breaks (§8.6) | ✅ Unblocked in principle | **NO — cannot start** | **Path grant for §8.6's five paths. Not self-granted.** |
+| The field-type change and every reader it breaks (§8.6) | ✅ Unblocked in principle | **NO — cannot start** | **Path grant for the paths §8.6 escalates: `packages/product_registry/**`, `packages/store_contract_tests/**`, `apps/server/lib/src/persistence/postgres_product_registry_store.dart`, `apps/server/lib/src/services/control_plane_service.dart`. Not self-granted.** |
 | **Reclamation policy — lifetime bound** | ❌ **GATED** | **NO** | **`OD-7.2` — unanswered** |
 | **Reclamation policy — who presses it** | ❌ **GATED** | **NO** | **`OD-7.3` — unanswered** |
 | **A1's persisted output** (`IMPL-002`) | ❌ **NOT MET** | — | `OD-7.2`, `OD-7.3`, and the §8.6 grant |
@@ -2101,7 +2143,7 @@ requirement. `IMPL-003` additionally depends on `OD-5` (§13.1).
 |---|---|
 | **No requirements artifact exists (L2)** | The traceability above is dispatch-text-to-design, not requirements-to-design. **Bounds §13.1's meaning.** |
 | `OD-7.2` / `OD-7.3` unanswered | **A1 can ship the mount but not a reclamation policy.** `IMPL-002`'s workspace will exist and be durable, with **no bound on its lifetime and no named reclaimer.** §6.3.6. |
-| §8.6's five paths not granted | **A1 cannot compile.** The field-type change `OD-8` requires is blocked until the grant is extended. **Dispatch-time input, not a design gap — and this lane took nothing.** |
+| §8.6's escalated paths not granted — `packages/product_registry/**`, `packages/store_contract_tests/**`, `apps/server/lib/src/persistence/postgres_product_registry_store.dart`, `apps/server/lib/src/services/control_plane_service.dart` | **A1 cannot compile.** The field-type change `OD-8` requires is blocked until the grant is extended. **Dispatch-time input, not a design gap — and this lane took nothing.** |
 | `OD-5` unanswered | `IMPL-003` cannot complete end to end; items A2 dispatches would stall at `agentExecuting` for ever. §9.1 precondition 3. |
 | `OD-10` unanswered | `IMPL-001` may build a scheduler that never dispatches. Safe, but **the requirement is unmet**. |
 | `OD-3` unanswered | A2's routing edits cannot be written. `D-13`/`D-14` bind regardless, so the guard set is authorable even though the route is not. |
@@ -2257,18 +2299,19 @@ prohibition ages badly.
 
 | Item | Value |
 |---|---|
-| Worktree | `/Users/alkebut/air/.aef-lanes/impl-lane-design-rev2` (branch created at `84be979`; revision 1 committed at `8ad9985`) |
+| Worktree | `/Users/alkebut/air/.aef-lanes/impl-lane-design-rev2` (branch created at `84be979`; revision 1 committed at `8ad9985`; revision 2 at `381b552` then `9bd8f6d`) |
 | Branch | `design/implementation-lane-rev2` |
-| Base SHA | `84be9794f83ee258664842cd2c9f73f562b0d5f7` — **unchanged by revision 2**; the base did not move and this revision amends revision 1 on top of it |
+| Base SHA | `84be9794f83ee258664842cd2c9f73f562b0d5f7` — **unchanged by revision 3 or revision 2**; the base did not move and both amend revision 1 on top of it |
 | Files in this revision | `docs/design/implementation-lane/design-brief.md`, `docs/design/implementation-lane/design-revision-metadata.yaml` |
 | Files modified outside `docs/design/implementation-lane/**` | **0** |
+| **Unit `OWNED_PATHS` changed by this revision** | **none.** §8.1's two ownership columns are byte-identical to revision 2's; only the descriptive `Revision 2` column and the prose around it were rewritten. |
 | Production code written | **none** |
 | Migration written | **none** |
 | Docker / Compose commands issued | **0** — including `ps`, `logs` and `info`; compose files were read **as text**, per `AGENTS.md` "Shared Docker state" |
 | Database connections | **0**; `psql` **0** |
 | `git stash` / amend / rebase / force-push / merge / push | **none** |
 | Path ownership taken by this lane | `docs/design/implementation-lane/**` only |
-| **Path ownership SELF-GRANTED to A1 or A2** | **none.** §8.6's five paths are *recorded and escalated*, not taken. |
+| **Path ownership SELF-GRANTED to A1 or A2** | **none.** The paths §8.6 escalates are *recorded and escalated*, not taken; §8.1 records each of them as a `FLIP` row whose grant is pending. |
 | Self-approval | **none.** This revision has not been reviewed by its author. |
 
 **Verified at this base and relied on above:** `cc9317c`, `f164d40`, `1f39a05` and `5cb2817` are
