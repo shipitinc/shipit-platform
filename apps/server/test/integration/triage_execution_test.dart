@@ -1759,9 +1759,39 @@ void main() {
 
       group('attempt bounds and retries', () {
         test(
-          'PRODUCTION DEFECT: a transient failure queues a retry that no '
-          'scheduler tick can ever claim',
+          'a transient failure returns the item to the lane entry state and '
+          'the scheduled retry REALLY RUNS',
           () async {
+            // THE SUCCESSOR TO A PINNED DEFECT.
+            //
+            // This slot used to hold
+            // `"PRODUCTION DEFECT: a transient failure queues a retry that no
+            // scheduler tick can ever claim"`, which asserted the BUG on
+            // purpose: it ran three ticks past the retry's back-off and
+            // asserted `dispatched` was empty every time, that the job was
+            // still `retryWaiting`, and that `run.process()` returned null.
+            // Its own comment said the test was a characterisation and not an
+            // endorsement, and that it was "expected to fail and be replaced
+            // with an assertion that attempt 2 succeeds" when the retry path
+            // was fixed. This is that replacement. The old assertions are
+            // INVERTED here one for one — including `cancelledQueued`, which
+            // used to hold the job id on every tick and now holds nothing.
+            //
+            // The defect was four links: the coordinator moved the item out of
+            // the lane's entry states (`agentExecuting -> agentFailed`);
+            // `RunnableWorkEvaluator` rejects any item outside `entryStates`
+            // before it consults anything; the next tick therefore classified
+            // it `noAction`; and `Scheduler._retireSupersededForItem` cancelled
+            // the retry that had just been scheduled. Nothing was dispatched,
+            // and `cancelledQueued` is not in the drain's `dispatched ∪
+            // terminal ∪ reconciled` union, so no operator signal was raised
+            // either. No retry had ever run on any `Scheduler` lane.
+            //
+            // Closed by decision `3659984d-4e2a-4625-81ff-37aa73252375`
+            // (option A): a retryable failure returns the item to the ENTRY
+            // STATE OF THE LANE WHOSE JOB FAILED. NOT a widening of any entry
+            // set — the last assertion below is the invariant that decision
+            // turns on, and it is asserted on the LIVE definition.
             final db = await newDb();
             var now = DateTime.utc(2026, 3, 1, 12);
             final run = await _dispatchTriage(
@@ -1772,9 +1802,9 @@ void main() {
               ),
               // The agent session ends interrupted, which `LocalWorker` reports
               // as `timedOut` and `RetryPolicy.classify` maps to
-              // `JobFailureKind.transient`. A second session would complete
-              // normally, so the ONLY thing stopping recovery is platform
-              // machinery, not the agent.
+              // `JobFailureKind.transient`. A second session completes
+              // normally, so the ONLY thing standing between this run and a
+              // classified defect is platform machinery.
               interruptFirstExecutions: 1,
               clock: () => now,
             );
@@ -1794,66 +1824,143 @@ void main() {
 
             // `RetryPolicy.retryDelay` is one minute, so the retry is not yet
             // due, and the work item has been moved to `agentFailed` by the
-            // coordinator settling the interrupted execution.
+            // coordinator settling the interrupted execution — outside every
+            // triage entry state.
             expect(run.job.availableAt, DateTime.utc(2026, 3, 1, 12, 1));
             expect(
               (await run.workflowStore.readWorkItem(run.workItemId)).state,
               WorkItemState.agentFailed,
             );
-            expect((await run.scheduler.tick()).dispatched, isEmpty);
 
-            // Past the delay, the retry becomes eligible in the queue...
-            now = now.add(const Duration(minutes: 2));
+            // ---- THE RETURN, on the very next tick.
+            //
+            // This is the tick that used to cancel the retry. It now hands the
+            // item back to `designNotRequired`, which is
+            // `triageDefectDefinition.entryStates` and always was.
+            final returning = await run.scheduler.tick();
+
             expect(
-              run.scheduler.queue.isEligibleAt(run.job, now),
+              returning.cancelledQueued,
+              isEmpty,
+              reason:
+                  'LINK 4 OF THE DEFECT, inverted. The retry that was just '
+                  'scheduled was NOT retired as superseded. Before the fix '
+                  'this list held the job id, on every tick, for ever — and '
+                  'nothing drained it, so an operator saw nothing either.',
+            );
+            expect(
+              returning.retryReturned.where((m) => m.returned).map((m) => m.to),
+              [WorkItemState.designNotRequired],
+              reason:
+                  'the item went back to the triage lane\'s OWN entry state — '
+                  'a RETURN, never a widening',
+            );
+            expect(
+              (await run.workflowStore.readWorkItem(run.workItemId)).state,
+              WorkItemState.designNotRequired,
+            );
+            expect(
+              returning.dispatched,
+              isEmpty,
+              reason: 'the one-minute back-off has not elapsed yet',
+            );
+            expect(
+              (await run.jobStore.readJob(run.job.jobId))!.state,
+              JobState.retryWaiting,
+              reason: 'the retry is still parked, and now it is CLAIMABLE',
+            );
+
+            // ---- past the delay, the retry is actually claimed.
+            now = now.add(const Duration(minutes: 2));
+            final dueForRetry = await run.jobStore.readJob(run.job.jobId);
+            expect(
+              run.scheduler.queue.isEligibleAt(dueForRetry!, now),
               isTrue,
               reason: 'the delay has elapsed, so the queue considers it due',
             );
 
-            // ...and the scheduler still will not touch it, on any tick.
-            for (var i = 0; i < 3; i++) {
-              final tick = await run.scheduler.tick();
-              expect(tick.dispatched, isEmpty);
-              expect(tick.deferred, isEmpty);
-              expect(tick.terminal, isEmpty);
-              expect(tick.cancelledQueued, isEmpty);
-              now = now.add(const Duration(hours: 1));
-            }
-
-            // Root cause, both halves of it:
-            //
-            //  * `Scheduler._eligibleRunnableJobs` only claims a job whose work
-            //    item `RunnableWorkEvaluator` calls `runnable`.
-            //  * `RunnableWorkEvaluator` calls `runnable` only from
-            //    `definition.entryStates`, and `triageDefectDefinition`'s are
-            //    `{designNotRequired, designApproved}`.
-            //  * The coordinator moved the item to `agentFailed`, which is not
-            //    one of them, so the status is `noAction` — and `noAction`
-            //    explicitly leaves every existing job untouched.
-            //
-            // So the job is due, owned by nobody, and can never advance. It is
-            // also not terminal, so the `job.isTerminal` guard in
-            // `apps/server/lib/server.dart`'s post-tick hook skips it and
-            // `TriageProcessor` never runs: the defect is silently never
-            // classified. The bounded retry allowance
-            // (`triageDefectDefinition.maxAttempts == 2`) is unreachable in
-            // production for exactly the failures it exists for.
-            //
-            // This test pins the CURRENT behaviour on purpose. It is a
-            // characterisation of a bug, not an endorsement: when the retry
-            // path is fixed, this test is expected to fail and be replaced with
-            // an assertion that attempt 2 succeeds.
-            final wedged = await run.jobStore.readJob(run.job.jobId);
-            expect(wedged!.state, JobState.retryWaiting);
-            expect(wedged.attempt, 2);
-            expect(wedged.isTerminal, isFalse);
-            expect(await run.process(), isNull);
-            expect(await run.triageResultRowsForDefect(), isEmpty);
+            final retryTick = await run.scheduler.tick();
             expect(
-              triageDefectDefinition.entryStates.contains(
-                WorkItemState.agentFailed,
+              retryTick.dispatched,
+              [run.job.jobId],
+              reason: 'a scheduler tick really claimed the scheduled retry',
+            );
+
+            // ---- AND THE SECOND EXECUTION REALLY RAN, AND SUCCEEDED.
+            //
+            // Not "a retry was scheduled" — that already worked. This is the
+            // second real agent session, in a second real worktree, through the
+            // real coordinator and the real platform verifier.
+            final recovered = await run.jobStore.readJob(run.job.jobId);
+            expect(recovered!.state, JobState.succeeded);
+            expect(recovered.attempt, 2);
+            expect(
+              recovered.failure,
+              isNull,
+              reason: 'and nothing about the first failure survived onto it',
+            );
+            expect(
+              (await run.workflowStore.readWorkItem(run.workItemId)).state,
+              WorkItemState.agentCompleted,
+              reason: 'the second session completed normally',
+            );
+
+            // ---- and the defect is finally CLASSIFIED, which is the thing the
+            // whole recovery exists to achieve.
+            //
+            // The RECOVERED row has to be handed to the processor, not
+            // `run.process()`: that helper reads `run.job`, which is the
+            // SNAPSHOT taken at the first dispatch — the failed one — so it is
+            // null for the uninteresting reason that a `retryWaiting` job has no
+            // result to consume. Both are asserted, so the difference is stated
+            // rather than assumed.
+            expect(await run.process(), isNull);
+            expect(
+              await run.processor.processCompletedTriageJob(recovered),
+              isNotNull,
+            );
+            final rows = await run.triageResultRowsForDefect();
+            expect(rows, hasLength(1));
+            expect(
+              rows.single['recommendedClassification'],
+              DefectClassification.implementationDefect.wire,
+              reason:
+                  'before the fix this list was EMPTY on every tick, for ever: '
+                  'the defect was never classified',
+            );
+
+            // ---- THE INVARIANT THE DECISION TURNS ON.
+            expect(
+              triageDefectDefinition.entryStates,
+              {
+                WorkItemState.designNotRequired,
+                WorkItemState.designApproved,
+                WorkItemState.reviewRejected,
+              },
+              reason:
+                  'NO entryStates set was widened. The fix returns the item to '
+                  'a state this definition already dispatched from; the '
+                  'one-element sets of the other lanes are what make the '
+                  'triage/implementation dispatch collision structurally '
+                  'unreachable, and widening one would destroy that. Option B '
+                  'of the decision — teach the scheduler to honour a retry for '
+                  'an item OUTSIDE entryStates — was rejected for exactly this '
+                  'reason.',
+            );
+            expect(
+              triageDefectDefinition.entryStates,
+              isNot(contains(WorkItemState.agentFailed)),
+            );
+            expect(
+              implementFeatureDefinition.entryStates,
+              {WorkItemState.implementationReady},
+            );
+            expect(
+              triageDefectDefinition.entryStates.intersection(
+                implementFeatureDefinition.entryStates,
               ),
-              isFalse,
+              isEmpty,
+              reason: 'disjointness is the property the return must preserve',
             );
           },
         );

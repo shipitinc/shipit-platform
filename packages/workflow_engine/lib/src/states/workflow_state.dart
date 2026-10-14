@@ -94,11 +94,23 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
     WorkItemState.agentFailed => [
       WorkItemWorkflowState.agentExecuting,
       WorkItemWorkflowState.designNotRequired,
+      // The RETRY RETURN edges (decision 3659984d, option A). Each lands on a
+      // state that is ALREADY an entry state of a wired `JobDefinition`; none of
+      // them adds a state to any entry set. Exactly one per entry set, so the
+      // scheduler's policy-derived return target stays unambiguous — see
+      // `work_item_transitions.dart` and `Scheduler._returnRetryableItems`.
+      WorkItemWorkflowState.implementationReady,
+      WorkItemWorkflowState.designRequired,
+      WorkItemWorkflowState.designInReview,
       WorkItemWorkflowState.cancelled,
       WorkItemWorkflowState.terminated,
     ],
     WorkItemState.reviewInProgress => [
       WorkItemWorkflowState.waitingForHumanDecision,
+      // The REVIEW lane's retry return. Not an approval: `agentCompleted` has no
+      // route to `reviewApproved`, it only puts the item back in front of a
+      // reviewer.
+      WorkItemWorkflowState.agentCompleted,
       WorkItemWorkflowState.cancelled,
       WorkItemWorkflowState.terminated,
     ],
