@@ -6,6 +6,31 @@ import 'persistence_database.dart';
 import 'util/db_row_util.dart';
 
 /// PostgreSQL implementation of [ExecutionStore].
+///
+/// ## `saveRequest` AND THE NOT NULL `createdAt`
+///
+/// `agent_execution_request."createdAt"` is `NOT NULL`, and
+/// `AgentExecutionRequest.createdAt` is a `DateTime?` that the only production
+/// caller — `LocalWorker._agentRequest` — never sets. Writing the request's own
+/// value straight through therefore inserts `null` and the database refuses the
+/// statement:
+///
+///     null value in column "createdAt" of relation "agent_execution_request"
+///     violates not-null constraint
+///
+/// That is not a hypothetical. This store was never on the coordinator's path
+/// until the composition root was wired to it, and `saveRequest` is the FIRST
+/// write a coordinator execution makes — so the failure lands on every agent
+/// execution, before a session is ever started, and the whole dispatch lane
+/// goes down while every health probe still reports green. It is repaired here,
+/// at the persistence boundary, rather than in `LocalWorker`:
+///
+///  * the layer that owns the schema is the layer that must satisfy it, and
+///  * "when this row was written" is the honest value for a column the domain
+///    model leaves unset, and is what the NOT NULL constraint is asking for.
+///
+/// A request that DOES carry a `createdAt` keeps it — this is a default, never
+/// an override, so a caller that knows better is not overruled.
 class PostgresExecutionStore implements ExecutionStore {
   PostgresExecutionStore(this._db);
 
@@ -63,9 +88,13 @@ class PostgresExecutionStore implements ExecutionStore {
           json['runtimeConfig'],
         ),
         'environmentJson': PersistenceDatabase.encodeJson(json['environment']),
-        'createdAt': PersistenceDatabase.toUtc(
-          urlParseDateTime(json['createdAt']),
-        ),
+        // See the class doc: the column is NOT NULL and the only production
+        // caller leaves the field unset, so the store supplies the write time.
+        'createdAt':
+            PersistenceDatabase.toUtc(
+              urlParseDateTime(json['createdAt']),
+            ) ??
+            DateTime.now().toUtc(),
       }),
     );
   }
