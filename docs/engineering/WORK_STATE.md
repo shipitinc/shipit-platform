@@ -1287,3 +1287,71 @@ A1 additionally owns, per fb3c3485's approved design §8.1/§8.6:
 
 Granted by the Manager 2026-10-13 to discharge design precondition P1. These were
 escalated by the design lane rather than self-taken. Verified no overlap with A2's map.
+
+---
+
+## Open follow-ups (2026-10-13, after the implementation-lane bring-up)
+
+Every item below was raised by an independent review and judged NON-BLOCKING. They are recorded here
+because each one is a claim the repository currently cannot enforce.
+
+### Needs a decision or its own lane
+
+1. **`Scheduler._eligibleRunnableJobs` does not filter by `job.jobType`** — HIGHEST. Every other loop in
+   that file does (`_cancelQueuedForItem`, `_retireJobsKeyedForPriorState`, `_retireSupersededForItem`).
+   With one shared `JobStore` across three schedulers, a scheduler whose definition finds an item runnable
+   will dispatch ANOTHER LANE'S JOB. Reproduced: the implementation scheduler built a
+   `WorkerExecutionRequest` with `role: engineeringReviewer`. Pre-existing at `ab22548`, reachable through
+   the OD-10 inflow. Operator elected to defer rather than gate the deploy on it.
+2. **OD-6 / §7.8 — role-scoped `VerificationPlan`.** The implementer inherits `triageVerificationPlan`
+   (`git rev-parse --verify HEAD^{commit}`), which CANNOT fail. §9.3's "verification failure reaches
+   `agentFailed` without `producerActorId`" is unreachable for implementation jobs. Do NOT read a green
+   implementation execution as evidence verification ran. Recorded in code at the composition point.
+3. **OD-5 — outflow.** Items stall at `agentExecuting` with no `qaContractId`. (Note: all 10 currently
+   stranded items DO carry a contract, so this may be moot for the live backlog — verify before deciding.)
+4. **OD-4 — deferral shape.** `Scheduler._dispatchOne` awaits the resolver bare (`scheduler.dart:765`).
+   A throwing resolver aborts the whole tick. Today's implementation probe cannot throw; a future one can.
+   The tick-level test is an executable tripwire for that.
+5. **OD-7.2 / OD-7.3 — durable clone reclamation.** Nothing bounds a product clone's lifetime and nothing
+   names who deletes it. `reclamationPolicy: none` is printed on every start.
+6. **Concurrent `materialize()` on one root destroys it 6/6 times.** Both calls observe
+   `rootPreExisted == false` and both claim ownership. Zero production reachability today (one boot-time
+   instruction, before any scheduler exists) — and that is an accident of the call graph, not a guard.
+7. **AGENTS.md governance collision.** The rule withholds even read-only `docker compose config` from lanes
+   without infrastructure authority, but reserves that authority to the human — so a Manager cannot grant
+   it. Two reviewers hit this. Needs a human amendment, not an interpretation.
+
+### Repo health / test-gate issues
+
+8. **`test/onboarding_test.dart` aborts the Dart test runner at load.** It is a `buildWithServerpod`
+   `isDatabaseEnabled: true` suite sitting in `test/`, and `maybeTestGroupTagsOverride: ['integration']`
+   applies under `serverpod test`, not `dart test` — so `--exclude-tags=integration` does not exclude it.
+   `dart test test/` therefore cannot be green in any environment without a live database. Either it moves
+   under `test/integration/` or the dispatch validation command changes.
+9. **`test/integration` shared-database races.** `operator_ui_e2e_test` and
+   `product_credential_immutability_postgres_test` vary run to run at IDENTICAL HEAD (and widen under load
+   to 11+ failures). The suite is not a reliable gate until these are isolated or run serially.
+10. **Integration DB migration drift.** Every run emits `Missing Index "design_revision_approved_unique_per_work_item"`
+    / "product_credential_active_repository_unique"`. No migration is responsible in these lanes; the
+    disposable test DB is behind.
+11. **`apps/control_plane/test/shared/transition_copy_test.dart` is unformatted at base** (last touched
+    `2acb7fc`). Any future `dart format --set-exit-if-changed` gate over that package will fail on it.
+
+### Correctness guards worth adding
+
+12. **`hasDurableWorkspace` call-site allowlist test.** The getter is deprecated with the hazard in its
+    message; a test enumerating the allowed call sites would make it incapable of gaining a caller without
+    going red. Cross-package `@Deprecated` use is INFO and does not move a gate.
+13. **`runs_event.dart`'s `RunsFilter` / `RunsFilterChanged` are still unwired.** The duplication was
+    removed by making the bloc delegate to `WorkFilter`, but the unwired enum remains. Wiring it at any
+    point silently drops rows.
+14. **`statSync` blind spot.** `Directory.statSync()` returns a ZEROED FileStat on a permission-denied
+    path while `existsSync()` on the SAME path throws — so switching the existence check to `statSync`
+    would silently collapse "unreadable" into "missing" with tests green.
+15. **Two known-false doc claims.** `a-second-clone-attempt-is-a-clone-deletion.md:198` says "before any
+    scheduler exists" (two `Scheduler` objects are constructed first). `compose.qa.yaml:139-143` claims a
+    value "arrives byte-for-byte" — false for a `$` in a `docker/.env` value, because Compose recursively
+    interpolates `.env` values (`$$` escapes, backslash does not).
+16. **Implementation reports are not committed artifacts.** A lane claimed "a one-line endpoint addition
+    away" — true only of its report, absent from every committed artifact. If reports are meant to be
+    auditable, that is a persistence gap in the reporting path.
