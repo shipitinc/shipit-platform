@@ -284,8 +284,9 @@ void main() {
     });
   });
 
-  group('the lane is wired AND deliberately unreachable, and says so', () {
-    test('the composition banner states the implementation lane\'s entry states', () {
+  group('the lane is wired AND its producers are declared', () {
+    test('the composition banner states the implementation lane\'s entry '
+        'states', () {
       expect(
         RegExp(
           r"'entryStates':\s*implementFeatureDefinition\.entryStates",
@@ -293,16 +294,46 @@ void main() {
         isTrue,
         reason:
             'an operator reading the startup line must be able to see the lane '
-            'exists AND that nothing routes into it, rather than inferring one '
-            'from the other',
+            'exists AND what routes into it, rather than inferring one from '
+            'the other',
       );
+    });
+
+    test('the banner must not claim the lane has NO producers', () {
+      // THE PROPERTY, NOT A VALUE.
+      //
+      // This assertion used to pin the banner's literal text — that it says
+      // `'producers': 'none yet'` — because until `OD-3` and `OD-10` were
+      // resolved that was true, and a lane that is wired and inert must not be
+      // able to read as a lane that is wired and idle-because-broken.
+      //
+      // It is no longer true. Four resolved human decisions and one automatic
+      // route now put items into `implementation_ready`, so the honest guard is
+      // the INVERSE one: the banner must never say the lane has no producers
+      // while the routing table and the inflow both give it some. Pinning the
+      // old literal would have been a test asserting a falsehood — green, and
+      // actively misleading — and it would have become a landmine that FAILED
+      // the moment anyone corrected the banner, punishing the fix.
+      //
+      // This is a one-sided assertion on purpose: it cannot detect a banner
+      // that wrongly claims producers exist. That half needs the routing table,
+      // which this source-grep file deliberately cannot see, and it is pinned
+      // executably in `implement_feature_deferral_test.dart` ('exactly the
+      // four rework gates route here, and nothing else does') and by the
+      // inflow's own tests. Between the two, producer availability is asserted
+      // from both sides without either file owning the other's table.
       expect(
         RegExp(r"'producers':\s*'none yet").hasMatch(source),
-        isTrue,
+        isFalse,
         reason:
-            'the entry state has no producer until the rework routing decision '
-            'is answered. A lane that is wired and inert must not be able to '
-            'read as a lane that is wired and idle-because-broken',
+            'the composition root still carries the pre-`OD-3` banner text '
+            '"none yet — no resolved human decision routes into '
+            'implementation_ready (OD-3 is open)". That statement is now FALSE: '
+            'four decisions and the completion inflow all route into it, and '
+            'deploying this revision starts the lane dispatching for the first '
+            'time. `apps/server/lib/server.dart` is not this lane\'s to write, '
+            'so the banner must be corrected by its owner — and this assertion '
+            'is what will tell them it is still wrong',
       );
     });
   });

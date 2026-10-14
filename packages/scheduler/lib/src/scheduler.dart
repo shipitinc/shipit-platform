@@ -8,6 +8,7 @@ import 'capacity/execution_capacity.dart';
 import 'capacity/job_capacity_guard.dart';
 import 'dispatch/worker_dispatch.dart';
 import 'health/provider_health_monitor.dart';
+import 'implementation_inflow.dart';
 import 'policy/entry_hop.dart';
 import 'policy/retry_policy.dart';
 import 'policy/runnable_work.dart';
@@ -243,7 +244,44 @@ class EntryHopRefusal {
   String toString() => '$workItemId ($state): $reason';
 }
 
-/// What one [Scheduler.tick] did, for tests and for the audit tail.
+/// One item the completion inflow considered, and what it did about it.
+///
+/// Reported for EVERY item in a declared inflow state, whether or not anything
+/// moved — including the refusals. "The lane routed nothing" and "the lane
+/// looked at four items and moved none" are different operational facts, and
+/// only the second one is ever a problem.
+@immutable
+class CompletionInflowMove {
+  const CompletionInflowMove({
+    required this.workItemId,
+    required this.from,
+    required this.to,
+    required this.reason,
+  });
+
+  final String workItemId;
+
+  /// The state the item was read in. Named `agentCompleted` in practice, but
+  /// read from the item rather than assumed, because the definition declares
+  /// its own source set.
+  final WorkItemState from;
+
+  /// Where the item was moved, or `null` when nothing was moved — because the
+  /// route was the state it was already in, because the attempt budget is
+  /// spent, or because a writer got there first.
+  final WorkItemState? to;
+
+  /// The operator-facing reason. Never a credential.
+  final String reason;
+
+  bool get moved => to != null && to != from;
+
+  @override
+  String toString() =>
+      '$workItemId ($from -> ${to?.wire ?? 'unchanged'}): $reason';
+}
+
+/// What one `Scheduler.tick` did, for tests and for the audit tail.
 @immutable
 class SchedulerTickResult {
   const SchedulerTickResult({
@@ -273,6 +311,19 @@ class SchedulerTickResult {
     /// report a permanent structural gap as ordinary transient noise, which is
     /// how this whole defect stayed invisible.
     this.entryHopRefused = const [],
+
+    /// Items this lane's completion inflow considered, and what it did with
+    /// each. Empty for every definition that declares no inflow, which is every
+    /// definition except the implementation lane.
+    ///
+    /// Reported rather than folded into any existing channel because none of
+    /// them means this: `deferred` is back-pressure, `entryHopRefused` is a
+    /// structural gap, and `blockedArtifactMissing` is "there is nothing to
+    /// operate on". A route that moved nothing is none of those, and the case
+    /// an operator most needs to see — the inflow considered items and moved
+    /// none of them — would otherwise be indistinguishable from a lane that
+    /// never looked.
+    this.completionInflow = const [],
   });
 
   final List<String> reconciled;
@@ -304,6 +355,10 @@ class SchedulerTickResult {
 
   /// Items refused a dispatch by [EntryHopper] this tick, with the reason.
   final List<EntryHopRefusal> entryHopRefused;
+
+  /// Items the completion inflow considered this tick, in item-id order. See
+  /// the field's declaration for why this is its own channel.
+  final List<CompletionInflowMove> completionInflow;
 }
 
 /// The durable scheduler: derivation + enqueue + dispatch + outcome adoption
@@ -525,6 +580,7 @@ class Scheduler {
     final terminal = <String>[];
     final blockedArtifactMissing = <String>[];
     final entryHopRefused = <EntryHopRefusal>[];
+    final completionInflow = <CompletionInflowMove>[];
 
     // 1. Recover claims that outlived their lease without ever persisting a
     //    terminal outcome.
@@ -564,16 +620,37 @@ class Scheduler {
       }
     }
 
-    // 2. Ask the WORKFLOW POLICY what it may schedule for every item. Never a
+    // 2. COMPLETION INFLOW. Before anything asks what is RUNNABLE, this lane
+    //    routes the items it shares with another lane.
+    //
+    //    It runs first on purpose. A work item routed here must be RE-READ
+    //    before the runnability probe runs, or the probe would classify it by
+    //    the state it was in a moment ago and this lane would dispatch nothing
+    //    until the next tick — a one-tick delay on every item, forever, for a
+    //    definition that declares an inflow. `items` is therefore re-read below
+    //    when anything moved, and `var` for exactly that reason.
+    //
+    //    Absent declaration = absent work. Every definition except the
+    //    implementation lane has `completionInflowFrom == null`, and the whole
+    //    block is skipped without touching the store, so no other lane's tick
+    //    changes by one read.
+    var items = await _workflowStore.readAllWorkItems();
+    if (_definition.hasCompletionInflow) {
+      completionInflow.addAll(await _runCompletionInflow(items));
+      if (completionInflow.isNotEmpty) {
+        items = await _workflowStore.readAllWorkItems();
+      }
+    }
+
+    // 3. Ask the WORKFLOW POLICY what it may schedule for every item. Never a
     //    local reconstruction of the transition graph.
-    final items = await _workflowStore.readAllWorkItems();
     items.sort((a, b) => a.workItemId.compareTo(b.workItemId));
     final byId = {for (final i in items) i.workItemId: i};
     final statusOf = {
       for (final i in items) i.workItemId: _evaluator.evaluate(i, _definition),
     };
 
-    // 3. Terminal items: cancel any residual queued jobs. Runnable items:
+    // 4. Terminal items: cancel any residual queued jobs. Runnable items:
     //    enqueue the missing job idempotently. No-action items: RETIRE the jobs
     //    they superseded. Blocked items: leave every existing job untouched
     //    (never cancelled, never dispatched) — a blocking gate is a pause the
@@ -643,7 +720,7 @@ class Scheduler {
       }
     }
 
-    // 4-8. Dispatch every eligible job, in fixed order, at most ONE attempt per
+    // 5-9. Dispatch every eligible job, in fixed order, at most ONE attempt per
     //      job per tick. Re-reading live state each round lets a job that
     //      completed during this tick free a capacity slot for the next one —
     //      and that slot is now a real, durable, counted one, released only by
@@ -699,7 +776,182 @@ class Scheduler {
       terminal: terminal,
       blockedArtifactMissing: blockedArtifactMissing,
       entryHopRefused: entryHopRefused,
+      completionInflow: completionInflow,
     );
+  }
+
+  /// Routes each item this lane shares with another lane, once, before
+  /// runnability is computed. Returns what it moved and what it refused.
+  ///
+  /// ## WHY IT IS HERE AND NOT IN A TICK HANDLER
+  ///
+  /// A handler would have to be registered by the composition root, and
+  /// `agentCompleted` items are not visible to this lane at all: its
+  /// `entryStates` is one element wide on purpose, so the runnability probe
+  /// rejects every other state before the policy is consulted. Putting the
+  /// route inside `tick` is what makes it live for a lane whose declaration is
+  /// in the same file as its dispatch surface — a handler nobody wired would
+  /// be a lane that looks wired and does nothing, which is the exact shape of
+  /// the defect this whole change exists to close.
+  ///
+  /// ## WHY IT CANNOT STEAL AN ITEM THAT IS ALREADY BEING REVIEWED
+  ///
+  /// The discriminator is [producedCommitFor], the same rule the engineering
+  /// review gate's workload resolver applies to the same durable rows. If that
+  /// resolver resolved a workload, the producer left a commit, and the route is
+  /// `reviewInProgress` — which this lane does not move anything to. So "review
+  /// dispatched" and "inflow routed to implementation" cannot both be true for
+  /// one item, and a reviewer is never displaced by a route.
+  ///
+  /// ## PER-ITEM ISOLATION
+  ///
+  /// One item's fault must not abort the pass, because the remaining items are
+  /// real work this lane can start. Each is guarded individually and a failure
+  /// is REPORTED, never swallowed: an unreadable worker store leaves the item
+  /// where it was, and the operator can see that in the tick result rather
+  /// than inferring it from a lane that looks idle.
+  Future<List<CompletionInflowMove>> _runCompletionInflow(
+    List<WorkItem> items,
+  ) async {
+    final sources = _definition.completionInflowFrom!;
+    // A lane that declares an inflow must be able to DISPATCH what the inflow
+    // hands it. `agentCompleted` is deliberately not in this definition's
+    // `entryStates` — that is the whole point — so the check is on the state the
+    // route LANDS on, not on the state it comes from. It is an assertion and
+    // not a runtime guard because the two values are both `const` in this
+    // package: a definition that failed it is a compile-time mistake in a
+    // `const`, and there is no state in which behaving differently would be
+    // better.
+    assert(
+      _definition.entryStates.contains(
+        completionRouteFor(
+          const NoCommitProduced(
+            NoProducedCommitReason.noCommitProduced,
+            'assertion only; the value is never read',
+          ),
+        ),
+      ),
+      'a definition that declares a completion inflow must dispatch from the '
+      'state the no-artifact route lands on, or the inflow hands work to a '
+      'lane nothing runs',
+    );
+    final moves = <CompletionInflowMove>[];
+    for (final item in items) {
+      if (!sources.contains(item.state)) continue;
+      final move = await _routeOneCompletion(item);
+      if (move != null) moves.add(move);
+    }
+    return moves;
+  }
+
+  /// Routes one item, or returns why it was not routed.
+  Future<CompletionInflowMove?> _routeOneCompletion(WorkItem item) async {
+    final workerStore = _workerStore;
+    final engine = _reclaimEngine;
+
+    late final ProducedCommit produced;
+    try {
+      produced = await producedCommitFor(workerStore, item);
+    } on Object catch (error) {
+      return CompletionInflowMove(
+        workItemId: item.workItemId,
+        from: WorkItemState.agentCompleted,
+        to: null,
+        reason:
+            'the producing execution\'s artifact could not be read ($error), so '
+            'whether this item should be reviewed or implemented is unknown. '
+            'It was left where it is; nothing ran and nothing was consumed',
+      );
+    }
+
+    final target = completionRouteFor(produced);
+
+    // Nothing to do when the route is the state the item is already in. The
+    // item got here BY a previous route, or by a human, and both are already
+    // correct. Writing again would be an unrequested transition and would
+    // advance the attempt counter for no reason.
+    if (target == item.state) {
+      return CompletionInflowMove(
+        workItemId: item.workItemId,
+        from: item.state,
+        to: item.state,
+        reason: 'already routed: $produced',
+      );
+    }
+
+    // THE BOUND. Checked before the write, on the item's own durable marker,
+    // so a repeated automatic route cannot spin. See `maxImplementationInflows`.
+    final attempt = DurableWorkflowEngine.readTriageAttempt(item) ?? 0;
+    if (attempt >= maxImplementationInflows) {
+      return CompletionInflowMove(
+        workItemId: item.workItemId,
+        from: item.state,
+        to: null,
+        reason:
+            'the item has already been put into the implementation lane '
+            '$attempt time(s) and the producer committed nothing each time. '
+            'Leaving it where it is, so the review lane\'s existing '
+            'fail-closed handler raises a blocking human decision for it '
+            'rather than the platform re-running it for ever',
+      );
+    }
+
+    final nextAttempt = attempt + 1;
+    try {
+      await engine.transition(
+        workItemId: item.workItemId,
+        to: target,
+        trigger: TransitionTrigger.systemEvent,
+        actor: _reclaimActor,
+        context: const {'agentAvailable': true, 'capabilitiesMatch': true},
+        // Idempotent per PRODUCER, not per tick: re-running this after a
+        // partial write returns the accepted outcome instead of moving the
+        // item a second time. A producer execution completes once, so the key
+        // can never be reused for a genuinely new piece of evidence.
+        idempotencyKey:
+            'completion-inflow-${item.workItemId}-'
+            '${item.metadata?['producerActorId'] ?? 'no-producer'}',
+        reason:
+            'the producer of ${item.workItemId} left no implementation '
+            'artifact ($produced), so there is nothing to review and the item '
+            'is routed into the implementation lane',
+        // Same transaction as the move, through the engine's own merge: the
+        // dedupe key this route will be dispatched under is computed from this
+        // marker, so a crash between the two would strand the item at a
+        // dispatchable state with a consumed key — the inert item, exactly.
+        metadataMerge: {
+          DurableWorkflowEngine.triageAttemptMetadataKey: nextAttempt,
+        },
+      );
+      return CompletionInflowMove(
+        workItemId: item.workItemId,
+        from: item.state,
+        to: target,
+        reason:
+            'routed to ${target.wire}: $produced. Dispatch discriminator '
+            'advanced to a$nextAttempt',
+      );
+    } on WorkflowTransitionRejectedException catch (error) {
+      // Someone else owns the item now — a human, a gate, another tick. Not an
+      // error here: the next tick re-reads and decides again.
+      return CompletionInflowMove(
+        workItemId: item.workItemId,
+        from: item.state,
+        to: null,
+        reason:
+            'the item moved while this lane was reading it ($error), so no '
+            'route was taken. Nothing ran and nothing was consumed',
+      );
+    } on ConcurrentModificationException {
+      return CompletionInflowMove(
+        workItemId: item.workItemId,
+        from: item.state,
+        to: null,
+        reason:
+            'another writer took the work item while this lane was routing it, '
+            'so no route was taken. Nothing ran and nothing was consumed',
+      );
+    }
   }
 
   Future<List<Job>> _eligibleRunnableJobs(

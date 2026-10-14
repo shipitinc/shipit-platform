@@ -337,14 +337,14 @@ void main() {
           rationale: 'A follow-up defect was found',
           signature: _sig(),
         );
-        // A rejected human QA approval lands on `designNotRequired`, NOT on
+        // A rejected human QA approval lands on `implementationReady`, NOT on
         // `agentExecuting`. See the note below — do not "restore" the old
         // expectation here.
-        expect(reworked.state, WorkItemState.designNotRequired);
+        expect(reworked.state, WorkItemState.implementationReady);
         expect(reworked.blockingHumanDecisionId, isNull);
         expect(await engine.isWaitingForHumanDecision(_workItemId), isFalse);
 
-        // WHY `designNotRequired` AND NOT `agentExecuting`
+        // WHY A DISPATCHABLE STATE AND NOT `agentExecuting`
         //
         // This test used to assert `agentExecuting` here, which pinned the
         // stranding state as correct behaviour. `agentExecuting` is in the
@@ -356,18 +356,18 @@ void main() {
         // `defect-DEF-1791684804452198` on 2026-10-12, stuck at
         // agent_executing since 16:43:11 with no job enqueued.
         //
-        // `designNotRequired` IS in `triageDefectDefinition.entryStates` and
-        // `implementFeatureDefinition.entryStates`, so it is dispatchable, and
-        // it is where the shipped operator retry already sends a failed item
-        // (`agentFailed -> designNotRequired`). The routing table
+        // It then asserted `designNotRequired`, which `OD-3` has since
+        // superseded: a human QA rejection judges the delivered RESULT, so it
+        // means "re-do the work" and routes to
+        // `implementFeatureDefinition.entryStates`. The routing table
         // (`HumanDecisionRouting.targetFor`) is the sole determinant of where
         // a resolved decision lands, so this expectation tracks production
-        // behaviour rather than restating the old stranding state.
+        // behaviour rather than restating a superseded routing.
         //
         // The remainder of the test proves what its NAME claims — that
         // resolving the gate UNBLOCKS it — by driving the item forward from
         // the state it actually landed in. There is no direct
-        // `designNotRequired -> agentCompleted` edge; the only legal path is
+        // `implementationReady -> agentCompleted` edge; the only legal path is
         // through `agentExecuting`, which is reached here by an explicit
         // orchestrator transition carrying `agentAvailable` — i.e. the
         // dispatch that the stranding state made impossible. Reaching

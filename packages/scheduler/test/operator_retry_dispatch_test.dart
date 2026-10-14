@@ -485,6 +485,12 @@ void main() {
             seed: _seedDefectAtEngineeringReviewGate,
             cap: 1,
           );
+          // The CONSUMED-KEY HISTORY, verbatim. `OD-3` moved rework off the
+          // triage lane and onto the implementation lane, so the keys that
+          // matter now are the implementation ones — and they are consumed by
+          // exactly the same mechanism: `enqueueIfAbsent` refuses a key ANY
+          // job holds, terminal or not, so the first dispatch of an
+          // implementation job burns `…:implement_feature` for ever.
           await _holdTerminalTriageJob(
             host,
             '${host.workItemId}:triage_defect',
@@ -500,30 +506,46 @@ void main() {
             '${host.workItemId}:triage_defect:a2',
             JobState.succeeded,
           );
+          await _holdTerminalTriageJob(
+            host,
+            '${host.workItemId}:implement_feature',
+            JobState.failed,
+            definition: implementFeatureDefinition,
+          );
+          await _holdTerminalTriageJob(
+            host,
+            '${host.workItemId}:implement_feature:a1',
+            JobState.failed,
+            definition: implementFeatureDefinition,
+          );
+          await _holdTerminalTriageJob(
+            host,
+            '${host.workItemId}:implement_feature:a2',
+            JobState.succeeded,
+            definition: implementFeatureDefinition,
+          );
           expect(
-            (await host.triageJobs()).map((j) => j.dedupeKey).toSet(),
+            {
+              ...(await host.triageJobs()).map((j) => j.dedupeKey),
+              ...(await host.implJobs()).map((j) => j.dedupeKey),
+            },
             {
               '${host.workItemId}:triage_defect',
               '${host.workItemId}:triage_defect:a1',
               '${host.workItemId}:triage_defect:a2',
+              '${host.workItemId}:implement_feature',
+              '${host.workItemId}:implement_feature:a1',
+              '${host.workItemId}:implement_feature:a2',
             },
             reason:
                 'the seeded state must be the QA state, or nothing below '
                 'proves anything',
           );
 
-          // THE BUG, verbatim: the item is already at a `triageDefectDefinition`
-          // entry state and a tick enqueues nothing, because the key the
-          // builder computes is one a terminal job holds.
-          final before = await host.scheduler.tick();
-          expect(
-            before.enqueued,
-            isEmpty,
-            reason:
-                'this is the inert item: designNotRequired is a legal entry '
-                'state and the key is consumed, so no job can be created',
-          );
-
+          // THE BUG, verbatim, on the lane the rework now targets: the item is
+          // about to arrive at an entry state whose key every terminal job
+          // already holds.
+          //
           // The human says "this is not acceptable".
           final reworked = await host.engine.resolveHumanDecision(
             decisionId:
@@ -545,31 +567,51 @@ void main() {
               signedAt: DateTime.now(),
             ),
           );
-          expect(reworked.state, WorkItemState.designNotRequired);
+          expect(reworked.state, WorkItemState.implementationReady);
           expect(
             reworked.metadata?['triageAttempt'],
             3,
             reason:
                 'the rework advances the discriminator past every key a '
-                'terminal job holds; this is the value that was missing',
+                'terminal job holds; this is the value that was missing, and '
+                'the implementation key builder reads it exactly as the triage '
+                'one does',
+          );
+
+          // TRIAGE MUST NOT PICK IT UP. The rework no longer re-classifies,
+          // so a triage tick here must enqueue nothing — if it did, the two
+          // lanes would contend for one item, which is the collision
+          // `implementFeatureDefinition.entryStates` is one element wide to
+          // make structurally impossible.
+          final triageTick = await host.scheduler.tick();
+          expect(
+            triageTick.enqueued,
+            isEmpty,
+            reason:
+                'rework at a review gate means re-do the work, not re-classify '
+                'it. A triage job here would classify work that has already '
+                'been implemented',
           );
 
           host.parkRuns = true;
-          final tick = host.scheduler.tick();
+          final tick = host.implScheduler.tick();
           await waitUntil(
-            () async => (await host.triageJobs()).any(
-              (j) => j.state == JobState.running,
-            ),
-            because: 'the re-triaged item must dispatch on the ordinary tick',
+            () async =>
+                (await host.implJobs()).any((j) => j.state == JobState.running),
+            because:
+                'the re-implemented item must dispatch on the ordinary tick',
           );
 
-          final running = (await host.triageJobs()).singleWhere(
+          final running = (await host.implJobs()).singleWhere(
             (j) => j.state == JobState.running,
           );
           expect(
             running.dedupeKey,
-            '${host.workItemId}:triage_defect:a3',
-            reason: 'the fresh suffix is the whole fix',
+            '${host.workItemId}:implement_feature:a3',
+            reason:
+                'the fresh suffix is the whole fix, and it had to be added to '
+                'the implementation key builder too — without it every '
+                're-implementation would silently enqueue nothing',
           );
           expect(host.dispatcher.started, hasLength(1));
 
@@ -1059,6 +1101,7 @@ class _Host {
     required this.store,
     required this.engine,
     required this.scheduler,
+    required this.implScheduler,
     required this.dispatcher,
     required this.jobStore,
     required this.workItemId,
@@ -1076,6 +1119,17 @@ class _Host {
   final InMemoryWorkflowStore store;
   final DurableWorkflowEngine engine;
   final Scheduler scheduler;
+
+  /// The implementation lane, over the SAME stores and the SAME job table.
+  ///
+  /// Built unconditionally because it is just a constructor call, and ticked
+  /// only where a test asks for it. It exists so the decision-driven re-entry
+  /// is proven on the lane `OD-3` actually routes to: a rework no longer
+  /// re-triages, so proving "a resolved decision re-enters a lane under a
+  /// fresh key" on the triage lane alone would leave the implementation lane's
+  /// own dedupe key unproven — and that key consumed its unsuffixed form on
+  /// the first dispatch exactly as the triage key did.
+  final Scheduler implScheduler;
   final _ParkingDispatcher dispatcher;
   final _LockingJobStore jobStore;
   final String workItemId;
@@ -1118,10 +1172,30 @@ class _Host {
       requestBuilder: triageDefectRequest,
     );
 
+    // Always resolves: the point of the real lane is that a deferral is not a
+    // dispatch, and this file is about dispatch. The readiness probe's own
+    // deferral behaviour is proven in `implement_feature_deferral_test.dart`,
+    // over the real `ImplementationReadinessProbe`.
+    final implScheduler = Scheduler(
+      schedulerId: 'sched-impl',
+      workflowStore: store,
+      jobStore: jobStore,
+      workerStore: InMemoryWorkerStore(),
+      dispatch: dispatcher,
+      definition: implementFeatureDefinition,
+      workload: _workload,
+      capacityGuard: JobCapacityGuard(store: jobStore, capacity: capacity),
+      dedupeKeyBuilder: implementFeatureDedupeKey,
+      instructionBuilder: implementFeatureInstruction,
+      requestBuilder: implementFeatureRequest,
+      workloadResolver: (job, item) async => _workload,
+    );
+
     return _Host._(
       store: store,
       engine: engine,
       scheduler: scheduler,
+      implScheduler: implScheduler,
       dispatcher: dispatcher,
       jobStore: jobStore,
       workItemId: seededWorkItemId,
@@ -1130,6 +1204,10 @@ class _Host {
 
   Future<List<Job>> triageJobs() async =>
       (await jobStore.listJobsForWorkItem(workItemId)).toList();
+
+  Future<List<Job>> implJobs() async => (await jobStore.listJobsForWorkItem(
+    workItemId,
+  )).where((j) => j.jobType == JobType.implementFeature).toList();
 
   Future<int> capacityDenials() async {
     var count = 0;
@@ -1385,12 +1463,13 @@ Future<String> _seedDefectAtEngineeringReviewGate(
 Future<void> _holdTerminalTriageJob(
   _Host host,
   String dedupeKey,
-  JobState terminal,
-) async {
+  JobState terminal, {
+  JobDefinition definition = triageDefectDefinition,
+}) async {
   final queue = JobQueue(store: host.jobStore);
   final created = await queue.enqueueIfAbsent(
     workItemId: host.workItemId,
-    definition: triageDefectDefinition,
+    definition: definition,
     dedupeKey: dedupeKey,
     instruction: 'seeded terminal holder',
   );

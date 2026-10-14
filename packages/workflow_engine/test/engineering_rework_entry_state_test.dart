@@ -23,7 +23,12 @@ import 'package:workflow_engine/workflow_engine.dart';
 /// to start), reached here through a human decision instead.
 ///
 /// `designNotRequired` IS in `triageDefectDefinition.entryStates`, which is
-/// the mechanism the operator retry already relies on. That is the target.
+/// the mechanism the operator retry already relies on. That was the target,
+/// and `OD-3` has since moved four of these five routes one lane further on
+/// to `implementationReady` — see `implementation_ready_edge_test.dart`, which
+/// owns that question. **The invariant this file protects is unchanged by
+/// that**: a human gate that says "do the work again" must land on a state
+/// SOME wired definition dispatches, and on no other.
 ///
 /// ## The fix needed BOTH halves, and this file now has both
 ///
@@ -568,29 +573,40 @@ void main() {
     });
   });
 
-  group('the PINNED GAP is CLOSED — routing now sends rework here', () {
-    test('HumanDecisionRouting sends (engineeringReview, rework) to '
-        'designNotRequired, so production rework is fixed', () {
+  group('the PINNED GAP is CLOSED — routing now sends rework somewhere '
+      'dispatchable', () {
+    test('HumanDecisionRouting sends (engineeringReview, rework) to the '
+        'implementation lane, so production rework is fixed', () {
       // This test INVERTED the pin the previous lane left. It asserted
       // `agentExecuting` deliberately, so that it would fail the moment the
       // routing table was corrected — which is exactly what happened. The
       // edge alone was never the fix: `resolveHumanDecision` derives its
       // target from this table and takes no caller-supplied state, so an
       // unreached edge changes nothing in production.
+      //
+      // It then asserted `designNotRequired`, which `OD-3` has since
+      // superseded: rework at a review gate means "re-do the work", not
+      // "re-classify it".
       expect(
         HumanDecisionRouting.targetFor(
           HumanDecisionType.engineeringReview,
           HumanDecisionChoice.rework,
         ),
-        WorkItemState.designNotRequired,
+        WorkItemState.implementationReady,
       );
     });
 
-    test('every stranding route now lands on a dispatchable entry state', () {
-      // The five routes this change moved. `agentExecuting` is in the
-      // `entryStates` of NO wired JobDefinition, so a route that lands
+    test('every "do the work again" route lands on a dispatchable entry '
+        'state', () {
+      // The five routes this change moved off `agentExecuting`. That state is
+      // in the `entryStates` of NO wired JobDefinition, so a route that lands
       // there is a permanent dead end: nothing enqueues for it, nothing
       // runs, and the decision is already answered.
+      //
+      // The invariant is DISPATCHABILITY, not one particular state, so it is
+      // asserted against the set. Naming a single state here would re-freeze
+      // exactly the question `OD-3` just answered, in a file that is not the
+      // owner of that question.
       const stranding = {
         (HumanDecisionType.engineeringReview, HumanDecisionChoice.rework),
         (HumanDecisionType.qaWaiver, HumanDecisionChoice.reject),
@@ -598,12 +614,16 @@ void main() {
         (HumanDecisionType.humanQaApproval, HumanDecisionChoice.reject),
         (HumanDecisionType.escalation, HumanDecisionChoice.approve),
       };
+      const dispatchable = {
+        WorkItemState.designNotRequired,
+        WorkItemState.implementationReady,
+      };
 
       for (final route in stranding) {
         final target = HumanDecisionRouting.targetFor(route.$1, route.$2);
         expect(
-          target,
-          WorkItemState.designNotRequired,
+          dispatchable,
+          contains(target),
           reason: '(${route.$1.name}, ${route.$2.name}) must not strand',
         );
       }

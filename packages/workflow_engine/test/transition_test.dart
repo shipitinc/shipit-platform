@@ -575,7 +575,10 @@ void main() {
           HumanDecisionType.engineeringReview,
           HumanDecisionChoice.rework,
         ),
-        WorkItemState.designNotRequired,
+        WorkItemState.implementationReady,
+        reason:
+            'OD-3 resolved "rework" at a review gate to mean re-do the work, '
+            'so it targets the implementation lane rather than re-triage',
       );
       expect(
         HumanDecisionRouting.targetFor(
@@ -1079,14 +1082,14 @@ void _escalationRoutingMethods() {
           HumanDecisionType.engineeringReview,
           HumanDecisionChoice.rework,
         ),
-        WorkItemState.designNotRequired,
+        WorkItemState.implementationReady,
       );
       expect(
         HumanDecisionRouting.escalationTargetFor(
           HumanDecisionType.humanQaApproval,
           HumanDecisionChoice.reject,
         ),
-        WorkItemState.designNotRequired,
+        WorkItemState.implementationReady,
       );
     });
 
@@ -1211,7 +1214,7 @@ void _escalationRoutingMethods() {
         HumanDecisionRouting.routesToEscalation(
           HumanDecisionType.engineeringReview,
           HumanDecisionChoice.rework,
-          WorkItemState.designNotRequired,
+          WorkItemState.implementationReady,
         ),
         isTrue,
       );
@@ -1227,7 +1230,7 @@ void _escalationRoutingMethods() {
         HumanDecisionRouting.routesToEscalation(
           HumanDecisionType.humanQaApproval,
           HumanDecisionChoice.reject,
-          WorkItemState.designNotRequired,
+          WorkItemState.implementationReady,
         ),
         isTrue,
       );

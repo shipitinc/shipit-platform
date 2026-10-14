@@ -150,6 +150,65 @@ class WorkItemTransitions {
       GuardConditions.actorAllowed([ActorType.orchestrator]),
     ],
     /*** Engineering review ***/
+    // THE IMPLEMENTATION LANE'S INFLOW EDGE — `OD-10`.
+    //
+    // `targetFor` decides where a resolved human decision lands, and it has
+    // no say over anything else. An item whose producer has FINISHED and left
+    // no commit is not at a decision — it is at `agentCompleted`, which is
+    // triage's exit state and `engineeringReviewDefinition.entryStates`, and
+    // which the review lane then fails closed on for ever, because there is no
+    // artifact to review. This edge is what that item takes instead.
+    //
+    // ## WHY NOT `designNotRequired -> implementationReady`
+    //
+    // Because `designNotRequired` is triage's ENTRY state and its only outgoing
+    // edge is the dispatch that runs triage. An edge into `implementationReady`
+    // from there would compete with that dispatch and could route an item into
+    // the build queue WITHOUT TRIAGE EVER RUNNING — an item nobody classified,
+    // built. The decision that named this edge (`OD-10`) recorded the operator's
+    // intent as "After TRIAGE COMPLETES, the item goes to implementationReady",
+    // and triage completing means the item is at `agentCompleted`. So that is
+    // where it is.
+    //
+    // ## WHY NO `agentResultValid()`
+    //
+    // The sibling edge `(agentCompleted, reviewInProgress)` carries it, because
+    // its caller — the execution coordinator, starting a reviewer — can supply
+    // the producer's `AgentResult` from the store. The scheduler cannot: it has
+    // no execution of its own, which is exactly why
+    // `engineeringReviewDefinition.skipWorkflowPolicyCheck` is `true`. A guard
+    // that cannot be satisfied here is a guard that makes this edge unreachable,
+    // and `RunnableWorkEvaluator` would classify every routed item `noAction`
+    // for ever — the inert item, with a worse story than before.
+    //
+    // Its evidence is not absent, it is already accounted for: the only edge
+    // INTO `agentCompleted` is `(agentExecuting, agentCompleted)`, guarded by
+    // BOTH `qaContractExists()` AND `agentResultValid()`. Arriving here already
+    // asserts that a completed, valid result exists.
+    //
+    // ## WHY THE GUARD IS `actorAllowed([orchestrator])` ALONE
+    //
+    // This is this table's own convention for an edge into an entry state that
+    // asserts no execution is starting: `planned -> designNotRequired` and
+    // `agentFailed -> designNotRequired` both carry exactly that, and neither
+    // carries `agentAvailable()`. That guard belongs on `-> agentExecuting`
+    // edges, where the transition asserts an agent is starting RIGHT NOW. This
+    // edge asserts no such thing, and capacity is enforced at claim time by
+    // `JobCapacityGuard` exactly as it is for every other job.
+    //
+    // ## WHAT IS DELIBERATELY NOT GUARDED HERE
+    //
+    // The artifact question — "did the producer leave a commit?" — is NOT a
+    // guard, and cannot be: guards read `context`, so encoding it as one would
+    // move the decision to whoever builds the context map rather than settle
+    // it, and two call sites would then answer it differently. It is one named
+    // function, `producedCommitFor` (`packages/scheduler`), which reads the
+    // same durable rows under the same rules as the review gate's workload
+    // resolver. The caller must supply that answer; the table's job here is to
+    // make the destination legal and the actor honest, and nothing more.
+    (WorkItemState.agentCompleted, WorkItemState.implementationReady): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+    ],
     (WorkItemState.agentCompleted, WorkItemState.reviewInProgress): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
       GuardConditions.agentResultValid(),
@@ -342,7 +401,10 @@ class WorkItemTransitions {
     // an open product decision, so this lane declares the route and
     // deliberately leaves it unclaimed rather than guessing which rejections
     // mean "re-classify" and which mean "re-do the work".
-    (WorkItemState.waitingForHumanDecision, WorkItemState.implementationReady): [
+    (
+      WorkItemState.waitingForHumanDecision,
+      WorkItemState.implementationReady,
+    ): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
       GuardConditions.blockingHumanDecisionResolved({
         (

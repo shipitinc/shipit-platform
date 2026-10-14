@@ -293,10 +293,13 @@ void main() {
             HumanDecisionType.engineeringReview,
             HumanDecisionChoice.rework,
           ),
-          WorkItemState.designNotRequired,
+          WorkItemState.implementationReady,
           reason:
               'the routing table is readable from here; the entry-state set is '
-              'not, because it lives in a package that depends on this one',
+              'not, because it lives in a package that depends on this one. '
+              'The assertion pins a value this package CAN see, so it moves '
+              'whenever `OD-3`-class routing changes and a reviewer sees the '
+              'change here rather than only in the scheduler package',
         );
       },
     );
@@ -317,8 +320,14 @@ void main() {
 
       expect(
         reworked.state,
-        WorkItemState.designNotRequired,
-        reason: 'the rework edge lands on the dispatchable entry state',
+        WorkItemState.implementationReady,
+        reason:
+            'the rework edge lands on a dispatchable entry state. `OD-3` moved '
+            'it from the triage entry state to the implementation lane\'s, '
+            'because rework at a review gate means re-do the work — and the '
+            'MARKER MOVED WITH IT, which is the half the re-triage rule exists '
+            'for: an implementation dedupe key also consumes its unsuffixed '
+            'form on the first dispatch',
       );
       expect(
         reworked.metadata?['triageAttempt'],
