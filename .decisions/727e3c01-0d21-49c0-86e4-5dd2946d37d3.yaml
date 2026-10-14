@@ -1,0 +1,59 @@
+# human-decision.yaml
+decision_id: 727e3c01-0d21-49c0-86e4-5dd2946d37d3
+type: PRODUCT
+status: RESOLVED
+title: OD-10/AMEND-1 — amend the OD-10 edge to (agentCompleted, implementationReady)
+supersedes: 2ec0a10f-e3b5-413e-a4ef-9aaff2b31688
+resolution:
+  selected: A
+  label: Amend OD-10 to (agentCompleted, implementationReady)
+  decided_by: operator
+question: >-
+  You selected `designNotRequired -> implementationReady`. A different edge shipped:
+  `(agentCompleted, implementationReady)`. Which is on record?
+context:
+  summary: >-
+    The substitution was surfaced back to the operator rather than absorbed by the lane, per AGENTS.md.
+    The lane's reasoning was independently VERIFIED by the reviewer and endorsed:
+    `designNotRequired` has exactly ONE outgoing edge — `(designNotRequired, agentExecuting)` at
+    `work_item_transitions.dart:116`, which is the triage DISPATCH. An edge into `implementationReady`
+    from there would contend with triage and could route an item to implementation without triage ever
+    running.
+
+    The operator's recorded INTENT — "After triage completes, the item goes to implementationReady
+    instead of waiting at a human gate" — names `agentCompleted`, because that is where triage leaves
+    the item and where the four stranded items sit.
+  what_changes_in_substance_for_the_operator: >-
+    The stranded `design_not_required` item is released INDIRECTLY: it runs triage first, reaches
+    `agentCompleted`, and only then advances. The original decision record's implication — "the direct
+    path for the stranded design_not_required item" — is therefore superseded, not merely reworded.
+    That item gets one extra triage pass it would not have needed under the literal edge.
+  immutable_record_note: >-
+    2ec0a10f remains RESOLVED and unedited. This is the amendment object.
+options:
+  - id: A
+    label: Amend OD-10 to (agentCompleted, implementationReady) — SELECTED
+    implications: Preserves the operator's intent while removing the triage contention.
+    effort: none — the shipped code already implements this edge
+    risk: The design_not_required item takes one extra triage pass. Triaging twice is not harmful; it
+          is the same work the item would have done anyway.
+  - id: B
+    label: Raise a fresh decision superseding OD-10
+    implications: Cleaner provenance, but discards the reasoning already recorded in 2ec0a10f.
+    effort: a new decision object
+    risk: none, just more ceremony
+  - id: C
+    label: Keep designNotRequired as originally chosen
+    implications: Requires reverting the shipped edge and moving the inflow to designNotRequired.
+    effort: reworking the lane
+    risk: >-
+      Highest. The literal edge contends with the triage dispatch and needs careful guarding to avoid
+      building an item nobody classified. Rejected.
+impact_if_not_resolved: >-
+  A human decision record asserts an edge that is not the one in the code, and the difference between
+  them — whether triage runs first — is exactly the part a reader cannot infer.
+related:
+  - decision: 2ec0a10f-e3b5-413e-a4ef-9aaff2b31688
+    status: RESOLVED, superseded on the edge only; its OD-5 outflow question is untouched
+  - decision: 330c51ea-c32a-456e-8327-d9bdf2b9b387
+    status: RESOLVED, unaffected — OD-3's four rework retargets are independent of this edge
