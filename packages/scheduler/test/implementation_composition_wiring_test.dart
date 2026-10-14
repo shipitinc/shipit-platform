@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:scheduler/scheduler.dart';
 import 'package:test/test.dart';
 
 /// The implementation lane's COMPOSITION is asserted here, because the failure
@@ -33,6 +34,10 @@ import 'package:test/test.dart';
 ///    raise a decision about an artefact nobody tried to produce;
 ///  * the durable-workspace root read missing — A1's runtime would refuse to
 ///    build and no product clone could ever be created.
+/// Whitespace the banner extractor tolerates between adjacent string
+/// literals. Anything else ends the value.
+bool _isSpace(String c) => c == ' ' || c == '\n' || c == '\t' || c == '\r';
+
 void main() {
   late String source;
 
@@ -70,6 +75,61 @@ void main() {
 
   String implSchedulerBody() =>
       schedulerNamed('final implScheduler = Scheduler(');
+
+  /// The VALUE of the composition banner's `producers` entry, reassembled from
+  /// the adjacent string literals Dart concatenates it from.
+  ///
+  /// Reassembling the value rather than grepping for one literal substring is
+  /// the point: the banner exists to tell an operator the difference between a
+  /// lane that is idle because nothing routes into it and one that is idle
+  /// because it is broken, so the assertion has to be about what the banner
+  /// SAYS, not about how it happens to be wrapped across lines. A substring
+  /// grep would let the claim drift one line at a time.
+  String producersBanner() {
+    const key = "'producers':";
+    final keys = RegExp(key).allMatches(source).toList();
+    expect(
+      keys.length,
+      1,
+      reason:
+          'the composition root must declare exactly one `producers` entry — '
+          'two would make the banner ambiguous and this extraction arbitrary',
+    );
+
+    var i = keys.single.start + key.length;
+    final buffer = StringBuffer();
+    // Adjacent literals concatenate, so the value is every literal that
+    // follows with nothing but whitespace between them; the first character
+    // that is neither ends it.
+    for (;;) {
+      while (i < source.length && _isSpace(source[i])) {
+        i++;
+      }
+      if (i >= source.length || source[i] != "'") break;
+      i++; // opening quote
+      while (i < source.length) {
+        if (source[i] == r'\' && i + 1 < source.length) {
+          buffer.write(source.substring(i, i + 2));
+          i += 2;
+          continue;
+        }
+        if (source[i] == "'") {
+          i++;
+          break;
+        }
+        buffer.write(source[i]);
+        i++;
+      }
+    }
+
+    final value = buffer.toString();
+    expect(
+      value,
+      isNotEmpty,
+      reason: "the banner's producers entry must actually say something",
+    );
+    return value;
+  }
 
   group('the implementation lane is wired, not merely defined', () {
     test('the composition builds a third Scheduler for it', () {
@@ -299,7 +359,8 @@ void main() {
       );
     });
 
-    test('the banner must not claim the lane has NO producers', () {
+    test('the banner states what routes into the lane, and drops the stale '
+        'OD-3 claim', () {
       // THE PROPERTY, NOT A VALUE.
       //
       // This assertion used to pin the banner's literal text — that it says
@@ -308,32 +369,71 @@ void main() {
       // able to read as a lane that is wired and idle-because-broken.
       //
       // It is no longer true. Four resolved human decisions and one automatic
-      // route now put items into `implementation_ready`, so the honest guard is
-      // the INVERSE one: the banner must never say the lane has no producers
-      // while the routing table and the inflow both give it some. Pinning the
-      // old literal would have been a test asserting a falsehood — green, and
-      // actively misleading — and it would have become a landmine that FAILED
-      // the moment anyone corrected the banner, punishing the fix.
+      // route now put items into `implementation_ready`, so pinning the old
+      // literal would have been a test asserting a falsehood — green, and
+      // actively misleading. For one correction cycle this file instead asserted
+      // only the INVERSE (the banner must not say `none yet`), which is safe but
+      // blind: it cannot tell a correct banner from a vague one, and a vague
+      // banner destroys the exact distinction the field exists to preserve.
       //
-      // This is a one-sided assertion on purpose: it cannot detect a banner
-      // that wrongly claims producers exist. That half needs the routing table,
-      // which this source-grep file deliberately cannot see, and it is pinned
-      // executably in `implement_feature_deferral_test.dart` ('exactly the
-      // four rework gates route here, and nothing else does') and by the
-      // inflow's own tests. Between the two, producer availability is asserted
-      // from both sides without either file owning the other's table.
+      // So the banner is now pinned to what the lane ACTUALLY DECLARES. The
+      // inflow half is read from `implementFeatureDefinition.completionInflowFrom`
+      // rather than transcribed, so it drifts in both directions: drop the inflow
+      // from the banner and this reds, and drop it from the definition and this
+      // reds with it, which is the only way the two can stay honest about each
+      // other. The four decision pairs live in `workflow_engine`, whose routing
+      // table this source-grep file deliberately does not own — they are pinned
+      // executably there, in `implement_feature_deferral_test.dart` ('exactly
+      // the four rework gates route here, and nothing else does'). Between the
+      // two files, producer availability is asserted from both sides without
+      // either owning the other's table.
+      final banner = producersBanner();
+
+      final inflow = implementFeatureDefinition.completionInflowFrom;
       expect(
-        RegExp(r"'producers':\s*'none yet").hasMatch(source),
-        isFalse,
+        inflow,
+        isNotNull,
         reason:
-            'the composition root still carries the pre-`OD-3` banner text '
-            '"none yet — no resolved human decision routes into '
-            'implementation_ready (OD-3 is open)". That statement is now FALSE: '
-            'four decisions and the completion inflow all route into it, and '
-            'deploying this revision starts the lane dispatching for the first '
-            'time. `apps/server/lib/server.dart` is not this lane\'s to write, '
-            'so the banner must be corrected by its owner — and this assertion '
-            'is what will tell them it is still wrong',
+            'this definition declares the `OD-10` completion inflow; without it '
+            'there is no automatic producer and the banner would be describing '
+            'a lane that cannot receive one',
+      );
+      expect(
+        inflow,
+        isNotEmpty,
+        reason: 'an empty `completionInflowFrom` declares no inflow at all',
+      );
+
+      for (final from in inflow!) {
+        expect(
+          banner,
+          contains(from.wire),
+          reason:
+              'the banner does not name `$from`, the state from which the '
+              'completion inflow of this lane routes. An operator reading it '
+              'cannot tell that items arrive here on completion, which is the '
+              'whole distinction the field exists to draw. Declared: '
+              '${inflow.map((s) => s.wire).toList()}',
+        );
+      }
+
+      expect(
+        banner,
+        isNot(contains('(OD-3 is open)')),
+        reason:
+            '`OD-3` is RESOLVED and `OD-10` delivered the inflow. A banner '
+            'that still says the decision is open tells an operator this lane '
+            'is deliberately unreachable, which is now false in the exact way '
+            'that matters: items DO route here and the lane WILL dispatch. '
+            'banner was: $banner',
+      );
+
+      expect(
+        banner,
+        isNot(contains('none yet')),
+        reason:
+            'the banner still claims the lane has no producers, for the same '
+            'reason as above. banner was: $banner',
       );
     });
   });

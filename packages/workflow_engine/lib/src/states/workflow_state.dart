@@ -85,6 +85,7 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
       WorkItemWorkflowState.terminated,
     ],
     WorkItemState.agentCompleted => [
+      WorkItemWorkflowState.implementationReady,
       WorkItemWorkflowState.reviewInProgress,
       WorkItemWorkflowState.designInReview,
       WorkItemWorkflowState.cancelled,

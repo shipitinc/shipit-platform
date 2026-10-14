@@ -697,11 +697,18 @@ void run(List<String> args) async {
             ..sort(),
       'capacity': implScheduler.capacitySummary,
       'producers':
-          'none yet — no resolved human decision routes into '
-          'implementation_ready (OD-3 is open). The lane is wired and '
-          'deliberately unreachable; a work item at that state would be '
-          'deferred, never dispatched, until a durable product workspace '
-          'resolves for it',
+          'four resolved human decisions route here: (engineeringReview, '
+          'rework), (humanQaApproval, reject), (qaRework, reject) and '
+          '(qaWaiver, reject) — a gate reworking or rejecting work that '
+          'already exists means re-implement, not re-triage (OD-3). One '
+          'completion inflow also lands here: an agent_completed item this '
+          'scheduler produced NO commit for is retargeted for another pass '
+          '(OD-10); one that did commit is left for review, untouched. '
+          '(escalation, approve) deliberately does NOT route here — an '
+          'escalation is a statement about EXECUTION failing, not about work '
+          'quality, so it re-plans at design_not_required. The lane is wired '
+          'and REACHABLE, so an idle implementation scheduler means items are '
+          'not arriving at these producers, not that the lane is inert',
     },
     // The cap IN FORCE, not the cap that was requested. Read back off the
     // scheduler rather than off the local `capacity` variable so that this line
