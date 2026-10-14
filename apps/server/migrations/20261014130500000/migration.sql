@@ -203,9 +203,45 @@ BEGIN;
 -- sweeps `information_schema` for every base table carrying a `productId`
 -- column and REFUSES if any of them other than `work_item` still holds a row
 -- under 'defects' -- or if `work_item` holds one outside the enumerated twelve.
--- That converts a one-time measurement into a standing invariant: if the repair
--- ever becomes incomplete, the migration that would have completed it will not
--- run to completion without saying so.
+-- That converts a one-time measurement into a standing invariant OVER ROWS
+-- OUTSIDE THE ENUMERATED SET: if the repair ever becomes incomplete by a
+-- thirteenth row appearing under the bucket, the migration that would have
+-- completed it will not run to completion without saying so.
+--
+-- THAT INVARIANT DOES NOT HOLD FOR AN ENUMERATED ROW HAND-REFILED BACK UNDER
+-- THE BUCKET, AND THE GAP IS RECORDED RATHER THAN PAPERED OVER. The sweep
+-- excludes the twelve by construction -- it counts `work_item` rows under the
+-- bucket only OUTSIDE the set -- and the audit-row arm then excludes them from
+-- `eligible` too. So an enumerated row hand-re-filed back to `defects` after
+-- this migration has run is classified ELIGIBLE by guard (c), skipped by the
+-- sweep, excluded from the UPDATE by the audit-row arm, reported as
+-- `moved = 0 = eligible`, and the migration SUCCEEDS with that one item left
+-- under a product that does not exist -- deferring on
+-- `implementation.deferred.product_missing` for ever, with a SUCCESS in the log
+-- saying nothing was wrong. The forced-replay test in
+-- `apps/server/test/integration/product_repoint_migration_test.dart` codifies
+-- that behaviour DELIBERATELY: the audit row must win over the value, or a
+-- hand re-file would be silently repointed a second time. The two properties
+-- are in genuine tension and this file chooses the audit row.
+--
+-- REACHABILITY TODAY IS NONE, through the two producers that file under the
+-- bucket: `DefectTriageWorkItemProvisioner._persist`
+-- (apps/server/lib/src/triage/lane_a_defect_triage_work_item.dart:229-232)
+-- and lane_e's `ensurePersisted`
+-- (apps/server/lib/src/triage/lane_e_design_remediation_work_item.dart:172-186)
+-- both READ the row before creating it and only create when it is absent, so
+-- neither writes over a row that already exists. The hazard that would open
+-- this gap is in the STORE, not in the producers, and is recorded here so the
+-- follow-up that fixes the provisioners sees it too:
+-- `WorkflowStore.saveWorkItem` called WITHOUT `expectedVersion`
+-- (apps/server/lib/src/persistence/postgres_workflow_store.dart:126-145,
+-- signature at :45) issues `ON CONFLICT ("workItemId") DO UPDATE SET` naming
+-- EVERY column -- `"productId" = EXCLUDED."productId"` among them -- so such a
+-- call rewrites `productId` unconditionally, with no version check at all, and
+-- would re-file a repointed row back under the bucket. With `expectedVersion`
+-- supplied it takes the versioned `UPDATE ... WHERE "version" = @expected`
+-- branch at :61-82 instead and cannot. That call site is in
+-- `apps/server/lib/**` and is OUT OF SCOPE for this migration.
 --
 -- A LATE ARRIVAL STOPS THIS MIGRATION; IT DOES NOT WIDEN IT. Given the
 -- provisioner above, a thirteenth row under 'defects' between dispatch and
@@ -260,7 +296,11 @@ BEGIN;
 -- WHAT WILL NOT CHANGE. Stated here because a dispatch that expects twelve
 -- moving items to start dispatching would otherwise report a false success:
 --
---   * THREE items will still not enter the implementation lane. The three at
+--   * THREE items will not be AUTOMATICALLY re-routed. Read the word
+--     `automatically` as doing the work: what `maxImplementationInflows`
+--     bounds is the AUTOMATIC completion inflow, not every route into the
+--     implementation lane, and a HUMAN can still act on these three wherever
+--     their producer left a commit. The three at
 --     `agent_completed` carry `triageAttempt` 3, 4 and 4, and the OD-10
 --     completion inflow refuses to route an item whose SHARED re-work
 --     discriminator reads at or above `maxImplementationInflows = 3`
@@ -279,7 +319,9 @@ BEGIN;
 --     reason: `planned` is in NO `JobDefinition.entryStates` in this
 --     repository -- the only wired sets are `designNotRequired`,
 --     `designApproved`, `designRequired`, `designRejected`, `designInReview`,
---     `agentCompleted` and `implementationReady`. The two
+--     `agentCompleted`, `implementationReady` and `reviewRejected`
+--     (`triageDefectDefinition.entryStates`,
+--     packages/scheduler/lib/src/triage_defect.dart:58-62). The two
 --     `design-remediation-*` rows stop at `planned` by design (ADR 0021,
 --     `EXTERNAL_DESIGN_GOVERNANCE_DEPENDENCY`) until the design governance
 --     runtime exists. Repointing them is correct -- they are owned by this
@@ -704,12 +746,33 @@ BEGIN
            || 'work_item and this audit table was read for update or written '
            || '-- in particular no defect, job, worker_execution, '
            || 'agent_execution, model_execution_record, design_revision, '
-           || 'onboarding_record or product_baseline row. The twelve '
-           || 'enumerated ids were filed under a product id with no registry '
-           || 'row, which is why the implementation readiness probe deferred '
-           || 'every one of them on implementation.deferred.product_missing; '
-           || 'the destination was checked to EXIST and to be governed before '
-           || 'this row was written. An item that moved on between dispatch '
+            || 'onboarding_record or product_baseline row. The twelve '
+            || 'enumerated ids were filed under a product id with no registry '
+            || 'row, and the deferral that follows from that is SCOPED TO THE '
+            || 'SEVEN AT implementation_ready -- every one of THOSE seven '
+            || 'deferred on implementation.deferred.product_missing -- not '
+            || 'universal across the twelve. The scope is not incidental: the '
+            || 'implementation readiness probe is the IMPLEMENTATION lane''s '
+            || 'workload resolver, wired only on '
+            || 'sched-impl (apps/server/lib/server.dart:653); '
+            || 'RunnableWorkEvaluator.evaluate returns noAction for any item '
+            || 'outside its definition''s entryStates '
+            || '(packages/scheduler/lib/src/policy/runnable_work.dart:172) '
+            || 'BEFORE the resolver is consulted. The three at '
+            || 'agent_completed are in '
+            || 'engineeringReviewDefinition.entryStates '
+            || '(packages/scheduler/lib/src/scheduler.dart:2166), so '
+            || 'sched-review claims them and its resolver is not this probe: '
+            || 'they were never deferred on '
+            || 'implementation.deferred.product_missing, or on anything else. '
+            || 'The two at '
+            || 'planned are in no wired entryStates at all and are claimed by '
+            || 'nothing, so they were never deferred on anything either. Those '
+            || 'five are repointed because being filed under a product that '
+            || 'does not exist is wrong at ANY state, not because a probe had '
+            || 'refused them. The destination was checked to EXIST and to be '
+            || 'governed before '
+            || 'this row was written. An item that moved on between dispatch '
            || 'and apply was still repointed, because being filed under a '
            || 'product that does not exist is wrong regardless of the state '
            || 'it has reached. This repair does not fix the producer: the '
@@ -734,9 +797,20 @@ BEGIN
             moved, eligible;
     END IF;
 
+    -- The second `%` is `eligible`, NOT the size of the enumerated set, and
+    -- the wording says so: `eligible` counts enumerated rows that still carried
+    -- their expected product id and had no audit row from this migration yet,
+    -- so it is 12 on a first apply and 0 on every re-apply. Labelling it
+    -- "enumerated" printed "repointed 0 of 0 enumerated work items" on a
+    -- completed repair, which reads as an empty target set rather than as a
+    -- repair that already finished. The trailing count is `total - eligible`,
+    -- so the two together always account for all twelve.
     RAISE NOTICE
-        'product-repoint: repointed % of % enumerated work items from defects '
-        'to %; % were already at the destination.',
+        'product-repoint: repointed % of % ELIGIBLE work items from defects '
+        'to %; % were already at the destination. ELIGIBLE is the enumerated '
+        'rows still carrying the expected product id with no audit row from '
+        'this migration yet, so it reads 0 on a re-apply and the pair '
+        'ELIGIBLE + already-at-destination is always the full set.',
         moved, eligible, dest,
         (SELECT count(*) FROM "shipit_product_repoint_target") - eligible;
 END $repoint$;

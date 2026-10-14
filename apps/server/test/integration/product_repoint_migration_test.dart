@@ -662,6 +662,140 @@ void main() {
         },
       );
 
+      test('its audit reason scopes the deferral to the seven the probe saw', () async {
+        // This is the claim the pre-correction file got wrong. It asserted, in
+        // EVERY ONE of the twelve rows it writes:
+        //
+        //   "...which is why the implementation readiness probe deferred every
+        //    one of them on implementation.deferred.product_missing"
+        //
+        // which is FALSE for five of the twelve. The probe is the
+        // IMPLEMENTATION lane's workload resolver, wired only on `sched-impl`
+        // (apps/server/lib/server.dart:653), and
+        // `RunnableWorkEvaluator.evaluate` returns `noAction` for any item
+        // outside its definition's entryStates
+        // (packages/scheduler/lib/src/policy/runnable_work.dart:172) BEFORE
+        // the resolver is ever consulted. So only the seven at
+        // `implementation_ready` were ever asked about a missing product:
+        //
+        //   * the three at `agent_completed` are claimed by
+        //     `engineeringReviewDefinition` (scheduler.dart:2166), whose
+        //     resolver is NOT this probe;
+        //   * the two at `planned` are in no wired entryStates at all, and are
+        //     claimed by nothing.
+        //
+        // Twelve rows are permanent ledger records the moment `make qa-up`
+        // runs, so a false sentence in one is a false record in twelve. This
+        // asserts on the reasons READ BACK OUT OF THE DATABASE, not on the
+        // migration's text: a text assertion would pass on a string the
+        // `||` chain never reaches.
+        await db.db.unsafeSimpleExecute(_applyRepointScript(repoint));
+
+        final rows = await _auditRows(db);
+        expect(rows, hasLength(_targets.length), reason: 'the fixture');
+        for (final row in rows) {
+          final id = row['workItemId']! as String;
+          final reason = row['reason']! as String;
+
+          // The narrowed, true claim: the deferral is scoped, and the reason
+          // says WHICH seven and why the other five were never asked.
+          expect(
+            reason,
+            contains('implementation.deferred.product_missing'),
+            reason: '$id must still name the deferral it records a cause for',
+          );
+          expect(
+            reason,
+            contains('SCOPED TO THE SEVEN AT implementation_ready'),
+            reason:
+                '$id must scope the deferral to the seven items the probe was '
+                'actually asked about, rather than implying it applied to all '
+                'twelve',
+          );
+          expect(
+            reason,
+            contains('RunnableWorkEvaluator.evaluate returns noAction'),
+            reason:
+                '$id must record WHY the other five were never asked -- the '
+                'entryStates gate short-circuits before the resolver',
+          );
+          expect(
+            reason,
+            contains('claimed by nothing'),
+            reason:
+                '$id must record that the two `planned` rows were claimed by no '
+                'lane at all, which is a different stop from a deferral',
+          );
+
+          // The widened claim, refused. Asserted as a NEGATIVE because the
+          // failure this guards against is a LATER EDIT RE-WIDENING the
+          // sentence, and a positive assertion alone would not notice a
+          // second, broader claim added alongside the narrow one.
+          expect(
+            reason,
+            isNot(contains('deferred every one of them')),
+            reason:
+                '$id must not claim the probe deferred every enumerated item: '
+                'it deferred the seven at implementation_ready and never saw '
+                'the other five',
+          );
+        }
+      });
+
+      test('its audit reason never claims a deferral for a row the probe never '
+          'saw', () async {
+        // The same falsity, checked from the OTHER side and against the
+        // fixture rather than the wording: the rows that WERE deferred and the
+        // rows that were NOT are different sets, and the reason is per-row, so
+        // the rows at states no lane claims must say so themselves.
+        await db.db.unsafeSimpleExecute(_applyRepointScript(repoint));
+
+        final expectedDeferred = _targets
+            .where((t) => t.$2 == 'implementation_ready')
+            .map((t) => t.$1)
+            .toSet();
+        expect(
+          expectedDeferred,
+          hasLength(7),
+          reason:
+              'the fixture must still hold seven implementation_ready rows, or '
+              'this test proves nothing about the split it asserts',
+        );
+        final neverClaimed = _targets
+            .where((t) => t.$2 != 'implementation_ready')
+            .map((t) => t.$1)
+            .toSet();
+        expect(neverClaimed, hasLength(5), reason: 'three plus two');
+        expect(
+          expectedDeferred.intersection(neverClaimed),
+          isEmpty,
+          reason: 'the two sets must partition the twelve',
+        );
+
+        for (final row in await _auditRows(db)) {
+          final id = row['workItemId']! as String;
+          final reason = row['reason']! as String;
+          if (expectedDeferred.contains(id)) {
+            expect(
+              reason,
+              contains('SCOPED TO THE SEVEN AT implementation_ready'),
+              reason: '$id is one of the seven the probe deferred',
+            );
+          } else {
+            expect(
+              reason,
+              contains(
+                'Those five are repointed because being filed under a product',
+              ),
+              reason:
+                  '$id is one of the five the probe never saw; its own row has '
+                  'to carry the reason it moved anyway, or a reader of that '
+                  'single row is told a deferral that never happened',
+            );
+          }
+        }
+      });
+
       test('its audit id prefix cannot collide with the earlier repairs', () {
         final sql = repoint.readAsStringSync();
         for (final earlier in const [
