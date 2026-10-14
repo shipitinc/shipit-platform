@@ -126,6 +126,7 @@ class _ModelStatsViewState extends State<_ModelStatsView> {
                 RunDurationPanel(
                   stats: state.durations,
                   unmeasuredRuns: state.unmeasuredRuns,
+                  durationErrorMessage: state.durationErrorMessage,
                 ),
                 const SizedBox(height: 46),
                 TechnicalDetails(

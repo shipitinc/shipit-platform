@@ -891,24 +891,49 @@ void run(List<String> args) async {
   //
   // ---- BUDGET-BLOCKED TICK: READ THIS BEFORE RAISING A BUDGET AGAIN ----
   //
-  // `_dispatchOne` awaits `_dispatch.run(request)`, which is the whole agent
-  // execution. So one tick is unavailable for as long as the longest run it
-  // dispatched — and every 30 s trigger during that window is DROPPED, not
-  // queued. This composition runs all three schedulers inside one
-  // single-flight callback, so a long review also delays triage and
-  // implementation, not just the review lane.
+  // THE BLOCKING FIGURE IS N × BUDGET, NOT ONE BUDGET. Read this before you
+  // read any sentence below as "a long run".
+  //
+  // `Scheduler.tick()` dispatches inside a `for (;;)` loop: it re-reads the
+  // eligible jobs, takes the batch that is still eligible, and `await`s
+  // `_dispatchOne(job, now)` for each of them SERIALLY. `_dispatchOne` awaits
+  // `_dispatch.run(request)` — the whole agent execution, start to terminal.
+  // There is NO per-tick dispatch cap: one tick attempts EVERY job that was
+  // eligible when it started.
+  //
+  // So the single flight is held for the SUM over everything that tick
+  // dispatched, not for the longest of them:
+  //
+  //     tick blocked for  Σ (N × budget)  =  N × budget
+  //
+  // where N is the number of eligible jobs that tick attempted, and each job is
+  // bounded by ITS OWN role's budget (30m triage / 3h review / 4h
+  // implementation). N is bounded only by the backlog, so THE FIGURE IS
+  // UNBOUNDED IN THE BACKLOG: a tick that drains a 10-job backlog can hold the
+  // single flight for up to ~40 hours at the implementation budget. The honest
+  // range for "how quiet is the console" is HOURS TO DAYS, not one budget. An
+  // earlier version of this comment said "as long as the longest run it
+  // dispatched"; that understated the stall by the backlog size, which is the
+  // exact error this repo's rule against unstatable numbers exists to prevent.
+  //
+  // Every 30 s trigger during that window is DROPPED, not queued. This
+  // composition runs all three schedulers inside one single-flight callback, so
+  // a long implementation run also delays triage and review, not just its own
+  // lane.
   //
   // This is PRE-EXISTING and NOT fixed by this change: at the old 300 s review
-  // budget roughly 90% of triggers were already dropped during a review, and at
-  // the raised budgets it is worse. It is written down here rather than fixed
-  // here because the fix is a composition change — moving dispatch off the tick,
-  // or giving each lane its own single flight — and that is its own decision
+  // budget roughly 90% of triggers were already dropped during a single review
+  // run, and at the raised budgets it is worse by the same factor of N. It is
+  // written down here rather than fixed here because every candidate fix is a
+  // composition change — a per-tick dispatch cap, moving dispatch off the tick,
+  // or giving each lane its own single flight — and each is its own decision
   // with its own ownership, not something a budget change should smuggle in.
   //
   // What an operator should expect: a long run is not a silent hang, it is a
   // logged `scheduler.tick.dropped_overlap` per period. If that line is
-  // appearing constantly with no work completing, the budget and the tick
-  // period are the two things to look at, in that order.
+  // appearing constantly with no work completing, the BACKLOG DEPTH, the budget
+  // and the tick period are the three things to look at, in that order — the
+  // backlog first, because it is the multiplier.
   final tick = TickSingleFlight(
     log: _log,
     runTick: () async {

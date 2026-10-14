@@ -26,12 +26,26 @@ import 'run_duration_stats.dart';
 /// must be able to count those, because that count is what tells them whether
 /// the budget is right.
 class RunDurationPanel extends StatelessWidget {
-  const RunDurationPanel({super.key, required this.stats, this.unmeasuredRuns});
+  const RunDurationPanel({
+    super.key,
+    required this.stats,
+    this.unmeasuredRuns,
+    this.durationErrorMessage,
+  });
 
   final RunDurationStats? stats;
 
   /// Runs in range with no usable duration. Null when the read failed.
   final int? unmeasuredRuns;
+
+  /// The failure the duration read actually produced, carried by the bloc.
+  ///
+  /// Rendered as-is rather than replaced by a fixed sentence. The bloc gives
+  /// this read its own error channel specifically so that the failure can be
+  /// named — an unreadable endpoint and a quiet one are different facts, and a
+  /// panel that swallows the message throws that distinction away at the last
+  /// step, after the whole screen was arranged to preserve it.
+  final String? durationErrorMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -51,6 +65,13 @@ class RunDurationPanel extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
+            if (durationErrorMessage case final message?) ...[
+              Text(
+                message,
+                style: ShipItType.monoMeta.copyWith(color: palette.negative),
+              ),
+              const SizedBox(height: 8),
+            ],
             Text(
               'Durations could not be read from agent execution records. This is '
               'a failure to read, not an absence of runs — no duration is being '

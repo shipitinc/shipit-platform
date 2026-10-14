@@ -95,32 +95,80 @@ void main() {
   });
 
   group('the values are PROVISIONAL, and say so at the call site', () {
-    test('every entry in the table is introduced by a PROVISIONAL marker', () {
-      // Each role's block names the role in caps and carries its own
-      // PROVISIONAL marker, so a fourth role added later cannot skip it.
+    test('every entry in the table is introduced by ITS OWN PROVISIONAL marker', () {
+      // BIND each role to its own header. Do NOT count markers.
+      //
+      // This test used to count the matching `PROVISIONAL.` lines and compare
+      // the count to the number of roles. That count is satisfiable by ANY
+      // comment: deleting triage's real header and writing `// TODO —
+      // PROVISIONAL.` in its place leaves the count at 3, so the test passed on
+      // a table in which triage's budget carried no provenance at all. That is
+      // the exact failure mode commit 362d047 exists to eliminate — a comment
+      // satisfying a source grep — reproduced in the sibling guard in this very
+      // file, on the branch whose thesis is "a number whose provenance cannot be
+      // stated is worse than no number".
+      //
+      // The negative assertions elsewhere in this file are immune to that attack
+      // (`timeoutSeconds:\s*\d+` must find nothing, and a comment cannot make
+      // something be found by a "must not match"). THIS one is positive, so it
+      // has to carry the role inside the pattern.
       final table = serverSource.substring(
         serverSource.indexOf('static const Map<String, Duration> byRole'),
         serverSource.indexOf('static int get triageSeconds'),
       );
+      final ownHeaders = <String, String>{};
       for (final role in AgentExecutionBudgets.byRole.keys) {
+        final keyAt = table.indexOf("'$role':");
         expect(
-          table.contains("'$role':"),
-          isTrue,
+          keyAt,
+          greaterThan(-1),
           reason: 'the table must actually declare $role',
         );
+        // The NEAREST header above this role's own entry is the one that
+        // introduces it; anything above that belongs to an earlier role. This is
+        // what makes the binding positional rather than merely global.
+        final headers = _provisionalHeader.allMatches(
+          table.substring(0, keyAt),
+        );
+        expect(
+          headers,
+          isNotEmpty,
+          reason:
+              '$role has no `// <ROLE NAME> — … PROVISIONAL.` header above its '
+              'own entry. A budget with no marker is precisely what this file '
+              'exists to forbid.',
+        );
+        final own = headers.last.group(1)!;
+        expect(
+          _namesRole(own, role),
+          isTrue,
+          reason:
+              "the header introducing $role must name $role, and it read: "
+              '"$own". A marker that names some OTHER role — or names nothing — '
+              'satisfies a count while telling a reader of $role nothing.',
+        );
+        ownHeaders[role] = own;
       }
-      final roleBlocks = RegExp(
-        r'// ([A-Z][A-Z ]+—.*?PROVISIONAL\.)',
-        multiLine: true,
-      ).allMatches(table).map((m) => m.group(1)!).toList();
+      // One marker per role, and no marker doing two roles' work.
       expect(
-        roleBlocks.length,
+        ownHeaders.values.toSet().length,
+        ownHeaders.length,
+        reason:
+            'each role needs its OWN header: $ownHeaders. One header shared by '
+            'two roles is the same defect as a count, one level down.',
+      );
+      // Kept as a SECONDARY invariant only, and it is worth being explicit that
+      // it cannot be the guard: after the attack above, this count is still 3
+      // and still passes. It is here so that a fourth role added without a
+      // header, or a header orphaned from every role, is still noticed.
+      expect(
+        _provisionalHeader.allMatches(table).length,
         AgentExecutionBudgets.byRole.length,
         reason:
             'each role\'s comment must lead with its name and end the header '
             'line with PROVISIONAL. The worst outcome of this change is the '
             'next person reading a budget and assuming somebody measured it — '
-            'which is exactly how 300 got there. Found: $roleBlocks',
+            'which is exactly how 300 got there.',
       );
       expect(
         RegExp(r'OPERATOR-STATED').allMatches(table).length,
@@ -315,11 +363,13 @@ void main() {
 
   group('the tick that runs three schedulers is aware of what a budget means', () {
     test('the blocking-tick coupling is documented where the tick is built', () {
-      // `_dispatchOne` awaits the whole agent execution, so one tick blocks for
-      // the length of the longest run it dispatched and `TickSingleFlight`
-      // DROPS every overlapping trigger. That was true at 300s and is worse at
-      // 3h; it is not introduced here and it is not fixed here, so it has to
-      // be written down where the tick is built rather than discovered by an
+      // `Scheduler.tick()` dispatches in a `for (;;)` loop, awaiting
+      // `_dispatchOne` — and so the whole agent execution — SERIALLY for every
+      // eligible job, with no per-tick cap. `TickSingleFlight` DROPS every
+      // overlapping trigger for the whole of that window, so the window is
+      // N × budget, not one budget. That was true at 300s and is worse at 3h;
+      // it is not introduced here and it is not fixed here, so it has to be
+      // written down where the tick is built rather than discovered by an
       // operator wondering why the console went quiet.
       expect(
         serverSource,
@@ -327,6 +377,30 @@ void main() {
         reason:
             'the composition must say plainly that raising a budget also '
             'lengthens how long the single-flight tick is unavailable.',
+      );
+      // The first version of that comment bounded the stall at "the longest run
+      // it dispatched", which understated it by the backlog size. These two
+      // assertions exist because the mis-statement was invisible: the comment
+      // was present, it was confident, and it was wrong by a factor of N. The
+      // figure is only useful to an operator if it names the multiplier.
+      expect(
+        RegExp(
+          r'N\s*[×x]\s*budget',
+          caseSensitive: false,
+        ).hasMatch(serverSource),
+        isTrue,
+        reason:
+            'the composition must state the stall as N × budget, where N is the '
+            'number of eligible jobs that tick dispatched serially. Bounding it '
+            'at one run understates it by the backlog.',
+      );
+      expect(
+        serverSource,
+        contains('UNBOUNDED IN THE BACKLOG'),
+        reason:
+            'N is bounded only by the backlog, so the stall has no ceiling in '
+            'the budgets themselves. Saying so is what stops the next reader '
+            'from treating the budget as the upper bound on the outage.',
       );
     });
   });
@@ -357,6 +431,28 @@ void main() {
     });
   });
 }
+
+/// A role header line inside [AgentExecutionBudgets.byRole]: an UPPERCASE name,
+/// an em dash, and a line that ends `PROVISIONAL.`.
+///
+/// Anchored to the whole line deliberately. A looser shape — "somewhere on this
+/// line the word PROVISIONAL appears" — is exactly the shape a stray comment
+/// satisfies, which is what the test above used and why it had to be replaced.
+final RegExp _provisionalHeader = RegExp(
+  r'^\s*//\s*([A-Z][A-Z0-9 /&]*\s*[—–-][^\n]*PROVISIONAL\.)\s*$',
+  multiLine: true,
+);
+
+/// Whether [header] is a marker that actually names [role].
+///
+/// The key and its header are written in different words — `triage-defect` is
+/// introduced by `DEFECT TRIAGE` — so the binding is "this header mentions this
+/// role", not "this header repeats this key". A marker naming nothing, or
+/// naming a different role, does not describe the budget it sits above.
+bool _namesRole(String header, String role) => role
+    .split(RegExp(r'[^A-Za-z0-9]+'))
+    .where((token) => token.length >= 4)
+    .any((token) => header.toUpperCase().contains(token.toUpperCase()));
 
 /// `packages/scheduler/lib/src/scheduler.dart`, located by walking up, exactly
 /// as the source-level assertions in this repository already do.
