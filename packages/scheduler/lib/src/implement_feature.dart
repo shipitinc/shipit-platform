@@ -131,6 +131,15 @@ const JobDefinition implementFeatureDefinition = JobDefinition(
 /// engine writes cannot be derived two different ways and disagree, which
 /// would build a key nothing holds and enqueue nothing.
 ///
+/// That claim is only true because EVERY writer calls
+/// [DurableWorkflowEngine.nextTriageAttempt]. It was not true when this
+/// comment was first written: the completion inflow computed `attempt + 1`
+/// inline at its own call site, which agreed only because `nextTriageAttempt`'s
+/// `floor` defaults to `0`. The counter's own documentation names "two
+/// writers, two different rules, one counter" as the hazard, and an inline
+/// `attempt + 1` is exactly that hazard wearing a third writer's coat. It now
+/// calls the function.
+///
 /// ## WHY THE ABSENT CASE IS BYTE-IDENTICAL TO TODAY
 ///
 /// With no `triageAttempt` the key is exactly `'<workItemId>:implement_feature'`,

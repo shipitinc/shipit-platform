@@ -436,5 +436,83 @@ void main() {
             'reason as above. banner was: $banner',
       );
     });
+
+    test('the COMMENT above the banner does not assert the lane is inert', () {
+      // The banner's VALUE is extracted above, so it was guarded — and the
+      // comment thirteen lines above it was not. It still said that no
+      // `HumanDecisionRouting` entry targets `implementation_ready` "because
+      // which rework pairs move there is an open decision (OD-3)", directly
+      // above the corrected string that names all four resolved ones. A false
+      // persisted claim about shipping code is worse than a missing one: a
+      // reader who finds it has to decide which of two adjacent statements to
+      // believe.
+      //
+      // Nothing can guard prose in general. What can be guarded is prose that
+      // makes a CLAIM ABOUT THE CURRENT STATE, and this is the prose that does.
+      final anchor = source.indexOf("'implementation': {");
+      expect(anchor, greaterThan(-1), reason: 'the banner entry must exist');
+
+      // The comment block immediately above it: everything from the end of the
+      // previous statement to the anchor.
+      final previousStatement = source.lastIndexOf('},', anchor);
+      expect(previousStatement, greaterThan(-1));
+      final comment = source.substring(previousStatement, anchor);
+
+      expect(
+        comment,
+        isNot(contains('(OD-3 is open)')),
+        reason:
+            '`OD-3` is resolved and `OD-10` delivered the inflow. This comment '
+            'is not about the decision being open — it is about what the banner '
+            'must let an operator distinguish. comment was: $comment',
+      );
+      for (final stale in const [
+        'no `HumanDecisionRouting`\n    // entry targets',
+        'nothing reaches it yet',
+        'is an open decision',
+      ]) {
+        expect(
+          comment,
+          isNot(contains(stale)),
+          reason:
+              'the lane is wired and REACHABLE. A comment claiming otherwise '
+              'sits directly above the string that says so. comment was: '
+              '$comment',
+        );
+      }
+      expect(
+        comment,
+        contains('REACHABLE'),
+        reason:
+            'the distinction this banner has to preserve is "nothing routed '
+            'into it" against "idle because it is broken". Naming it here — '
+            'not only in the value below — is what keeps the next reader from '
+            're-adding the claim that was just removed.',
+      );
+    });
+
+    test('the implementation section ticks BEFORE the review section', () {
+      // `sched-impl` ROUTES items out of `agentCompleted`; `sched-review`
+      // DISPATCHES from it and its fail-closed handler MOVES them. Ticking
+      // review first let the handler park a no-artifact item before the inflow
+      // ever saw it, and the item never reached `implementationReady` — with
+      // both ticks reporting success. See
+      // `apps/server/test/implementation_inflow_tick_order_test.dart`, which
+      // proves the outcome is now the same in either order; this pins the
+      // order the composition actually uses.
+      final impl = source.indexOf('await implScheduler.tick();');
+      final review = source.indexOf('await reviewScheduler.tick();');
+      expect(impl, greaterThan(-1), reason: 'the lane must be ticked');
+      expect(review, greaterThan(-1), reason: 'review must be ticked');
+      expect(
+        impl,
+        lessThan(review),
+        reason:
+            'disjointness has to be structural, not accidental. Handled by '
+            'engineeringReviewMissingArtifact standing down as well, so this '
+            'ordering is the braces rather than the only defence — but a '
+            'reorder that silently flips it restores the window.',
+      );
+    });
   });
 }

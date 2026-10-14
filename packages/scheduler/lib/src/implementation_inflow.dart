@@ -4,11 +4,21 @@ import 'package:worker_runtime/worker_runtime.dart' show WorkerStore;
 
 /// Why a completed producer left no commit behind.
 ///
-/// Five shapes, because "there is nothing to review" is one sentence sent to
-/// an operator and five different problems with five different fixes: a
-/// missing identity is a producer that never ran, an ambiguous identity is two
-/// runs that cannot be told apart, a reviewer-only match means the anchor is
-/// wrong, and the last two are the honest answer for a triage report.
+/// Four shapes, because "there is nothing to review" is one sentence sent to
+/// an operator and four different problems with four different fixes: a
+/// missing identity is a producer that never ran, an absent execution is a
+/// stamp that names nothing, an ambiguous identity is two runs that cannot be
+/// told apart, and the last one is the honest answer for a triage report.
+///
+/// ## WHY THERE IS NO "IT WAS A REVIEWER" SHAPE
+///
+/// There was one, and it was removed as unreachable rather than left to rot.
+/// The candidate loop below SKIPS any execution carrying
+/// `WorkerCapability.engineeringReview`, so by the time a single match has been
+/// isolated it cannot be a reviewer — a case that can never be reached is
+/// advertised in an operator-facing list of causes and reads as a diagnosis
+/// nobody can act on. The reviewer is not lost: it is simply not a candidate,
+/// which is the same answer the skip already gives.
 enum NoProducedCommitReason {
   /// No `producerActorId` on the work item: nothing recorded who produced it.
   producerNotIdentified,
@@ -19,10 +29,6 @@ enum NoProducedCommitReason {
   /// More than one execution carries it. They cannot be told apart from this
   /// data, so the answer is "unknown", not "the newest one".
   producerExecutionAmbiguous,
-
-  /// The only match is a reviewer execution, and a reviewer never produces a
-  /// commit — so the anchor is not pointing at a producer.
-  producerExecutionIsReviewer,
 
   /// The execution ran and committed nothing: `endingRevision` is null, or is
   /// the very revision it started from. **This is the triage shape** — the
@@ -84,15 +90,24 @@ final class NoCommitProduced extends ProducedCommit {
 /// Decides whether the producer of [item]'s last completed run left an
 /// implementation artifact.
 ///
-/// ## THIS IS THE SAME RULE, OVER THE SAME ROWS, AS THE REVIEW GATE'S
+/// ## THIS IS THE ONE RULE THE REVIEW GATE ALSO USES
 ///
-/// It is a deliberate transcription of `engineeringReviewWorkloadResolver`
-/// (`apps/server/lib/src/review/engineering_review_gate.dart`), and being a
-/// transcription is the point — two independent rules for "did this run produce
-/// something reviewable" is how a real commit gets sent to the build queue and
-/// a reviewer gets sent to a revision nobody committed. The anchor, the
-/// reviewer filter, the exactly-one rule and the commit-inequality are all
-/// identical, and a test asserts they cannot drift apart.
+/// `engineeringReviewWorkloadResolver`
+/// (`apps/server/lib/src/review/engineering_review_gate.dart`) CALLS this
+/// function; it does not re-state it. Two independent transcriptions of "did
+/// this run produce something reviewable" is how a real commit gets sent to
+/// the build queue while a reviewer is sent to a revision nobody committed, so
+/// the duplication was removed rather than asserted against — the dependency
+/// runs from the app onto this package, which is the direction that already
+/// exists (`apps/server` depends on `packages/scheduler`), so sharing costs
+/// nothing and needs no inversion.
+///
+/// What sharing does NOT cover is the mapping from this verdict to each lane's
+/// action. `engineeringReviewWorkloadResolver` still turns [CommitProduced]
+/// into a workload and everything else into `null`, and that mapping lives in
+/// a different package from [completionRouteFor], so no single function can
+/// assert they are complementary. `apps/server/test/inflow_vs_review_route_test.dart`
+/// EXECUTES both over the same durable rows and fails if they ever disagree.
 ///
 /// ## WHY THE ANCHOR AND NOT THE LATEST EXECUTION
 ///
@@ -160,16 +175,10 @@ Future<ProducedCommit> producedCommitFor(
   }
 
   final producer = matches.single;
-  if (producer.requiredCapabilities.contains(
-    WorkerCapability.engineeringReview,
-  )) {
-    return const NoCommitProduced(
-      NoProducedCommitReason.producerExecutionIsReviewer,
-      'the only execution matching this work item\'s producer identity is a '
-      'reviewer, and a reviewer never produces a commit',
-    );
-  }
-
+  // No reviewer check here, and deliberately so. The loop above already skipped
+  // every reviewer-capability execution, so `matches.single` cannot be one; a
+  // second check on a value the loop has already excluded would be a branch no
+  // input can reach. See `NoProducedCommitReason`.
   final produced = producer.endingRevision;
   if (produced == null || produced == producer.requestedStartingRevision) {
     return NoCommitProduced(
@@ -205,8 +214,25 @@ WorkItemState completionRouteFor(ProducedCommit produced) => switch (produced) {
   NoCommitProduced() => WorkItemState.implementationReady,
 };
 
-/// How many times the inflow may put ONE work item into the implementation
-/// lane without a human in the loop.
+/// How many automatic entries into the implementation lane ONE work item may
+/// get, without a human in the loop.
+///
+/// ## WHAT IS ACTUALLY COUNTED
+///
+/// `DurableWorkflowEngine`'s `triageAttemptMetadataKey` — and that is the
+/// SHARED
+/// re-work discriminator, not a tally of this lane's entries. The operator
+/// retry and a resolved rework/reject decision advance it too
+/// (`durable_workflow_engine.dart`), so an item that entered this lane ZERO
+/// times can already read `2` because a person pressed retry twice.
+///
+/// That is a deliberate tightening, not an accident: the whole cycle closes on
+/// ONE counter, so bounding that counter is what bounds the loop. The cost is
+/// that an item with prior human-driven re-work gets FEWER automatic attempts,
+/// and every surface that reports the bound says so in those words —
+/// `CompletionInflowMove.reason` names the discriminator, never "times this
+/// item was implemented". An operator-facing refusal that misstates which
+/// counter it read is worse than a tighter bound.
 ///
 /// ## WHY A BOUND IS NOT OPTIONAL
 ///
@@ -218,15 +244,17 @@ WorkItemState completionRouteFor(ProducedCommit produced) => switch (produced) {
 /// an item that can never be implemented — the exact defect this lane exists to
 /// end, re-created with a different shape.
 ///
-/// ## WHY IT IS AN ATTEMPT COUNT AND NOT A FAILURE
+/// ## WHY IT IS A BOUND AND NOT A FAILURE
 ///
 /// Refusing the route is not a failure and not a drop. The item is left at
 /// `agentCompleted`, where `sched-review` already offers it to the reviewer
-/// every tick; the review workload resolver refuses it for the same reason
-/// this one does, and the composition root's existing fail-closed handler
-/// turns that into a blocking human decision. So the bound does not strand the
-/// item — it hands it to a person, which is where an item nobody can implement
-/// belongs.
+/// every tick; the review workload resolver refuses it for the same reason this
+/// one does, and the composition root's fail-closed handler
+/// (`engineeringReviewMissingArtifact`) turns that into a blocking human
+/// decision — but ONLY once the stand-down inside that handler stops deferring
+/// to this bound, which is why the two check the same number. So the bound does
+/// not strand the item — it hands it to a person, which is where an item nobody
+/// can implement belongs.
 ///
 /// Three, because each attempt costs a real implementer execution and the
 /// historical budget for a lane that re-dispatches the same work is two

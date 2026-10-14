@@ -34,10 +34,11 @@ const _produced = 'federated-feed-routing';
 const _startRevision = '0f9a1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b';
 
 WorkItem _completed({
+  String workItemId = 'wi-1',
   Object? producerActorId = 'agx-exec-impl-1',
   Map<String, dynamic>? metadata,
 }) => WorkItem(
-  workItemId: 'wi-1',
+  workItemId: workItemId,
   productId: 'prod-1',
   category: WorkItemCategory.bugfix,
   title: 'Route the federated feed',
@@ -54,6 +55,7 @@ WorkItem _completed({
 /// One worker execution, shaped the way `LocalWorker._finish` records it.
 WorkerExecution _execution({
   required String workerExecutionId,
+  String workItemId = 'wi-1',
   required String? agentExecutionId,
   required String? endingRevision,
   String requestedStartingRevision = _startRevision,
@@ -64,7 +66,7 @@ WorkerExecution _execution({
   },
 }) => WorkerExecution(
   workerExecutionId: workerExecutionId,
-  workItemId: 'wi-1',
+  workItemId: workItemId,
   repositoryPath: repositoryPath,
   requestedStartingRevision: requestedStartingRevision,
   requiredCapabilities: capabilities,
@@ -446,8 +448,13 @@ void main() {
     test('the automatic route is BOUNDED, and the bound hands the item to a '
         'human rather than dropping it', () async {
       final workflowStore = InMemoryWorkflowStore();
+      // THE LITERAL, not the constant. A test that seeds
+      // `maxImplementationInflows` validates the mechanism against itself and
+      // says nothing at all about the value: setting the constant to 99 left
+      // every test in this file green. The value is pinned separately, in the
+      // "the bound IS three" test below.
       await workflowStore.saveWorkItem(
-        _completed(metadata: {'triageAttempt': maxImplementationInflows}),
+        _completed(metadata: const {'triageAttempt': 3}),
       );
       final workerStore = await _storeWith([
         _execution(
@@ -480,13 +487,17 @@ void main() {
         (await workflowStore.readWorkItem('wi-1')).state,
         WorkItemState.agentCompleted,
         reason:
-            'an item that cannot be implemented after '
-            '$maxImplementationInflows attempts belongs in front of a person. '
-            'Leaving it at agent_completed is what lets the review lane\'s '
-            'existing fail-closed handler raise a blocking decision for it',
+            'an item that cannot be implemented after its re-work budget is '
+            'spent belongs in front of a person. Leaving it at agent_completed '
+            'is what lets the review lane\'s fail-closed handler raise a '
+            'blocking decision for it — and that handler STANDS DOWN while the '
+            'budget lasts, so the two check the same number',
       );
       expect(result.completionInflow.single.moved, isFalse);
-      expect(result.completionInflow.single.reason, contains('already been'));
+      expect(
+        result.completionInflow.single.reason,
+        contains('re-work discriminator'),
+      );
       expect(result.enqueued, isEmpty);
       expect(dispatch.requests, isEmpty);
     });
@@ -532,6 +543,103 @@ void main() {
     );
 
     test(
+      'an UNREADABLE DISCRIMINATOR on one item does not abort the lane\'s tick',
+      () async {
+        // `DurableWorkflowEngine.readTriageAttempt` throws `FormatException` BY
+        // DESIGN on a marker that is present and not an int/whole-double/
+        // numeric-String — falling back would rebuild a dedupe key a terminal
+        // job already holds. That is the right call inside the ENGINE.
+        //
+        // It was also, for one revision, a lane-wide outage: the read sat
+        // outside the per-item guard, so one corrupt byte on one work item
+        // propagated out of `_runCompletionInflow`, out of `tick`, and into the
+        // composition root's `implementation.tick.failed` — which loses the
+        // whole `SchedulerTickResult` and with it every UNRELATED runnable
+        // `implementationReady` item that same tick could have dispatched.
+        //
+        // Two items, one corrupt. `wi-bad` cannot be routed; `wi-good` must
+        // still be.
+        final workflowStore = InMemoryWorkflowStore();
+        await workflowStore.saveWorkItem(
+          _completed(
+            workItemId: 'wi-bad',
+            metadata: {
+              'triageAttempt': {'not': 'a number'},
+            },
+          ),
+        );
+        await workflowStore.saveWorkItem(
+          _completed(workItemId: 'wi-good', producerActorId: 'agx-exec-impl-2'),
+        );
+        final workerStore = await _storeWith([
+          _execution(
+            workerExecutionId: 'wx-1',
+            workItemId: 'wi-bad',
+            agentExecutionId: 'agx-exec-impl-1',
+            endingRevision: null,
+          ),
+          _execution(
+            workerExecutionId: 'wx-2',
+            workItemId: 'wi-good',
+            agentExecutionId: 'agx-exec-impl-2',
+            endingRevision: null,
+          ),
+        ]);
+        final jobStore = InMemoryJobStore();
+        final dispatch = _CapturingDispatch();
+        final scheduler = Scheduler(
+          schedulerId: 'sched-impl',
+          workflowStore: workflowStore,
+          jobStore: jobStore,
+          workerStore: workerStore,
+          dispatch: dispatch,
+          definition: implementFeatureDefinition,
+          workload: _workload,
+          dedupeKeyBuilder: implementFeatureDedupeKey,
+          instructionBuilder: implementFeatureInstruction,
+          requestBuilder: implementFeatureRequest,
+          workloadResolver: (job, item) async => _workload,
+          clock: () => DateTime.utc(2026, 1, 1),
+        );
+
+        // The whole point: this RETURNS. It did not before.
+        final SchedulerTickResult result;
+        try {
+          result = await scheduler.tick();
+        } on Object catch (error) {
+          fail(
+            'a corrupt discriminator on one work item took the whole lane\'s '
+            'tick with it: $error. Per-item isolation is only true if every '
+            'per-item read is inside the per-item guard.',
+          );
+        }
+
+        // Reported, not swallowed: the operator can tell which item and why.
+        final bad = result.completionInflow.singleWhere(
+          (m) => m.workItemId == 'wi-bad',
+        );
+        expect(bad.to, isNull);
+        expect(bad.reason, contains('could not be read'));
+        expect(
+          (await workflowStore.readWorkItem('wi-bad')).state,
+          WorkItemState.agentCompleted,
+          reason: 'the item whose discriminator was illegible is left alone',
+        );
+
+        // AND the unrelated item still moved, in the same tick. This is the
+        // half that was lost: the blast radius was the lane, not the inflow.
+        expect(
+          (await workflowStore.readWorkItem('wi-good')).state,
+          WorkItemState.implementationReady,
+          reason:
+              'one item\'s corrupt metadata must not cost every other item '
+              'its route. That is the difference between a guard and a comment',
+        );
+        expect(dispatch.requests, hasLength(1));
+      },
+    );
+
+    test(
       'a lane that declares NO inflow never reads the worker store at all',
       () async {
         final workflowStore = InMemoryWorkflowStore();
@@ -566,62 +674,200 @@ void main() {
   });
 
   group('the two routes cannot disagree with each other', () {
-    test('review dispatches for an item the inflow would NOT route', () async {
-      // The concurrency safety argument, as an executable statement of the two
-      // components' shared input. Both read `producerActorId`, both read the
-      // execution carrying it, both compare `endingRevision` with
-      // `requestedStartingRevision`. If this assertion holds, then "the review
-      // lane dispatched" implies "the inflow did not move the item", so a
-      // reviewer can never be displaced by a route, and a review job never
-      // lands on an item the implementation lane has already taken.
-      const rows =
-          <
-            ({String? ending, String start, Set<WorkerCapability> capabilities})
-          >[
-            (
-              ending: 'a-commit',
-              start: 'a-commit',
-              capabilities: {WorkerCapability.linux},
+    test('EVERY refusal routes to implementation, and only a commit does not', () async {
+      // The half of the non-divergence argument this package can see.
+      //
+      // What used to stand here derived the review side from the verdict under
+      // test (`reviewDispatches = verdict is CommitProduced`) and then asserted
+      // the two were disjoint. That re-spelled `completionRouteFor`'s own switch
+      // — it could not detect divergence from the real resolver, because the
+      // real resolver was never called. A test that can only fail when the thing
+      // it is testing is copied into it is documentation.
+      //
+      // The real resolver lives in `apps/server`, which depends on THIS package,
+      // so the executing comparison is
+      // `apps/server/test/inflow_vs_review_route_test.dart` and it calls
+      // `producedCommitFor` — the very function this file exercises, not a copy.
+      // What remains here is the property that only this package can state: all
+      // four refusals take the same route, so there is exactly one input class
+      // on which the two lanes could ever contend.
+      const refusals = <NoProducedCommitReason>[
+        NoProducedCommitReason.producerNotIdentified,
+        NoProducedCommitReason.producerExecutionMissing,
+        NoProducedCommitReason.producerExecutionAmbiguous,
+        NoProducedCommitReason.noCommitProduced,
+      ];
+
+      for (final cause in refusals) {
+        expect(
+          completionRouteFor(NoCommitProduced(cause, 'refused: $cause')),
+          WorkItemState.implementationReady,
+          reason:
+              'a refusal is a defect attempt, never a wrong review. Diverging '
+              'here would route a real commit to a second implementer',
+        );
+      }
+      expect(
+        completionRouteFor(
+          const CommitProduced(repositoryPath: '/p', commit: 'c'),
+        ),
+        WorkItemState.reviewInProgress,
+      );
+      expect(
+        NoProducedCommitReason.values,
+        refusals,
+        reason:
+            'the list of causes is operator-facing, and a cause no input can '
+            'reach is a diagnosis nobody can act on. Adding one without a row '
+            'that produces it is how `producerExecutionIsReviewer` survived a '
+            'review: the candidate loop skipped reviewer executions, so its '
+            'branch below the skip was unreachable and it was still advertised',
+      );
+    });
+
+    test('the bound is THREE, stated here rather than read from the constant', () async {
+      // Why the value is three, and why it is pinned with a literal.
+      //
+      // Three, because the inflow buys an unattended IMPLEMENTATION attempt and
+      // each one costs a real implementer execution against a product's durable
+      // clone. Two covers the normal shape (an implementer that commits nothing
+      // once, then succeeds); a third covers the run that failed for a reason
+      // that fixed itself. The next step is a human, because the alternative is
+      // an unattended machine spending real executions on an item that cannot
+      // be implemented — the defect this lane exists to end, re-created with a
+      // different shape.
+      //
+      // Pinned with a literal on purpose: every other test in this file that
+      // touches the bound seeds the CONSTANT, which makes the constant validate
+      // itself. Changing 3 to 99 left all sixteen tests green.
+      expect(
+        maxImplementationInflows,
+        3,
+        reason:
+            'the automatic-entry budget. If this value is genuinely wrong, change '
+            'it HERE with the reasoning updated, not silently in the constant',
+      );
+
+      // And behaviourally: two still routes, three does not. Both literals, so
+      // the off-by-one in the comparison is caught rather than inherited.
+      Future<WorkItemState> routeAt(Object marker) async {
+        final workflowStore = InMemoryWorkflowStore();
+        await workflowStore.saveWorkItem(
+          _completed(metadata: {'triageAttempt': marker}),
+        );
+        final scheduler = Scheduler(
+          schedulerId: 'sched-impl',
+          workflowStore: workflowStore,
+          jobStore: InMemoryJobStore(),
+          workerStore: await _storeWith([
+            _execution(
+              workerExecutionId: 'wx-1',
+              agentExecutionId: 'agx-exec-impl-1',
+              endingRevision: null,
             ),
-            (
-              ending: null,
-              start: 'a-commit',
-              capabilities: {WorkerCapability.linux},
-            ),
-            (ending: 'b', start: 'a', capabilities: {WorkerCapability.linux}),
-            (
-              ending: 'b',
-              start: 'a',
-              capabilities: {WorkerCapability.engineeringReview},
-            ),
-          ];
-      for (final row in rows) {
-        final store = await _storeWith([
+          ]),
+          dispatch: _CapturingDispatch(),
+          definition: implementFeatureDefinition,
+          workload: _workload,
+          dedupeKeyBuilder: implementFeatureDedupeKey,
+          instructionBuilder: implementFeatureInstruction,
+          requestBuilder: implementFeatureRequest,
+          workloadResolver: (job, item) async => _workload,
+          clock: () => DateTime.utc(2026, 1, 1),
+        );
+        await scheduler.tick();
+        return (await workflowStore.readWorkItem('wi-1')).state;
+      }
+
+      expect(await routeAt(2), WorkItemState.implementationReady);
+      expect(await routeAt(3), WorkItemState.agentCompleted);
+    });
+
+    test('the bound message names the counter it actually read', () async {
+      // An item that entered the implementation lane ZERO times can carry a
+      // high `triageAttempt`: the operator retry and resolved rework/reject
+      // decisions advance the same marker. A refusal that said "already been put
+      // into the implementation lane 2 time(s)" would be a false statement in
+      // the one sentence an operator actually reads.
+      final workflowStore = InMemoryWorkflowStore();
+      await workflowStore.saveWorkItem(
+        _completed(metadata: const {'triageAttempt': 2}),
+      );
+      final scheduler = Scheduler(
+        schedulerId: 'sched-impl',
+        workflowStore: workflowStore,
+        jobStore: InMemoryJobStore(),
+        workerStore: await _storeWith([
           _execution(
             workerExecutionId: 'wx-1',
             agentExecutionId: 'agx-exec-impl-1',
-            endingRevision: row.ending,
-            requestedStartingRevision: row.start,
-            capabilities: row.capabilities,
+            endingRevision: null,
           ),
-        ]);
-        final verdict = await producedCommitFor(store, _completed());
+        ]),
+        dispatch: _CapturingDispatch(),
+        definition: implementFeatureDefinition,
+        workload: _workload,
+        dedupeKeyBuilder: implementFeatureDedupeKey,
+        instructionBuilder: implementFeatureInstruction,
+        requestBuilder: implementFeatureRequest,
+        workloadResolver: (job, item) async => _workload,
+        clock: () => DateTime.utc(2026, 1, 1),
+      );
 
-        // The review resolver's own rule, transcribed: it resolves a workload
-        // on exactly the complement of this verdict.
-        final reviewDispatches = verdict is CommitProduced;
-        final inflowRoutes =
-            completionRouteFor(verdict) == WorkItemState.implementationReady;
+      // Two prior operator retries and no lane entry: the route is still taken
+      // (2 < 3), and the item's marker is advanced by the ENGINE's own rule.
+      final result = await scheduler.tick();
+      expect(
+        (await workflowStore.readWorkItem('wi-1')).metadata?['triageAttempt'],
+        3,
+        reason:
+            'the inflow writes through `DurableWorkflowEngine.nextTriageAttempt`, '
+            'not an inline `attempt + 1`, so the number the dedupe key builder '
+            'reads back cannot be derived by a second rule',
+      );
+      expect(result.completionInflow.single.moved, isTrue);
 
-        expect(
-          reviewDispatches && inflowRoutes,
-          isFalse,
-          reason:
-              'a row where review dispatches AND the inflow routes would be '
-              'the one input on which the two lanes contend for one item. '
-              'Row: $row',
-        );
-      }
+      // And at the bound, the words are the ones an operator can act on.
+      final bounded = InMemoryWorkflowStore();
+      await bounded.saveWorkItem(
+        _completed(metadata: const {'triageAttempt': 3}),
+      );
+      final boundedScheduler = Scheduler(
+        schedulerId: 'sched-impl',
+        workflowStore: bounded,
+        jobStore: InMemoryJobStore(),
+        workerStore: await _storeWith([
+          _execution(
+            workerExecutionId: 'wx-1',
+            agentExecutionId: 'agx-exec-impl-1',
+            endingRevision: null,
+          ),
+        ]),
+        dispatch: _CapturingDispatch(),
+        definition: implementFeatureDefinition,
+        workload: _workload,
+        dedupeKeyBuilder: implementFeatureDedupeKey,
+        instructionBuilder: implementFeatureInstruction,
+        requestBuilder: implementFeatureRequest,
+        workloadResolver: (job, item) async => _workload,
+        clock: () => DateTime.utc(2026, 1, 1),
+      );
+      final boundedResult = await boundedScheduler.tick();
+      final reason = boundedResult.completionInflow.single.reason;
+      expect(reason, contains('re-work discriminator'));
+      expect(
+        reason,
+        contains('operator retry'),
+        reason:
+            'the counter is shared with human-driven re-work, so the operator '
+            'has to be told that — otherwise a high number reads as "the lane '
+            'failed three times" for an item the lane never ran on',
+      );
+      expect(
+        reason,
+        isNot(contains('implementation lane 3 time')),
+        reason: 'the false reading this message used to give',
+      );
     });
 
     test('the inflow is declared on the implementation lane only', () {

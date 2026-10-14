@@ -796,20 +796,34 @@ class Scheduler {
   ///
   /// ## WHY IT CANNOT STEAL AN ITEM THAT IS ALREADY BEING REVIEWED
   ///
-  /// The discriminator is [producedCommitFor], the same rule the engineering
-  /// review gate's workload resolver applies to the same durable rows. If that
-  /// resolver resolved a workload, the producer left a commit, and the route is
-  /// `reviewInProgress` — which this lane does not move anything to. So "review
-  /// dispatched" and "inflow routed to implementation" cannot both be true for
-  /// one item, and a reviewer is never displaced by a route.
+  /// The discriminator is [producedCommitFor], and the engineering review
+  /// gate's workload resolver CALLS that same function over the same durable
+  /// rows — one rule, not two. If that resolver resolved a workload, the producer
+  /// left a commit, and the route is `reviewInProgress` — which this lane does
+  /// not move anything to. So "review dispatched" and "inflow routed to
+  /// implementation" cannot both be true for one item, and a reviewer is never
+  /// displaced by a route.
+  ///
+  /// ## AND WHY THE OTHER LANE MUST ALSO STAND DOWN
+  ///
+  /// Complementarity alone is not enough, because the two lanes run in ONE tick
+  /// and the review lane's fail-closed handler can MOVE an item before this one
+  /// ever looks at it. `engineeringReviewMissingArtifact` therefore defers to
+  /// this lane for a no-artifact producer instead of parking the item at a human
+  /// gate — see that file for the rule and
+  /// `apps/server/test/implementation_inflow_tick_order_test.dart` for the
+  /// proof that the outcome is the same in BOTH tick orders.
   ///
   /// ## PER-ITEM ISOLATION
   ///
   /// One item's fault must not abort the pass, because the remaining items are
   /// real work this lane can start. Each is guarded individually and a failure
-  /// is REPORTED, never swallowed: an unreadable worker store leaves the item
-  /// where it was, and the operator can see that in the tick result rather
-  /// than inferring it from a lane that looks idle.
+  /// is REPORTED, never swallowed: an unreadable worker store — or an unreadable
+  /// dispatch discriminator on one item — leaves that item where it was, and
+  /// the operator can see it in the tick result rather than inferring it from a
+  /// lane that looks idle. The guard covers EVERY per-item read, not only the
+  /// one that was there when this comment was written: a read left outside it
+  /// turns one bad byte on one work item into the loss of the whole lane's tick.
   Future<List<CompletionInflowMove>> _runCompletionInflow(
     List<WorkItem> items,
   ) async {
@@ -817,11 +831,16 @@ class Scheduler {
     // A lane that declares an inflow must be able to DISPATCH what the inflow
     // hands it. `agentCompleted` is deliberately not in this definition's
     // `entryStates` — that is the whole point — so the check is on the state the
-    // route LANDS on, not on the state it comes from. It is an assertion and
-    // not a runtime guard because the two values are both `const` in this
-    // package: a definition that failed it is a compile-time mistake in a
-    // `const`, and there is no state in which behaving differently would be
-    // better.
+    // route LANDS on, not on the state it comes from.
+    //
+    // `assert` and not a runtime guard, and the reason is worth stating exactly
+    // rather than approximately: `assert` is a RUNTIME check that Dart strips
+    // from AOT (production) builds. It is not a compile-time assertion, and a
+    // reader who believes it is will not learn that a malformed definition
+    // would ship. It is here because the mistake is a `const` definition edited
+    // by hand, the failure would be immediate and total (the inflow hands work
+    // to a lane nothing runs), and the check costs one comparison in JIT where
+    // asserts are enabled.
     assert(
       _definition.entryStates.contains(
         completionRouteFor(
@@ -849,18 +868,37 @@ class Scheduler {
     final workerStore = _workerStore;
     final engine = _reclaimEngine;
 
+    // BOTH reads are inside ONE guard, because they are the two things that
+    // must be legible before this lane may move a work item at all, and either
+    // one can throw by design. `producedCommitFor` throws when the worker store
+    // is unreadable; `readTriageAttempt` throws `FormatException` on a
+    // PRESENT-BUT-UNREADABLE discriminator, which is deliberate
+    // (`DurableWorkflowEngine.readTriageAttempt` explains why falling back
+    // would reuse a consumed dedupe key).
+    //
+    // With the discriminator read OUTSIDE this guard, one corrupt marker on one
+    // work item propagated a `FormatException` out of `_runCompletionInflow`,
+    // out of `tick`, and into the composition root's `implementation.tick.failed`
+    // — which loses the WHOLE lane's tick result, including every unrelated
+    // runnable `implementationReady` item that tick could have dispatched. The
+    // blast radius of one bad byte was the lane, not this inflow. Per-item
+    // isolation below is only true if every per-item read is inside it.
     late final ProducedCommit produced;
+    late final int reWorkAttempt;
     try {
       produced = await producedCommitFor(workerStore, item);
+      reWorkAttempt = DurableWorkflowEngine.readTriageAttempt(item) ?? 0;
     } on Object catch (error) {
       return CompletionInflowMove(
         workItemId: item.workItemId,
-        from: WorkItemState.agentCompleted,
+        from: item.state,
         to: null,
         reason:
-            'the producing execution\'s artifact could not be read ($error), so '
-            'whether this item should be reviewed or implemented is unknown. '
-            'It was left where it is; nothing ran and nothing was consumed',
+            'this item could not be read well enough to decide whether it '
+            'should be reviewed or implemented ($error). Whether it was the '
+            'producing execution\'s artifact or this item\'s dispatch '
+            'discriminator that was illegible, the answer is the same: it was '
+            'left where it is, nothing ran and nothing was consumed',
       );
     }
 
@@ -879,24 +917,37 @@ class Scheduler {
       );
     }
 
-    // THE BOUND. Checked before the write, on the item's own durable marker,
-    // so a repeated automatic route cannot spin. See `maxImplementationInflows`.
-    final attempt = DurableWorkflowEngine.readTriageAttempt(item) ?? 0;
-    if (attempt >= maxImplementationInflows) {
+    // THE BOUND. Checked before the write, on the item's own durable marker, so
+    // a repeated automatic route cannot spin. See `maxImplementationInflows`
+    // for WHY that marker is the SHARED re-work discriminator and not a count
+    // of entries into this lane — the message below names the discriminator for
+    // the same reason, because an operator-facing refusal that misstates which
+    // counter it read is worse than a tighter bound.
+    if (reWorkAttempt >= maxImplementationInflows) {
       return CompletionInflowMove(
         workItemId: item.workItemId,
         from: item.state,
         to: null,
         reason:
-            'the item has already been put into the implementation lane '
-            '$attempt time(s) and the producer committed nothing each time. '
-            'Leaving it where it is, so the review lane\'s existing '
-            'fail-closed handler raises a blocking human decision for it '
-            'rather than the platform re-running it for ever',
+            'the re-work discriminator on this item already reads '
+            '$reWorkAttempt, which is at or above the platform\'s bound of '
+            '$maxImplementationInflows automatic entries into the '
+            'implementation lane, so no further automatic route is taken. That '
+            'counter is shared: it is also advanced by the operator retry and '
+            'by resolved rework/reject decisions, so this item may never have '
+            'entered the lane at all. Leaving it where it is so the review '
+            'lane\'s fail-closed handler raises a blocking human decision for '
+            'it, rather than the platform re-running it for ever',
       );
     }
 
-    final nextAttempt = attempt + 1;
+    // ONE arithmetic rule for every writer of this counter
+    // (`DurableWorkflowEngine.nextTriageAttempt`), not `attempt + 1` spelled
+    // out here. That function is the documented single rule precisely so a
+    // third writer cannot derive the number a different way — see
+    // `implementFeatureDedupeKey`, which reads the same counter back to build
+    // the key this very write will be dispatched under.
+    final nextAttempt = DurableWorkflowEngine.nextTriageAttempt(item);
     try {
       await engine.transition(
         workItemId: item.workItemId,

@@ -420,12 +420,18 @@ void main() {
   );
 
   test(
-    'fails closed: when no implementation artifact is resolvable the review '
-    'job is not dispatched and a blocking engineeringReview decision is raised',
+    'fails closed: a review job with no resolvable artifact is not dispatched, '
+    'and review STANDS DOWN while the implementation inflow still has budget',
     () async {
       // The implementer completes WITHOUT producing a change, so no artifact
       // commit exists (`endingRevision == startingRevision`). The review
       // scheduler uses the REAL resolver, so it must refuse to dispatch.
+      //
+      // And because `producedCommitFor` — the same function that resolver
+      // calls — says nothing was committed, `engineeringReviewMissingArtifact`
+      // must NOT park the item. There is nothing to review, so a human gate is
+      // the wrong place for it: the decision's only answers are rework and
+      // reject, and the implementation lane can simply do the work.
       final host = EngineeringReviewE2EHost(
         repo: repo,
         workspaceRoot: '${temp.path}/workspaces',
@@ -474,11 +480,111 @@ void main() {
       expect(job, isNotNull);
       expect(job!.jobType, JobType.engineeringReview);
 
-      // The drain turns the blocked job into a blocking human decision.
       await engineeringReviewMissingArtifact(
         workflowEngine: host.workflowEngine,
         executionStore: host.executionStore,
+        workerStore: host.workerStore,
         job: job,
+        logger: (_, __) {},
+      );
+
+      final stoodDown = await host.workflowEngine.loadWorkItem('wi-er');
+      expect(
+        stoodDown.state,
+        WorkItemState.agentCompleted,
+        reason:
+            'the implementation lane\'s completion inflow owns this item. '
+            'Parking it here used to pre-empt that inflow purely by `await` '
+            'order, and the item then sat at a human gate whose only answers '
+            'are the wrong ones.',
+      );
+      expect(stoodDown.blockingHumanDecisionId, isNull);
+
+      // Idempotent in the other direction too: handling the same blocked job
+      // again is still a no-op, and still raises nothing.
+      await engineeringReviewMissingArtifact(
+        workflowEngine: host.workflowEngine,
+        executionStore: host.executionStore,
+        workerStore: host.workerStore,
+        job: job,
+        logger: (_, __) {},
+      );
+      expect(
+        (await host.workflowEngine.loadWorkItem(
+          'wi-er',
+        )).blockingHumanDecisionId,
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'fails closed: once the re-work budget is spent, the missing artifact '
+    'DOES raise a blocking engineeringReview decision',
+    () async {
+      // The one case the stand-down must not swallow. When the shared re-work
+      // discriminator has already reached `maxImplementationInflows`, the
+      // implementation lane will NOT route this item either — so review
+      // standing down would leave it at `agentCompleted` for ever with nobody
+      // acting on it. This is what the human gate is for, and the two sides
+      // read the same number precisely so they cannot disagree about whether
+      // the budget is spent.
+      final host = EngineeringReviewE2EHost(
+        repo: repo,
+        workspaceRoot: '${temp.path}/workspaces',
+        writeImplementerArtifact: false,
+        resolveReviewWorkload: true,
+      );
+
+      await host.workflowEngine.createWorkItem(
+        workItemId: 'wi-er',
+        productId: 'prod-1',
+        category: WorkItemCategory.feature,
+        title: 'Implement calculator add',
+        description: 'Implement the calculator add function for the contract',
+        qaContractId: 'qa-1',
+        featureRef: 'feature/calc',
+      );
+      for (final state in const [
+        WorkItemState.planning,
+        WorkItemState.planned,
+        WorkItemState.designNotRequired,
+      ]) {
+        await host.workflowEngine.transition(
+          workItemId: 'wi-er',
+          to: state,
+          trigger: TransitionTrigger.systemEvent,
+          context: const {'featureRef': 'feature/calc'},
+        );
+      }
+
+      await host.runImplementer();
+
+      // The counter the implementation lane's bound reads, advanced as a human
+      // retry or a resolved rework decision would have advanced it.
+      final item = await host.workflowStore.readWorkItem('wi-er');
+      await host.workflowStore.saveWorkItem(
+        item.copyWith(
+          metadata: {
+            ...?item.metadata,
+            DurableWorkflowEngine.triageAttemptMetadataKey:
+                maxImplementationInflows,
+          },
+        ),
+      );
+
+      final tick = await host.reviewScheduler.tick();
+      expect(tick.blockedArtifactMissing, hasLength(1));
+      final job = await host.jobStore.readJob(
+        tick.blockedArtifactMissing.single,
+      );
+      expect(job, isNotNull);
+
+      await engineeringReviewMissingArtifact(
+        workflowEngine: host.workflowEngine,
+        executionStore: host.executionStore,
+        workerStore: host.workerStore,
+        job: job!,
         logger: (_, __) {},
       );
 
@@ -497,6 +603,7 @@ void main() {
       await engineeringReviewMissingArtifact(
         workflowEngine: host.workflowEngine,
         executionStore: host.executionStore,
+        workerStore: host.workerStore,
         job: job,
         logger: (_, __) {},
       );
