@@ -511,6 +511,14 @@ void main() {
         );
         expect(
           banner,
+          isNot(contains('agent_completed / agent_failed are in no wired')),
+          reason:
+              'the same denial appears a second time in the DOWN warning, so '
+              'asserting only the first occurrence would leave the false '
+              'claim standing in the rollback instructions.',
+        );
+        expect(
+          banner,
           contains('engineeringReviewDefinition'),
           reason:
               'the banner must name the definition that actually claims '

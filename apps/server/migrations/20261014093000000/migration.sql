@@ -654,11 +654,16 @@ INSERT INTO "serverpod_migrations" ("module", "version", "timestamp")
 -- To rollback this migration, run the following:
 --
 -- WARNING: this restores the defect. Each item goes back to the state it held
--- and to computing the key a terminal triage job already holds, and
--- agent_completed / agent_failed are in no wired JobDefinition.entryStates --
--- so nothing will ever dispatch them again. That is precisely how they were
--- stranded. Run it only to return a database to its pre-migration shape, then
--- re-apply this migration instead.
+-- and to computing the key a terminal triage job already holds, and nothing
+-- will ever dispatch them again -- but the two reasons are NOT the same, and
+-- collapsing them was the error corrected above. The five `agent_failed`
+-- items go back to a state in NO wired JobDefinition.entryStates. The two
+-- `agent_completed` items go back to a state that IS a wired entry state
+-- (`engineeringReviewDefinition`, see above), and stay stranded because the
+-- CONSUMED, UNSUFFIXED `engineering_review` key leaves
+-- `engineeringReviewDedupeKey` with no fresh key to offer. Either way that is
+-- precisely how they were stranded. Run it only to return a database to its
+-- pre-migration shape, then re-apply this migration instead.
 --
 -- THE STATEMENT ORDER BELOW IS THE REVERSE OF THE EARLIER REPAIRS', AND THAT
 -- IS A FIX, NOT A COSMETIC DIFFERENCE. 20261012150000000 and
