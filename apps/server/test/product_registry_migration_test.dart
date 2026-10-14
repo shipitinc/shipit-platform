@@ -165,11 +165,61 @@ void main() {
       expect(body, contains("VALUES ('control_plane', '$creator'"));
     });
 
-    test('the registry lists it, and it is the newest entry', () {
-      // Positional BY NATURE: a fresh database is built from whatever
-      // definition.sql is newest, so `registry.last` is not a fragile proxy
-      // for it, it is the mechanism.
-      expect(registry.last, creator);
+    test('the registry lists it, and the fresh-database path still has it', () {
+      // `registry.last` and `creator` are DIFFERENT SUBJECTS, and asserting
+      // they are the same value conflates them. `creator` is resolved by
+      // CONTENT — it is the migration whose SQL ADDS the columns. `registry.last`
+      // is whatever definition.sql is newest, and it is positional BY NATURE,
+      // because a fresh database is built from it.
+      //
+      // Those two coincide only while the creator is ALSO the newest. They
+      // stopped coinciding when a later DATA-ONLY migration was registered
+      // (20261014093000000, the stranded-key repair, whose migration.json is
+      // `actions: []` and whose definition.json is the creator's byte for
+      // byte). So `expect(registry.last, creator)` does not protect the
+      // fresh-database path at all; it only forbids any migration from ever
+      // being registered after the one that added the columns, which is not a
+      // property anybody wants — and the same fragility
+      // `operator_action_migration_test.dart` already documents and corrected
+      // for when a data-repair migration landed on top of ITS creator.
+      //
+      // What the fresh-database path actually needs is that the NEWEST
+      // definition still declares the three columns. A later migration that
+      // shipped a definition.sql WITHOUT them would leave every freshly created
+      // database without them, while every creator-scoped assertion in this
+      // file stayed green — which is the exact defect this test exists to
+      // catch, and the one the positional form would have missed.
+      final newest = registry.last;
+      expect(
+        int.parse(newest),
+        greaterThanOrEqualTo(int.parse(creator)),
+        reason:
+            '$newest is the newest registered version and a chain-migrated '
+            'database replays it last; a stamp earlier than $creator could '
+            'never be reached',
+      );
+
+      final newestDefinition = File(
+        p.join(migrationsDir.path, newest, 'definition.sql'),
+      );
+      expect(
+        newestDefinition.existsSync(),
+        isTrue,
+        reason:
+            '$newest is the newest registered version and its definition.sql '
+            'is the artifact a fresh database is actually built from',
+      );
+      final newestSql = newestDefinition.readAsStringSync();
+      for (final column in columns) {
+        expect(
+          newestSql,
+          contains('"$column" text'),
+          reason:
+              'a fresh database is built from $newest/definition.sql, NOT from '
+              "the creator's, so $column must be declared there too or every "
+              'newly created database silently lacks it',
+        );
+      }
     });
   });
 
