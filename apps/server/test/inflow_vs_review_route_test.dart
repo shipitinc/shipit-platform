@@ -6,6 +6,7 @@ import 'package:test/test.dart';
 import 'package:worker_runtime/worker_runtime.dart';
 
 import 'package:control_plane_server/src/review/engineering_review_gate.dart';
+import 'package:control_plane_server/server.dart';
 
 /// ## WHY THIS FILE IS IN `apps/server` AND NOT IN `packages/scheduler`
 ///
@@ -97,6 +98,9 @@ WorkloadResolver _resolver(WorkerStore store) =>
     engineeringReviewWorkloadResolver(
       workerStore: store,
       runtimeTypeId: 'rt-review',
+      // The one production budget, named so the resolver holds no literal of
+      // its own. See `AgentExecutionBudgets` — PROVISIONAL.
+      timeoutSeconds: AgentExecutionBudgets.engineeringReviewSeconds,
     );
 
 /// One durable input, described once and fed to both lanes.

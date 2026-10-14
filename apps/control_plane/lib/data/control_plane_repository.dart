@@ -1456,6 +1456,104 @@ class ControlPlaneRepository {
     );
     return ModelStatsResponse.fromJson(result.toJson());
   }
+
+  /// Every durable agent execution, as raw run samples for the duration table.
+  ///
+  /// ## WHY THIS READS `executionEndpoints` AND NOT `getModelStats`
+  ///
+  /// `agent_execution` already carries `role`, `status`, `startedAt` and
+  /// `completedAt`, and `executionEndpoints.list` already returns all of them
+  /// as `AgentExecutionRecordView`. Adding duration fields to `ModelStatsView`
+  /// would mean editing a GENERATED Serverpod type and regenerating it —
+  /// `apps/server/lib/src/generated/**` belongs to another lane — and would
+  /// also mean a migration-free but schema-coupled change to a wire contract
+  /// for no gain: the answer is already on the wire.
+  ///
+  /// ## WHAT IS AND IS NOT FILTERED HERE
+  ///
+  /// [from]/[to] filter on `startedAt`, which is the only timestamp every row
+  /// is guaranteed to have — `completedAt` is null for a run that never
+  /// finished, and dropping those would drop exactly the killed-at-budget runs
+  /// the table exists to show.
+  ///
+  /// Rows with no `completedAt`, or whose `completedAt` precedes `startedAt`,
+  /// are still returned, marked by [AgentExecutionSample.isMeasurable] = false.
+  /// They are not silently excluded: an operator who sees "12 rows, 11
+  /// measured" learns something, and one who sees a gap learns nothing.
+  Future<List<AgentExecutionSample>> listAgentExecutionSamples({
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    final result = await _client.executionEndpoints.list();
+    final samples = <AgentExecutionSample>[];
+    for (final execution in result.executions) {
+      final started = execution.startedAt;
+      if (from != null && (started == null || started.isBefore(from))) {
+        continue;
+      }
+      if (to != null && (started == null || started.isAfter(to))) {
+        continue;
+      }
+      final completed = execution.completedAt;
+      final measured =
+          started != null && completed != null && !completed.isBefore(started);
+      samples.add(
+        AgentExecutionSample(
+          executionId: execution.executionId,
+          workItemId: execution.workItemId,
+          role: execution.role,
+          status: execution.status,
+          reason: execution.reason,
+          startedAt: started,
+          completedAt: completed,
+          durationSeconds: measured
+              ? completed.difference(started).inSeconds
+              : null,
+        ),
+      );
+    }
+    return samples;
+  }
+}
+
+/// One durable agent execution, projected onto what the duration table needs.
+///
+/// A hand-written response object like every other one in this file — the
+/// generated `AgentExecutionRecordView` stays inside the repository, which is
+/// the whole reason this file exists.
+class AgentExecutionSample {
+  const AgentExecutionSample({
+    required this.executionId,
+    required this.workItemId,
+    required this.role,
+    required this.status,
+    required this.reason,
+    required this.startedAt,
+    required this.completedAt,
+    required this.durationSeconds,
+  });
+
+  final String executionId;
+  final String workItemId;
+
+  /// Durable `AgentRole` wire value.
+  final String role;
+
+  /// Durable `AgentSessionStatus` wire value.
+  final String status;
+
+  /// The execution's own terminal reason. Carried because a row that ended at
+  /// the budget says so here, and an operator should not have to infer it from
+  /// the duration alone.
+  final String? reason;
+  final DateTime? startedAt;
+  final DateTime? completedAt;
+
+  /// Null when the run cannot be measured — never finished, or the two
+  /// timestamps disagree.
+  final int? durationSeconds;
+
+  bool get isMeasurable => durationSeconds != null;
 }
 
 class OverviewResponse {

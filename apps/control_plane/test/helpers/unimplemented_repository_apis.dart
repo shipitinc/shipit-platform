@@ -185,6 +185,17 @@ mixin UnimplementedRepositoryApis {
     String? groupBy,
   }) async => throw UnimplementedError();
 
+  /// Empty rather than `UnimplementedError`, and for the same reason
+  /// `listModelExecutions` above is: a deployment that has run no agent
+  /// executions has none, and that is a real state the Run Duration panel must
+  /// render ("no runs in this range") rather than a missing fake. A test that
+  /// does not care about durations gets an empty table and says nothing; a test
+  /// that does must override this.
+  Future<List<AgentExecutionSample>> listAgentExecutionSamples({
+    DateTime? from,
+    DateTime? to,
+  }) async => const [];
+
   // Credentials · Add Product
   //
   // Deliberately `UnimplementedError` rather than a benign empty result: a fake

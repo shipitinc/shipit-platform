@@ -109,6 +109,14 @@ import 'package:scheduler/scheduler.dart'
 
 /// The starting point of the ShipIt control plane server.
 ///
+/// ## THE AGENT-EXECUTION BUDGETS ARE [AgentExecutionBudgets] AND NOTHING ELSE
+///
+/// Every per-agent wall-clock budget in this composition comes from that one
+/// table, including the one the engineering-review workload resolver uses — the
+/// resolver takes its budget as a required argument precisely so that no second
+/// copy of a number can exist somewhere less visible. Adjusting any budget is
+/// now one edit here.
+///
 /// Serverpod hosts the PostgreSQL persistence layer only. All workflow policy
 /// authority lives in [workflow_engine]'s `DurableWorkflowEngine`; endpoints
 /// never mutate `WorkItem.state` directly.
@@ -461,9 +469,18 @@ void run(List<String> args) async {
       // a worktree whose HEAD does not equal the requested revision exactly,
       // and a literal 'HEAD' never equals a SHA.
       startingRevision: triageSource.startingRevision,
-      timeoutSeconds: 300,
+      // `AgentExecutionBudgets.triageSeconds`, NOT a literal — see that class
+      // for the provenance of the number and for why it is provisional.
+      timeoutSeconds: AgentExecutionBudgets.triageSeconds,
       // The id `OpencodeAdapter` is registered under above.
       runtimeTypeId: triageRuntimeTypeId,
+    ),
+    // Decoupled from `timeoutSeconds` deliberately: the scheduler's own default
+    // is `timeoutSeconds * 4 + claimLease`, which is a five-minute-budget
+    // heuristic and turns this lane's budget into a four-times-larger reclaim
+    // window. See `AgentExecutionBudgets.zombieStalenessFor`.
+    zombieStalenessAfter: AgentExecutionBudgets.zombieStalenessFor(
+      AgentExecutionBudgets.byRole['triage-defect']!,
     ),
     clock: () => DateTime.now().toUtc(),
     providerHealthMonitor: providerHealthMonitor,
@@ -494,14 +511,24 @@ void run(List<String> args) async {
     workloadResolver: engineeringReviewWorkloadResolver(
       workerStore: workerStore,
       runtimeTypeId: triageRuntimeTypeId,
+      // The one budget value in the composition, named explicitly here so the
+      // resolver holds no literal of its own.
+      timeoutSeconds: AgentExecutionBudgets.engineeringReviewSeconds,
     ),
     // Inert for review: the resolver above is authoritative and a null result
-    // prevents dispatch, so this static value never runs a reviewer.
+    // prevents dispatch, so this static value never runs a reviewer. Its
+    // timeout still tracks the real one, because a value that is inert today
+    // and stale tomorrow is exactly how a second number grows.
     workload: SchedulerWorkload(
       repositoryPath: triageSource.path,
       startingRevision: triageSource.startingRevision,
-      timeoutSeconds: 300,
+      timeoutSeconds: AgentExecutionBudgets.engineeringReviewSeconds,
       runtimeTypeId: triageRuntimeTypeId,
+    ),
+    // See the triage scheduler above: the default `timeoutSeconds * 4 +
+    // claimLease` is not scaled for an hours-long budget.
+    zombieStalenessAfter: AgentExecutionBudgets.zombieStalenessFor(
+      AgentExecutionBudgets.byRole['engineering-review']!,
     ),
     clock: () => DateTime.now().toUtc(),
     providerHealthMonitor: providerHealthMonitor,
@@ -627,11 +654,16 @@ void run(List<String> args) async {
     },
     readOnboarding: baselineRegistryStore.readOnboardingForProduct,
     runtimeTypeId: triageRuntimeTypeId,
-    // 1800, not the 300 both shipped schedulers use. An implementation run is
-    // not a five-minute classification, and this value also sets
-    // `Scheduler.zombieStalenessBound` (`timeoutSeconds * 4 + claimLease`), so
-    // getting it wrong is how an execution outlives its lease for hours.
-    timeoutSeconds: 1800,
+    // The ONE implementation budget, named here and read again below for the
+    // inert static workload. It is the readiness probe's value that actually
+    // runs an implementer, because the probe is the authoritative workload
+    // resolver for this lane.
+    //
+    // 4 hours, against the 1800s (30 minutes) this carried before — a number
+    // whose only stated justification was that it was different from the review
+    // lane's 300, and which an operator reports an implementation run
+    // ROUTINELY EXCEEDS. PROVISIONAL: see `AgentExecutionBudgets`.
+    timeoutSeconds: AgentExecutionBudgets.implementationSeconds,
     durableRuntimeAvailable: durableWorkspaceRuntime.isAvailable,
     durableRuntimeUnavailableReason: durableWorkspaceRuntime.availableReason,
     log: _log,
@@ -658,8 +690,17 @@ void run(List<String> args) async {
     workload: SchedulerWorkload(
       repositoryPath: triageSource.path,
       startingRevision: triageSource.startingRevision,
-      timeoutSeconds: 1800,
+      // The SAME constant the readiness probe above uses. Tracking it is
+      // deliberate: an inert value that drifts from the real one is a future
+      // lie, and the cost of tracking it is one identifier.
+      timeoutSeconds: AgentExecutionBudgets.implementationSeconds,
       runtimeTypeId: triageRuntimeTypeId,
+    ),
+    // See the triage scheduler above for why this is not left to the default
+    // `timeoutSeconds * 4 + claimLease`. At a 4-hour budget that default is a
+    // 16.7-hour reclaim window.
+    zombieStalenessAfter: AgentExecutionBudgets.zombieStalenessFor(
+      AgentExecutionBudgets.byRole['implement-feature']!,
     ),
     clock: () => DateTime.now().toUtc(),
     providerHealthMonitor: providerHealthMonitor,
@@ -805,23 +846,69 @@ void run(List<String> args) async {
     // once enabled, is the per-tick `work_entry.sweep.completed` line; that is
     // a fact no startup-time field can carry.
     'defectTriageSweep': workEntrySweepGate.describe(),
+    // The agent-execution budgets in force, AND their staleness bounds, read
+    // back off the live schedulers rather than off `AgentExecutionBudgets` —
+    // the same discipline as `capacitySummary` above: this banner must be
+    // incapable of describing a bound the object actually dispatching under
+    // does not have.
+    //
+    // Printed because a provisional number nothing prints is a provisional
+    // number nobody remembers to re-derive. The values here are ceilings chosen
+    // from operator-stated ranges; the Models -> Stats "Run duration" panel is
+    // what should replace them.
+    'agentExecutionBudgets': {
+      ...AgentExecutionBudgets.describe(),
+      // The staleness bound is read back OFF THE LIVE SCHEDULER, not off the
+      // table, so this line cannot describe a window the dispatching object
+      // does not actually have. Same discipline as `capacitySummary` above.
+      'stalenessBoundInForce': {
+        'triage': scheduler.zombieStalenessBound.inSeconds,
+        'review': reviewScheduler.zombieStalenessBound.inSeconds,
+        'implementation': implScheduler.zombieStalenessBound.inSeconds,
+      },
+      'livenessInForce': {
+        'triage': scheduler.livenessSummary,
+        'review': reviewScheduler.livenessSummary,
+        'implementation': implScheduler.livenessSummary,
+      },
+    },
   });
 
   // Run the scheduler every 30 seconds — ONE tick at a time.
   //
   // `Timer.periodic` does NOT await its callback. `scheduler.tick()` blocks for
-  // a full agent execution (up to 300 s), so the callback outlives its 30 s
-  // period and the next tick starts anyway: every tick re-reads all jobs and
-  // re-attempts a dispatch for everything the previous tick has not yet
-  // claimed. That overlap — not unbounded per-tick concurrency — is what turned
-  // 9 queued defects into 9 simultaneous agent sessions and exhausted the host
-  // on 2026-10-10.
+  // a full agent execution, so the callback outlives its 30 s period and the
+  // next tick starts anyway: every tick re-reads all jobs and re-attempts a
+  // dispatch for everything the previous tick has not yet claimed. That overlap
+  // — not unbounded per-tick concurrency — is what turned 9 queued defects into
+  // 9 simultaneous agent sessions and exhausted the host on 2026-10-10.
   //
   // [TickSingleFlight] is what makes the two properties consistent: at most one
   // tick in flight, and every trigger accounted for. A trigger that arrives
   // while a tick runs does not wait — QUEUEING it would rebuild the pile-up one
   // level down — and does not quietly do nothing either. It is dropped, and the
   // drop is logged as its own event.
+  //
+  // ---- BUDGET-BLOCKED TICK: READ THIS BEFORE RAISING A BUDGET AGAIN ----
+  //
+  // `_dispatchOne` awaits `_dispatch.run(request)`, which is the whole agent
+  // execution. So one tick is unavailable for as long as the longest run it
+  // dispatched — and every 30 s trigger during that window is DROPPED, not
+  // queued. This composition runs all three schedulers inside one
+  // single-flight callback, so a long review also delays triage and
+  // implementation, not just the review lane.
+  //
+  // This is PRE-EXISTING and NOT fixed by this change: at the old 300 s review
+  // budget roughly 90% of triggers were already dropped during a review, and at
+  // the raised budgets it is worse. It is written down here rather than fixed
+  // here because the fix is a composition change — moving dispatch off the tick,
+  // or giving each lane its own single flight — and that is its own decision
+  // with its own ownership, not something a budget change should smuggle in.
+  //
+  // What an operator should expect: a long run is not a silent hang, it is a
+  // logged `scheduler.tick.dropped_overlap` per period. If that line is
+  // appearing constantly with no work completing, the budget and the tick
+  // period are the two things to look at, in that order.
   final tick = TickSingleFlight(
     log: _log,
     runTick: () async {
@@ -1344,12 +1431,13 @@ class TickSingleFlightResult {
 /// ## Why a guard at all
 ///
 /// `Timer.periodic` does not await its callback, and one tick blocks for a full
-/// agent execution — `timeoutSeconds: 300`. The callback therefore outlives its
-/// 30-second period by a factor of ten, and without a guard every one of those
-/// ten periods starts another tick. Each overlapping tick independently re-reads
-/// all jobs and re-attempts a dispatch for everything the previous tick has not
-/// yet claimed. Nine queued defects became nine simultaneous agent sessions
-/// that way, and that is what exhausted the host.
+/// agent execution — which is now an HOURS-long budget, not `timeoutSeconds:
+/// 300`. The callback therefore outlives its 30-second period by a factor of
+/// two orders of magnitude, and without a guard every one of those periods
+/// starts another tick. Each overlapping tick independently re-reads all jobs
+/// and re-attempts a dispatch for everything the previous tick has not yet
+/// claimed. Nine queued defects became nine simultaneous agent sessions that
+/// way, and that is what exhausted the host.
 ///
 /// ## Why a trigger is DROPPED rather than queued
 ///
@@ -2347,4 +2435,212 @@ Future<void> _reportAdapterHealth(
       'action': 'registered, but reachability is UNVERIFIED',
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// AGENT-EXECUTION BUDGETS
+// ---------------------------------------------------------------------------
+//
+// ## READ THIS BEFORE CHANGING A NUMBER HERE
+//
+// **Every value in this table is PROVISIONAL. No duration data existed when it
+// was set.** They are ceilings chosen from the ranges an operator stated, not
+// from measurements — because there were no measurements to choose from: every
+// run recorded so far was either fast or killed at its budget, which is
+// precisely why the kill has to stop being the common case before the
+// surviving runs say anything useful.
+//
+// The number this table replaces is the reason that warning is here. The
+// engineering-review budget was a typed-in literal of `300` with no
+// justification anywhere in the repository — not a comment, not a ticket, not a
+// note. It was simply there, and it was exactly the number of the failed
+// reviews, which is how a guess gets mistaken for a finding. Do not repeat
+// that: a number whose provenance cannot be stated is worse than no number.
+//
+// ## THE REPLACEMENT FOR THESE NUMBERS IS ALREADY IN FRONT OF YOU
+//
+// `agent_execution.startedAt` / `completedAt` and `role` / `status` hold every
+// one of these runs. `GET executionEndpoints.list` returns them all, and the
+// Models → Stats surface reads them and reports, per role and per terminal
+// status, the count / min / median / max duration. That panel is the
+// measurement that should replace this table. When enough real runs have
+// accumulated, set each ceiling from its MEDIAN plus an agreed margin — and
+// raise the stale-computation comment above to say which run it came from.
+//
+// ## WHAT A BUDGET ACTUALLY CONTROLS, BEYOND KILLING THE AGENT
+//
+// `SchedulerWorkload.timeoutSeconds` is not one value with one effect. Setting
+// it to [X] also:
+//
+//  * passes `X` to the runtime as `AgentSessionConfig.timeout`, so an adapter
+//    may bound its own ACP calls by it;
+//  * bounds `LocalWorker`'s outer wait at `X + workerLeaseGrace`;
+//  * bounds the coordinator's whole dispatch path, which is what settles a run
+//    as `interrupted` when the agent does not finish (see
+//    `ExecutionCoordinator._expireExecution`); and
+//  * used to set `Scheduler.zombieStalenessBound = timeoutSeconds * 4 +
+//    claimLease`, which is a multi-hour multiplier on the window in which a
+//    dead execution is allowed to keep its claim and its capacity slot.
+//
+// The last of those is a defect at these magnitudes, not a detail: a 3-hour
+// budget times four is a 12-hour staleness bound. Every scheduler below is
+// therefore given an EXPLICIT [AgentExecutionBudgets.zombieStalenessFor] via
+// `Scheduler.zombieStalenessAfter`, so raising a budget here does not silently
+// multiply the reclaim window by four. That decoupling, and its cost, are
+// documented on [AgentExecutionBudgets.zombieStalenessFor] — read it before
+// treating the staleness bound as incidental.
+//
+class AgentExecutionBudgets {
+  const AgentExecutionBudgets._();
+
+  /// Ceiling for a single agent execution, per role.
+  ///
+  /// PROVISIONAL; NO DURATION DATA EXISTED WHEN THESE WERE SET. See the
+  /// Models → Stats "Run duration" panel (`agent_execution.startedAt` /
+  /// `completedAt`, per role and per terminal status) for the measurement that
+  /// should replace them. Each entry below repeats that marker so a fourth
+  /// role added later cannot quietly skip it.
+  ///
+  /// They are per-role rather than one number because the operator's stated
+  /// ranges are per-role and differ by an order of magnitude: a review is
+  /// reported at 15–30 minutes here, and an implementation run "routinely
+  /// exceeds" half an hour with no stated ceiling.
+  static const Map<String, Duration> byRole = <String, Duration>{
+    // DEFECT TRIAGE — 30 minutes. PROVISIONAL.
+    //
+    // NO OPERATOR-STATED RANGE EXISTS FOR THIS ROLE; this is the weakest
+    // number in the table and it is called out rather than dressed up.
+    //
+    // What exists is the only measurement that ever existed, and it says the
+    // old ceiling was being HIT: implementer and triage runs finished at
+    // 114s–260s, and the ones that failed did so at 303s–320s — that is a
+    // budget being reached, not a distribution with a tail. 30 minutes is the
+    // operator's stated LOWER bound for the slowest role they named (a review,
+    // 15 minutes), adopted as a common floor so no lane is left holding a
+    // ceiling this deployment has demonstrably already hit.
+    //
+    // PROVISIONAL for the same reason as every other value here: it is a floor
+    // picked to stop the bleeding, not a number derived from triage runs.
+    'triage-defect': Duration(minutes: 30),
+
+    // IMPLEMENTATION — 4 hours. PROVISIONAL.
+    //
+    // OPERATOR-STATED: an implementation run under this framework ROUTINELY
+    // EXCEEDS the 1800s it used to carry, and a ceiling of "a few hours per
+    // agent run" is the right order of magnitude. 4 hours is the top of that
+    // range, taken deliberately: this is the one lane where the operator named
+    // a direction ("routinely exceeds") rather than a number, so under-shooting
+    // reproduces the exact failure being fixed, while over-shooting only costs
+    // wall clock on a run that was going to be killed anyway.
+    //
+    // It replaces 1800s (30 minutes) — a number whose only justification was
+    // that it was different from the review lane's 300.
+    'implement-feature': Duration(hours: 4),
+
+    // ENGINEERING REVIEW — 3 hours. PROVISIONAL.
+    //
+    // OPERATOR-STATED: a review run HERE, THROUGH OPENCODE, TAKES 15–30
+    // MINUTES. 3 hours is 6× the stated maximum, so ordinary variance, a
+    // larger diff, or a slow provider do not reach the ceiling — only a genuinely
+    // wedged run does.
+    //
+    // It replaces 300s (5 minutes), which is LESS THAN THE STATED MINIMUM for
+    // this role and had no justification anywhere in the repository. A ceiling
+    // below the observed floor is not a ceiling; it is a coin toss that always
+    // lands on killed.
+    'engineering-review': Duration(hours: 3),
+  };
+
+  /// Triage's budget, in the seconds every workload field wants.
+  static int get triageSeconds => byRole['triage-defect']!.inSeconds;
+
+  /// The implementation lane's budget, in seconds.
+  ///
+  /// Read by BOTH `ImplementationReadinessProbe.timeoutSeconds` (the value that
+  /// actually runs an implementer, because the readiness probe is the
+  /// authoritative workload resolver) and the inert static workload the
+  /// `Scheduler` constructor requires.
+  static int get implementationSeconds =>
+      byRole['implement-feature']!.inSeconds;
+
+  /// The engineering review lane's budget, in seconds.
+  ///
+  /// Passed to `engineeringReviewWorkloadResolver`, which used to carry a
+  /// literal `300` of its own.
+  static int get engineeringReviewSeconds =>
+      byRole['engineering-review']!.inSeconds;
+
+  /// How long a non-terminal execution may go unobserved before the scheduler
+  /// declares it a zombie and reclaims it.
+  ///
+  /// ## WHY IT IS NOT `timeoutSeconds * 4 + claimLease`
+  ///
+  /// That is the formula `Scheduler.zombieStalenessBound` uses when a scheduler
+  /// does not configure one, and it was written for budgets of five minutes. At
+  /// a 3-hour review budget it produces a 12.2-hour staleness bound: a dead
+  /// execution would hold its claim and its capacity slot for half a day before
+  /// anything reclaimed it. The multiplier is the problem — it was a proxy for
+  /// "the non-agent work around a run", and at these magnitudes it stops being
+  /// one.
+  ///
+  /// ## WHAT REPLACES IT, AND WHAT IT COSTS
+  ///
+  /// `agentBudget + [stallAllowance]`. The bound must EXCEED the agent budget —
+  /// anything shorter reclaims a legitimately long run for being slow, which is
+  /// the exact failure `Scheduler.executionLiveness` exists to prevent — so the
+  /// sum is the minimum defensible coupling, and it is explicit rather than
+  /// multiplied.
+  ///
+  /// THE COST, STATED PLAINLY: raising a budget necessarily raises this window,
+  /// because the two cannot be separated without breaking the invariant above.
+  /// The honest cost of a 4-hour implementation budget is therefore that a
+  /// genuinely dead execution whose liveness CANNOT be observed (a process
+  /// restart, where the probe's in-process session map no longer knows about it)
+  /// is reclaimed after 5 hours rather than after the ~2 hours the old formula
+  /// gave for the 1800s budget. `SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS` counts
+  /// such an execution against the cap for that whole window.
+  ///
+  /// The mitigation already exists and is why this is acceptable rather than
+  /// merely survivable: when liveness IS observable, a proven-dead execution is
+  /// reclaimed immediately and this bound is never consulted. It is consulted
+  /// only in the unknown case, and `Scheduler.livenessSummary` — surfaced in the
+  /// startup banner below — says which of the two policies the running process
+  /// is actually under.
+  ///
+  /// PROVISIONAL, like every number in this class: one hour of allowance for
+  /// workspace preparation, independent verification, artifact commit and
+  /// worktree cleanup around the agent, chosen because no measurement of how
+  /// long that teardown actually takes exists.
+  static const Duration stallAllowance = Duration(hours: 1);
+
+  /// The staleness bound for a scheduler whose agent budget is [agentBudget].
+  static Duration zombieStalenessFor(Duration agentBudget) =>
+      agentBudget + stallAllowance;
+
+  /// One line naming every budget in force, for the startup banner.
+  ///
+  /// Present so the values are visible to an operator at runtime rather than
+  /// only to whoever opens this file. A provisional number that nothing prints
+  /// is a provisional number nobody will remember to re-derive.
+  static Map<String, Object> describe() => <String, Object>{
+    'provisional':
+        'every value here is a ceiling chosen from operator-stated ranges. NO '
+        'DURATION DATA EXISTED WHEN THEY WERE SET. The Models -> Stats '
+        '"Run duration" panel (agent_execution.startedAt/completedAt, per '
+        'role and per terminal status) is the measurement that should '
+        'replace them.',
+    'byRoleSeconds': <String, int>{
+      for (final entry in byRole.entries) entry.key: entry.value.inSeconds,
+    },
+    'zombieStaleness': {
+      'rule':
+          'agentBudget + ${stallAllowance.inMinutes}m '
+          '(NOT the Scheduler default of timeoutSeconds * 4 + claimLease, '
+          'which turns a 3h review budget into a 12.2h reclaim window)',
+      'byRoleSeconds': <String, int>{
+        for (final entry in byRole.entries)
+          entry.key: zombieStalenessFor(entry.value).inSeconds,
+      },
+    },
+  };
 }

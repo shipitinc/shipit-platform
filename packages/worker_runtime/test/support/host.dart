@@ -17,6 +17,7 @@ class WorkerHost {
     required GitRepoFixture repo,
     required String workspaceRoot,
     WritingBehavior behavior = WritingBehavior.writeImplementation,
+    bool throwOnStart = false,
   }) {
     workflowStore = InMemoryWorkflowStore();
     workflowEngine = DurableWorkflowEngine(store: workflowStore);
@@ -25,6 +26,7 @@ class WorkerHost {
       executionId: 'agx-fixed',
       workItemId: 'wi-1',
       behavior: behavior,
+      throwOnStart: throwOnStart,
     );
     runtime = AgentRuntime(
       registry: AgentAdapterRegistry()

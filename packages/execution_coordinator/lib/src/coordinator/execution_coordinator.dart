@@ -366,9 +366,20 @@ class ExecutionCoordinator {
         ),
       );
     } on TimeoutException catch (e) {
-      return _failWithoutSession(request, 'start timeout: $e');
+      // A TIMEOUT, so it settles as one — see `_expireExecution`. The agent
+      // never ran, but the reason it never ran is that it ran out of time, and
+      // a run that runs out of time is the one failure a bounded retry exists
+      // for. The sibling `catch` below is the crash case and settles `failed`.
+      return _settleWithoutSession(
+        request,
+        'start timeout: $e',
+        status: AgentSessionStatus.interrupted,
+      );
     } catch (e) {
-      return _failWithoutSession(request, 'start failure: $e');
+      // A CRASH, not a timeout, and deliberately still `failed`. This is the
+      // branch that must NOT become retryable: a runtime that throws on every
+      // start would otherwise spend one attempt per start forever.
+      return _settleWithoutSession(request, 'start failure: $e');
     }
 
     // A drive path that resumes AFTER this execution was settled must not
@@ -433,7 +444,7 @@ class ExecutionCoordinator {
   Future<AgentExecution> _abandonedRecord(AgentExecutionRequest request) async {
     final recorded = await store.readExecutionOrNull(request.executionId);
     if (recorded != null) return recorded;
-    return _failWithoutSession(
+    return _settleWithoutSession(
       request,
       'execution was already settled before its session could be registered',
     );
@@ -452,11 +463,53 @@ class ExecutionCoordinator {
   /// not settle inside its budget.
   ///
   /// This is deliberately not an abandoned future. The agent process is asked
-  /// to stop, the execution is persisted as a real terminal `failed` record
-  /// carrying an honest reason, an `executionFailed` event is appended, the
-  /// work item leaves [WorkItemState.agentExecuting] for
-  /// [WorkItemState.agentFailed], and a model execution record is written - so
-  /// the job is never left running behind a durable status string.
+  /// to stop, the execution is persisted as a real TERMINAL record carrying an
+  /// honest reason, an `executionFailed` event is appended, the work item leaves
+  /// [WorkItemState.agentExecuting] for [WorkItemState.agentFailed], and a model
+  /// execution record is written - so the job is never left running behind a
+  /// durable status string.
+  ///
+  /// ## WHY THIS SETTLES AS `interrupted`, NOT `failed`
+  ///
+  /// Because that one word decides whether the job is ever tried again.
+  ///
+  /// The chain downstream is real and has no discretion in it:
+  ///
+  /// ```text
+  /// AgentSessionStatus.interrupted -> WorkerExecutionStatus.timedOut
+  ///                                 (LocalWorker._drive)
+  /// WorkerExecutionStatus.timedOut -> JobFailureKind.transient
+  ///                                 (RetryPolicy.classify)
+  /// JobFailureKind.transient       -> JobQueue.scheduleRetry, bounded by
+  ///                                 Job.maxAttempts
+  /// AgentSessionStatus.failed     -> WorkerExecutionStatus.executedFail
+  ///                                 -> JobFailureKind.permanent
+  ///                                 -> JobState.failed, ZERO attempts spent
+  /// ```
+  ///
+  /// A budget expiry was settled as `failed`, so an execution killed by its
+  /// budget spent no attempt, reached `JobState.failed` immediately, and the
+  /// definition's `maxAttempts` was unreachable for the one failure the
+  /// deployment actually observes. `engineeringReviewDefinition.maxAttempts: 2`
+  /// was not a retry budget; it was a literal nobody could spend.
+  ///
+  /// `interrupted` is not a new status invented for this. A runtime that
+  /// interrupts its own session already arrives here: `_failureDetails` maps a
+  /// driver-emitted [SessionInterrupted] to [AgentSessionStatus.interrupted]
+  /// (`:997-1001`). The same agent run, timing out by the runtime's own hand
+  /// and timing out by the coordinator's budget, now settles the same way.
+  ///
+  /// ## WHY A CRASH IS NOT THIS
+  ///
+  /// The dangerous regression is the opposite direction, and it is prevented by
+  /// the only thing that can prevent it: the two are different terminal states,
+  /// written by different call sites. [_drive]'s `'start failure: $e'` branch —
+  /// an exception raised while starting the session — settles `failed`, and so
+  /// does [_abandonedRecord]. Only the two TIMEOUT paths (`_expireExecution`
+  /// and the `start timeout:` branch) settle `interrupted`. A runtime that
+  /// throws on every start therefore burns one attempt per job and is bounded by
+  /// `maxAttempts` like everything else; it does not retry forever, and it does
+  /// not get to pretend it was a timeout.
   ///
   /// The drive path may still be wedged somewhere that is not the terminal
   /// wait, and can finish long after this returns.
@@ -475,45 +528,87 @@ class ExecutionCoordinator {
     AgentExecutionRequest request,
     Duration budget,
   ) async {
-    await _stopSessionQuietly(
-      request.executionId,
-      'execution exceeded its ${budget.inSeconds}s budget',
-    );
-    return _failWithoutSession(
+    final reason = 'execution exceeded its ${budget.inSeconds}s budget';
+    final session = _liveSessions[request.executionId];
+
+    // ## DETACH BEFORE ASKING THE SESSION TO STOP — ORDER IS THE FIX
+    //
+    // Cancelling a live session makes it emit [SessionCancelled], and that
+    // event travels back through [_onSessionEvent] into the SAME terminal
+    // contract [_finalize] is waiting on. So cancelling first and settling
+    // second was a race: whichever of the two completed first decided the
+    // execution's status, and the loser overwrote it. A budget expiry therefore
+    // settled as `cancelled` some of the time — a NON-retryable class — which
+    // is the opposite of what this method exists to produce, and it made the
+    // reviewer retry non-deterministic in exactly the run shape it was written
+    // for.
+    //
+    // Removing the contract and the subscription FIRST means the cancellation
+    // this coordinator requests cannot become its own verdict: the agent
+    // process is still asked to stop, and the durable outcome of a run that hit
+    // its budget is the budget, not the stop.
+    //
+    // The `SessionCancelled` is consequently not appended to the event stream
+    // either. That is correct rather than lossy: it is an event the platform
+    // manufactured for itself, and [_settleWithoutSession] appends the honest
+    // one — `executionFailed`, carrying the budget that was exceeded.
+    _forget(request.executionId);
+    _terminalContracts.remove(request.executionId);
+
+    if (session != null) {
+      try {
+        await session.cancel(reason).timeout(_cancelGrace);
+      } catch (_) {
+        // The session is abandoned; only the durable record survives, and it
+        // is written regardless.
+      }
+    }
+
+    return _settleWithoutSession(
       request,
       'execution exceeded its ${budget.inSeconds}s timeout budget without '
       'reaching a terminal agent event',
+      status: AgentSessionStatus.interrupted,
     );
   }
 
-  /// Best-effort stop of the live session. A wedged transport must not be able
-  /// to hold the timeout path open, so the cancel wait is itself bounded, and a
-  /// cancel that never answers is not an error: the durable terminal record
-  /// written by the caller is the authority either way.
-  Future<void> _stopSessionQuietly(String executionId, String reason) async {
-    final session = _liveSessions[executionId];
-    if (session == null) return;
-    try {
-      await session.cancel(reason).timeout(_cancelGrace);
-    } catch (_) {
-      // The session is abandoned; only the durable record survives, and it is
-      // written regardless.
-    }
-  }
-
   /// The honest terminal event for a session that stopped answering without
-  /// ever reporting one. Routed through the ordinary failure path, so it lands
-  /// on `AgentSessionStatus.failed` with this reason rather than on nothing.
-  SessionFailed _neverEmittedTerminalEvent(
+  /// ever reporting one. Routed through the ordinary terminal path, so it lands
+  /// on a real durable status rather than on nothing.
+  ///
+  /// ## [SessionInterrupted], NOT [SessionFailed]
+  ///
+  /// This is the path a budget expiry actually takes in production, and it was
+  /// the one that made the whole retry budget unreachable.
+  ///
+  /// The terminal wait is bounded by what is LEFT of the execution budget
+  /// ([_finalize]), so a session that registers, accepts its instruction and then
+  /// goes quiet is settled HERE — by this manufactured event — several ticks
+  /// before [_expireExecution]'s outer budget can fire. The manufactured event
+  /// was a [SessionFailed], which means the session reported a failure. It did
+  /// not: nobody asked it anything and it answered nothing, because the clock
+  /// ran out. Reporting that as a failure is what made
+  /// `engineeringReviewDefinition.maxAttempts: 2` unreachable for a review
+  /// killed at its budget — `failed` classifies as PERMANENT, so the job spent
+  /// no attempt and failed on the spot.
+  ///
+  /// `SessionInterrupted` is the truthful statement and it is what the same run
+  /// already produced when the runtime interrupted itself: `_failureDetails`
+  /// maps a driver-emitted [SessionInterrupted] to
+  /// [AgentSessionStatus.interrupted], and now so does the coordinator's own.
+  ///
+  /// The crash case is untouched and must stay that way: a session that emits
+  /// [SessionFailed] of its own accord still arrives through the same
+  /// `_failureDetails` switch and still settles `failed`.
+  SessionInterrupted _neverEmittedTerminalEvent(
     String executionId,
     Duration budget,
-  ) => SessionFailed(
+  ) => SessionInterrupted(
     eventId: 'timeout-$executionId',
     timestamp: DateTime.now(),
-    error:
+    reason:
         'session never emitted a terminal event within the '
         '${budget.inSeconds}s execution budget',
-    recoverable: true,
   );
 
   /// Cancels the live session for [executionId]; the driver loop finalizes the
@@ -1012,10 +1107,26 @@ class ExecutionCoordinator {
     };
   }
 
-  Future<AgentExecution> _failWithoutSession(
+  /// Settles an execution this coordinator never drove to a terminal session
+  /// event — no session to finalise, but a durable terminal record owed
+  /// regardless, because a job left non-terminal behind a durable status string
+  /// is the failure this whole method exists to prevent.
+  ///
+  /// ## [status] IS THE WHOLE ARGUMENT
+  ///
+  /// Default `failed` is the honest answer for "the dispatch path died". The
+  /// two call sites that are reporting a TIMEOUT pass
+  /// [AgentSessionStatus.interrupted] explicitly, because the distinction is
+  /// not cosmetic: it decides whether the job spends an attempt and retries
+  /// inside its `maxAttempts`, or fails permanently having spent none. See
+  /// [_expireExecution] for the full chain, and for why the opposite regression
+  /// — making a genuine crash retryable — is prevented by keeping these two
+  /// call sites separate rather than by any guard inside this method.
+  Future<AgentExecution> _settleWithoutSession(
     AgentExecutionRequest request,
-    String reason,
-  ) async {
+    String reason, {
+    AgentSessionStatus status = AgentSessionStatus.failed,
+  }) async {
     final result = _fallbackResult(request, reason: reason);
     final stamped = result.copyWith(
       role: request.role,
@@ -1026,7 +1137,7 @@ class ExecutionCoordinator {
       executionId: request.executionId,
       workItemId: request.workItemId,
       type: AgentEventType.executionFailed,
-      payload: {'error': reason},
+      payload: {'error': reason, 'settledAs': status.name},
     );
 
     try {
@@ -1049,7 +1160,6 @@ class ExecutionCoordinator {
     await _insertModelExecutionRecord(request, stamped, false, reason);
 
     final recorded = await store.readExecution(request.executionId);
-    final status = AgentSessionStatus.failed;
     await store.saveExecution(
       recorded.copyWith(
         status: status,

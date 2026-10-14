@@ -112,9 +112,15 @@ void main() {
 
   /// The honest terminal row the timeout produced, before the late drive path
   /// gets a chance to touch it.
+  ///
+  /// `interrupted`, not `failed`: every shape exercised here ends at the budget,
+  /// and `interrupted` is what classifies as TRANSIENT downstream so the job
+  /// spends an attempt and retries inside `maxAttempts`. These tests are about
+  /// the verdict SURVIVING a late writer, not about which terminal class it
+  /// belongs to — `budget_expiry_is_a_timeout_test.dart` owns that question.
   Future<void> expectTerminalAtExpiry() async {
     final before = await executionStore.readExecution('exec-1');
-    expect(before.status, AgentSessionStatus.failed);
+    expect(before.status, AgentSessionStatus.interrupted);
     expect(before.isTerminal, isTrue);
     expect(before.completedAt, isNotNull);
   }
@@ -129,7 +135,7 @@ void main() {
 
         // The budget expires while the session has not even started.
         final timedOut = await coordinator.execute(request());
-        expect(timedOut.status, AgentSessionStatus.failed);
+        expect(timedOut.status, AgentSessionStatus.interrupted);
         await expectTerminalAtExpiry();
         expect(coordinator.liveSessionCount, 0);
 
@@ -146,7 +152,7 @@ void main() {
         );
         final after = await executionStore.readExecution('exec-1');
         expect(after.isTerminal, isTrue);
-        expect(after.status, AgentSessionStatus.failed);
+        expect(after.status, AgentSessionStatus.interrupted);
       },
     );
 
@@ -227,7 +233,7 @@ void main() {
       expect(executionStore.resurrections, isEmpty);
       final after = await executionStore.readExecution('exec-1');
       expect(after.isTerminal, isTrue);
-      expect(after.status, AgentSessionStatus.failed);
+      expect(after.status, AgentSessionStatus.interrupted);
     });
   });
 
@@ -240,7 +246,7 @@ void main() {
         final coordinator = coordinatorOf(instructionGate: gate);
 
         final timedOut = await coordinator.execute(request());
-        expect(timedOut.status, AgentSessionStatus.failed);
+        expect(timedOut.status, AgentSessionStatus.interrupted);
         await expectTerminalAtExpiry();
 
         gate.complete();
@@ -255,7 +261,7 @@ void main() {
         );
         final after = await executionStore.readExecution('exec-1');
         expect(after.isTerminal, isTrue);
-        expect(after.status, AgentSessionStatus.failed);
+        expect(after.status, AgentSessionStatus.interrupted);
         expect(coordinator.hasLiveSession('exec-1'), isFalse);
         expect(coordinator.liveSessionCount, 0);
       },

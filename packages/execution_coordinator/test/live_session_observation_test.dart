@@ -219,8 +219,12 @@ void main() {
           );
           expect(
             timedOut.status,
-            AgentSessionStatus.failed,
-            reason: shape.name,
+            AgentSessionStatus.interrupted,
+            reason:
+                '${shape.name}: every wedge shape below ends at the budget, and '
+                'a budget expiry settles `interrupted` so the job retries '
+                'inside maxAttempts rather than failing permanently having '
+                'spent no attempt.',
           );
           expect(
             coordinator.hasLiveSession('exec-1'),

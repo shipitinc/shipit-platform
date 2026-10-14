@@ -4,6 +4,7 @@ import 'package:test/test.dart';
 import 'package:worker_runtime/worker_runtime.dart';
 
 import 'package:control_plane_server/src/review/engineering_review_gate.dart';
+import 'package:control_plane_server/server.dart';
 
 WorkItem _item(String workItemId, {String? producerActorId}) {
   final now = DateTime.utc(2026, 1, 1);
@@ -66,6 +67,9 @@ WorkloadResolver _resolver(WorkerStore store) =>
     engineeringReviewWorkloadResolver(
       workerStore: store,
       runtimeTypeId: 'rt-review',
+      // The one production budget, named so the resolver holds no literal of
+      // its own. See `AgentExecutionBudgets` — PROVISIONAL.
+      timeoutSeconds: AgentExecutionBudgets.engineeringReviewSeconds,
     );
 
 void main() {

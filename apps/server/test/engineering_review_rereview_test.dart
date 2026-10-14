@@ -6,6 +6,7 @@ import 'package:worker_runtime/worker_runtime.dart';
 import 'package:workflow_store/workflow_store.dart';
 
 import 'package:control_plane_server/src/review/engineering_review_gate.dart';
+import 'package:control_plane_server/server.dart';
 
 /// ## WHAT THIS FILE EXISTS TO PROVE
 ///
@@ -193,6 +194,9 @@ class _Host {
         workloadResolver: engineeringReviewWorkloadResolver(
           workerStore: workerStore,
           runtimeTypeId: 'rt-review',
+          // The one production budget, named so the resolver holds no literal of
+          // its own. See `AgentExecutionBudgets` — PROVISIONAL.
+          timeoutSeconds: AgentExecutionBudgets.engineeringReviewSeconds,
         ),
         workload: workload,
         clock: clock,
