@@ -1,6 +1,6 @@
 import 'dart:async' show Timer, unawaited;
 import 'dart:convert' show jsonDecode;
-import 'dart:io' show Directory, File, Platform, Process, exit, stdout;
+import 'dart:io' show Directory, Platform, Process, exit, stdout;
 
 import 'package:serverpod/serverpod.dart';
 import 'package:agent_runtime/agent_runtime.dart'
@@ -9,7 +9,6 @@ import 'package:execution_coordinator/execution_coordinator.dart'
     show
         ExecutionCoordinator,
         ExecutionStore,
-        FileJsonExecutionStore,
         ModelExecutionRecordStore,
         VerificationPlan;
 import 'package:workflow_store/workflow_store.dart' show DurableWorkflowEngine;
@@ -65,6 +64,7 @@ import 'package:worker_runtime/worker_runtime.dart'
 import 'src/generated/endpoints.dart';
 import 'src/generated/protocol.dart';
 import 'src/persistence/persistence_database.dart';
+import 'src/persistence/postgres_execution_store.dart';
 import 'src/persistence/postgres_workflow_store.dart';
 import 'src/persistence/postgres_job_store.dart';
 import 'src/persistence/postgres_worker_store.dart';
@@ -228,10 +228,75 @@ void run(List<String> args) async {
   // otherwise-successful triage job settled as `executedFail`. Extracting the
   // composition makes the plan this process actually attaches reachable from a
   // test without a real `opencode` binary or a database.
+  //
+  // ## THE STORE IS `PostgresExecutionStore`, AND IT WAS NOT A CHOICE
+  //
+  // This line previously read
+  //
+  //     store: FileJsonExecutionStore(
+  //       File('${Directory.systemTemp.path}/execution_coordinator/store.json'),
+  //     ),
+  //
+  // which is the defect this comment exists to stop being reintroduced. The
+  // store is now built by [agentExecutionStore], which is named so the exact
+  // wiring is reachable from a test. Every execution the coordinator produced
+  // went into that one JSON file; every READER of an agent execution —
+  // `engineeringReviewTickHandler`, `engineeringReviewMissingArtifact`, the
+  // control plane's `executionStore` getter — read PostgreSQL. The two never
+  // met. The measured consequence, on a QA database that had run 35 worker
+  // executions:
+  //
+  //     agent_execution         =  0 rows
+  //     worker_execution        = 35 rows
+  //     model_execution_record  = 29 rows
+  //
+  // `PostgresExecutionStore` already existed, already implemented every
+  // `ExecutionStore` method against real SQL, and was already wired into
+  // `ControlPlaneService.executionStore`. Nothing was wrong with it. Nothing
+  // wrote agent executions to it, because nothing was routed to it.
+  //
+  // `db` is in scope here on its own merits and needs no reordering to make
+  // that true: it is constructed at the top of this function, and the very
+  // next argument, `modelExecutionRecordStore`, was already
+  // `PostgresModelExecutionRecordStore(db)`. The same `db` already served five
+  // other stores. There was no boot-order problem here and there is none now.
+  //
+  // ## WHY THIS IS THE ROOT CAUSE AND NOT A SYMPTOM
+  //
+  // The engineering review gate could never find a producer artifact, because
+  // the gate reads agent executions from Postgres and no agent execution had
+  // ever been written there. Its fail-closed park then bailed on
+  // `engineering-review-missing-artifact-no-implementer-result`, because
+  // `agentResultValid()` needs that same unreadable result — so the ONE
+  // mechanism that stops a stranded work item from being stranded silently did
+  // nothing, on every run, for ever.
+  //
+  // ## WHAT THIS DOES *NOT* CHANGE
+  //
+  // `producedCommitFor` — the discriminator both the review workload resolver
+  // and the inflow's stand-down share — reads `worker_execution` and the work
+  // item's `producerActorId` metadata. It never reads the agent execution
+  // store, and it was never broken by this split: `LocalWorker` mints the
+  // anchor itself as `'agx-${request.workerExecutionId}'`
+  // (`local_worker.dart`), records it on the worker execution, and the
+  // coordinator stamps that same id onto the work item
+  // (`stamped.executionId == request.executionId`). Both ends of that join are
+  // columns of `worker_execution`. Swapping this store therefore changes NO
+  // discriminator verdict and moves NO tick-order outcome; the stand-down is
+  // evaluated before this store is read at all, and it reads a different store
+  // entirely. See `apps/server/test/execution_store_wiring_test.dart`, which
+  // proves the discriminator's verdicts on both sides of the artifact boundary
+  // and pins the stand-down's independence from the execution store.
+  //
+  // ## WHAT IT DOES CHANGE
+  //
+  // Two things, both of them the point of the change. The review workload
+  // resolver's reviewer executions become readable, so a review verdict can be
+  // read and raised instead of logging `execution-not-terminal` with status
+  // `null`. And `engineeringReviewMissingArtifact` stops bailing, so the
+  // fail-closed park becomes reachable for exactly the items it exists for.
   final coordinator = buildTriageExecutionCoordinator(
-    store: FileJsonExecutionStore(
-      File('${Directory.systemTemp.path}/execution_coordinator/store.json'),
-    ),
+    store: agentExecutionStore(db),
     workflowEngine: durableWorkflowEngine,
     runtime: AgentRuntime(registry: agentAdapters),
     modelExecutionRecordStore: PostgresModelExecutionRecordStore(db),
@@ -1135,6 +1200,38 @@ ExecutionCoordinator buildTriageExecutionCoordinator({
   verificationPlan: triageVerificationPlan,
   modelExecutionRecordStore: modelExecutionRecordStore,
 );
+
+/// The [ExecutionStore] the execution coordinator writes to.
+///
+/// Extracted for the same reason [buildTriageExecutionCoordinator] is: so the
+/// exact store this process attaches is reachable from a test without booting
+/// a server or an `opencode` binary. A named seam is the difference between a
+/// wiring that is pinned and one that is merely correct today.
+///
+/// ## WHY IT IS NAMED, AND WHY THE NAME IS THE POINT
+///
+/// It returned a `FileJsonExecutionStore` pointed at
+/// `${Directory.systemTemp}/execution_coordinator/store.json` until this fix.
+/// The coordinator wrote every agent execution there while every reader read
+/// PostgreSQL, and the two never met: `agent_execution` held zero rows across
+/// 35 worker executions, so the engineering review gate could never read a
+/// producer's result and its fail-closed park silently declined to act — on
+/// every tick, for ever. The two stores looked interchangeable because
+/// `ExecutionStore` is an interface and both implementations satisfy it. Nothing
+/// about the type system, and no test, would have said otherwise.
+///
+/// So the store the production composition attaches is named here, and the
+/// integration suite drives THIS function end to end — a real `LocalWorker`,
+/// a real `ExecutionCoordinator`, a real producer run — then asserts that
+/// `agent_execution` gained the row and that the review gate can act on it. If
+/// anyone reintroduces a store the readers cannot see, that test fails on the
+/// missing row, not on a class name.
+///
+/// A unit test asserting `agentExecutionStore(db) is PostgresExecutionStore`
+/// would pass against a wiring that is still wrong, and would have passed
+/// against the file store too. The behaviour is the assertion.
+ExecutionStore agentExecutionStore(PersistenceDatabase db) =>
+    PostgresExecutionStore(db);
 
 /// The code carried by a tick that was dropped because another was still
 /// running.
