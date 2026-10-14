@@ -39,6 +39,11 @@ import 'package:workflow_store/workflow_store.dart';
 /// with a separate owner.
 const _itemId = 'wi-1';
 
+/// The second work item in the isolation tests: healthy, reviewable, and on
+/// the same tick as the corrupt one. Named so that a failure says which item
+/// the lane lost rather than just that something did.
+const _healthyItemId = 'wi-2';
+
 /// Reports "no compatible worker" so the scheduler builds the request — proving
 /// what it WOULD have dispatched — and never runs one. Same technique as
 /// `implementation_inflow_tick_order_test.dart`, for the same reason: a worker
@@ -65,10 +70,12 @@ class _NoWorkerDispatch implements WorkerDispatch {
 ///
 /// `metadata` is the marker map under test; pass nothing for the ABSENT case,
 /// which is the one that must keep building the historical key byte for byte.
-WorkItem _reviewable({Map<String, dynamic>? metadata}) {
+/// [id] names the item, so a tick can be given two of them and asked what one
+/// unreadable marker costs the other.
+WorkItem _reviewable({Map<String, dynamic>? metadata, String id = _itemId}) {
   final now = DateTime.utc(2026, 1, 1);
   return WorkItem(
-    workItemId: _itemId,
+    workItemId: id,
     productId: 'prod-1',
     category: WorkItemCategory.bugfix,
     title: 'Fix the thing',
@@ -422,6 +429,116 @@ void main() {
         expect(dispatch.requests, isEmpty);
       },
     );
+  });
+
+  group('one UNREADABLE marker costs one item, not the review lane', () {
+    // The blast radius this key inherited by throwing, and the bound on it.
+    //
+    // `readTriageAttempt` throws `FormatException` BY DESIGN on a
+    // present-but-unreadable marker, and the builder inherits that rather than
+    // re-deciding it — it must not fall back to the consumed unsuffixed key.
+    // What it must not do either is take the whole tick down with it. The tick
+    // is this lane's only outward channel, so an item whose key cannot be built
+    // used to end `tick()` with an exception: `enqueued`, `dispatched` AND
+    // `blockedArtifactMissing` were all lost for every OTHER reviewable item,
+    // on every tick, for ever — while the composition root logged it as the
+    // ordinary `review.tick.failed` it already expects to be retried. A single
+    // corrupt byte starved the lane rather than parking one item.
+    //
+    // It is the same reader and the same shape as the completion inflow's
+    // per-item guard (`scheduler.dart`, `_routeOneCompletion`), which fixes it
+    // for `sched-impl`. This file proves the fix for THIS lane's call site.
+    test('the tick RETURNS and the healthy item on it is still reviewed', () async {
+      final store = InMemoryJobStore();
+      final dispatch = _NoWorkerDispatch();
+
+      // Corrupt item FIRST by id, so a tick that is not guarded throws before
+      // it has considered anything else. There is no ordering of these two that
+      // makes an unguarded tick survive, which is the point.
+      final tick = await _reviewTick(store, [
+        _reviewable(metadata: const {'triageAttempt': 'not-a-number'}),
+        _reviewable(id: _healthyItemId),
+      ], dispatch);
+
+      // THE LANE SURVIVES. The healthy item was enqueued under the historical
+      // key (it carries no marker) and offered to a reviewer.
+      expect(
+        tick.enqueued,
+        hasLength(1),
+        reason:
+            'one unreadable marker must cost its own item and nothing else. '
+            'Before the per-item guard, this tick threw out of `tick()` and no '
+            'result at all existed to assert on',
+      );
+      final jobs = await store.listJobsForWorkItem(_healthyItemId);
+      expect(jobs.single.dedupeKey, '$_healthyItemId:engineering_review');
+      expect(
+        dispatch.requests.single.workItemId,
+        _healthyItemId,
+        reason: 'and it reached a reviewer, rather than merely being enqueued',
+      );
+
+      // FAIL-CLOSED FOR THE REFUSED ITEM. No job, so nothing dispatches, so no
+      // reviewer can be pointed at a revision chosen by a marker nobody could
+      // read.
+      expect(
+        await store.listJobsForWorkItem(_itemId),
+        isEmpty,
+        reason:
+            'the unreadable item must get NO review job. Falling back to the '
+            'historical key would ask for one the previous attempt already '
+            'holds and enqueue nothing while looking healthy; inventing a key '
+            'would re-review for ever',
+      );
+    });
+
+    test('the refusal is REPORTED, not swallowed', () async {
+      final store = InMemoryJobStore();
+      final dispatch = _NoWorkerDispatch();
+      final corrupt = _reviewable(metadata: const {'triageAttempt': 1.5});
+
+      final first = await _reviewTick(store, [corrupt], dispatch);
+      final second = await _reviewTick(store, [corrupt], dispatch);
+
+      for (final tick in [first, second]) {
+        expect(
+          tick.entryHopRefused.map((r) => r.workItemId),
+          [_itemId],
+          reason:
+              'a silent skip is how this defect stayed invisible: the lane '
+              'would look idle with no item to explain it',
+        );
+        final refusal = tick.entryHopRefused.single;
+        expect(refusal.state, 'agent_completed');
+        expect(
+          refusal.reason,
+          allOf(
+            contains('no dedupe key could be built'),
+            contains('Nothing ran and nothing was consumed'),
+          ),
+          reason:
+              'the operator-facing reason must name what was refused and what '
+              'it cost. An unreadable marker is a defect in whatever wrote it, '
+              'and it repeats every tick until a human repairs it',
+        );
+        // NOT on `blockedArtifactMissing`, and deliberately so: that channel
+        // carries JOB ids, and this item has none — the key was never built, so
+        // there is nothing the composition root's missing-artifact handler
+        // could read. The cost of that choice is that no blocking human
+        // decision is raised for this item; it parks itself at its entry state
+        // and is re-reported on every tick until the marker is repaired.
+        expect(tick.blockedArtifactMissing, isEmpty);
+      }
+
+      // Nothing was consumed, on either tick: no job, no dispatch, no move.
+      // That is the whole of what is observable here — the scheduler writes
+      // work-item state only through the entry hop, which the review lane does
+      // not take — and it is enough: the item is left reviewable, and the tick
+      // after the marker is repaired reviews it normally.
+      expect(first.enqueued, isEmpty);
+      expect(second.enqueued, isEmpty);
+      expect(dispatch.requests, isEmpty);
+    });
   });
 }
 

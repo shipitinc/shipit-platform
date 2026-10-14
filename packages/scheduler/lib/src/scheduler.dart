@@ -303,13 +303,15 @@ class SchedulerTickResult {
     this.blockedArtifactMissing = const [],
 
     /// Items the workflow policy called `runnable` that the scheduler could not
-    /// make startable — no declared hop, or a declared hop the policy will not
-    /// let the scheduler take. Reported apart from [deferred] because nothing
-    /// about it resolves itself: the item is not back-pressured, it is parked
-    /// against a route the transition table does not offer, and an operator is
-    /// the only one who can change that. Folding it into [deferred] would
-    /// report a permanent structural gap as ordinary transient noise, which is
-    /// how this whole defect stayed invisible.
+    /// make startable — no declared hop, a declared hop the policy will not let
+    /// the scheduler take, or a dispatch discriminator on the item that could
+    /// not be read, so no dedupe key could be built. Reported apart from
+    /// [deferred] because nothing about it resolves itself: the item is not
+    /// back-pressured, it is parked against a route the transition table does
+    /// not offer or against bytes nothing can read, and an operator is the only
+    /// one who can change that. Folding it into [deferred] would report a
+    /// permanent structural gap as ordinary transient noise, which is how this
+    /// whole defect stayed invisible.
     this.entryHopRefused = const [],
 
     /// Items this lane's completion inflow considered, and what it did with
@@ -353,7 +355,8 @@ class SchedulerTickResult {
   /// ordinary transient back-pressure to retry silently.
   final List<String> blockedArtifactMissing;
 
-  /// Items refused a dispatch by [EntryHopper] this tick, with the reason.
+  /// Items the scheduler refused to start this tick — by [EntryHopper], or by
+  /// the dedupe-key build — with the reason.
   final List<EntryHopRefusal> entryHopRefused;
 
   /// Items the completion inflow considered this tick, in item-id order. See
@@ -702,7 +705,76 @@ class Scheduler {
             continue;
           }
           final ready = prepared.item;
-          final dedupeKey = _dedupeKeyBuilder(ready, _definition);
+
+          // PER-ITEM ISOLATION AROUND THE DEDUPE-KEY BUILD.
+          //
+          // The key is the first thing this loop derives from the item's own
+          // durable bytes, and a builder that DECODES those bytes throws by
+          // design rather than guessing: `readTriageAttempt` raises
+          // `FormatException` on a PRESENT-BUT-UNREADABLE `triageAttempt`, and
+          // three wired builders call it — `triageDefectDedupeKey`,
+          // `implementFeatureDedupeKey` and `engineeringReviewDedupeKey`.
+          //
+          // Unguarded, one corrupt marker on one work item propagated a
+          // `FormatException` out of this loop, out of `tick`, and into the
+          // composition root's `<lane>.tick.failed`. That is not one item
+          // parked: the WHOLE tick result is lost with it, so every OTHER
+          // runnable item this tick could have enqueued or dispatched is lost
+          // too, and the next tick throws on the same item again — one bad byte
+          // STARVES THE LANE for ever. For the review lane the blast radius is
+          // the entire review path (the inflow cannot route a commit, so
+          // `sched-review` is the only way an item ever reaches a reviewer —
+          // `docs/engineering/learning/the-inflow-cannot-route-a-commit-so-review-is-the-only-path.md`),
+          // and the throw happens BEFORE `blockedArtifactMissing` is populated,
+          // so the fail-closed human gate never runs either. Same reader, same
+          // unbounded shape as the one `_routeOneCompletion`'s guard already
+          // closes for the completion inflow.
+          //
+          // AT THE CALL SITE, and not inside the builders: a builder that caught
+          // its own fault would have to invent a key or return nothing, and
+          // "no key" is indistinguishable from "already enqueued" to everything
+          // downstream. Here the scheduler already knows exactly what a refusal
+          // costs — nothing is enqueued, the item stays where it was, nothing
+          // is consumed — so this is a refusal, not a guess.
+          //
+          // REPORTED ON `entryHopRefused`, which is already this loop's channel
+          // for an item the policy called runnable and the scheduler refused to
+          // dispatch, with a reason. Deliberately NOT `blockedArtifactMissing`:
+          // that channel carries JOB ids, and no job exists — the key was never
+          // built — so the composition root's `engineeringReviewMissingArtifact`
+          // loop would have nothing to read. The cost of this choice is stated
+          // rather than hidden: for such an item the fail-closed HUMAN gate is
+          // unreachable, and it parks itself at its entry state and re-reports
+          // every tick until a human repairs the marker. Raising a decision for
+          // it would need a new channel wired in `apps/server`, which is not
+          // this lane's to change.
+          //
+          // DELIBERATELY NOT WIDER. The instruction builder beside it
+          // interpolates the item's own fields and cannot throw by design, and
+          // `_queue.enqueueIfAbsent` is a STORE WRITE whose faults must stay
+          // loud: folding one in would turn a retryable store error into a
+          // silent per-item refusal. Only the derivation that DECODES is guarded,
+          // and this guard grows the day another builder decodes something else.
+          late final String dedupeKey;
+          try {
+            dedupeKey = _dedupeKeyBuilder(ready, _definition);
+          } on Object catch (error) {
+            entryHopRefused.add(
+              EntryHopRefusal(
+                workItemId: ready.workItemId,
+                state: ready.state.wire,
+                reason:
+                    'the dispatch discriminator on this item could not be '
+                    'read, so no dedupe key could be built and no job was '
+                    'enqueued for it ($error). Nothing ran and nothing was '
+                    'consumed: it is left exactly where it was, and every other '
+                    'work item this tick was still considered. Nothing about '
+                    'this item changes on a later tick, so the same refusal is '
+                    'reported again until the marker is repaired',
+              ),
+            );
+            continue;
+          }
           if (prepared.status == EntryHopStatus.performed) {
             cancelledQueued.addAll(
               await _retireJobsKeyedForPriorState(ready, dedupeKey),
@@ -2277,6 +2349,17 @@ const JobDefinition engineeringReviewDefinition = JobDefinition(
 /// that key is already consumed by the terminal job the re-review exists to
 /// replace. See that method for the full argument; it is stated once, here, to
 /// record that this builder inherits it rather than choosing it.
+///
+/// ## WHAT HAPPENS WHEN THAT THROW FIRES
+///
+/// The caller guards it. `Scheduler.tick` builds this key inside a per-item
+/// `try` and reports a throw on `SchedulerTickResult.entryHopRefused` with
+/// nothing enqueued and nothing consumed, so one unreadable marker costs that
+/// item and not the tick — and the composition root's
+/// `engineeringReviewMissingArtifact` is untouched, because no job is ever
+/// created to report. That guard is the only reason this builder is allowed to
+/// throw at all: unguarded, the throw escaped `tick()` and took every OTHER
+/// reviewable item's tick result with it, on every tick, for ever.
 String engineeringReviewDedupeKey(WorkItem item, JobDefinition definition) {
   final base = '${item.workItemId}:${definition.jobType.wire}';
   final attempt = DurableWorkflowEngine.readTriageAttempt(item);
