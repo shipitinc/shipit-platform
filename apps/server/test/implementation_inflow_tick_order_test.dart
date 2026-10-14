@@ -42,6 +42,12 @@ import 'package:control_plane_server/src/review/engineering_review_gate.dart';
 /// import it runs the wrong way.
 const _startingRevision = 'aaaaaaa';
 
+/// The second work item's commit, and the healthy sibling that proves a refused
+/// item does not cost the lane. It differs from [_startingRevision], which is
+/// the only thing that makes it an artifact rather than a report.
+const _siblingItemId = 'wi-2';
+const _siblingCommit = 'c2c2c2c';
+
 /// Reports "no compatible worker" so the scheduler builds the request — proving
 /// what it WOULD have dispatched — and never runs one.
 class _NoWorkerDispatch implements WorkerDispatch {
@@ -215,7 +221,10 @@ class _Host {
   /// installs tick HANDLERS for terminal jobs; those cannot fire here because
   /// nothing is ever dispatched, and copying them in would add code this file
   /// cannot exercise.
-  Future<void> runReviewSection() async {
+  ///
+  /// Returns the tick result so a test can assert on the channels the handler
+  /// loop above did NOT act on — which is where an unreadable marker lands.
+  Future<SchedulerTickResult> runReviewSection() async {
     final tick = await reviewScheduler.tick();
     for (final jobId in tick.blockedArtifactMissing) {
       final job = await jobStore.readJob(jobId);
@@ -228,6 +237,7 @@ class _Host {
         logger: (_, __) {},
       );
     }
+    return tick;
   }
 
   Future<WorkItem> run({required bool reviewFirst}) async {
@@ -264,6 +274,45 @@ AgentResult _producerResult() => AgentResult(
 );
 
 const _noArtifact = {'producerActorId': 'agx-wx-1'};
+
+/// Adds a SECOND reviewable work item to [host]: its producer really committed
+/// [_siblingCommit] and its marker is absent, so it is reviewable on every tick.
+///
+/// It exists so that "the tick survived" is not an assertion about a tick that
+/// had nothing else to do. A test with only the corrupt item proves the item
+/// did not throw; only a test with a second item proves the LANE did not.
+Future<void> _addReviewableSibling(_Host host) async {
+  final now = DateTime.utc(2026, 1, 1);
+  await host.workflowStore.saveWorkItem(
+    WorkItem(
+      workItemId: _siblingItemId,
+      productId: 'prod-1',
+      category: WorkItemCategory.bugfix,
+      title: 'A second, healthy defect',
+      description: 'A producer finished and committed real code.',
+      state: WorkItemState.agentCompleted,
+      metadata: const {'producerActorId': 'agx-wx-2'},
+      createdAt: now,
+      updatedAt: now,
+    ),
+  );
+  await host.workerStore.saveWorkerExecution(
+    WorkerExecution(
+      workerExecutionId: 'wx-2',
+      workItemId: _siblingItemId,
+      repositoryPath: '/durable/clone',
+      requestedStartingRevision: _startingRevision,
+      requiredCapabilities: const {
+        WorkerCapability.linux,
+        WorkerCapability.git,
+      },
+      agentExecutionId: 'agx-wx-2',
+      endingRevision: _siblingCommit,
+      status: WorkerExecutionStatus.executedPass,
+      cleanupPolicy: WorkerCleanupPolicy.removeAlways,
+    ),
+  );
+}
 
 void main() {
   group('a no-artifact producer lands in the SAME state in BOTH tick orders', () {
@@ -424,27 +473,112 @@ void main() {
       },
     );
 
-    test('an unreadable producer still parks, fail-closed', () async {
-      // `readTriageAttempt` throws by design on a present-but-unreadable marker,
-      // and falling back would rebuild a dedupe key a terminal job already
-      // holds. An unreadable answer must NOT be read as "the inflow will take
-      // it" — that would strand the item on the strength of a read nobody could
-      // complete.
-      final host = await _Host.withProducer(
-        metadata: const {
-          'producerActorId': 'agx-wx-1',
-          'triageAttempt': 'not-a-number',
-        },
-      );
+    test(
+      'an unreadable producer is refused fail-closed, and the lane survives it',
+      () async {
+        // `readTriageAttempt` throws by design on a present-but-unreadable
+        // marker, and falling back would rebuild a dedupe key a terminal job
+        // already holds. An unreadable answer must NOT be read as "the inflow
+        // will take it" — and it must not be read as "this tick is over".
+        //
+        // WHAT IS ASSERTED NOW, AND WHY IT IS NOT THE OLD ASSERTION. This test
+        // used to require `waitingForHumanDecision`. It no longer does, and the
+        // reason is the cost of refusing inside the scheduler instead of wiring
+        // a new channel: the human gate is reachable only through
+        // `reviewTick.blockedArtifactMissing`, that channel carries JOB ids, and
+        // an unreadable marker means no key was built and therefore NO JOB
+        // exists to report. So the refusal lands on `entryHopRefused` — which
+        // the composition root does not yet read — and the item parks ITSELF at
+        // `agentCompleted`, reviewable again on the tick after a human repairs
+        // the marker. Raising a blocking decision for it needs new wiring in
+        // `apps/server/lib`, which this lane does not own.
+        //
+        // What is NOT negotiable, and is what replaces that assertion: the
+        // unreadable item gets NO review job, and every OTHER reviewable item
+        // on the same tick is still reviewed. Before the per-item guard the
+        // `FormatException` escaped `reviewScheduler.tick()` entirely, so the
+        // whole tick result was lost — for the healthy item as well as the
+        // corrupt one — and the composition root logged the ordinary
+        // `review.tick.failed` it expects to be retried. Starvation reads
+        // exactly like transient noise.
+        final host = await _Host.withProducer(
+          metadata: const {
+            'producerActorId': 'agx-wx-1',
+            'triageAttempt': 'not-a-number',
+          },
+        );
+        await _addReviewableSibling(host);
 
-      final item = await host.run(reviewFirst: false);
+        // The composition's order: implementation first.
+        final implTick = await host.implScheduler.tick();
+        expect(
+          implTick.completionInflow.where((move) => move.moved),
+          isEmpty,
+          reason:
+              'an unreadable answer moves nothing in either direction — the '
+              'item stays where it is, so the review lane is still offered it',
+        );
 
-      expect(
-        item.state,
-        WorkItemState.waitingForHumanDecision,
-        reason: 'an unknown answer is not a licence to look away',
-      );
-    });
+        final reviewTick = await host.runReviewSection();
+
+        // FAIL-CLOSED, FOR THAT ITEM. No key, so no job, so no reviewer can be
+        // pointed at a revision chosen by a marker nobody could read.
+        expect(
+          await host.jobStore.listJobsForWorkItem('wi-1'),
+          isEmpty,
+          reason:
+              'the item with the unreadable discriminator must get no review '
+              'job at all',
+        );
+        expect(
+          reviewTick.entryHopRefused.map((r) => r.workItemId),
+          ['wi-1'],
+          reason:
+              'and it must be REPORTED. A silent skip leaves a lane that looks '
+              'idle with no item to explain it',
+        );
+        expect(
+          reviewTick.blockedArtifactMissing,
+          isEmpty,
+          reason:
+              'which is exactly why no blocking human decision is raised for '
+              'it: that channel is keyed by job id and this item never had one',
+        );
+
+        // THE LANE SURVIVES. The sibling on the SAME tick was enqueued and
+        // offered to a reviewer at the revision its producer left. Without this
+        // half the test would pass on a tick that did nothing at all.
+        expect(
+          (await host.jobStore.listJobsForWorkItem(
+            _siblingItemId,
+          )).single.dedupeKey,
+          '$_siblingItemId:engineering_review',
+          reason: 'the healthy item asked for the historical key and got it',
+        );
+        expect(
+          host.dispatch.requests
+              .where((r) => r.role == AgentRole.engineeringReviewer)
+              .single
+              .startingRevision,
+          _siblingCommit,
+          reason:
+              'and it was DISPATCHED at its produced revision, not merely '
+              'enqueued. One unreadable byte on one item costs that item; it '
+              'does not cost the review lane, and this is the half that says so',
+        );
+
+        final item = await host.engine.loadWorkItem('wi-1');
+        expect(
+          item.state,
+          WorkItemState.agentCompleted,
+          reason:
+              'the item is left exactly where it was rather than parked or '
+              'moved — nothing ran and nothing was consumed, and it is still '
+              'reviewable the moment the marker is readable',
+        );
+        expect(item.blockingHumanDecisionId, isNull);
+      },
+    );
   });
 
   group('the composition root ticks implementation FIRST', () {
