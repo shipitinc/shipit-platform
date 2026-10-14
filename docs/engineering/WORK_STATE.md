@@ -1355,3 +1355,42 @@ because each one is a claim the repository currently cannot enforce.
 16. **Implementation reports are not committed artifacts.** A lane claimed "a one-line endpoint addition
     away" — true only of its report, absent from every committed artifact. If reports are meant to be
     auditable, that is a persistence gap in the reporting path.
+
+### Operator-facing defects found by actually operating it
+
+Recorded 2026-10-14, the first time a human decision became reachable in this platform. Both were found by
+the operator using the product, not by any gate — every test that touched these paths was green throughout.
+
+17. **`/needs-you/:decisionId` cannot open a decision.** The route is declared with a `decisionId` parameter
+    (`apps/control_plane/lib/router.dart:75`) but the code treats it as a **workItemId**:
+    `inspectDecision(String workItemId)` calls `workflowEndpoints.listDecisions(workItemId: ...)` and throws
+    `StateError('No decisions found for work item $workItemId')` on empty. Passing a decision id therefore
+    queries for a work item *by that name*, finds nothing, and the UI renders "We could not open this
+    decision".
+    **The app contradicts itself and the most likely path is the broken one.** `run_detail_page.dart:146`
+    and `:763` both link to `'/needs-you/${state.blockingHumanDecisionId}'` — a DECISION id. So clicking the
+    decision from the run page, the route an operator is most likely to take, fails.
+    **Workaround until fixed:** use the workItemId —
+    `http://localhost:8081/#/needs-you/defect-DEF-1791685264570406` (and the other four at the gate).
+    **Fix is a choice, not a patch:** either resolve by `decisionId` in the endpoint, or rename the route
+    parameter to `workItemId` and change the two link sites. The first is better if the detail screen is
+    ever reachable from more than one place, since a decision id is the canonical identity of what the
+    operator is being asked about. Needs its own lane on `apps/control_plane/**` and
+    `apps/server/lib/src/endpoints/**`, and it touches the path an operator uses to unblock work — so it
+    should not be bundled with anything else.
+
+18. **`artifactRefsJson` is empty on every work item, including five that reached review successfully.**
+    Expected the engineering review to record the artifact it reviewed. Either it is written at merge rather
+    than at review, or it is written to a column not yet checked. Not blocking the flow, but it means the
+    audit trail does not currently say WHICH commit any item's review covered — which is the whole point of
+    the artifact contract. Verify before assuming the review verdict is anchored.
+
+19. **Postgres aborted its checkpointer under load (`signal 6: Aborted`) while the platform was doing real
+    work.** Recovered on its own; `database system was not properly shut down; automatic recovery in
+    progress`. No data was lost and work continued through it — `waiting_for_human_decision` went 4→5 during
+    recovery. Load was ~41 at the time (an external agent tool plus a Flutter build competing for cores), and
+    fell to ~5.6 afterwards, so resource pressure is the leading suspect — but an aborted checkpointer is a
+    real fault, not a graceful restart, and it will likely recur under the same conditions. Needs a
+    diagnostic reading the full Postgres log around the abort (OOM vs assertion vs shared memory) before it
+    happens again mid-workflow. **Do not restart or `qa-down` the QA stack to "fix" it** — items are sitting
+    at the human gate and that state is the first thing such a command would cost.
