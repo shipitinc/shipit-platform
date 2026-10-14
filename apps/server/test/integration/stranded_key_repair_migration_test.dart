@@ -488,6 +488,48 @@ void main() {
         }
       });
 
+      test('its banner does not deny the engineering_review entry state', () {
+        // `agent_completed` IS a wired entry state --
+        // `engineeringReviewDefinition.entryStates == {agentCompleted}`
+        // (packages/scheduler/lib/src/scheduler.dart:2166), wired at
+        // apps/server/lib/server.dart:105. A banner that denies this is not
+        // merely imprecise: it is the stated reason the two `agent_completed`
+        // items are being moved, and it would send monitoring to watch for the
+        // wrong strand. `agent_failed` really is in no wired entry state, so
+        // the negation is asserted only for `agent_completed`.
+        final banner = repair.readAsStringSync();
+        expect(
+          banner,
+          isNot(
+            contains(
+              '`agent_completed` and `agent_failed` are in no wired',
+            ),
+          ),
+          reason:
+              'only agent_failed is in no wired entryStates; agent_completed '
+              'IS engineeringReviewDefinition.entryStates.',
+        );
+        expect(
+          banner,
+          contains('engineeringReviewDefinition'),
+          reason:
+              'the banner must name the definition that actually claims '
+              'agent_completed, so the correction cannot be silently undone.',
+        );
+        expect(
+          banner,
+          contains('engineeringReviewDedupeKey'),
+          reason:
+              'the unsuffixed engineering_review key is the actual blocker for '
+              'the two agent_completed items and must be stated.',
+        );
+        expect(
+          banner,
+          contains('engineering_review'),
+          reason: 'the wire form of that key is what is consumed for ever.',
+        );
+      });
+
       test(
         '(a) it advances the marker to a key nothing holds, for every target',
         () async {
@@ -575,12 +617,54 @@ void main() {
               row['guardEvaluationsJson'],
               isNull,
               reason:
-                  'no workflow edge exists for these moves, so no guard was '
-                  'evaluated. A value here would claim a verdict nobody took.',
+                  'this repair does not walk the transition table at all -- it '
+                  'writes the column directly -- so no guard was evaluated. '
+                  'A value here would claim a verdict nobody took. Note this '
+                  'is NOT because "no edge exists": an '
+                  'agent_failed -> design_not_required edge does exist '
+                  '(work_item_transitions.dart:149-151).',
             );
             expect(
               row['idempotencyKey'],
               'stranded-key-repair:consumed-triage-dedupe-key',
+            );
+          }
+
+          // THE AUDIT ROW IS PERMANENT LEDGER TEXT. These eight rows are
+          // written to a live table the moment this migration is applied and
+          // are never rewritten, so a false claim in the `reason` is a false
+          // claim on the record for good. `agent_failed ->
+          // design_not_required` DOES exist; only `agent_completed ->
+          // design_not_required` does not. Asserting the TRUTH here is what
+          // stops the old wording coming back.
+          for (final row in audit) {
+            final reason = row['reason']! as String;
+            expect(
+              reason,
+              contains('NO agent_completed -> design_not_required edge exists'),
+              reason: 'the absent edge must be named.',
+            );
+            expect(
+              reason,
+              contains('agent_failed -> design_not_required DOES exist'),
+              reason:
+                  'the five agent_failed rows are repaired around an edge that '
+                  'legally exists, and the ledger must say so.',
+            );
+            expect(
+              reason,
+              isNot(contains('no agent_completed -> design_not_required or')),
+              reason:
+                  'the old text denied BOTH edges, which is false for five of '
+                  'the eight.',
+            );
+            expect(
+              reason,
+              isNot(
+                contains('agent_failed -> design_not_required edge exists'),
+              ),
+              reason:
+                  'the agent_failed edge must never be described as absent.',
             );
           }
 

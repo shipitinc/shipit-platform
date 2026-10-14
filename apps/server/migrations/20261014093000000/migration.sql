@@ -40,10 +40,33 @@ BEGIN;
 -- {designNotRequired, designApproved, reviewRejected}) AND the scheduler can
 -- take the dedupe key. Both halves are broken for this set, differently:
 --
---   * STATE. `agent_completed` and `agent_failed` are in no wired
---     `JobDefinition.entryStates`, so nothing ever claims them. They are
---     permanent dead ends -- the same dead end 20261012150000000 rescued for
---     `agent_executing`.
+--   * STATE. `agent_failed` is in NO wired `JobDefinition.entryStates` -- the
+--     only `agent_*` entry state wired anywhere is
+--     `engineeringReviewDefinition`'s `agentCompleted`
+--     (packages/scheduler/lib/src/scheduler.dart:2166) -- so nothing ever
+--     claims it. It is a permanent dead end, the same dead end
+--     20261012150000000 rescued for `agent_executing`. `agent_completed` is
+--     NOT in that position: it IS that wired entry state, so for the two
+--     `agent_completed` items the STATE was never the blocker.
+--
+-- THE TWO `agent_completed` ITEMS WERE BLOCKED BY A KEY AS WELL, AND THIS
+-- REPAIR DOES NOT REACH THAT KEY. Their blocker was a CONSUMED
+-- `engineering_review` dedupe key. `engineeringReviewDedupeKey`
+-- (packages/scheduler/lib/src/scheduler.dart:2187-2188) is
+-- `'<workItemId>:<jobType.wire>'` -- `engineering_review` -- with NO attempt
+-- suffix, where `triageDefectDedupeKey` appends `':a<n>'`. So the moment a
+-- terminal `engineering_review` job exists for an item, that key is consumed
+-- FOR EVER, exactly like the triage key, and NO attempt discriminator can mint
+-- another one: the unsuffixed form has nothing left to vary. Returning these
+-- two to triage -- the stated goal of this migration, and still the right
+-- thing to do -- runs triage again and carries them back to `agent_completed`,
+-- which is triage's exit state, where they MAY RE-STRAND ON THE REVIEW KEY.
+-- The monitoring plan has to expect exactly that, and this migration must NOT
+-- be reported as having repaired it: it advances the TRIAGE key and touches no
+-- `engineering_review` key at all. The `agent_completed -> design_not_required`
+-- edge is absent too -- which is what lets this repair move them out of that
+-- state in the first place -- but that moves them PAST the strand, not out of
+-- it.
 --   * KEY. `triageDefectDedupeKey`
 --     (packages/scheduler/lib/src/triage_defect.dart:118-123) builds
 --     `'<workItemId>:triage_defect'`, plus `':a<n>'` when
@@ -574,9 +597,21 @@ SELECT 'tr-stranded-key-repair-' || "workItemId",
        ' (greater than both the marker and the highest attempt already '
        'consumed by this item''s triage job keys, which was ' ||
        "jobFloor"::text || '); and moved state to design_not_required, the '
-       'triageDefectDefinition entry state, so the scheduler claims it. State '
-       'written directly: no agent_completed -> design_not_required or '
-       'agent_failed -> design_not_required edge exists. No job, '
+        'triageDefectDefinition entry state, so the scheduler claims it. State '
+        'written directly: NO agent_completed -> design_not_required edge '
+        'exists, which is why that state is written straight into the column. '
+        'For the five agent_failed items this is NOT a bypass of the state '
+        'machine -- agent_failed -> design_not_required DOES exist '
+        '(packages/workflow_engine/lib/src/transitions/'
+        'work_item_transitions.dart:149-151, guarded only by '
+        'actorAllowed([orchestrator])) -- and it is bypassed DELIBERATELY, '
+        'because that edge writes the state and nothing else, while this '
+        'repair must ALSO advance metadata.triageAttempt to mint an unheld '
+        'dedupe key. No transition edge carries a metadata merge at all: the '
+        'marker is advanced by the engine''s own operations '
+        '(DurableWorkflowEngine.operatorRetry and resolveHumanDecision), never '
+        'by an edge, so no agent_failed -> design_not_required edge could have '
+        'performed this repair. No job, '
        'worker_execution, agent_execution or model_execution_record row was '
        'touched -- manufacturing one here would destroy the measurement this '
        'repair exists to make possible. No payload was overwritten: this '
@@ -644,10 +679,36 @@ INSERT INTO "serverpod_migrations" ("module", "version", "timestamp")
 -- Deleting it would put these items on the BARE key -- which the terminal
 -- triage job that stranded them still holds -- so a rollback that merely
 -- removed the key would leave the item no less stranded than before, and would
--- destroy the record of how many attempts had been consumed. Stepping the
--- marker back by exactly one restores the pre-migration value for every row
--- this migration produced; the EXISTS arm keeps the step confined to rows
--- carrying this migration's audit row.
+-- destroy the record of how many attempts had been consumed. The EXISTS arm
+-- keeps the step confined to rows carrying this migration's audit row.
+--
+-- WHAT THE DECREMENT DOES AND DOES NOT RESTORE, STATED PLAINLY. The statement
+-- computes `COALESCE(meta->>'triageAttempt','0')::bigint - 1`, so it restores
+-- the pre-migration marker ONLY for a row that arrived with a READABLE marker
+-- at or above the job floor -- in which case `newAttempt` was `marker + 1` and
+-- the step lands back exactly on `marker`. It does NOT restore the
+-- pre-migration value in either of the other two cases:
+--
+--   * A row whose marker was ABSENT (the five `agent_failed` items) gets a
+--     NUMBER where it had none. `newAttempt` is `greatest(0, jobFloor) + 1`, so
+--     the step writes `triageAttempt: 0` when the floor is 0 and
+--     `triageAttempt: <jobFloor>` when the floor is higher. Absent and 0 mean
+--     the same thing to `readTriageAttempt`, which is why the difference does
+--     not bite -- but they are not the same stored value, and this comment
+--     must not claim they are.
+--   * A row whose marker was readable but BELOW the job floor is also not
+--     restored: `newAttempt` was `jobFloor + 1`, so the step writes `jobFloor`
+--     rather than the smaller marker the row arrived with.
+--
+-- This is BEHAVIOURALLY HARMLESS, and the limit is recorded rather than papered
+-- over: every row the above applies to is restored to `agent_failed`, which no
+-- `JobDefinition` claims, so it is stranded either way and the marker it ends
+-- up carrying changes nothing about that. It is still worth stating, because
+-- "this DOWN is commented out and never auto-executed" is not a reason for a
+-- comment inside it to be false. THE ARITHMETIC IS DELIBERATELY LEFT EXACTLY
+-- AS WRITTEN: making the restore faithful for `absent` is a change to the
+-- rollback's semantics and needs its own decision, not a silent edit made
+-- inside a correction.
 --
 -- THE FIRST QUERY BELOW IS ALSO THE DIAGNOSTIC FOR UNREADABLE MARKERS. It is
 -- read-only, classifies the marker with the same CASE the migration uses, and
