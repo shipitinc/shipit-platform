@@ -65,7 +65,17 @@ class EngineeringReviewE2EHost {
       executionId: 'agx-impl',
       writeArtifact: writeImplementerArtifact,
     );
-    reviewSession = DesignGateAgentSession(executionId: 'agx-eng-review');
+    reviewSession = DesignGateAgentSession(
+      executionId: 'agx-eng-review',
+      // THE REVIEWER ANSWERS. This session used to emit `{}` — no structured
+      // result at all — and the gate read the absence through a
+      // `changes_required` default and raised a decision saying the review had
+      // found problems. The chain then approved it, so the fabrication was
+      // invisible here: this test passed while the operator-facing wording was a
+      // lie. The reviewer now says what it found, and step 3 below asserts that
+      // verdict is the one that reaches the decision.
+      structuredResult: {'verdict': ReviewVerdict.approved.wire},
+    );
     runtime = AgentRuntime(
       registry: AgentAdapterRegistry()
         ..register(
@@ -393,6 +403,16 @@ void main() {
       final decision = await host.workflowStore.readHumanDecision(decisionId!);
       expect(decision.decisionType, HumanDecisionType.engineeringReview);
       expect(decision.blocking, isTrue);
+      expect(
+        decision.recommendation,
+        'APPROVE',
+        reason:
+            'and it is APPROVE because the reviewer said APPROVE. Before the '
+            'reviewer had a verdict at all this recommendation was '
+            'CHANGES_REQUIRED with the opposite meaning, produced by a default '
+            'rather than by a reviewer.',
+      );
+      expect(decision.metadata?['reviewVerdict'], 'approved');
 
       // 4. A human approves -> reviewApproved -> qaInProgress.
       final approved = await host.workflowEngine.resolveHumanDecision(

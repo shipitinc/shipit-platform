@@ -518,6 +518,28 @@ class DurableWorkflowEngine {
   }
 
   ///
+  /// ## WHY `context` IS BUILT HERE AND NOT LEFT NULL
+  ///
+  /// `HumanDecision.context` used to be left null on every request, and the
+  /// `human_decision` table's `contextJson` column is written straight from it —
+  /// so every decision this method ever created persisted an EMPTY `contextJson`.
+  /// The persistence layer was faithful; the value handed to it was not there.
+  ///
+  /// Both fields are derived from facts this method already holds and invents
+  /// nothing: [DecisionContext.workflowState] is the state the decision is being
+  /// raised FROM (the item is still at `item.state` here — the gate entry
+  /// happens below), and [DecisionContext.availableOptions] is the caller's own
+  /// option ids, in the caller's order. A caller that passes no options records
+  /// an empty list rather than a guess.
+  ///
+  /// It does NOT carry `metadata`. [DecisionContext] is a closed three-field
+  /// shape in `platform_contracts` and has nowhere to put an arbitrary payload;
+  /// stuffing a review result into `relatedDecisions` would be a lie about what
+  /// that field means. The review result travels on `metadata` (`metadataJson`),
+  /// which this method has always persisted — getting it onto the operator's
+  /// screen is a wire-contract change in `apps/server/lib/src/generated/` and is
+  /// reported separately rather than faked here.
+  ///
   /// The pending decision is persisted before the gate is entered, so a crash
   /// between the two leaves a durable (but unused) pending decision. Passing
   /// an explicit [decisionId] makes request retries idempotent.
@@ -569,6 +591,12 @@ class DurableWorkflowEngine {
       decisionType: decisionType,
       status: HumanDecisionStatus.pending,
       question: question,
+      context: DecisionContext(
+        workflowState: item.state.wire,
+        availableOptions:
+            options?.map((o) => o.optionId).toList(growable: false) ??
+            const <String>[],
+      ),
       options: options,
       recommendation: recommendation,
       blocking: blocking,

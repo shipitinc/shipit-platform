@@ -74,10 +74,327 @@ WorkloadResolver engineeringReviewWorkloadResolver({
   };
 }
 
+/// WHY THERE IS NO "NO VERDICT" MEMBER OF [ReviewVerdict]
+///
+/// This gate used to answer "the reviewer returned nothing" with
+/// [ReviewVerdict.changesRequired], in three places: a wire default before any
+/// result had been read, a fallback when `ReviewVerdict.fromWire` threw, and a
+/// literal when there was no reviewer result at all. Three work items were
+/// sitting at `waitingForHumanDecision` reading *"Engineering review requires
+/// changes"* and *"WHAT WE SUGGEST: CHANGES_REQUIRED"* for code no reviewer had
+/// ever assessed.
+///
+/// The tempting fix is a fifth enum constant — `ReviewVerdict.notAssessed`, say.
+/// It is wrong, and the type's shape is why. [ReviewVerdict] is a CLOSED set of
+/// four assessments; every member claims a reviewer looked at work and reached
+/// that conclusion, and every reader downstream (`isPassing`, the
+/// APPROVE/CHANGES_REQUIRED recommendation, `HumanDecisionRouting`) is entitled
+/// to treat each member as exactly that claim. A member meaning "nobody looked"
+/// would be a member that lies about its own contract: every one of those readers
+/// would have to be taught to distrust it, which is a wider and more dangerous
+/// change than this one, and it lives in `packages/platform_contracts`, shared by
+/// every product surface rather than by this gate.
+///
+/// So the type keeps its meaning and the DECISION PATH becomes unreachable
+/// without a real verdict. [ReviewVerdict] cannot represent "no verdict"
+/// honestly, therefore nothing downstream of a missing verdict is ever entered:
+/// [engineeringReviewTickHandler] reads a verdict or it records an absence and
+/// returns, and the `requestHumanDecision` call below is reachable only from a
+/// branch holding a [ReviewVerdict] a reviewer actually produced.
+///
+/// "No verdict" is represented here, in this file, as [_NoVerdict] — a value that
+/// exists only to be turned into a durable record and a log line. It is never
+/// converted into a verdict, never persisted on a decision, and never shown to a
+/// human as something to adjudicate.
+enum _NoVerdictCause {
+  /// The reviewer execution hit its budget without producing anything.
+  reviewerTimedOut('reviewer_timed_out'),
+
+  /// The reviewer execution ended in a non-assessing terminal state (failed,
+  /// cancelled, orphaned) and wrote no result.
+  reviewerExecutionFailed('reviewer_execution_failed'),
+
+  /// The reviewer execution completed but the store holds no agent result for it.
+  reviewerResultMissing('reviewer_result_missing'),
+
+  /// A result exists and parses, but carries no verdict at all.
+  verdictAbsent('verdict_absent'),
+
+  /// A verdict string exists and is not one of [ReviewVerdict]'s wire values.
+  verdictUnreadable('verdict_unreadable'),
+
+  /// The result's structured payload could not be read.
+  structuredResultUnreadable('structured_result_unreadable');
+
+  const _NoVerdictCause(this.wire);
+
+  final String wire;
+}
+
+/// "There is no verdict", together with the cause that says WHY.
+///
+/// This is the counterpart [ReviewVerdict] cannot be. It exists so that "we
+/// could not ask" and "the answer is changes" stop sharing a value.
+class _NoVerdict {
+  const _NoVerdict(this.cause, this.detail);
+
+  final _NoVerdictCause cause;
+  final String detail;
+}
+
+/// Exactly one of the two fields is non-null.
+typedef _VerdictRead = ({EngineeringReviewResult? result, _NoVerdict? absence});
+
+/// Which REVIEWER-side absence explains a missing verdict.
+///
+/// The split is the operator-facing point of requirement "tell a slow review
+/// from a broken one": a budget that ran out and a crash are different incidents
+/// with different remedies, and an unreadable verdict is neither — it is a
+/// reviewer that answered in a dialect this build does not speak.
+///
+/// The wording matched is the coordinator's own (`_expireExecution` /
+/// `_neverEmittedTerminalEvent`): both budget-expiry reasons contain "budget",
+/// and `interrupted` is the status a timed-out session settles at.
+_NoVerdictCause _absenceCauseFor(AgentExecution execution) {
+  final reason = (execution.reason ?? '').toLowerCase();
+  final ranOutOfBudget =
+      reason.contains('budget') ||
+      reason.contains('timeout') ||
+      reason.contains('timed out') ||
+      reason.contains('terminal event');
+  if (ranOutOfBudget || execution.status == AgentSessionStatus.interrupted) {
+    return _NoVerdictCause.reviewerTimedOut;
+  }
+  return switch (execution.status) {
+    AgentSessionStatus.completed => _NoVerdictCause.reviewerResultMissing,
+    _ => _NoVerdictCause.reviewerExecutionFailed,
+  };
+}
+
+/// Reads the reviewer's verdict, or says why there is none.
+///
+/// Everything this returns that is not an [EngineeringReviewResult] is an
+/// absence, and an absence is never turned into a verdict on the way out. The
+/// previous version had three exits that all produced `changesRequired`; this has
+/// none, and that is the whole invariant.
+_VerdictRead _readReviewVerdict({
+  required Job job,
+  required String workItemId,
+  required String executionId,
+  required AgentExecution execution,
+  required AgentResult? reviewerResult,
+  void Function(String message, Map<String, dynamic> context)? logger,
+}) {
+  if (reviewerResult == null) {
+    return (
+      result: null,
+      absence: _NoVerdict(
+        _absenceCauseFor(execution),
+        'the reviewer execution reached ${execution.status.name} without '
+        'writing an agent result'
+        '${execution.reason == null ? '' : ' (${execution.reason})'}',
+      ),
+    );
+  }
+
+  final Map<String, dynamic> structured;
+  try {
+    structured = reviewerResult.structuredResult;
+  } on Object catch (e) {
+    return (
+      result: null,
+      absence: _NoVerdict(
+        _NoVerdictCause.structuredResultUnreadable,
+        'the reviewer result could not be read: $e',
+      ),
+    );
+  }
+
+  // An embedded, fully-formed review result is the richest thing a reviewer can
+  // hand back and it carries its own verdict, so it is read first. A parse
+  // failure falls THROUGH to the wire+findings path rather than aborting: that
+  // path can still produce an honest verdict from the same payload, and
+  // refusing to look would be its own kind of fabrication.
+  final embedded = structured['engineeringReviewResult'];
+  if (embedded is Map) {
+    try {
+      return (
+        result: EngineeringReviewResult.fromJson(
+          Map<String, dynamic>.from(embedded),
+        ),
+        absence: null,
+      );
+    } on Object catch (e) {
+      logger?.call('engineering-review-gate-embedded-result-unparseable', {
+        'jobId': job.jobId,
+        'workItemId': workItemId,
+        'executionId': executionId,
+        'error': '$e',
+      });
+    }
+  }
+
+  // NO DEFAULT. There is no verdict here yet, and that is a fact about the
+  // reviewer rather than a verdict.
+  final rawVerdict = structured['verdict'];
+  final verdictWire = rawVerdict is String && rawVerdict.isNotEmpty
+      ? rawVerdict
+      : null;
+  if (verdictWire == null) {
+    return (
+      result: null,
+      absence: _NoVerdict(
+        _NoVerdictCause.verdictAbsent,
+        'the reviewer returned a result carrying no verdict',
+      ),
+    );
+  }
+
+  // Requirement 4. An unreadable verdict wire is NOT a review verdict: it is a
+  // string this build does not recognise as one. It used to become
+  // `changesRequired`, which is the most dangerous of the three sites precisely
+  // because it reads like an ordinary parse fallback — a reviewer that answered
+  // `CHANGES_REQUIRED`, or `needs_work`, or shipped a typo would have been
+  // reported to the operator as a reviewer having found problems.
+  final ReviewVerdict verdict;
+  try {
+    verdict = ReviewVerdict.fromWire(verdictWire);
+  } on Object catch (e) {
+    return (
+      result: null,
+      absence: _NoVerdict(
+        _NoVerdictCause.verdictUnreadable,
+        "'$verdictWire' is not a review verdict ($e)",
+      ),
+    );
+  }
+
+  final findings = <DesignFinding>[];
+  try {
+    final f = structured['findings'];
+    if (f is List) {
+      for (final x in f) {
+        if (x is Map) {
+          try {
+            findings.add(DesignFinding.fromJson(Map<String, dynamic>.from(x)));
+          } on Object catch (e) {
+            logger?.call('engineering-review-gate-finding-unparseable', {
+              'jobId': job.jobId,
+              'workItemId': workItemId,
+              'executionId': executionId,
+              'error': '$e',
+            });
+          }
+        }
+      }
+    }
+  } on Object catch (e) {
+    // A finding that cannot be read is dropped from the list, which understates
+    // what the reviewer found. That is a lesser evil than inventing a verdict,
+    // and it is loud rather than silent.
+    logger?.call('engineering-review-gate-findings-unreadable', {
+      'jobId': job.jobId,
+      'workItemId': workItemId,
+      'executionId': executionId,
+      'error': '$e',
+    });
+  }
+
+  return (
+    result: EngineeringReviewResult(
+      reviewExecutionId: executionId,
+      workItemId: workItemId,
+      verdict: verdict,
+      findings: findings,
+      assessedDimensions: const [],
+      createdAt: reviewerResult.completedAt,
+      version: 1,
+      reviewerRole: AgentRole.engineeringReviewer,
+    ),
+    absence: null,
+  );
+}
+
+/// Makes the absence durable on the reviewer's own execution before returning.
+///
+/// A log line is not a record: it leaves with the process, and the next operator
+/// to open this item needs to tell a slow review from a broken one without
+/// reading logs. The event is appended to the reviewer's execution timeline —
+/// where its `AgentExecution`, its `AgentResult` and its run page already live —
+/// carrying the cause and the detail.
+///
+/// It is recorded as [AgentEventType.warning], not `executionFailed`: a reviewer
+/// that ended on `end_turn` with an unreadable payload did NOT fail, and
+/// stamping a failure onto it would be the same fabrication this gate exists to
+/// stop, one layer down.
+///
+/// A store that refuses the write must not take the tick down with it: the
+/// decision is already NOT being raised, and the log line below still says why.
+Future<void> _recordNoVerdict({
+  required ExecutionStore executionStore,
+  required Job job,
+  required String workItemId,
+  required String executionId,
+  required _NoVerdict absence,
+  void Function(String message, Map<String, dynamic> context)? logger,
+}) async {
+  final detail = {
+    'jobId': job.jobId,
+    'workItemId': workItemId,
+    'executionId': executionId,
+    'cause': absence.cause.wire,
+    'why': absence.detail,
+    'decision': 'not raised; no reviewer returned a verdict',
+  };
+  logger?.call('engineering-review-gate-no-verdict', detail);
+
+  try {
+    final prior = await executionStore.readEvents(executionId);
+    final sequence =
+        prior.fold<int>(0, (max, e) => e.sequence > max ? e.sequence : max) + 1;
+    final now = DateTime.now().toUtc();
+    await executionStore.appendEvent(
+      AgentEventRecord(
+        eventId: 'no-verdict-$executionId-${now.microsecondsSinceEpoch}',
+        executionId: executionId,
+        workItemId: workItemId,
+        sequence: sequence,
+        type: AgentEventType.warning,
+        occurredAt: now,
+        payload: {
+          'reviewGate': 'no_verdict',
+          'cause': absence.cause.wire,
+          'detail': absence.detail,
+        },
+      ),
+    );
+  } on Object catch (e) {
+    logger?.call('engineering-review-gate-no-verdict-record-failed', {
+      ...detail,
+      'error': '$e',
+    });
+  }
+}
+
 /// Builds a tick handler for engineering review jobs. When the reviewer
 /// execution reaches a terminal state, this raises a blocking
 /// `engineeringReview` HumanDecision to move `reviewInProgress` to
 /// `waitingForHumanDecision`.
+///
+/// ## IT ONLY RAISES A DECISION FOR A VERDICT A REVIEWER ACTUALLY RETURNED
+///
+/// If the reviewer produced no verdict — it ran out of budget, it crashed, its
+/// result never landed, or it answered in something this build cannot parse —
+/// this records why and returns, leaving the item at `reviewInProgress`.
+///
+/// Leaving it at `reviewInProgress` is the RETRYABLE state, and it is left there
+/// rather than at `waitingForHumanDecision` because that state is the only thing
+/// this gate used to reach and it is terminal with respect to the item's own
+/// budget: nothing re-dispatches a `blockedHumanDecisionId`, so parking an
+/// unassessed item there converts a review that can still be retried into a
+/// question a human has to answer about work nobody read. The reviewer job's own
+/// bounded `maxAttempts` (`engineeringReviewDefinition`) is the retry mechanism
+/// and this gate does not duplicate, pre-empt or reset it.
 TickJobHandler engineeringReviewTickHandler({
   required DurableWorkflowEngine workflowEngine,
   required ExecutionStore executionStore,
@@ -131,119 +448,30 @@ TickJobHandler engineeringReviewTickHandler({
 
     final reviewerResult = await executionStore.readResult(executionId);
 
-    EngineeringReviewResult? reviewResult;
-    // Default to the WIRE value of `changesRequired` (`changes_required`), never
-    // a hand-typed literal: `ReviewVerdict.fromWire` is strict, and the string
-    // 'changesRequired' is not a wire value, so a literal here would silently
-    // fall through the fallback below and mis-type the verdict.
-    String verdictWire = ReviewVerdict.changesRequired.wire;
-    if (reviewerResult != null) {
-      try {
-        final sr = reviewerResult.structuredResult;
-        final v = sr['verdict'];
-        if (v is String && v.isNotEmpty) {
-          verdictWire = v;
-        }
-        final r = sr['engineeringReviewResult'];
-        if (r is Map<String, dynamic>) {
-          try {
-            reviewResult = EngineeringReviewResult.fromJson(
-              Map<String, dynamic>.from(r),
-            );
-          } on Object catch (e) {
-            logger?.call(
-              'engineering-review-gate-embedded-result-unparseable',
-              {
-                'jobId': job.jobId,
-                'workItemId': workItemId,
-                'executionId': executionId,
-                'error': '$e',
-              },
-            );
-          }
-        }
-      } on Object catch (e) {
-        logger?.call('engineering-review-gate-structured-result-unreadable', {
-          'jobId': job.jobId,
-          'workItemId': workItemId,
-          'executionId': executionId,
-          'error': '$e',
-        });
-      }
-      if (reviewResult == null) {
-        final findings = <DesignFinding>[];
-        try {
-          final sr = reviewerResult.structuredResult;
-          final f = sr['findings'];
-          if (f is List) {
-            for (final x in f) {
-              if (x is Map<String, dynamic>) {
-                try {
-                  findings.add(
-                    DesignFinding.fromJson(Map<String, dynamic>.from(x)),
-                  );
-                } on Object catch (e) {
-                  logger?.call('engineering-review-gate-finding-unparseable', {
-                    'jobId': job.jobId,
-                    'workItemId': workItemId,
-                    'executionId': executionId,
-                    'error': '$e',
-                  });
-                }
-              }
-            }
-          }
-        } on Object catch (e) {
-          logger?.call('engineering-review-gate-findings-unreadable', {
-            'jobId': job.jobId,
-            'workItemId': workItemId,
-            'executionId': executionId,
-            'error': '$e',
-          });
-        }
-        final verdict = () {
-          try {
-            return ReviewVerdict.fromWire(verdictWire);
-          } on Object catch (e) {
-            logger?.call('engineering-review-gate-unknown-verdict', {
-              'jobId': job.jobId,
-              'workItemId': workItemId,
-              'executionId': executionId,
-              'verdictWire': verdictWire,
-              'error': '$e',
-            });
-            return ReviewVerdict.changesRequired;
-          }
-        }();
-        reviewResult = EngineeringReviewResult(
-          reviewExecutionId: executionId,
-          workItemId: workItemId,
-          verdict: verdict,
-          findings: findings,
-          assessedDimensions: const [],
-          createdAt: reviewerResult.completedAt,
-          version: 1,
-          reviewerRole: AgentRole.engineeringReviewer,
-        );
-      }
-    } else {
-      logger?.call('engineering-review-gate-missing-reviewer-result', {
-        'jobId': job.jobId,
-        'workItemId': workItemId,
-        'executionId': executionId,
-      });
-      final verdict = ReviewVerdict.changesRequired;
-      reviewResult = EngineeringReviewResult(
-        reviewExecutionId: executionId,
+    // THE INVARIANT, IN ONE LINE. Either a reviewer returned a verdict, or this
+    // gate records why it did not and leaves the item alone. There is no third
+    // branch, and no default for `ReviewVerdict` anywhere below this line.
+    final read = _readReviewVerdict(
+      job: job,
+      workItemId: workItemId,
+      executionId: executionId,
+      execution: execution,
+      reviewerResult: reviewerResult,
+      logger: logger,
+    );
+    final absence = read.absence;
+    if (absence != null) {
+      await _recordNoVerdict(
+        executionStore: executionStore,
+        job: job,
         workItemId: workItemId,
-        verdict: verdict,
-        findings: const [],
-        assessedDimensions: const [],
-        createdAt: DateTime.now(),
-        version: 1,
-        reviewerRole: AgentRole.engineeringReviewer,
+        executionId: executionId,
+        absence: absence,
+        logger: logger,
       );
+      return;
     }
+    final reviewResult = read.result!;
 
     // NO literal fallback. `_ActorIsNotSelfGuard` (`packages/workflow_engine`)
     // compares the reviewing actor's id against this producer id; a constant

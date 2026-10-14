@@ -19,11 +19,23 @@ class DesignGateAgentSession implements AgentSession {
     required this.executionId,
     this.sessionId = 'ses-design-gate',
     this.writeArtifact = true,
+    this.structuredResult = const {},
   });
 
   /// When false the session completes WITHOUT writing into its worktree, so the
   /// worker produces no artifact commit (`endingRevision == startingRevision`).
   final bool writeArtifact;
+
+  /// What this agent hands back as its structured result.
+  ///
+  /// Defaults to `{}` — an agent that answered in prose and emitted no
+  /// structured payload, which is exactly what QA held for the two engineering
+  /// reviews that ended on `end_turn` at 131s/160s. It is the honest default
+  /// rather than a convenient one: a test that needs a REVIEW GATE to open must
+  /// say what the reviewer found, because a gate that opens on a fabricated
+  /// `changes_required` default passes its own test while telling an operator
+  /// that nobody reviewed anything.
+  final Map<String, dynamic> structuredResult;
 
   @override
   final String executionId;
@@ -150,7 +162,7 @@ class DesignGateAgentSession implements AgentSession {
         errors: complete ? const [] : const [],
         warnings: const [],
       ),
-      structuredResult: const {},
+      structuredResult: structuredResult,
       summary: complete
           ? 'produced the design revision in the worktree'
           : 'did not complete',
