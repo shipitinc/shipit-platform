@@ -134,10 +134,17 @@ List<File> _chainMigrations() {
 ///
 /// Never by registry position and never by a hard-coded version: the version
 /// directory is a timestamp the generator chose, and a test that pins it is a
-/// test that breaks for the wrong reason. The marker is the transition-id
-/// prefix, which is this migration's own and no other migration's.
+/// test that breaks for the wrong reason.
+///
+/// The marker is the CONSTRUCTION SITE of the transition id, not the bare
+/// prefix. Matching the prefix alone was a latent bug this file had: a later
+/// migration that merely NAMES this prefix — as a later migration documenting
+/// which prefixes its own rollback must not delete has every reason to do —
+/// resolves here as a second candidate and takes the whole suite down in
+/// `setUpAll`. The construction site is what only the migration that actually
+/// WRITES these ids contains.
 File _repairMigration() {
-  const marker = 'tr-stranded-key-repair-';
+  const marker = "'tr-stranded-key-repair-' ||";
   final declaring = _chainMigrations()
       .where(
         (file) => file.readAsStringSync().contains(
@@ -160,6 +167,86 @@ File _repairMigration() {
 String _versionOf(File migration) =>
     migration.parent.path.split(Platform.pathSeparator).last;
 
+/// The registry row a real deployment has and a chain-built schema does not.
+///
+/// NO migration in this repository inserts a `product` row — product rows are
+/// created by the application, never by a migration — so a schema replayed
+/// from `migration.sql` alone has an EMPTY `product` table. Migration
+/// `20261014130500000` (the product repoint) refuses on an empty one, by
+/// design: repointing work items onto a product that does not exist would
+/// recreate the exact defect being repaired. This file replays the WHOLE chain,
+/// that migration included, so the seed has to be in place before the replay
+/// reaches it rather than afterwards.
+///
+/// It is placed by CONTENT, immediately before the file that declares that
+/// migration, rather than at the end of the chain or by version: the guard
+/// runs inside the replay, and a seed written afterwards arrives too late to
+/// stop it firing. This is test scaffolding standing in for a registry that
+/// production populates, and it says so in the row it inserts.
+const _productRegistrySeed = '''
+INSERT INTO "shipit_key_repair_chain"."product"
+    ("productId", "name", "description", "manifestVersion", "state",
+     "createdAt", "updatedAt", "version")
+VALUES ('shipit-platform', 'ShipIt Platform',
+        'seeded by the chain-replay harness; a real deployment creates this '
+        'row through the product registry, never through a migration',
+        'test', 'governed', now(), now(), 1);
+''';
+
+/// The work-item rows that migration refuses to replay without.
+///
+/// Its guard classifies an enumerated id that has no `work_item` row as a
+/// refusal rather than a skip, so a chain-built schema cannot replay it until
+/// the rows exist. They are read out of that migration's OWN target table
+/// rather than restated here, so the id list stays declared exactly once.
+String _repointTargetSeed() {
+  final declaring = _chainMigrations()
+      .where(
+        (file) => file.readAsStringSync().contains("'tr-product-repoint-' ||"),
+      )
+      .toList();
+  if (declaring.length != 1) {
+    throw StateError(
+      'expected exactly one migration writing tr-product-repoint- transition '
+      'ids, found ${declaring.map((f) => f.path).toList()}. The chain seed '
+      'cannot be built without it, and a chain that cannot replay it is not a '
+      'chain replay of the whole migration set.',
+    );
+  }
+  final ids =
+      RegExp(
+            r"\('((?:defect|design-remediation)-DEF-\d+)', 'defects'\)",
+          )
+          .allMatches(declaring.single.readAsStringSync())
+          .map((m) => m.group(1)!)
+          .toSet();
+  if (ids.isEmpty) {
+    throw StateError(
+      'no work item ids found in ${declaring.single.path}; the chain seed '
+      'would be empty and the replay would exercise a refusal path rather than '
+      'the repair',
+    );
+  }
+  final buffer = StringBuffer();
+  for (final id in ids.toList()..sort()) {
+    final suffix = id
+        .replaceFirst('design-remediation-', '')
+        .replaceFirst('defect-', '');
+    buffer.writeln('''
+INSERT INTO "shipit_key_repair_chain"."work_item"
+    ("workItemId", "productId", "category", "title", "description", "state",
+     "featureRef", "createdAt", "updatedAt", "version")
+VALUES ('$id', 'defects', 'bugfix', 'chain replay seed', 'chain replay seed',
+        'implementation_ready', '$suffix', now(), now(), 1);
+''');
+  }
+  return buffer.toString();
+}
+
+/// Content marker of the migration that needs a governed product to exist and
+/// its enumerated rows to be present.
+const _needsProductRegistry = "'tr-product-repoint-' ||";
+
 /// The whole chain as ONE simple-query batch for [db] to execute inside
 /// `$_chainSchema`.
 ///
@@ -174,6 +261,11 @@ String _chainScript() {
     ..writeln('BEGIN;')
     ..writeln('SET LOCAL search_path TO "$_chainSchema";');
   for (final file in _chainMigrations()) {
+    if (file.readAsStringSync().contains(_needsProductRegistry)) {
+      buffer
+        ..writeln(_productRegistrySeed)
+        ..writeln(_repointTargetSeed());
+    }
     buffer.writeln(_stripTransactionWrapper(file.readAsStringSync()));
   }
   buffer.writeln('COMMIT;');
