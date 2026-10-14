@@ -2182,10 +2182,107 @@ const JobDefinition engineeringReviewDefinition = JobDefinition(
   targetState: WorkItemState.reviewInProgress,
 );
 
-/// Builds a dedupe key for engineering review jobs: (workItemId, jobType).
-/// Only one active engineering review job per work item at a time.
-String engineeringReviewDedupeKey(WorkItem item, JobDefinition definition) =>
-    '${item.workItemId}:${definition.jobType.wire}';
+/// Builds a dedupe key for engineering review jobs: (workItemId, jobType[, attempt]).
+/// Only one active engineering review job per work item per attempt at a time.
+///
+/// ## WHY THE ATTEMPT SUFFIX EXISTS
+///
+/// `JobQueue.enqueueIfAbsent` resolves a dedupe key that ANY job already holds,
+/// terminal or not. The first engineering review dispatched for a work item
+/// therefore burns `'<workItemId>:engineering_review'` for ever, and the SECOND
+/// time the item reaches `agentCompleted` holding a reviewable commit the
+/// enqueue returns `created: false`: the re-review silently does nothing, and
+/// the item sits at a dispatchable state with an artifact nobody has read and
+/// no job running.
+///
+/// That is the same defect `triageDefectDedupeKey` was written to close, and
+/// it is closed the way `implementFeatureDedupeKey` was closed when `OD-3`
+/// moved rework off the triage lane: the same durable `triageAttempt` marker,
+/// read through the same reader ([DurableWorkflowEngine.readTriageAttempt])
+/// that stamps it ([DurableWorkflowEngine.nextTriageAttempt]). One counter,
+/// one reader, one rule.
+///
+/// Migration `20261014093000000` already named this key, by its line number,
+/// as the one thing it could not reach: its own banner records that the two
+/// `agent_completed` items it repaired "were blocked by a CONSUMED
+/// `engineering_review` dedupe key" that carries no suffix, and that returning
+/// them to triage "carries them back to `agent_completed`, where they MAY
+/// RE-STRAND ON THE REVIEW KEY". This is that.
+///
+/// ## WHY THIS LANE SHARES THAT COUNTER INSTE OF HAVING ONE OF ITS OWN
+///
+/// Because the two counters would answer the same question. `triageAttempt`
+/// is not a count of retries — its own documentation says so — it is the count
+/// of times this item has been SENT BACK INTO PRODUCTION, and a second
+/// engineering review is due exactly when that has happened. `(agentExecuting,
+/// agentCompleted)` is the ONLY edge into `agentCompleted`
+/// (`work_item_transitions.dart`), so a reviewable artifact arrives at this
+/// lane's entry state only by a producer running again, and a producer runs
+/// again only because a person pressed retry, a person resolved a rework or
+/// reject, or this lane's own completion inflow re-entered the item — the
+/// three routes that stamp the marker. A second counter would count a subset of
+/// those same events under a second name.
+///
+/// It also removes a hazard rather than adding one. `implementFeatureDedupeKey`
+/// already builds the IMPLEMENTATION lane's key out of this counter, so a
+/// separate review counter would put two counters over one intent — the
+/// "two writers, two different rules, one counter" failure the marker itself
+/// documents, now with two counters — in exchange for no new information.
+///
+/// ## THE COUPLING'S CONSEQUENCE, STATED RATHER THAN GLOSSED
+///
+/// Sharing ties this key's freshness to `maxImplementationInflows`
+/// (`implementation_inflow.dart`), because that bound is checked on this very
+/// marker and the completion inflow checks it BEFORE writing. So once an item
+/// reads 3, the automatic route stands down, the marker stops moving on its
+/// own, and the item is left at `agentCompleted` for `sched-review` — which is
+/// exactly the hand-off this suffix is here to make usable, and exactly the
+/// shape of every item this fix un-strands.
+///
+/// The consequence is that this change does NOT close the whole class. A SECOND
+/// exhausted review job on the same item, with no re-work in between, would
+/// ask for the same `:a<n>` again and be refused — the same silent no-op, one
+/// cycle later. Only re-work moves the marker, and the automatic route that
+/// moves it is what the bound stops.
+///
+/// Closing that needs a discriminator that counts REVIEW attempts and is
+/// advanced by whoever requests the re-review. That writer does not exist and
+/// cannot be added beside this builder: `DurableWorkflowEngine` has no
+/// metadata-only write (the only one is `transition(metadataMerge:)`, which
+/// requires a state move, and this lane's item is already in the state it must
+/// stay in), and the reader/writer pair belongs next to `nextTriageAttempt`
+/// in `packages/workflow_store`. It is recorded as a routed discovery rather
+/// than smuggled in here.
+///
+/// ## WHY THE ABSENT CASE IS BYTE-IDENTICAL TO TODAY
+///
+/// With no `triageAttempt` the key is exactly `'<workItemId>:engineering_review'`,
+/// which is what every engineering review job already persisted under.
+/// Re-spelling the default would orphan every one of them and, on the next
+/// tick, mint a SECOND job for a review already in flight. That property is
+/// not to be traded for anything.
+///
+/// ## WHY THE READING IS DELEGATED, NOT REPEATED
+///
+/// The marker is read by [DurableWorkflowEngine.readTriageAttempt], which is
+/// the same reader `nextTriageAttempt` uses to produce the value stamped in
+/// the first place. Two copies of "how a marker is read" is how a writer and a
+/// reader come to disagree about which numbers are attempt numbers, and that
+/// disagreement would not throw — it would build a key nothing holds and
+/// enqueue nothing.
+///
+/// That reader also owns the unreadable case: a marker that is PRESENT but is
+/// not an int, a whole-valued double or a numeric String throws
+/// [FormatException] rather than falling back to the historical key, because
+/// that key is already consumed by the terminal job the re-review exists to
+/// replace. See that method for the full argument; it is stated once, here, to
+/// record that this builder inherits it rather than choosing it.
+String engineeringReviewDedupeKey(WorkItem item, JobDefinition definition) {
+  final base = '${item.workItemId}:${definition.jobType.wire}';
+  final attempt = DurableWorkflowEngine.readTriageAttempt(item);
+  if (attempt == null) return base;
+  return '$base:a$attempt';
+}
 
 /// Builds an instruction for engineering review jobs.
 String engineeringReviewInstruction(WorkItem item, JobDefinition definition) =>
