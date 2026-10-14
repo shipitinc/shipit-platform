@@ -46,6 +46,7 @@ class JobDefinition {
     this.targetState = WorkItemState.agentExecuting,
     this.entryProbeTargets = const {},
     this.skipWorkflowPolicyCheck = false,
+    this.completionInflowFrom,
   });
 
   final JobType jobType;
@@ -100,6 +101,35 @@ class JobDefinition {
   /// If true, skip the workflow policy check (for design/review jobs that
   /// don't map to standard agentExecuting transitions).
   final bool skipWorkflowPolicyCheck;
+
+  /// The states this lane CONSUMES on its way in, when declared; `null` for
+  /// every definition that does not.
+  ///
+  /// ## WHAT IT IS FOR, AND WHY IT IS NOT `entryStates`
+  ///
+  /// `entryStates` is where this lane DISPATCHES from, and it is deliberately
+  /// one element wide for the implementation lane so that no other definition
+  /// can contend for the same item in the same tick. Widening it with
+  /// `agentCompleted` would put two schedulers on one work item and destroy
+  /// that, which is why the inflow is a separate declaration.
+  ///
+  /// An item listed here is not dispatched BY this lane. It is ROUTED by it,
+  /// once, before runnability is computed: the lane reads the durable evidence
+  /// for what the last producer left behind and moves the item to whichever
+  /// state that evidence names. An item whose route does not land on one of
+  /// [entryStates] is simply left where it was — so a lane that declares an
+  /// inflow it does not dispatch from routes work to a state nothing runs,
+  /// which is refused rather than half-performed, exactly as
+  /// [EntryHopper._refusalFor] refuses an unusable hop.
+  ///
+  /// Null is the default rather than an empty set so that "declares no
+  /// inflow" is expressible in one word and so a definition's own declaration
+  /// is visible at its declaration site.
+  final Set<WorkItemState>? completionInflowFrom;
+
+  /// Whether this definition declares an inflow at all.
+  bool get hasCompletionInflow =>
+      completionInflowFrom != null && completionInflowFrom!.isNotEmpty;
 }
 
 /// Derives, for one work item, whether the scheduler may dispatch it, by

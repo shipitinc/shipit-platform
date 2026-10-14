@@ -105,13 +105,15 @@ void main() {
     },
   );
 
-  group('the entry state has no producer yet, and that is the documented state', () {
-    // This group is the file's honesty section. It is deliberately the FIRST
-    // thing a reader meets after the file's header, because the single most
-    // misleading sentence a reviewer could leave with is "the implementation
-    // lane now exists and runs". It exists and it is wired; NOTHING reaches it
-    // yet, and that is `OD-3` and `OD-10` being open rather than an oversight.
-    test('no human decision resolves into implementationReady today', () {
+  group('the entry state now HAS producers, and they are named here', () {
+    // This group is the file's honesty section, and the honesty runs the other
+    // way now. While `OD-3` and `OD-10` were open the misleading sentence was
+    // "the implementation lane now exists and runs" — it existed and it was
+    // wired, and NOTHING reached it. That is no longer true, and the
+    // replacement risk is the mirror one: a reader who sees `implementationReady`
+    // reachable must be able to see EXACTLY which resolutions reach it and
+    // that deploying this starts the lane dispatching for the first time.
+    test('exactly the four rework gates route here, and nothing else does', () {
       final routed = <String>[];
       for (final type in HumanDecisionType.values) {
         for (final choice in HumanDecisionChoice.values) {
@@ -121,19 +123,25 @@ void main() {
           }
         }
       }
+      routed.sort();
       expect(
         routed,
-        isEmpty,
+        [
+          '(engineeringReview, rework)',
+          '(humanQaApproval, reject)',
+          '(qaRework, reject)',
+          '(qaWaiver, reject)',
+        ],
         reason:
-            'a route now targets implementation_ready. If this lane added one, '
-            'the corresponding entry in HumanDecisionRouting.targetFor AND '
-            'escalationTargetFor (for exactly two of the five rework pairs) '
-            'moved with it, and the reason `OD-3` was unanswered no longer '
-            'holds. Otherwise the two tables have diverged: $routed',
+            'this list IS the set of things that put an item into this lane. A '
+            'fifth entry means a producer nobody decided on; a missing one '
+            'means a decision that resolves into a state nothing dispatches. '
+            '`(escalation, approve)` must stay absent: an escalation is about '
+            'EXECUTION failing, so the work may not exist at all',
       );
     });
 
-    test('a real rework still lands on the triage lane, not this one', () async {
+    test('a real rework now lands on THIS lane', () async {
       final workflowStore = InMemoryWorkflowStore();
       final engine = DurableWorkflowEngine(store: workflowStore);
       await seedWorkItem(engine);
@@ -160,19 +168,20 @@ void main() {
 
       expect(
         (await engine.loadWorkItem('wi-impl')).state,
-        WorkItemState.designNotRequired,
+        WorkItemState.implementationReady,
         reason:
-            'rework currently re-triages. Moving this route is `OD-3`, and it '
-            'is not this lane to decide',
+            '`OD-3` resolved rework at a review gate to mean re-do the work. '
+            'The consequence, stated plainly because it is the deployment '
+            'consequence: from this revision the lane dispatches for the first '
+            'time, and any item already parked at a human gate starts moving',
       );
     });
 
-    test('the transition table DOES carry the route the retarget will use', () {
-      // The edge is present and fully guarded even though no routing targets
-      // it. That is deliberate (design §7.5 Obligation A / D-14): without the
-      // edge, answering `OD-3` would be an engine change as well as a routing
-      // change, and the engine would throw on a resolution into a state nothing
-      // leaves.
+    test('the transition table carries both edges the producers need', () {
+      // The rework edge was added ahead of `OD-3` deliberately (design §7.5
+      // Obligation A / D-14): without it, answering `OD-3` would have been an
+      // engine change as well as a routing change, and the engine would throw
+      // on a resolution into a state nothing leaves.
       expect(
         WorkItemTransitions.isLegalTransition(
           WorkItemState.waitingForHumanDecision,
@@ -184,6 +193,22 @@ void main() {
         WorkItemTransitions.isLegalTransition(
           WorkItemState.implementationReady,
           WorkItemState.agentExecuting,
+        ),
+        isTrue,
+      );
+    });
+
+    test('and the INFLOW edge the second producer needs', () {
+      // `OD-10`'s producer is not a decision — it is an item whose producer
+      // completed and left no commit. It reaches this state from
+      // `agentCompleted`, which is where a triage run leaves every item it
+      // finishes. See `implementation_completion_inflow_test.dart` for the
+      // discriminator; the edge is named here so its absence is a named failure
+      // in this package and not only in the file that drives it.
+      expect(
+        WorkItemTransitions.isLegalTransition(
+          WorkItemState.agentCompleted,
+          WorkItemState.implementationReady,
         ),
         isTrue,
       );

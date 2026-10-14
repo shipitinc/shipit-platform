@@ -5,7 +5,7 @@ import 'package:workflow_engine/workflow_engine.dart';
 import 'package:workflow_store/workflow_store.dart';
 
 /// `WorkItemState.implementationReady` is not a stranding state, and the rework
-/// gate that will feed it is not a weakened gate.
+/// gate that feeds it is not a weakened gate.
 ///
 /// ## What this file is for
 ///
@@ -14,17 +14,21 @@ import 'package:workflow_store/workflow_store.dart';
 ///  * **D-12** — `implementationReady -> agentExecuting` exists, so an item at
 ///    the implementation lane's entry state is not inert.
 ///  * **D-14** — `waitingForHumanDecision -> implementationReady` exists and
-///    carries the SAME guard set as the edge it shadows, so answering the open
-///    routing question (`OD-3`) is a routing-table edit and not an engine
-///    change. Without this edge, a retarget would move an item to a state
-///    nothing leaves and the engine would throw on resolution: the decision
-///    would be answered and the work would sit at its gate with nothing
-///    running.
+///    carries the SAME guard set as the edge it shadows, so answering `OD-3`
+///    was a routing-table edit and not an engine change. Without this edge, a
+///    retarget would move an item to a state nothing leaves and the engine
+///    would throw on resolution: the decision would be answered and the work
+///    would sit at its gate with nothing running.
+///
+/// `OD-3` is now RESOLVED and four of the five rework pairs target the state.
+/// The obligations above did not change; what changed is that the edge is no
+/// longer declared-but-unclaimed, and this file is where that is asserted.
 ///
 /// The second is the one this file spends most of its lines on, because it is
 /// the one that fails SILENTLY. A guard set that drifts does not error; it
 /// quietly accepts resolutions it should refuse, or quietly refuses ones an
-/// operator authorised.
+/// operator authorised. So does an escalation lockstep divergence: it does not
+/// error either, it stops the escalation index advancing.
 void main() {
   const engine = WorkflowEngine();
   const schedulerContext = <String, dynamic>{
@@ -32,9 +36,13 @@ void main() {
     'capabilitiesMatch': true,
   };
 
-  /// The rework pairs the design brief names as candidates for retargeting.
-  /// Listed here as the question, not as the answer: `OD-3` decides WHICH of
-  /// these mean "re-do the work" rather than "re-classify".
+  /// The rework pairs the design brief names as candidates for retargeting,
+  /// and the five `OD-3` actually considered.
+  ///
+  /// All five are candidates for `escalationTargetFor`, and only two are live
+  /// arms; the retarget itself moved four of the five, so this list is the
+  /// `OD-3` question rather than the `OD-3` answer. The answer is asserted
+  /// explicitly in the routing group below.
   const reworkCandidates = <(HumanDecisionType, HumanDecisionChoice)>[
     (HumanDecisionType.engineeringReview, HumanDecisionChoice.rework),
     (HumanDecisionType.qaWaiver, HumanDecisionChoice.reject),
@@ -188,14 +196,14 @@ void main() {
       );
     });
 
-    test('the edge is declared, fully armed, and DELIBERATELY unclaimed', () async {
+    test('the edge is declared, fully armed, and CLAIMED by the routes OD-3 '
+        'resolved', () async {
       // The two halves, kept apart on purpose because conflating them is how a
       // lane that does nothing gets mistaken for a lane that is broken.
       //
       // The TABLE accepts the move. `_move` builds the resolved decision the
       // guards actually read and asks the live policy, so this is the real
-      // guard set and not a hand-written context map. That is the part this lane
-      // owns, and it is what makes answering `OD-3` a routing edit.
+      // guard set and not a hand-written context map.
       expect(
         _move(HumanDecisionType.engineeringReview, HumanDecisionChoice.rework),
         isTrue,
@@ -204,27 +212,82 @@ void main() {
             'edge nothing can take is a stranding edge in a different costume',
       );
 
-      // The ROUTING does not yet ask for it. `resolveHumanDecision` derives its
-      // target from `targetFor` alone, so a real resolution lands on
-      // `designNotRequired` — the triage lane — and `implementationReady` stays
-      // unreachable. WHICH of the five rework pairs move here is `OD-3`, an
-      // open product decision, and this lane does not make it.
+      // The ROUTING now asks for it. `resolveHumanDecision` derives its target
+      // from `targetFor` alone, so a real resolution lands on
+      // `implementationReady`. This is the assertion that failed while OD-3 was
+      // open, and it is the reason the retarget could not be a no-op.
       final landed = await _resolveEngineeringRework();
       expect(
         HumanDecisionRouting.targetFor(
           HumanDecisionType.engineeringReview,
           HumanDecisionChoice.rework,
         ),
-        WorkItemState.designNotRequired,
+        WorkItemState.implementationReady,
       );
       expect(
         landed.state,
+        WorkItemState.implementationReady,
+        reason:
+            'a live rework must now RE-IMPLEMENT. If this starts failing, a '
+            'routing entry has moved away from implementation_ready, and this '
+            'test is where that happened',
+      );
+    });
+
+    test('exactly the four rework gates route here, and escalation does not', () {
+      // `OD-3` chose four of the five candidates and named the one it did not:
+      // an escalation is a statement about EXECUTION failing, not about work
+      // quality, so `(escalation, approve)` must still re-plan rather than
+      // re-implement. Asserting the four by name is what stops a fifth route
+      // from arriving here by accident — this table is the ONLY determinant of
+      // where a resolved decision lands, so an extra arm is an extra producer
+      // the lane nobody reviewed.
+      const toImplementationReady = <(HumanDecisionType, HumanDecisionChoice)>[
+        (HumanDecisionType.engineeringReview, HumanDecisionChoice.rework),
+        (HumanDecisionType.qaWaiver, HumanDecisionChoice.reject),
+        (HumanDecisionType.qaRework, HumanDecisionChoice.reject),
+        (HumanDecisionType.humanQaApproval, HumanDecisionChoice.reject),
+      ];
+      for (final pair in toImplementationReady) {
+        expect(
+          HumanDecisionRouting.targetFor(pair.$1, pair.$2),
+          WorkItemState.implementationReady,
+          reason:
+              '(${pair.$1.name}, ${pair.$2.name}) is one of the four gates '
+              'OD-3 resolved to mean "re-do the work"',
+        );
+      }
+      expect(
+        HumanDecisionRouting.targetFor(
+          HumanDecisionType.escalation,
+          HumanDecisionChoice.approve,
+        ),
         WorkItemState.designNotRequired,
         reason:
-            'a live rework still re-triages today. If this starts failing, a '
-            'routing entry now targets implementation_ready, and this test is '
-            'where the retarget happened',
+            'an escalation is about execution failing, so the work may not '
+            'exist at all. Routing it into the build queue would be the '
+            'misroute OD-3 explicitly declined',
       );
+    });
+
+    test('neither lockstep arm was left behind on the old state', () {
+      // The failure mode this exists to catch is SILENT: `_isEscalationTransition`
+      // compares the two tables and a mismatch does not throw, it just stops
+      // the escalation index advancing and reshapes the audit trail. Asserting
+      // the VALUE, not merely the equality, is what makes a partial move
+      // visible.
+      for (final pair in const [
+        (HumanDecisionType.engineeringReview, HumanDecisionChoice.rework),
+        (HumanDecisionType.humanQaApproval, HumanDecisionChoice.reject),
+      ]) {
+        expect(
+          HumanDecisionRouting.escalationTargetFor(pair.$1, pair.$2),
+          WorkItemState.implementationReady,
+          reason:
+              '(${pair.$1.name}, ${pair.$2.name}) moved in `targetFor`, so this '
+              'arm must have moved with it in the SAME commit',
+        );
+      }
     });
 
     test(

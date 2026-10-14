@@ -29,51 +29,58 @@ import 'package:platform_contracts/platform_contracts.dart';
 ///    ALREADY RUNNING. Resolving a decision does not start one, so the
 ///    scheduler is right to refuse to dispatch an item claiming that.
 ///
-/// The dispatchable target for "this human wants the work done again" is
-/// [WorkItemState.designNotRequired]: it is in `triageDefectDefinition`'s and
-/// `implementFeatureDefinition`'s `entryStates`, and it is the state the
-/// already-shipped operator retry returns a failed item to (`be75ba1`,
-/// `agentFailed -> designNotRequired`).
+/// ## WHAT "REWORK" MEANS — `OD-3`, RESOLVED
 ///
-/// ## `implementationReady` EXISTS AND IS DELIBERATELY UNCLAIMED HERE
+/// Five routes used to point at [WorkItemState.designNotRequired], which
+/// re-triages. Whether that means "re-classify" or "re-do the work" is a
+/// product decision about what rework MEANS, and `OD-3` answered it: **four of
+/// the five mean re-do the work**, so they now target the implementation lane's
+/// own entry state, [WorkItemState.implementationReady].
 ///
-/// The implementation lane has its own entry state,
-/// [WorkItemState.implementationReady], and the transition table already
-/// carries a `waitingForHumanDecision -> implementationReady` edge with this
-/// gate's full guard set. **No route in [targetFor] targets it**, and that is a
-/// decision that has not been made rather than an oversight: five routes
-/// currently point at [WorkItemState.designNotRequired], and whether
-/// `(engineeringReview, rework)` and `(qaRework, reject)` mean "re-classify"
-/// (re-triage, unchanged) while `(qaWaiver, reject)`,
-/// `(humanQaApproval, reject)` and `(escalation, approve)` mean "re-do the
-/// work" (implementation) is a product decision about what rework MEANS. It is
-/// recorded as `OD-3` in the design brief and it is unanswered.
+/// | Pair | Target | Why |
+/// |---|---|---|
+/// | `(engineeringReview, rework)` | `implementationReady` | a reviewer asked for changes to work that exists |
+/// | `(humanQaApproval, reject)` | `implementationReady` | human QA judged the delivered result |
+/// | `(qaRework, reject)` | `implementationReady` | QA asked for rework rather than a waiver |
+/// | `(qaWaiver, reject)` | `implementationReady` | a waiver was refused; the result was judged |
+/// | `(escalation, approve)` | **`designNotRequired`** | an escalation is a statement about EXECUTION failure, not about work quality — re-planning it is safe |
 ///
-/// The edge exists anyway, and deliberately, for one reason: [targetFor] is the
-/// only thing that decides where a resolved decision lands, so a retarget with
-/// no matching edge would move an item into a state nothing leaves and the
-/// engine would throw on resolution. Declaring the route now means answering
-/// `OD-3` later is a routing-table edit; leaving the edge out would make it an
-/// engine change too.
+/// The four gates that move exist only for items that already produced work, so
+/// "redo" on them means re-implement. `(escalation, approve)` is the one that
+/// does not, which is exactly why it stays: an escalation raised by a provider
+/// failure on an item that never implemented must not be mistaken for a verdict
+/// on work, and moving it would route such an item into the build queue.
+///
+/// [WorkItemState.designNotRequired] remains the target for `(escalation,
+/// approve)` and is still in `triageDefectDefinition`'s `entryStates`, so that
+/// route dispatches exactly as it did before.
+///
+/// ## WHY THE `implementationReady` EDGE EXISTED BEFORE ANY ROUTE NAMED IT
+///
+/// [targetFor] is the only thing that decides where a resolved decision lands,
+/// so a retarget with no matching edge would move an item into a state nothing
+/// leaves and the engine would throw on resolution. The edge was declared ahead
+/// of the decision precisely so that answering `OD-3` would be a routing-table
+/// edit and not an engine change. This table is the answer.
 ///
 /// ## WHICH RETARGETS NEED `escalationTargetFor` MOVED WITH THEM
 ///
 /// [escalationTargetFor] short-circuits to `null` for any choice that is not
 /// `reject` or `rework`, and `DurableWorkflowEngine._isEscalationTransition`
 /// short-circuits on the same condition before it ever calls it. So of the five
-/// candidate pairs, exactly TWO are lockstep arms and three are not:
+/// pairs, exactly TWO are lockstep arms and three are not:
 ///
 /// | Pair | Needs `escalationTargetFor` moved? |
 /// |---|---|
-/// | `(engineeringReview, rework)` | **YES** — a live arm at `:182-183` |
-/// | `(humanQaApproval, reject)` | **YES** — a live arm at `:184-185` |
+/// | `(engineeringReview, rework)` | **YES** — a live arm below |
+/// | `(humanQaApproval, reject)` | **YES** — a live arm below |
 /// | `(qaWaiver, reject)` | no — no arm; the short-circuit makes it inert |
 /// | `(qaRework, reject)` | no — no arm; `_ => null` |
 /// | `(escalation, approve)` | no — `approve`, so the short-circuit returns `null` first |
 ///
 /// The two live arms are asserted by name in
-/// `test/implementation_ready_edge_test.dart`, because a divergence between
-/// the two tables does not error: it silently stops the escalation index
+/// `test/implementation_ready_edge_test.dart`, because a divergence between the
+/// two tables does not error: it silently stops the escalation index
 /// advancing and changes the shape of the audit trail.
 class HumanDecisionRouting {
   const HumanDecisionRouting._();
@@ -94,13 +101,13 @@ class HumanDecisionRouting {
       (HumanDecisionType.engineeringReview, HumanDecisionChoice.reject) =>
         WorkItemState.reviewRejected,
       (HumanDecisionType.engineeringReview, HumanDecisionChoice.rework) =>
-        WorkItemState.designNotRequired,
+        WorkItemState.implementationReady,
       (HumanDecisionType.qaWaiver, HumanDecisionChoice.waive) =>
         WorkItemState.qaPassed,
       (HumanDecisionType.qaWaiver, HumanDecisionChoice.reject) =>
-        WorkItemState.designNotRequired,
+        WorkItemState.implementationReady,
       (HumanDecisionType.qaRework, HumanDecisionChoice.reject) =>
-        WorkItemState.designNotRequired,
+        WorkItemState.implementationReady,
       (HumanDecisionType.qaRework, HumanDecisionChoice.rework) =>
         WorkItemState.designInReview,
       (HumanDecisionType.deploymentApproval, HumanDecisionChoice.approve) =>
@@ -110,13 +117,18 @@ class HumanDecisionRouting {
       (HumanDecisionType.humanQaApproval, HumanDecisionChoice.approve) =>
         WorkItemState.completed,
       (HumanDecisionType.humanQaApproval, HumanDecisionChoice.reject) =>
-        WorkItemState.designNotRequired,
+        WorkItemState.implementationReady,
       (_, HumanDecisionChoice.cancel) => WorkItemState.cancelled,
       // An escalation is a failure handed to a human: the operator either
       // puts the work back in flight or sends it back to be re-planned.
       // (`cancel` is already covered by the catch-all above.) Without these
       // routes a resolved escalation leaves the item parked at its gate with
       // the decision already answered.
+      //
+      // `approve` stays at `designNotRequired`, DELIBERATELY and alone among
+      // the five "do the work again" resolutions: an escalation is a statement
+      // about EXECUTION failing, not a judgement on the work, so the work may
+      // not have been produced at all. See the class comment.
       (HumanDecisionType.escalation, HumanDecisionChoice.approve) =>
         WorkItemState.designNotRequired,
       (HumanDecisionType.escalation, HumanDecisionChoice.rework) =>
@@ -130,10 +142,10 @@ class HumanDecisionRouting {
   ///
   /// This is used for transitions that should increment the escalation index
   /// and return to the production state:
-  /// - engineeringReview rework -> designNotRequired
+  /// - engineeringReview rework -> implementationReady
   /// - engineeringReview reject -> agentExecuting (see BELOW)
   /// - designApproval reject/rework -> designInReview
-  /// - humanQaApproval reject -> designNotRequired
+  /// - humanQaApproval reject -> implementationReady
   /// - humanQaApproval rework -> agentExecuting
   ///
   /// ## WHY THIS MUST NOT DIVERGE FROM [targetFor]
@@ -169,6 +181,14 @@ class HumanDecisionRouting {
   /// this comparison and the value is inert either way. It is left alone
   /// because adding a route for it would be a new decision, not a lockstep
   /// move.
+  ///
+  /// ## THE TWO LOCKSTEP ARMS MOVED WITH `OD-3`
+  ///
+  /// `(engineeringReview, rework)` and `(humanQaApproval, reject)` both
+  /// retargeted to `implementationReady`, so both arms below did. They are the
+  /// only two: `(qaWaiver, reject)` and `(qaRework, reject)` have no arm at all,
+  /// and `(escalation, approve)` is not classified as an escalation in the first
+  /// place. See the class comment for the full table.
   static WorkItemState? escalationTargetFor(
     HumanDecisionType decisionType,
     HumanDecisionChoice choice,
@@ -178,11 +198,12 @@ class HumanDecisionRouting {
       return null;
     }
     return switch ((decisionType, choice)) {
-      // Lockstep with targetFor: both moved to the dispatchable entry state.
+      // Lockstep with targetFor: both moved to the implementation lane's entry
+      // state when OD-3 was resolved.
       (HumanDecisionType.engineeringReview, HumanDecisionChoice.rework) =>
-        WorkItemState.designNotRequired,
+        WorkItemState.implementationReady,
       (HumanDecisionType.humanQaApproval, HumanDecisionChoice.reject) =>
-        WorkItemState.designNotRequired,
+        WorkItemState.implementationReady,
       // Unreachable answers, preserved so the escalation classification of
       // these pairs does not change. See KNOWN PRE-EXISTING DIVERGENCE above.
       (HumanDecisionType.engineeringReview, HumanDecisionChoice.reject) =>

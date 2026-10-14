@@ -8,6 +8,7 @@ export 'src/baseline_dispatch.dart';
 export 'src/baseline_product.dart';
 export 'src/dispatch/worker_dispatch.dart';
 export 'src/implement_feature.dart';
+export 'src/implementation_inflow.dart';
 export 'src/policy/entry_hop.dart';
 export 'src/policy/retry_policy.dart';
 export 'src/policy/runnable_work.dart';

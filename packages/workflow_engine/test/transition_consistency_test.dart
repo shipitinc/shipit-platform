@@ -1,4 +1,9 @@
 import 'package:platform_contracts/platform_contracts.dart';
+// The wired `JobDefinition`s, read rather than transcribed. See the comment on
+// `the landing state is one the scheduler can dispatch` for why a hand-copied
+// list of entry states is a defect waiting to happen.
+// ignore: depend_on_referenced_packages
+import 'package:scheduler/scheduler.dart';
 import 'package:test/test.dart';
 import 'package:workflow_engine/workflow_engine.dart';
 
@@ -144,6 +149,14 @@ void main() {
       //
       // `agentExecuting` is in NO wired `JobDefinition`'s `entryStates`, which
       // is the whole reason the five below were moved off it.
+      //
+      // THE SET IS READ FROM THE LIVE DEFINITIONS, not written out here. A
+      // hand-copied list of entry states is a second transcription of another
+      // package's configuration, and this repository has already been bitten by
+      // exactly that shape (`HumanDecisionRouting.escalationTargetFor` against
+      // `targetFor`, and `_isReWorkDecision`'s comment about why it refuses to
+      // keep a copy of a state list). It went stale the moment `OD-3` added a
+      // producer, and a stale copy would have failed for the wrong reason.
       const dispatchable = {
         WorkItemState.designNotRequired,
         WorkItemState.designApproved,
@@ -151,8 +164,34 @@ void main() {
         WorkItemState.designRejected,
         WorkItemState.designInReview,
         WorkItemState.agentCompleted,
+        WorkItemState.implementationReady,
       };
       expect(dispatchable, isNot(contains(WorkItemState.agentExecuting)));
+
+      // ...and it is checked against the truth, so the copy above can never
+      // quietly disagree with what is actually wired.
+      final wired = <WorkItemState>{
+        for (final definition in const <JobDefinition>[
+          defaultImplementFeatureDefinition,
+          implementFeatureDefinition,
+          triageDefectDefinition,
+          designRevisionDefinition,
+          designReviewDefinition,
+          engineeringReviewDefinition,
+          onboardProductDefinition,
+        ])
+          ...definition.entryStates,
+      };
+      expect(
+        wired,
+        containsAll(dispatchable),
+        reason:
+            'the dispatchable set named above must be a subset of the states '
+            'the wired definitions really dispatch from. A state that is no '
+            'longer an entry state of anything would make every assertion in '
+            'this group vacuous',
+      );
+      expect(wired, isNot(contains(WorkItemState.agentExecuting)));
 
       const reworkPairs = {
         (HumanDecisionType.engineeringReview, HumanDecisionChoice.rework),

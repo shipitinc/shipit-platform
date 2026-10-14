@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:scheduler/scheduler.dart';
 import 'package:test/test.dart';
 
 /// The implementation lane's COMPOSITION is asserted here, because the failure
@@ -33,6 +34,10 @@ import 'package:test/test.dart';
 ///    raise a decision about an artefact nobody tried to produce;
 ///  * the durable-workspace root read missing — A1's runtime would refuse to
 ///    build and no product clone could ever be created.
+/// Whitespace the banner extractor tolerates between adjacent string
+/// literals. Anything else ends the value.
+bool _isSpace(String c) => c == ' ' || c == '\n' || c == '\t' || c == '\r';
+
 void main() {
   late String source;
 
@@ -70,6 +75,61 @@ void main() {
 
   String implSchedulerBody() =>
       schedulerNamed('final implScheduler = Scheduler(');
+
+  /// The VALUE of the composition banner's `producers` entry, reassembled from
+  /// the adjacent string literals Dart concatenates it from.
+  ///
+  /// Reassembling the value rather than grepping for one literal substring is
+  /// the point: the banner exists to tell an operator the difference between a
+  /// lane that is idle because nothing routes into it and one that is idle
+  /// because it is broken, so the assertion has to be about what the banner
+  /// SAYS, not about how it happens to be wrapped across lines. A substring
+  /// grep would let the claim drift one line at a time.
+  String producersBanner() {
+    const key = "'producers':";
+    final keys = RegExp(key).allMatches(source).toList();
+    expect(
+      keys.length,
+      1,
+      reason:
+          'the composition root must declare exactly one `producers` entry — '
+          'two would make the banner ambiguous and this extraction arbitrary',
+    );
+
+    var i = keys.single.start + key.length;
+    final buffer = StringBuffer();
+    // Adjacent literals concatenate, so the value is every literal that
+    // follows with nothing but whitespace between them; the first character
+    // that is neither ends it.
+    for (;;) {
+      while (i < source.length && _isSpace(source[i])) {
+        i++;
+      }
+      if (i >= source.length || source[i] != "'") break;
+      i++; // opening quote
+      while (i < source.length) {
+        if (source[i] == r'\' && i + 1 < source.length) {
+          buffer.write(source.substring(i, i + 2));
+          i += 2;
+          continue;
+        }
+        if (source[i] == "'") {
+          i++;
+          break;
+        }
+        buffer.write(source[i]);
+        i++;
+      }
+    }
+
+    final value = buffer.toString();
+    expect(
+      value,
+      isNotEmpty,
+      reason: "the banner's producers entry must actually say something",
+    );
+    return value;
+  }
 
   group('the implementation lane is wired, not merely defined', () {
     test('the composition builds a third Scheduler for it', () {
@@ -284,8 +344,9 @@ void main() {
     });
   });
 
-  group('the lane is wired AND deliberately unreachable, and says so', () {
-    test('the composition banner states the implementation lane\'s entry states', () {
+  group('the lane is wired AND its producers are declared', () {
+    test('the composition banner states the implementation lane\'s entry '
+        'states', () {
       expect(
         RegExp(
           r"'entryStates':\s*implementFeatureDefinition\.entryStates",
@@ -293,16 +354,164 @@ void main() {
         isTrue,
         reason:
             'an operator reading the startup line must be able to see the lane '
-            'exists AND that nothing routes into it, rather than inferring one '
-            'from the other',
+            'exists AND what routes into it, rather than inferring one from '
+            'the other',
+      );
+    });
+
+    test('the banner states what routes into the lane, and drops the stale '
+        'OD-3 claim', () {
+      // THE PROPERTY, NOT A VALUE.
+      //
+      // This assertion used to pin the banner's literal text — that it says
+      // `'producers': 'none yet'` — because until `OD-3` and `OD-10` were
+      // resolved that was true, and a lane that is wired and inert must not be
+      // able to read as a lane that is wired and idle-because-broken.
+      //
+      // It is no longer true. Four resolved human decisions and one automatic
+      // route now put items into `implementation_ready`, so pinning the old
+      // literal would have been a test asserting a falsehood — green, and
+      // actively misleading. For one correction cycle this file instead asserted
+      // only the INVERSE (the banner must not say `none yet`), which is safe but
+      // blind: it cannot tell a correct banner from a vague one, and a vague
+      // banner destroys the exact distinction the field exists to preserve.
+      //
+      // So the banner is now pinned to what the lane ACTUALLY DECLARES. The
+      // inflow half is read from `implementFeatureDefinition.completionInflowFrom`
+      // rather than transcribed, so it drifts in both directions: drop the inflow
+      // from the banner and this reds, and drop it from the definition and this
+      // reds with it, which is the only way the two can stay honest about each
+      // other. The four decision pairs live in `workflow_engine`, whose routing
+      // table this source-grep file deliberately does not own — they are pinned
+      // executably there, in `implement_feature_deferral_test.dart` ('exactly
+      // the four rework gates route here, and nothing else does'). Between the
+      // two files, producer availability is asserted from both sides without
+      // either owning the other's table.
+      final banner = producersBanner();
+
+      final inflow = implementFeatureDefinition.completionInflowFrom;
+      expect(
+        inflow,
+        isNotNull,
+        reason:
+            'this definition declares the `OD-10` completion inflow; without it '
+            'there is no automatic producer and the banner would be describing '
+            'a lane that cannot receive one',
       );
       expect(
-        RegExp(r"'producers':\s*'none yet").hasMatch(source),
-        isTrue,
+        inflow,
+        isNotEmpty,
+        reason: 'an empty `completionInflowFrom` declares no inflow at all',
+      );
+
+      for (final from in inflow!) {
+        expect(
+          banner,
+          contains(from.wire),
+          reason:
+              'the banner does not name `$from`, the state from which the '
+              'completion inflow of this lane routes. An operator reading it '
+              'cannot tell that items arrive here on completion, which is the '
+              'whole distinction the field exists to draw. Declared: '
+              '${inflow.map((s) => s.wire).toList()}',
+        );
+      }
+
+      expect(
+        banner,
+        isNot(contains('(OD-3 is open)')),
         reason:
-            'the entry state has no producer until the rework routing decision '
-            'is answered. A lane that is wired and inert must not be able to '
-            'read as a lane that is wired and idle-because-broken',
+            '`OD-3` is RESOLVED and `OD-10` delivered the inflow. A banner '
+            'that still says the decision is open tells an operator this lane '
+            'is deliberately unreachable, which is now false in the exact way '
+            'that matters: items DO route here and the lane WILL dispatch. '
+            'banner was: $banner',
+      );
+
+      expect(
+        banner,
+        isNot(contains('none yet')),
+        reason:
+            'the banner still claims the lane has no producers, for the same '
+            'reason as above. banner was: $banner',
+      );
+    });
+
+    test('the COMMENT above the banner does not assert the lane is inert', () {
+      // The banner's VALUE is extracted above, so it was guarded — and the
+      // comment thirteen lines above it was not. It still said that no
+      // `HumanDecisionRouting` entry targets `implementation_ready` "because
+      // which rework pairs move there is an open decision (OD-3)", directly
+      // above the corrected string that names all four resolved ones. A false
+      // persisted claim about shipping code is worse than a missing one: a
+      // reader who finds it has to decide which of two adjacent statements to
+      // believe.
+      //
+      // Nothing can guard prose in general. What can be guarded is prose that
+      // makes a CLAIM ABOUT THE CURRENT STATE, and this is the prose that does.
+      final anchor = source.indexOf("'implementation': {");
+      expect(anchor, greaterThan(-1), reason: 'the banner entry must exist');
+
+      // The comment block immediately above it: everything from the end of the
+      // previous statement to the anchor.
+      final previousStatement = source.lastIndexOf('},', anchor);
+      expect(previousStatement, greaterThan(-1));
+      final comment = source.substring(previousStatement, anchor);
+
+      expect(
+        comment,
+        isNot(contains('(OD-3 is open)')),
+        reason:
+            '`OD-3` is resolved and `OD-10` delivered the inflow. This comment '
+            'is not about the decision being open — it is about what the banner '
+            'must let an operator distinguish. comment was: $comment',
+      );
+      for (final stale in const [
+        'no `HumanDecisionRouting`\n    // entry targets',
+        'nothing reaches it yet',
+        'is an open decision',
+      ]) {
+        expect(
+          comment,
+          isNot(contains(stale)),
+          reason:
+              'the lane is wired and REACHABLE. A comment claiming otherwise '
+              'sits directly above the string that says so. comment was: '
+              '$comment',
+        );
+      }
+      expect(
+        comment,
+        contains('REACHABLE'),
+        reason:
+            'the distinction this banner has to preserve is "nothing routed '
+            'into it" against "idle because it is broken". Naming it here — '
+            'not only in the value below — is what keeps the next reader from '
+            're-adding the claim that was just removed.',
+      );
+    });
+
+    test('the implementation section ticks BEFORE the review section', () {
+      // `sched-impl` ROUTES items out of `agentCompleted`; `sched-review`
+      // DISPATCHES from it and its fail-closed handler MOVES them. Ticking
+      // review first let the handler park a no-artifact item before the inflow
+      // ever saw it, and the item never reached `implementationReady` — with
+      // both ticks reporting success. See
+      // `apps/server/test/implementation_inflow_tick_order_test.dart`, which
+      // proves the outcome is now the same in either order; this pins the
+      // order the composition actually uses.
+      final impl = source.indexOf('await implScheduler.tick();');
+      final review = source.indexOf('await reviewScheduler.tick();');
+      expect(impl, greaterThan(-1), reason: 'the lane must be ticked');
+      expect(review, greaterThan(-1), reason: 'review must be ticked');
+      expect(
+        impl,
+        lessThan(review),
+        reason:
+            'disjointness has to be structural, not accidental. Handled by '
+            'engineeringReviewMissingArtifact standing down as well, so this '
+            'ordering is the braces rather than the only defence — but a '
+            'reorder that silently flips it restores the window.',
       );
     });
   });
