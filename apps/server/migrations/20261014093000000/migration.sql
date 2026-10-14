@@ -607,11 +607,16 @@ SELECT 'tr-stranded-key-repair-' || "workItemId",
         'actorAllowed([orchestrator])) -- and it is bypassed DELIBERATELY, '
         'because that edge writes the state and nothing else, while this '
         'repair must ALSO advance metadata.triageAttempt to mint an unheld '
-        'dedupe key. No transition edge carries a metadata merge at all: the '
-        'marker is advanced by the engine''s own operations '
-        '(DurableWorkflowEngine.operatorRetry and resolveHumanDecision), never '
-        'by an edge, so no agent_failed -> design_not_required edge could have '
-        'performed this repair. No job, '
+        'dedupe key. No transition edge carries a metadata merge at all, and '
+        'none of the THREE writers of the marker is an edge: '
+        'DurableWorkflowEngine.operatorRetry (durable_workflow_engine.dart:'
+        '486-497) and the scheduler''s completion-inflow route (packages/'
+        'scheduler/lib/src/scheduler.dart:950-975) each pass it as metadataMerge '
+        'on the engine''s own transition call, while '
+        'DurableWorkflowEngine.resolveHumanDecision (durable_workflow_engine.'
+        'dart:822-824, 845-847) merges it into a COPY of the item''s metadata '
+        'and saves that directly -- so no edge could have performed this '
+        'repair. No job, '
        'worker_execution, agent_execution or model_execution_record row was '
        'touched -- manufacturing one here would destroy the measurement this '
        'repair exists to make possible. No payload was overwritten: this '
@@ -697,10 +702,12 @@ INSERT INTO "serverpod_migrations" ("module", "version", "timestamp")
 --   * A row whose marker was ABSENT (the five `agent_failed` items) gets a
 --     NUMBER where it had none. `newAttempt` is `greatest(0, jobFloor) + 1`, so
 --     the step writes `triageAttempt: 0` when the floor is 0 and
---     `triageAttempt: <jobFloor>` when the floor is higher. Absent and 0 mean
---     the same thing to `readTriageAttempt`, which is why the difference does
---     not bite -- but they are not the same stored value, and this comment
---     must not claim they are.
+--     `triageAttempt: <jobFloor>` when the floor is higher. Absent and 0 are
+--     NOT the same to `readTriageAttempt` -- absent reads `null` and builds the
+--     BARE key, `0` reads `0` and builds `:a0`, a value `nextTriageAttempt`
+--     never mints. The difference does not bite because of the STATE, not the
+--     marker: every row above is restored to `agent_failed`, which no
+--     `JobDefinition` claims.
 --   * A row whose marker was readable but BELOW the job floor is also not
 --     restored: `newAttempt` was `jobFloor + 1`, so the step writes `jobFloor`
 --     rather than the smaller marker the row arrived with.

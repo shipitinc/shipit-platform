@@ -538,6 +538,89 @@ void main() {
         );
       });
 
+      test('its DOWN does not claim absent and 0 read alike', () {
+        // Executed, not asserted: `readTriageAttempt` returns `null` for an
+        // ABSENT marker (`marker == null` -> null,
+        // durable_workflow_engine.dart:346-365) and `0` for a stored zero, and
+        // `triageDefectDedupeKey` then builds the BARE key for the first and
+        // `':a0'` for the second (triage_defect.dart:118-123). The old comment
+        // claimed they "mean the same thing to readTriageAttempt" and then
+        // undercut itself in the same breath -- and durable_workflow_engine.dart
+        // :381-383 says the opposite outright ("ABSENT means `1`, so the FIRST
+        // re-triage ... is never `:a0`"). `nextTriageAttempt` is
+        // `max(floor, marker ?? 0) + 1`, so no writer ever mints 0 and `:a0` is
+        // a key nothing can reach.
+        final down = repair.readAsStringSync();
+        expect(
+          down,
+          contains('NOT the same to `readTriageAttempt`'),
+          reason:
+              'absent reads null and builds the bare key; 0 reads 0 and '
+              'builds :a0. They are not the same.',
+        );
+        expect(
+          down,
+          contains('a value `nextTriageAttempt`'),
+          reason:
+              'the :a0 half of the difference must be stated, because it is '
+              'what makes the two stored values behave differently.',
+        );
+        expect(
+          down,
+          contains(
+            'never mints. The difference does not bite because of the STATE, '
+            'not the',
+          ),
+          reason:
+              '`:a0` is a key nextTriageAttempt never mints, and the '
+              'harmlessness is the STATE'
+              's doing. Asserted on single source '
+              'lines: a substring spanning a `--` line break would have to '
+              'match the comment prefix too, which is how the first draft of '
+              'this assertion failed on text that was already correct.',
+        );
+        expect(
+          down,
+          contains('because of the STATE, not the'),
+          reason:
+              'the causal clause is what makes the difference harmless, and it '
+              'is the STATE (every affected row returns to `agent_failed`, '
+              'which no JobDefinition claims) -- not the marker. Getting this '
+              'backwards is the defect the previous wording had.',
+        );
+        // Absence, as a REGEX rather than one literal, so any rewording that
+        // reintroduces reader-equivalence fails and not only the exact string
+        // that was corrected.
+        expect(
+          down,
+          isNot(
+            matches(
+              RegExp(
+                r'Absent and 0[^.]*\bsame thing to .?readTriageAttempt',
+                caseSensitive: false,
+              ),
+            ),
+          ),
+          reason:
+              'no sentence may claim readTriageAttempt treats absent and 0 '
+              'alike. This is the claim that was false, and the regex covers '
+              'every phrasing of it, not just the one that was written.',
+        );
+        expect(
+          down,
+          isNot(contains('Absent and 0 mean')),
+          reason:
+              'the exact false opener, asserted separately so the '
+              'correction cannot be reverted by a partial edit.',
+        );
+      });
+
+      // The marker-writer enumeration is asserted in test (b) instead, against
+      // the MATERIALISED `reason` rather than this file's source: it is SQL
+      // string concatenation, so the prose only exists once Postgres has joined
+      // the literals. Asserting it here would be matching source fragments, not
+      // the sentence that lands in eight permanent rows.
+
       test(
         '(a) it advances the marker to a key nothing holds, for every target',
         () async {
@@ -673,6 +756,105 @@ void main() {
               ),
               reason:
                   'the agent_failed edge must never be described as absent.',
+            );
+
+            // THE MARKER-WRITER ENUMERATION. Three writers of
+            // `triageAttempt` exist in production code, not two:
+            //
+            //   * `DurableWorkflowEngine.operatorRetry`
+            //     (durable_workflow_engine.dart:486-497) -- `metadataMerge` on
+            //     the engine's own `transition` call;
+            //   * `DurableWorkflowEngine.resolveHumanDecision`
+            //     (durable_workflow_engine.dart:822-824, 845-847) -- NOT a
+            //     `metadataMerge` call: it merges the key into a COPY of the
+            //     item's metadata and persists that with `tx.saveWorkItem`
+            //     directly. The `metadataMerge` argument belongs to
+            //     `transition()` (:136, :230-232), which this method never
+            //     calls;
+            //   * the scheduler's completion-inflow route
+            //     (packages/scheduler/lib/src/scheduler.dart:950-975) --
+            //     `metadataMerge` on `engine.transition` (:952, :973-975),
+            //     added by the OD-10 completion inflow in 951d7db.
+            //
+            // Two of the three share a mechanism; the third does not. A list
+            // that named only the first two was not exhaustive, and this text
+            // is written into eight permanent live rows.
+            expect(
+              reason,
+              contains(
+                'none of the THREE writers of the marker is an edge',
+              ),
+              reason:
+                  'the enumeration must be stated as complete and as three, so '
+                  'it cannot read as a two-item list that happens to end.',
+            );
+            expect(
+              reason,
+              contains(
+                'DurableWorkflowEngine.operatorRetry '
+                '(durable_workflow_engine.dart:486-497)',
+              ),
+              reason: 'writer one, with the site that writes the marker.',
+            );
+            expect(
+              reason,
+              contains(
+                // `\'`, NOT `''`: in a Dart single-quoted literal `''`
+                // closes and reopens, so adjacent-literal concatenation would
+                // silently swallow the apostrophe and the assertion would then
+                // be vacuous against a text that does carry one.
+                'the scheduler\'s completion-inflow route '
+                '(packages/scheduler/lib/src/scheduler.dart:950-975)',
+              ),
+              reason:
+                  'writer three is the one the old text omitted entirely; it '
+                  'is a live writer introduced by 951d7db.',
+            );
+            expect(
+              reason,
+              contains(
+                'DurableWorkflowEngine.resolveHumanDecision '
+                '(durable_workflow_engine.dart:822-824, 845-847)',
+              ),
+              reason: 'writer two, with the site that writes the marker.',
+            );
+            expect(
+              reason,
+              isNot(
+                matches(RegExp(r'operatorRetry and resolveHumanDecision')),
+              ),
+              reason:
+                  'the stale two-name enumeration must be gone; a false claim '
+                  'in this column is a false claim on the record for ever.',
+            );
+            expect(
+              reason,
+              isNot(contains('never by an edge')),
+              reason:
+                  'the old sentence drew the conclusion from an exhaustive-'
+                  'looking two-writer list that was not exhaustive.',
+            );
+            // The clause that was NOT verifiable: `resolveHumanDecision` does
+            // not pass the marker as `metadataMerge`, so the replacement text
+            // must not group it with the two that do.
+            expect(
+              reason,
+              contains(
+                'merges it into a COPY of the item\'s metadata',
+              ),
+              reason:
+                  'resolveHumanDecision writes the marker by merging into a '
+                  'copy of the item\'s metadata and saving that directly '
+                  '(durable_workflow_engine.dart:818-833, 845-847). It never '
+                  'passes `metadataMerge`, which is an argument of '
+                  '`transition()` that this method does not call. Asserted so '
+                  'the grouping cannot be silently "simplified" back.',
+            );
+            expect(
+              reason,
+              contains('so no edge could have performed this repair'),
+              reason:
+                  'the conclusion the enumeration supports, in its own words.',
             );
           }
 
