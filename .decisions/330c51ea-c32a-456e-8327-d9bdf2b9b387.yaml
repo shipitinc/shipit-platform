@@ -1,0 +1,85 @@
+# human-decision.yaml
+decision_id: 330c51ea-c32a-456e-8327-d9bdf2b9b387
+type: PRODUCT
+status: RESOLVED
+title: OD-3 — which rework pairs route into implementationReady
+resolution:
+  selected: A
+  label: The four rework gates route to implementationReady; escalation/approve stays at designNotRequired
+  decided_by: operator
+  rationale_given: >-
+    Those four gates only exist for items that already produced work, so "redo" means re-implement.
+    Escalation is a statement about EXECUTION failure, not work quality, so re-planning it is safe.
+question: >-
+  Five routes currently target designNotRequired (re-triage). Which of them mean "re-do the work" and
+  should target implementationReady instead?
+context:
+  summary: >-
+    `HumanDecisionRouting.targetFor` (packages/workflow_engine/lib/src/transitions/human_decision_routing.dart)
+    has five routes pointing at designNotRequired. A `waitingForHumanDecision -> implementationReady` edge
+    already exists (work_item_transitions.dart:345) carrying the gate's full guard set, deliberately
+    declared so that answering this is a routing-table edit rather than an engine change.
+
+    The product question is what rework MEANS: "re-classify" (re-triage, unchanged) or "re-do the work"
+    (implementation).
+  pairs_and_lockstep:
+    - pair: (engineeringReview, rework)
+      current: designNotRequired
+      lockstep: true
+      note: live escalationTargetFor arm at :182-183; MUST move in the same commit
+    - pair: (humanQaApproval, reject)
+      current: designNotRequired
+      lockstep: true
+      note: live escalationTargetFor arm at :184-185; MUST move in the same commit
+    - pair: (qaRework, reject)
+      current: designNotRequired
+      lockstep: false
+    - pair: (qaWaiver, reject)
+      current: designNotRequired
+      lockstep: false
+    - pair: (escalation, approve)
+      current: designNotRequired
+      lockstep: false
+      note: "approve short-circuits escalationTargetFor to null before any comparison"
+  why_lockstep_matters: >-
+    `DurableWorkflowEngine._isEscalationTransition` (durable_workflow_engine.dart:979) computes escalation
+    as `escalationTargetFor(type, choice) == targetFor(type, choice)`. A divergence does NOT error — it
+    silently stops the escalation index advancing and changes the shape of the audit trail. Both arms are
+    asserted by name in `test/implementation_ready_edge_test.dart`.
+  what_this_does_not_unblock: >-
+    The five currently-stranded work items sit at `agentCompleted` (4, review failed closed on the missing
+    artifact) and `designNotRequired` (1, awaiting triage). NONE is at a resolved human decision, so
+    `targetFor` has nothing to act on for them. This decision changes behaviour for FUTURE rework cycles.
+    The inflow question is OD-10 (decision 2ec0a10f-e3b5-413e-a4ef-9aaff2b31688), which is what actually
+    releases the current backlog.
+options:
+  - id: A
+    label: The four rework gates; leave escalation alone — SELECTED
+    implications: >-
+      engineeringReview/rework, humanQaApproval/reject, qaRework/reject and qaWaiver/reject target
+      implementationReady. escalation/approve keeps designNotRequired. Two lockstep arms move with it.
+    effort: one routing-table edit plus the two lockstep arms plus edge assertions
+    risk: >-
+      Low. An escalation raised by a provider failure on an item that never implemented will not misroute
+      into implementationReady, because escalation/approve is excluded.
+  - id: B
+    label: Only engineeringReview/rework
+    implications: smallest change; the reviewer-rework loop advances directly to implementation.
+    effort: minimal
+    risk: Low, but leaves three rework gates re-triaging.
+  - id: C
+    label: All five pairs
+    implications: maximum throughput.
+    effort: as A, plus escalation
+    risk: >-
+      Higher. An escalation raised on an item that never implemented would misroute; the readiness probe
+      would defer it anyway, so the cost is a misleading state rather than a wrong action.
+  - id: D
+    label: None — leave all five as-is
+    implications: implementationReady keeps no producer from this table; IMPL-001 stays unmet.
+    effort: none
+    risk: The lane stays unreachable.
+impact_if_not_resolved: >-
+  Reviewer rework loops re-triage instead of re-implementing, so a reviewed artifact can never be revised
+  through the workflow.
+linked_decisions: [2ec0a10f-e3b5-413e-a4ef-9aaff2b31688]

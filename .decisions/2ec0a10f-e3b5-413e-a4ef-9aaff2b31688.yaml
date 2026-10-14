@@ -1,0 +1,79 @@
+# human-decision.yaml
+decision_id: 2ec0a10f-e3b5-413e-a4ef-9aaff2b31688
+type: PRODUCT
+status: RESOLVED
+title: OD-10 — what routes a triaged, unimplemented item INTO implementationReady
+resolution:
+  selected: A
+  label: designNotRequired -> implementationReady
+  decided_by: operator
+  rationale_given: >-
+    Direct path for the stranded designNotRequired item, and the entry the other four reach once repaired.
+    Human-gated opt-in was considered and rejected: the per-item human friction is what let these items
+    strand in the first place.
+question: >-
+  What moves a triaged, unimplemented work item into the implementation lane's entry state?
+context:
+  summary: >-
+    Until this decision, `implementationReady` had NO producer at all. The live boot banner stated it:
+    `producers: none yet — no resolved human decision routes into implementation_ready (OD-3 is open).
+    The lane is wired and deliberately unreachable; a work item at that state would be deferred, never
+    dispatched`.
+
+    `sched-impl`'s definition has `entryStates: {implementationReady}` — a ONE-element set, disjoint from
+    every other production definition. That is what makes the triage/implementation dispatch collision
+    structurally unreachable rather than merely guarded (`RunnableWorkEvaluator` returns `noAction` on an
+    entryStates miss BEFORE the policy is consulted; `EntryHopper` refuses any hop not landing on its own
+    definition's entry states).
+
+  live_state_at_decision_time:
+    work_items: "5 agent_failed, 4 agent_completed, 3 planned, 1 draft, 1 design_not_required"
+    non_terminal_jobs: 0
+    agent_execution_rows: 0
+    note: "every job in the queue was terminal — nothing was queued, running or retrying"
+    stranded_at_agent_completed: >-
+      4 items whose engineering review failed closed on the missing implementation artifact. These are NOT
+      at a human decision gate, so no human-decision retarget releases them.
+
+  prerequisite_satisfied_by_this_session:
+    onboarding_record: >-
+      1 row — `ob-shipit-platform`, pinnedRevision `f58d6fb129c1d4265ada5af9dc359eb5ac27a9a2`,
+      completedBaselineId `bl-shipit-platform-1`. The durable workspace resolves, so the §7.7 readiness
+      probe will not defer for lack of a workspace.
+options:
+  - id: A
+    label: designNotRequired -> implementationReady — SELECTED
+    implications: >-
+      A triaged item proceeds to implementation instead of awaiting a human gate. This is the direct path
+      for the stranded `design_not_required` item, and the entry the other four reach once their dedupe
+      keys are repaired.
+    effort: transition-table edge plus dispatcher wiring
+    risk: >-
+      Moderate, and concentrated in ONE place: the discriminator between "a triage report was produced"
+      (route to implementation) and "a code artifact was produced" (route to review). Getting that
+      discriminator wrong would send a real artifact to implementation instead of review, manufacturing a
+      duplicate commit. The implementation lane must derive and test it, not assume it.
+  - id: B
+    label: Human-gated opt-in only
+    implications: an operator explicitly moves each item into implementationReady.
+    effort: operator action per item
+    risk: >-
+      Safest for a platform writing commits into a governed repo, but it reproduces the exact per-item
+      human friction that stranded these five in the first place.
+  - id: C
+    label: Gate the edge on a resolvable workspace
+    implications: only route in when a durable workspace actually resolves.
+    effort: probe integration on the transition
+    risk: >-
+      Low, but redundant: the §7.7 readiness probe already defers rather than dispatches when no workspace
+      resolves. Belt-and-braces, not a fix.
+  - id: D
+    label: Not yet — deal with Chain B first
+    implications: re-enter triage by repairing the 5 consumed dedupe keys, then decide inflow.
+    effort: n/a
+    risk: >-
+      Repairing the keys first just walks the items back to a state with no producer — the dead end this
+      session was built to end.
+impact_if_not_resolved: >-
+  `sched-impl` has no producer. The lane dispatches nothing, forever, and no defect can reach human QA.
+linked_decisions: [330c51ea-c32a-456e-8327-d9bdf2b9b387]
