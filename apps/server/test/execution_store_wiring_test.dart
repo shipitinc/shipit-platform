@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:execution_coordinator/execution_coordinator.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:test/test.dart';
@@ -19,6 +21,13 @@ import 'package:control_plane_server/src/review/engineering_review_gate.dart';
 /// answered behaviourally rather than by asserting which class the composition
 /// root constructs — an assertion of that shape passes just as happily against
 /// a wiring that is still wrong.
+///
+/// The one property no harness here can reach is the CALL SITE itself: every
+/// test in this file injects its own store, and `run()` cannot be entered from
+/// a unit test. That is pinned separately, from the source text, and it pins
+/// the BINDING rather than the type — see the group at the end of this file,
+/// which is the difference between an assertion that rotted and one that would
+/// have caught it.
 ///
 /// The answer rests on ONE fact about the code under test:
 /// `engineeringReviewMissingArtifact` evaluates its stand-down
@@ -528,4 +537,136 @@ void main() {
       },
     );
   });
+
+  group('the production composition binds the coordinator to the named seam', () {
+    // ## WHY THIS FILE NEEDS A SOURCE-TEXT ASSERTION AT ALL
+    //
+    // Every other test here proves a property of the code UNDER TEST. None of
+    // them proves that the production composition reaches that code. The
+    // round-trip suite calls `agentExecutionStore(db)` itself; every harness in
+    // this file injects its own store. `run()` is the one place the real wiring
+    // is decided, and it needs a live database, a live `opencode` binary and a
+    // worker registry — so it cannot be entered from a unit test at all.
+    //
+    // The consequence, which is the entire reason this group exists: reverting
+    // `server.dart` to
+    //
+    //     store: FileJsonExecutionStore(
+    //       File('${Directory.systemTemp.path}/execution_coordinator/store.json'),
+    //     ),
+    //
+    // leaves the WHOLE suite green. A writer and a reader each satisfied
+    // `ExecutionStore`, were wired to different instances, and no type, no
+    // behavioural test and no integration test could see it — which is how
+    // `agent_execution` stayed at zero rows across 35 worker executions while
+    // every test in the repository passed.
+    //
+    // ## THIS IS NOT THE "ASSERT THE CLASS" ANTI-PATTERN. DO NOT SIMPLIFY IT.
+    //
+    // The anti-pattern — and the one this file's own header rejects — asserts
+    // WHICH CLASS was constructed, e.g. `agentExecutionStore(db) is
+    // PostgresExecutionStore`. That passes against a wiring that is still
+    // wrong, and would have passed against the file store too, because it never
+    // looks at the call site. It pins a TYPE.
+    //
+    // What follows pins a BINDING: that the `store:` argument of the one
+    // `buildTriageExecutionCoordinator(` call inside `run()` is the seam, on the
+    // same `db` every other Postgres store in that function already uses. The
+    // type is still free to change; what may not change is that the production
+    // composition and the tests' seam resolve to the same place. That is
+    // exactly the thing which rotted, so it is the thing that is pinned.
+    //
+    // Read as text for the same reason `implementation_inflow_tick_order_test`
+    // reads `lib/server.dart` as text: what is pinned here is not observable
+    // from any in-process harness.
+    late String source;
+
+    setUpAll(() {
+      source = File('lib/server.dart').readAsStringSync();
+    });
+
+    test(
+      'the coordinator `run()` builds is bound to `agentExecutionStore(db)`',
+      () {
+        final call = _coordinatorCallInRun(source);
+
+        expect(
+          call,
+          contains('store: agentExecutionStore(db)'),
+          reason:
+              'the coordinator `run()` builds must write through the SAME seam '
+              'the integration suite drives. If `run()` hands it any other '
+              'ExecutionStore, agent executions land where no reader looks and '
+              'every test in this repository still passes — the exact defect '
+              'this assertion exists to make impossible to reintroduce '
+              'silently.',
+        );
+        expect(
+          call,
+          isNot(contains('FileJsonExecutionStore')),
+          reason:
+              'the belt to those braces. `FileJsonExecutionStore` is named in '
+              'the comment above the call and in the `agentExecutionStore` doc '
+              'comment, which is why this asserts on the call text and not on '
+              'the whole file: inside the parentheses it can only mean the '
+              'production wiring names it.',
+        );
+      },
+    );
+  });
+}
+
+/// Returns the source text of the single `buildTriageExecutionCoordinator(` CALL
+/// inside `run()`, parentheses matched.
+///
+/// Scoped twice over on purpose. The declaration
+/// (`ExecutionCoordinator buildTriageExecutionCoordinator({`) is not a call and
+/// must never satisfy this, and a call outside `run()` would be a different
+/// composition entirely — so the search runs inside `run()`'s body only, and
+/// the factory is reached through `= ` so the declaration cannot be mistaken
+/// for a call.
+String _coordinatorCallInRun(String source) {
+  final runStart = RegExp('^void run\\(', multiLine: true).firstMatch(source);
+  expect(
+    runStart,
+    isNotNull,
+    reason: 'the composition root must still be `run`',
+  );
+  final runEnd = RegExp('^\\}', multiLine: true).firstMatch(
+    source.substring(runStart!.end),
+  );
+  expect(runEnd, isNotNull, reason: '`run()` must be a top-level function');
+  final body = source.substring(runStart.end, runStart.end + runEnd!.start);
+
+  final calls = RegExp('= buildTriageExecutionCoordinator\\(').allMatches(body);
+  expect(
+    calls,
+    hasLength(1),
+    reason:
+        'exactly ONE call site, so the assertions cannot bind to nothing, to a '
+        'declaration, or to one of several. Inlining an `ExecutionCoordinator('
+        '...)` instead of going through the named factory means the '
+        'composition is no longer reachable from a test at all.',
+  );
+
+  final open = body.indexOf('(', calls.single.start);
+  var depth = 0;
+  var close = -1;
+  for (var i = open; i < body.length; i++) {
+    if (body[i] == '(') {
+      depth++;
+    } else if (body[i] == ')') {
+      depth--;
+      if (depth == 0) {
+        close = i;
+        break;
+      }
+    }
+  }
+  expect(
+    close,
+    greaterThan(-1),
+    reason: 'the call must be delimited by balanced parentheses to be read',
+  );
+  return body.substring(open, close + 1);
 }
