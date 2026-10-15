@@ -65,6 +65,26 @@ String? knownTransitionMessage(String from, String to) => switch ((from, to)) {
   // is the queue, not a second "retrying" that duplicates the line above.
   ('agent_failed', 'design_not_required') => 'Trying again after an error',
   ('agent_completed', 'review_in_progress') => 'Independent review started',
+  // The implementation finished and produced a commit, so the item enters the
+  // build lane. Distinct from `review_in_progress` above: that one goes to a
+  // REVIEWER, this one sends it to a BUILDER.
+  ('agent_completed', 'implementation_ready') => 'Ready to build',
+  // ---- The retry-return edges (decision 3659984d, option A) ----
+  //
+  // A retryable failure used to leave the item here permanently: the scheduled
+  // retry could not be claimed, because the item had left its lane's entry
+  // states. These four edges put it back, so the item becomes dispatchable
+  // again. The copy says "trying again" rather than "failed", because that is
+  // what will actually happen next, and an operator reading "failed" here has
+  // been told something that is no longer true.
+  ('agent_failed', 'implementation_ready') => 'Trying the build again',
+  ('agent_failed', 'design_required') => 'Trying design again',
+  ('agent_failed', 'design_in_review') => 'Trying design review again',
+  // A reviewer that timed out is not a rejected review. Saying "review
+  // restarted" keeps the distinction from `('review_rejected', ...)` below
+  // visible: nothing was reviewed and nothing was judged.
+  ('review_in_progress', 'agent_completed') =>
+    'Review did not finish — queued to run again',
   // The implementation turned out to need a design revision, so the item goes
   // back to design rather than to review.
   ('agent_completed', 'design_in_review') => 'Design revision needed',
