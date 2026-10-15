@@ -11,6 +11,17 @@ import '../../shared/state_views.dart';
 import 'model_stats_bloc.dart';
 import 'run_duration_panel.dart';
 
+/// ## WHAT THIS PAGE MAY NOT DO
+///
+/// Render a number it did not read. Every figure below comes from
+/// `ModelStatsResponse`, whose fields are exactly the keys `ModelStatsView`
+/// sends plus two getters derived from them. There is no default, no
+/// placeholder, and no "— if unavailable" standing in for a zero.
+///
+/// And a card whose data failed to read must say so. A card that renders
+/// `0.0%` when the query threw is the most dangerous form of this bug, because
+/// it is indistinguishable from a real measurement — so [readError] blanks every
+/// card on the screen rather than letting a stale or absent value stand in.
 class ModelStatsPage extends StatelessWidget {
   const ModelStatsPage({super.key, this.bloc});
 
@@ -69,9 +80,18 @@ class _ModelStatsViewState extends State<_ModelStatsView> {
           return const Center(child: Text('No data available'));
         }
 
+        // THE THIRD LAYER OF THE ORIGINAL DEFECT.
+        //
+        // A refresh that fails while earlier data is still on screen used to
+        // leave that data on screen with no indication that the numbers on it
+        // are no longer current. Every card below takes this and refuses to
+        // draw a figure when it is set.
+        final readError = state.errorMessage;
+
         if (isMobile(context)) {
           return _MobileModelStats(
             stats: stats,
+            readError: readError,
             timeRange: _timeRange,
             customRange: _customRange,
             groupBy: _groupBy,
@@ -95,9 +115,13 @@ class _ModelStatsViewState extends State<_ModelStatsView> {
               children: [
                 PageHeader(
                   title: 'Model Cost & Usage Stats',
-                  subtitle: _buildSubtitle(stats),
-                  liveLabel: 'LIVE',
+                  subtitle: _buildSubtitle(stats, readError),
+                  liveLabel: readError == null ? 'LIVE' : 'READ FAILED',
                 ),
+                if (readError != null) ...[
+                  const SizedBox(height: 16),
+                  _ReadFailureBanner(message: readError),
+                ],
                 const SizedBox(height: 25),
                 _ControlBar(
                   timeRange: _timeRange,
@@ -117,9 +141,15 @@ class _ModelStatsViewState extends State<_ModelStatsView> {
                   },
                 ),
                 const SizedBox(height: 24),
-                _SummaryCards(stats: stats),
+                _SummaryCards(stats: stats, readError: readError),
                 const SizedBox(height: 24),
-                _ChartsSection(stats: stats, groupBy: _groupBy),
+                _ChartsSection(
+                  stats: stats,
+                  groupBy: _groupBy,
+                  readError: readError,
+                ),
+                const SizedBox(height: 24),
+                _NotMeasuredHerePanel(),
                 const SizedBox(height: 24),
                 // The budgets an operator is about to tune live on this page,
                 // so the measurement that should replace them lives here too.
@@ -138,7 +168,7 @@ class _ModelStatsViewState extends State<_ModelStatsView> {
                     'totalCost=\$${stats.totalCostUsd.toStringAsFixed(2)}',
                     'totalTokens=${stats.totalTokens}',
                     'totalExecutions=${stats.totalExecutions}',
-                    'successRate=${(stats.successRate * 100).toStringAsFixed(1)}%',
+                    'successRate=${_formatRate(stats.successRate)}',
                   ],
                 ),
               ],
@@ -149,8 +179,14 @@ class _ModelStatsViewState extends State<_ModelStatsView> {
     );
   }
 
-  String _buildSubtitle(ModelStatsResponse stats) {
-    return '\$${stats.totalCostUsd.toStringAsFixed(2)} · ${_formatTokens(stats.totalTokens)} tokens · ${stats.totalExecutions} executions · ${(stats.successRate * 100).toStringAsFixed(1)}% success';
+  /// `null` success rate reads "no executions in range", NOT "0% success".
+  String _buildSubtitle(ModelStatsResponse stats, String? readError) {
+    if (readError != null) {
+      return 'These figures could not be re-read. Nothing on this screen is '
+          'current, and nothing below claims to be.';
+    }
+    final rate = _formatRate(stats.successRate);
+    return '\$${stats.totalCostUsd.toStringAsFixed(2)} · ${_formatTokens(stats.totalTokens)} tokens · ${stats.totalExecutions} ${stats.totalExecutions == 1 ? 'execution' : 'executions'} · $rate';
   }
 
   void _loadStats(BuildContext context) {
@@ -177,11 +213,57 @@ class _ModelStatsViewState extends State<_ModelStatsView> {
       ModelStatsLoaded(from: from, to: to, groupBy: _groupBy.apiValue),
     );
   }
+}
 
-  String _formatTokens(int tokens) {
-    if (tokens >= 1000000) return '${(tokens / 1000000).toStringAsFixed(1)}M';
-    if (tokens >= 1000) return '${(tokens / 1000).toStringAsFixed(1)}K';
-    return tokens.toString();
+/// An em dash, not a zero.
+///
+/// It is the only glyph this screen uses to mean "there is no figure here",
+/// and it is never produced by a number that failed to arrive.
+const _noFigure = '—';
+
+String _formatRate(double? rate) =>
+    rate == null ? 'no runs in range' : '${(rate * 100).toStringAsFixed(1)}%';
+
+String _formatTokens(int tokens) {
+  if (tokens >= 1000000) return '${(tokens / 1000000).toStringAsFixed(1)}M';
+  if (tokens >= 1000) return '${(tokens / 1000).toStringAsFixed(1)}K';
+  return tokens.toString();
+}
+
+/// Says plainly that the numbers on the screen are not current.
+class _ReadFailureBanner extends StatelessWidget {
+  const _ReadFailureBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return DesignPanel(
+      edgeColor: palette.negative,
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'The figures below are NOT current.',
+            style: ShipItType.sectionTitle.copyWith(color: palette.negative),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message,
+            style: ShipItType.monoMeta.copyWith(color: palette.inkSecondary),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Each card shows an em dash rather than a figure it failed to read. '
+            'A stale total and a zero look identical on a card, so neither is '
+            'drawn.',
+            style: ShipItType.bodySmall.copyWith(color: palette.attention),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -389,56 +471,66 @@ class _DateRangePicker extends StatelessWidget {
 }
 
 class _SummaryCards extends StatelessWidget {
-  const _SummaryCards({required this.stats});
+  const _SummaryCards({required this.stats, required this.readError});
 
   final ModelStatsResponse stats;
 
+  /// Non-null when the read these cards describe FAILED. Each card then shows
+  /// the em dash (see [_noFigure]); none of them falls back to a stale or zero
+  /// value.
+  final String? readError;
+
   @override
   Widget build(BuildContext context) {
+    final failed = readError != null;
     final palette = context.palette;
+    final rate = stats.successRate;
     return Row(
       children: [
         Expanded(
           child: _SummaryCard(
             label: 'Total Cost',
-            value: '\$${stats.totalCostUsd.toStringAsFixed(2)}',
-            color: palette.accent,
+            value: failed
+                ? _noFigure
+                : '\$${stats.totalCostUsd.toStringAsFixed(2)}',
+            color: failed ? palette.negative : palette.accent,
           ),
         ),
         const SizedBox(width: 16),
         Expanded(
           child: _SummaryCard(
             label: 'Total Tokens',
-            value: _formatTokens(stats.totalTokens),
-            color: palette.positive,
+            value: failed ? _noFigure : _formatTokens(stats.totalTokens),
+            color: failed ? palette.negative : palette.positive,
           ),
         ),
         const SizedBox(width: 16),
         Expanded(
           child: _SummaryCard(
             label: 'Executions',
-            value: stats.totalExecutions.toString(),
-            color: palette.inkSecondary,
+            value: failed ? _noFigure : '${stats.totalExecutions}',
+            color: failed ? palette.negative : palette.inkSecondary,
           ),
         ),
         const SizedBox(width: 16),
         Expanded(
           child: _SummaryCard(
             label: 'Success Rate',
-            value: '${(stats.successRate * 100).toStringAsFixed(1)}%',
-            color: stats.successRate >= 0.95
+            // Three distinct answers, and the middle one used to be
+            // unreachable: a real rate, the literal string "no runs in range"
+            // when nothing ran, and $noFigure when the read failed.
+            value: failed ? _noFigure : _formatRate(rate),
+            color: failed
+                ? palette.negative
+                : rate == null
+                ? palette.inkTertiary
+                : rate >= 0.95
                 ? palette.positive
                 : palette.attention,
           ),
         ),
       ],
     );
-  }
-
-  String _formatTokens(int tokens) {
-    if (tokens >= 1000000) return '${(tokens / 1000000).toStringAsFixed(1)}M';
-    if (tokens >= 1000) return '${(tokens / 1000).toStringAsFixed(1)}K';
-    return tokens.toString();
   }
 }
 
@@ -470,58 +562,92 @@ class _SummaryCard extends StatelessWidget {
   }
 }
 
+/// The three per-dimension charts this read CAN produce, driven by the
+/// GROUP BY control that was previously wired to the server and then ignored.
+///
+/// The four charts that used to sit here — Cost Over Time, Tokens by Provider,
+/// Success Rate by Model, Escalation Frequency, Cost by Task Type — read five
+/// keys `ModelStatsView` never sent, so all five drew "No data" from the first
+/// day. Three of them are exactly what `byGroup` holds, and the GROUP BY
+/// selector already chose which dimension; the other two have no source at all
+/// and are now named as such in [_NotMeasuredHerePanel].
 class _ChartsSection extends StatelessWidget {
-  const _ChartsSection({required this.stats, required this.groupBy});
+  const _ChartsSection({
+    required this.stats,
+    required this.groupBy,
+    required this.readError,
+  });
 
   final ModelStatsResponse stats;
   final _GroupBy groupBy;
+  final String? readError;
 
   @override
   Widget build(BuildContext context) {
+    final failed = readError != null;
+    final dimension = groupBy.label.toLowerCase();
+    final groups = failed ? const <ModelStatsGroupResponse>[] : stats.byGroup;
+
+    final tokens = <_BarDatum>[
+      for (final g in groups)
+        _BarDatum(label: g.key, value: g.totalTokens.toDouble()),
+    ];
+    // A group with no runs has no rate. It is dropped here rather than drawn
+    // as a zero-height bar, which would read as "this model always fails".
+    final rates = <_BarDatum>[
+      for (final g in groups)
+        if (g.successRate case final r?) _BarDatum(label: g.key, value: r),
+    ];
+    final costs = <_BarDatum>[
+      for (final g in groups) _BarDatum(label: g.key, value: g.totalCostUsd),
+    ];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _ChartCard(
-          title: 'Cost Over Time',
-          child: _CostOverTimeChart(points: stats.costOverTime),
+          title: 'Tokens by $dimension',
+          subtitle:
+              'One bar per $dimension, from the grouped aggregate. Summed: '
+              '${failed ? _noFigure : '${stats.totalTokens} total'}',
+          child: _GroupBarChart(
+            data: tokens,
+            formatValue: (v) => _formatTokens(v.round()),
+            emptyLabel: failed
+                ? 'Token counts could not be read. Nothing is claimed here.'
+                : 'No executions in this range, so there are no $dimension '
+                      'tokens to show.',
+          ),
         ),
         const SizedBox(height: 16),
         Row(
           children: [
             Expanded(
               child: _ChartCard(
-                title: 'Tokens by Provider',
-                child: _BarChart(data: stats.tokensByProvider),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _ChartCard(
-                title: 'Success Rate by Model',
-                child: _BarChart(
-                  data: stats.successRateByModel,
+                title: 'Success Rate by $dimension',
+                subtitle: 'successCount / count, per group.',
+                child: _GroupBarChart(
+                  data: rates,
                   formatValue: (v) => '${(v * 100).toStringAsFixed(1)}%',
+                  emptyLabel: failed
+                      ? 'Success rates could not be read. Nothing is claimed '
+                            'here.'
+                      : 'No $dimension with runs in this range.',
                 ),
               ),
             ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: _ChartCard(
-                title: 'Escalation Frequency',
-                child: _EscalationChart(data: stats.escalationFrequency),
-              ),
-            ),
             const SizedBox(width: 16),
             Expanded(
               child: _ChartCard(
-                title: 'Cost by Task Type',
-                child: _BarChart(
-                  data: stats.costByTaskType,
+                title: 'Cost by $dimension',
+                subtitle: 'totalCostUsd, per group.',
+                child: _GroupBarChart(
+                  data: costs,
                   formatValue: (v) => '\$${v.toStringAsFixed(2)}',
+                  emptyLabel: failed
+                      ? 'Costs could not be read. Nothing is claimed here.'
+                      : 'No executions in this range, so there are no $dimension '
+                            'costs to show.',
                 ),
               ),
             ),
@@ -532,10 +658,58 @@ class _ChartsSection extends StatelessWidget {
   }
 }
 
+/// The two figures this screen used to claim it was showing and never did.
+///
+/// Naming them is the point. An operator who used to read an empty "Cost Over
+/// Time" chart had no way to tell a feature that had never worked from a range
+/// with no spend; a sentence saying the measurement is not taken is a
+/// different thing to see.
+class _NotMeasuredHerePanel extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return DesignPanel(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Not measured on this screen',
+            style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Two charts that used to sit here are gone rather than blank. They '
+            'are not hidden because the data is uninteresting — it is not '
+            'collected by this read at all.',
+            style: ShipItType.bodySmall.copyWith(color: palette.inkTertiary),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            '· Cost over time — `getModelStats` returns ONE aggregate for the '
+            'whole range. It has no time buckets, so no per-day or per-hour '
+            'figure exists to plot, and none is interpolated here.',
+            style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '· Escalation frequency — `model_execution_record` records an '
+            '`escalationIndex` per execution, but `getModelStats` offers no '
+            'grouping by it, so the distribution is not available through this '
+            'read.',
+            style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ChartCard extends StatelessWidget {
-  const _ChartCard({required this.title, required this.child});
+  const _ChartCard({required this.title, required this.child, this.subtitle});
 
   final String title;
+  final String? subtitle;
   final Widget child;
 
   @override
@@ -550,6 +724,13 @@ class _ChartCard extends StatelessWidget {
             title,
             style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary),
           ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              subtitle!,
+              style: ShipItType.bodySmall.copyWith(color: palette.inkTertiary),
+            ),
+          ],
           const SizedBox(height: 16),
           SizedBox(height: 300, child: child),
         ],
@@ -558,222 +739,95 @@ class _ChartCard extends StatelessWidget {
   }
 }
 
-class _CostOverTimeChart extends StatelessWidget {
-  const _CostOverTimeChart({required this.points});
+/// One bar: a label and the figure it stands for.
+///
+/// Built from [ModelStatsGroupResponse] fields by the caller rather than
+/// accepting a pre-shaped record, so a metric that is undefined for a group
+/// (see `successRate`) can be left out instead of being passed as `0`.
+class _BarDatum {
+  const _BarDatum({required this.label, required this.value});
 
-  final List<TimeSeriesPointResponse> points;
-
-  @override
-  Widget build(BuildContext context) {
-    if (points.isEmpty) {
-      return Center(
-        child: Text(
-          'No data',
-          style: ShipItType.bodySmall.copyWith(
-            color: context.palette.inkTertiary,
-          ),
-        ),
-      );
-    }
-
-    final palette = context.palette;
-    final maxValue = points.map((p) => p.value).reduce((a, b) => a > b ? a : b);
-    final minValue = points.map((p) => p.value).reduce((a, b) => a < b ? a : b);
-
-    return CustomPaint(
-      painter: _LineChartPainter(
-        points: points,
-        maxValue: maxValue,
-        minValue: minValue,
-        color: palette.accent,
-        ruleColor: palette.rule,
-        labelColor: palette.inkTertiary,
-        formatValue: (v) => '\$${v.toStringAsFixed(2)}',
-      ),
-      size: Size.infinite,
-    );
-  }
+  final String label;
+  final double value;
 }
 
-class _BarChart extends StatelessWidget {
-  const _BarChart({required this.data, this.formatValue});
-
-  final List<GroupedStatResponse> data;
-  final String Function(double)? formatValue;
-
-  @override
-  Widget build(BuildContext context) {
-    if (data.isEmpty) {
-      return Center(
-        child: Text(
-          'No data',
-          style: ShipItType.bodySmall.copyWith(
-            color: context.palette.inkTertiary,
-          ),
-        ),
-      );
-    }
-
-    final palette = context.palette;
-    final maxValue = data.map((d) => d.value).reduce((a, b) => a > b ? a : b);
-
-    return CustomPaint(
-      painter: _BarChartPainter(
-        data: data,
-        maxValue: maxValue,
-        color: palette.accent,
-        ruleColor: palette.rule,
-        labelColor: palette.inkTertiary,
-        formatValue: formatValue ?? ((v) => v.toStringAsFixed(0)),
-      ),
-      size: Size.infinite,
-    );
-  }
-}
-
-class _EscalationChart extends StatelessWidget {
-  const _EscalationChart({required this.data});
-
-  final List<EscalationStatResponse> data;
-
-  @override
-  Widget build(BuildContext context) {
-    if (data.isEmpty) {
-      return Center(
-        child: Text(
-          'No data',
-          style: ShipItType.bodySmall.copyWith(
-            color: context.palette.inkTertiary,
-          ),
-        ),
-      );
-    }
-
-    final palette = context.palette;
-    final maxValue = data.map((d) => d.count).reduce((a, b) => a > b ? a : b);
-
-    return CustomPaint(
-      painter: _BarChartPainter(
-        data: data
-            .map(
-              (d) => GroupedStatResponse(
-                key: 'Esc ${d.escalationIndex}',
-                value: d.count.toDouble(),
-                count: d.count,
-              ),
-            )
-            .toList(),
-        maxValue: maxValue.toDouble(),
-        color: palette.attention,
-        ruleColor: palette.rule,
-        labelColor: palette.inkTertiary,
-        formatValue: (v) => v.toInt().toString(),
-      ),
-      size: Size.infinite,
-    );
-  }
-}
-
-class _LineChartPainter extends CustomPainter {
-  _LineChartPainter({
-    required this.points,
-    required this.maxValue,
-    required this.minValue,
-    required this.color,
-    required this.ruleColor,
-    required this.labelColor,
+class _GroupBarChart extends StatelessWidget {
+  const _GroupBarChart({
+    required this.data,
     required this.formatValue,
+    required this.emptyLabel,
   });
 
-  final List<TimeSeriesPointResponse> points;
-  final double maxValue;
-  final double minValue;
-  final Color color;
-  final Color ruleColor;
-  final Color labelColor;
+  final List<_BarDatum> data;
   final String Function(double) formatValue;
 
+  /// Spoken, not drawn as an empty axis. Distinguishes "nothing to plot" from
+  /// "plotted, and every bar is zero".
+  final String emptyLabel;
+
   @override
-  void paint(Canvas canvas, Size size) {
-    if (points.isEmpty) return;
-
-    const padding = 40.0;
-    final chartWidth = size.width - 2 * padding;
-    final chartHeight = size.height - 2 * padding;
-
-    final xScale = chartWidth / (points.length - 1).clamp(1, double.infinity);
-    final yScale =
-        chartHeight / (maxValue - minValue).clamp(0.001, double.infinity);
-
-    final path = Path();
-    for (var i = 0; i < points.length; i++) {
-      final x = padding + i * xScale;
-      final y = size.height - padding - (points[i].value - minValue) * yScale;
-      if (i == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
+  Widget build(BuildContext context) {
+    if (data.isEmpty) {
+      return _ChartEmpty(message: emptyLabel);
     }
 
-    // Draw axes
-    final axisPaint = Paint()
-      ..color = ruleColor
-      ..strokeWidth = 1;
-    canvas.drawLine(
-      const Offset(padding, padding),
-      Offset(padding, size.height - padding),
-      axisPaint,
-    );
-    canvas.drawLine(
-      Offset(padding, size.height - padding),
-      Offset(size.width - padding, size.height - padding),
-      axisPaint,
-    );
-
-    // Draw line
-    final linePaint = Paint()
-      ..color = color
-      ..strokeWidth = 2
-      ..style = PaintingStyle.stroke;
-    canvas.drawPath(path, linePaint);
-
-    // Draw points
-    final pointPaint = Paint()..color = color;
-    for (var i = 0; i < points.length; i++) {
-      final x = padding + i * xScale;
-      final y = size.height - padding - (points[i].value - minValue) * yScale;
-      canvas.drawCircle(Offset(x, y), 4, pointPaint);
+    final maxValue = data.map((d) => d.value).reduce((a, b) => a > b ? a : b);
+    if (maxValue <= 0) {
+      // Every group really did read zero. Bars of zero height are an empty
+      // chart with no explanation, which is indistinguishable from a chart that
+      // failed to draw — so the actual figures are printed instead.
+      return _ChartEmpty(
+        message:
+            'Every ${data.length} ${data.length == 1 ? 'group reads' : 'groups read'} '
+            '${formatValue(0)} exactly. These are real measurements of zero, '
+            'not missing data.',
+      );
     }
 
-    // Draw labels
-    final textStyle = ShipItType.monoMeta.copyWith(
-      color: labelColor,
-      fontSize: 10,
-    );
-    final maxText = TextPainter(
-      text: TextSpan(text: formatValue(maxValue), style: textStyle),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    maxText.paint(
-      canvas,
-      Offset(padding - maxText.width - 8, padding - maxText.height / 2),
-    );
-    final minText = TextPainter(
-      text: TextSpan(text: formatValue(minValue), style: textStyle),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    minText.paint(
-      canvas,
-      Offset(
-        padding - minText.width - 8,
-        size.height - padding - minText.height / 2,
+    final palette = context.palette;
+    return Semantics(
+      // The bars are painted, so their labels and values exist only as canvas
+      // operations — invisible to a screen reader, which is how the figures on
+      // this screen were unreachable to anyone not looking at the pixels. The
+      // summary below is the same data as text.
+      label: data.map((d) => '${d.label}: ${formatValue(d.value)}').join(', '),
+      container: true,
+      excludeSemantics: true,
+      child: CustomPaint(
+        painter: _BarChartPainter(
+          data: data,
+          maxValue: maxValue,
+          color: palette.accent,
+          ruleColor: palette.rule,
+          labelColor: palette.inkTertiary,
+          formatValue: formatValue,
+        ),
+        size: Size.infinite,
       ),
     );
   }
+}
+
+class _ChartEmpty extends StatelessWidget {
+  const _ChartEmpty({required this.message});
+
+  final String message;
 
   @override
-  bool shouldRepaint(covariant _LineChartPainter oldDelegate) => true;
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: ShipItType.bodySmall.copyWith(
+            color: context.palette.inkTertiary,
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _BarChartPainter extends CustomPainter {
@@ -786,12 +840,17 @@ class _BarChartPainter extends CustomPainter {
     required this.formatValue,
   });
 
-  final List<GroupedStatResponse> data;
+  final List<_BarDatum> data;
   final double maxValue;
   final Color color;
   final Color ruleColor;
   final Color labelColor;
   final String Function(double) formatValue;
+
+  /// Model ids are long (`claude-sonnet-4-20250514`) and a centred label has
+  /// no width budget, so they are clipped rather than allowed to run over
+  /// their neighbours.
+  static const _maxLabelChars = 14;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -800,8 +859,6 @@ class _BarChartPainter extends CustomPainter {
     const padding = 40.0;
     final chartWidth = size.width - 2 * padding;
     final chartHeight = size.height - 2 * padding;
-    final barWidth = chartWidth / data.length * 0.6;
-    final spacing = chartWidth / data.length * 0.4;
 
     // Draw axes
     final axisPaint = Paint()
@@ -825,8 +882,12 @@ class _BarChartPainter extends CustomPainter {
       fontSize: 10,
     );
 
+    final slot = chartWidth / data.length;
+    final barWidth = slot * 0.6;
+    final spacing = slot * 0.4;
+
     for (var i = 0; i < data.length; i++) {
-      final x = padding + i * (barWidth + spacing) + spacing / 2;
+      final x = padding + i * slot + spacing / 2;
       final barHeight = (data[i].value / maxValue) * chartHeight;
       final y = size.height - padding - barHeight;
 
@@ -836,7 +897,6 @@ class _BarChartPainter extends CustomPainter {
       );
       canvas.drawRRect(rect, barPaint);
 
-      // Draw value on top
       final valueText = TextPainter(
         text: TextSpan(text: formatValue(data[i].value), style: textStyle),
         textDirection: TextDirection.ltr,
@@ -849,9 +909,8 @@ class _BarChartPainter extends CustomPainter {
         ),
       );
 
-      // Draw key below
       final keyText = TextPainter(
-        text: TextSpan(text: data[i].key, style: textStyle),
+        text: TextSpan(text: _clip(data[i].label), style: textStyle),
         textDirection: TextDirection.ltr,
       )..layout();
       keyText.paint(
@@ -861,6 +920,10 @@ class _BarChartPainter extends CustomPainter {
     }
   }
 
+  static String _clip(String label) => label.length <= _maxLabelChars
+      ? label
+      : '${label.substring(0, _maxLabelChars - 1)}…';
+
   @override
   bool shouldRepaint(covariant _BarChartPainter oldDelegate) => true;
 }
@@ -868,6 +931,7 @@ class _BarChartPainter extends CustomPainter {
 class _MobileModelStats extends StatelessWidget {
   const _MobileModelStats({
     required this.stats,
+    required this.readError,
     required this.timeRange,
     required this.customRange,
     required this.groupBy,
@@ -878,6 +942,7 @@ class _MobileModelStats extends StatelessWidget {
   });
 
   final ModelStatsResponse stats;
+  final String? readError;
   final _TimeRange timeRange;
   final DateTimeRange? customRange;
   final _GroupBy groupBy;
@@ -906,12 +971,16 @@ class _MobileModelStats extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              _buildSubtitle(stats),
+              _buildSubtitle(stats, readError),
               style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary),
             ),
+            if (readError != null) ...[
+              const SizedBox(height: 14),
+              _ReadFailureBanner(message: readError!),
+            ],
             const SizedBox(height: 18),
             const ContentRule(strong: true),
-            _SummaryCards(stats: stats),
+            _SummaryCards(stats: stats, readError: readError),
             const SizedBox(height: 16),
             const ContentRule(),
             const SizedBox(height: 16),
@@ -927,21 +996,26 @@ class _MobileModelStats extends StatelessWidget {
             const SizedBox(height: 16),
             const ContentRule(),
             const SizedBox(height: 16),
-            _MobileChartsSection(stats: stats, groupBy: groupBy),
+            _MobileChartsSection(
+              stats: stats,
+              groupBy: groupBy,
+              readError: readError,
+            ),
+            const SizedBox(height: 16),
+            const ContentRule(),
+            const SizedBox(height: 16),
+            _NotMeasuredHerePanel(),
           ],
         ),
       ),
     );
   }
 
-  String _buildSubtitle(ModelStatsResponse stats) {
-    return '\$${stats.totalCostUsd.toStringAsFixed(2)} · ${_formatTokens(stats.totalTokens)} tokens · ${stats.totalExecutions} executions · ${(stats.successRate * 100).toStringAsFixed(1)}% success';
-  }
-
-  String _formatTokens(int tokens) {
-    if (tokens >= 1000000) return '${(tokens / 1000000).toStringAsFixed(1)}M';
-    if (tokens >= 1000) return '${(tokens / 1000).toStringAsFixed(1)}K';
-    return tokens.toString();
+  String _buildSubtitle(ModelStatsResponse stats, String? readError) {
+    if (readError != null) {
+      return 'These figures could not be re-read.';
+    }
+    return '\$${stats.totalCostUsd.toStringAsFixed(2)} · ${_formatTokens(stats.totalTokens)} tokens · ${stats.totalExecutions} ${stats.totalExecutions == 1 ? 'execution' : 'executions'} · ${_formatRate(stats.successRate)}';
   }
 }
 
@@ -1023,44 +1097,67 @@ class _MobileControlBar extends StatelessWidget {
 }
 
 class _MobileChartsSection extends StatelessWidget {
-  const _MobileChartsSection({required this.stats, required this.groupBy});
+  const _MobileChartsSection({
+    required this.stats,
+    required this.groupBy,
+    required this.readError,
+  });
 
   final ModelStatsResponse stats;
   final _GroupBy groupBy;
+  final String? readError;
 
   @override
   Widget build(BuildContext context) {
+    final failed = readError != null;
+    final dimension = groupBy.label.toLowerCase();
+    final groups = failed ? const <ModelStatsGroupResponse>[] : stats.byGroup;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _MobileChartCard(
-          title: 'Cost Over Time',
-          child: _CostOverTimeChart(points: stats.costOverTime),
-        ),
-        const SizedBox(height: 16),
-        _MobileChartCard(
-          title: 'Tokens by Provider',
-          child: _BarChart(data: stats.tokensByProvider),
-        ),
-        const SizedBox(height: 16),
-        _MobileChartCard(
-          title: 'Success Rate by Model',
-          child: _BarChart(
-            data: stats.successRateByModel,
-            formatValue: (v) => '${(v * 100).toStringAsFixed(1)}%',
+          title: 'Tokens by $dimension',
+          child: _GroupBarChart(
+            data: [
+              for (final g in groups)
+                _BarDatum(label: g.key, value: g.totalTokens.toDouble()),
+            ],
+            formatValue: (v) => _formatTokens(v.round()),
+            emptyLabel: failed
+                ? 'Token counts could not be read. Nothing is claimed here.'
+                : 'No executions in this range, so there are no $dimension '
+                      'tokens to show.',
           ),
         ),
         const SizedBox(height: 16),
         _MobileChartCard(
-          title: 'Escalation Frequency',
-          child: _EscalationChart(data: stats.escalationFrequency),
+          title: 'Success Rate by $dimension',
+          child: _GroupBarChart(
+            data: [
+              for (final g in groups)
+                if (g.successRate case final r?)
+                  _BarDatum(label: g.key, value: r),
+            ],
+            formatValue: (v) => '${(v * 100).toStringAsFixed(1)}%',
+            emptyLabel: failed
+                ? 'Success rates could not be read. Nothing is claimed here.'
+                : 'No $dimension with runs in this range.',
+          ),
         ),
         const SizedBox(height: 16),
         _MobileChartCard(
-          title: 'Cost by Task Type',
-          child: _BarChart(
-            data: stats.costByTaskType,
+          title: 'Cost by $dimension',
+          child: _GroupBarChart(
+            data: [
+              for (final g in groups)
+                _BarDatum(label: g.key, value: g.totalCostUsd),
+            ],
             formatValue: (v) => '\$${v.toStringAsFixed(2)}',
+            emptyLabel: failed
+                ? 'Costs could not be read. Nothing is claimed here.'
+                : 'No executions in this range, so there are no $dimension '
+                      'costs to show.',
           ),
         ),
       ],
