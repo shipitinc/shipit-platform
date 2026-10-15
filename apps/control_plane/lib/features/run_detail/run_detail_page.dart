@@ -12,6 +12,7 @@ import '../../shared/state_views.dart';
 import '../../shared/detail_sections.dart';
 import '../../shared/mobile_chrome.dart';
 import 'failed_work_item_action_panel.dart';
+import 'review_repair_affordance.dart';
 import 'run_detail_bloc.dart';
 import 'run_detail_event.dart';
 
@@ -182,6 +183,40 @@ class _RunDetailView extends StatelessWidget {
                       );
                     },
                   ),
+                // THE REPAIR, BELOW EVERYTHING ELSE ON THE PAGE.
+                //
+                // Not a peer of "Review and decide" and deliberately not beside
+                // it: that button asks the operator to approve work, this offers
+                // to set aside a decision that may never have been reviewed at
+                // all. One call site, below the two-column body, so it cannot
+                // drift into a second call site beside the approval CTA on one
+                // layout and not the other — and so it survives the repair it
+                // performs, which retires the very decision whose presence
+                // gates it.
+                //
+                // It contributes NO spacing of its own when it renders nothing:
+                // it returns `SizedBox.shrink()` on an item that is not parked,
+                // so a run with nothing to repair is laid out exactly as it was
+                // before this block existed. The run-detail goldens pin that.
+                ReviewRepairAffordance(
+                  decisionId: state.blockingHumanDecisionId,
+                  report: state.repairReport,
+                  stripOpen: state.isRepairStripOpen,
+                  submitting: state.isSubmittingRepair,
+                  onOpen: () => context.read<RunDetailBloc>().add(
+                    RunDetailReviewRepairStarted(),
+                  ),
+                  onSubmit: (reason, requestId) =>
+                      context.read<RunDetailBloc>().add(
+                        RunDetailReviewRepairSubmitted(
+                          reason: reason,
+                          requestId: requestId,
+                        ),
+                      ),
+                  onCancel: () => context.read<RunDetailBloc>().add(
+                    RunDetailReviewRepairCancelled(),
+                  ),
+                ),
                 const SizedBox(height: 40),
                 TechnicalDetails(
                   lines: [

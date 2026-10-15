@@ -254,3 +254,142 @@ String operatorActionAnnouncement(
   'invalidRequest' => blankReasonSentence,
   _ => failedSentence,
 };
+
+// ---------------------------------------------------------------------------
+// THE REVIEW REPAIR AFFORDANCE
+//
+// A separate surface from the failed-work panel above, and deliberately worded
+// in a different register: that panel offers a CHOICE between two legitimate
+// outcomes, while this offers a REPAIR for a state that should not exist. The
+// vocabulary never overlaps — nothing here says "try again", "start", "stop" or
+// "approve", because a repair is none of those and borrowing their words is how
+// a repair would come to read as a peer of approving work.
+// ---------------------------------------------------------------------------
+
+/// The micro-label above the repair offer.
+const String reviewRepairLabel = 'IF NOBODY REVIEWED THIS';
+
+/// The micro-label above a REFUSED repair.
+///
+/// Its own label, not [reviewRepairLabel]: the refusal sentence is very often
+/// the opposite of the offer's premise — "a reviewer really did return a
+/// verdict" — so printing "IF NOBODY REVIEWED THIS" above it would print the
+/// offer's conditional and its own refutation in the same eight words. The
+/// label says what happened instead of what was offered.
+const String reviewRepairRefusedLabel = 'NOTHING CHANGED';
+
+/// The heading. Conditional on purpose.
+///
+/// The screen does NOT know the decision was fabricated — only the server does,
+/// by re-deriving provenance from the reviewer's own result. So the offer is
+/// posed as a condition the operator may be looking at, never as a diagnosis
+/// the UI has made.
+const String reviewRepairHeading = 'This question may never have been reviewed';
+
+/// What repairing it actually does, in the plainest words available.
+const String reviewRepairExplanation =
+    'If no reviewer ever returned a verdict, the decision this work is waiting '
+    'on is a question nobody asked. Answering it would be answering that '
+    'question. You can set the decision aside instead, and put the work back in '
+    'the queue for a real review.';
+
+/// The guardrail, stated on the surface itself rather than in a design document.
+///
+/// This is the sentence that makes the control safe to offer at all: it is not
+/// asking the operator to trust the button, it is telling them what happens if
+/// the button is wrong.
+const String reviewRepairGuardrailSentence =
+    'It checks before it does anything. If a reviewer really did review this, '
+    'or you have already decided it, nothing changes and it tells you why.';
+
+/// The affordance. Warning-tinted outline, never a filled button: a filled
+/// button on this screen is the approval, and this must never read as its
+/// equal.
+const String reviewRepairActionLabel = 'Set aside and re-review';
+
+/// The confirm strip's heading. "Repairing", never "You chose" — the same
+/// reason as the label above.
+const String reviewRepairStripHeading = 'Repairing this decision';
+
+/// Names the consequence, on the surface, before anything is committed.
+///
+/// It also states the two things that do NOT happen, because those are the two
+/// an operator is most likely to fear and most likely to be wrong about: the
+/// old decision is not deleted, and the reason is recorded.
+const String reviewRepairConsequenceSentence =
+    'This voids the decision and re-queues the review. The old decision is '
+    'kept on record, and your reason is saved with your name.';
+
+/// The confirm button. It says what pressing it DOES, not what it is.
+const String reviewRepairConfirmLabel =
+    'Void the decision and re-queue the review';
+
+/// The headline after a repair that landed.
+const String reviewRepairedHeadline = 'Repaired — the decision was set aside';
+
+/// The three facts that must be readable AT A GLANCE afterwards.
+///
+/// A repair that leaves the screen looking like the work moved forward is a
+/// false state in miniature, so each of the three is stated separately rather
+/// than folded into one reassuring sentence: the decision was retired and not
+/// approved, the review is re-queued and not finished, and the prior decision
+/// survives as evidence rather than being deleted.
+const String reviewRepairedDecisionFact = 'Set aside, not approved';
+const String reviewRepairedReviewFact = 'Back in the queue, not finished';
+const String reviewRepairedRecordFact =
+    'The previous decision is kept on record as evidence';
+
+/// Their micro-labels, so the three facts read as a record and not as a list
+/// of reassurances.
+const String reviewRepairedDecisionLabel = 'THE DECISION';
+const String reviewRepairedReviewLabel = 'THE REVIEW';
+const String reviewRepairedRecordLabel = 'THE RECORD';
+
+/// The live-region sentence for a repair that landed.
+const String reviewRepairedSentence =
+    'Done. The decision was set aside and the review is back in the queue.';
+
+/// What the screen says about one resolved repair attempt.
+///
+/// ## WHY EVERY REFUSAL READS AS THE SERVER'S OWN SENTENCE
+///
+/// [detail] is the server's `detail`, carried whole. It is the only sentence
+/// that carries what the server re-derived from the reviewer's own result, and
+/// an operator told "something went wrong" instead of "a reviewer really did
+/// return a verdict" has learned nothing and will try again.
+///
+/// So there is deliberately NO per-outcome table here. Anything that is not
+/// `accepted` is a refusal, and every refusal — the three the affordance is most
+/// likely to hit (`reviewerProducedVerdict`, `alreadyDecided`, `notApplicable`)
+/// and every value the endpoint adds later — reads the server's sentence.
+/// A table would have been a place for a new outcome to land on a generic
+/// string, which is the failure this is shaped to make impossible.
+///
+/// The empty fallback is [failedSentence], and it exists only because the UI
+/// must never leave an empty region (AC-21). `detail` is non-nullable on the
+/// wire, so that branch is unreachable through the real client; it is here so a
+/// future caller cannot turn "nothing to say" into a blank space.
+String repairOutcomeSentence(String outcome, {String? detail}) {
+  if (outcome == 'accepted') return reviewRepairedSentence;
+  final server = detail?.trim();
+  return server == null || server.isEmpty ? failedSentence : server;
+}
+
+/// A live-region label for the confirm button.
+///
+/// The button names its consequence, so the screen-reader label does too, and
+/// it says plainly that the button is not yet live — "Add a reason first" is
+/// the truth while the reason field is empty, and offering the consequence as
+/// if it were available would be a lie about the state of the control.
+String repairConfirmSemanticsLabel({required bool ready}) => ready
+    ? reviewRepairConfirmLabel
+    : 'Add a reason first. $reviewRepairConsequenceSentence';
+
+/// The whole offer as one node for a screen reader.
+///
+/// Carried over from `_GateCard` and `FailedWorkItemActionPanel` for the same
+/// reason: without `explicitChildNodes` the button's tap action merges upward
+/// and the block reads as one tappable region with nothing to say what it does.
+const String reviewRepairSemanticsLabel =
+    'If nobody reviewed this question, you can set the decision aside and '
+    're-queue the review. It is a repair, not an approval.';

@@ -240,4 +240,18 @@ mixin UnimplementedRepositoryApis {
     required String requestedBy,
     required String reason,
   }) async => throw UnimplementedError();
+
+  // The review repair.
+  //
+  // `UnimplementedError` for the same reason as the two above, sharpened: a
+  // fake that returned a fabricated "nothing to repair" would make a screen
+  // that offers a repair on an unrepairable item look healthy and INERT. A
+  // test that reaches this must implement it.
+  Future<ReviewRepairResultResponse> repairUnreviewedReview({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+    String? decisionId,
+  }) async => throw UnimplementedError();
 }

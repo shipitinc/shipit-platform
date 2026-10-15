@@ -286,6 +286,19 @@ void main() {
   });
 
   group('Run detail', () {
+    // ## THESE TWO GOLDENS WERE RE-BASELINED, ONCE, DELIBERATELY
+    //
+    // `WI-9c11` is parked on `GD-5b1e`, so this fixture DOES supply a blocking
+    // decision — and the review-repair affordance is offered only where one
+    // exists. Adding it therefore moved pixels here, below the approval panel.
+    // That is the feature showing up, not drift, so the goldens were
+    // re-baselined by name (`--plain-name "matches the board"`) rather than by
+    // running the whole file, which would have rewritten every golden in it.
+    //
+    // Note the contrast with the group below, which deliberately did NOT move:
+    // no fixture there supplies a legal action. So "the goldens changed" and
+    // "the goldens did not change" are both on record, and neither was achieved
+    // by editing a fixture to suit the diff.
     for (final theme in {
       'light': ShipItTheme.light(),
       'dark': ShipItTheme.dark(),
