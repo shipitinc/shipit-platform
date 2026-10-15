@@ -191,6 +191,77 @@ _NoVerdictCause _absenceCauseFor(AgentExecution execution) {
   };
 }
 
+/// Supplies the five [DesignFinding] fields that are run identity rather than
+/// review content, and ONLY those, so a reviewer that reported what it
+/// observed does not lose the finding to a missing bookkeeping field.
+///
+/// ## WHY THIS EXISTS
+///
+/// [engineeringReviewInstruction] documents the fields a reviewer legitimately
+/// owns — severity, dimension, evidence, requiredCorrection, affectedSurface,
+/// category. It cannot document `findingId`, `revisionId`, `reviewExecutionId`,
+/// `createdAt` or `version`, because a reviewer has no way to know its own
+/// `reviewExecutionId` and inventing one would be fabricated provenance. But
+/// [DesignFinding.fromJson] requires all eleven, and a finding missing any of
+/// them used to be DROPPED with a log line — so the prompt could describe a
+/// finding the gate was guaranteed to throw away.
+///
+/// That is a silent loss of exactly the evidence an operator needs: the reason
+/// `recommendation` says what it says. It is fixed by completing the five from
+/// the run this gate is already holding, not by inventing them.
+///
+/// ## EVERY VALUE IS READ, NOT GUESSED
+///
+///  * `reviewExecutionId` — the reviewing execution, the same id already stamped
+///    on the enclosing [EngineeringReviewResult].
+///  * `revisionId` — the reviewer's own `workspace.startingRevision`, which is
+///    the commit the workload resolver handed it
+///    (`engineeringReviewWorkloadResolver`), i.e. the revision actually under
+///    review. An empty string when the execution carries no workspace, which
+///    still parses and is still visibly empty rather than wrong.
+///  * `createdAt` — the reviewer's result completion, the same instant the
+///    enclosing result uses.
+///  * `version` — `1`, matching the enclosing result's own literal.
+///  * `findingId` — derived from the execution id and the finding's position,
+///    so it is stable for a given run and distinguishes two findings from one
+///    review. It is an identifier for a row that exists, not a claim about
+///    anything.
+///  * `category` — [DesignFindingCategory.feasibility] when the reviewer gave
+///    none. That is the classification b1's own engineering-review fixtures use
+///    and it says only "this came out of an engineering review". The enum is a
+///    DESIGN-review taxonomy (accessibility, design_system_compliance, …) and
+///    an engineering reviewer has no honest choice among eight design
+///    categories, so asking it to pick one would be asking for a meaningless
+///    answer. A reviewer that supplies a real category keeps it.
+///
+/// ## AND NOTHING THE REVIEWER SAID IS TOUCHED
+///
+/// Only ABSENT keys are filled. A reviewer that supplies its own identity keeps
+/// it, and `resolvedByRevisionId` is never stamped — that field means something
+/// has been fixed, which only a later run may assert.
+Map<String, dynamic> _withReviewRunIdentity(
+  Map<String, dynamic> finding, {
+  required AgentExecution execution,
+  required String executionId,
+  required DateTime createdAt,
+  required int index,
+}) {
+  final completed = finding;
+  completed.putIfAbsent('findingId', () => '$executionId-f$index');
+  completed.putIfAbsent(
+    'revisionId',
+    () => execution.workspace.startingRevision ?? '',
+  );
+  completed.putIfAbsent('reviewExecutionId', () => executionId);
+  completed.putIfAbsent('createdAt', () => createdAt.toIso8601String());
+  completed.putIfAbsent('version', () => 1);
+  completed.putIfAbsent(
+    'category',
+    () => DesignFindingCategory.feasibility.wire,
+  );
+  return completed;
+}
+
 /// Reads the reviewer's verdict, or says why there is none.
 ///
 /// Everything this returns that is not an [EngineeringReviewResult] is an
@@ -293,10 +364,21 @@ _VerdictRead _readReviewVerdict({
   try {
     final f = structured['findings'];
     if (f is List) {
-      for (final x in f) {
+      for (var i = 0; i < f.length; i++) {
+        final x = f[i];
         if (x is Map) {
           try {
-            findings.add(DesignFinding.fromJson(Map<String, dynamic>.from(x)));
+            findings.add(
+              DesignFinding.fromJson(
+                _withReviewRunIdentity(
+                  Map<String, dynamic>.from(x),
+                  execution: execution,
+                  executionId: executionId,
+                  createdAt: reviewerResult.completedAt,
+                  index: i,
+                ),
+              ),
+            );
           } on Object catch (e) {
             logger?.call('engineering-review-gate-finding-unparseable', {
               'jobId': job.jobId,
