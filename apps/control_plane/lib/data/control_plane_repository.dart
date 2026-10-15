@@ -221,6 +221,7 @@ class ControlPlaneRepository {
               toState: t.toState,
               transitionedAt: t.transitionedAt,
               reason: t.reason,
+              outcome: t.outcome,
             ),
           )
           .toList(),
@@ -1812,6 +1813,7 @@ class TransitionResponse {
     required this.toState,
     required this.transitionedAt,
     this.reason,
+    this.outcome,
   });
 
   final String transitionId;
@@ -1820,6 +1822,15 @@ class TransitionResponse {
   final String toState;
   final DateTime transitionedAt;
   final String? reason;
+
+  /// The durable `work_item_transition.outcome` wire value, verbatim.
+  ///
+  /// `'accepted'` means this row records that the item MOVED. `'rejected'` — or
+  /// null, which is not evidence of a move — records an ATTEMPT the policy
+  /// refused. This field is why the timeline can tell those apart: without it
+  /// the screen rendered 236 refused attempts on QA as 236 transitions that
+  /// never happened. See `operator_action_copy.dart` `timelineMessageFor`.
+  final String? outcome;
 }
 
 class DecisionDetailResponse {

@@ -214,6 +214,10 @@ void main() {
             fromState: 'design_approved',
             toState: 'agent_executing',
             transitionedAt: DateTime(2026, 1, 1),
+            // The durable record always carries an outcome; without it the
+            // client cannot tell a move from a refused attempt and must not
+            // assume one.
+            outcome: 'accepted',
           ),
           TransitionResponse(
             transitionId: 't-002',
@@ -221,6 +225,7 @@ void main() {
             fromState: 'review_in_progress',
             toState: 'waiting_for_human_decision',
             transitionedAt: DateTime(2026, 1, 1),
+            outcome: 'accepted',
           ),
         ],
       );
@@ -263,6 +268,7 @@ void main() {
               fromState: 'pending',
               toState: 'running',
               transitionedAt: DateTime(2026, 1, 1),
+              outcome: 'accepted',
             ),
           ],
         );

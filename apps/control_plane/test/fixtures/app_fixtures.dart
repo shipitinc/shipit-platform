@@ -363,11 +363,26 @@ DecisionResponse makeDecision({
   );
 }
 
+/// A transition-history row.
+///
+/// ## WHY `outcome` IS SET HERE AND NOT LEFT ABSENT
+///
+/// `work_item_transition` records ATTEMPTS: the engine appends a row and
+/// changes nothing when the policy refuses an edge. The real server always
+/// carries `TransitionOutcome`, so a fixture that omits it models a row the
+/// platform cannot produce — and the client deliberately treats a MISSING
+/// outcome as "not evidence that the item moved" rather than defaulting it to
+/// `accepted`, because that default is exactly what rendered 236 refused
+/// attempts as 236 transitions that never happened.
+///
+/// So the default here is `'accepted'`, which is what these fixtures have
+/// always meant, and a test that needs a refusal passes `outcome: 'rejected'`.
 TransitionResponse makeTransition({
   required String from,
   required String to,
   DateTime? at,
   String? reason,
+  String outcome = 'accepted',
 }) {
   return TransitionResponse(
     transitionId: 't-${from}_$to',
@@ -376,6 +391,7 @@ TransitionResponse makeTransition({
     toState: to,
     transitionedAt: at ?? DateTime(2026, 9, 15, 10, 0),
     reason: reason,
+    outcome: outcome,
   );
 }
 

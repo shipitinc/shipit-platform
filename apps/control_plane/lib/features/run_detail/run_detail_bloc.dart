@@ -99,10 +99,23 @@ class RunDetailBloc extends Bloc<RunDetailEvent, RunDetailState> {
               .map(
                 (t) => RunEvent(
                   type: t.toState,
-                  message: plainTransitionMessage(t.fromState, t.toState),
+                  // NOT `plainTransitionMessage(from, to)` for every row.
+                  //
+                  // `work_item_transition` is an ATTEMPT log: the engine
+                  // appends a row and changes nothing when the policy refuses
+                  // an edge. Rendering every row as the move is what put
+                  // "Independent review started" on screen 236 times for a
+                  // work item where no review ever started. The wire now
+                  // carries `outcome`, so the two are told apart here.
+                  message: timelineMessageFor(
+                    from: t.fromState,
+                    to: t.toState,
+                    outcome: t.outcome,
+                  ),
                   raw: rawTransitionPair(t.fromState, t.toState),
                   timestamp: t.transitionedAt,
                   reason: t.reason,
+                  outcome: t.outcome,
                 ),
               )
               .toList(),
@@ -544,6 +557,7 @@ class RunEvent {
     required this.raw,
     required this.timestamp,
     this.reason,
+    this.outcome,
   });
 
   final String type;
@@ -559,12 +573,33 @@ class RunEvent {
   /// details" — but it is no longer thrown away before anything can read it.
   final String? reason;
 
+  /// The durable `work_item_transition.outcome` wire value, verbatim: this row
+  /// records that the item MOVED. Null or `rejected` records an ATTEMPT the
+  /// policy refused, which is not a move.
+  ///
+  /// See [timelineMessageFor] and `transition_copy.dart`. Null is deliberately
+  /// NOT treated as "accepted": that inference is exactly what produced a
+  /// timeline asserting 236 transitions that never happened.
+  final String? outcome;
+
+  /// Whether the platform REFUSED this transition and the item never went to
+  /// [type].
+  ///
+  /// Null is refused too, and that is the conservative direction: an attempt
+  /// whose outcome cannot be read is not evidence that the item moved.
+  bool get wasRefused => outcome != 'accepted';
+
   /// True when this entry handed control to the operator. The design tints
   /// these rows amber.
+  ///
+  /// A refused row NEVER tints, whatever [type] says — it is not a state the
+  /// item reached, so tinting it for handing over control would claim a
+  /// handover that did not happen.
   bool get needsOperator =>
-      type == 'waiting_for_human_decision' ||
-      type == 'design_in_review' ||
-      type == 'agent_failed' ||
-      type == 'qa_failed' ||
-      type == 'deployment_failed';
+      !wasRefused &&
+      (type == 'waiting_for_human_decision' ||
+          type == 'design_in_review' ||
+          type == 'agent_failed' ||
+          type == 'qa_failed' ||
+          type == 'deployment_failed');
 }

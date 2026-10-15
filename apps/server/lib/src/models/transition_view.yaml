@@ -1,3 +1,21 @@
+### One row of a work item's transition history — and a row is NOT a move.
+###
+### `work_item_transition` is an ATTEMPT log. `DurableWorkflowEngine.transition`
+### appends a row and changes nothing when the policy refuses the edge, so
+### `outcome` distinguishes "this item moved here" from "the platform tried to
+### move it here and was refused". Without it, a client cannot tell the two apart
+### and renders both as the move.
+###
+### That is not cosmetic. On QA one work item carried 236 `outcome = 'rejected'`
+### rows for `agent_completed -> review_in_progress` — a refused attempt caused
+### by a role-blind producer lookup — and the timeline rendered all of them as
+### "Independent review started". The screen asserted a transition that never
+### happened, 236 times, to an operator reading it. See
+### `docs/engineering/learning/236-transition-rows-that-moved-nothing.md` §7.
+###
+### NULLABLE deliberately, not defaulted. A client MUST NOT treat a missing
+### `outcome` as "accepted": that is the inference that produced the false state.
+### See `plainTransitionMessage` and `transition_copy.dart`.
 class: TransitionView
 fields:
   transitionId: String
@@ -6,3 +24,9 @@ fields:
   toState: String
   transitionedAt: DateTime
   reason: String?
+  ### Durable `TransitionOutcome` wire value: 'accepted' | 'rejected'.
+  ###
+  ### Null when the source could not report one. The UI renders such a row as
+  ### an attempt it cannot classify, never as a move — an unknown outcome is
+  ### not evidence that the item moved.
+  outcome: String?

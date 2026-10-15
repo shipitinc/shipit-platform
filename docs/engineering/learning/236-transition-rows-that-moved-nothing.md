@@ -4,8 +4,11 @@
 **Date**: 2026-10-15
 **HEAD**: `fix/review-item-stall`, base `0c51755`
 **Category**: `CONTRADICTION` + `PROJECT_FACT` — see §1 and §7.
-**Status**: PARTIALLY CLOSED. The churn is stopped and reported. The root cause is
-in `packages/execution_coordinator/**`, which this lane does not own.
+**Status**: CLOSED. Root cause fixed in `packages/execution_coordinator`
+(`producer_execution.dart`); the stall now reaches a human
+(`apps/server/lib/src/triage/stalled_work_item_gate.dart`); the refused-attempt
+rendering is fixed (§7). Follow-up correction: `ce20f88` → the HEAD recorded in
+the correction report.
 
 ---
 
@@ -120,12 +123,58 @@ The scheduler only ever sees the first name, so it applies the first answer
 forever. **A single exception type carrying two causes is why a correct breaker
 could not stop a correct loop.**
 
-### Not fixed here, and why
+### Fixed, and the rule it produced
 
-`execution_coordinator.dart` is outside this lane's ownership. The one-line
-correctness fix is to resolve the IMPLEMENTER's execution for that context (by
-role, or by `item.metadata['producerActorId']`, which the same file's sibling
-already writes) rather than the newest row of any role.
+`_reviewEntryTransitionContext` no longer calls
+`latestExecutionForWorkItem`. It resolves **the execution that produced the
+item** through `resolveProducerExecution`
+(`packages/execution_coordinator/lib/src/coordinator/producer_execution.dart`),
+which is now the single place in the platform that answers "what produced this
+work item":
+
+1. **`item.metadata['producerActorId']`** — primary. It names an execution id
+   exactly, and `_completeSuccess` stamps it in the SAME `transition()` call
+   that moves the item to `agent_completed`, so the stamp and the state are one
+   durable fact. It is also a single primary-key read, and it is the identifier
+   `producedCommitFor` already treats as authoritative.
+2. **the newest `AgentRole.implementer` execution** — fallback, when the stamp
+   is absent. `producerActorId` was added to this repository *after* the first
+   `agent_completed` items were already durable; failing closed on a missing
+   stamp would refuse a perfectly good review for a legacy item and **trade one
+   self-lock for another**. `AgentExecution.role` is a durable column, so this is
+   a determinate read, not a guess.
+3. **never** "the newest execution of any role". That is the defect.
+
+The guarantee, asserted in both directions:
+
+> An item whose producer execution completed successfully can enter review
+> **regardless of what any reviewer execution did, in any order, any number of
+> times** — and an item whose producer did **not** complete is still refused.
+
+`producer_evidence_entry_test.dart` runs the real coordinator end to end with a
+failed reviewer present, and `producer_execution_resolution_test.dart` contains
+a non-vacuity check: it asserts the OLD role-blind lookup really does return
+the failed reviewer on the measured QA rows, so the ALLOW tests fail against
+the old code rather than passing vacuously.
+
+### The lesson that generalises
+
+**A "latest X" lookup is only correct until X stops being the latest.** The
+lookup was right for the first review of an item and wrong for every one after,
+and no test caught it because every existing test ran on a fresh item. The
+defect is not that the lookup was role-blind; it is that **the thing being
+looked up and the thing the guard needed were different things**, and nothing
+in the type system said so.
+
+### STILL OPEN, and in a path this lane does not own
+
+`apps/server/lib/src/review/engineering_review_gate.dart:700` performs the same
+role-blind `latestExecutionForWorkItem` lookup to supply the identical
+`agentResultValid()` evidence for `engineeringReviewMissingArtifact`. That path
+has the same defect and has NOT been fixed: `apps/server/lib/src/review/**` is
+PROHIBITED to this lane. It is one call away from being fixed by passing the
+already-resolved producer result, and the shared function now exists for
+exactly that. **Escalated as a finding, not worked around.**
 
 ---
 
@@ -199,71 +248,142 @@ lane.
 
 ---
 
-## 6. The operator surface is NOT delivered, and the reason is structural
+## 6. The operator surface is DELIVERED, and it needed no new endpoint
 
-The brief asked for the conclusion to reach the operator. It does not, and the
-blocker is not the UI:
+The brief asked for the conclusion to reach the operator. At `ce20f88` it did
+not, and the blocker was structural rather than a matter of effort — the
+`review_repair` lane's pattern needs a `models/*.yaml` to declare a protocol
+model, and `apps/server/lib/src/models/**` was outside `OWNED_PATHS`:
 
 | needed | path | status |
 |---|---|---|
-| tick → operator channel | `apps/server/lib/server.dart` | **outside OWNED_PATHS** |
-| tick drain | `apps/server/lib/src/triage/lane_i_tick_hook.dart` | **outside OWNED_PATHS** (`services/**` is owned; `triage/` is not) |
-| new endpoint method | needs `serverpod generate` | `apps/server/lib/src/generated/**` is **READ_ONLY** |
-| control-plane call | `packages/control_plane_client/**` | **outside OWNED_PATHS** |
-| new view field | `apps/server/lib/src/models/*.yaml` + regen | **outside OWNED_PATHS** |
+| tick → operator channel | `apps/server/lib/server.dart` | **done** — all three lanes' `stalled` lists are drained |
+| drain | `apps/server/lib/src/triage/stalled_work_item_gate.dart` | **done** (new) |
+| new endpoint method | — | **not needed**, see below |
+| control-plane call | `packages/control_plane_client/**` | **not needed**, see below |
 
-Adding an unwired endpoint method would be actively worse than adding none: the
-repository already documents that class — *a generated client can reference a file
-it never emitted*, `a-generated-client-can-reference-a-file-it-never-emitted.md` —
-where `dart analyze` is green and the method is unreachable from every client.
+**The stall reuses a decision the platform already knows how to show.** It raises
+a blocking `engineeringReview` `HumanDecision`, which the existing decision
+screen already renders and submits through the existing `resolveDecision`
+endpoint. A new endpoint would have been a second way to reach the server from
+the feature layer, which is the same class of defect as
+`a-generated-client-can-reference-a-file-it-never-emitted.md`.
 
-The control-plane **could** render a stall panel today only by inferring one from
-transition rows the client already fetches — and `TransitionView` carries no
-`outcome`, so it cannot tell a refusal from a move. Inferring would be guessing,
-which `N8` forbids.
+Two facts forced the shape rather than preference:
 
-**What is delivered instead** is `SchedulerTickResult.stalled`: a durable,
-structured, operator-facing statement on a channel the composition root can act
-on, carrying the work item, its state, the deferrals spent and a sentence saying
-a human is needed. It is the input an affordance needs; the wiring is one lane
-away.
+* `agentCompleted` has **no** edge to `waitingForHumanDecision`. The only route
+  runs through `reviewInProgress`, and that edge carries
+  `blockingHumanDecisionPendingOfType([engineeringReview])`
+  (`work_item_transitions.dart:317`). The state machine names the decision type
+  for you; choosing `escalation` here would have meant adding an edge, which is
+  a state-machine change and not a wiring change.
+* **`engineeringReview` + `rework` routes to `implementationReady`**, the
+  implementation lane's entry state. That IS the operator retry the brief asked
+  for: the work runs again, a fresh producer runs, and the item reaches
+  `agent_completed` with a fresh `producerActorId`.
 
-**Unblocks by:** opening `apps/server/lib/server.dart` and
-`apps/server/lib/src/triage/lane_i_tick_hook.dart`, plus `serverpod generate`
-authority. Both were needed for `review_repair` too.
+**Recovery needs no new control and clears no flag.** `Scheduler` lifts a stall
+when `WorkItem.version` moves past the version recorded when it fired, and every
+resolution is a real transition — so the recovery is a write, not a reset.
+
+The one interaction worth naming: `review_repair`'s
+`repairUnreviewedReview` will classify this decision as repairable (it has no
+reviewer output, which is the class repair targets), so the repair affordance
+offers a *second* correct recovery on the same item. Suppressing it would mean
+editing `apps/server/lib/src/review/**`, which is PROHIBITED here.
+
+**The stall drain shares the producer resolution with the coordinator.** It has
+to park the item through the same guarded edge, so it calls
+`resolveProducerExecution` rather than re-deriving it. That is the point: two
+call sites that each re-derive "what produced this item" is how they come to
+disagree, and §2 is what that looks like.
 
 ---
 
-## 7. A second false state found beside this one
+## 7. A second false state found beside this one — NOW FIXED
 
-`apps/control_plane` renders every transition row through
+`apps/control_plane` rendered every transition row through
 `plainTransitionMessage(from, to)` → `('agent_completed','review_in_progress') =>
 'Independent review started'`.
 
 For these items that sentence was rendered **236 times, and no review ever
-started.** The timeline asserts the opposite of the durable record because
-`TransitionView` carries no `outcome`. Same class, same screen, one layer up.
+started.** The timeline asserted the opposite of the durable record because
+`TransitionView` carried no `outcome`. Same class, same screen, one layer up.
 
-Not fixed here (`apps/control_plane/lib/shared/transition_copy.dart` and the
-`TransitionView` model are outside OWNED_PATHS).
+`TransitionView` now carries `outcome` (nullable, verbatim from
+`work_item_transition.outcome`), and `timelineMessageFor`
+(`operator_action_copy.dart`) tells the two apart:
+
+* `accepted` → the move copy, **byte-identical to what it always was**;
+* `rejected` → the same copy behind a `Not applied — ` prefix;
+* **null or unrecognised → treated as refused**, never as a move.
+
+### WHY THE NULL CASE IS THE INTERESTING ONE
+
+`outcome` is nullable, and defaulting null to `accepted` would reintroduce the
+original defect the instant a client met a row without the field. An attempt
+whose outcome cannot be read is **not evidence that the item moved**, so it is
+worded as an attempt. The cost is that the fixtures had to be made faithful:
+`makeTransition` now sets `outcome: 'accepted'` by default, because that is what
+those fixtures always meant. No golden image moved.
+
+### WHY A REFUSED ROW IS RENDERED RATHER THAN DROPPED
+
+Dropping `outcome != 'accepted'` rows was considered and rejected. 236 refused
+attempts are the single most diagnostic fact on that screen — it is what
+identified a spin loop nobody had noticed — so hiding them would replace a false
+state ("236 transitions happened") with a different one ("nothing happened") and
+destroy the only trace the operator has. What changes is the WORDING, so "review
+started" and "a review was tried and was refused" are distinguishable.
+
+A refused row also never tints as handing control to the operator, whatever
+state it names: it did not hand over.
 
 ---
 
 ## 8. Discovery records
 
-- `PROJECT_FACT` — the review entry edge is permanently unsatisfiable for any work
-  item that already has a reviewer execution. Persisted here at automatic authority.
-- `CONTRADICTION` — a reviewer's own execution shadows the implementer's result in
-  the only lookup the review entry transition uses. Reconciles §2 with
-  `_reviewEntryTransitionContext`'s stated intent; escalated because the fix is in
-  `execution_coordinator`.
+- `PROJECT_FACT` — the review entry edge is permanently unsatisfiable for any
+  work item that already has a reviewer execution. **RESOLVED** at the corrected
+  HEAD; the resolution rule is `resolveProducerExecution`.
+- `CONTRADICTION` — a reviewer's own execution shadowed the implementer's result
+  in the only lookup the review entry transition used. **RESOLVED**, and
+  reconciled in §2.
+- `CONTRADICTION` (NEW, **NOT RESOLVED**) — the same role-blind lookup still
+  exists at `apps/server/lib/src/review/engineering_review_gate.dart:700`.
+  Same defect, prohibited path, reported rather than worked around.
+- `ARCHITECTURE_DISCOVERY` (NEW, human decision) — **one rule for "what produced
+  this work item" should be shared, not re-derived per call site.** There are
+  now three places that need it (`execution_coordinator`, the stall gate, and the
+  review gate above). Two of them share one function; the third cannot be
+  reached. If a fourth appears, this is an architecture decision, not a
+  convenience refactor.
 - `WORKFLOW_IMPROVEMENT` (needs independent review) — an exception type carrying
   two causes with opposite correct answers is a scheduler hazard; the scheduler
   cannot distinguish them and applies one rule to both.
+  `WorkItemSupersededException` is still that type: it still says "the item
+  moved" on a path where nothing moved, and the scheduler still cannot tell.
+  The root-cause fix means the common path no longer produces it, but the
+  conflation itself is untouched.
 - `WORKFLOW_IMPROVEMENT` (needs independent review) — every query over
   `work_item_transition` that asks "what happened" must filter `outcome`.
+- `WORKFLOW_IMPROVEMENT` (NEW, needs independent review) — **a "latest X" lookup
+  is only correct until X stops being the latest.** No test caught §2 because
+  every test ran on a fresh item. Any fixture for a "most recent" lookup should
+  include a *later row of a different kind*.
 - `PROJECT_FACT` — `test/retry_return_to_entry_state_test.dart` is unformatted at
-  `0c51755` (`dart format` exits 1). Pre-existing, untouched here.
-- `RUNTIME_DISCOVERY` — `apps/server/test/onboarding_test.dart` exits 1 with no
-  test output at `0c51755` and at this HEAD. It kills any whole-suite run of
-  `apps/server/test/`; run the other 32 files by name.
+  `0c51755` (`dart format` exits 1). Pre-existing, untouched. It is the ONLY file
+  that makes `packages/scheduler`'s `dart format --set-exit-if-changed` fail.
+- `RUNTIME_DISCOVERY` — `apps/server/test/onboarding_test.dart` produces no test
+  output at all (it prints only `loading`), at `0c51755` and at the corrected
+  HEAD. It kills any whole-suite run of `apps/server/test/`. Run the other 33
+  files by name — all 33 are green at the corrected HEAD.
+- `RUNTIME_DISCOVERY` (NEW) — **`docker/compose.test.yaml`'s
+  `postgres_integration` interpolates `SERVERPOD_DATABASE_PASSWORD` at `up`
+  time.** Exporting it *after* `compose up` — which the obvious hand-rolled
+  replica of `make test-integration` does, because the Makefile checks it in a
+  separate earlier step — yields `container ... exited (1)` with no message. The
+  published port is a *second*, differently-named variable
+  (`SHIPIT_TEST_DB_PORT`), so overriding the port for `dart test` without
+  exporting it to compose publishes 9199 and connects to nothing. Both must be
+  exported before `up`.

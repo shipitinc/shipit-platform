@@ -50,6 +50,18 @@ class WorkflowEndpoints extends Endpoint {
       final history = await service.readTransitionHistory(workItemId);
       return WorkItemDetailView(
         workItem: UiViewMappers.workItemView(item),
+        // `outcome` is carried verbatim, and it is the field that makes this
+        // list honest. `work_item_transition` is an ATTEMPT log: the engine
+        // appends a row and changes NOTHING when the policy refuses an edge.
+        // Without this the client cannot tell a move from a refusal, and it
+        // rendered 236 refused `agent_completed -> review_in_progress` attempts
+        // on QA as "Independent review started" — asserting a transition that
+        // never happened, to an operator, 236 times.
+        //
+        // `e.outcome.wire` and never a literal: the wire values are
+        // `TransitionOutcome.accepted` / `.rejected`, and a hand-written string
+        // here is how the two states get spelled differently on the two sides
+        // of the wire.
         transitionHistory: history
             .map(
               (e) => TransitionView(
@@ -59,6 +71,7 @@ class WorkflowEndpoints extends Endpoint {
                 toState: e.toState.wire,
                 transitionedAt: e.occurredAt,
                 reason: e.reason,
+                outcome: e.outcome.wire,
               ),
             )
             .toList(),

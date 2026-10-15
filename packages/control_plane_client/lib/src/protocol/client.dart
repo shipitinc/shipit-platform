@@ -1288,12 +1288,13 @@ class EndpointWorkItemActionEndpoints extends _i1.EndpointRef {
   ///
   /// ## WHAT IT IS PROVABLY SCOPED TO
   ///
-  /// [readReviewVerdictProvenance] decides, and it decides from the REVIEWER'S
-  /// OWN durable result. The decision's `metadata` is read only for the
+  /// [readReviewVerdictProvenance] decides repairability, and it decides from the
+  /// REVIEWER'S OWN durable result. The decision's `metadata` is read only for the
   /// execution id it names; its `reviewVerdict` is never taken as evidence that
   /// anyone reviewed anything. Only [ReviewAssessment.noReviewerOutput] — no
   /// result at all, or a result with neither a structured payload nor a
-  /// summary — reaches the write.
+  /// summary — reaches the write, and only for a decision that IS an
+  /// `engineering_review`.
   ///
   /// ## WHAT IT REFUSES, AND WHY EACH REFUSAL IS THE SAFE SIDE
   ///
@@ -1314,6 +1315,22 @@ class EndpointWorkItemActionEndpoints extends _i1.EndpointRef {
   ///    the reviewer's prose on the execution record.
   ///  * [ReviewAssessment.unreadable] → `reviewerOutputUnreadable`. "I could not
   ///    check" is not "there was nothing there".
+  ///  * a decision that is not an `engineering_review` at all →
+  ///    `decisionTypeNotReviewable`. Said TWICE on purpose, by two independent
+  ///    gates — step (5) reads `decisionType` off the row, and step (6) asks
+  ///    [readReviewVerdictProvenance], which classifies the same fact as
+  ///    [ReviewAssessment.decisionTypeNotReviewable] — because this is the one
+  ///    method here that can void a PENDING human decision and it must not fail
+  ///    OPEN. Until 2026-10-15 both gates answered "no reviewer output", the only
+  ///    repairable class, for all eighteen non-review types: a pending
+  ///    `deployment_approval` or `destructive_migration_approval` was retired as
+  ///    "unreviewed" and its work item re-queued. Latent in production (both
+  ///    `requestHumanDecision` callers raise `engineeringReview`, and every other
+  ///    blocking type uses a synthetic scope that is not a `work_item` row), but
+  ///    the affordance's documentation promised a refusal that did not exist, and
+  ///    a documented safety property that is false is worse than an undocumented
+  ///    one because it is relied on. See
+  ///    [ReviewAssessment.decisionTypeNotReviewable].
   ///  * a decision a human has already RESOLVED → `alreadyDecided`. Someone
   ///    answered the question. Overwriting that answer is not a repair, it is
   ///    discarding a real human decision — and QA has one on record: an operator
