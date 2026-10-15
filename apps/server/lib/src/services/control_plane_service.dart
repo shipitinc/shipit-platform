@@ -42,6 +42,8 @@ import '../persistence/postgres_qa_contract_store.dart';
 import '../persistence/postgres_worker_registration_store.dart';
 import '../persistence/postgres_worker_store.dart';
 import '../persistence/postgres_workflow_store.dart';
+import '../review/engineering_review_gate.dart'
+    show verdictAbsentChoiceIsResolvable, verdictAbsentResolvableChoices;
 import '../triage/lane_a_defect_triage_work_item.dart';
 import '../triage/work_entry.dart';
 import 'structured_logger.dart';
@@ -1863,7 +1865,26 @@ class ControlPlaneService {
   /// - the resolution is persisted inside the same transaction that moves
   ///   the work item,
   /// - a duplicate resolution is an idempotent replay, never a second
-  ///   transition.
+  /// transition.
+  ///
+  /// ## AND A VERDICT-LESS DECISION CANNOT BE RESOLVED AS A VERDICT
+  ///
+  /// `WorkflowEndpoints.resolveDecision` takes a `choice` off the wire and hands
+  /// it straight to `HumanDecisionChoice.fromWire` — it never checks the choice
+  /// against the decision's own `options`, because that is the shape every
+  /// lifecycle gate in this platform already uses. So "the screen does not offer
+  /// it" is a property of the screen and not of the record, and a request
+  /// crafted against this method would answer `approve` on a decision raised
+  /// precisely because NO reviewer approved anything.
+  ///
+  /// [verdictAbsentChoiceIsResolvable] closes that for exactly one decision type
+  /// and no other: a decision carrying `reviewVerdictAbsentMetadataKey`, which is
+  /// the marker `raiseVerdictAbsentDecision` writes. Scoped deliberately — "every
+  /// choice must be one of the decision's options" is a change to every
+  /// lifecycle gate's behaviour and is not what decision
+  /// `c495e02f-5c5d-4b45-8124-42ad0e90d6d4` asked for. What it asked for is that a
+  /// decision carrying no verdict cannot be turned into one, and that is
+  /// enforced here, before the engine writes anything.
   Future<WorkItem> resolveHumanDecision({
     required String decisionId,
     required HumanDecisionChoice choice,
@@ -1871,6 +1892,32 @@ class ControlPlaneService {
     required String rationale,
     required DecisionSignature signature,
   }) async {
+    final decision = await workflowStore.readHumanDecision(decisionId);
+    if (!verdictAbsentChoiceIsResolvable(decision, choice)) {
+      // Nothing is written: no resolution, no transition, no audit row. The
+      // refusal names the choices that ARE open, because an operator who cannot
+      // pick one needs to be told what they can.
+      logger.warning('workflow.decision_choice_refused', {
+        'decisionId': decisionId,
+        'workItemId': decision.workItemId,
+        'choice': choice.wire,
+        'verdictRecorded': false,
+        'allowedChoices': verdictAbsentResolvableChoices
+            .map((c) => c.wire)
+            .toList(),
+        'reason':
+            'this decision records that NO reviewer returned a verdict, so it '
+            'cannot be resolved with a choice that asserts one. Nothing was '
+            'written',
+      });
+      throw StateError(
+        'decision $decisionId records no reviewer verdict, so it cannot be '
+        'resolved as "${choice.wire}". Resolve it with '
+        '${verdictAbsentResolvableChoices.map((c) => c.wire).join(' or ')}. '
+        'Nothing was written.',
+      );
+    }
+
     final workItem = await workflowEngine.resolveHumanDecision(
       decisionId: decisionId,
       choice: choice,

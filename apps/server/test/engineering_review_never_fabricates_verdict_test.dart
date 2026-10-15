@@ -8,7 +8,14 @@ import 'package:control_plane_server/src/review/engineering_review_gate.dart';
 
 /// ## WHAT THIS FILE EXISTS TO PROVE
 ///
-/// **A reviewer that produced no verdict must never become a human decision.**
+/// **No decision ever asserts a verdict that was not parsed.**
+///
+/// That is the invariant as it stands after decision
+/// `c495e02f-5c5d-4b45-8124-42ad0e90d6d4` (ARCHITECTURE, RESOLVED, option A).
+/// It replaced a deliberately stricter one — *"a reviewer that produced no
+/// verdict must never become a human decision"* — which is quoted, with its
+/// reason and its decision id, at each site it was amended and in the file
+/// header below this one. Read that before changing anything here.
 ///
 /// Three work items sat at `waitingForHumanDecision` on 2026-10-14 reading
 /// *"Engineering review requires changes. Approve, reject, or request rework?"*
@@ -32,22 +39,73 @@ import 'package:control_plane_server/src/review/engineering_review_gate.dart';
 ///
 /// ## WHAT "RETRYABLE" IS ASSERTED TO MEAN HERE
 ///
-/// `reviewInProgress`, with no `blockingHumanDecisionId`. Not "left alone" in
-/// the abstract: a decision is the item's only one-way exit out of review, so
-/// the absence of one is the assertion that the retry path still exists. The
-/// gate does not create, reset or duplicate a retry — the reviewer job's own
-/// bounded `maxAttempts` is the mechanism, and `a reviewer job whose budget is
-/// untouched by a no-verdict gate` asserts that contract holds.
+/// `reviewInProgress`, with no `blockingHumanDecisionId`. Not "left alone" in the
+/// abstract: a decision is the item's only one-way exit out of review, so the
+/// absence of one is the assertion that the retry path still exists. The gate
+/// does not create, reset or duplicate a retry — the reviewer job's own bounded
+/// `maxAttempts` is the mechanism, and `a reviewer job whose budget is untouched
+/// by a no-verdict gate` asserts that contract holds.
+///
+/// ## AMENDED 2026-10-15 — READ THIS BEFORE RESTORING EITHER ZERO-ROW ASSERTION
+///
+/// Two tests in this file asserted **zero** `HumanDecision` rows for absences
+/// that decision `c495e02f-5c5d-4b45-8124-42ad0e90d6d4` (ARCHITECTURE, RESOLVED,
+/// option A) has since made operator-actionable. They are AMENDED, not deleted,
+/// and each carries its reason inline. The three sibling tests that were NOT
+/// amended — `SITE 3: no reviewer result at all raises NOTHING`,
+/// `a no-verdict gate leaves the reviewer job's bounded budget untouched` and
+/// `the item is left RETRYABLE: reviewInProgress, no blocking decision` — still
+/// assert zero rows, byte-identical, because a review that did not finish still
+/// has `maxAttempts` owed to it.
+///
+/// | | before | after |
+/// |---|---|---|
+/// | invariant | "**a reviewer that produced no verdict must never become a human decision**" | "**no decision asserts a verdict that was not parsed**" |
+/// | strength | also forbade a decision that says *no verdict was produced* | permits exactly that one decision, and only that one |
+/// | why | "no decision exists without a parsed verdict" | a decision that STATES THE ABSENCE preserves the property that protects the reader, and closes a silent park: four reviews completed against real commits on 2026-10-15, produced real findings in prose, recorded `{}`, and left four work items at `reviewIn_progress` with nothing on any operator screen. The job SUCCEEDED, so `maxAttempts` never retried it |
+/// | decided by | `93587cf` (b1) | `c495e02f-5c5d-4b45-8124-42ad0e90d6d4`, option A, RESOLVED by `operator` |
+///
+/// **What is load-bearing in BOTH versions and is still asserted below:** a
+/// decision that carries an `UNPARSED` verdict — `'CHANGES_REQUIRED'`,
+/// `'changesRequired'`, `'needs_work'`, `'changes_required '` — is still refused,
+/// and still records `verdict_unreadable` as its cause. That is the invariant
+/// that actually stops a reviewer being reported as having found problems when
+/// it did not, and the amendment does not touch it.
+///
+/// If you are here to restore a zero-row assertion, read
+/// `apps/server/lib/src/review/engineering_review_gate.dart` § WHY THERE IS NO
+/// "NO VERDICT" MEMBER OF `ReviewVerdict` and the decision file first.
 void main() {
   group('no verdict means no decision — the three fabrication sites', () {
     test(
-      'SITE 1: a reviewer result carrying no verdict at all raises NOTHING',
+      'SITE 1: a reviewer result carrying no verdict raises a decision that '
+      'asserts NO verdict',
       () async {
         // The live case, verbatim: `end_turn` at 131s/160s, 2000 bytes of
         // markdown in `summary`, `{}` in `structuredResultJson`.
         //
         // The pre-fix gate read `verdictWire` (default `changes_required`) out
         // of this empty map and raised "engineering review requires changes".
+        //
+        // ── AMENDED 2026-10-15, per decision
+        // `c495e02f-5c5d-4b45-8124-42ad0e90d6d4` (ARCHITECTURE, RESOLVED, option
+        // A). This test asserted ZERO rows here, which was the b1 (93587cf)
+        // instruction "a reviewer that produced no verdict must never become a
+        // human decision". That invariant is now "no decision asserts a verdict
+        // that was not parsed" — deliberately weaker, because the original form
+        // left a review that COMPLETED with real findings parked at
+        // `review_in_progress` with nothing on any operator screen, and the job
+        // succeeded so no retry was coming.
+        //
+        // WHAT IT NOW CATCHES THAT IT DID NOT: that the gate is silent about a
+        // review that concluded nothing. Reverting the gate to b1's behaviour
+        // turns this red.
+        //
+        // WHAT IT CATCHES EXACTLY AS BEFORE: that `changes_required` is not
+        // invented out of an empty map. The decision asserted below carries no
+        // verdict token anywhere, so the original defect is still caught — by a
+        // stricter assertion than the zero-row one, because it names every key a
+        // reader could mistake for an assessment.
         final host = await _GateHost.reviewerResult(
           structuredResult: const {},
           summary:
@@ -57,8 +115,8 @@ void main() {
 
         await host.drainGate();
 
-        await host.expectNoDecisionRaised(
-          reason:
+        await host.expectNoVerdictRaised(
+          why:
               'a reviewer that answered in prose and emitted no structured '
               'verdict was assessed by nobody. `changes_required` here was '
               'invented by the default at the top of the read.',
@@ -67,48 +125,72 @@ void main() {
       },
     );
 
-    test('SITE 2: an UNREADABLE verdict wire is not a review verdict', () async {
-      // The site that is easy to miss, because it reads like a parse fallback
-      // and a parse fallback returning a conservative default is a normal
-      // thing to see. It is not one here: `'CHANGES_REQUIRED'` is a string this
-      // build does not recognise as a verdict, and the reviewer wrote it. The
-      // pre-fix gate reported it to an operator as a reviewer having found
-      // problems.
-      //
-      // Several spellings, because any of them reaching an operator as
-      // "the reviewer found problems" is the same fabrication.
-      for (final wire in const [
-        'CHANGES_REQUIRED',
-        'changesRequired',
-        'needs_work',
-        'changes_required ',
-        '',
-      ]) {
-        final host = await _GateHost.reviewerResult(
-          structuredResult: {'verdict': wire},
-          summary: 'I looked at it and here is my answer: $wire',
-        );
+    test(
+      'SITE 2: an UNREADABLE verdict wire raises a decision that asserts NO '
+      'verdict',
+      () async {
+        // The site that is easy to miss, because it reads like a parse fallback
+        // and a parse fallback returning a conservative default is a normal
+        // thing to see. It is not one here: `'CHANGES_REQUIRED'` is a string this
+        // build does not recognise as a verdict, and the reviewer wrote it. The
+        // pre-fix gate reported it to an operator as a reviewer having found
+        // problems.
+        //
+        // Several spellings, because any of them reaching an operator as
+        // "the reviewer found problems" is the same fabrication.
+        //
+        // ── AMENDED 2026-10-15, per decision
+        // `c495e02f-5c5d-4b45-8124-42ad0e90d6d4` (ARCHITECTURE, RESOLVED, option
+        // A), same amendment as SITE 1 and for the same reason: the review
+        // COMPLETED, so nothing will retry it, so a decision is owed.
+        //
+        // WHAT IT NOW CATCHES THAT IT DID NOT: that an unrecognised verdict is
+        // silently dropped on the floor. This is the residue of the Q1 prompt
+        // defect — the reviewer answered `CHANGES_REQUIRED` and this build could
+        // not read it — and it must reach an operator rather than a log.
+        //
+        // WHAT IT CATCHES EXACTLY AS BEFORE, and this is the load-bearing half:
+        // that `'CHANGES_REQUIRED'` is NOT recorded as a verdict. The decision
+        // raised below carries no `reviewVerdict` and no
+        // `engineeringReviewResult`, and its question quotes the unreadable
+        // string as a string this build does not recognise — never as a
+        // conclusion. Reverting the `fromWire` catch-all to `changes_required`
+        // turns this red on the `noVerdictOnTheRecord` assertion, not on a row
+        // count.
+        for (final wire in const [
+          'CHANGES_REQUIRED',
+          'changesRequired',
+          'needs_work',
+          'changes_required ',
+          '',
+        ]) {
+          final host = await _GateHost.reviewerResult(
+            structuredResult: {'verdict': wire},
+            summary: 'I looked at it and here is my answer: $wire',
+          );
 
-        await host.drainGate();
+          await host.drainGate();
 
-        await host.expectNoDecisionRaised(
-          reason:
-              "'$wire' is not one of ReviewVerdict's four wire values. Reading "
-              'it as `changes_required` asserts a finding no reviewer made.',
-        );
-        expect(
-          host.absenceCauses,
-          [
-            // An empty string is not even a wire value — it is "no verdict
-            // said", which is a different absence with the same outcome.
-            wire.isEmpty ? 'verdict_absent' : 'verdict_unreadable',
-          ],
-          reason:
-              'the cause must name WHICH absence this is, not just that '
-              'one happened',
-        );
-      }
-    });
+          await host.expectNoVerdictRaised(
+            why:
+                "'$wire' is not one of ReviewVerdict's four wire values. "
+                'Reading it as `changes_required` asserts a finding no reviewer '
+                'made.',
+          );
+          expect(
+            host.absenceCauses,
+            [
+              // An empty string is not even a wire value — it is "no verdict
+              // said", which is a different absence with the same outcome.
+              wire.isEmpty ? 'verdict_absent' : 'verdict_unreadable',
+            ],
+            reason:
+                'the cause must name WHICH absence this is, not just that '
+                'one happened',
+          );
+        }
+      },
+    );
 
     test('SITE 3: no reviewer result at all raises NOTHING', () async {
       // The live timeout case, verbatim: the execution reached `failed` at
@@ -602,7 +684,12 @@ class _GateHost {
     return workflowStore.readHumanDecision(id);
   }
 
-  /// The central assertion: no decision, and the item still retryable.
+  /// The central assertion, UNCHANGED since b1: no decision at all, and the item
+  /// still retryable.
+  ///
+  /// Used by the three tests the ruling did NOT reach — `SITE 3`, the
+  /// double-drain, and `the item is left RETRYABLE`. A review that did not
+  /// finish still has `maxAttempts` owed to it, so it still raises nothing.
   Future<void> expectNoDecisionRaised({String? reason}) async {
     final decisions = await workflowStore.readHumanDecisionsForWorkItem(
       workItemId,
@@ -623,4 +710,148 @@ class _GateHost {
     );
     expect(item.blockingHumanDecisionId, isNull);
   }
+
+  /// The AMENDED central assertion, for a review that COMPLETED with no verdict.
+  ///
+  /// ## IT IS STRICTER THAN THE ZERO-ROW ONE IT REPLACES, NOT LOOSER
+  ///
+  /// `isEmpty` could be satisfied by a decision of ANY type, which is why b1's
+  /// comment insisted it "cannot be satisfied by a decision of some other type
+  /// either". But it could equally be satisfied by a decision that is merely
+  /// *quiet* about the verdict — and quietness is exactly the failure this lane
+  /// was produced by. So this asserts the three things a reader would actually
+  /// mistake for an assessment, and asserts that none of them is present:
+  ///
+  ///  1. `metadata['reviewVerdict']` — absent. Every downstream reader that
+  ///     asks "was this reviewed, and how" asks this first.
+  ///  2. `metadata['engineeringReviewResult']` — absent. It is what
+  ///     `readReviewVerdictProvenance` parses, and a result object with a
+  ///     verdict in it would classify this decision as `assessed`.
+  ///  3. `recommendation` — not one of [ReviewVerdict]'s four wire values, not
+  ///     `APPROVE`, and not `CHANGES_REQUIRED`. It is rendered to an operator
+  ///     under "WHAT WE SUGGEST".
+  ///
+  /// Plus the positive half: the decision says, in its own text, that no verdict
+  /// was produced, and offers only choices that assert none.
+  Future<void> expectNoVerdictRaised({required String why}) async {
+    final item = await workflowEngine.loadWorkItem(workItemId);
+    final blockingId = item.blockingHumanDecisionId;
+
+    expect(
+      blockingId,
+      isNotNull,
+      reason:
+          'the review completed, so nothing else will move this item: $why. '
+          'Leaving it at reviewInProgress with no decision is the silent park '
+          'this decision was resolved to end.',
+    );
+    expect(
+      item.state,
+      WorkItemState.waitingForHumanDecision,
+      reason: 'the item must be reachable by a person',
+    );
+
+    final decision = await workflowStore.readHumanDecision(blockingId!);
+    final metadata = decision.metadata ?? const <String, dynamic>{};
+
+    expect(
+      metadata.containsKey('reviewVerdict'),
+      isFalse,
+      reason:
+          'no key named reviewVerdict may exist on this decision, not even '
+          'carrying null. Every reader downstream treats its presence as "a '
+          'reviewer assessed this". $why',
+    );
+    expect(
+      metadata.containsKey('engineeringReviewResult'),
+      isFalse,
+      reason:
+          'a result object would be parsed by readReviewVerdictProvenance and '
+          'this decision would classify as `assessed`. $why',
+    );
+    expect(
+      metadata[reviewVerdictAbsentMetadataKey],
+      isA<Map<String, dynamic>>(),
+      reason:
+          'the decision must be recognisable as the verdict-less one from the '
+          'record alone, which is what keeps it apart from a supersession '
+          'stall. $why',
+    );
+    expect(
+      metadata[reviewVerdictAbsentMetadataKey]!['verdictRecorded'],
+      isFalse,
+      reason: 'and it must say so in its own words',
+    );
+    expect(
+      decision.recommendation,
+      isNot(anyOf('APPROVE', 'CHANGES_REQUIRED', 'approved', 'changes_required')),
+      reason:
+          'the recommendation is rendered to an operator under "WHAT WE '
+          'SUGGEST". On this decision it must not be readable as an assessment. '
+          '$why',
+    );
+    expect(
+      decision.recommendation,
+      verdictAbsentRecommendation,
+      reason: 'and it must be the one the gate documents',
+    );
+    expect(
+      decision.question,
+      allOf(
+        contains('NO VERDICT'),
+        contains(absenceReasonFragment()),
+      ),
+      reason:
+          'the question is what an operator reads first and the only field of a '
+          'decision that reaches the screen. It must state the absence in those '
+          'terms. $why',
+    );
+    expect(
+      decision.options!.map((o) => o.optionId),
+      unorderedEquals(['rework', 'cancel']),
+      reason:
+          'approve routes to reviewApproved and reject to reviewRejected — both '
+          'are assessments, and a decision carrying no verdict cannot offer '
+          'either. $why',
+    );
+    expect(
+      decision.options!.any((o) => o.recommended ?? false),
+      isFalse,
+      reason:
+          'the platform has no basis for preferring one answer over the other '
+          'here, and highlighting one would be it nudging an operator toward a '
+          'judgement nobody made',
+    );
+    for (final wire in ReviewVerdict.values) {
+      expect(
+        decision.recommendation,
+        isNot(wire.wire),
+        reason: '${wire.wire} is a reviewer assessment; this decision has none',
+      );
+    }
+
+    // Exactly one decision, and the absence is still on the execution timeline.
+    expect(
+      await workflowStore.readHumanDecisionsForWorkItem(workItemId),
+      hasLength(1),
+      reason: 'one question, not a queue of them',
+    );
+    expect(
+      (await executionStore.readEvents(reviewerExecutionId))
+          .where((e) => e.payload?['reviewGate'] == 'no_verdict'),
+      isNotEmpty,
+      reason:
+          'b1\'s durable absence record is kept as well: the decision is the '
+          'thing the operator acts on, the timeline entry is the thing a later '
+          'reader audits',
+    );
+  }
+
+  /// The substring [expectNoVerdictRaised] requires the question to carry for
+  /// the cause this host produced.
+  String absenceReasonFragment() => absenceCauses.isEmpty
+      ? 'no cause recorded'
+      : (absenceCauses.last == 'verdict_absent'
+            ? 'carrying no verdict'
+            : 'is not a review verdict');
 }

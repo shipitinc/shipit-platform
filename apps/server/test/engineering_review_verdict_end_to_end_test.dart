@@ -28,10 +28,19 @@
 ///
 /// A test covering only the happy path would pass with the bug. The second half
 /// of this file is the other direction: a reviewer that emits no verdict must
-/// produce NO decision and NO verdict-shaped anything, anywhere — and a reviewer
-/// that emits a near-miss spelling must be no different from one that emits
-/// nothing at all. `93587cf` removed three `changesRequired` fallbacks; this is
-/// what stops that defect returning by another route.
+/// produce NO verdict anywhere — and a reviewer that emits a near-miss spelling
+/// must be no different from one that emits nothing at all. `93587cf` removed
+/// three `changesRequired` fallbacks; this is what stops that defect returning
+/// by another route.
+///
+/// **AMENDED 2026-10-15** by decision `c495e02f-5c5d-4b45-8124-42ad0e90d6d4`
+/// (ARCHITECTURE, RESOLVED, option A). Two tests in the anti-fabrication group
+/// asserted ZERO `HumanDecision` rows. The invariant they encoded — *"a
+/// reviewer that produced no verdict must never become a human decision"* — is
+/// now *"no decision asserts a verdict that was not parsed"*. Both assertions
+/// are amended in place with the reason inline, and both are now STRICTER about
+/// the property this group exists for, because they name every field a verdict
+/// could be read from instead of counting rows.
 library;
 
 import 'dart:async';
@@ -362,11 +371,14 @@ void main() {
   });
 
   group('ANTI-FABRICATION: no verdict means no verdict-shaped anything', () {
-    test('a review that completes with no verdict raises NO decision', () async {
-      final host = await _ReviewHost.create();
+    test(
+      'a review that completes with no verdict reaches a person carrying NO '
+      'verdict',
+      () async {
+        final host = await _ReviewHost.create();
 
-      // The live case: a thorough prose review and no JSON object.
-      await host.deliverReviewerTurn('''
+        // The live case: a thorough prose review and no JSON object.
+        await host.deliverReviewerTurn('''
 ## Engineering review
 
 I re-ran every gate and read the whole diff. The change is coherent, the
@@ -374,21 +386,72 @@ tests are real, and there is one blocking problem: `_DesktopSkeletonRow`
 lays its trailing placeholders out as 142/132/72 against column constants
 that do not line up.
 ''');
-      await host.drainGate();
+        await host.drainGate();
 
-      expect(
-        await host.decisions(),
-        isEmpty,
-        reason:
-            'no reviewer returned a verdict, so no verdict may exist anywhere. '
-            'This is the assertion a happy-path-only test would never make.',
-      );
-      final item = await host.workflowEngine.loadWorkItem(
-        _ReviewHost.workItemId,
-      );
-      expect(item.blockingHumanDecisionId, isNull);
-      expect(item.state, WorkItemState.reviewInProgress);
-    });
+        // ── AMENDED 2026-10-15, per decision
+        // `c495e02f-5c5d-4b45-8124-42ad0e90d6d4` (ARCHITECTURE, RESOLVED, option
+        // A). This test asserted ZERO decisions here, which was b1's (93587cf)
+        // instruction "a reviewer that produced no verdict must never become a
+        // human decision". The invariant is now "no decision asserts a verdict
+        // that was not parsed" — deliberately weaker, because the original left
+        // four real reviews parked at review_in_progress with nothing on any
+        // operator screen.
+        //
+        // WHAT IT NOW CATCHES THAT IT DID NOT: that a completed review which
+        // concluded nothing is silently dropped. Reverting the gate to b1's
+        // behaviour turns this red.
+        //
+        // WHAT IT CATCHES EXACTLY AS BEFORE, and is the whole point of this
+        // group: that no verdict exists anywhere. `isEmpty` could be satisfied
+        // by a quiet decision; the assertion below names every field an
+        // operator or a reader would take a verdict from and requires each to
+        // be free of one. The original line — a fabricated
+        // `changes_required` — fails it on `reviewVerdict`, not on a row count.
+        final decisions = await host.decisions();
+        expect(
+          decisions,
+          hasLength(1),
+          reason:
+              'the review COMPLETED, so nothing will retry it, and the decision '
+              'is the only thing that can move the item',
+        );
+        final decision = decisions.single;
+        final metadata = decision.metadata ?? const <String, dynamic>{};
+        expect(
+          metadata.containsKey('reviewVerdict'),
+          isFalse,
+          reason:
+              'no key a reader could mistake for an assessment may exist here, '
+              'not even carrying null',
+        );
+        expect(
+          metadata.containsKey('engineeringReviewResult'),
+          isFalse,
+        );
+        expect(
+          decision.recommendation,
+          isNot(anyOf('APPROVE', 'CHANGES_REQUIRED')),
+          reason:
+              'this string is rendered to an operator under "WHAT WE SUGGEST", '
+              'which is where a fabricated verdict was most visible',
+        );
+        expect(
+          decision.question,
+          contains(
+            'lays its trailing placeholders out as 142/132/72',
+          ),
+          reason:
+              'the reviewer did real work against a real commit; its prose is '
+              'what lets an operator judge whether to repeat the review',
+        );
+
+        final item = await host.workflowEngine.loadWorkItem(
+          _ReviewHost.workItemId,
+        );
+        expect(item.blockingHumanDecisionId, decision.decisionId);
+        expect(item.state, WorkItemState.waitingForHumanDecision);
+      },
+    );
 
     test('the absence is recorded durably, naming the cause', () async {
       final host = await _ReviewHost.create();
@@ -415,6 +478,10 @@ that do not line up.
         // Every one of these is what a reviewer that TRIED to comply might
         // produce. Reading any of them as a verdict asserts a finding or an
         // approval no reviewer made.
+        //
+        // ── AMENDED 2026-10-15, same decision, same amendment, same reason: the
+        // review completed, so a decision is owed. The anti-fabrication property
+        // is unchanged and now asserted on the record rather than on a count.
         for (final wire in const [
           'CHANGES_REQUIRED',
           'changesRequired',
@@ -427,12 +494,23 @@ that do not line up.
           await host.deliverReviewerTurn('{"verdict":"$wire"}');
           await host.drainGate();
 
+          final decisions = await host.decisions();
           expect(
-            await host.decisions(),
-            isEmpty,
-            reason:
-                '"$wire" is not a ReviewVerdict wire value, so it must not '
-                'become one',
+            decisions,
+            hasLength(1),
+            reason: 'the review completed, so it must reach a person',
+          );
+          final metadata = decisions.single.metadata ?? const <String, dynamic>{};
+          expect(
+            metadata.containsKey('reviewVerdict'),
+            isFalse,
+            reason: '"$wire" is not a ReviewVerdict wire value, so it must not '
+                'become one — not in the record, and not in the '
+                'recommendation',
+          );
+          expect(
+            decisions.single.recommendation,
+            isNot(anyOf('APPROVE', 'CHANGES_REQUIRED', wire)),
           );
           expect(host.noVerdictLogs.single['cause'], 'verdict_unreadable');
         }

@@ -1,7 +1,8 @@
 import 'package:execution_coordinator/execution_coordinator.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:scheduler/scheduler.dart';
-import 'package:workflow_store/workflow_store.dart';
+import 'package:workflow_store/workflow_store.dart'
+    show DurableWorkflowEngine, WorkflowTransitionRejectedException;
 import 'package:worker_runtime/worker_runtime.dart';
 
 import '../triage/lane_i_tick_hook.dart';
@@ -431,13 +432,15 @@ _VerdictRead _readReviewVerdict({
 /// stop, one layer down.
 ///
 /// A store that refuses the write must not take the tick down with it: the
-/// decision is already NOT being raised, and the log line below still says why.
+/// decision is already being raised or deliberately NOT raised, and the log line
+/// below still says why.
 Future<void> _recordNoVerdict({
   required ExecutionStore executionStore,
   required Job job,
   required String workItemId,
   required String executionId,
   required _NoVerdict absence,
+  required bool reviewCompleted,
   void Function(String message, Map<String, dynamic> context)? logger,
 }) async {
   final detail = {
@@ -446,7 +449,16 @@ Future<void> _recordNoVerdict({
     'executionId': executionId,
     'cause': absence.cause.wire,
     'why': absence.detail,
-    'decision': 'not raised; no reviewer returned a verdict',
+    // Says WHAT WAS DONE about it, because "no verdict" on its own is exactly
+    // the sentence that left four items invisible: the reader cannot tell a gate
+    // that is handling this from a gate that dropped it.
+    'decision': reviewCompleted
+        ? 'raised a verdict-less engineering review decision: it asserts no '
+              'verdict, carries the reviewer\'s own prose, and offers only '
+              'rework and cancel'
+        : 'not raised; this review has not finished, so the reviewer job\'s own '
+              'bounded maxAttempts is still owed a retry and the item is left '
+              'retryable at review_in_progress',
   };
   logger?.call('engineering-review-gate-no-verdict', detail);
 
@@ -467,6 +479,7 @@ Future<void> _recordNoVerdict({
           'reviewGate': 'no_verdict',
           'cause': absence.cause.wire,
           'detail': absence.detail,
+          'reviewCompleted': reviewCompleted,
         },
       ),
     );
@@ -478,25 +491,409 @@ Future<void> _recordNoVerdict({
   }
 }
 
+/// The `metadata` key under which the verdict-less decision records WHY there
+/// is no verdict and WHICH run produced none.
+///
+/// ## WHY IT IS A KEY AND NOT A FLAG, AND WHY IT IS NOT THE STALL'S KEY
+///
+/// `stalledWorkItemMetadataKey` (`'schedulerStall'`, in
+/// `apps/server/lib/src/triage/stalled_work_item_gate.dart`) is the other way
+/// this repository stops a work item from moving with nothing on screen, and the
+/// two gates raise the same `HumanDecisionType.engineeringReview` because
+/// `reviewInProgress -> waitingForHumanDecision` is guarded by
+/// `blockingHumanDecisionPendingOfType([engineeringReview])` and no other type is
+/// reachable from there. So type alone cannot tell them apart, and anything that
+/// renders or reads a decision must be able to.
+///
+/// They differ in cause, in who acts, and in what acting does:
+///
+/// | | supersession stall (b8) | verdict-less review (this file) |
+/// |---|---|---|
+/// | cause | the lane refused to launch; no execution ever started | a reviewer DID run, to completion, and its output could not be read |
+/// | reviewer output | none exists | prose exists and is quoted in the question |
+/// | operator action | find why this item cannot begin an execution at all, then start it again | read what the reviewer wrote, then have it built and reviewed again |
+/// | recoverable by | moving the item — any action lifts it by evidence | resolving the decision: `rework` re-runs the work, `cancel` stops it |
+///
+/// Four further structural differences keep them apart on any surface that
+/// renders `question`, `recommendation` or the option labels, which is all
+/// `DecisionView` carries: the metadata key, the opening sentence of the
+/// question, the `recommendation` string, and the option labels. Asserted
+/// together in
+/// `apps/server/test/engineering_review_verdict_absent_decision_test.dart`.
+const String reviewVerdictAbsentMetadataKey = 'reviewVerdictAbsent';
+
+/// The ONLY choices a verdict-less decision may be resolved with.
+///
+/// `HumanDecisionRouting.targetFor(engineeringReview, …)` routes `approve` to
+/// `reviewApproved` and `reject` to `reviewRejected`. Both are ASSESSMENTS, and
+/// both would be fabrications here: `reviewApproved` is the state that admits a
+/// change to the rest of the pipeline on a review nobody concluded, and
+/// `reviewRejected` records a reviewer having rejected work for reasons no
+/// reviewer gave. `rework` routes to `implementationReady` and `cancel` to
+/// `cancelled`, and neither says anything at all about the work's quality — one
+/// runs it again, the other stops it.
+///
+/// `resolveDecision` takes a `HumanDecisionChoice` off the wire and never checks
+/// it against the decision's own `options`, so "we did not offer it" would not by
+/// itself hold. [verdictAbsentChoiceIsResolvable] is checked at the resolution
+/// path for exactly this decision.
+const Set<HumanDecisionChoice> verdictAbsentResolvableChoices = {
+  HumanDecisionChoice.rework,
+  HumanDecisionChoice.cancel,
+};
+
+/// Whether [decision] is a verdict-less decision raised by this file.
+///
+/// A structural test on the record, not on a field the caller can set loosely:
+/// the key is written by [raiseVerdictAbsentDecision] alongside the cause and the
+/// reviewer's own prose, and its presence is what the resolution path keys on.
+/// A decision that carries a `reviewVerdict` and this key at once is refused —
+/// see [verdictAbsentChoiceIsResolvable].
+bool isVerdictAbsentDecision(HumanDecision decision) =>
+    decision.metadata?[reviewVerdictAbsentMetadataKey] != null;
+
+/// Whether [choice] may resolve [decision].
+///
+/// The check is scoped to verdict-less decisions deliberately. Widening it to
+/// "every choice must be one of the decision's options" would be a change to the
+/// behaviour of every lifecycle gate in the platform, which is not this lane's
+/// to make and is not what decision
+/// `c495e02f-5c5d-4b45-8124-42ad0e90d6d4` asked for. What it asked for is that a
+/// decision carrying no verdict cannot be turned into one, and that is scoped.
+bool verdictAbsentChoiceIsResolvable(
+  HumanDecision decision,
+  HumanDecisionChoice choice,
+) {
+  if (!isVerdictAbsentDecision(decision)) return true;
+  if (decision.metadata?['reviewVerdict'] != null) {
+    // Unreachable by construction — [raiseVerdictAbsentDecision] never writes
+    // one — and refused anyway rather than trusted, because a row that claims a
+    // verdict AND a verdict-less marker is exactly the shape that must not be
+    // resolvable as though a reviewer had spoken.
+    return false;
+  }
+  return verdictAbsentResolvableChoices.contains(choice);
+}
+
+/// The `recommendation` the verdict-less decision carries.
+///
+/// Deliberately not `APPROVE`, not `CHANGES_REQUIRED`, and not `REWORK` — the
+/// last one is what the supersession stall gate carries, and two questions that
+/// differ in cause must not share the one line the operator reads under
+/// "WHAT WE SUGGEST". A suggestion that begins with the words NO VERDICT cannot
+/// be skimmed as an assessment by anyone, including a screen reader announcing
+/// the label on its own.
+const String verdictAbsentRecommendation =
+    'NO VERDICT — READ WHAT THE REVIEWER WROTE, THEN SEND THE WORK BACK';
+
+/// The two options. Same `optionId`s the routing table understands and the stall
+/// gate uses, different words, and neither one is pre-marked `recommended`:
+/// there is no better answer here, and highlighting one would be the platform
+/// nudging an operator toward a judgement it has no basis for.
+const List<HumanDecisionOption> verdictAbsentOptions = [
+  HumanDecisionOption(
+    optionId: 'rework',
+    label: 'Build it again and review it again',
+    description:
+        'No reviewer assessed this. Send it back to be implemented and '
+        'reviewed from scratch.',
+  ),
+  HumanDecisionOption(
+    optionId: 'cancel',
+    label: 'Abandon this work item',
+    description:
+        'Stop working on this. The review and its record are kept.',
+  ),
+];
+
+/// The one sentence chain an operator reads, plus the reviewer's own words.
+///
+/// ## EVERY SENTENCE HERE IS A REFUSAL TO BE MISREAD
+///
+/// * It opens with the literal words `NO VERDICT` and says, in terms, that
+///   nothing was assessed — no approval, no request for changes, no findings.
+/// * It separates "the review PROCESS succeeded" from "the review CONCLUDED
+///   something", which is the exact conflation that produced the four invisible
+///   items.
+/// * It labels the reviewer's prose as prose and says it has not been
+///   interpreted, so a reviewer that wrote something assessment-shaped in
+///   English cannot be read back as having returned a verdict.
+/// * It names the two actions and says plainly that neither is a verdict.
+///
+/// Takes the facts, not the file-private [_NoVerdict]: this is the operator-facing
+/// text of a durable record, and its inputs are two strings and an id.
+String verdictAbsentQuestion({
+  required String cause,
+  required String detail,
+  required String executionId,
+  required String? producerExecutionId,
+  required String? reviewProse,
+}) {
+  final prose = (reviewProse ?? '').trim();
+  final buffer = StringBuffer()
+    ..writeln('NO VERDICT. Nothing has been assessed on this work item.')
+    ..writeln()
+    ..writeln(
+      'The engineering review ran to completion and this build could not read a '
+      'review verdict from what it returned. So there is no approval and no '
+      'request for changes here, and no findings have been accepted or '
+      'rejected — not because a reviewer found none, but because no reviewer '
+      'produced a verdict to act on. The review PROCESS succeeded; that is not '
+      'the same as the review CONCLUDING anything.',
+    )
+    ..writeln()
+    ..writeln('  cause:     $cause')
+    ..writeln('  detail:    $detail')
+    ..writeln('  reviewer:  $executionId')
+    ..writeln(
+      '  reviewed:  ${producerExecutionId == null || producerExecutionId.isEmpty ? 'an implementation whose execution id is not recorded' : producerExecutionId}',
+    )
+    ..writeln();
+
+  if (prose.isEmpty) {
+    buffer.writeln(
+      'The reviewer wrote no summary either, so there is nothing of its own to '
+      'read here.',
+    );
+  } else {
+    buffer
+      ..writeln(
+        'What the reviewer actually wrote follows, verbatim. It is the '
+        "reviewer's own prose. It has NOT been read as a verdict and nothing in "
+        'it has been interpreted as one:',
+      )
+      ..writeln()
+      ..writeln('---')
+      ..writeln(prose)
+      ..writeln('---');
+  }
+
+  buffer
+    ..writeln()
+    ..writeln(
+      'Choose "Build it again and review it again" to send this item back to be '
+      'implemented and reviewed from scratch, or "Abandon this work item" to '
+      'stop it and keep the record. Neither answer approves this change and '
+      'neither is a review verdict, because no reviewer produced one.',
+    );
+  return buffer.toString();
+}
+
+/// The structured facts, kept beside the prose so a surface can render them
+/// without parsing English.
+///
+/// Deliberately carries NO `reviewVerdict` and NO `engineeringReviewResult`:
+/// those two keys are what `readReviewVerdictProvenance` and every downstream
+/// reader treat as "a reviewer assessed this", and writing either here — even
+/// as null — is the first step of a row that later reads as an assessment. The
+/// absence is named by `cause` and by the key it hangs under, which is what
+/// [isVerdictAbsentDecision] and [verdictAbsentChoiceIsResolvable] read.
+Map<String, dynamic> verdictAbsentMetadata({
+  required String cause,
+  required String detail,
+  required String executionId,
+  required String? producerActorId,
+  required String? reviewProse,
+}) => {
+  reviewVerdictAbsentMetadataKey: {
+    'verdictRecorded': false,
+    'cause': cause,
+    'detail': detail,
+    'reviewExecutionId': executionId,
+    'reviewedRevisionExecutionId': producerActorId,
+    // Carried so a surface can show how much the reviewer actually said. Null
+    // is a real answer here: "it wrote nothing" is what the operator needs to
+    // see, and it is different from "its prose is not readable here".
+    'reviewProsePresent': (reviewProse ?? '').trim().isNotEmpty,
+  },
+  // `readReviewVerdictProvenance` reads this key to find the reviewer run when
+  // classifying a decision, and it is what makes "set aside and re-review"
+  // available on a verdict-less decision that carried no prose at all.
+  'reviewExecutionId': executionId,
+};
+
+/// What raising the verdict-less decision did with one work item.
+enum VerdictAbsentDecisionOutcome {
+  /// A blocking decision is now attached to the work item.
+  raised,
+
+  /// The item is already parked behind a pending decision of this type. The
+  /// engine's own `requestHumanDecision` idempotency returned it, so a repeated
+  /// tick did not mint a second question.
+  alreadyPending,
+
+  /// No producer identity is recorded, and `actorIsNotSelf()` — which
+  /// `reviewInProgress -> waitingForHumanDecision` carries — FAILS CLOSED
+  /// without one. Nothing is written: the absence record and the log line are
+  /// already durable, and inventing an identity to get through the guard would
+  /// be the same fabrication one layer up.
+  producerIdentityUnreadable,
+
+  /// The engine refused the gate entry. The item is left exactly where it was
+  /// and still needs a person; this is a visible block, not a quiet one.
+  refused,
+}
+
+/// Raises the verdict-less decision for a review that completed with none,
+/// idempotently.
+///
+/// ## IDEMPOTENCE IS THE ENGINE'S, AND THIS DOES NOT WEAKEN IT
+///
+/// The gate is drained on every tick for as long as the job is terminal, and the
+/// tick period is 30s. `DurableWorkflowEngine.requestHumanDecision` already
+/// returns the existing pending decision when an item is parked at the gate, and
+/// the caller has already returned early for an item at
+/// `waitingForHumanDecision` — so this is belt-and-braces over an idempotency
+/// that exists independently, not a new mechanism competing with it.
+Future<VerdictAbsentDecisionOutcome> raiseVerdictAbsentDecision({
+  required DurableWorkflowEngine workflowEngine,
+  required String workItemId,
+  required Job job,
+  required String executionId,
+  required String cause,
+  required String detail,
+  required String? producerActorId,
+  required String? reviewProse,
+  void Function(String message, Map<String, dynamic> context)? logger,
+}) async {
+  final item = await workflowEngine.loadWorkItem(workItemId);
+  if (item.state == WorkItemState.waitingForHumanDecision) {
+    logger?.call('engineering-review-no-verdict-decision-already-pending', {
+      'jobId': job.jobId,
+      'workItemId': workItemId,
+      'executionId': executionId,
+      'decisionId': item.blockingHumanDecisionId,
+    });
+    return VerdictAbsentDecisionOutcome.alreadyPending;
+  }
+
+  if (producerActorId == null || producerActorId.isEmpty) {
+    // Fail closed and say so. `actorIsNotSelf()` refuses a gate entry with no
+    // producer identity, so raising here would throw rather than land, and
+    // throwing would take the whole `review` section of the tick with it.
+    logger?.call('engineering-review-no-verdict-decision-no-producer', {
+      'jobId': job.jobId,
+      'workItemId': workItemId,
+      'executionId': executionId,
+      'cause': cause,
+      'action':
+          'no decision was raised. This review completed without a verdict and '
+          'nothing else will move this item, so the absence is on the '
+          'reviewer\'s execution timeline and the item is still parked at '
+          'review_in_progress. The missing fact is the implementer\'s execution '
+          'id on the work item; nothing was fabricated to get past the guard '
+          'that refused it',
+    });
+    return VerdictAbsentDecisionOutcome.producerIdentityUnreadable;
+  }
+
+  try {
+    await workflowEngine.requestHumanDecision(
+      workItemId: workItemId,
+      decisionType: HumanDecisionType.engineeringReview,
+      question: verdictAbsentQuestion(
+        cause: cause,
+        detail: detail,
+        executionId: executionId,
+        producerExecutionId: producerActorId,
+        reviewProse: reviewProse,
+      ),
+      options: verdictAbsentOptions,
+      recommendation: verdictAbsentRecommendation,
+      blocking: true,
+      metadata: verdictAbsentMetadata(
+        cause: cause,
+        detail: detail,
+        executionId: executionId,
+        producerActorId: producerActorId,
+        reviewProse: reviewProse,
+      ),
+      // The ORCHESTRATOR, not the reviewer. The edge
+      // `reviewInProgress -> waitingForHumanDecision` admits
+      // [ActorType.engineeringReviewer] and `actorIsNotSelf()` passes either,
+      // because the reviewer's execution id cannot equal the implementer's. But
+      // there is nothing here for the reviewer to have said — that is the whole
+      // subject of this decision — and attributing it to that execution would
+      // be a second, quieter version of the bug this lane exists to end. The
+      // producer identity travels in `extraContext` for the same reason
+      // `engineeringReviewMissingArtifact` passes it: the guard reads it there.
+      actor: const WorkflowActor(
+        actorId: 'orchestrator',
+        actorType: ActorType.orchestrator,
+      ),
+      extraContext: {
+        'producerActorId': producerActorId,
+        'reviewExecutionId': executionId,
+      },
+    );
+  } on WorkflowTransitionRejectedException catch (e) {
+    logger?.call('engineering-review-no-verdict-decision-refused', {
+      'jobId': job.jobId,
+      'workItemId': workItemId,
+      'executionId': executionId,
+      'error': e.toString(),
+      'action':
+          'nothing was written; the item is still at review_in_progress with '
+          'the absence on its reviewer\'s timeline and still needs a person',
+    });
+    return VerdictAbsentDecisionOutcome.refused;
+  }
+
+  logger?.call('engineering-review-no-verdict-decision-raised', {
+    'jobId': job.jobId,
+    'workItemId': workItemId,
+    'executionId': executionId,
+    'cause': cause,
+    'carriesVerdict': false,
+  });
+  return VerdictAbsentDecisionOutcome.raised;
+}
+
 /// Builds a tick handler for engineering review jobs. When the reviewer
 /// execution reaches a terminal state, this raises a blocking
 /// `engineeringReview` HumanDecision to move `reviewInProgress` to
 /// `waitingForHumanDecision`.
 ///
-/// ## IT ONLY RAISES A DECISION FOR A VERDICT A REVIEWER ACTUALLY RETURNED
+/// ## IT RAISES A VERDICT-LESS DECISION FOR A REVIEW THAT COMPLETED WITHOUT ONE
 ///
-/// If the reviewer produced no verdict — it ran out of budget, it crashed, its
-/// result never landed, or it answered in something this build cannot parse —
-/// this records why and returns, leaving the item at `reviewInProgress`.
+/// The original b1 rule was: if the reviewer produced no verdict, record why and
+/// return, leaving the item at `reviewInProgress`. That is still exactly right
+/// for a review that did NOT finish — a budget kill, a crash, a missing result.
+/// There the reviewer job's own bounded `maxAttempts` is still owed a retry, and
+/// `Scheduler._returnOneToEntryState` returns the item to a lane entry state to
+/// make it claimable, while `waitingForHumanDecision` is explicitly skipped by
+/// that return. Parking those items would pre-empt a retry that is coming.
 ///
-/// Leaving it at `reviewInProgress` is the RETRYABLE state, and it is left there
-/// rather than at `waitingForHumanDecision` because that state is the only thing
-/// this gate used to reach and it is terminal with respect to the item's own
-/// budget: nothing re-dispatches a `blockedHumanDecisionId`, so parking an
-/// unassessed item there converts a review that can still be retried into a
-/// question a human has to answer about work nobody read. The reviewer job's own
-/// bounded `maxAttempts` (`engineeringReviewDefinition`) is the retry mechanism
-/// and this gate does not duplicate, pre-empt or reset it.
+/// It is wrong for a review that DID finish. Measured on 2026-10-15: four review
+/// executions reached `completed` against real commits (one `18ad90a`, +957/-199)
+/// and produced real findings in their prose, every one of them recorded `{}` in
+/// `structuredResultJson`, so no verdict was parsed, so no decision was raised,
+/// so all four items sat at `reviewInProgress` with nothing on any operator
+/// screen and no retry coming — the job SUCCEEDED, and `maxAttempts` only ever
+/// retries a failure. A review that concluded nothing and a review that passed
+/// were indistinguishable, and that is the false state this whole programme
+/// exists to end.
+///
+/// So the gate now raises ONE more decision, under decision
+/// `c495e02f-5c5d-4b45-8124-42ad0e90d6d4` (ARCHITECTURE, RESOLVED, option A),
+/// and it is a decision that asserts NO VERDICT:
+///
+///  * it names the absence and its cause in its own text, and never carries a
+///    `ReviewVerdict` anywhere — not in `metadata`, not in
+///    `extraContext`, not in a recommendation that reads like one;
+///  * it carries the reviewer's ACTUAL prose, because the reviewer did real
+///    work and hiding it would replace one false state with another;
+///  * it offers only `rework` and `cancel`, because `approve` and `reject` are
+///    the two choices that WOULD assert an assessment nobody made; and
+///  * it is refused by the resolution path if a client submits any other choice,
+///    so "it was not offered" is not the only thing stopping it.
+///
+/// The invariant this replaces — "no decision exists without a parsed verdict" —
+/// was an OPERATOR INSTRUCTION from b1, deliberately weakened to "no decision
+/// asserts a verdict that was not parsed", which is the property that actually
+/// protects a reader. The two zero-row assertions it rested on are amended in
+/// `apps/server/test/engineering_review_never_fabricates_verdict_test.dart`,
+/// with the decision quoted inline.
 TickJobHandler engineeringReviewTickHandler({
   required DurableWorkflowEngine workflowEngine,
   required ExecutionStore executionStore,
@@ -569,8 +966,29 @@ TickJobHandler engineeringReviewTickHandler({
         workItemId: workItemId,
         executionId: executionId,
         absence: absence,
+        // THE ONLY DIFFERENCE SINCE b1, and it is one word. `completed` means the
+        // review ran to the end of its turn and nothing will retry it, so the
+        // only thing that can still move this item is a person. Anything else
+        // (`failed`, `interrupted`) still has `maxAttempts` owed to it, and this
+        // gate must not take the item out from under that retry.
+        reviewCompleted: execution.status == AgentSessionStatus.completed,
         logger: logger,
       );
+
+      if (execution.status == AgentSessionStatus.completed) {
+        final producerActorId = item.metadata?['producerActorId'] as String?;
+        await raiseVerdictAbsentDecision(
+          workflowEngine: workflowEngine,
+          workItemId: workItemId,
+          job: job,
+          executionId: executionId,
+          cause: absence.cause.wire,
+          detail: absence.detail,
+          reviewProse: reviewerResult?.summary,
+          producerActorId: producerActorId,
+          logger: logger,
+        );
+      }
       return;
     }
     final reviewResult = read.result!;
