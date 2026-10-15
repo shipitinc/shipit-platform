@@ -993,8 +993,19 @@ class WorkItemActionEndpoints extends Endpoint {
   ///    answered the question. Overwriting that answer is not a repair, it is
   ///    discarding a real human decision — and QA has one on record: an operator
   ///    approved `dec-hn7h7daum6-2atjhe`, whose reviewer had in fact timed out,
-  ///    and the work item is now at `reviewApproved`. This refusal is what stops
+  ///    and the work item moved to `reviewApproved`. This refusal is what stops
   ///    this method being the thing that did that.
+  ///
+  ///    THE OPERATOR HAS SINCE GONE THE OTHER WAY ON THAT ONE, and the two
+  ///    positions are deliberately not the same. Voiding a human approval is
+  ///    `HUMAN_DECISION_REQUIRED` by construction: migration
+  ///    `20261014210000000` did it for all five fabricated decisions under
+  ///    recorded decision `8f1ed5bf-4147-449a-a221-558aac2303a9`, after being
+  ///    shown that one of them had an approval resting on nothing. THIS method
+  ///    still refuses, because an operator clicking a button on one item is not
+  ///    that: the consent was given for five named rows with a stated reason,
+  ///    and generalising it to an ad-hoc action would hand the one authority
+  ///    nobody granted it. The two decisions disagree on purpose.
   ///  * a decision that is not the item's blocking one, or an item not at
   ///    `waitingForHumanDecision` → `notApplicable`. There is nothing parked.
   ///  * a non-terminal job → `alreadyRunning`. A second operator action must not
@@ -1026,21 +1037,49 @@ class WorkItemActionEndpoints extends Endpoint {
   /// DID, without writing again — so a double-click cannot mint a second
   /// discriminator bump, which would queue a second review.
   ///
-  /// ## WHY IT IS `@doNotGenerate` — AND WHAT THAT COSTS
+  /// ## WHY IT IS `@doNotGenerate` — AND WHAT THE GENERATOR WAS RUN AGAINST
   ///
   /// Serverpod dispatches methods from the GENERATED connector table
   /// (`lib/src/generated/endpoints.dart`), and the matching client method lives
-  /// in `packages/control_plane_client/lib/src/protocol/client.dart`. Both are
-  /// READ-ONLY in the dispatch that produced this file, so `serverpod generate`
-  /// could not be run. Rather than fake reachability, the method is annotated
-  /// and its refusal contract is driven directly by
-  /// `apps/server/test/review_repair_action_test.dart`.
+  /// in `packages/control_plane_client/lib/src/protocol/client.dart`.
   ///
-  /// TO MAKE IT REACHABLE: run `serverpod generate` from `apps/server`, which
-  /// will emit the connector, the protocol entry and the client method, and
-  /// then delete this `@doNotGenerate` annotation. Until that happens this action
-  /// is NOT callable from the control-plane client, and nothing in this file
-  /// claims otherwise.
+  /// `serverpod generate` WAS RUN against this method on 2026-10-15, with both
+  /// generated paths opened for it and with this annotation REMOVED. It does not
+  /// work, and the reason is worth more than the annotation is:
+  ///
+  ///   * It emitted the connector row here, the client method there, and the
+  ///     `protocol.yaml` entry — correctly, for this signature.
+  ///   * It emitted an `import
+  ///     'package:control_plane_client/src/endpoints/work_item_action_endpoints.dart'`
+  ///     in the generated client, and **never emitted that file**. The client
+  ///     package does not analyze: `Target of URI doesn't exist`.
+  ///   * `ReviewRepairResult` appears **zero** times in the generated
+  ///     `protocol.dart` and `protocol.yaml`, so the server's
+  ///     `SerializationManager` cannot decode the return value in either
+  ///     direction. The server analyzes clean only because nothing exercises it.
+  ///
+  /// In this Serverpod (3.4.13) every wire type is declared as a YAML model
+  /// under `apps/server/lib/src/models/`, which generates into both packages.
+  /// A hand-written `SerializableModel` in `lib/src/endpoints/` is referenced by
+  /// the generated client but never copied to it.
+  ///
+  /// So closing this gap needs the model declaration and both generated copies:
+  ///
+  ///   * `apps/server/lib/src/models/review_repair_result.yaml`
+  ///   * `apps/server/lib/src/generated/review_repair_result.dart`
+  ///   * `apps/server/lib/src/generated/protocol.dart` (regenerated)
+  ///   * `packages/control_plane_client/lib/src/protocol/review_repair_result.dart`
+  ///   * `packages/control_plane_client/lib/src/protocol.dart` (regenerated)
+  ///
+  /// None of those is inside the ownership that was extended to run the
+  /// generator — the extension named `generated/endpoints.dart` and
+  /// `protocol/client.dart`, and the generator reaches further than that. They
+  /// were NOT written on a guess about what a reviewer would allow, and the
+  /// generated output was reverted so this lane leaves a BUILDING repository.
+  ///
+  /// To make it reachable: grant those five paths, add the YAML, delete this
+  /// annotation, make [ReviewRepairResult] a generated model rather than a plain
+  /// Dart type, and re-run `serverpod generate`.
   @doNotGenerate
   Future<ReviewRepairResult> repairUnreviewedReview(
     Session session, {
@@ -1127,6 +1166,16 @@ class WorkItemActionEndpoints extends Endpoint {
     // Both refuse, because "the decision is no longer pending" is the only
     // thing either of them establishes, and over either is discarding a real
     // human decision.
+    //
+    // THIS ARM IS NOT OBSOLETE AFTER MIGRATION 20261014210000000, and it is
+    // worth saying why, because the migration voided exactly the decision this
+    // arm was named after. The `choice != null` arm is what now catches it:
+    // migration `20261014210000000` sets `status = cancelled` but does NOT
+    // write `decider`, `choice`, `rationale`, `signatureJson`,
+    // `resolvedOptionId` or `timestamp`, so the recorded approval is still
+    // there and this method still refuses. Widening the migration to clear
+    // those columns would erase the evidence that a human approved anything,
+    // and would make this arm blind to exactly the case it exists for.
     final alreadyRetired =
         decisionIsRetiredUnreviewed(decision) ||
         decision.status == HumanDecisionStatus.cancelled;
@@ -1498,10 +1547,20 @@ class WorkItemActionEndpoints extends Endpoint {
 /// different owner. The status is set to
 /// [HumanDecisionStatus.cancelled] alongside it; this key is what says WHY.
 ///
-/// Read by three call sites that must never disagree: the repair's own replay
-/// and double-repair refusal, `WorkflowEndpoints.resolveDecision`'s refusal to
-/// approve, and the decision projections that stop presenting it as a
-/// question.
+/// Read by exactly ONE call site — this endpoint's replay and double-repair
+/// refusal. That is stated rather than glossed because an earlier revision of
+/// this comment claimed three readers, naming
+/// `WorkflowEndpoints.resolveDecision` and the decision projections. Neither
+/// reads it: `resolveDecision` has no marker check, and the operator-UI reads
+/// key off `blockingHumanDecisionId` and `isResolved` instead, which a retired
+/// decision fails on either count. A comment that claims a reader which does not
+/// exist is worse than no comment, because the next reader concludes the
+/// property is enforced somewhere and stops checking.
+///
+/// Migration `20261014210000000` writes this same key, so the marker is a
+/// SHARED vocabulary between the migration and this method and not a private
+/// one — which is why it lives at the top level with a name rather than as a
+/// constant buried in a method.
 const String reviewUnreviewableMetadataKey = 'reviewUnreviewable';
 
 /// The repair action's idempotency-key prefix. A REPLAY KEY ONLY, exactly like
@@ -1530,12 +1589,18 @@ String reviewRepairTransitionId(String requestId) =>
 
 /// The result of one repair attempt.
 ///
-/// ## WHY IT IS A PLAIN DART TYPE
+/// ## WHY IT IS A PLAIN DART TYPE — AND WHAT THAT COSTS
 ///
-/// `repairUnreviewedReview` is `@doNotGenerate`, so no Serverpod model exists
-/// for it and inventing one here would need the generated protocol this lane
-/// may not touch. Promoting it to the wire is part of the `serverpod generate`
-/// step documented on the method.
+/// A plain Dart type is not a wire type, and Serverpod's connector table and
+/// client protocol are generated from the endpoint signatures, so while this
+/// carries `@doNotGenerate` the action is NOT callable from a control-plane
+/// client and nothing in this file claims otherwise. `apps/server/test/
+/// review_repair_action_test.dart` drives the contract directly instead.
+///
+/// `serverpod generate` WAS RUN against this method, with the generated paths
+/// opened for it, and it is the reason this type is still plain. See the
+/// `@doNotGenerate` note on the method for what the generator emitted and why
+/// the result could not be committed.
 class ReviewRepairResult {
   const ReviewRepairResult({
     required this.outcome,
