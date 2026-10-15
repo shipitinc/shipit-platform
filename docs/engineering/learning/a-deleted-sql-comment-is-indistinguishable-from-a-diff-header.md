@@ -26,7 +26,7 @@ Counting `git diff -U0` line prefixes for
 
 | Measure | Value |
 |---|---|
-| `git diff --numstat` — authoritative | `50  8` (50 added, 8 deleted) |
+| `git diff --numstat` — authoritative | `51  8` (51 added, 8 deleted) |
 | Lines matching `^-` | 9 |
 | Lines matching `^---` | 9 |
 | Of those, the real `--- a/<path>` header | **1** |
