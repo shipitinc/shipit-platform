@@ -1,0 +1,59 @@
+### The result of one attempt at repairing a work item parked behind an
+### engineering-review decision that no reviewer ever backed.
+###
+### ## WHY THIS IS A MODEL AND NOT A HAND-WRITTEN DART TYPE
+###
+### A plain Dart type declared in `lib/src/endpoints/` is not a wire type. It is
+### referenced by the generated client and never copied to it, and it appears
+### zero times in `lib/src/generated/protocol.dart` — so the server's
+### `SerializationManager` cannot decode the return value in either direction,
+### the client does not analyze, and the action is unreachable. Measured on
+### 2026-10-15; recorded in
+### docs/engineering/learning/a-generated-client-can-reference-a-file-it-never-emitted.md.
+### Every wire type in this Serverpod (3.4.13) is a YAML model under
+### `lib/src/models/`, and that is what puts a class into the serialization
+### table. So this declaration is what makes the action callable, not a
+### formality.
+###
+### ## NOT SERVER-AUTHORED UI COPY
+###
+### `outcome` is a WIRE VALUE and `detail` is diagnostic — the "why", and the
+### whole value of a refusal an operator has to act on. Neither is presentational:
+### the operator-facing sentence for each outcome is the client's to word, from
+### its own copy module, which is the same boundary `WorkItemActionResult`
+### keeps.
+class: ReviewRepairResult
+fields:
+  ### 'accepted' | 'notApplicable' | 'reviewerProducedVerdict' |
+  ### 'reviewerProducedProse' | 'reviewerOutputUnreadable' | 'alreadyDecided' |
+  ### 'alreadyRunning' | 'concurrentWrite' | 'invalidRequest'.
+  ###
+  ### A closed set, and every input reaches exactly one of them:
+  ###
+  ### | outcome | meaning | wrote anything? |
+  ### |---|---|---|
+  ### | `accepted` | repaired, or a replay of an intent that was | yes, once |
+  ### | `notApplicable` | nothing is parked behind a fabricated question | no |
+  ### | `reviewerProducedVerdict` | a reviewer really returned this verdict | no |
+  ### | `reviewerProducedProse` | a real assessment exists, in prose only | no |
+  ### | `reviewerOutputUnreadable` | the reviewer result could not be read | no |
+  ### | `alreadyDecided` | a human answered; the repair must not undo that | no |
+  ### | `alreadyRunning` | a live job holds the item | no |
+  ### | `concurrentWrite` | another writer moved it first | no |
+  ### | `invalidRequest` | no requester or no reason | no |
+  ###
+  ### `accepted` covers BOTH the first application and a replay of an intent that
+  ### was already carried out, deliberately: a replay must report what that
+  ### request DID, not refuse itself as inapplicable after the item has moved on.
+  ### Every other value is a refusal, and a refusal wrote nothing.
+  outcome: String
+  ### Why this outcome, in one sentence. Diagnostic, not presentational.
+  detail: String
+  ### The work item as it stands after this attempt — always re-read, so a
+  ### refusal still reports the true current state rather than a stale one.
+  ###
+  ### `WorkItemView`, not the durable `WorkItem`: a view is what the wire
+  ### carries, and the durable record's `metadata`/`version` are server-internal.
+  workItem: WorkItemView
+  ### The decision this attempt concerned, or null when none applied.
+  decisionId: String?

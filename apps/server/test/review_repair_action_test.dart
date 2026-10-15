@@ -1,4 +1,9 @@
 import 'package:control_plane_server/src/endpoints/work_item_action_endpoints.dart';
+// `ReviewRepairResult` is a GENERATED model, not a hand-written one. The import
+// is named explicitly rather than pulled from `generated/protocol.dart` so that
+// deleting this YAML model breaks THIS file loudly, at this line, rather than
+// silently widening to a barrel that no longer mentions the type.
+import 'package:control_plane_server/src/generated/review_repair_result.dart';
 import 'package:control_plane_server/src/services/control_plane_service.dart';
 import 'package:execution_coordinator/execution_coordinator.dart'
     show ExecutionStore, InMemoryExecutionStore;

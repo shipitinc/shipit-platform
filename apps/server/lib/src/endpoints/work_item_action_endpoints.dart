@@ -29,6 +29,7 @@ import 'package:workflow_store/workflow_store.dart'
 
 import '../generated/execution_capacity_view.dart';
 import '../generated/operator_action_summary_view.dart';
+import '../generated/review_repair_result.dart';
 import '../generated/work_item_action_context_view.dart';
 import '../generated/work_item_action_result.dart';
 import '../generated/work_item_action_view.dart';
@@ -1037,50 +1038,26 @@ class WorkItemActionEndpoints extends Endpoint {
   /// DID, without writing again — so a double-click cannot mint a second
   /// discriminator bump, which would queue a second review.
   ///
-  /// ## WHY IT IS `@doNotGenerate` — AND WHAT THE GENERATOR WAS RUN AGAINST
+  /// ## ON THE WIRE
   ///
   /// Serverpod dispatches methods from the GENERATED connector table
   /// (`lib/src/generated/endpoints.dart`), and the matching client method lives
-  /// in `packages/control_plane_client/lib/src/protocol/client.dart`.
+  /// in `packages/control_plane_client/lib/src/protocol/client.dart`. This
+  /// method used to carry `@doNotGenerate` and to return a hand-written Dart
+  /// class, which made it unreachable from any control-plane client: the
+  /// generator emits an import for a file it never writes, and a type declared
+  /// outside `lib/src/models/` appears ZERO times in `protocol.dart`, so the
+  /// `SerializationManager` cannot decode the return value in either direction.
+  /// A green `dart analyze` on the server proved nothing about that, because
+  /// nothing exercised it.
   ///
-  /// `serverpod generate` WAS RUN against this method on 2026-10-15, with both
-  /// generated paths opened for it and with this annotation REMOVED. It does not
-  /// work, and the reason is worth more than the annotation is:
-  ///
-  ///   * It emitted the connector row here, the client method there, and the
-  ///     `protocol.yaml` entry — correctly, for this signature.
-  ///   * It emitted an `import
-  ///     'package:control_plane_client/src/endpoints/work_item_action_endpoints.dart'`
-  ///     in the generated client, and **never emitted that file**. The client
-  ///     package does not analyze: `Target of URI doesn't exist`.
-  ///   * `ReviewRepairResult` appears **zero** times in the generated
-  ///     `protocol.dart` and `protocol.yaml`, so the server's
-  ///     `SerializationManager` cannot decode the return value in either
-  ///     direction. The server analyzes clean only because nothing exercises it.
-  ///
-  /// In this Serverpod (3.4.13) every wire type is declared as a YAML model
-  /// under `apps/server/lib/src/models/`, which generates into both packages.
-  /// A hand-written `SerializableModel` in `lib/src/endpoints/` is referenced by
-  /// the generated client but never copied to it.
-  ///
-  /// So closing this gap needs the model declaration and both generated copies:
-  ///
-  ///   * `apps/server/lib/src/models/review_repair_result.yaml`
-  ///   * `apps/server/lib/src/generated/review_repair_result.dart`
-  ///   * `apps/server/lib/src/generated/protocol.dart` (regenerated)
-  ///   * `packages/control_plane_client/lib/src/protocol/review_repair_result.dart`
-  ///   * `packages/control_plane_client/lib/src/protocol.dart` (regenerated)
-  ///
-  /// None of those is inside the ownership that was extended to run the
-  /// generator — the extension named `generated/endpoints.dart` and
-  /// `protocol/client.dart`, and the generator reaches further than that. They
-  /// were NOT written on a guess about what a reviewer would allow, and the
-  /// generated output was reverted so this lane leaves a BUILDING repository.
-  ///
-  /// To make it reachable: grant those five paths, add the YAML, delete this
-  /// annotation, make [ReviewRepairResult] a generated model rather than a plain
-  /// Dart type, and re-run `serverpod generate`.
-  @doNotGenerate
+  /// [ReviewRepairResult] is therefore a YAML model
+  /// (`lib/src/models/review_repair_result.yaml`) and the connector row, the
+  /// client method, the serialization entry and both generated copies all come
+  /// from `serverpod generate`. The evidence that closed it is in
+  /// docs/engineering/learning/a-generated-client-can-reference-a-file-it-never-emitted.md
+  /// and the wire proof is `apps/server/test/integration/review_repair_wire_e2e_test.dart`,
+  /// which drives this method through the REAL generated client over HTTP.
   Future<ReviewRepairResult> repairUnreviewedReview(
     Session session, {
     required String workItemId,
@@ -1103,7 +1080,9 @@ class WorkItemActionEndpoints extends Endpoint {
         detail:
             'this operator intent was already carried out; reporting it rather '
             'than running it a second time',
-        workItem: await service.readWorkItem(prior.workItemId),
+        workItem: UiViewMappers.workItemView(
+          await service.readWorkItem(prior.workItemId),
+        ),
         decisionId: prior.decisionId,
       );
     }
@@ -1355,7 +1334,7 @@ class WorkItemActionEndpoints extends Endpoint {
       detail:
           'the decision was retired as unreviewable and the work item returned '
           'to agent_completed at review attempt $attempt',
-      workItem: updated,
+      workItem: UiViewMappers.workItemView(updated),
       decisionId: decision.decisionId,
     );
   }
@@ -1379,7 +1358,9 @@ class WorkItemActionEndpoints extends Endpoint {
     return ReviewRepairResult(
       outcome: outcome,
       detail: detail,
-      workItem: await service.readWorkItem(workItemId),
+      workItem: UiViewMappers.workItemView(
+        await service.readWorkItem(workItemId),
+      ),
       decisionId: decisionId,
     );
   }
@@ -1586,58 +1567,6 @@ String reviewRepairIdempotencyKey(String requestId) =>
 /// those can delete this action's rows.
 String reviewRepairTransitionId(String requestId) =>
     'tr-review-repair-$requestId';
-
-/// The result of one repair attempt.
-///
-/// ## WHY IT IS A PLAIN DART TYPE — AND WHAT THAT COSTS
-///
-/// A plain Dart type is not a wire type, and Serverpod's connector table and
-/// client protocol are generated from the endpoint signatures, so while this
-/// carries `@doNotGenerate` the action is NOT callable from a control-plane
-/// client and nothing in this file claims otherwise. `apps/server/test/
-/// review_repair_action_test.dart` drives the contract directly instead.
-///
-/// `serverpod generate` WAS RUN against this method, with the generated paths
-/// opened for it, and it is the reason this type is still plain. See the
-/// `@doNotGenerate` note on the method for what the generator emitted and why
-/// the result could not be committed.
-class ReviewRepairResult {
-  const ReviewRepairResult({
-    required this.outcome,
-    required this.detail,
-    required this.workItem,
-    this.decisionId,
-  });
-
-  /// A closed set, and every input reaches exactly one of them:
-  ///
-  /// | outcome | meaning | wrote anything? |
-  /// |---|---|---|
-  /// | `accepted` | repaired, or a replay of an intent that was | yes, once |
-  /// | `notApplicable` | nothing is parked behind a fabricated question | no |
-  /// | `reviewerProducedVerdict` | a reviewer really returned this verdict | no |
-  /// | `reviewerProducedProse` | a real assessment exists, in prose only | no |
-  /// | `reviewerOutputUnreadable` | the reviewer result could not be read | no |
-  /// | `alreadyDecided` | a human answered; the repair must not undo that | no |
-  /// | `alreadyRunning` | a live job holds the item | no |
-  /// | `concurrentWrite` | another writer moved it first | no |
-  /// | `invalidRequest` | no requester or no reason | no |
-  ///
-  /// `accepted` covers both the first application and a replay, deliberately:
-  /// a replay must report what that request DID, not refuse itself as
-  /// inapplicable after the item has moved on.
-  final String outcome;
-
-  /// Why this outcome, in one sentence. Diagnostic, not presentational.
-  final String detail;
-
-  /// The work item as it stands after this attempt — always re-read, so a
-  /// refusal still reports the true current state rather than a stale one.
-  final WorkItem workItem;
-
-  /// The decision this attempt concerned, or null when none applied.
-  final String? decisionId;
-}
 
 // ---------------------------------------------------------------------------
 // WHAT A PENDING `engineering_review` DECISION ACTUALLY RESTS ON.

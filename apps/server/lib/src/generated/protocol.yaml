@@ -63,6 +63,7 @@ workItemActionEndpoints:
   - actionContext:
   - retryFailedWorkItem:
   - stopFailedWorkItem:
+  - repairUnreviewedReview:
 workerEndpoints:
   - listWorkers:
   - listExecutions:

@@ -76,19 +76,21 @@ import 'package:control_plane_client/src/protocol/work_item_action_context_view.
     as _i36;
 import 'package:control_plane_client/src/protocol/work_item_action_result.dart'
     as _i37;
-import 'package:control_plane_client/src/protocol/worker_list_view.dart'
+import 'package:control_plane_client/src/protocol/review_repair_result.dart'
     as _i38;
-import 'package:control_plane_client/src/protocol/worker_execution_list_view.dart'
+import 'package:control_plane_client/src/protocol/worker_list_view.dart'
     as _i39;
-import 'package:control_plane_client/src/protocol/worker_execution_inspection_view.dart'
+import 'package:control_plane_client/src/protocol/worker_execution_list_view.dart'
     as _i40;
-import 'package:control_plane_client/src/protocol/job_summary_view.dart'
+import 'package:control_plane_client/src/protocol/worker_execution_inspection_view.dart'
     as _i41;
-import 'package:control_plane_client/src/protocol/work_item_detail_view.dart'
+import 'package:control_plane_client/src/protocol/job_summary_view.dart'
     as _i42;
-import 'package:control_plane_client/src/protocol/resolve_decision_view.dart'
+import 'package:control_plane_client/src/protocol/work_item_detail_view.dart'
     as _i43;
-import 'protocol.dart' as _i44;
+import 'package:control_plane_client/src/protocol/resolve_decision_view.dart'
+    as _i44;
+import 'protocol.dart' as _i45;
 
 /// Server half of Add Product: mints repository deploy keys and proves they can
 /// reach the repository (ADR 0018 §A2 / §A3).
@@ -1196,14 +1198,29 @@ class EndpointWorkItemActionEndpoints extends _i1.EndpointRef {
   ///     key.
   ///  2. **State.** Not `agent_failed` ⇒ `notApplicable`, nothing written.
   ///  3. **Edge legality**, asked of the real table.
-  ///  4. **The bound.** Reached ⇒ `notConfigured`, nothing written. Unresolved
-  ///     ⇒ `notConfigured`, nothing written, and the diagnostic names the
-  ///     variable.
+  ///  4. **The bound.** Reached ⇒ `notConfigured`, nothing written. Switched
+  ///     off by an explicit `0` ⇒ `notConfigured`, nothing written. Unset ⇒
+  ///     **no bound and no refusal** — this step does not stop it (reversed
+  ///     2026-10-12; see [operatorRetryLimitEnvVar]).
   ///  5. **The reason.** Blank ⇒ `invalidRequest`, nothing written. The record
   ///     must say why, not just what (§6.4 step 1, §6.3).
   ///  6. **`alreadyRunning`.** Any non-terminal job for this item means a
   ///     second operator action could be layered on top of a live attempt.
   ///  7. **The write.** One transaction.
+  ///
+  /// Steps 1, 2, 3, 5, 6 and 7 are UNCHANGED by the 2026-10-12 reversal, and
+  /// that is the point worth stating: an uncounted retry is still one
+  /// deliberate, reasoned, non-double-spending, non-concurrent action per
+  /// invocation. Only step 4 changed.
+  ///
+  /// ## HOW OFTEN THIS MAY BE CALLED
+  ///
+  /// Unbounded, by a human, one deliberate confirm-and-reason at a time. What
+  /// bounds it is not a counter but the guards above: an item must be parked
+  /// in `agent_failed`, must not already be running, and each call writes one
+  /// audit row. What bounds AUTOMATIC re-running is a different mechanism
+  /// entirely — the job's own `maxAttempts` — and this method does not consult
+  /// it (nor could it: it never enqueues or claims a job).
   ///
   /// `requestId` is minted by the client ONCE per operator intent — on confirm,
   /// not on load and not per HTTP attempt — and reused for every network retry
@@ -1253,6 +1270,135 @@ class EndpointWorkItemActionEndpoints extends _i1.EndpointRef {
       'reason': reason,
     },
   );
+
+  /// WRITE. Returns a work item parked behind a fabricated engineering-review
+  /// decision to `agentCompleted` — retryable and dispatchable — and retires the
+  /// decision without destroying it.
+  ///
+  /// ## WHY THIS IS NOT A TRANSITION
+  ///
+  /// `waitingForHumanDecision -> agentCompleted` has no edge in
+  /// `WorkItemTransitions`, exactly as `agentCompleted ->
+  /// waitingForHumanDecision` never had one (`engineering_review_gate.dart`
+  /// reaches the gate by entering `reviewInProgress` first). Nothing in the
+  /// state machine models "a question was asked that nobody asked", so this
+  /// writes the item directly inside one transaction, and says in its audit row
+  /// that no edge was taken. The same is true of every repair migration in this
+  /// repository, and the reason is the same: there is no edge to take.
+  ///
+  /// ## WHAT IT IS PROVABLY SCOPED TO
+  ///
+  /// [readReviewVerdictProvenance] decides, and it decides from the REVIEWER'S
+  /// OWN durable result. The decision's `metadata` is read only for the
+  /// execution id it names; its `reviewVerdict` is never taken as evidence that
+  /// anyone reviewed anything. Only [ReviewAssessment.noReviewerOutput] — no
+  /// result at all, or a result with neither a structured payload nor a
+  /// summary — reaches the write.
+  ///
+  /// ## WHAT IT REFUSES, AND WHY EACH REFUSAL IS THE SAFE SIDE
+  ///
+  ///  * [ReviewAssessment.assessed] → `reviewerProducedVerdict`. A reviewer
+  ///    really returned this verdict. Discarding it would destroy a real review.
+  ///    This is the guardrail, and it is the whole reason the provenance is
+  ///    RE-DERIVED rather than read off the decision.
+  ///  * [ReviewAssessment.reviewerProseOnly] → `reviewerProducedProse`. A real
+  ///    reviewer wrote a real assessment that the machine channel failed to
+  ///    capture and the operator has never seen. Measured live in QA on
+  ///    2026-10-14: one such reviewer wrote
+  ///    *"**Verdict: `APPROVE_WITH_NON_BLOCKING_FOLLOWUP`**"* while the decision
+  ///    it produced claimed `changes_required`. Refusing here is deliberate and
+  ///    is the conservative side of the choice — an operator-triggered path that
+  ///    can throw away a genuine review is worse than the bug it repairs. The
+  ///    operator's safe answer on one of these is to RESOLVE the decision
+  ///    (reject routes to `reviewRejected`, a triage entry state), which keeps
+  ///    the reviewer's prose on the execution record.
+  ///  * [ReviewAssessment.unreadable] → `reviewerOutputUnreadable`. "I could not
+  ///    check" is not "there was nothing there".
+  ///  * a decision a human has already RESOLVED → `alreadyDecided`. Someone
+  ///    answered the question. Overwriting that answer is not a repair, it is
+  ///    discarding a real human decision — and QA has one on record: an operator
+  ///    approved `dec-hn7h7daum6-2atjhe`, whose reviewer had in fact timed out,
+  ///    and the work item moved to `reviewApproved`. This refusal is what stops
+  ///    this method being the thing that did that.
+  ///
+  ///    THE OPERATOR HAS SINCE GONE THE OTHER WAY ON THAT ONE, and the two
+  ///    positions are deliberately not the same. Voiding a human approval is
+  ///    `HUMAN_DECISION_REQUIRED` by construction: migration
+  ///    `20261014210000000` did it for all five fabricated decisions under
+  ///    recorded decision `8f1ed5bf-4147-449a-a221-558aac2303a9`, after being
+  ///    shown that one of them had an approval resting on nothing. THIS method
+  ///    still refuses, because an operator clicking a button on one item is not
+  ///    that: the consent was given for five named rows with a stated reason,
+  ///    and generalising it to an ad-hoc action would hand the one authority
+  ///    nobody granted it. The two decisions disagree on purpose.
+  ///  * a decision that is not the item's blocking one, or an item not at
+  ///    `waitingForHumanDecision` → `notApplicable`. There is nothing parked.
+  ///  * a non-terminal job → `alreadyRunning`. A second operator action must not
+  ///    be layered on a live attempt.
+  ///  * a blank reason or a blank requester → `invalidRequest`. The record must
+  ///    say who and why.
+  ///
+  /// EVERY refusal returns before the transaction opens, so every refusal writes
+  /// NOTHING — no audit row, no decision change, no version bump.
+  ///
+  /// ## THE FRESH DEDUPE KEY IS AN ARITHMETIC BORROW, NOT A RE-DERIVATION
+  ///
+  /// `engineeringReviewDedupeKey` (packages/scheduler/lib/src/scheduler.dart)
+  /// builds `'<workItemId>:engineering_review'` plus `':a<n>'` when
+  /// `metadata.triageAttempt` is readable — and the terminal job that stranded
+  /// the item already holds its key, so the item is inert without a bump. The
+  /// bump reuses [DurableWorkflowEngine.nextTriageAttempt] with the HIGHEST
+  /// attempt this item's own `engineering_review` jobs have consumed as the
+  /// floor, which is the same second-watermark rule
+  /// `20261014093000000` used for the triage key and the same one
+  /// `operatorRetry` uses. The arithmetic is not restated here; only the floor
+  /// is computed, and it is computed from the item's own job rows so the key it
+  /// writes is provably unheld.
+  ///
+  /// ## REPLAY
+  ///
+  /// `requestId` is minted by the caller once per operator intent. A repeat
+  /// finds its own audit row by idempotency key and returns what that request
+  /// DID, without writing again — so a double-click cannot mint a second
+  /// discriminator bump, which would queue a second review.
+  ///
+  /// ## ON THE WIRE
+  ///
+  /// Serverpod dispatches methods from the GENERATED connector table
+  /// (`lib/src/generated/endpoints.dart`), and the matching client method lives
+  /// in `packages/control_plane_client/lib/src/protocol/client.dart`. This
+  /// method used to carry `@doNotGenerate` and to return a hand-written Dart
+  /// class, which made it unreachable from any control-plane client: the
+  /// generator emits an import for a file it never writes, and a type declared
+  /// outside `lib/src/models/` appears ZERO times in `protocol.dart`, so the
+  /// `SerializationManager` cannot decode the return value in either direction.
+  /// A green `dart analyze` on the server proved nothing about that, because
+  /// nothing exercised it.
+  ///
+  /// [ReviewRepairResult] is therefore a YAML model
+  /// (`lib/src/models/review_repair_result.yaml`) and the connector row, the
+  /// client method, the serialization entry and both generated copies all come
+  /// from `serverpod generate`. The evidence that closed it is in
+  /// docs/engineering/learning/a-generated-client-can-reference-a-file-it-never-emitted.md
+  /// and the wire proof is `apps/server/test/integration/review_repair_wire_e2e_test.dart`,
+  /// which drives this method through the REAL generated client over HTTP.
+  _i2.Future<_i38.ReviewRepairResult> repairUnreviewedReview({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+    String? decisionId,
+  }) => caller.callServerEndpoint<_i38.ReviewRepairResult>(
+    'workItemActionEndpoints',
+    'repairUnreviewedReview',
+    {
+      'workItemId': workItemId,
+      'requestId': requestId,
+      'requestedBy': requestedBy,
+      'reason': reason,
+      'decisionId': decisionId,
+    },
+  );
 }
 
 /// Read endpoints for worker_runtime durable state (registrations +
@@ -1270,26 +1416,26 @@ class EndpointWorkerEndpoints extends _i1.EndpointRef {
   /// `WorkerRegistrationCodec.toJson(...)` verbatim, whose nested `capabilities`
   /// and `artifactCache` objects are `Map<String, dynamic>`; those are now typed
   /// views keyed by their wire names.
-  _i2.Future<_i38.WorkerListView> listWorkers() =>
-      caller.callServerEndpoint<_i38.WorkerListView>(
+  _i2.Future<_i39.WorkerListView> listWorkers() =>
+      caller.callServerEndpoint<_i39.WorkerListView>(
         'workerEndpoints',
         'listWorkers',
         {},
       );
 
   /// Lists worker executions, newest first. Reads only.
-  _i2.Future<_i39.WorkerExecutionListView> listExecutions({
+  _i2.Future<_i40.WorkerExecutionListView> listExecutions({
     String? workItemId,
-  }) => caller.callServerEndpoint<_i39.WorkerExecutionListView>(
+  }) => caller.callServerEndpoint<_i40.WorkerExecutionListView>(
     'workerEndpoints',
     'listExecutions',
     {'workItemId': workItemId},
   );
 
   /// Returns one execution, its events and (if present) its result. Reads only.
-  _i2.Future<_i40.WorkerExecutionInspectionView> inspect({
+  _i2.Future<_i41.WorkerExecutionInspectionView> inspect({
     required String workerExecutionId,
-  }) => caller.callServerEndpoint<_i40.WorkerExecutionInspectionView>(
+  }) => caller.callServerEndpoint<_i41.WorkerExecutionInspectionView>(
     'workerEndpoints',
     'inspect',
     {'workerExecutionId': workerExecutionId},
@@ -1309,9 +1455,9 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
   /// Read-only: the operator surface reports what the scheduler has committed
   /// and never enqueues, claims or cancels. Feeds the Run detail line that
   /// explains what is held up behind a pending decision.
-  _i2.Future<List<_i41.JobSummaryView>> jobsForWorkItem({
+  _i2.Future<List<_i42.JobSummaryView>> jobsForWorkItem({
     required String workItemId,
-  }) => caller.callServerEndpoint<List<_i41.JobSummaryView>>(
+  }) => caller.callServerEndpoint<List<_i42.JobSummaryView>>(
     'workflowEndpoints',
     'jobsForWorkItem',
     {'workItemId': workItemId},
@@ -1319,8 +1465,8 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
 
   /// Returns the current work item and its transition history. Never mutates
   /// state; `WorkItem.state` on the wire is always reported, never written.
-  _i2.Future<_i42.WorkItemDetailView> inspect({required String workItemId}) =>
-      caller.callServerEndpoint<_i42.WorkItemDetailView>(
+  _i2.Future<_i43.WorkItemDetailView> inspect({required String workItemId}) =>
+      caller.callServerEndpoint<_i43.WorkItemDetailView>(
         'workflowEndpoints',
         'inspect',
         {'workItemId': workItemId},
@@ -1337,11 +1483,20 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
 
   /// Resolves a human decision through the durable engine.
   ///
-  /// This is the only legal request-side state transition. The decision,
-  /// its resolution, and the resulting work item move are persisted
-  /// transactionally; a repeated call is an idempotent replay, so retries
-  /// after a network failure never double-apply the transition.
-  _i2.Future<_i43.ResolveDecisionView> resolveDecision({
+  /// This was, until `WorkItemActionEndpoints` landed, the only legal
+  /// request-side state transition. It is now the FIRST of two: the second is
+  /// the operator action surface on a work item parked in a failure state
+  /// (`work_item_action_endpoints.dart` — `retryFailedWorkItem` /
+  /// `stopFailedWorkItem`), which is deliberately a separate endpoint class so
+  /// this comment and `ControlPlaneService`'s had to be amended rather than
+  /// left quietly false.
+  ///
+  /// What still holds is the part that matters: there is still no third path,
+  /// and neither of these writes SQL or sets `WorkItem.state` directly. Both go
+  /// through `DurableWorkflowEngine` under the injected policy, both are
+  /// idempotent under a client-minted key, and a repeated call replays the
+  /// prior outcome instead of re-applying the transition.
+  _i2.Future<_i44.ResolveDecisionView> resolveDecision({
     required String decisionId,
     required String choice,
     required String decider,
@@ -1350,7 +1505,7 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
     required String publicKey,
     required String signature,
     required DateTime signedAt,
-  }) => caller.callServerEndpoint<_i43.ResolveDecisionView>(
+  }) => caller.callServerEndpoint<_i44.ResolveDecisionView>(
     'workflowEndpoints',
     'resolveDecision',
     {
@@ -1386,7 +1541,7 @@ class Client extends _i1.ServerpodClientShared {
     bool? disconnectStreamsOnLostInternetConnection,
   }) : super(
          host,
-         _i44.Protocol(),
+         _i45.Protocol(),
          securityContext: securityContext,
          streamingConnectionTimeout: streamingConnectionTimeout,
          connectionTimeout: connectionTimeout,

@@ -119,38 +119,39 @@ import 'repository_reference_added_view.dart' as _i105;
 import 'repository_reference_view.dart' as _i106;
 import 'resolve_decision_view.dart' as _i107;
 import 'resource_usage_view.dart' as _i108;
-import 'scheduler_event_view.dart' as _i109;
-import 'standing_policy_view.dart' as _i110;
-import 'transition_view.dart' as _i111;
-import 'triage_result_view.dart' as _i112;
-import 'work_item_action_context_view.dart' as _i113;
-import 'work_item_action_result.dart' as _i114;
-import 'work_item_action_view.dart' as _i115;
-import 'work_item_detail_view.dart' as _i116;
-import 'work_item_failure_view.dart' as _i117;
-import 'work_item_view.dart' as _i118;
-import 'worker_event_view.dart' as _i119;
-import 'worker_execution_inspection_view.dart' as _i120;
-import 'worker_execution_list_view.dart' as _i121;
-import 'worker_execution_result_view.dart' as _i122;
-import 'worker_execution_view.dart' as _i123;
-import 'worker_list_view.dart' as _i124;
-import 'worker_registration_view.dart' as _i125;
+import 'review_repair_result.dart' as _i109;
+import 'scheduler_event_view.dart' as _i110;
+import 'standing_policy_view.dart' as _i111;
+import 'transition_view.dart' as _i112;
+import 'triage_result_view.dart' as _i113;
+import 'work_item_action_context_view.dart' as _i114;
+import 'work_item_action_result.dart' as _i115;
+import 'work_item_action_view.dart' as _i116;
+import 'work_item_detail_view.dart' as _i117;
+import 'work_item_failure_view.dart' as _i118;
+import 'work_item_view.dart' as _i119;
+import 'worker_event_view.dart' as _i120;
+import 'worker_execution_inspection_view.dart' as _i121;
+import 'worker_execution_list_view.dart' as _i122;
+import 'worker_execution_result_view.dart' as _i123;
+import 'worker_execution_view.dart' as _i124;
+import 'worker_list_view.dart' as _i125;
+import 'worker_registration_view.dart' as _i126;
 import 'package:control_plane_server/src/generated/work_item_view.dart'
-    as _i126;
-import 'package:control_plane_server/src/generated/decision_view.dart' as _i127;
+    as _i127;
+import 'package:control_plane_server/src/generated/decision_view.dart' as _i128;
 import 'package:control_plane_server/src/generated/human_direction_attachment_view.dart'
-    as _i128;
-import 'package:control_plane_server/src/generated/human_direction_view.dart'
     as _i129;
-import 'package:control_plane_server/src/generated/feature_request_summary_view.dart'
+import 'package:control_plane_server/src/generated/human_direction_view.dart'
     as _i130;
-import 'package:control_plane_server/src/generated/product_view.dart' as _i131;
+import 'package:control_plane_server/src/generated/feature_request_summary_view.dart'
+    as _i131;
+import 'package:control_plane_server/src/generated/product_view.dart' as _i132;
 import 'package:control_plane_server/src/generated/product_summary_view.dart'
-    as _i132;
-import 'package:platform_contracts/src/types/baseline_fact.dart' as _i133;
+    as _i133;
+import 'package:platform_contracts/src/types/baseline_fact.dart' as _i134;
 import 'package:control_plane_server/src/generated/job_summary_view.dart'
-    as _i134;
+    as _i135;
 export 'agent_artifact_view.dart';
 export 'agent_claimed_check_view.dart';
 export 'agent_diagnostics_view.dart';
@@ -257,6 +258,7 @@ export 'repository_reference_added_view.dart';
 export 'repository_reference_view.dart';
 export 'resolve_decision_view.dart';
 export 'resource_usage_view.dart';
+export 'review_repair_result.dart';
 export 'scheduler_event_view.dart';
 export 'standing_policy_view.dart';
 export 'transition_view.dart';
@@ -6446,56 +6448,59 @@ class Protocol extends _i1.SerializationManagerServer {
     if (t == _i108.ResourceUsageView) {
       return _i108.ResourceUsageView.fromJson(data) as T;
     }
-    if (t == _i109.SchedulerEventView) {
-      return _i109.SchedulerEventView.fromJson(data) as T;
+    if (t == _i109.ReviewRepairResult) {
+      return _i109.ReviewRepairResult.fromJson(data) as T;
     }
-    if (t == _i110.StandingPolicyView) {
-      return _i110.StandingPolicyView.fromJson(data) as T;
+    if (t == _i110.SchedulerEventView) {
+      return _i110.SchedulerEventView.fromJson(data) as T;
     }
-    if (t == _i111.TransitionView) {
-      return _i111.TransitionView.fromJson(data) as T;
+    if (t == _i111.StandingPolicyView) {
+      return _i111.StandingPolicyView.fromJson(data) as T;
     }
-    if (t == _i112.TriageResultView) {
-      return _i112.TriageResultView.fromJson(data) as T;
+    if (t == _i112.TransitionView) {
+      return _i112.TransitionView.fromJson(data) as T;
     }
-    if (t == _i113.WorkItemActionContextView) {
-      return _i113.WorkItemActionContextView.fromJson(data) as T;
+    if (t == _i113.TriageResultView) {
+      return _i113.TriageResultView.fromJson(data) as T;
     }
-    if (t == _i114.WorkItemActionResult) {
-      return _i114.WorkItemActionResult.fromJson(data) as T;
+    if (t == _i114.WorkItemActionContextView) {
+      return _i114.WorkItemActionContextView.fromJson(data) as T;
     }
-    if (t == _i115.WorkItemActionView) {
-      return _i115.WorkItemActionView.fromJson(data) as T;
+    if (t == _i115.WorkItemActionResult) {
+      return _i115.WorkItemActionResult.fromJson(data) as T;
     }
-    if (t == _i116.WorkItemDetailView) {
-      return _i116.WorkItemDetailView.fromJson(data) as T;
+    if (t == _i116.WorkItemActionView) {
+      return _i116.WorkItemActionView.fromJson(data) as T;
     }
-    if (t == _i117.WorkItemFailureView) {
-      return _i117.WorkItemFailureView.fromJson(data) as T;
+    if (t == _i117.WorkItemDetailView) {
+      return _i117.WorkItemDetailView.fromJson(data) as T;
     }
-    if (t == _i118.WorkItemView) {
-      return _i118.WorkItemView.fromJson(data) as T;
+    if (t == _i118.WorkItemFailureView) {
+      return _i118.WorkItemFailureView.fromJson(data) as T;
     }
-    if (t == _i119.WorkerEventView) {
-      return _i119.WorkerEventView.fromJson(data) as T;
+    if (t == _i119.WorkItemView) {
+      return _i119.WorkItemView.fromJson(data) as T;
     }
-    if (t == _i120.WorkerExecutionInspectionView) {
-      return _i120.WorkerExecutionInspectionView.fromJson(data) as T;
+    if (t == _i120.WorkerEventView) {
+      return _i120.WorkerEventView.fromJson(data) as T;
     }
-    if (t == _i121.WorkerExecutionListView) {
-      return _i121.WorkerExecutionListView.fromJson(data) as T;
+    if (t == _i121.WorkerExecutionInspectionView) {
+      return _i121.WorkerExecutionInspectionView.fromJson(data) as T;
     }
-    if (t == _i122.WorkerExecutionResultView) {
-      return _i122.WorkerExecutionResultView.fromJson(data) as T;
+    if (t == _i122.WorkerExecutionListView) {
+      return _i122.WorkerExecutionListView.fromJson(data) as T;
     }
-    if (t == _i123.WorkerExecutionView) {
-      return _i123.WorkerExecutionView.fromJson(data) as T;
+    if (t == _i123.WorkerExecutionResultView) {
+      return _i123.WorkerExecutionResultView.fromJson(data) as T;
     }
-    if (t == _i124.WorkerListView) {
-      return _i124.WorkerListView.fromJson(data) as T;
+    if (t == _i124.WorkerExecutionView) {
+      return _i124.WorkerExecutionView.fromJson(data) as T;
     }
-    if (t == _i125.WorkerRegistrationView) {
-      return _i125.WorkerRegistrationView.fromJson(data) as T;
+    if (t == _i125.WorkerListView) {
+      return _i125.WorkerListView.fromJson(data) as T;
+    }
+    if (t == _i126.WorkerRegistrationView) {
+      return _i126.WorkerRegistrationView.fromJson(data) as T;
     }
     if (t == _i1.getType<_i3.AgentArtifactView?>()) {
       return (data != null ? _i3.AgentArtifactView.fromJson(data) : null) as T;
@@ -6905,75 +6910,79 @@ class Protocol extends _i1.SerializationManagerServer {
       return (data != null ? _i108.ResourceUsageView.fromJson(data) : null)
           as T;
     }
-    if (t == _i1.getType<_i109.SchedulerEventView?>()) {
-      return (data != null ? _i109.SchedulerEventView.fromJson(data) : null)
+    if (t == _i1.getType<_i109.ReviewRepairResult?>()) {
+      return (data != null ? _i109.ReviewRepairResult.fromJson(data) : null)
           as T;
     }
-    if (t == _i1.getType<_i110.StandingPolicyView?>()) {
-      return (data != null ? _i110.StandingPolicyView.fromJson(data) : null)
+    if (t == _i1.getType<_i110.SchedulerEventView?>()) {
+      return (data != null ? _i110.SchedulerEventView.fromJson(data) : null)
           as T;
     }
-    if (t == _i1.getType<_i111.TransitionView?>()) {
-      return (data != null ? _i111.TransitionView.fromJson(data) : null) as T;
+    if (t == _i1.getType<_i111.StandingPolicyView?>()) {
+      return (data != null ? _i111.StandingPolicyView.fromJson(data) : null)
+          as T;
     }
-    if (t == _i1.getType<_i112.TriageResultView?>()) {
-      return (data != null ? _i112.TriageResultView.fromJson(data) : null) as T;
+    if (t == _i1.getType<_i112.TransitionView?>()) {
+      return (data != null ? _i112.TransitionView.fromJson(data) : null) as T;
     }
-    if (t == _i1.getType<_i113.WorkItemActionContextView?>()) {
+    if (t == _i1.getType<_i113.TriageResultView?>()) {
+      return (data != null ? _i113.TriageResultView.fromJson(data) : null) as T;
+    }
+    if (t == _i1.getType<_i114.WorkItemActionContextView?>()) {
       return (data != null
-              ? _i113.WorkItemActionContextView.fromJson(data)
+              ? _i114.WorkItemActionContextView.fromJson(data)
               : null)
           as T;
     }
-    if (t == _i1.getType<_i114.WorkItemActionResult?>()) {
-      return (data != null ? _i114.WorkItemActionResult.fromJson(data) : null)
+    if (t == _i1.getType<_i115.WorkItemActionResult?>()) {
+      return (data != null ? _i115.WorkItemActionResult.fromJson(data) : null)
           as T;
     }
-    if (t == _i1.getType<_i115.WorkItemActionView?>()) {
-      return (data != null ? _i115.WorkItemActionView.fromJson(data) : null)
+    if (t == _i1.getType<_i116.WorkItemActionView?>()) {
+      return (data != null ? _i116.WorkItemActionView.fromJson(data) : null)
           as T;
     }
-    if (t == _i1.getType<_i116.WorkItemDetailView?>()) {
-      return (data != null ? _i116.WorkItemDetailView.fromJson(data) : null)
+    if (t == _i1.getType<_i117.WorkItemDetailView?>()) {
+      return (data != null ? _i117.WorkItemDetailView.fromJson(data) : null)
           as T;
     }
-    if (t == _i1.getType<_i117.WorkItemFailureView?>()) {
-      return (data != null ? _i117.WorkItemFailureView.fromJson(data) : null)
+    if (t == _i1.getType<_i118.WorkItemFailureView?>()) {
+      return (data != null ? _i118.WorkItemFailureView.fromJson(data) : null)
           as T;
     }
-    if (t == _i1.getType<_i118.WorkItemView?>()) {
-      return (data != null ? _i118.WorkItemView.fromJson(data) : null) as T;
+    if (t == _i1.getType<_i119.WorkItemView?>()) {
+      return (data != null ? _i119.WorkItemView.fromJson(data) : null) as T;
     }
-    if (t == _i1.getType<_i119.WorkerEventView?>()) {
-      return (data != null ? _i119.WorkerEventView.fromJson(data) : null) as T;
+    if (t == _i1.getType<_i120.WorkerEventView?>()) {
+      return (data != null ? _i120.WorkerEventView.fromJson(data) : null) as T;
     }
-    if (t == _i1.getType<_i120.WorkerExecutionInspectionView?>()) {
+    if (t == _i1.getType<_i121.WorkerExecutionInspectionView?>()) {
       return (data != null
-              ? _i120.WorkerExecutionInspectionView.fromJson(data)
+              ? _i121.WorkerExecutionInspectionView.fromJson(data)
               : null)
           as T;
     }
-    if (t == _i1.getType<_i121.WorkerExecutionListView?>()) {
+    if (t == _i1.getType<_i122.WorkerExecutionListView?>()) {
       return (data != null
-              ? _i121.WorkerExecutionListView.fromJson(data)
+              ? _i122.WorkerExecutionListView.fromJson(data)
               : null)
           as T;
     }
-    if (t == _i1.getType<_i122.WorkerExecutionResultView?>()) {
+    if (t == _i1.getType<_i123.WorkerExecutionResultView?>()) {
       return (data != null
-              ? _i122.WorkerExecutionResultView.fromJson(data)
+              ? _i123.WorkerExecutionResultView.fromJson(data)
               : null)
           as T;
     }
-    if (t == _i1.getType<_i123.WorkerExecutionView?>()) {
-      return (data != null ? _i123.WorkerExecutionView.fromJson(data) : null)
+    if (t == _i1.getType<_i124.WorkerExecutionView?>()) {
+      return (data != null ? _i124.WorkerExecutionView.fromJson(data) : null)
           as T;
     }
-    if (t == _i1.getType<_i124.WorkerListView?>()) {
-      return (data != null ? _i124.WorkerListView.fromJson(data) : null) as T;
+    if (t == _i1.getType<_i125.WorkerListView?>()) {
+      return (data != null ? _i125.WorkerListView.fromJson(data) : null) as T;
     }
-    if (t == _i1.getType<_i125.WorkerRegistrationView?>()) {
-      return (data != null ? _i125.WorkerRegistrationView.fromJson(data) : null)
+    if (t == _i1.getType<_i126.WorkerRegistrationView?>()) {
+      return (data != null ? _i126.WorkerRegistrationView.fromJson(data) : null)
           as T;
     }
     if (t == List<_i71.DiagnosticEntryView>) {
@@ -7126,9 +7135,9 @@ class Protocol extends _i1.SerializationManagerServer {
               : null)
           as T;
     }
-    if (t == List<_i109.SchedulerEventView>) {
+    if (t == List<_i110.SchedulerEventView>) {
       return (data as List)
-              .map((e) => deserialize<_i109.SchedulerEventView>(e))
+              .map((e) => deserialize<_i110.SchedulerEventView>(e))
               .toList()
           as T;
     }
@@ -7198,9 +7207,9 @@ class Protocol extends _i1.SerializationManagerServer {
               .toList()
           as T;
     }
-    if (t == List<_i110.StandingPolicyView>) {
+    if (t == List<_i111.StandingPolicyView>) {
       return (data as List)
-              .map((e) => deserialize<_i110.StandingPolicyView>(e))
+              .map((e) => deserialize<_i111.StandingPolicyView>(e))
               .toList()
           as T;
     }
@@ -7216,9 +7225,9 @@ class Protocol extends _i1.SerializationManagerServer {
               .toList()
           as T;
     }
-    if (t == List<_i115.WorkItemActionView>) {
+    if (t == List<_i116.WorkItemActionView>) {
       return (data as List)
-              .map((e) => deserialize<_i115.WorkItemActionView>(e))
+              .map((e) => deserialize<_i116.WorkItemActionView>(e))
               .toList()
           as T;
     }
@@ -7228,27 +7237,27 @@ class Protocol extends _i1.SerializationManagerServer {
               .toList()
           as T;
     }
-    if (t == List<_i111.TransitionView>) {
+    if (t == List<_i112.TransitionView>) {
       return (data as List)
-              .map((e) => deserialize<_i111.TransitionView>(e))
+              .map((e) => deserialize<_i112.TransitionView>(e))
               .toList()
           as T;
     }
-    if (t == List<_i119.WorkerEventView>) {
+    if (t == List<_i120.WorkerEventView>) {
       return (data as List)
-              .map((e) => deserialize<_i119.WorkerEventView>(e))
+              .map((e) => deserialize<_i120.WorkerEventView>(e))
               .toList()
           as T;
     }
-    if (t == List<_i123.WorkerExecutionView>) {
+    if (t == List<_i124.WorkerExecutionView>) {
       return (data as List)
-              .map((e) => deserialize<_i123.WorkerExecutionView>(e))
+              .map((e) => deserialize<_i124.WorkerExecutionView>(e))
               .toList()
           as T;
     }
-    if (t == List<_i125.WorkerRegistrationView>) {
+    if (t == List<_i126.WorkerRegistrationView>) {
       return (data as List)
-              .map((e) => deserialize<_i125.WorkerRegistrationView>(e))
+              .map((e) => deserialize<_i126.WorkerRegistrationView>(e))
               .toList()
           as T;
     }
@@ -7281,61 +7290,61 @@ class Protocol extends _i1.SerializationManagerServer {
               : null)
           as T;
     }
-    if (t == List<_i126.WorkItemView>) {
+    if (t == List<_i127.WorkItemView>) {
       return (data as List)
-              .map((e) => deserialize<_i126.WorkItemView>(e))
+              .map((e) => deserialize<_i127.WorkItemView>(e))
               .toList()
           as T;
     }
-    if (t == List<_i127.DecisionView>) {
+    if (t == List<_i128.DecisionView>) {
       return (data as List)
-              .map((e) => deserialize<_i127.DecisionView>(e))
+              .map((e) => deserialize<_i128.DecisionView>(e))
               .toList()
           as T;
     }
-    if (t == List<_i128.HumanDirectionAttachmentView>) {
+    if (t == List<_i129.HumanDirectionAttachmentView>) {
       return (data as List)
-              .map((e) => deserialize<_i128.HumanDirectionAttachmentView>(e))
+              .map((e) => deserialize<_i129.HumanDirectionAttachmentView>(e))
               .toList()
           as T;
     }
-    if (t == _i1.getType<List<_i128.HumanDirectionAttachmentView>?>()) {
+    if (t == _i1.getType<List<_i129.HumanDirectionAttachmentView>?>()) {
       return (data != null
               ? (data as List)
                     .map(
-                      (e) => deserialize<_i128.HumanDirectionAttachmentView>(e),
+                      (e) => deserialize<_i129.HumanDirectionAttachmentView>(e),
                     )
                     .toList()
               : null)
           as T;
     }
-    if (t == List<_i129.HumanDirectionView>) {
+    if (t == List<_i130.HumanDirectionView>) {
       return (data as List)
-              .map((e) => deserialize<_i129.HumanDirectionView>(e))
+              .map((e) => deserialize<_i130.HumanDirectionView>(e))
               .toList()
           as T;
     }
-    if (t == List<_i130.FeatureRequestSummaryView>) {
+    if (t == List<_i131.FeatureRequestSummaryView>) {
       return (data as List)
-              .map((e) => deserialize<_i130.FeatureRequestSummaryView>(e))
+              .map((e) => deserialize<_i131.FeatureRequestSummaryView>(e))
               .toList()
           as T;
     }
-    if (t == List<_i131.ProductView>) {
+    if (t == List<_i132.ProductView>) {
       return (data as List)
-              .map((e) => deserialize<_i131.ProductView>(e))
+              .map((e) => deserialize<_i132.ProductView>(e))
               .toList()
           as T;
     }
-    if (t == List<_i132.ProductSummaryView>) {
+    if (t == List<_i133.ProductSummaryView>) {
       return (data as List)
-              .map((e) => deserialize<_i132.ProductSummaryView>(e))
+              .map((e) => deserialize<_i133.ProductSummaryView>(e))
               .toList()
           as T;
     }
-    if (t == List<_i133.BaselineFact>) {
+    if (t == List<_i134.BaselineFact>) {
       return (data as List)
-              .map((e) => deserialize<_i133.BaselineFact>(e))
+              .map((e) => deserialize<_i134.BaselineFact>(e))
               .toList()
           as T;
     }
@@ -7348,9 +7357,9 @@ class Protocol extends _i1.SerializationManagerServer {
               : null)
           as T;
     }
-    if (t == List<_i134.JobSummaryView>) {
+    if (t == List<_i135.JobSummaryView>) {
       return (data as List)
-              .map((e) => deserialize<_i134.JobSummaryView>(e))
+              .map((e) => deserialize<_i135.JobSummaryView>(e))
               .toList()
           as T;
     }
@@ -7469,23 +7478,24 @@ class Protocol extends _i1.SerializationManagerServer {
       _i106.RepositoryReferenceView => 'RepositoryReferenceView',
       _i107.ResolveDecisionView => 'ResolveDecisionView',
       _i108.ResourceUsageView => 'ResourceUsageView',
-      _i109.SchedulerEventView => 'SchedulerEventView',
-      _i110.StandingPolicyView => 'StandingPolicyView',
-      _i111.TransitionView => 'TransitionView',
-      _i112.TriageResultView => 'TriageResultView',
-      _i113.WorkItemActionContextView => 'WorkItemActionContextView',
-      _i114.WorkItemActionResult => 'WorkItemActionResult',
-      _i115.WorkItemActionView => 'WorkItemActionView',
-      _i116.WorkItemDetailView => 'WorkItemDetailView',
-      _i117.WorkItemFailureView => 'WorkItemFailureView',
-      _i118.WorkItemView => 'WorkItemView',
-      _i119.WorkerEventView => 'WorkerEventView',
-      _i120.WorkerExecutionInspectionView => 'WorkerExecutionInspectionView',
-      _i121.WorkerExecutionListView => 'WorkerExecutionListView',
-      _i122.WorkerExecutionResultView => 'WorkerExecutionResultView',
-      _i123.WorkerExecutionView => 'WorkerExecutionView',
-      _i124.WorkerListView => 'WorkerListView',
-      _i125.WorkerRegistrationView => 'WorkerRegistrationView',
+      _i109.ReviewRepairResult => 'ReviewRepairResult',
+      _i110.SchedulerEventView => 'SchedulerEventView',
+      _i111.StandingPolicyView => 'StandingPolicyView',
+      _i112.TransitionView => 'TransitionView',
+      _i113.TriageResultView => 'TriageResultView',
+      _i114.WorkItemActionContextView => 'WorkItemActionContextView',
+      _i115.WorkItemActionResult => 'WorkItemActionResult',
+      _i116.WorkItemActionView => 'WorkItemActionView',
+      _i117.WorkItemDetailView => 'WorkItemDetailView',
+      _i118.WorkItemFailureView => 'WorkItemFailureView',
+      _i119.WorkItemView => 'WorkItemView',
+      _i120.WorkerEventView => 'WorkerEventView',
+      _i121.WorkerExecutionInspectionView => 'WorkerExecutionInspectionView',
+      _i122.WorkerExecutionListView => 'WorkerExecutionListView',
+      _i123.WorkerExecutionResultView => 'WorkerExecutionResultView',
+      _i124.WorkerExecutionView => 'WorkerExecutionView',
+      _i125.WorkerListView => 'WorkerListView',
+      _i126.WorkerRegistrationView => 'WorkerRegistrationView',
       _ => null,
     };
   }
@@ -7715,39 +7725,41 @@ class Protocol extends _i1.SerializationManagerServer {
         return 'ResolveDecisionView';
       case _i108.ResourceUsageView():
         return 'ResourceUsageView';
-      case _i109.SchedulerEventView():
+      case _i109.ReviewRepairResult():
+        return 'ReviewRepairResult';
+      case _i110.SchedulerEventView():
         return 'SchedulerEventView';
-      case _i110.StandingPolicyView():
+      case _i111.StandingPolicyView():
         return 'StandingPolicyView';
-      case _i111.TransitionView():
+      case _i112.TransitionView():
         return 'TransitionView';
-      case _i112.TriageResultView():
+      case _i113.TriageResultView():
         return 'TriageResultView';
-      case _i113.WorkItemActionContextView():
+      case _i114.WorkItemActionContextView():
         return 'WorkItemActionContextView';
-      case _i114.WorkItemActionResult():
+      case _i115.WorkItemActionResult():
         return 'WorkItemActionResult';
-      case _i115.WorkItemActionView():
+      case _i116.WorkItemActionView():
         return 'WorkItemActionView';
-      case _i116.WorkItemDetailView():
+      case _i117.WorkItemDetailView():
         return 'WorkItemDetailView';
-      case _i117.WorkItemFailureView():
+      case _i118.WorkItemFailureView():
         return 'WorkItemFailureView';
-      case _i118.WorkItemView():
+      case _i119.WorkItemView():
         return 'WorkItemView';
-      case _i119.WorkerEventView():
+      case _i120.WorkerEventView():
         return 'WorkerEventView';
-      case _i120.WorkerExecutionInspectionView():
+      case _i121.WorkerExecutionInspectionView():
         return 'WorkerExecutionInspectionView';
-      case _i121.WorkerExecutionListView():
+      case _i122.WorkerExecutionListView():
         return 'WorkerExecutionListView';
-      case _i122.WorkerExecutionResultView():
+      case _i123.WorkerExecutionResultView():
         return 'WorkerExecutionResultView';
-      case _i123.WorkerExecutionView():
+      case _i124.WorkerExecutionView():
         return 'WorkerExecutionView';
-      case _i124.WorkerListView():
+      case _i125.WorkerListView():
         return 'WorkerListView';
-      case _i125.WorkerRegistrationView():
+      case _i126.WorkerRegistrationView():
         return 'WorkerRegistrationView';
     }
     className = _i2.Protocol().getClassNameForObject(data);
@@ -8081,56 +8093,59 @@ class Protocol extends _i1.SerializationManagerServer {
     if (dataClassName == 'ResourceUsageView') {
       return deserialize<_i108.ResourceUsageView>(data['data']);
     }
+    if (dataClassName == 'ReviewRepairResult') {
+      return deserialize<_i109.ReviewRepairResult>(data['data']);
+    }
     if (dataClassName == 'SchedulerEventView') {
-      return deserialize<_i109.SchedulerEventView>(data['data']);
+      return deserialize<_i110.SchedulerEventView>(data['data']);
     }
     if (dataClassName == 'StandingPolicyView') {
-      return deserialize<_i110.StandingPolicyView>(data['data']);
+      return deserialize<_i111.StandingPolicyView>(data['data']);
     }
     if (dataClassName == 'TransitionView') {
-      return deserialize<_i111.TransitionView>(data['data']);
+      return deserialize<_i112.TransitionView>(data['data']);
     }
     if (dataClassName == 'TriageResultView') {
-      return deserialize<_i112.TriageResultView>(data['data']);
+      return deserialize<_i113.TriageResultView>(data['data']);
     }
     if (dataClassName == 'WorkItemActionContextView') {
-      return deserialize<_i113.WorkItemActionContextView>(data['data']);
+      return deserialize<_i114.WorkItemActionContextView>(data['data']);
     }
     if (dataClassName == 'WorkItemActionResult') {
-      return deserialize<_i114.WorkItemActionResult>(data['data']);
+      return deserialize<_i115.WorkItemActionResult>(data['data']);
     }
     if (dataClassName == 'WorkItemActionView') {
-      return deserialize<_i115.WorkItemActionView>(data['data']);
+      return deserialize<_i116.WorkItemActionView>(data['data']);
     }
     if (dataClassName == 'WorkItemDetailView') {
-      return deserialize<_i116.WorkItemDetailView>(data['data']);
+      return deserialize<_i117.WorkItemDetailView>(data['data']);
     }
     if (dataClassName == 'WorkItemFailureView') {
-      return deserialize<_i117.WorkItemFailureView>(data['data']);
+      return deserialize<_i118.WorkItemFailureView>(data['data']);
     }
     if (dataClassName == 'WorkItemView') {
-      return deserialize<_i118.WorkItemView>(data['data']);
+      return deserialize<_i119.WorkItemView>(data['data']);
     }
     if (dataClassName == 'WorkerEventView') {
-      return deserialize<_i119.WorkerEventView>(data['data']);
+      return deserialize<_i120.WorkerEventView>(data['data']);
     }
     if (dataClassName == 'WorkerExecutionInspectionView') {
-      return deserialize<_i120.WorkerExecutionInspectionView>(data['data']);
+      return deserialize<_i121.WorkerExecutionInspectionView>(data['data']);
     }
     if (dataClassName == 'WorkerExecutionListView') {
-      return deserialize<_i121.WorkerExecutionListView>(data['data']);
+      return deserialize<_i122.WorkerExecutionListView>(data['data']);
     }
     if (dataClassName == 'WorkerExecutionResultView') {
-      return deserialize<_i122.WorkerExecutionResultView>(data['data']);
+      return deserialize<_i123.WorkerExecutionResultView>(data['data']);
     }
     if (dataClassName == 'WorkerExecutionView') {
-      return deserialize<_i123.WorkerExecutionView>(data['data']);
+      return deserialize<_i124.WorkerExecutionView>(data['data']);
     }
     if (dataClassName == 'WorkerListView') {
-      return deserialize<_i124.WorkerListView>(data['data']);
+      return deserialize<_i125.WorkerListView>(data['data']);
     }
     if (dataClassName == 'WorkerRegistrationView') {
-      return deserialize<_i125.WorkerRegistrationView>(data['data']);
+      return deserialize<_i126.WorkerRegistrationView>(data['data']);
     }
     if (dataClassName.startsWith('serverpod.')) {
       data['className'] = dataClassName.substring(10);
