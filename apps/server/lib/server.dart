@@ -97,6 +97,8 @@ import 'src/implementation/implementation_readiness_probe.dart'
     show ImplementationReadinessProbe, toWorkloadResolver;
 import 'src/triage/defect_triage_sweep.dart';
 import 'src/triage/lane_i_tick_hook.dart' show drainTriageOutcomesFromTick;
+import 'src/triage/stalled_work_item_gate.dart'
+    show StallGateResult, raiseStallDecisions;
 import 'src/triage/triage_processor.dart';
 import 'src/triage/work_entry.dart' show WorkEntryTrigger;
 import 'src/review/engineering_review_gate.dart';
@@ -975,6 +977,21 @@ void run(List<String> args) async {
         );
         outcome.dispatched = tickResult.dispatched.length;
         outcome.handledOff = drain.handedOff;
+
+        // The stall channel, drained here for the same reason the review
+        // section drains `blockedArtifactMissing`: a scheduler conclusion that
+        // nobody converts into a human-owned state is not surfacing. Before
+        // this, a stall was written to `scheduler_event.payloadJson` and read by
+        // nobody while the item's state said `agent_completed` and every
+        // operator screen called it "Awaiting review".
+        outcome.foldStalls(
+          await raiseStallDecisions(
+            workflowEngine: durableWorkflowEngine,
+            executionStore: coordinator.store,
+            stalls: tickResult.stalled,
+            logger: _log,
+          ),
+        );
         // Rows the per-row guard caught. Reported here because the completion
         // line is the only channel the scheduler has; leaving them here would
         // make a contended or faulting reclaim indistinguishable from a clean
@@ -1033,6 +1050,18 @@ void run(List<String> args) async {
         final implTick = await implScheduler.tick();
         outcome.implDispatched = implTick.dispatched.length;
 
+        // The implementation lane stalls too, and on the SAME channel. It is
+        // drained for the same reason as the two above: a conclusion that
+        // reaches no human is not a conclusion the platform acted on.
+        outcome.foldStalls(
+          await raiseStallDecisions(
+            workflowEngine: durableWorkflowEngine,
+            executionStore: coordinator.store,
+            stalls: implTick.stalled,
+            logger: _log,
+          ),
+        );
+
         for (final jobId in implTick.blockedArtifactMissing) {
           _log('implementation.deferred', {
             'jobId': jobId,
@@ -1076,6 +1105,21 @@ void run(List<String> args) async {
       // stale review job it left is retired as `noAction`.
       try {
         final reviewTick = await reviewScheduler.tick();
+
+        // THIRD and last stall drain. `SchedulerStall` is scoped to the lane
+        // that raised it (two schedulers share one `JobStore`), so each lane
+        // drains its own — a lane's refusal to launch is not another lane's
+        // business, and merging them would raise a decision one lane's refusal
+        // caused on an item another lane owns.
+        outcome.foldStalls(
+          await raiseStallDecisions(
+            workflowEngine: durableWorkflowEngine,
+            executionStore: coordinator.store,
+            stalls: reviewTick.stalled,
+            logger: _log,
+          ),
+        );
+
         final reviewDrain = await drainTriageOutcomesFromTick(
           tickResult: reviewTick,
           jobStore: jobStore,
@@ -1409,12 +1453,43 @@ class TickOutcome {
   /// that reads as "nothing to do".
   final List<String> failedSections;
 
+  /// What the stall drain did across all three lanes this tick.
+  ///
+  /// A VALUE and not a set of counters because it is summed from three lanes,
+  /// and summing counts across lanes is how a reader ends up unable to say
+  /// whether "3 raised" means three items or one item three times. This keeps
+  /// each lane's contribution and the total separate, so both questions have an
+  /// answer.
+  StallGateResult stalls = StallGateResult.empty;
+
   @override
   String toString() =>
       'dispatched: $dispatched, handledOff: $handledOff, '
       'implDispatched: $implDispatched, '
       'sweepEnqueued: $sweepEnqueued, failedSections: $failedSections, '
-      'reconcileFailed: $reconcileFailed';
+      'reconcileFailed: $reconcileFailed, stalls: $stalls';
+
+  /// Folds one lane's drain into [stalls].
+  ///
+  /// Counting, not collecting ids: the same item can legitimately stall on more
+  /// than one lane, and a union of ids would report that as one item — the
+  /// opposite of the reason this field exists. The per-lane counts are kept so
+  /// "three lanes each raised one" and "one lane raised three" stay
+  /// distinguishable.
+  void foldStalls(StallGateResult other) {
+    stalls = StallGateResult(
+      considered: stalls.considered + other.considered,
+      raised: stalls.raised + other.raised,
+      alreadyPending: stalls.alreadyPending + other.alreadyPending,
+      notParkable: stalls.notParkable + other.notParkable,
+      producerEvidenceUnreadable:
+          stalls.producerEvidenceUnreadable + other.producerEvidenceUnreadable,
+      failedWorkItemIds: [
+        ...stalls.failedWorkItemIds,
+        ...other.failedWorkItemIds,
+      ],
+    );
+  }
 }
 
 /// The outcome of ONE trigger: either a tick ran, or the trigger was dropped

@@ -8,6 +8,7 @@ import 'package:workflow_store/workflow_store.dart';
 import '../store/execution_store.dart';
 import '../store/model_execution_record_store.dart';
 import '../verifier/workspace_verifier.dart';
+import 'producer_execution.dart';
 
 /// Thrown when [ExecutionCoordinator.execute] is called for an execution that
 /// already has a live, non-terminal record. Executions are single-shot; replay
@@ -212,26 +213,56 @@ class ExecutionCoordinator {
   /// The transition context for moving an item `agentCompleted -> reviewInProgress`.
   ///
   /// The edge is guarded by `agentResultValid()`, which requires the
-  /// IMPLEMENTER's completed [AgentResult] under `context['agentResult']`. The
-  /// reviewer has not run yet at entry, so the latest execution for the work
-  /// item IS the implementer's, and this hands over the very result the
-  /// completion path stamped ([_completeSuccess]) — never a synthesized one.
-  /// If the implementer's result is genuinely absent the map omits the key and
-  /// the engine rejects the transition, which is the honest outcome: the
+  /// PRODUCER's completed [AgentResult] under `context['agentResult']`. This
+  /// hands over the very result the completion path stamped
+  /// ([_completeSuccess]) — never a synthesized one — read from the execution
+  /// that produced the item rather than from the newest execution of any role.
+  ///
+  /// ## WHY THE NEWEST-ANY-ROLE LOOKUP WAS A SELF-LOCKING DEFECT
+  ///
+  /// This used to call `latestExecutionForWorkItem`, whose own contract is
+  /// "newest by startedAt, any role". That is the implementer on the FIRST
+  /// review and the reviewer on every one after, because a reviewer execution
+  /// is newer than the implementer it was dispatched to check. So the guard
+  /// read the reviewer's result, and a reviewer that failed permanently
+  /// prevented the item from EVER entering review again.
+  ///
+  /// The item is `agent_completed` because a producer ran and succeeded; that
+  /// is the evidence this guard exists to check. Reviewing a reviewer's outcome
+  /// as precondition evidence for entering review is a category error, and it
+  /// is what produced the 243 `outcome = 'rejected'` rows and the four-jobs-a-
+  /// minute churn measured in
+  /// `docs/engineering/learning/236-transition-rows-that-moved-nothing.md`.
+  ///
+  /// Resolution is delegated to [resolveProducerExecution] rather than
+  /// re-implemented here, so this transition and the stall gate in
+  /// `apps/server/lib/src/triage/stalled_work_item_gate.dart` — which has to
+  /// park the very same item through the very same edge — cannot disagree about
+  /// what produced it.
+  ///
+  /// If the producer's result is genuinely absent the map omits the key and the
+  /// engine rejects the transition, which is the honest outcome: the
   /// `agentCompleted` state is not true without a completed result.
   Future<Map<String, dynamic>> _reviewEntryTransitionContext(
     String workItemId,
   ) async {
-    final implementerExecution = await store.latestExecutionForWorkItem(
-      workItemId,
+    // Re-read here rather than reusing the item loaded by [execute]. That load
+    // happens before the role check and the transition; a producer that stamped
+    // a fresh `producerActorId` in between would otherwise be read stale. This
+    // is one primary-key work-item read on the reviewer DISPATCH path — once
+    // per review attempt, never on a scheduler tick — so it does not put the
+    // per-tick cost the scheduler lane is careful about on this path.
+    final item = await workflowEngine.loadWorkItem(workItemId);
+    final producer = await resolveProducerExecution(
+      store: store,
+      workItemId: workItemId,
+      producerActorId: item.metadata?['producerActorId'],
     );
-    final implementerResult = implementerExecution == null
-        ? null
-        : await store.readResult(implementerExecution.executionId);
+    final producerResult = producer.result;
     return <String, dynamic>{
       'agentAvailable': true,
       'capabilitiesMatch': true,
-      if (implementerResult != null) 'agentResult': implementerResult,
+      if (producerResult != null) 'agentResult': producerResult,
     };
   }
 

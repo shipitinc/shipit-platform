@@ -5,4 +5,5 @@ export 'src/store/in_memory_execution_store.dart';
 export 'src/store/file_json_execution_store.dart';
 export 'src/store/model_execution_record_store.dart';
 export 'src/verifier/workspace_verifier.dart';
+export 'src/coordinator/producer_execution.dart';
 export 'src/coordinator/execution_coordinator.dart';

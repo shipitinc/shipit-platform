@@ -16,6 +16,7 @@ library;
 
 import '../../core/plain_language.dart';
 import '../../shared/decision_choice.dart';
+import '../../shared/transition_copy.dart' show plainTransitionMessage;
 
 /// Panel heading. EXISTING — `PlainLanguage.decisionType('escalation')`.
 String get retryPanelHeading => PlainLanguage.decisionType('escalation');
@@ -393,3 +394,59 @@ String repairConfirmSemanticsLabel({required bool ready}) => ready
 const String reviewRepairSemanticsLabel =
     'If nobody reviewed this question, you can set the decision aside and '
     're-queue the review. It is a repair, not an approval.';
+
+// ---------------------------------------------------------------------------
+// A REFUSED TRANSITION IS NOT A MOVE
+// ---------------------------------------------------------------------------
+
+/// The prefix on a refused attempt, so it can never be read as the move it
+/// imitates.
+///
+/// A prefix rather than a different sentence per pair: the refused set is open
+/// — any edge the policy can refuse, for any reason — and a per-pair table would
+/// need an entry per pair per reason and would fall through to the MOVE copy for
+/// every one it lacked. The thing that is common to all of them is that the item
+/// did not move, so that is what the sentence says.
+const String refusedTransitionPrefix = 'Not applied — ';
+
+/// A refused attempt, worded from the move it failed to make.
+///
+/// `plainTransitionMessage(from, to)` is reused deliberately, and inverted: it
+/// is the operator's own vocabulary for what was being attempted, so "Not
+/// applied — Independent review started" says both halves in one line and stays
+/// inside the register the rest of the timeline already uses.
+String refusedTransitionMessage(String from, String to) =>
+    '$refusedTransitionPrefix${plainTransitionMessage(from, to)}';
+
+/// The message for one transition row.
+///
+/// ## WHY A REFUSED ROW IS RENDERED AT ALL
+///
+/// The alternative is to drop `outcome != 'accepted'` rows entirely, and it was
+/// rejected on purpose. A refused attempt is the durable evidence that the
+/// platform KEPT TRYING and was refused, which is the single most diagnostic
+/// fact on the screen: on QA one work item carried 236 of them, and that count
+/// is what identified a spin loop nobody had noticed. Dropping the rows would
+/// replace a false state ("236 transitions happened") with a different false
+/// state ("nothing happened"), and it would hide the only trace the operator
+/// has. The programme's own rule applies — a conclusion nobody can see is not a
+/// conclusion the platform reached.
+///
+/// What changes is the WORDING, so the operator can tell "review started" from
+/// "something tried to start a review and was refused", which is the
+/// distinction the previous rendering erased.
+///
+/// ## WHY A MISSING OUTCOME IS TREATED AS REFUSED
+///
+/// `outcome` is nullable on the wire because the source may not be able to
+/// report one. Treating null as "accepted" would reintroduce the original
+/// defect the moment a client met a row without the field. An attempt whose
+/// outcome is unknown is not evidence that the item moved, so it is worded as an
+/// attempt.
+String timelineMessageFor({
+  required String from,
+  required String to,
+  required String? outcome,
+}) => outcome == 'accepted'
+    ? plainTransitionMessage(from, to)
+    : refusedTransitionMessage(from, to);

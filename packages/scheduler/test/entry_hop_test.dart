@@ -462,7 +462,6 @@ void main() {
       },
     );
   });
-
   group('deferrals are counted per WORK ITEM, across re-mints', () {
     test(
       'a re-minted job inherits the bound its predecessor already spent',
@@ -506,8 +505,54 @@ void main() {
           reason: 'still no attempt spent: no execution ever started',
         );
 
+        // WHILE THE ITEM SITS STILL, the re-mint does not happen at all.
+        //
+        // This is the behaviour `review_stall_test.dart` exists to pin, and it
+        // is asserted here too because this file is where the "a re-minted job
+        // inherits the bound" claim is made — a claim that used to be provable
+        // only by letting the churn run. The cap fires on the JOB; the producer
+        // is what has to stop, or the same tick mints a fresh job, supersedes
+        // it, cancels it, and repeats. Asserted as a COUNT, because the work
+        // item's state is `design_not_required` either way and cannot tell a
+        // stopped lane from a spinning one.
+        final stalled = await host.scheduler.tick();
+        expect(
+          stalled.stalled.map((s) => s.workItemId),
+          contains('wi-1'),
+          reason: 'and the conclusion is reported, not discarded',
+        );
+        expect(
+          await host.jobStore.listJobsForWorkItem('wi-1'),
+          hasLength(1),
+          reason:
+              'no fresh job for a stationary item. Before the producer was '
+              'gated, this count grew by one every tick — the 214-jobs-each QA '
+              'measured on 2026-10-15',
+        );
+
+        // Now let the item genuinely MOVE, which is the one condition under
+        // which a re-mint is still owed: the recorded diagnosis described an
+        // item that had not progressed, and this one has.
+        const hop = {'agentAvailable': true, 'capabilitiesMatch': true};
+        await host.workflowEngine.transition(
+          workItemId: 'wi-1',
+          to: WorkItemState.agentExecuting,
+          trigger: TransitionTrigger.systemEvent,
+          context: hop,
+        );
+        await host.workflowEngine.transition(
+          workItemId: 'wi-1',
+          to: WorkItemState.agentFailed,
+          trigger: TransitionTrigger.systemEvent,
+        );
+        await host.workflowEngine.transition(
+          workItemId: 'wi-1',
+          to: WorkItemState.designNotRequired,
+          trigger: TransitionTrigger.systemEvent,
+        );
+
         // The cancelled job yields the key, so the next tick mints a FRESH job
-        // for the same work item — the remint that used to reset the counter.
+        // for the same work item — the remint whose count used to reset.
         final remint = await host.scheduler.tick();
         expect(remint.enqueued, hasLength(1));
         final secondJob = (await host.jobStore.readJob(
@@ -529,8 +574,9 @@ void main() {
           JobState.cancelled,
           reason:
               'the work item has already been deferred three times across every '
-              'job it has held. A per-row count restarts here and requeues this '
-              'one, which is the unbounded cycle',
+              'job it has held, and moving it did not move the COUNT. A '
+              'per-row count restarts on the fresh row and requeues this one, '
+              'which is the unbounded cycle',
         );
         expect(second.attempt, 1, reason: 'and still no attempt was spent');
         expect(second.cancelReason, contains('superseded'));
