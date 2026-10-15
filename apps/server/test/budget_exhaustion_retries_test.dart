@@ -277,6 +277,160 @@ void main() {
       // in this file — the same error as the pin, in the opposite direction.
     },
   );
+
+  // -------------------------------------------------------------------------
+  // A transport failure is not an agent verdict, so it is RETRIED — and it is
+  // still bounded. Both halves, end to end, through the real
+  // `Scheduler` -> `LocalWorker` -> `ExecutionCoordinator` chain.
+  //
+  // The seam that makes the session emit `SessionInterrupted` rather than
+  // `SessionFailed` for a quiet wire is proven in
+  // `packages/agent_runtime/test/opencode_transport_failure_classification_test.dart`;
+  // what is under test here is what the SCHEDULER does with the difference.
+  // -------------------------------------------------------------------------
+
+  Future<ReviewRetryHost> hostFor(String workItemId, int timeoutSeconds) async {
+    final host = ReviewRetryHost(
+      repo: repo,
+      workspaceRoot: '${temp.path}/workspaces',
+      reviewTimeoutSeconds: timeoutSeconds,
+    );
+    await host.produceArtifact(workItemId);
+    return host;
+  }
+
+  test(
+    'a transport timeout spends an attempt and is TRANSIENT, not permanent',
+    () async {
+      final host = await hostFor('wi-wire', 60);
+
+      host.review.script = ReviewScript.transportTimeout;
+      await host.tickReview();
+
+      final job = await host.reviewJob('wi-wire');
+      expect(
+        job.state,
+        JobState.retryWaiting,
+        reason:
+            'NOT `failed`. Two live review jobs died here — '
+            '`AcpTransportException: ACP request timed out: session/prompt` — at '
+            'attempt 1 of 2, spending zero attempts and leaving their work items '
+            'stranded at `review_in_progress`. A wire that goes quiet is not an '
+            'assessment, and classifying it as permanent asserts a verdict the '
+            'system does not have.',
+      );
+      expect(job.attempt, job.maxAttempts, reason: 'one retry was scheduled');
+      expect(job.failure?.kind, JobFailureKind.transient);
+      expect(job.isTerminal, isFalse);
+
+      final execution = (await host.reviewExecutions('wi-wire')).single;
+      expect(
+        execution.status,
+        WorkerExecutionStatus.timedOut,
+        reason: 'the link that makes the retry possible',
+      );
+    },
+  );
+
+  test('the retry RE-DISPATCHES, and maxAttempts bounds it at exactly N', () async {
+    final host = await hostFor('wi-bound', 60);
+    host.review.script = ReviewScript.transportTimeout;
+
+    await host.tickReview();
+    final scheduled = await host.reviewJob('wi-bound');
+    expect(
+      scheduled.state,
+      JobState.retryWaiting,
+      reason: 'precondition: the retry was scheduled',
+    );
+    expect(scheduled.maxAttempts, 2, reason: "the lane's configured budget");
+
+    // Attempt 2 runs, past the back-off, and fails the same way.
+    host.advanceClock(const Duration(minutes: 2));
+    await host.tickReview();
+    expect(
+      await host.reviewExecutions('wi-bound'),
+      hasLength(2),
+      reason: 'the retry was actually SPENT, not merely scheduled',
+    );
+    final afterSecond = await host.reviewJob('wi-bound');
+    expect(afterSecond.attempt, 2, reason: 'and the budget is now spent');
+
+    // Two more ticks. This is the assertion that keeps the fix from being the
+    // OTHER defect: "retryable" must not mean "retried forever".
+    for (var tick = 3; tick <= 4; tick++) {
+      host.advanceClock(const Duration(minutes: 2));
+      await host.tickReview();
+      expect(
+        await host.reviewExecutions('wi-bound'),
+        hasLength(2),
+        reason:
+            'after tick $tick the count must STILL be 2. N=2 means exactly two '
+            'executions, never three — a permanently broken runtime spends the '
+            'budget and stops.',
+      );
+    }
+
+    // MEASURED, and deliberately not asserted as anything else: once the
+    // budget is spent the job row sits at `queued` rather than going terminal
+    // `failed`. It is re-offered on every tick and never runs again, so no
+    // THIRD reviewer is ever dispatched. Two consequences, both real:
+    //
+    //  * the bound this test cares about — executions, i.e. agent runs and
+    //    model spend — is genuinely N. The job row is not the evidence for it
+    //    and asserting `JobState.failed` would assert something measured to be
+    //    false in this harness.
+    //  * a reviewer that exhausts its retry budget leaves an operator with a
+    //    non-terminal job and no blocking decision, which is the same shape as
+    //    the live incident this lane fixes (two items stranded at
+    //    `review_in_progress`).
+    //
+    // This is NOT introduced here. The identical sequence is produced by
+    // `ReviewScript.hang` — the budget-expiry path that has been retryable
+    // since decision 3659984d — on the same host at the same clock, which is
+    // why the `CLOSED GAP` test above still records attempt 2 as settling
+    // `executedFail` against a stale double. It lives in
+    // `packages/scheduler` (`Scheduler._adopt` -> `canRetry`), which this lane
+    // does not own; it is reported to the Manager rather than fixed here.
+    expect(
+      afterSecond.state,
+      isNot(JobState.retryWaiting),
+      reason:
+          'whatever the exhausted job settles as, it must not be waiting on a '
+          'retry that can never be claimed',
+    );
+  });
+
+  test(
+    "a transport timeout does NOT make the agent's own failure retryable",
+    () async {
+      // The dangerous direction. Widening the transient class to cover "the
+      // runtime did not answer" must not widen it to cover "the runtime answered
+      // and said no", which is a verdict and belongs to the correction gate.
+      final host = await hostFor('wi-verdict', 60);
+      host.review.script = ReviewScript.crash;
+      await host.tickReview();
+
+      final job = await host.reviewJob('wi-verdict');
+      expect(
+        job.state,
+        JobState.failed,
+        reason:
+            'a JSON-RPC error from the runtime is an assessment. It must stay '
+            'permanent or a permanently-broken model turns into a retry loop.',
+      );
+      expect(
+        job.attempt,
+        1,
+        reason: 'a permanent failure spends NO additional attempt',
+      );
+      expect(job.failure?.kind, JobFailureKind.permanent);
+
+      host.advanceClock(const Duration(minutes: 2));
+      expect((await host.tickReview()).dispatched, isEmpty);
+      expect(await host.reviewExecutions('wi-verdict'), hasLength(1));
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -286,7 +440,7 @@ void main() {
 /// What the reviewer does on a given execution. One entry is consumed per
 /// session start, so a test scripts attempt 1 and attempt 2 independently
 /// instead of mutating the agent mid-run.
-enum ReviewScript { hang, complete, crash }
+enum ReviewScript { hang, complete, crash, transportTimeout }
 
 class ScriptedReviewSession implements AgentSession {
   ScriptedReviewSession({required this.executionId, required this.script});
@@ -349,6 +503,23 @@ class ScriptedReviewSession implements AgentSession {
             timestamp: DateTime.now(),
             error: 'scripted reviewer crash',
             recoverable: true,
+          ),
+        );
+      case ReviewScript.transportTimeout:
+        // The wire went quiet: the runtime returned no assessment at all. This
+        // is what `OpenCodeSession` now emits for an `AcpTransportException`,
+        // and what it used to report as `SessionFailed` — which settled
+        // `executedFail`, classified permanent, and spent zero attempts. See
+        // `packages/agent_runtime/test/`
+        // `opencode_transport_failure_classification_test.dart` for the seam
+        // that proves the adapter really does this.
+        _status = AgentSessionStatus.interrupted;
+        _events.add(
+          SessionInterrupted(
+            eventId: 'evt-transport-timeout',
+            timestamp: DateTime.now(),
+            reason:
+                'AcpTransportException: ACP request timed out: session/prompt',
           ),
         );
     }

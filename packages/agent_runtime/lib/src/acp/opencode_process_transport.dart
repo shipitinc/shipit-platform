@@ -15,7 +15,7 @@ class OpenCodeProcessTransport implements AcpTransport {
     this.environment,
     this.pure = false,
     this.extraArgs = const [],
-    this.requestTimeout = const Duration(minutes: 5),
+    this.requestTimeout,
   });
 
   final String executable;
@@ -24,11 +24,62 @@ class OpenCodeProcessTransport implements AcpTransport {
   final bool pure;
   final List<String> extraArgs;
 
-  /// Upper bound on any single request on the wire (initialize, session/new,
-  /// session/prompt, ...). A wedged runtime process must not hold the executor
-  /// hostage for the transport's whole lifetime; the session layer applies an
-  /// even tighter bound around the prompt itself.
-  final Duration requestTimeout;
+  /// An upper bound on any single request on the wire (initialize,
+  /// session/new, session/prompt, ...), or null for none.
+  ///
+  /// ## WHY THERE IS NO DEFAULT — THIS FIELD HAD ONE, AND IT KILLED REVIEWERS
+  ///
+  /// It defaulted to `Duration(minutes: 5)`, with a doc comment asserting an
+  /// intent that was the exact inverse of what the code did:
+  ///
+  /// > "A wedged runtime process must not hold the executor hostage for the
+  /// > transport's whole lifetime; the session layer applies an even tighter
+  /// > bound around the prompt itself."
+  ///
+  /// The author assumed the session layer's bound would be tighter. It was not:
+  /// the session layer carried the role budget (three hours for a review) and
+  /// this default was five minutes, so **the transport was by far the tightest
+  /// bound in the system and the only one that fired**. `defaultAcpTransport`
+  /// never passed a value, so the class default bound every request on the wire
+  /// — including `session/prompt`, which legitimately runs for the whole review.
+  ///
+  /// Live QA, two engineering reviews dead with
+  /// `AcpTransportException: ACP request timed out: session/prompt`, at 308s and
+  /// 350s. Not a slow runtime: a typed-in number nobody measured, sitting
+  /// between the budget and the work.
+  ///
+  /// ## WHY NO VALUE OF THIS FIELD FIXES THAT
+  ///
+  /// The stated intent — catch a wedged process early — cannot be satisfied here
+  /// at ANY value, which is why the field has no default rather than a better
+  /// one:
+  ///
+  ///  * **Any bound shorter than the execution budget is a ceiling on legitimate
+  ///    work, not a wedged-process guard.** `session/prompt` is the work. The
+  ///    5-minute default did not protect against wedging; it aborted healthy
+  ///    agents mid-review, which is worse: a wedged process costs a budget, a
+  ///    healthy agent costs a review.
+  ///  * **Any bound at or above the execution budget is unreachable.** The
+  ///    budget that ends a wedged runtime is `ExecutionCoordinator`'s, and its
+  ///    clock starts BEFORE the session is created, so its deadline is always
+  ///    strictly earlier than any bound applied inside the session. The
+  ///    coordinator fires first whatever this field says.
+  ///
+  /// So the wedged-process protection lives where it actually works and is
+  /// unaffected by this field: the coordinator's budget ends the execution and
+  /// cancels the session (`SIGTERM`, then `SIGKILL` after five seconds), and the
+  /// session layer applies the SAME budget around each phase. See
+  /// `defaultAcpTransport`, which passes `config.timeout` so the value comes
+  /// from the role budget and not from this file.
+  ///
+  /// ## WHAT null ACTUALLY MEANS
+  ///
+  /// Not "wait forever, unkillably". A pending request is still completed with an
+  /// error by [close] and by the child-exit handler, so nothing here outlives
+  /// the transport; and every production caller sits under a budget. A caller
+  /// that wants an independent wire bound passes one deliberately, which is the
+  /// point: a bound nobody chose is a bound nobody reasoned about.
+  final Duration? requestTimeout;
 
   Process? _process;
   final _notifications = StreamController<Map<String, dynamic>>.broadcast();
@@ -177,13 +228,17 @@ class OpenCodeProcessTransport implements AcpTransport {
         'params': params,
       }),
     );
-    return completer.future.timeout(
-      requestTimeout,
-      onTimeout: () {
-        _pending.remove(id);
-        throw AcpTransportException('ACP request timed out: $method');
-      },
-    );
+    final bound = requestTimeout;
+    final pending = completer.future;
+    return bound == null
+        ? pending
+        : pending.timeout(
+            bound,
+            onTimeout: () {
+              _pending.remove(id);
+              throw AcpTransportException('ACP request timed out: $method');
+            },
+          );
   }
 
   int get nextRequestId => ++_nextId;

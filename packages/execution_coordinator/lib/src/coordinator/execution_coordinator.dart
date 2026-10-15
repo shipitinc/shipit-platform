@@ -369,16 +369,38 @@ class ExecutionCoordinator {
       // A TIMEOUT, so it settles as one — see `_expireExecution`. The agent
       // never ran, but the reason it never ran is that it ran out of time, and
       // a run that runs out of time is the one failure a bounded retry exists
-      // for. The sibling `catch` below is the crash case and settles `failed`.
+      // for. The sibling branches below are the crash cases and settle `failed`.
       return _settleWithoutSession(
         request,
         'start timeout: $e',
         status: AgentSessionStatus.interrupted,
       );
+    } on AcpTransportException catch (e) {
+      // Also a TIMEOUT, by the same argument, and it is the shape production
+      // actually hits: `OpenCodeSession.start` converts its own `TimeoutException`
+      // into an AcpTransportException ("opencode did not finish starting within
+      // Ns"), so the branch above was unreachable for the adapter this
+      // coordinator drives.
+      //
+      // It is equally the shape of a child that died during the handshake. That
+      // is not an assessment either — nothing came back over the wire — so it is
+      // settled the same way and bounded by `maxAttempts` like every other
+      // transient. `ProcessException` (no `opencode` on PATH) is NOT one of
+      // these: it lands in the crash branch below and stays permanent, because a
+      // missing binary fails identically on every attempt.
+      return _settleWithoutSession(
+        request,
+        'start transport failure: $e',
+        status: AgentSessionStatus.interrupted,
+      );
     } catch (e) {
       // A CRASH, not a timeout, and deliberately still `failed`. This is the
-      // branch that must NOT become retryable: a runtime that throws on every
-      // start would otherwise spend one attempt per start forever.
+      // branch that must NOT become retryable: a runtime that throws a plain
+      // exception on every start — a `StateError`, a failed spawn — would
+      // otherwise be re-dispatched on every job it is given, spending one
+      // attempt each time. `maxAttempts` bounds that too, but a permanently
+      // broken configuration should fail on the first attempt and say so,
+      // rather than burning the retry budget on a certainty.
       return _settleWithoutSession(request, 'start failure: $e');
     }
 

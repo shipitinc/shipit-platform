@@ -60,6 +60,39 @@ ProviderError _providerErrorFromException(Object exception, String provider) {
 ///
 /// Runtime-specific knobs come from [AgentSessionConfig.runtimeConfig]
 /// (`executable`, `model`, `pure`) so the workflow layer stays provider-neutral.
+///
+/// ## THE BUDGET IS PASSED, AND IT IS THE ONLY NUMBER ON THE WIRE
+///
+/// This factory used to construct the transport WITHOUT `requestTimeout`, so the
+/// transport silently took its class default of five minutes and applied it to
+/// every request — including `session/prompt`, the one call that legitimately
+/// runs for the whole review. Two engineering reviews died at 308s and 350s on
+/// `AcpTransportException: ACP request timed out: session/prompt`. The role
+/// budget was wired one layer down and a five-minute literal one layer above it
+/// was the ceiling nobody had measured.
+///
+/// Passing [AgentSessionConfig.timeout] — the budget, straight from
+/// `AgentExecutionBudgets` — is what makes the two layers agree, and it is a
+/// pass-through rather than a re-derived multiple: a second number here would be
+/// the same defect one layer down.
+///
+/// ## WHY THE WEDGED-PROCESS PROTECTION SURVIVES ITS LOSS
+///
+/// The transport's old doc comment claimed this bound existed so "a wedged
+/// runtime process must not hold the executor hostage". It cannot do that job at
+/// any value, and the claim is what made the five minutes look deliberate:
+///
+///  * shorter than the budget, it is a ceiling on legitimate work, not a guard —
+///    which is why a healthy reviewer was killed at five minutes;
+///  * at or above the budget, it is unreachable, because the coordinator's budget
+///    clock starts before this session does and so fires first regardless.
+///
+/// The protection that actually works is unchanged by this: the coordinator ends
+/// the execution on its own budget and cancels the session (`SIGTERM`, then
+/// `SIGKILL` after five seconds), and [_OpenCodeSession] applies the same budget
+/// around each phase here. Both apply the SAME value, so neither is a single
+/// point of failure and there is no bound shorter than the budget to undercut
+/// the work.
 Future<AcpTransport> defaultAcpTransport(AgentSessionConfig config) async {
   final executable = config.runtimeConfig['executable'] ?? 'opencode';
   final pure = config.runtimeConfig['pure'] == 'true';
@@ -70,6 +103,7 @@ Future<AcpTransport> defaultAcpTransport(AgentSessionConfig config) async {
     pure: pure,
     extraArgs: args == null ? const [] : args.split(' '),
     environment: config.environment,
+    requestTimeout: config.timeout,
   );
 }
 
@@ -156,7 +190,36 @@ class OpenCodeSession implements AgentSession {
   String? _model;
   String _modelConfigError = '';
   int _sequence = 0;
-  Duration _timeout = const Duration(minutes: 5);
+
+  /// The execution budget for this session, from [AgentSessionConfig.timeout].
+  ///
+  /// ## NO DEFAULT — this field carried `Duration(minutes: 5)`
+  ///
+  /// `late final`, not `= const Duration(minutes: 5)`. The old default was
+  /// unreachable through [start] (which assigns it before anything can read it)
+  /// and therefore harmless there — but a field initialised to a budget is a
+  /// budget with a value and a name, and the next reader has to work out whether
+  /// that value is live. `late final` makes the assignment a compile error the
+  /// second time and the absence of one a `LateInitializationError` instead of a
+  /// silent five minutes.
+  late final Duration _timeout;
+
+  /// Set once this session has reported a terminal event, so exactly one is
+  /// emitted per session.
+  ///
+  /// This is not cosmetic. When the child dies mid-`session/prompt`, TWO
+  /// signals arrive for the one failure: `_handleChildExit` completes the
+  /// outstanding request with [AcpTransportException] AND emits a
+  /// `transport/closed` notification. The catch block and
+  /// [_onNotification] both ran [_handleTransportFailure], so the coordinator
+  /// was handed two terminal events for a single interruption — and the
+  /// durable outcome depended on which arrived first.
+  bool _settled = false;
+
+  /// Why the session was interrupted, when the reason is not self-describing.
+  /// Carried into the result so a durable record says "the wire went quiet"
+  /// rather than repeating a transport string with no attribution.
+  String _failureDetail = '';
 
   /// Provider name for error attribution (e.g., 'opencode', 'anthropic', 'openai').
   /// Also the provider [qualifyModelId] assumes for an unqualified model id.
@@ -403,6 +466,7 @@ class OpenCodeSession implements AgentSession {
       _stopReason = (response['stopReason'] as String?) ?? 'end_turn';
       _resultReason = _stopReason;
       _status = AgentSessionStatus.completed;
+      _settled = true;
       _eventController.add(
         SessionCompleted(
           eventId: _nextEventId(),
@@ -411,21 +475,18 @@ class OpenCodeSession implements AgentSession {
         ),
       );
     } on TimeoutException {
-      _status = AgentSessionStatus.interrupted;
-      _resultStatus = AgentResultStatus.partial;
-      _resultReason = 'instruction timeout';
-      _eventController.add(
-        SessionInterrupted(
-          eventId: _nextEventId(),
-          timestamp: DateTime.now(),
-          reason: 'instruction timeout after ${_timeout.inSeconds}s',
-        ),
+      _settleInterrupted(
+        'instruction timeout after ${_timeout.inSeconds}s',
+        detail: 'the execution budget expired during session/prompt',
       );
       await transport.close();
     } on AcpRequestException catch (e) {
-      await _handleTransportFailure(e.toString(), recoverable: true);
+      // The PEER answered. See [_reportAgentFailure].
+      _reportAgentFailure(e.toString());
     } on AcpTransportException catch (e) {
-      await _handleTransportFailure(e.toString(), recoverable: true);
+      // Nobody answered. See [_reportTransportInterruption].
+      _reportTransportInterruption(e.toString());
+      await transport.close();
     } finally {
       await sub.cancel();
     }
@@ -433,27 +494,74 @@ class OpenCodeSession implements AgentSession {
 
   ProviderError? _lastProviderError;
 
-  Future<void> _handleTransportFailure(
-    String error, {
-    required bool recoverable,
-  }) async {
+  /// A transport failed: the wire went quiet, the child died, or a request ran
+  /// out of time. Reported as [SessionInterrupted], NOT as [SessionFailed].
+  ///
+  /// ## WHY THE DISTINCTION IS STRUCTURAL, NOT A HEURISTIC
+  ///
+  /// There are exactly two failure shapes on this path and they are told apart by
+  /// which side raised them:
+  ///
+  ///  * [AcpRequestException] is constructed in exactly one place —
+  ///    `OpenCodeProcessTransport._onLine`, from a JSON-RPC `error` object the
+  ///    runtime SENT. It means the agent answered, and its answer was a refusal
+  ///    or an error. That is an assessment, and it is [SessionFailed].
+  ///  * [AcpTransportException] is constructed only by the local transport —
+  ///    not open, closed, child exited, request timed out. Nothing came back, so
+  ///    there is no assessment to record and nothing about the code was learned.
+  ///    That is [SessionInterrupted].
+  ///
+  /// The difference survives the whole chain downstream and is the whole reason
+  /// this is a change: `SessionFailed` settles `AgentSessionStatus.failed` ->
+  /// `WorkerExecutionStatus.executedFail` -> `JobFailureKind.permanent` -> the
+  /// job dies having spent ZERO attempts, while `SessionInterrupted` settles
+  /// `interrupted` -> `timedOut` -> `transient` -> `scheduleRetry`, bounded by
+  /// `maxAttempts`. Recording a wire timeout as a failure asserts a verdict the
+  /// system does not have — the same class of error as inventing a review
+  /// decision, and it is why two review jobs sat at attempt 1 of 2 with their work
+  /// items stranded at `reviewIn_progress`.
+  ///
+  /// ## AND A CRASH IS STILL BOUNDED
+  ///
+  /// A child that dies mid-prompt lands here too, so it becomes retryable. That
+  /// is bounded by `maxAttempts` at the scheduler — a broken runtime spends the
+  /// retry budget and then fails for good, and a job that dies permanently (the
+  /// agent's own refusal, or a start crash that is not a transport exception)
+  /// still spends nothing. The bound is asserted end to end in
+  /// `apps/server/test/transport_timeout_is_retryable_test.dart`.
+  void _reportTransportInterruption(String error) {
     _lastProviderError = _providerErrorFromException(
       Exception(error),
       _provider,
     );
+    if (_settled) return;
     if (_cancelled) {
-      _status = AgentSessionStatus.cancelled;
-      _resultStatus = AgentResultStatus.cancelled;
-      _resultReason = 'cancelled';
-      _eventController.add(
-        SessionCancelled(
-          eventId: _nextEventId(),
-          timestamp: DateTime.now(),
-          reason: _resultReason,
-        ),
-      );
+      _settleCancelled();
       return;
     }
+    _settleInterrupted(
+      error,
+      detail: 'the ACP transport failed; the runtime returned no assessment',
+    );
+  }
+
+  /// The agent answered with a JSON-RPC error: a real failure of its own accord.
+  ///
+  /// Deliberately still [SessionFailed] — it classifies as PERMANENT and spends
+  /// no attempt. This is the control for
+  /// [_reportTransportInterruption]; collapsing the two is what would turn a
+  /// broken runtime into a retry loop.
+  void _reportAgentFailure(String error) {
+    _lastProviderError = _providerErrorFromException(
+      Exception(error),
+      _provider,
+    );
+    if (_settled) return;
+    if (_cancelled) {
+      _settleCancelled();
+      return;
+    }
+    _settled = true;
     _status = AgentSessionStatus.failed;
     _resultStatus = AgentResultStatus.failed;
     _resultReason = error;
@@ -462,7 +570,42 @@ class OpenCodeSession implements AgentSession {
         eventId: _nextEventId(),
         timestamp: DateTime.now(),
         error: error,
-        recoverable: recoverable,
+        recoverable: true,
+      ),
+    );
+  }
+
+  /// Records an interruption: the run ended without a terminal answer.
+  ///
+  /// [_resultStatus] is `partial`, not `failed`, matching the budget-expiry path
+  /// that has always reported it that way — a run cut short is not a run that
+  /// produced a failure.
+  void _settleInterrupted(String reason, {String? detail}) {
+    if (_settled) return;
+    _settled = true;
+    _status = AgentSessionStatus.interrupted;
+    _resultStatus = AgentResultStatus.partial;
+    _resultReason = reason;
+    if (detail != null) _failureDetail = detail;
+    _eventController.add(
+      SessionInterrupted(
+        eventId: _nextEventId(),
+        timestamp: DateTime.now(),
+        reason: reason,
+      ),
+    );
+  }
+
+  void _settleCancelled() {
+    _settled = true;
+    _status = AgentSessionStatus.cancelled;
+    _resultStatus = AgentResultStatus.cancelled;
+    _resultReason = 'cancelled';
+    _eventController.add(
+      SessionCancelled(
+        eventId: _nextEventId(),
+        timestamp: DateTime.now(),
+        reason: _resultReason,
       ),
     );
   }
@@ -485,9 +628,12 @@ class OpenCodeSession implements AgentSession {
 
   void _onNotification(Map<String, dynamic> message) {
     if (message['method'] == 'transport/closed') {
-      _handleTransportFailure(
+      // The child is gone. Nobody reported anything, so this is an
+      // interruption — the same class as a timed-out request, and the
+      // `_settled` guard is what keeps the outstanding request's own
+      // AcpTransportException from reporting it a second time.
+      _reportTransportInterruption(
         'transport closed: ${(message['params'] as Map<String, dynamic>?)?['reason']}',
-        recoverable: true,
       );
       return;
     }
@@ -707,6 +853,11 @@ class OpenCodeSession implements AgentSession {
     if (transport != null) {
       await transport.close();
     }
+    // `transport.close()` completes outstanding requests with an
+    // AcpTransportException, which arrives on the prompt path AFTER this
+    // method returns. Without marking the session settled first, that late
+    // signal would report a second, contradictory terminal event.
+    _settled = true;
     _status = AgentSessionStatus.cancelled;
     _resultStatus = AgentResultStatus.cancelled;
     _resultReason = reason;
@@ -765,6 +916,12 @@ class OpenCodeSession implements AgentSession {
               message: _modelConfigError,
               severity: 'warning',
             ),
+          if (_failureDetail.isNotEmpty)
+            DiagnosticEntry(
+              code: 'transport_interrupted',
+              message: _failureDetail,
+              severity: 'warning',
+            ),
         ],
       ),
       structuredResult: structured,
@@ -779,6 +936,12 @@ class OpenCodeSession implements AgentSession {
         // instead, never as `model`.
         if (_model != null) 'model': _model,
         if (_modelConfigError.isNotEmpty) 'modelNotApplied': _modelConfigError,
+        if (_failureDetail.isNotEmpty) 'interruptedBecause': _failureDetail,
+        // True only when the runtime returned nothing at all. The distinction is
+        // what keeps a wire timeout from being read downstream as an assessment.
+        'runtimeAnswered':
+            _resultStatus == AgentResultStatus.completed ||
+            _status == AgentSessionStatus.failed,
         if (_stopReason.isNotEmpty) 'stopReason': _stopReason,
         'structuredResultPresent': structured.isNotEmpty,
         'usage': {'used': _used, 'size': _size, 'cost': _cost},
