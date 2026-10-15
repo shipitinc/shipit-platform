@@ -45,7 +45,14 @@ class ModelStatsBloc extends Bloc<ModelStatsEvent, ModelStatsState> {
         to: event.to,
         groupBy: event.groupBy,
       );
-      emit(ModelStatsState(isLoading: false, stats: stats));
+      // `copyWith`, not a fresh `ModelStatsState`. A fresh state drops
+      // [durations], so between this emit and the one below the duration panel
+      // renders "Durations could not be read" for a read that had not failed —
+      // the same false-failure the panel exists to distinguish from reality.
+      // A successful reload also CLEARS the previous failure: the numbers on
+      // screen are current again, and the page keys its whole error treatment
+      // off this field.
+      emit(state.copyWith(isLoading: false, stats: stats, clearError: true));
     } catch (e) {
       emit(state.copyWith(isLoading: false, errorMessage: e.toString()));
     }

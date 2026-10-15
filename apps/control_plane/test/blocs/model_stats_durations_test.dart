@@ -21,6 +21,7 @@ class FakeRepository
   Object? statsThrow;
   DateTime? lastFrom;
   DateTime? lastTo;
+  String? lastGroupBy;
 
   @override
   Future<ModelStatsResponse> getModelStats({
@@ -31,16 +32,21 @@ class FakeRepository
     if (statsThrow != null) throw statsThrow!;
     lastFrom = from;
     lastTo = to;
+    lastGroupBy = groupBy;
+    // 2 runs, 1 of them a success: successRate derives to 0.5. Spelled out as
+    // the two counts rather than as a rate so this fake cannot drift from the
+    // derivation the production mapping performs.
     return const ModelStatsResponse(
-      totalCostUsd: 1.5,
-      totalTokens: 100,
       totalExecutions: 2,
-      successRate: 1,
-      costOverTime: [],
-      tokensByProvider: [],
-      successRateByModel: [],
-      escalationFrequency: [],
-      costByTaskType: [],
+      successCount: 1,
+      failureCount: 1,
+      totalInputTokens: 20,
+      totalOutputTokens: 80,
+      totalTokens: 100,
+      totalCachedReadTokens: 0,
+      totalCostUsd: 1.5,
+      avgCostUsd: 0.75,
+      byGroup: [],
     );
   }
 

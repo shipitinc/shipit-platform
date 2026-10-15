@@ -45,8 +45,10 @@ class ModelExecutionStats {
   );
 
   factory ModelExecutionStats.byGroup(List<GroupedModelExecutionStats> groups) {
+    final count = groups.fold(0, (sum, g) => sum + g.count);
+    final totalCostUsd = groups.fold(0.0, (sum, g) => sum + g.totalCostUsd);
     return ModelExecutionStats(
-      count: groups.fold(0, (sum, g) => sum + g.count),
+      count: count,
       totalInputTokens: groups.fold(0, (sum, g) => sum + g.totalInputTokens),
       totalOutputTokens: groups.fold(0, (sum, g) => sum + g.totalOutputTokens),
       totalTokens: groups.fold(0, (sum, g) => sum + g.totalTokens),
@@ -54,10 +56,12 @@ class ModelExecutionStats {
         0,
         (sum, g) => sum + g.totalCachedReadTokens,
       ),
-      totalCostUsd: groups.fold(0.0, (sum, g) => sum + g.totalCostUsd),
-      avgCostUsd: groups.isEmpty
-          ? 0.0
-          : groups.fold(0.0, (sum, g) => sum + g.avgCostUsd) / groups.length,
+      totalCostUsd: totalCostUsd,
+      // total/count, NOT the mean of the per-group means. The groups are a
+      // partition of the same rows, so averaging their means silently weights a
+      // 3-run model the same as a 300-run one and reports a number no
+      // execution cost.
+      avgCostUsd: count > 0 ? totalCostUsd / count : 0.0,
       successCount: groups.fold(0, (sum, g) => sum + g.successCount),
       failureCount: groups.fold(0, (sum, g) => sum + g.failureCount),
       byGroup: groups,
@@ -178,36 +182,67 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
       params['to'] = to.toUtc();
     }
 
-    String groupByColumn;
-    switch (groupBy) {
-      case 'modelId':
-        groupByColumn = '"modelId"';
-        break;
-      case 'provider':
-        groupByColumn = '"provider"';
-        break;
-      case 'taskType':
-        groupByColumn = '"taskType"';
-        break;
-      case 'role':
-        groupByColumn = '"role"';
-        break;
-      default:
-        groupByColumn = '1'; // No grouping, single aggregate
-    }
-
     final whereClause = where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}';
-    final groupByClause = groupBy != null ? 'GROUP BY $groupByColumn' : '';
 
-    final selectColumns = groupBy != null ? '$groupByColumn, ' : '';
+    // The group column as `toColumnMap()` keys it: BARE.
+    //
+    // `Row.toColumnMap()` keys are column NAMES. `SELECT "role", ...` names the
+    // column `role` — the quotes are SQL identifier delimiters and are never
+    // part of the name. This method used to hold `'"role"'` and then look up
+    // `m['"role"']`, which is null, so `null as String` threw and EVERY grouped
+    // call 500'd. The SQL fragment quotes at build time; the Dart map lookup
+    // must not.
+    //
+    // Null means "no grouping". A non-null groupBy that is not a real column is
+    // now an explicit ArgumentError naming the supported set, rather than the
+    // accidental TypeError it used to be — there was no working behaviour to
+    // preserve here, because every such call threw.
+    final groupColumn = switch (groupBy) {
+      'modelId' => 'modelId',
+      'provider' => 'provider',
+      'taskType' => 'taskType',
+      'role' => 'role',
+      null => null,
+      _ => throw ArgumentError.value(
+        groupBy,
+        'groupBy',
+        'unsupported grouping; supported: modelId, provider, taskType, role',
+      ),
+    };
+
+    final groupByClause = groupColumn == null ? '' : 'GROUP BY "$groupColumn"';
+
+    final selectColumns = groupColumn == null ? '' : '"$groupColumn", ';
 
     final rows = await _db.query(
+      // WHY THE FOUR `::bigint` CASTS ON THE TOKEN SUMS
+      //
+      // `inputTokens`/`outputTokens`/`totalTokens`/`cachedReadTokens` are
+      // `bigint`, and PostgreSQL's `SUM(bigint)` returns `numeric` — never
+      // `bigint` again. Verified against the QA database:
+      //     SELECT pg_typeof(SUM("inputTokens")) FROM "model_execution_record"
+      //     -> numeric
+      // The postgres driver decodes `numeric` as a String (text codec
+      // `asText()`, binary codec `_decodeNumeric`), so `as int?` threw a
+      // TypeError on every one of these four columns and `getModelStats`
+      // 500'd on every call. Verified: SUM("costUsd") is `double precision` and
+      // COUNT(*) is `bigint`, so those two never needed this.
+      //
+      // The cast is in the SQL rather than a defensive `?? 0` in Dart because
+      // `?? 0` cannot see a type error — it would have turned this exception
+      // into a confident 0-token report, which is the exact bug class this
+      // screen exists to stop.
+      //
+      // `COALESCE(..., 0)` is not a mask: the ONLY way SUM over these columns is
+      // NULL is that no rows matched, and the sum over no rows IS zero. An
+      // overflow of int64 raises rather than wrapping, so this cannot silently
+      // report a wrong total.
       '''SELECT $selectColumns
             COUNT(*) as "count",
-            SUM("inputTokens") as "totalInputTokens",
-            SUM("outputTokens") as "totalOutputTokens",
-            SUM("totalTokens") as "totalTokens",
-            SUM("cachedReadTokens") as "totalCachedReadTokens",
+            COALESCE(SUM("inputTokens"), 0)::bigint as "totalInputTokens",
+            COALESCE(SUM("outputTokens"), 0)::bigint as "totalOutputTokens",
+            COALESCE(SUM("totalTokens"), 0)::bigint as "totalTokens",
+            COALESCE(SUM("cachedReadTokens"), 0)::bigint as "totalCachedReadTokens",
             SUM("costUsd") as "totalCostUsd",
             AVG("costUsd") as "avgCostUsd",
             COUNT(*) FILTER (WHERE "success") as "successCount",
@@ -219,21 +254,21 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
       parameters: QueryParameters.named(params),
     );
 
-    if (groupBy != null) {
+    if (groupColumn != null) {
       return ModelExecutionStats.byGroup(
         rows.map((r) {
           final m = r.toColumnMap();
           return GroupedModelExecutionStats(
-            groupKey: m[groupByColumn] as String,
+            groupKey: m[groupColumn] as String,
             count: m['count'] as int,
-            totalInputTokens: m['totalInputTokens'] as int? ?? 0,
-            totalOutputTokens: m['totalOutputTokens'] as int? ?? 0,
-            totalTokens: m['totalTokens'] as int? ?? 0,
-            totalCachedReadTokens: m['totalCachedReadTokens'] as int? ?? 0,
+            totalInputTokens: m['totalInputTokens'] as int,
+            totalOutputTokens: m['totalOutputTokens'] as int,
+            totalTokens: m['totalTokens'] as int,
+            totalCachedReadTokens: m['totalCachedReadTokens'] as int,
             totalCostUsd: (m['totalCostUsd'] as num?)?.toDouble() ?? 0.0,
             avgCostUsd: (m['avgCostUsd'] as num?)?.toDouble() ?? 0.0,
-            successCount: m['successCount'] as int? ?? 0,
-            failureCount: m['failureCount'] as int? ?? 0,
+            successCount: m['successCount'] as int,
+            failureCount: m['failureCount'] as int,
           );
         }).toList(),
       );
@@ -246,14 +281,22 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
     final m = rows.first.toColumnMap();
     return ModelExecutionStats(
       count: m['count'] as int,
-      totalInputTokens: m['totalInputTokens'] as int? ?? 0,
-      totalOutputTokens: m['totalOutputTokens'] as int? ?? 0,
-      totalTokens: m['totalTokens'] as int? ?? 0,
-      totalCachedReadTokens: m['totalCachedReadTokens'] as int? ?? 0,
+      totalInputTokens: m['totalInputTokens'] as int,
+      totalOutputTokens: m['totalOutputTokens'] as int,
+      totalTokens: m['totalTokens'] as int,
+      totalCachedReadTokens: m['totalCachedReadTokens'] as int,
+      // `costUsd` is `double precision`, so `SUM`/`AVG` over it are
+      // `double precision` too and these arrive as `num` — the `numeric` trap
+      // above does not apply to them. NULL here means the row set was empty.
+      // For `totalCostUsd` that is a TRUE zero (the sum of no costs is zero).
+      // For `avgCostUsd` it is NOT a measurement at all, and the field is
+      // non-nullable because `ModelStatsView.avgCostUsd` is; the client is the
+      // layer that refuses to display a mean over zero executions
+      // (`ModelStatsResponse.avgCostPerExecution`).
       totalCostUsd: (m['totalCostUsd'] as num?)?.toDouble() ?? 0.0,
       avgCostUsd: (m['avgCostUsd'] as num?)?.toDouble() ?? 0.0,
-      successCount: m['successCount'] as int? ?? 0,
-      failureCount: m['failureCount'] as int? ?? 0,
+      successCount: m['successCount'] as int,
+      failureCount: m['failureCount'] as int,
     );
   }
 

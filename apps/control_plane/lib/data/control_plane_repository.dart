@@ -3152,123 +3152,194 @@ class ModelExecutionRecordResponse {
   }
 }
 
+/// ## THE WIRE SHAPE, AND WHY THIS CLASS IS BUILT THE WAY IT IS
+///
+/// `ModelStatsView.toJson()` emits exactly ten keys:
+///
+///     count, totalInputTokens, totalOutputTokens, totalTokens,
+///     totalCachedReadTokens, totalCostUsd, avgCostUsd,
+///     successCount, failureCount, byGroup
+///
+/// The version of this class that shipped before read NINE other keys
+/// (`totalExecutions`, `successRate`, `costOverTime`, `tokensByProvider`,
+/// `successRateByModel`, `escalationFrequency`, `costByTaskType`), every one of
+/// which the server never sent, and defaulted every one of them to `0.0` / `0`
+/// / `const []`. The success-rate card therefore read `0.0%` on every load and
+/// its `>= 0.95` colour threshold could never be true; the four charts drew
+/// "No data" for ever; and the eight numbers the server DOES send were
+/// discarded unread. No card on this screen could distinguish a real zero from
+/// a key that was never there.
+///
+/// So: every field below is either a key the server sends, or derived by a
+/// getter from keys the server sends. Nothing here defaults. A key that
+/// disappears or changes type raises in [fromJson] and surfaces through the
+/// bloc's error channel — which is the only honest outcome, because the
+/// alternative is a confident zero.
+///
+/// The three derived figures the old class read off the wire — `successRate`,
+/// and the per-group and per-dimension charts — are computed HERE from
+/// `successCount`/`failureCount` and from `byGroup`. Nothing about them needs a
+/// server change.
 class ModelStatsResponse {
   const ModelStatsResponse({
-    required this.totalCostUsd,
-    required this.totalTokens,
     required this.totalExecutions,
-    required this.successRate,
-    required this.costOverTime,
-    required this.tokensByProvider,
-    required this.successRateByModel,
-    required this.escalationFrequency,
-    required this.costByTaskType,
+    required this.successCount,
+    required this.failureCount,
+    required this.totalInputTokens,
+    required this.totalOutputTokens,
+    required this.totalTokens,
+    required this.totalCachedReadTokens,
+    required this.totalCostUsd,
+    required this.avgCostUsd,
+    required this.byGroup,
   });
 
-  final double totalCostUsd;
-  final int totalTokens;
+  /// Server `count`, RENAMED rather than re-derived: it *is* the number of
+  /// executions in range.
+  ///
+  /// A zero here is a TRUE zero — nothing ran in the range — and not a failed
+  /// read. The failure travels on the bloc's `errorMessage` and is rendered in
+  /// place of the numbers; it is never smuggled in here as a value, because a
+  /// `ModelStatsResponse` can only ever describe a read that succeeded.
   final int totalExecutions;
-  final double successRate;
-  final List<TimeSeriesPointResponse> costOverTime;
-  final List<GroupedStatResponse> tokensByProvider;
-  final List<GroupedStatResponse> successRateByModel;
-  final List<EscalationStatResponse> escalationFrequency;
-  final List<GroupedStatResponse> costByTaskType;
+
+  /// Server `successCount`. Unaggregated on purpose: the rate is a getter, so
+  /// it cannot drift from these two counts.
+  final int successCount;
+
+  /// Server `failureCount`.
+  final int failureCount;
+
+  /// Server `totalInputTokens`.
+  final int totalInputTokens;
+
+  /// Server `totalOutputTokens`.
+  final int totalOutputTokens;
+
+  /// Server `totalTokens`.
+  final int totalTokens;
+
+  /// Server `totalCachedReadTokens`. Read, not requested by the old mapping —
+  /// and worth having: a prompt-cache hit rate is a cost lever.
+  final int totalCachedReadTokens;
+
+  /// Server `totalCostUsd`. A zero is a true zero (the sum of no costs).
+  final double totalCostUsd;
+
+  /// Server `avgCostUsd`, verbatim.
+  ///
+  /// This is the raw wire value and it is NOT displayable on its own: the
+  /// server sends `0.0` when no row matched, because `ModelStatsView.avgCostUsd`
+  /// is non-nullable and NULL had nowhere to go. Read [avgCostPerExecution]
+  /// instead, which refuses to report a mean over zero executions.
+  final double avgCostUsd;
+
+  /// Server `byGroup`, one bucket per value of whatever `groupBy` the call
+  /// asked for. Empty when the call asked for no grouping — which is a real
+  /// answer ("one undifferentiated total"), not a missing one.
+  final List<ModelStatsGroupResponse> byGroup;
+
+  /// DERIVED: `successCount / totalExecutions`.
+  ///
+  /// The server sends no rate and never has; the old mapping read a
+  /// `successRate` key that does not exist and rendered `0.0%` — an
+  /// indistinguishable claim of "nothing ever succeeds".
+  ///
+  /// NULL when nothing ran in range. 0 successes out of 0 runs is 0/0, and
+  /// rendering that as `0.0%` asserts a measurement that was never taken.
+  double? get successRate {
+    if (totalExecutions <= 0) return null;
+    return successCount / totalExecutions;
+  }
+
+  /// DERIVED guard on [avgCostUsd]: the mean cost per execution, or NULL when
+  /// nothing ran.
+  ///
+  /// `11.00 / 41 = 0.268` is a cost per execution. `0.00` with a count of zero
+  /// is not a cheap system; it is no measurement at all.
+  double? get avgCostPerExecution {
+    if (totalExecutions <= 0) return null;
+    return avgCostUsd;
+  }
 
   factory ModelStatsResponse.fromJson(Map<String, dynamic> json) {
+    // Strict on purpose. Every key below is non-nullable in the generated
+    // `ModelStatsView`, so a missing or differently-typed value means the two
+    // sides have diverged — and that must fail loudly here rather than arrive
+    // as a zero on a card.
     return ModelStatsResponse(
-      totalCostUsd: (json['totalCostUsd'] as num?)?.toDouble() ?? 0.0,
-      totalTokens: (json['totalTokens'] as num?)?.toInt() ?? 0,
-      totalExecutions: (json['totalExecutions'] as num?)?.toInt() ?? 0,
-      successRate: (json['successRate'] as num?)?.toDouble() ?? 0.0,
-      costOverTime:
-          (json['costOverTime'] as List<dynamic>?)
-              ?.map(
-                (p) =>
-                    TimeSeriesPointResponse.fromJson(p as Map<String, dynamic>),
-              )
-              .toList() ??
-          const [],
-      tokensByProvider:
-          (json['tokensByProvider'] as List<dynamic>?)
-              ?.map(
-                (p) => GroupedStatResponse.fromJson(p as Map<String, dynamic>),
-              )
-              .toList() ??
-          const [],
-      successRateByModel:
-          (json['successRateByModel'] as List<dynamic>?)
-              ?.map(
-                (p) => GroupedStatResponse.fromJson(p as Map<String, dynamic>),
-              )
-              .toList() ??
-          const [],
-      escalationFrequency:
-          (json['escalationFrequency'] as List<dynamic>?)
-              ?.map(
-                (p) =>
-                    EscalationStatResponse.fromJson(p as Map<String, dynamic>),
-              )
-              .toList() ??
-          const [],
-      costByTaskType:
-          (json['costByTaskType'] as List<dynamic>?)
-              ?.map(
-                (p) => GroupedStatResponse.fromJson(p as Map<String, dynamic>),
-              )
-              .toList() ??
-          const [],
+      totalExecutions: json['count'] as int,
+      successCount: json['successCount'] as int,
+      failureCount: json['failureCount'] as int,
+      totalInputTokens: json['totalInputTokens'] as int,
+      totalOutputTokens: json['totalOutputTokens'] as int,
+      totalTokens: json['totalTokens'] as int,
+      totalCachedReadTokens: json['totalCachedReadTokens'] as int,
+      totalCostUsd: (json['totalCostUsd'] as num).toDouble(),
+      avgCostUsd: (json['avgCostUsd'] as num).toDouble(),
+      byGroup: (json['byGroup'] as List<dynamic>)
+          .map(
+            (e) => ModelStatsGroupResponse.fromJson(e as Map<String, dynamic>),
+          )
+          .toList(growable: false),
     );
   }
 }
 
-class TimeSeriesPointResponse {
-  const TimeSeriesPointResponse({required this.timestamp, required this.value});
-
-  final DateTime timestamp;
-  final double value;
-
-  factory TimeSeriesPointResponse.fromJson(Map<String, dynamic> json) {
-    return TimeSeriesPointResponse(
-      timestamp: DateTime.parse(json['timestamp'] as String),
-      value: (json['value'] as num).toDouble(),
-    );
-  }
-}
-
-class GroupedStatResponse {
-  const GroupedStatResponse({
+/// One `groupBy` bucket of [ModelStatsResponse.byGroup].
+///
+/// Every field here is a field of the generated `ModelStatsGroupView`, so every
+/// field is a key the server actually sends.
+class ModelStatsGroupResponse {
+  const ModelStatsGroupResponse({
     required this.key,
-    required this.value,
-    this.count,
-  });
-
-  final String key;
-  final double value;
-  final int? count;
-
-  factory GroupedStatResponse.fromJson(Map<String, dynamic> json) {
-    return GroupedStatResponse(
-      key: json['key'] as String,
-      value: (json['value'] as num).toDouble(),
-      count: (json['count'] as num?)?.toInt(),
-    );
-  }
-}
-
-class EscalationStatResponse {
-  const EscalationStatResponse({
-    required this.escalationIndex,
     required this.count,
+    required this.totalInputTokens,
+    required this.totalOutputTokens,
+    required this.totalTokens,
+    required this.totalCachedReadTokens,
+    required this.totalCostUsd,
+    required this.avgCostUsd,
+    required this.successCount,
+    required this.failureCount,
   });
 
-  final int escalationIndex;
-  final int count;
+  /// Server `groupKey`: the raw column value — a model id, a provider, an agent
+  /// role wire value, a task type.
+  final String key;
 
-  factory EscalationStatResponse.fromJson(Map<String, dynamic> json) {
-    return EscalationStatResponse(
-      escalationIndex: (json['escalationIndex'] as num).toInt(),
-      count: (json['count'] as num).toInt(),
+  final int count;
+  final int totalInputTokens;
+  final int totalOutputTokens;
+  final int totalTokens;
+  final int totalCachedReadTokens;
+  final double totalCostUsd;
+  final double avgCostUsd;
+  final int successCount;
+  final int failureCount;
+
+  /// DERIVED, and null rather than zero for the same reason as the headline
+  /// rate: a group always has at least one row, but the getter refuses to
+  /// invent an answer if it ever does not.
+  double? get successRate {
+    if (count <= 0) return null;
+    return successCount / count;
+  }
+
+  /// Strict for the same reason as [ModelStatsResponse.fromJson]: every key
+  /// here is non-nullable in the generated `ModelStatsGroupView`.
+  factory ModelStatsGroupResponse.fromJson(Map<String, dynamic> json) {
+    return ModelStatsGroupResponse(
+      key: json['groupKey'] as String,
+      count: json['count'] as int,
+      totalInputTokens: json['totalInputTokens'] as int,
+      totalOutputTokens: json['totalOutputTokens'] as int,
+      totalTokens: json['totalTokens'] as int,
+      totalCachedReadTokens: json['totalCachedReadTokens'] as int,
+      totalCostUsd: (json['totalCostUsd'] as num).toDouble(),
+      avgCostUsd: (json['avgCostUsd'] as num).toDouble(),
+      successCount: json['successCount'] as int,
+      failureCount: json['failureCount'] as int,
     );
   }
 }
