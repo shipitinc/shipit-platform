@@ -466,6 +466,16 @@ class JobQueue {
   /// omitted the job's existing reference is preserved. Callers supply it only
   /// when [JobQueue.markRunning] lost its CAS and the reference had to be
   /// reconstructed from the adopted outcome.
+  /// [eventPayload] adds machine-readable keys to the terminal event's
+  /// payload, on top of the `failureCode`/`reason` this method always writes.
+  ///
+  /// It exists for the ONE cancellation whose meaning has to outlive the job
+  /// row: the supersession-deferral cap. That cancellation releases the dedupe
+  /// key, so the very next tick mints a fresh job for the same work, and a
+  /// conclusion that is only stated in `reason` — prose no later reader
+  /// classifies — is re-derived from zero every time. The keys written here are
+  /// what [Scheduler] reads back to refuse the re-mint, so the bound and the
+  /// refusal cannot be derived from two different stories.
   Future<Job> complete({
     required Job job,
     required JobState terminal,
@@ -473,6 +483,7 @@ class JobQueue {
     String? cancelReason,
     DateTime? now,
     JobExecutionReference? executionReference,
+    Map<String, dynamic>? eventPayload,
   }) async {
     assert(
       terminal == JobState.succeeded ||
@@ -512,6 +523,13 @@ class JobQueue {
         current,
         type,
         payload: {
+          // Spread FIRST, so the keys this method owns cannot be overwritten by
+          // a caller. `failureCode` and `reason` are the record's own
+          // vocabulary and `eventPayload` is an addition to it, never a way to
+          // restate it: a caller that could shadow `reason` could state a
+          // cancellation one way on the row and another way in the log, which
+          // is the one disagreement this log exists to make impossible.
+          ...?eventPayload,
           if (failure != null) 'failureCode': failure.code.name,
           if (cancelReason != null) 'reason': cancelReason,
         },
@@ -565,16 +583,21 @@ class JobQueue {
   /// Cancels a job that has NOT started executing (queued/retryWaiting).
   /// Running jobs are cancelled through the worker/coordinator path and
   /// reach this terminal transition via outcome adoption.
+  ///
+  /// [eventPayload] is [complete]'s, forwarded: a cancellation whose
+  /// consequence outlives the job row writes its machine-readable facts here.
   Future<Job> cancelQueued({
     required Job job,
     required String reason,
     DateTime? now,
+    Map<String, dynamic>? eventPayload,
   }) {
     return complete(
       job: job,
       terminal: JobState.cancelled,
       cancelReason: reason,
       now: now,
+      eventPayload: eventPayload,
     );
   }
 

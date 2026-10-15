@@ -387,6 +387,12 @@ class SchedulerTickResult {
     /// names is not terminal, so a drain would skip it, and a return is not an
     /// outcome to consume.
     this.retryReturned = const [],
+
+    /// Items this lane refused to launch work for because it has already
+    /// stopped for them. Defaults to empty for the same reason as every other
+    /// diagnostic here: this is a NEW channel, and a lane with no stall in it
+    /// must keep compiling and keep passing without knowing it exists.
+    this.stalled = const [],
   });
 
   final List<String> reconciled;
@@ -427,6 +433,87 @@ class SchedulerTickResult {
   /// Retryable failures considered for a return to this lane's entry state this
   /// tick. See the constructor's declaration for why this is its own channel.
   final List<RetryReturnMove> retryReturned;
+
+  /// Items this lane has STOPPED producing work for, and why.
+  ///
+  /// Its own channel because nothing else means this. `deferred` is
+  /// back-pressure on a job that is wanted and will be dispatched; `cancelled`
+  /// is a job withdrawn; `entryHopRefused` is a structural gap on a runnable
+  /// item. A stall is none of those: the item is runnable, the lane understands
+  /// why, and it has declined to launch again until a human says so. Reporting
+  /// it is the whole difference between a conclusion the platform reached and a
+  /// conclusion it discarded — before this channel existed, the identical fact
+  /// was written to `scheduler_event.payloadJson` and read by nobody, while the
+  /// item's state said `agent_completed` and every operator screen called it
+  /// "Awaiting review".
+  final List<SchedulerStall> stalled;
+}
+
+/// One work item this lane has stopped producing jobs for, and the reason an
+/// operator has to act on.
+///
+/// ## WHAT A STALL IS, AND WHY IT IS NOT A WORKFLOW STATE
+///
+/// The item is at a state this lane dispatches from, and the item cannot be
+/// moved: its only route out is an edge whose guard cannot be satisfied, so
+/// there is no legal transition to park it on and nothing this lane may write.
+/// A "terminal" workflow state is therefore not available as a stop — not
+/// because it is unwise here, but because the graph does not offer one. What IS
+/// available is the only lever that actually stops the bleeding, which is the
+/// PRODUCER: refusing to mint.
+///
+/// That is the property this type stands for. A test that only asserts the
+/// item's final state passes while the churn continues, because the item is
+/// `agent_completed` both while the lane spins and while it does not. The only
+/// thing that distinguishes them is the number of jobs that exist.
+///
+/// ## WHY IT IS NOT A PERMANENT DEAD END
+///
+/// A stall is lifted by either of two durable facts, and both are checked
+/// rather than remembered:
+///
+///  1. the work item MOVES — `WorkItem.version` is the durable counter of real
+///     moves, so a version above the one recorded when the stall was raised
+///     means somebody or something genuinely progressed this item and the
+///     recorded diagnosis is stale; or
+///  2. an operator says the cause is fixed, which is a write to the work item
+///     and therefore also moves its version.
+///
+/// So the stall expires on evidence, and "evidence" here is one monotone
+/// counter rather than a flag somebody has to remember to clear.
+@immutable
+class SchedulerStall {
+  const SchedulerStall({
+    required this.workItemId,
+    required this.state,
+    required this.jobType,
+    required this.deferrals,
+    required this.reason,
+  });
+
+  final String workItemId;
+
+  /// The durable state the item was in when the stall was raised, read from
+  /// the item rather than assumed.
+  final WorkItemState state;
+
+  /// This lane's [JobType]. A stall is scoped to the lane that raised it: two
+  /// schedulers share one [JobStore], and one lane's refusal to launch is not
+  /// another lane's business.
+  final JobType jobType;
+
+  /// How many supersession deferrals this item had burned across every job it
+  /// has held when the cap fired. Carried so the operator surface can say "3 of
+  /// 3" rather than only "3".
+  final int deferrals;
+
+  /// Operator-facing, in one sentence, saying what to do. Never a credential.
+  final String reason;
+
+  @override
+  String toString() =>
+      '$workItemId ($state, ${jobType.wire}) stalled after $deferrals '
+      'supersession deferrals: $reason';
 }
 
 /// The durable scheduler: derivation + enqueue + dispatch + outcome adoption
@@ -748,6 +835,18 @@ class Scheduler {
       for (final i in items) i.workItemId: _evaluator.evaluate(i, _definition),
     };
 
+    // 3.5 STALLS. Derived once, from durable job state, before step 4 asks
+    //     this lane to produce anything.
+    //
+    //     It has to run before step 4 because step 4 is the PRODUCER, and the
+    //     producer is the thing that has to stop. The breaker in
+    //     `_adoptSupersession` ends a job; a cancelled job yields its dedupe
+    //     key; and a key with no holder is an invitation to mint. Stopping the
+    //     job and stopping the producer are different acts, and only the
+    //     second one ends a loop.
+    final stalls = await _supersessionStalls(items);
+    final stalled = <SchedulerStall>[];
+
     // 4. Terminal items: cancel any residual queued jobs. Runnable items:
     //    enqueue the missing job idempotently. No-action items: RETIRE the jobs
     //    they superseded. Blocked items: leave every existing job untouched
@@ -779,6 +878,32 @@ class Scheduler {
           // which time it has left `waitingForHumanDecision`.
           break;
         case RunnableWorkStatus.runnable:
+          // THE STALL GATE, and it is first for a reason: it must be checked
+          // before the entry hop, because the hop is a WRITE. An item this lane
+          // has already stopped for gets no hop taken on its behalf, no key
+          // built, and above all no job minted.
+          //
+          // Placing it here rather than inside `RunnableWorkEvaluator` is what
+          // keeps the two concerns apart. The evaluator answers "may work start
+          // from this state", a question about the workflow graph that every
+          // item and every tick must get the same answer to. A stall is a
+          // statement about THIS LANE'S HISTORY WITH THIS ITEM, derived from the
+          // job store, and folding it into the evaluator would make one lane's
+          // queue history look like a property of the transition graph.
+          final stall = stalls[item.workItemId];
+          if (stall != null) {
+            stalled.add(stall);
+            // Anything this lane already had queued for the item is withdrawn
+            // here rather than left to spin in step 5: the same reason, in the
+            // same act. A job left `queued` behind a stall is the exact inert
+            // row `_retireSupersededForItem` exists to prevent, and it would
+            // also be the row a future reader mistakes for "this review is
+            // pending".
+            cancelledQueued.addAll(
+              await _retireStalledJobsForItem(item, stall),
+            );
+            continue;
+          }
           // An item can be runnable and still not STARTABLE: the probe may be
           // asking about a legal intermediate hop rather than about beginning
           // an execution right here. The hop is taken here — before the dedupe
@@ -901,6 +1026,20 @@ class Scheduler {
       )).where((j) => !attempted.contains(j.jobId)).toList();
       if (eligible.isEmpty) break;
       for (final job in eligible) {
+        // The stall gate again, at the point work would actually START.
+        //
+        // Step 4 already withdrew this lane's jobs for every stalled item, so
+        // this arm is unreachable in a single-writer tick. It is here because
+        // "unreachable today" is not a property: two schedulers share one
+        // [JobStore], and a job minted for a stalled item by another process —
+        // or by a tick that started before the stall landed — would otherwise
+        // reach `_dispatchOne` and burn a real worker execution on work this
+        // lane has already concluded it cannot start.
+        final itemStall = stalls[job.workItemId];
+        if (itemStall != null) {
+          attempted.add(job.jobId);
+          continue;
+        }
         final outcome = await _dispatchOne(job, now);
         if (outcome.dispatched) {
           dispatched.add(job.jobId);
@@ -945,6 +1084,7 @@ class Scheduler {
       entryHopRefused: entryHopRefused,
       completionInflow: completionInflow,
       retryReturned: retryReturned,
+      stalled: stalled,
     );
   }
 
@@ -1814,6 +1954,33 @@ class Scheduler {
   /// job is not wanted".
   static const int _maxSupersessionDeferrals = 3;
 
+  /// Machine-readable prefix that marks the cancellation [_maxSupersessionDeferrals]
+  /// produced, as opposed to every other cancellation this lane writes.
+  ///
+  /// ## WHY A MARKER RATHER THAN THE EVENT LOG ALONE
+  ///
+  /// The stall derivation needs to find these rows from a single `listJobs()`
+  /// sweep, because reading every job's event log on every tick is
+  /// `O(items × jobs)` durable reads on the critical path of the whole lane to
+  /// answer a question that is false for almost every row (see
+  /// [_supersessionStalls]). [Job.cancelReason] is already on the row that
+  /// sweep returns, so a prefix there is what makes the expensive read
+  /// necessary at all — let alone only sometimes.
+  ///
+  /// It is a marker and not a sentence for the same reason
+  /// `supersededExecutionMarker` is one: matching prose is a coupling that
+  /// fails silently. Editing the operator-facing wording below would otherwise
+  /// quietly disable the stall — no error, no failed test, just the loop back.
+  ///
+  /// ## IT IS A PREFIX, AND THE REASON STILL READS AS ENGLISH
+  ///
+  /// `superseded: [supersession-cap] this work item has now been deferred…`.
+  /// Everything that asserts on the prose asserts it by `contains`, which the
+  /// marker does not disturb; what asserts on it by `startsWith` is
+  /// `_isSupersessionCapCancellation` and nothing else.
+  static const String _supersessionCapMarker =
+      'superseded: [supersession-cap] ';
+
   /// Adopts a worker execution's terminal outcome onto its job: merges the
   /// reported agent execution id into the job's execution reference, then lets
   /// the retry policy pick the resulting state.
@@ -1962,7 +2129,8 @@ class Scheduler {
       return _queue.cancelQueued(
         job: job,
         reason:
-            'superseded: this work item has now been deferred '
+            '$_supersessionCapMarker'
+            'this work item has now been deferred '
             '$_maxSupersessionDeferrals times because it kept moving before an '
             'execution started, and it is still ${workItem.state.wire}. '
             'Stopping rather than spinning — a human should check why this item '
@@ -1970,6 +2138,31 @@ class Scheduler {
             'has held, including ones re-minted after an earlier cancellation, '
             'so re-minting cannot reset it. No attempt was consumed.',
         now: now,
+        // THE PART THAT ACTUALLY STOPS IT, and the reason this method writes
+        // anything beyond prose.
+        //
+        // Everything above is true today and changes nothing: this cancellation
+        // RELEASES the dedupe key (JobQueue's documented contract), so the
+        // next tick mints a fresh job for the same work and the whole cycle
+        // repeats. The breaker stops the JOB. Measured on QA on 2026-10-15,
+        // that left two work items at 214 jobs each and four jobs a minute,
+        // with the conclusion above living only in `scheduler_event
+        // .payloadJson` where no operator surface reads it.
+        //
+        // What is written here is what lets a later tick RECOGNISE this
+        // cancellation instead of re-deriving it from prose: the cap fired, on
+        // which job type, and — the load-bearing one — the work item's
+        // `version` at that instant. Version is the durable counter of real
+        // moves, so `version > stalledWorkItemVersion` is proof that this
+        // item progressed after the diagnosis was taken and the diagnosis no
+        // longer describes it. See [_supersessionStalls] for the read side.
+        eventPayload: {
+          'supersessionCapFired': true,
+          'supersessionJobType': job.jobType.wire,
+          'supersessionDeferrals': deferrals,
+          'stalledWorkItemVersion': workItem.version,
+          'stalledWorkItemState': workItem.state.wire,
+        },
       );
     }
     return _queue.requeueSuperseded(
@@ -2037,6 +2230,164 @@ class Scheduler {
           .length;
     }
     return deferrals;
+  }
+
+  /// Every item in [items] this lane has already stopped producing work for.
+  ///
+  /// ## THE CONDITION, IN ONE SENTENCE
+  ///
+  /// A work item is stalled when this lane has already burned its
+  /// supersession-deferral budget on it AND the item has not moved since —
+  /// which is read, not remembered.
+  ///
+  /// ## WHY "AND IT HAS NOT MOVED" IS PART OF THE CONDITION
+  ///
+  /// Because the cap firing says something about one JOB, not about the work
+  /// item, and the two come apart in the case the cap was written for. Three
+  /// deferrals on an item that is genuinely shuttling between states is a
+  /// healthy queue: the item is moving, it just keeps arriving before its
+  /// execution starts. Cancelling that job and then declining to mint another
+  /// one would strand a review that is owed and would be a regression against
+  /// `supersession_requeue_test.dart`, which exists precisely to prove the
+  /// requeue works. So the version recorded when the cap fired is compared
+  /// against the item's version NOW: a larger version is proof of a real move
+  /// and lifts the stall on its own, with no flag for anybody to forget.
+  ///
+  /// That is also what makes the stall recoverable rather than terminal, and it
+  /// is the recovery path that needs no new write surface at all: an operator
+  /// action on this item moves it, and moving it lifts the stall.
+  ///
+  /// ## WHY IT IS DERIVED AND NOT RECORDED ON THE WORK ITEM
+  ///
+  /// `WorkItem.metadata` is the obvious home and is deliberately not used. The
+  /// only writer for it here would be a bare `saveWorkItem` with no transition
+  /// row beside it — an out-of-band write to the row every audit question is
+  /// asked of — and `ControlPlaneService`'s class contract says in terms that
+  /// nothing writes state outside the engine. The event log is already durable,
+  /// already per-work-item across re-mints (that is what
+  /// [_supersessionDeferrals] proved), already the record an operator reads,
+  /// and needs no schema change in a package this lane does not own.
+  ///
+  /// The cost is paid honestly and is the reason this is written the way it is:
+  /// it costs ONE [JobStore.listJobs] call per tick, and ZERO event-log reads
+  /// unless a job row says a cap fired. The obvious alternative — for each item
+  /// in hand, list that item's jobs and read each one's events — is
+  /// `O(items × jobs)` durable reads on the critical path of EVERY tick, to
+  /// answer a question that is false for almost every item. It was written that
+  /// way first, and it broke `capacity_limit_test.dart`'s T5: that harness
+  /// models every store read as two event-loop yields and the test calibrates
+  /// its interleaving on how many of them a tick spends, so the extra reads
+  /// pushed the restarted process past the point where it could still take a
+  /// freed slot. A store read is not free just because it is indexed, and a
+  /// tick is the one place in this package that must not get slower for every
+  /// other work item in the system.
+  ///
+  /// So the sweep is inverted. [Job.cancelReason] is already on the row the
+  /// single sweep returns, so a cap-fired cancellation is recognisable without
+  /// opening its event log at all — which is what [_supersessionCapMarker]
+  /// is for, and why it is a MARKER rather than a phrase. Only the handful of
+  /// rows that match are opened, and only for the version.
+  Future<Map<String, SchedulerStall>> _supersessionStalls(
+    List<WorkItem> items,
+  ) async {
+    // One sweep. `listJobs` is already called by this tick's reconciliation
+    // pass, so the marginal cost of this call is one more read of a set this
+    // method needs anyway.
+    final rows = await _jobStore.listJobs();
+
+    if (!rows.any((r) => _isSupersessionCapCancellation(r))) return const {};
+
+    // Only now, and only for the rows that matched: open the event log for the
+    // version the diagnosis was taken at, and count the deferrals spent.
+    final byItem =
+        <String, ({int version, String? state, String jobId, int deferrals})>{};
+    for (final row in rows) {
+      if (row.jobType != _definition.jobType) continue;
+      if (!_isSupersessionCapCancellation(row)) continue;
+      final events = await _jobStore.readEvents(row.jobId);
+      int? versionAt;
+      String? stateAt;
+      var deferrals = 0;
+      for (final event in events) {
+        if (event.type == SchedulerEventType.jobQueued &&
+            event.payload?['supersessionDeferred'] == true) {
+          deferrals++;
+        }
+        if (event.type != SchedulerEventType.jobCancelled) continue;
+        if (event.payload?['supersessionCapFired'] != true) continue;
+        final raw = event.payload?['stalledWorkItemVersion'];
+        final parsed = raw is int ? raw : int.tryParse('${raw ?? ''}');
+        if (parsed == null) continue;
+        // Any cap firing counts, but the LATEST one is the current diagnosis,
+        // so an item that stalled, moved and stalled again reports the second
+        // diagnosis against the second version.
+        if (versionAt == null || parsed >= versionAt) {
+          versionAt = parsed;
+          stateAt = event.payload?['stalledWorkItemState'] as String?;
+        }
+      }
+      if (versionAt == null) continue;
+      final prior = byItem[row.workItemId];
+      if (prior == null || versionAt >= prior.version) {
+        byItem[row.workItemId] = (
+          version: versionAt,
+          state: stateAt,
+          jobId: row.jobId,
+          deferrals: deferrals,
+        );
+      }
+    }
+
+    final byId = {for (final i in items) i.workItemId: i};
+    final stalls = <String, SchedulerStall>{};
+    for (final entry in byItem.entries) {
+      final item = byId[entry.key];
+      // An item this tick did not hand us is not this tick's business; a
+      // terminal one is retired by step 4 on its own account.
+      if (item == null || item.isTerminal) continue;
+      // The item MOVED since the diagnosis. It is no longer the thing the
+      // breaker described, so this lane owes it a fresh job and must mint one.
+      if (item.version > entry.value.version) continue;
+      stalls[entry.key] = SchedulerStall(
+        workItemId: item.workItemId,
+        state: item.state,
+        jobType: _definition.jobType,
+        deferrals: entry.value.deferrals,
+        reason: _stallReason(
+          item,
+          entry.value.state,
+          entry.value.jobId,
+          entry.value.deferrals,
+        ),
+      );
+    }
+    return stalls;
+  }
+
+  /// Whether [row] is the cancellation the supersession-deferral cap produced.
+  ///
+  /// A row-level test, deliberately, so the sweep in [_supersessionStalls] can
+  /// exclude every ordinary cancellation without opening an event log.
+  static bool _isSupersessionCapCancellation(Job row) {
+    final reason = row.cancelReason;
+    return reason != null && reason.startsWith(_supersessionCapMarker);
+  }
+
+  String _stallReason(
+    WorkItem item,
+    String? stalledAtState,
+    String jobId,
+    int deferrals,
+  ) {
+    final state = stalledAtState ?? item.state.wire;
+    return 'work item ${item.workItemId} is $state and this lane has already '
+        'deferred it $deferrals times without one execution ever starting, '
+        'so it stopped launching instead of spinning. Job $jobId holds the full '
+        'reason. Nothing was consumed and no attempt was spent. This resolves on '
+        'its own the moment this item MOVES — a producer running again, or an '
+        'operator action on it — because that clears the diagnosis; until then '
+        'it needs a human to find why this item cannot begin an execution at '
+        'all.';
   }
 
   /// Why this item is no longer something [_definition] can run — the same
@@ -2581,6 +2932,55 @@ class Scheduler {
       }
       if (job.jobType != _definition.jobType) continue;
       await _queue.cancelQueued(job: job, reason: reason);
+      retired.add(job.jobId);
+    }
+    return retired;
+  }
+
+  /// Withdraws this lane's still-dispatchable jobs for an item it has stalled,
+  /// and says so on each one.
+  ///
+  /// ## WHY IT EXISTS ALONGSIDE THE ENQUEUE REFUSAL
+  ///
+  /// The enqueue refusal stops the NEXT job. It does not touch a job minted on
+  /// the tick the stall landed, nor one an earlier tick queued and never got to.
+  /// Left alone those sit `queued` for ever, which is the inert-row shape
+  /// [_retireSupersededForItem] exists to prevent — and worse, it is a row that
+  /// reads exactly like pending legitimate work to anyone who looks at the
+  /// queue rather than at the tick result.
+  ///
+  /// Claims and running jobs are deliberately NOT touched, for the reason
+  /// [_retireSupersededForItem] gives: they converge on a verdict through
+  /// outcome adoption, and overriding one would destroy a result that is still
+  /// landing. A stall never applies to one anyway — it is only ever derived for
+  /// an item that has not moved since the diagnosis, so nothing is running.
+  ///
+  /// The reason names the STALL rather than reusing `_supersededReason`,
+  /// because the two are different facts and merging them would recreate the
+  /// defect: `superseded` says the item moved away from the work, this says the
+  /// item is exactly where the work is and the work cannot start.
+  Future<List<String>> _retireStalledJobsForItem(
+    WorkItem item,
+    SchedulerStall stall,
+  ) async {
+    final retired = <String>[];
+    for (final job in await _jobStore.listJobsForWorkItem(item.workItemId)) {
+      if (job.isTerminal) continue;
+      if (job.state != JobState.queued && job.state != JobState.retryWaiting) {
+        continue;
+      }
+      if (job.jobType != _definition.jobType) continue;
+      await _queue.cancelQueued(
+        job: job,
+        reason:
+            'stalled: this lane has stopped launching work for this item. '
+            '${stall.reason}',
+        // NOT `supersessionCapFired`. This is a consequence of the cap, not a
+        // fresh firing of it, and recording it as one would let a stall
+        // re-derive itself from its own withdrawal — the loop this whole
+        // mechanism exists to end.
+        eventPayload: const {'stalledJobWithdrawn': true},
+      );
       retired.add(job.jobId);
     }
     return retired;
