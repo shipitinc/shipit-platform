@@ -32,12 +32,16 @@ import 'test_tools/serverpod_test_tools.dart';
 ///       the list was written — the drift guard;
 ///   (g) it is idempotent on re-run;
 ///   (h) its `down` restores the prior values EXACTLY, including an absent
-///       `triageAttempt`.
+///       `triageAttempt`;
+///   (i) a LATE `down` -- one run after the tick has moved the items off
+///       `agent_completed`, so the window has closed -- is a PARTIAL ROLLBACK:
+///       it restores the DECISION, not the item, and then deletes both the audit
+///       row and the migration's own `serverpod_migrations` version.
 ///
-/// (d), (f), (g) and (h) in particular are claims about what a SECOND or
+/// (d), (f), (g), (h) and (i) in particular are claims about what a SECOND or
 /// REVERSED application writes, and no static check can make such a claim. So
 /// the migration is applied — the real `migration.sql`, read off disk, not a
-/// paraphrase of it — and, for (h), so is the real `down`.
+/// paraphrase of it — and, for (h) and (i), so is the real `down`.
 ///
 /// ## WHY THE BOOTSTRAP PATH NEVER TOUCHES THIS MIGRATION — AND ONLY THAT
 ///
@@ -833,6 +837,58 @@ Future<List<Map<String, Object?>>> _auditRows(PersistenceDatabase db) async {
     '"idempotencyKey", "guardEvaluationsJson", "reason" '
     'FROM "$_chainSchema"."work_item_transition" '
     "WHERE \"transitionId\" LIKE 'tr-unreviewed-review-repair-%'",
+  );
+  return [for (final r in rows) r.toColumnMap()];
+}
+
+/// The DOWN banner's own CHECK query, executed.
+///
+/// THE QUERY IS COPIED FROM THE BANNER, not reimplemented, so a banner edit that
+/// changes the query without changing what it answers fails here. Only the two
+/// `$_chainSchema` qualifications are added: the banner's query is written for
+/// `public` on a deployed database, where the unqualified names resolve there.
+///
+/// This exists because the query it replaces was DEAD in the only state where a
+/// `down` can run. That version joined `human_decision` on
+/// `w."blockingHumanDecisionId"`, a column the UP nulls for every target and
+/// nothing restores, so the join matched nothing and every `d."status"` read
+/// NULL -- which, to an operator mid-incident, reads as "step 2 will match
+/// nothing" on the exact state where step 2 acts. A pre-check query that has
+/// never been executed is how that shipped.
+///
+/// Asserted on the SAME rows, in all four states the banner describes: before
+/// the UP, after the UP with the items still in-window, late -- after the tick
+/// has moved the items and the window has closed -- and after the `down`, which
+/// is the state in which the audit row this joins through is gone and the banner
+/// owes the operator an answer for it.
+Future<List<Map<String, Object?>>> _preCheckRows(PersistenceDatabase db) async {
+  final rows = await db.queryNoTransaction(
+    'SELECT w."workItemId", w."state", w."blockingHumanDecisionId", '
+    '       d."decisionId", d."status" '
+    'FROM "$_chainSchema"."work_item" w '
+    'LEFT JOIN "$_chainSchema"."work_item_transition" x '
+    '       ON x."transitionId" = \'tr-unreviewed-review-repair-\' '
+    '                        || w."workItemId" '
+    '      AND x."idempotencyKey" = \'$_idempotencyKey\' '
+    'LEFT JOIN "$_chainSchema"."human_decision" d '
+    '       ON d."decisionId" = x."guardEvaluationsJson"::jsonb '
+    '                        ->> \'decisionId\' '
+    'WHERE w."workItemId" IN '
+    '(${_targets.map((t) => '\'${t.workItemId}\'').join(', ')}) '
+    "ORDER BY w.\"workItemId\"",
+  );
+  return [for (final r in rows) r.toColumnMap()];
+}
+
+/// The `control_plane` row in the scratch schema's `serverpod_migrations`,
+/// which is the registry row a real deployment of this migration has and which
+/// step 4 of the `down` deletes.
+Future<List<Map<String, Object?>>> _migrationVersionRows(
+  PersistenceDatabase db,
+) async {
+  final rows = await db.queryNoTransaction(
+    'SELECT "module", "version" FROM "$_chainSchema"."serverpod_migrations" '
+    "WHERE \"module\" = 'control_plane'",
   );
   return [for (final r in rows) r.toColumnMap()];
 }
@@ -2173,7 +2229,68 @@ void main() {
               ),
           };
 
+          // STATE 1, BEFORE THE UP. The query answers here too, with
+          // `d."status"` NULL -- and for an HONEST reason this time: nothing has
+          // been repaired, so there is no audit row to join through. The banner
+          // says so; this is where it is measured rather than asserted.
+          final beforeUp = await _preCheckRows(db);
+          for (final t in _targets) {
+            final row = beforeUp.singleWhere(
+              (r) => r['workItemId'] == t.workItemId,
+            );
+            expect(row['state'], t.fromState, reason: t.workItemId);
+            expect(row['decisionId'], isNull, reason: t.workItemId);
+            expect(
+              row['status'],
+              isNull,
+              reason:
+                  '${t.workItemId}: before the UP there is no audit row, so the '
+                  'CHECK query has nothing to join through and says nothing '
+                  'about the decision. That is the ONE state where a NULL here '
+                  'is harmless, and it is worth having it pinned so the late '
+                  'states cannot be mistaken for it',
+            );
+          }
+
           await db.db.unsafeSimpleExecute(_applyRepairScript(repair));
+
+          // STATE 2, IN-WINDOW. Right after the UP and before the tick: the
+          // items are at `agent_completed`, the audit rows exist, and the
+          // decisions are `cancelled`. This is the reading the DOWN banner tells
+          // an operator to take before running the `down`, and it is the only
+          // state in which the banner's "IN WINDOW" row is reachable.
+          final inWindow = await _preCheckRows(db);
+          for (final t in _targets) {
+            final row = inWindow.singleWhere(
+              (r) => r['workItemId'] == t.workItemId,
+            );
+            expect(row['state'], 'agent_completed', reason: t.workItemId);
+            expect(
+              row['blockingHumanDecisionId'],
+              isNull,
+              reason: t.workItemId,
+            );
+            // The half the query exists for, and the half the query it replaces
+            // could never return: the decision is VOIDED and the query says so.
+            expect(
+              row['decisionId'],
+              t.decisionId,
+              reason:
+                  '${t.workItemId}: the CHECK query must reach the decision '
+                  'through the audit row. It cannot reach it through '
+                  '`w."blockingHumanDecisionId"`, which the UP has just NULLed.',
+            );
+            expect(
+              row['status'],
+              'cancelled',
+              reason:
+                  '${t.workItemId}: the CHECK query must be able to see that the '
+                  'decision is voided. A NULL here reads to an operator as "step '
+                  '2 will match nothing", which is the opposite of the truth on '
+                  'the one state where step 2 acts.',
+            );
+          }
+          expect(inWindow, hasLength(5));
 
           // THE TICK. Byte-identical to what (g) does, because it is the same
           // event: `agent_completed` is an `engineeringReviewDefinition` entry
@@ -2185,6 +2302,57 @@ void main() {
             '\'review_in_progress\', "version" = "version" + 4 '
             'WHERE "workItemId" IN '
             '(${_targets.map((t) => '\'${t.workItemId}\'').join(', ')})',
+          );
+
+          // STATE 3, LATE AND BEFORE THE DOWN. The window has closed and this is
+          // the last moment at which the CHECK query can still be read: the audit
+          // rows still exist, and the decisions are still voided, but the items
+          // have moved. This is the row the banner calls the partial one, and it
+          // is the state in which the query it replaced would have shown NULL --
+          // i.e. "safe".
+          final late = await _preCheckRows(db);
+          for (final t in _targets) {
+            final row = late.singleWhere(
+              (r) => r['workItemId'] == t.workItemId,
+            );
+            expect(row['state'], 'review_in_progress', reason: t.workItemId);
+            expect(row['decisionId'], t.decisionId, reason: t.workItemId);
+            expect(
+              row['status'],
+              'cancelled',
+              reason:
+                  '${t.workItemId}: still voided, still to be un-voided by the '
+                  '`down` about to run. The CHECK query has to be able to say so '
+                  'BEFORE the `down`, because step 3 deletes the audit row it '
+                  'joins through and the answer is gone afterwards.',
+            );
+          }
+
+          // STEP 4'S PRECONDITION, MADE EXPLICIT. The `down` deletes this
+          // migration's own `serverpod_migrations` version. An earlier test in
+          // this file ran a `down` too and already deleted it, and `_resetData`
+          // does not put registry rows back, so the row is re-established here
+          // rather than assumed -- otherwise "step 4 deleted it" and "step 4
+          // found nothing to delete" would be the same passing assertion.
+          //
+          // Upserted the way the migration's own version statements write it, so
+          // the precondition holds whatever ran before this test, and so a
+          // unique index on `module` cannot fail the insert.
+          await db.db.unsafeSimpleExecute(
+            'INSERT INTO "$_chainSchema"."serverpod_migrations" '
+            '("module", "version", "timestamp") '
+            "VALUES ('control_plane', '${_versionOf(repair)}', now()) "
+            'ON CONFLICT ("module") '
+            "DO UPDATE SET \"version\" = '${_versionOf(repair)}', "
+            '"timestamp" = now()',
+          );
+          expect(
+            (await _migrationVersionRows(db)).single['version'],
+            _versionOf(repair),
+            reason:
+                'the precondition for the step-4 assertion below: the version row '
+                'must exist before the `down`, or the assertion cannot tell a '
+                'deletion from a no-op',
           );
 
           // THE LATE ROLLBACK. The real `down`, sliced out of the file between
@@ -2332,6 +2500,44 @@ void main() {
                 'the repair happened.',
           );
 
+          // AND STEP 4 TAKES THE MIGRATION VERSION WITH IT. The last bullet of
+          // the DOWN banner says the version is rolled back too, and until this
+          // assertion existed nothing in the suite checked it -- the banner
+          // claimed coverage it did not have. Asserted after the precondition
+          // established above, so a deletion and a no-op cannot pass alike.
+          expect(
+            await _migrationVersionRows(db),
+            isEmpty,
+            reason:
+                'step 4 must delete this migration\'s own `serverpod_migrations` '
+                'version, so that nothing is left marking this repair as ever '
+                'applied. It was asserted to exist immediately above, so an empty '
+                'result here is the deletion and not the absence of a row.',
+          );
+
+          // STATE 4, AFTER THE DOWN. The query still runs, and this is what it
+          // now answers. Step 3 removed the audit row, so the join through it
+          // finds nothing and `d."status"` is NULL -- which the banner now says
+          // out loud means "a rollback already ran, or the repair was undone by
+          // hand", NOT "there is nothing to do". Asserted so that sentence is
+          // measured: the reading an operator gets after the fact is exactly the
+          // one that makes the query useless afterwards.
+          final afterDown = await _preCheckRows(db);
+          for (final t in _targets) {
+            final row = afterDown.singleWhere(
+              (r) => r['workItemId'] == t.workItemId,
+            );
+            expect(row['state'], 'review_in_progress', reason: t.workItemId);
+            expect(
+              row['status'],
+              isNull,
+              reason:
+                  '${t.workItemId}: after the `down` the audit row is gone, so the '
+                  'CHECK query can no longer name the decision. This is why the '
+                  'banner tells an operator to run it BEFORE, not after.',
+            );
+          }
+
           // THE CONTROL, so the assertions above cannot be satisfied by a
           // `down` that reached beyond the enumerated set. The control is a
           // genuine, unfabricated `pending` decision that this migration never
@@ -2347,10 +2553,12 @@ void main() {
             controlDecision['status'],
             'pending',
             reason:
-                'the control was never voided by the UP, so a rollback that '
-                'restores decisions outside the enumeration would find it '
-                'already `pending` only by having written it -- and this file '
-                'must fail if it ever does',
+                'the control is still `pending`, which is what it was before the '
+                'UP, so the rollback did not touch it. NOTE WHAT THIS DOES NOT '
+                'PROVE: it read `pending` before the `down` too, so it cannot by '
+                'itself detect a `down` that restored it to the value it already '
+                'held. What rules that out is HALF TWO -- the five enumerated '
+                'decisions changed status -- plus this file failing to execute.',
           );
           final controlItem = await _row(
             db,
@@ -2362,10 +2570,12 @@ void main() {
             controlItem['state'],
             'waiting_for_human_decision',
             reason:
-                'the control is never moved by the UP, so a late rollback must '
-                'not move it either. This is the assertion that a `down` which '
-                'restored EVERY decision rather than the enumerated five would '
-                'trip',
+                'the control item is unmoved. NOTE WHAT THIS DOES NOT PROVE '
+                'EITHER: it read `waiting_for_human_decision` before the `down` as '
+                'well, so it pins that the `down` did not move a decision it had '
+                'no business touching, and nothing more. It is kept because a '
+                'control that cannot fail is not a control, but it should not be '
+                'read as stronger than that.',
           );
           // And the legitimate parked-on-pending pair this file seeded is still
           // intact -- proof that HALF THREE's count of 0 above is a fact about
@@ -2377,6 +2587,26 @@ void main() {
                 'the control pair is the control: if this broke, the HALF THREE '
                 'query would be counting the wrong set',
           );
+
+          // The four CHECK-query readings, printed rather than merely asserted.
+          // The assertions above pin them exactly, so this is not what proves
+          // the banner -- it is what lets a reader SEE what the banner now tells
+          // an operator, and lets a reviewer confirm the query was executed
+          // rather than reasoned about.
+          for (final (label, rows) in [
+            ('1 before UP', beforeUp),
+            ('2 in-window', inWindow),
+            ('3 late, before down', late),
+            ('4 after down', afterDown),
+          ]) {
+            // ignore: avoid_print
+            print(
+              'CHECK query [$label]: '
+              '${rows.map((r) => '${r['workItemId']} state=${r['state']} '
+                  'blocking=${r['blockingHumanDecisionId']} '
+                  'decision=${r['decisionId']} status=${r['status']}').join(' | ')}',
+            );
+          }
         },
       );
 

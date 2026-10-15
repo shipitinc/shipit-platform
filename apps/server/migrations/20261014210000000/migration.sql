@@ -1345,9 +1345,37 @@ INSERT INTO "serverpod_migrations" ("module", "version", "timestamp")
 --     SELECT w."workItemId", w."state", w."blockingHumanDecisionId",
 --            d."decisionId", d."status"
 --       FROM "work_item" w
+--       LEFT JOIN "work_item_transition" x
+--              ON x."transitionId" =
+--                        'tr-unreviewed-review-repair-' || w."workItemId"
+--             AND x."idempotencyKey" =
+--                        'unreviewed-review-repair:void-fabricated-verdict'
 --       LEFT JOIN "human_decision" d
---              ON d."decisionId" = w."blockingHumanDecisionId"
+--              ON d."decisionId" = x."guardEvaluationsJson"::jsonb
+--                                       ->> 'decisionId'
 --      WHERE w."workItemId" IN (...the five enumerated targets...);
+--
+-- WHY IT JOINS THROUGH THE AUDIT ROW AND NOT THROUGH THE ITEM. An earlier
+-- version of this query read the decision off `w."blockingHumanDecisionId"`.
+-- That column is NULL on all five targets -- the UP above sets it to NULL and
+-- nothing ever puts it back, which is a bullet of the partial rollback further
+-- up -- so the join matched nothing, `d."decisionId"` and `d."status"` came back
+-- NULL on every row, and the one thing this query exists to tell an operator was
+-- never anything but NULL. That is worse than not shipping the query, and it is
+-- worse in the dangerous direction: NULL is not `cancelled`, `cancelled` is the
+-- ONLY thing step 2 matches, so an operator reading NULL concludes step 2 will
+-- do nothing and the run is safe, on precisely the state where step 2 WILL act.
+-- The query above joins through step 2's OWN key, so it shows what step 2 will
+-- match. Test `(i)` runs it in all four states described below -- before the UP,
+-- in-window, late and before the `down`, and after the `down` -- and asserts the
+-- rows, so this cannot rot back into the version that cannot see anything.
+--
+-- RUN IT BEFORE THE DOWN, NOT AFTER. Step 3 of the `down` deletes the audit row
+-- this joins through, so the `d."status"` column only answers "is it voided
+-- right now" while the repair is still recorded -- which is the whole window in
+-- which running the `down` is a decision rather than a post-mortem. Before the
+-- UP it answers too, with `d."status"` NULL for a different and honest reason:
+-- nothing has been repaired yet.
 --
 -- READ IT LIKE THIS:
 --
@@ -1361,10 +1389,22 @@ INSERT INTO "serverpod_migrations" ("module", "version", "timestamp")
 -- matches `d."status" = 'cancelled'` and nothing else. A decision that is not
 -- `cancelled` is skipped by step 2, so the decision half of the partial rollback
 -- applies to exactly the decisions this migration voided -- all five, unless a
--- hand intervention has already moved one. A `pending` or `resolved` decision
--- sitting next to an item that is NOT at `agent_completed` is therefore the shape
--- to be suspicious of after the fact: it is either a rollback that already ran,
--- or a repair that was undone by hand.
+-- hand intervention has already moved one.
+--
+-- A NULL `d."status"` IS NOT "SAFE TO RUN". Read it against the `state` beside
+-- it, because the two together distinguish the three states that look alike:
+--
+--   * `d."status"` = `cancelled`, `state` = `agent_completed` -- IN WINDOW. The
+--     rollback is complete: item and decision both go back.
+--   * `d."status"` = `cancelled`, `state` ANYTHING ELSE -- THE PARTIAL ONE. The
+--     item is left where the tick put it, the decision comes back un-voided, and
+--     the fabricated verdict with it. This is the row to act on.
+--   * `d."status"` NULL -- THE AUDIT ROW IS GONE, so step 2 matches nothing and
+--     this run restores nothing. That is either a rollback that already ran, or
+--     a repair that was undone by hand -- and, before the UP ever ran, an item
+--     this migration never touched. All three are safe to run; none of them is
+--     the `state = 'agent_completed'` + `cancelled` case, so check `d."status"`
+--     before you conclude anything from `state`.
 --
 -- IN SHORT: THE WINDOW IS "BEFORE THE RE-QUEUED REVIEW RUNS", AND IT IS NOT A
 -- TIME YOU CONTROL. If this DOWN is being considered because the re-review is
@@ -1378,9 +1418,12 @@ INSERT INTO "serverpod_migrations" ("module", "version", "timestamp")
 -- `apps/server/test/integration/unreviewed_review_repair_migration_test.dart`
 -- executes this file's real UP, moves the items exactly as the tick does, runs
 -- this file's real `down` extracted from between its own markers, and asserts
--- every claim in this paragraph -- including that the item is left alone and that
--- the audit rows end up empty. If a future edit changes any of it, that test is
--- what notices.
+-- every claim in this paragraph -- the item left alone, the audit rows ending up
+-- empty, AND step 4 taking the `serverpod_migrations` version back. It also runs
+-- the CHECK query above in all four of its states -- before the UP, in-window,
+-- late, and after the `down` has run -- and asserts the rows it returns, so the
+-- two halves of this banner -- the prose and the statements -- are held to the
+-- same test. If a future edit changes any of it, that test is what notices.
 --
 -- ---------------------------------------------------------------------------
 -- DOWN SCRIPT -- EXECUTABLE REGION
