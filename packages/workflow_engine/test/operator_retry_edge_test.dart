@@ -1,6 +1,27 @@
 import 'package:platform_contracts/platform_contracts.dart';
+// The wired `JobDefinition`s, read rather than transcribed, for the same reason
+// `transition_consistency_test.dart` reads them: a hand-copied list of entry
+// states is a second transcription of another package's configuration and it
+// goes stale silently.
+// ignore: depend_on_referenced_packages
+import 'package:scheduler/scheduler.dart';
 import 'package:test/test.dart';
 import 'package:workflow_engine/workflow_engine.dart';
+
+/// Every state any wired `JobDefinition` dispatches from, read from the live
+/// definitions.
+final Set<WorkItemState> _wiredEntryStates = <WorkItemState>{
+  for (final definition in const <JobDefinition>[
+    defaultImplementFeatureDefinition,
+    implementFeatureDefinition,
+    triageDefectDefinition,
+    designRevisionDefinition,
+    designReviewDefinition,
+    engineeringReviewDefinition,
+    onboardProductDefinition,
+  ])
+    ...definition.entryStates,
+};
 
 /// AC-35 / AC-7 — the operator-retry edge `agentFailed -> designNotRequired`.
 ///
@@ -82,8 +103,8 @@ void main() {
       );
     });
 
-    test('agentFailed has exactly TWO explicit outgoing edges, neither a '
-        'self-transition', () {
+    test('agentFailed has exactly FIVE explicit outgoing edges, each named, '
+        'and none a self-transition', () {
       // Enumerated from the PUBLIC API rather than by reading the private
       // map: every state the table considers legal from `agentFailed`, minus
       // the two generic escapes (`cancelled`, `terminated`), which every
@@ -102,25 +123,66 @@ void main() {
             ),
           )
           .where((to) => !genericEscapeTargets.contains(to))
-          .toList();
+          .toSet();
 
+      // EXACT SET EQUALITY, not a count and not `containsAll`. A count answers
+      // "did the number change"; a set answers "is the inventory the one that
+      // was decided", so an edge being REMOVED as silently as one being added
+      // fails too. The previous assertion here was `length == 2` with a
+      // `containsAll` above it, and it was stronger about addition than about
+      // removal; this form is stronger about both.
       expect(
         explicit,
-        containsAll(<WorkItemState>[
-          WorkItemState.agentExecuting,
+        {
+          // The historical one: an operator retry puts the item back in front of
+          // triage (`designNotRequired` is `triageDefectDefinition`'s entry
+          // state). Unchanged by this work.
           WorkItemState.designNotRequired,
-        ]),
+          // Pre-existing: `agentFailed -> agentExecuting` has always been legal.
+          WorkItemState.agentExecuting,
+          // THE RETRY RETURN EDGES (decision 3659984d-4e2a-4625-81ff-37aa73252375,
+          // option A). A retryable failure returns the item to the entry state
+          // of the lane whose job failed; each of these is ALREADY an entry
+          // state of a wired definition, and none widens one.
+          WorkItemState.implementationReady, // implementFeatureDefinition
+          WorkItemState.designRequired, // designRevisionDefinition
+          WorkItemState.designInReview, // designReviewDefinition
+        },
+        reason:
+            'the outgoing edges of agentFailed are an inventory that was '
+            'DELIBERATELY decided, not an accident. `containsAll` plus a count '
+            'was the old shape and let a deletion through silently; set '
+            'equality fails on an addition AND a removal, which is what an '
+            'inventory is for.',
       );
       expect(
         explicit.where((to) => to == WorkItemState.agentFailed),
         isEmpty,
         reason: 'no outgoing edge from agentFailed may be a self-transition',
       );
-      expect(
-        explicit.length,
-        2,
-        reason: 'agentFailed must gain exactly ONE new edge, not more',
-      );
+      // And the property the whole rule rests on, asserted here because
+      // workflow_engine cannot see a JobDefinition: every edge added above that
+      // is NOT the pre-existing pair lands on a state the wired definitions
+      // really dispatch from. `transition_consistency_test.dart` reads the live
+      // entry sets and asserts the same thing from the other side.
+      for (final retryReturnTarget in <WorkItemState>[
+        WorkItemState.implementationReady,
+        WorkItemState.designRequired,
+        WorkItemState.designInReview,
+        WorkItemState.designNotRequired,
+      ]) {
+        // ignore: depend_on_referenced_packages
+        expect(
+          _wiredEntryStates,
+          contains(retryReturnTarget),
+          reason:
+              '${retryReturnTarget.wire} is a retry-return target, so it must '
+              'be a state some wired JobDefinition dispatches from. If this '
+              'fails, either an entry set was WIDENED or an edge was added to a '
+              'state nothing runs — and both are the rejected alternative to '
+              'returning the item to an existing entry state.',
+        );
+      }
     });
 
     test('the retry target is a triage entry state', () {

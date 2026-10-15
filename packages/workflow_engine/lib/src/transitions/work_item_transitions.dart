@@ -149,6 +149,103 @@ class WorkItemTransitions {
     (WorkItemState.agentFailed, WorkItemState.designNotRequired): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
     ],
+    // THE RETRY RETURN EDGES — decision `3659984d-4e2a-4625-81ff-37aa73252375`
+    // (option A): a RETRYABLE execution failure returns the work item to the
+    // ENTRY STATE OF THE LANE WHOSE JOB FAILED.
+    //
+    // ## THE DEFECT THESE EXIST TO END
+    //
+    // A transient execution failure leaves the work item OUTSIDE its lane's
+    // `entryStates` — `agentExecuting -> agentFailed` for every ordinary role,
+    // and `reviewInProgress` for the engineering reviewer, which the coordinator
+    // deliberately leaves alone. Meanwhile `Scheduler._adopt` parks the job at
+    // `retryWaiting` with a live `availableAt`.
+    //
+    // `RunnableWorkEvaluator.evaluate` rejects any item outside `entryStates`
+    // BEFORE it consults the policy, so the next tick classified it `noAction`,
+    // and `Scheduler._retireSupersededForItem` CANCELLED the very retry that had
+    // just been scheduled. `cancelledQueued` is not in the drain's
+    // `dispatched ∪ terminal ∪ reconciled` union, so nothing raised an operator
+    // signal either. No retry has ever run on any `Scheduler` lane. Every
+    // `maxAttempts` in this platform was unreachable for exactly the failures
+    // it exists for.
+    //
+    // ## WHY THE ITEM IS RETURNED RATHER THAN THE SCHEDULER RELEASED
+    //
+    // The rejected alternative (option B) taught the scheduler to honour a retry
+    // for an item OUTSIDE `entryStates`. That leaves the work item in a state no
+    // lane dispatches from, which is the invariant itself: the one-element entry
+    // sets are exactly what make the triage/implementation dispatch collision
+    // STRUCTURALLY UNREACHABLE. Every edge below therefore lands on a state
+    // that is ALREADY an entry state of some wired `JobDefinition`. None of them
+    // adds a state to any entry set, and
+    // `packages/scheduler/test/implement_feature_entry_disjointness_test.dart`
+    // plus `retry_return_to_entry_state_test.dart` fail by name if one ever does.
+    //
+    // ## WHY THE RETURN IS CONDITIONAL AND NOT UNCONDITIONAL
+    //
+    // The trigger is not "the execution failed". It is "a RETRYABLE failure
+    // left a bounded retry owed", which the scheduler decides from durable job
+    // state (`JobState.retryWaiting` + `JobFailureKind.transient` +
+    // `RetryPolicy.canRetry`). A PERMANENT failure settles the job terminally
+    // `failed`, so no return is owed and the item stays at `agentFailed` for a
+    // human. A crash and a timeout therefore still behave differently, which is
+    // the whole point of the classification work these edges complete.
+    //
+    // ## WHY EXACTLY ONE EDGE PER ENTRY SET, AND NOT ONE PER ENTRY STATE
+    //
+    // The scheduler derives its return target from the POLICY, not from a list
+    // written here: it asks which of its own `entryStates` is reachable from the
+    // state the failure left behind, and moves the item there only when exactly
+    // ONE answer comes back (`Scheduler._returnRetryableItemsToEntryStates`).
+    // That makes the edges below load-bearing in both directions. A lane needs
+    // one reachable entry state or the return is REFUSED and reported; two or
+    // more is an ambiguity, and is refused too. So `agentFailed -> designApproved`
+    // and `agentFailed -> reviewRejected` are DELIBERATELY ABSENT: adding either
+    // would make `triageDefectDefinition`'s return ambiguous and silently disable
+    // the retry for every lane that dispatches from `agentFailed`.
+    //
+    // ## WHY THE GUARD SET IS `actorAllowed([orchestrator])` ALONE
+    //
+    // Derived from this table's own convention for an edge into an entry state
+    // that asserts no execution is starting — `planned -> designNotRequired`
+    // (:28) and `agentFailed -> designNotRequired` (:149) both carry exactly
+    // that and nothing else. `agentAvailable()` belongs only on `->
+    // agentExecuting` edges, where the transition claims an agent is starting
+    // RIGHT NOW; a return claims no such thing, and capacity is enforced at
+    // claim time by `JobCapacityGuard` exactly as it is for every other job.
+    //
+    // No evidence guard either, and deliberately: the only evidence these edges
+    // could demand is the failed `AgentResult`, and the scheduler has no
+    // execution of its own to read it from (which is precisely why
+    // `engineeringReviewDefinition.skipWorkflowPolicyCheck` is true). A guard
+    // that cannot be satisfied by the actor taking the edge is a guard that
+    // makes the edge unreachable and the retry dead again — the same reasoning
+    // that put `OD-10`'s `agentCompleted -> implementationReady` edge on
+    // `actorAllowed` alone (:209).
+    //
+    // The orchestrator actor type is also what makes the RETURN separable from a
+    // HUMAN decision: every edge below is reachable by any orchestrator, so
+    // `Scheduler`'s automatic return and a human-driven rework both use this
+    // table, and neither one bypasses it.
+    (WorkItemState.agentFailed, WorkItemState.implementationReady): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+    ],
+    // The design agent's entry state. `designRevisionDefinition` declares
+    // `{designRequired, designRejected}`; only `designRequired` is reachable from
+    // `agentFailed`, so the scheduler's derivation resolves uniquely.
+    //
+    // `designRejected` is deliberately NOT given an edge here even though it is
+    // in the same set: a rejected design is a HUMAN verdict and re-running the
+    // designer would quietly overturn it. One reachable answer per lane is what
+    // keeps this unambiguous; see the derivation note above.
+    (WorkItemState.agentFailed, WorkItemState.designRequired): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+    ],
+    // The design reviewer's entry state, for `designReviewDefinition`.
+    (WorkItemState.agentFailed, WorkItemState.designInReview): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+    ],
     /*** Engineering review ***/
     // THE IMPLEMENTATION LANE'S INFLOW EDGE — `OD-10`.
     //
@@ -226,6 +323,70 @@ class WorkItemTransitions {
       GuardConditions.blockingHumanDecisionPendingOfType([
         HumanDecisionType.engineeringReview,
       ]),
+    ],
+    // THE REVIEW LANE'S RETRY RETURN — decision
+    // `3659984d-4e2a-4625-81ff-37aa73252375` (option A).
+    //
+    // ## WHY THIS EDGE AND NOT `reviewInProgress -> agentFailed`
+    //
+    // The engineering reviewer is the ONE role the coordinator settles
+    // differently: `ExecutionCoordinator._completeFailure` and `_failWithoutSession`
+    // both skip the `agentFailed` transition for `AgentRole.engineeringReviewer`,
+    // so a reviewer that crashes leaves its work item AT `reviewInProgress`
+    // rather than moving it. That is the correct call — an unreviewed item must
+    // not be filed as a failed coding result — and it is exactly what made this
+    // lane the worst case of the retry defect: the item was neither back in
+    // `engineeringReviewDefinition.entryStates` (`{agentCompleted}`) nor in a
+    // state a human would recognise as failed. It simply sat at
+    // `reviewInProgress`, looking like a review in progress, with its job
+    // cancelled as superseded one tick later and nobody told.
+    //
+    // `agentCompleted` IS the review lane's entry state, so returning there is
+    // the option-A shape: a RETURN to an existing entry state, never a widening.
+    // The next tick classifies the item `runnable` and the scheduled retry is
+    // claimed for real.
+    //
+    // ## THIS EDGE DOES NOT APPROVE ANYTHING
+    //
+    // It is not the review verdict and it must never be mistaken for one. The
+    // verdict is raised as a blocking `engineeringReview` `HumanDecision` through
+    // the edge above, and the only routes OUT of `agentCompleted` are
+    // `-> implementationReady` (`OD-10`'s inflow), `-> reviewInProgress`
+    // (this lane dispatching again) and `-> designInReview`. None of them
+    // reaches `reviewApproved`, so no orchestrator can use this edge to push
+    // unreviewed work through the approval gate: returning the item puts it
+    // back in front of a reviewer, which is the entire intent.
+    //
+    // ## WHY NO `agentResultValid()`
+    //
+    // The sibling entry edge `agentCompleted -> reviewInProgress` (:212) carries
+    // it, because its caller — the coordinator starting a reviewer — can supply
+    // the IMPLEMENTER's completed `AgentResult` from the store. The scheduler
+    // cannot, for exactly the reason
+    // `engineeringReviewDefinition.skipWorkflowPolicyCheck` is true, and adding
+    // the guard here would make this edge unreachable from the only actor that
+    // needs it and the review lane's retry dead again. The evidence is not
+    // absent, either: the only edge INTO `agentCompleted` is
+    // `(agentExecuting, agentCompleted)`, guarded by BOTH `qaContractExists()`
+    // AND `agentResultValid()`. Arriving there already asserted a completed,
+    // valid result exists, and nothing on the way out of it needs it again.
+    //
+    // ## WHY `actorAllowed([orchestrator])` ALONE
+    //
+    // This table's own convention for an edge into an entry state that asserts
+    // no execution is starting: `planned -> designNotRequired` (:28),
+    // `agentFailed -> designNotRequired` and `agentCompleted ->
+    // implementationReady` (:209) all carry exactly that.
+    //
+    // `actorIsNotSelf()` is deliberately NOT carried across from the edge above.
+    // It exists to stop a reviewer approving its OWN review, and it works by
+    // comparing the acting actor's id against the `producerActorId` stamped on
+    // the item — data only the coordinator has. The actor taking this edge is
+    // the scheduler's `orchestrator`, which is not a reviewer and holds no
+    // execution at all, so the guard could never fail here; copying it would
+    // add an unevaluable check that reads as a guarantee it does not give.
+    (WorkItemState.reviewInProgress, WorkItemState.agentCompleted): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
     ],
     (WorkItemState.waitingForHumanDecision, WorkItemState.reviewApproved): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),

@@ -281,6 +281,48 @@ class CompletionInflowMove {
       '$workItemId ($from -> ${to?.wire ?? 'unchanged'}): $reason';
 }
 
+/// One item a tick considered returning to its lane's entry state, and what it
+/// did about it.
+///
+/// Reported for EVERY retry owed by a job in this lane, whether or not the
+/// return happened — including the refusals. "The lane returned nothing" and
+/// "the lane owed a retry and could not return the item" are different
+/// operational facts, and only the second one is a problem: the item stays
+/// stranded and its retry will be cancelled as superseded one tick later.
+@immutable
+class RetryReturnMove {
+  const RetryReturnMove({
+    required this.workItemId,
+    required this.jobId,
+    required this.from,
+    this.to,
+    required this.reason,
+  });
+
+  final String workItemId;
+
+  /// The job whose retry is being honoured. Named so an operator reading a
+  /// refusal can find the job whose budget is about to be wasted.
+  final String jobId;
+
+  /// The state the item was read in — `agentFailed` for an ordinary role, or
+  /// `reviewInProgress` for the engineering reviewer, which the coordinator
+  /// deliberately leaves alone.
+  final WorkItemState from;
+
+  /// Where the item was moved, or `null` when nothing was moved.
+  final WorkItemState? to;
+
+  /// The operator-facing reason. Never a credential.
+  final String reason;
+
+  bool get returned => to != null && to != from;
+
+  @override
+  String toString() =>
+      '$workItemId ($from -> ${to?.wire ?? 'unchanged'}) retry $jobId: $reason';
+}
+
 /// What one `Scheduler.tick` did, for tests and for the audit tail.
 @immutable
 class SchedulerTickResult {
@@ -326,6 +368,25 @@ class SchedulerTickResult {
     /// none of them — would otherwise be indistinguishable from a lane that
     /// never looked.
     this.completionInflow = const [],
+
+    /// Retryable failures whose work item this tick returned to the lane's
+    /// entry state — and the ones it could not.
+    ///
+    /// Its own channel because none of the others means this. `deferred` is
+    /// back-pressure on a job that is wanted; `cancelledQueued` is a job
+    /// WITHDRAWN because its item no longer wants it, which is the very thing
+    /// this pass exists to prevent; `entryHopRefused` is a structural gap on a
+    /// runnable item. A return that happened is the operational proof that
+    /// `maxAttempts` is real, and a refusal is the operational proof that a
+    /// retry is still being thrown away — which is invisible today and was the
+    /// whole reason this defect could sit in the catalogue as background noise
+    /// for an entire project.
+    ///
+    /// NOT folded into `cancelledQueued`, and deliberately not part of the
+    /// tick drain's `dispatched ∪ terminal ∪ reconciled` union: the job this
+    /// names is not terminal, so a drain would skip it, and a return is not an
+    /// outcome to consume.
+    this.retryReturned = const [],
   });
 
   final List<String> reconciled;
@@ -362,6 +423,10 @@ class SchedulerTickResult {
   /// Items the completion inflow considered this tick, in item-id order. See
   /// the field's declaration for why this is its own channel.
   final List<CompletionInflowMove> completionInflow;
+
+  /// Retryable failures considered for a return to this lane's entry state this
+  /// tick. See the constructor's declaration for why this is its own channel.
+  final List<RetryReturnMove> retryReturned;
 }
 
 /// The durable scheduler: derivation + enqueue + dispatch + outcome adoption
@@ -398,6 +463,16 @@ class Scheduler {
        _definition = definition,
        _workload = workload,
        _clock = clock ?? DateTime.now,
+       // ONE policy object behind every question this scheduler asks of the
+       // workflow graph, and the answer to "may the scheduler take this
+       // transition" itself. `_evaluator`, `_reclaimEngine` and
+       // `_returnRetryableItemsToEntryStates` all consult THIS instance, so a
+       // reclaim, an entry hop and a retry return cannot disagree about which
+       // edges exist. Named as a field rather than left as two inline
+       // `policy ?? const WorkflowEngine()` expressions because the third
+       // reader arrived with this change and three separate constructions of
+       // "the policy" is three chances to drift.
+       _policy = policy ?? const WorkflowEngine(),
        _evaluator = RunnableWorkEvaluator(
          policy: policy ?? const WorkflowEngine(),
        ),
@@ -448,6 +523,10 @@ class Scheduler {
   final DateTime Function() _clock;
   final RunnableWorkEvaluator _evaluator;
   final DurableWorkflowEngine _reclaimEngine;
+
+  /// The single workflow policy this scheduler consults. See the constructor
+  /// for why it is one named instance rather than three inline constructions.
+  final WorkflowEngine _policy;
 
   /// Performs the intermediate hop an entry state declares when it cannot
   /// reach this definition's running state in one edge. See
@@ -643,6 +722,22 @@ class Scheduler {
       if (completionInflow.isNotEmpty) {
         items = await _workflowStore.readAllWorkItems();
       }
+    }
+
+    // 2.5 RETRY RETURN. A retryable failure left this item OUTSIDE this lane's
+    //     entry states, and the retry it is owed can therefore never be
+    //     claimed. Put the item back, before anything asks what is runnable.
+    //
+    //     It runs HERE, after the completion inflow and before the runnability
+    //     map, for the same structural reason the inflow does: step 3 classifies
+    //     from a snapshot, and step 4's `noAction` branch is what
+    //     CANCELS a retry. A return performed after step 3 would be read by
+    //     nothing, and the item would be retired as superseded by the very tick
+    //     that returned it. So `items` is re-read below whenever anything moved,
+    //     and `var` for exactly that reason.
+    final retryReturned = await _returnRetriableItemsToEntryStates(items);
+    if (retryReturned.any((move) => move.returned)) {
+      items = await _workflowStore.readAllWorkItems();
     }
 
     // 3. Ask the WORKFLOW POLICY what it may schedule for every item. Never a
@@ -849,7 +944,356 @@ class Scheduler {
       blockedArtifactMissing: blockedArtifactMissing,
       entryHopRefused: entryHopRefused,
       completionInflow: completionInflow,
+      retryReturned: retryReturned,
     );
+  }
+
+  /// The retry-return pass. Returns every retryable failure this lane owes a
+  /// return for, and the ones it could not perform.
+  ///
+  /// ## THE DEFECT THIS EXISTS TO END
+  ///
+  /// Four links, all of which had to be true at once:
+  ///
+  ///  1. a retryable execution failure moves the work item OUT of its lane's
+  ///     `entryStates` — `agentExecuting -> agentFailed` for every ordinary role,
+  ///     and the coordinator leaves a reviewer at `reviewInProgress`;
+  ///  2. `RunnableWorkEvaluator.evaluate` rejects any item outside
+  ///     `entryStates` BEFORE it consults the retry policy or anything else;
+  ///  3. so the next tick classifies the item `noAction`; and
+  ///  4. `Scheduler._retireSupersededForItem` then CANCELS the retry that was
+  ///     just scheduled — and `cancelledQueued` is not in the tick drain's
+  ///     `dispatched ∪ terminal ∪ reconciled` union, so no operator signal was
+  ///     raised either.
+  ///
+  /// The item was due, owned by nobody, and could never advance, in silence.
+  /// No retry has ever run on any `Scheduler` lane, so every `maxAttempts` in
+  /// this platform was unreachable for exactly the failures it exists for.
+  ///
+  /// ## WHY THE ITEM IS MOVED AND NOT THE JOB RELEASED
+  ///
+  /// The rejected alternative (option B of the decision) taught the scheduler
+  /// to honour a retry for an item OUTSIDE `entryStates`. That leaves the work
+  /// in a state no lane dispatches from — which is the invariant itself. The
+  /// one-element entry sets are precisely what make the triage/implementation
+  /// dispatch collision STRUCTURALLY UNREACHABLE, and an item parked outside
+  /// every entry set reintroduces that collision by a different route. So this
+  /// is a RETURN to a state that is already an entry state, and
+  /// `_returnTargetFor` can only ever name one that is.
+  ///
+  /// ## WHY THE TARGET IS DERIVED FROM THE POLICY, NOT DECLARED
+  ///
+  /// `entryStates` may hold several states (triage holds three). There is no
+  /// list here saying which one a retry returns to, because a list would be a
+  /// second transcription of the transition graph — and the codebase's standing
+  /// rule is "ask the policy, never a local copy of the graph"
+  /// ([RunnableWorkEvaluator], [EntryHopper]). Instead this asks the POLICY
+  /// which of its own entry states is reachable from the state the failure left
+  /// behind, and proceeds only on a UNIQUE answer. Zero reachable and more than
+  /// one reachable are both REFUSALS, reported with a reason.
+  ///
+  /// That is what makes the four edges in `work_item_transitions.dart`
+  /// load-bearing in both directions: `agentFailed -> designApproved` and
+  /// `agentFailed -> reviewRejected` are deliberately absent, because adding
+  /// either would make triage's return ambiguous and silently disable the retry
+  /// for every lane that dispatches from `agentFailed`.
+  ///
+  /// ## WHY A LANE ONLY EVER RETURNS ITS OWN JOBS
+  ///
+  /// Scoped to `job.jobType == _definition.jobType`, the same scoping
+  /// `_retireSupersededForItem` already applies on the cancel side. Two
+  /// schedulers share one `JobStore`, and a lane is only entitled to move a
+  /// work item for its OWN job. The alternative is a cross-lane hijack waiting
+  /// for one edge: the implementation lane's tick sees the review lane's
+  /// `retryWaiting` job, and the moment an `reviewInProgress ->
+  /// implementationReady` edge existed it would return a reviewer's item out
+  /// from under it — reintroducing through the back door the very collision the
+  /// disjoint entry sets exist to make unreachable.
+  ///
+  /// ## WHY THE JOB IS THE EVIDENCE, AND WHY IT IS ENOUGH
+  ///
+  /// Every condition below is read from durable state, and together they are a
+  /// complete account: `JobState.retryWaiting` is written by exactly ONE
+  /// method in this package — `JobQueue.scheduleRetry` — and `_adopt` calls
+  /// that method only under [RetryPolicy.canRetry]. So a job in `retryWaiting`
+  /// carrying a `transient` [JobFailure] already asserts, in the durable row
+  /// itself, all three facts this pass needs: THIS lane dispatched an
+  /// execution of THIS item, it failed on INFRASTRUCTURE rather than on its
+  /// result, and the budget had room when the retry was offered. No local flag,
+  /// no second guess and no re-derivation of the failure are involved.
+  ///
+  /// ## WHY `canRetry` IS **NOT** RE-CHECKED HERE
+  ///
+  /// It would refuse every retry, for an off-by-one that is worth stating
+  /// exactly because it is so easy to reintroduce.
+  ///
+  /// `scheduleRetry` PRE-INCREMENTS: the moment the retry is scheduled the job
+  /// already reads `attempt == 2` against `maxAttempts == 2`. So
+  /// `canRetry(attempt: 2, maxAttempts: 2)` is `2 < 2`, i.e. false, for a
+  /// retry that is perfectly live. `_adopt` calls `canRetry` BEFORE the
+  /// increment, which is the only point at which it answers the right question.
+  ///
+  /// The budget is not thereby unbounded. The NEXT bound is applied where it
+  /// belongs: when the retried execution settles, `_adopt` calls `canRetry`
+  /// again against the then-current `attempt`, and a second transient failure
+  /// completes the job terminally `failed`. That is what makes `maxAttempts`
+  /// mean "exactly N executions, never N+1", and
+  /// `test/retry_return_to_entry_state_test.dart` asserts the count of REAL
+  /// executions rather than the state of the job row.
+  ///
+  /// ## WHY A PERMANENT FAILURE NEVER COMES HERE
+  ///
+  /// `Scheduler._adopt` settles a permanent failure terminally `failed`, so it
+  /// never reaches `retryWaiting` and this pass never sees it: the item stays
+  /// where the failure put it and waits for a human. That is the whole point of
+  /// keeping the failure classes distinct — a crash and a timeout still behave
+  /// differently, and neither is made unconditional.
+  ///
+  /// ## WHY A HUMAN GATE IS NEVER TOUCHED
+  ///
+  /// An item parked at `waitingForHumanDecision` is a PAUSE that consumes no
+  /// capacity and is expected to resolve back into an entry state. Returning a
+  /// retryable item out of it would silently pre-empt a decision a human has not
+  /// answered yet, so that state is refused explicitly — the one refusal here
+  /// that is not a graph question.
+  ///
+  /// ## PER-ITEM ISOLATION
+  ///
+  /// A read fault or a rejected write on one item must not abort the pass: the
+  /// remaining items are real work this lane can recover, and a throw here would
+  /// escape `tick` and lose the WHOLE lane's tick result — every unrelated
+  /// item's dispatch with it. Each item is guarded individually and every
+  /// refusal is REPORTED on [SchedulerTickResult.retryReturned], never
+  /// swallowed. An item that keeps refusing re-reports every tick, which is the
+  /// intended signal: it is not going to fix itself.
+  Future<List<RetryReturnMove>> _returnRetriableItemsToEntryStates(
+    List<WorkItem> items,
+  ) async {
+    final owed = <(Job, WorkItem)>[];
+    for (final job in await _jobStore.listJobs()) {
+      // SCOPED TO THIS LANE'S JOB TYPE, and the reason is the same one
+      // `_retireSupersededForItem` already enforces on the cancel side: two
+      // schedulers share one `JobStore`, and a lane is only entitled to move
+      // work items for ITS OWN jobs.
+      //
+      // Without this, the implementation lane's tick would see the REVIEW
+      // lane's `retryWaiting` job and consider returning its item — and the
+      // day someone added an `reviewInProgress -> implementationReady` edge to
+      // make that possible, the implementation lane would hijack a reviewer's
+      // retry and re-introduce, through the back door, the cross-lane collision
+      // the disjoint entry sets exist to make unreachable. The review lane's
+      // return belongs to the review lane, and the review lane is the only
+      // component that knows `engineeringReviewDefinition`.
+      if (job.jobType != _definition.jobType) continue;
+      // `retryWaiting` is the queue's own name for "a retry is owed and its
+      // delay has not elapsed yet". It is written by `JobQueue.scheduleRetry`
+      // and by nothing else, so this is the one condition that says a retry
+      // exists — not a reconstruction of what the failure was.
+      if (job.state != JobState.retryWaiting) continue;
+      final failure = job.failure;
+      // `isRetryable` is `== transient` on the contract enum, so `cancelled` and
+      // `permanent` are both excluded here by construction rather than by a
+      // second list kept in step with the enum.
+      if (failure == null || !failure.kind.isRetryable) continue;
+      // `canRetry` is deliberately NOT re-checked here: `scheduleRetry`
+      // pre-increments `attempt`, so it answers `2 < 2` — false — for a retry
+      // that is perfectly live. See this method's doc for the full argument and
+      // for why the next bound is applied where it belongs.
+      final item = items
+          .where((i) => i.workItemId == job.workItemId)
+          .firstOrNull;
+      if (item == null) continue;
+      // The defect, stated as a condition: the item has LEFT this lane's entry
+      // states, so nothing will claim the retry. An item still inside them needs
+      // no return at all — the ordinary runnable branch already handles it.
+      if (_definition.entryStates.contains(item.state)) continue;
+      owed.add((job, item));
+    }
+    if (owed.isEmpty) return const [];
+
+    owed.sort((a, b) {
+      final byItem = a.$2.workItemId.compareTo(b.$2.workItemId);
+      return byItem != 0 ? byItem : a.$1.jobId.compareTo(b.$1.jobId);
+    });
+
+    final moves = <RetryReturnMove>[];
+    for (final (job, item) in owed) {
+      moves.add(await _returnOneToEntryState(job, item));
+    }
+    return moves;
+  }
+
+  /// Returns one item, or reports why it was not returned.
+  Future<RetryReturnMove> _returnOneToEntryState(Job job, WorkItem item) async {
+    if (item.isTerminal) {
+      return RetryReturnMove(
+        workItemId: item.workItemId,
+        jobId: job.jobId,
+        from: item.state,
+        reason:
+            'work item ${item.workItemId} is ${item.state.wire}, which is '
+            'terminal, so nothing owns it and no retry is owed. The retry on '
+            'job ${job.jobId} will be retired as superseded, which is correct.',
+      );
+    }
+    if (item.state == WorkItemState.waitingForHumanDecision) {
+      return RetryReturnMove(
+        workItemId: item.workItemId,
+        jobId: job.jobId,
+        from: item.state,
+        reason:
+            'work item ${item.workItemId} is parked at a blocking human '
+            'decision. Returning it now would pre-empt a decision nobody has '
+            'answered, so the retry on job ${job.jobId} is left alone until '
+            'the gate resolves back into an entry state.',
+      );
+    }
+
+    final reachable = _returnTargetsFrom(item.state);
+    if (reachable.isEmpty) {
+      return RetryReturnMove(
+        workItemId: item.workItemId,
+        jobId: job.jobId,
+        from: item.state,
+        reason:
+            'a ${_definition.jobType.wire} execution failed transiently and job '
+            '${job.jobId} is owed a retry, but the transition table offers no '
+            'edge from ${item.state.wire} back into any '
+            '${_definition.jobType.wire} entry state '
+            '(${_entryStateWireList()}). Nothing is returned, so the next tick '
+            'retires the retry as superseded and this item is stranded until a '
+            'human acts on it. Adding that edge is the fix; adding an entry '
+            'state would be the rejected alternative.',
+      );
+    }
+    if (reachable.length > 1) {
+      return RetryReturnMove(
+        workItemId: item.workItemId,
+        jobId: job.jobId,
+        from: item.state,
+        reason:
+            'the transition table offers MORE THAN ONE '
+            '${_definition.jobType.wire} entry state reachable from '
+            '${item.state.wire} (${(reachable.map((s) => s.wire).toList()..sort()).join(', ')}), '
+            'so which one this retry returns to is ambiguous and the scheduler '
+            'will not guess. Job ${job.jobId} will be retired as superseded. '
+            'Exactly one reachable entry state per lane is the invariant that '
+            'makes this unambiguous.',
+      );
+    }
+
+    final target = reachable.single;
+    // `validate()` is asked about the transition BEFORE the write, for the same
+    // reason `_routeOneCompletion` does: a refused write and an unaccepted
+    // transition are the same fact, and the engine's verdict is cheaper and
+    // more honest than discovering it from a thrown exception. The two agree by
+    // construction — `DurableWorkflowEngine.transition` refuses anything
+    // `validate` rejects — so this is a refusal with a readable reason, not a
+    // second rule.
+    final verdict = _policy.evaluateWorkItemTransition(
+      from: item.state,
+      to: target,
+      trigger: TransitionTrigger.systemEvent,
+      actor: _reclaimActor,
+      // Empty on purpose, and NOT the
+      // `{'agentAvailable': true, 'capabilitiesMatch': true}` the dispatch
+      // probe uses. A return asserts no agent is starting — capacity is
+      // `JobCapacityGuard`'s job — so supplying those keys would claim a fact
+      // that is false at this moment and would quietly satisfy an
+      // `agentAvailable()` guard that has no business being satisfied here.
+      // An edge that needs evidence is therefore refused, which is the
+      // conservative direction: this pass can only fail to return something a
+      // human can fix, never return something it should not.
+      context: const {},
+    );
+    if (!verdict.isValid) {
+      return RetryReturnMove(
+        workItemId: item.workItemId,
+        jobId: job.jobId,
+        from: item.state,
+        reason:
+            'the transition ${item.state.wire} -> ${target.wire} exists but the '
+            'workflow policy will not let the scheduler take it in the '
+            'scheduler\'s own context '
+            '(${verdict.failedGuards.join(', ')}). Not returning: job '
+            '${job.jobId} will be retired as superseded and this item will wait '
+            'for a human.',
+      );
+    }
+
+    try {
+      final moved = await _reclaimEngine.transition(
+        workItemId: item.workItemId,
+        to: target,
+        trigger: TransitionTrigger.systemEvent,
+        actor: _reclaimActor,
+        context: const {},
+        reason:
+            'job ${job.jobId} is owed a bounded retry after a transient '
+            '${_definition.jobType.wire} execution failure '
+            '(${job.failure?.code.name}), and the failure left this item at '
+            '${item.state.wire}, outside every '
+            '${_definition.jobType.wire} entry state, so no tick could ever '
+            'claim it. Returning it to ${target.wire} — an existing entry '
+            'state, not a widened one — so the scheduled retry runs for real.',
+      );
+      return RetryReturnMove(
+        workItemId: item.workItemId,
+        jobId: job.jobId,
+        from: item.state,
+        to: moved.state,
+        reason:
+            '${item.state.wire} -> ${moved.state.wire}: a transient failure '
+            'owed a retry, and the item had left every entry state this lane '
+            'dispatches from',
+      );
+    } on Object catch (error) {
+      // Someone else owns the item now — a human, a gate, another tick. Not an
+      // error: a delay, never a loss, and the next tick re-reads and decides
+      // again from whatever state the item now holds.
+      return RetryReturnMove(
+        workItemId: item.workItemId,
+        jobId: job.jobId,
+        from: item.state,
+        reason:
+            'returning ${item.workItemId} to ${target.wire} was refused ($error) '
+            '— another writer owns it, or the policy disagrees at write time. '
+            'Nothing was moved and nothing was consumed; the next tick '
+            're-reads and decides again.',
+      );
+    }
+  }
+
+  /// The entry states of this definition the POLICY says [from] may reach.
+  ///
+  /// Read from the policy rather than from a list, which is what makes the
+  /// return target unambiguous-by-construction rather than unambiguous-by-
+  /// convention: an edge added to `work_item_transitions.dart` that reaches a
+  /// second entry state from the same failure state CHANGES this answer, and a
+  /// second answer is a refusal.
+  List<WorkItemState> _returnTargetsFrom(WorkItemState from) {
+    final targets = <WorkItemState>[];
+    for (final entry in _definition.entryStates) {
+      final transition = _policy.evaluateWorkItemTransition(
+        from: from,
+        to: entry,
+        trigger: TransitionTrigger.systemEvent,
+        actor: _reclaimActor,
+        context: const {},
+      );
+      if (transition.isValid) targets.add(entry);
+    }
+    // Sorted so the refusal reason above is stable across runs rather than
+    // dependent on `entryStates` iteration order.
+    targets.sort((a, b) => a.wire.compareTo(b.wire));
+    return targets;
+  }
+
+  /// The entry states of this lane, as wire tokens, sorted — for operator-facing
+  /// refusal reasons.
+  String _entryStateWireList() {
+    final wires = _definition.entryStates.map((s) => s.wire).toList()..sort();
+    return wires.join(', ');
   }
 
   /// Routes each item this lane shares with another lane, once, before
@@ -1142,11 +1586,9 @@ class Scheduler {
       return const _DispatchOutcome(blockedArtifactMissing: true);
     }
 
-    final request = await _requestBuilder(
+    final request = _scopedToAttempt(
+      await _requestBuilder(current, workload, item, _modelSelection),
       current,
-      workload,
-      item,
-      _modelSelection,
     );
     final selection = _dispatch.select(request);
     if (!selection.isDispatched) {
@@ -1163,7 +1605,14 @@ class Scheduler {
       job: current,
       now: now,
       workerId: selection.candidate!.workerId,
-      workerExecutionId: 'wx-${current.jobId}',
+      // The request's OWN id, never a re-spelling of it. These were the same
+      // string by coincidence — every builder spells it `'wx-${job.jobId}'` —
+      // and [JobQueue.requeueSuperseded] documents `Job.executionReference` as
+      // naming "a worker execution that ended without producing anything".
+      // A reference that names a different execution than the one that ran is
+      // not a reference; `_reconcileClaim`, `_reclaimZombie` and
+      // `_releaseWorkItem` all chase it.
+      workerExecutionId: request.workerExecutionId,
     );
 
     try {
@@ -1183,6 +1632,98 @@ class Scheduler {
       );
       return const _DispatchOutcome();
     }
+  }
+
+  /// Gives each ATTEMPT of a job its own worker-execution id, and nothing else
+  /// changes.
+  ///
+  /// ## WHY, IN ONE LINE
+  ///
+  /// Without it a retry cannot run a second agent session, so option A of the
+  /// retry-return decision would deliver a retry that is CLAIMED and
+  /// DISPATCHED and then silently replays the failure it was supposed to
+  /// recover from.
+  ///
+  /// ## THE CHAIN, END TO END
+  ///
+  ///  * every request builder spells the id `'wx-${job.jobId}'`
+  ///    (`triageDefectRequest`, `implementFeatureRequest`,
+  ///    `engineeringReviewRequest`, …), so it is the SAME STRING for every
+  ///    attempt of one job;
+  ///  * `LocalWorker._agentRequest` derives the agent execution id from it —
+  ///    `'agx-${request.workerExecutionId}'`;
+  ///  * and `ExecutionCoordinator.execute` is SINGLE-SHOT per execution id: an
+  ///    id that already names a terminal execution returns that record instead
+  ///    of starting anything. That is a correct and deliberate coordinator
+  ///    invariant — "replay is achieved by observing the terminal record, not
+  ///    by re-running the agent".
+  ///
+  /// So the retried dispatch received the FIRST attempt's interrupted
+  /// execution, `_retryPolicy.classify` classified it transient a second time,
+  /// and `canRetry` had already been spent: the job settled terminally
+  /// `failed`. The retry was real enough to observe and useless in practice.
+  ///
+  /// ## WHY ATTEMPT 1 IS BYTE-IDENTICAL TO TODAY
+  ///
+  /// The suffix is added only from attempt 2. Every worker execution row ever
+  /// persisted under `'wx-<jobId>'` — every historical execution, every
+  /// `producerActorId` an item's `OD-10` discriminator resolves through — keeps
+  /// matching. Re-spelling the base id would orphan all of them and, on the next
+  /// tick, dispatch work whose producer could no longer be identified. This
+  /// property is not to be traded for anything.
+  ///
+  /// ## WHY THE SUFFIX IS THE ATTEMPT AND NOT A COUNTER OR A RANDOM VALUE
+  ///
+  /// [Job.attempt] is already durable, already bounded by `maxAttempts`, and
+  /// already the number the operator sees. A fresh `DateTime` or a nonce would
+  /// make the id un-derivable from the job row, which is exactly what
+  /// reconciliation needs: `_reconcileClaim`, `_reclaimZombie` and
+  /// `_releaseWorkItem` all read `Job.executionReference`, never a derivation.
+  ///
+  /// ## IT DOES NOT LOOSEN THE COORDINATOR'S INVARIANT
+  ///
+  /// The coordinator stays single-shot per id. What changes is that a retry
+  /// asks for a DIFFERENT id, which is a different piece of work rather than a
+  /// second claim on the same one — and `Job.executionReference` is written from
+  /// the request's real id, so the audit row, the reconciliation chase and the
+  /// workspace all name the execution that actually ran.
+  ///
+  /// ## WHY IT IS APPLIED HERE AND NOT IN THE BUILDERS
+  ///
+  /// The builders are five separate functions in five separate files, and
+  /// changing each one is five chances to spell the suffix differently. This is
+  /// the single place every dispatch passes through, so one rule applies to
+  /// every definition including the ones added later — which is the same
+  /// reasoning `DedupeKeyBuilder` and `InstructionBuilder` exist as injectable
+  /// seams, and the opposite of them.
+  WorkerExecutionRequest _scopedToAttempt(
+    WorkerExecutionRequest request,
+    Job job,
+  ) {
+    if (job.attempt <= 1) return request;
+    return WorkerExecutionRequest(
+      workerExecutionId: '${request.workerExecutionId}:a${job.attempt}',
+      workItemId: request.workItemId,
+      repositoryPath: request.repositoryPath,
+      startingRevision: request.startingRevision,
+      requiredCapabilities: request.requiredCapabilities,
+      role: request.role,
+      instruction: request.instruction,
+      timeoutSeconds: request.timeoutSeconds,
+      runtimeTypeId: request.runtimeTypeId,
+      expectedArtifacts: request.expectedArtifacts,
+      cleanupPolicy: request.cleanupPolicy,
+      envAllowlist: request.envAllowlist,
+      environment: request.environment,
+      runtimeConfig: request.runtimeConfig,
+      createdAt: request.createdAt,
+      // Carried across VERBATIM. It is the independence constraint for a
+      // design review — the designer must never review itself — and it names
+      // EXECUTION ids recorded by the same `'agx-$workerExecutionId'` rule this
+      // method feeds, so a retry's request asks the same question as the
+      // original one did.
+      excludedExecutionIds: request.excludedExecutionIds,
+    );
   }
 
   /// Claims [current], taking a capacity slot first when the budget is

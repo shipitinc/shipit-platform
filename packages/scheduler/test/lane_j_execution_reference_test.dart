@@ -306,6 +306,12 @@ void main() {
           expect(
             retrying.executionReference!.workerExecutionId,
             'wx-${retrying.jobId}',
+            reason:
+                'attempt 1 is byte-identical to every execution ever persisted '
+                'under this id. Only attempts from 2 onward are suffixed, so no '
+                'historical worker execution row — and no `producerActorId` an '
+                "item's OD-10 discriminator resolves through - never stops "
+                'matching.',
           );
 
           now = t0.add(const Duration(minutes: 2));
@@ -320,7 +326,30 @@ void main() {
           expect(done.executionReference!.agentExecutionId, 'agx-2');
           expect(
             done.executionReference!.workerExecutionId,
-            'wx-${done.jobId}',
+            'wx-${done.jobId}:a2',
+            reason:
+                'attempt 2 gets ITS OWN worker execution id, and this is not '
+                'cosmetic. `LocalWorker._agentRequest` derives the agent '
+                'execution id as `agx-<workerExecutionId>`, and '
+                '`ExecutionCoordinator.execute` is SINGLE-SHOT per execution '
+                'id — an id that already names a terminal execution returns '
+                'that record instead of starting anything. So one shared '
+                'worker execution id across attempts means the retry is '
+                'CLAIMED and DISPATCHED and then silently REPLAYS the failure '
+                'it was meant to recover from: the classifier sees the same '
+                'interruption twice, the budget is already spent, and the job '
+                'settles terminally failed. The dispatcher here reports a '
+                'distinct agent id per run, which is why this file never '
+                'surfaced the collision and the real integration stack does.',
+          );
+          expect(
+            done.executionReference!.workerExecutionId,
+            isNot(retrying.executionReference!.workerExecutionId),
+            reason:
+                'the two attempts must be two DISTINCT executions on the job '
+                'row, not one row overwritten twice. This is the property that '
+                'makes a reconciliation chase reach the run that is actually '
+                'in flight.',
           );
           expect(done.executionReference!.resultId, isNull);
         },
