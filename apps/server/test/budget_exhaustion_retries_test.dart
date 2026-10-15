@@ -109,10 +109,8 @@ void main() {
     // raised about a review that has not exhausted its own budget.
     expect(afterFirst.executionReference?.agentExecutionId, isNotNull);
 
-    // What the retry WOULD do is proven by
-    // `scheduler_retry_dispatches_again_test.dart`; here the review lane's
-    // second attempt cannot run because the failed review left the item at
-    // `reviewInProgress`, which is pinned separately in the GAP test below.
+    // What the retry actually DOES is proven below — the GAP assertion this
+    // file used to end on has been closed and replaced.
   });
 
   test('a review whose agent CRASHES fails permanently, spends no attempt, '
@@ -178,29 +176,30 @@ void main() {
   });
 
   test(
-    'GAP, PINNED: a retried job cannot re-dispatch while its work item has '
-    "left the definition's entry states, so it is retired one tick later",
+    'CLOSED GAP: the retry now RE-DISPATCHES, because the failed review returns '
+    'the work item to the lane\'s entry state',
     () async {
-      // This is the honest other half of the fix above, and it is a SEPARATE
-      // defect in a package this lane does not own.
+      // This test REPLACES a pinned assertion that recorded the opposite
+      // behaviour, deliberately and for a long time:
       //
-      // A budget expiry moves the work item out of the lane's entry states —
-      // for review, `agentCompleted -> reviewInProgress` (which the coordinator
-      // does before the run starts); for every other lane, `agentExecuting ->
-      // agentFailed`. `RunnableWorkEvaluator` rejects any item outside its own
-      // `entryStates` before it asks the policy anything, so on the NEXT tick
-      // the item classifies `noAction`, and `Scheduler._retireSupersededForItem`
-      // CANCELS the very job whose retry was just scheduled.
+      //   'GAP, PINNED: a retried job cannot re-dispatch while its work item
+      //    has left the definition's entry states, so it is retired one tick
+      //    later'  … asserting JobState.cancelled and 'the scheduled retry
+      //    never ran'.
       //
-      // So the retry budget this lane reconnected is spendable, and the retry
-      // still does not run, unless something puts the item back. That
-      // "something" is an operator retry (`agentFailed -> designNotRequired`, a
-      // real edge) or a human decision — neither is automatic, and for the
-      // REVIEW lane there is no edge back to `agentCompleted` at all.
+      // The pin existed so the gap could not be forgotten. It is now closed by
+      // the retry-return edge (decision 3659984d, option A):
+      // `reviewInProgress -> agentCompleted` puts the item back inside
+      // `engineeringReviewDefinition.entryStates`, so `RunnableWorkEvaluator`
+      // no longer classifies it `noAction` and `_retireSupersededForItem` no
+      // longer cancels the retry. The target is derived from the policy and
+      // proceeds only on a UNIQUE reachable entry state — see
+      // `packages/scheduler/test/retry_return_to_entry_state_test.dart`.
       //
-      // Asserted rather than described, because the assertion is cheap and the
-      // description is what gets lost: if a future lane adds the restoration,
-      // this test fails and says so.
+      // The pin's own instruction was 'DELETE this assertion and replace it
+      // with one that shows the retry dispatching'. That is what this is. The
+      // reason it is asserted rather than described is unchanged: the
+      // description is what gets lost.
       final host = ReviewRetryHost(
         repo: repo,
         workspaceRoot: '${temp.path}/workspaces',
@@ -208,33 +207,74 @@ void main() {
       );
       await host.produceArtifact('wi-gap');
 
+      // Attempt 1: the reviewer starts and never finishes.
       host.review.script = ReviewScript.hang;
       await host.tickReview();
+
+      final scheduled = await host.reviewJob('wi-gap');
       expect(
-        (await host.reviewJob('wi-gap')).state,
+        scheduled.state,
         JobState.retryWaiting,
         reason: 'precondition: the retry WAS scheduled',
       );
 
-      // No restoration. The item is still where the failed review left it.
+      // Past the back-off. Attempt 2 is dispatched and run.
       host.advanceClock(const Duration(minutes: 2));
       await host.tickReview();
 
-      final stranded = await host.reviewJob('wi-gap');
+      final afterRetry = await host.reviewJob('wi-gap');
       expect(
-        stranded.state,
-        JobState.cancelled,
+        afterRetry.state,
+        isNot(JobState.cancelled),
         reason:
-            'PINNED BEHAVIOUR, not an endorsement. The retry was scheduled and '
-            'then retired as superseded because the item left the lane\'s '
-            'entry states. Whoever closes this must DELETE this assertion and '
-            'replace it with one that shows the retry dispatching.',
+            'NOT retired as superseded. The item is back inside the lane\'s '
+            'entry states, so the scheduled retry is claimable.',
       );
       expect(
-        await host.reviewExecutions('wi-gap'),
-        hasLength(1),
-        reason: 'one reviewer execution, and the scheduled retry never ran',
+        afterRetry.attempt,
+        2,
+        reason: 'the retry was actually SPENT, not merely scheduled',
       );
+
+      // The load-bearing assertion: TWO executions, not one. A retry that is
+      // "scheduled" but never dispatched is precisely what the pin recorded,
+      // and the execution count is the only thing that tells the two apart.
+      //
+      // This is the whole point of the replacement. Before the edge this count
+      // was 1 forever: the retry was scheduled, then retired as superseded on
+      // the next tick, and no second reviewer ever ran.
+      final executions = await host.reviewExecutions('wi-gap');
+      expect(
+        executions,
+        hasLength(2),
+        reason:
+            'two reviewer executions: attempt 1 timed out, attempt 2 was '
+            'dispatched and ran. Before the edge this was 1.',
+      );
+      expect(
+        executions.first.status,
+        WorkerExecutionStatus.timedOut,
+        reason: 'attempt 1 is the budget expiry this whole file is about',
+      );
+
+      // NOTE on what is deliberately NOT asserted here: that attempt 2
+      // SUCCEEDS. Measured in this harness it settles as
+      // `executedFail/agentFailed`, because `ScriptedReviewSession` is a single
+      // shared instance and attempt 1's detached session leaves it in a state
+      // the `complete` script does not re-arm from. That is a property of the
+      // test double, not of the production path.
+      //
+      // Successful completion of a retried run is proven where the double does
+      // not get in the way:
+      //   packages/scheduler/test/retry_return_to_entry_state_test.dart
+      //     transient failure -> 2 real executions -> the second SUCCEEDS
+      //   apps/server/test/integration/triage_execution_test.dart
+      //     the same, end to end, with a persisted result row
+      //   packages/execution_coordinator/test/budget_expiry_is_a_timeout_test.dart
+      //     the coordinator half on its own
+      //
+      // Asserting `succeeded` here would assert something measured to be false
+      // in this file — the same error as the pin, in the opposite direction.
     },
   );
 }
