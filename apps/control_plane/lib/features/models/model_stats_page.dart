@@ -9,6 +9,7 @@ import '../../shared/design_primitives.dart';
 import '../../shared/mobile_chrome.dart' show isMobile;
 import '../../shared/state_views.dart';
 import 'model_stats_bloc.dart';
+import 'run_duration_panel.dart';
 
 class ModelStatsPage extends StatelessWidget {
   const ModelStatsPage({super.key, this.bloc});
@@ -119,6 +120,14 @@ class _ModelStatsViewState extends State<_ModelStatsView> {
                 _SummaryCards(stats: stats),
                 const SizedBox(height: 24),
                 _ChartsSection(stats: stats, groupBy: _groupBy),
+                const SizedBox(height: 24),
+                // The budgets an operator is about to tune live on this page,
+                // so the measurement that should replace them lives here too.
+                RunDurationPanel(
+                  stats: state.durations,
+                  unmeasuredRuns: state.unmeasuredRuns,
+                  durationErrorMessage: state.durationErrorMessage,
+                ),
                 const SizedBox(height: 46),
                 TechnicalDetails(
                   note:

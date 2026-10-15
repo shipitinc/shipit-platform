@@ -41,9 +41,7 @@ Set<(String, String)> _liveEnginePairs() {
   final wire = {
     for (final state in WorkItemState.values) state.name: state.wire,
   };
-  final entry = RegExp(
-    r'\(WorkItemState\.(\w+), WorkItemState\.(\w+)\):\s*\[',
-  );
+  final entry = RegExp(r'\(WorkItemState\.(\w+), WorkItemState\.(\w+)\):\s*\[');
 
   final pairs = <(String, String)>{};
   for (final match in entry.allMatches(source.readAsStringSync())) {
@@ -54,7 +52,11 @@ Set<(String, String)> _liveEnginePairs() {
       isNotNull,
       reason: 'unknown WorkItemState member ${match.group(1)}',
     );
-    expect(to, isNotNull, reason: 'unknown WorkItemState member ${match.group(2)}');
+    expect(
+      to,
+      isNotNull,
+      reason: 'unknown WorkItemState member ${match.group(2)}',
+    );
     pairs.add((from!, to!));
   }
 
@@ -70,8 +72,11 @@ void main() {
   group('plainTransitionMessage', () {
     test('every engine-accepted pair has dedicated plain copy', () {
       final pairs = _liveEnginePairs();
-      final unmatched = pairs.where((p) => knownTransitionMessage(p.$1, p.$2) == null).toList()
-        ..sort((a, b) => '${a.$1}->${a.$2}'.compareTo('${b.$1}->${b.$2}'));
+      final unmatched =
+          pairs
+              .where((p) => knownTransitionMessage(p.$1, p.$2) == null)
+              .toList()
+            ..sort((a, b) => '${a.$1}->${a.$2}'.compareTo('${b.$1}->${b.$2}'));
       expect(
         unmatched,
         isEmpty,
@@ -197,10 +202,7 @@ void main() {
     // string is a named failure rather than something only a regex noticed.
     test('both ways out of a rejected review carry their own copy', () {
       expect(
-        plainTransitionMessage(
-          'review_rejected',
-          'design_not_required',
-        ),
+        plainTransitionMessage('review_rejected', 'design_not_required'),
         'Review not approved, work queued to start again',
         reason:
             'the item is queued to start again — this is what "dispatchable" '
@@ -217,10 +219,7 @@ void main() {
       // The reason option B was chosen: the operator can see "you rejected
       // this" rather than a state that reads like a design decision.
       expect(
-        plainTransitionMessage(
-          'waiting_for_human_decision',
-          'review_rejected',
-        ),
+        plainTransitionMessage('waiting_for_human_decision', 'review_rejected'),
         'Review not approved',
       );
     });

@@ -419,6 +419,9 @@ void main() {
           final resolver = engineeringReviewWorkloadResolver(
             workerStore: run.workerStore,
             runtimeTypeId: 'review-runtime',
+            // The one production budget, named so the resolver holds no literal of
+            // its own. See `AgentExecutionBudgets` — PROVISIONAL.
+            timeoutSeconds: AgentExecutionBudgets.engineeringReviewSeconds,
           );
           final workload = await resolver(
             Job(
@@ -486,6 +489,9 @@ void main() {
           final resolver = engineeringReviewWorkloadResolver(
             workerStore: run.workerStore,
             runtimeTypeId: 'review-runtime',
+            // The one production budget, named so the resolver holds no literal of
+            // its own. See `AgentExecutionBudgets` — PROVISIONAL.
+            timeoutSeconds: AgentExecutionBudgets.engineeringReviewSeconds,
           );
           final workload = await resolver(
             Job(

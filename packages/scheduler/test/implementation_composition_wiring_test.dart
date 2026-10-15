@@ -212,15 +212,59 @@ void main() {
       );
     });
 
-    test('the implementation timeout is 1800, not the triage 300', () {
+    // THE PROPERTY, NOT A VALUE — the same correction the banner assertion
+    // below makes, and for the same reason.
+    //
+    // This used to pin the literal `timeoutSeconds: 1800`, which asserted the
+    // VALUE rather than what the value was standing in for.
+    // `AgentExecutionBudgets` now owns that number (`implement-feature` is 4
+    // hours, from the operator-stated "routinely exceeds 30m"), so the literal
+    // is gone from the composition — correctly. A guard that must be edited
+    // every time a budget is re-derived is a guard that gets deleted at the
+    // first re-derivation, and it reds for the least interesting possible
+    // reason: the number moved, not the wiring.
+    //
+    // What it was actually preventing still holds, and is what is asserted
+    // instead: a budget must never be a SECOND TYPED-IN NUMBER, and the reclaim
+    // window must not silently inherit the Scheduler's default formula. Both
+    // failure modes are invisible in a running process — the lane reports
+    // itself healthy either way — which is why they can only be caught here.
+    test('the implementation budget is NAMED, and so is its reclaim window', () {
+      final body = implSchedulerBody();
+
       expect(
-        RegExp(r'timeoutSeconds: 1800,').hasMatch(implSchedulerBody()),
+        RegExp(
+          r'timeoutSeconds:\s*AgentExecutionBudgets\.implementationSeconds',
+        ).hasMatch(body),
         isTrue,
         reason:
-            'an implementation run is not a five-minute classification, and '
-            'this value also sets `zombieStalenessBound` (`timeoutSeconds * 4 '
-            '+ claimLease`). The shipped 300 is how an execution outlived its '
-            'lease for hours',
+            'the scheduler must read its budget off the table that documents '
+            'where the number came from. Two copies of a budget cannot both be '
+            're-derived when the operator-stated range behind it is revised, '
+            'and the copy with no comment is the one that survives',
+      );
+      expect(
+        RegExp(r'timeoutSeconds:\s*\d').hasMatch(body),
+        isFalse,
+        reason:
+            'a bare integer is precisely the defect this replaced. It sits in '
+            'the INERT static workload, so it changes no run by itself — but it '
+            'is the number a reader copies to learn what an implementation run '
+            'is allowed to take, and a stale answer there is worse than none',
+      );
+      expect(
+        RegExp(
+          r'zombieStalenessAfter:\s*AgentExecutionBudgets\.zombieStalenessFor\(',
+        ).hasMatch(body),
+        isTrue,
+        reason:
+            'omitting this leaves `Scheduler.zombieStalenessBound` at its '
+            'default of `timeoutSeconds * 4 + claimLease`. That formula was '
+            'written for five-minute budgets; at a 4-hour implementation budget '
+            'it becomes a 16.7-hour window in which a dead execution keeps its '
+            'claim and its capacity slot. That is the same failure the old 300 '
+            'produced — an execution outliving its lease for hours — one order '
+            'of magnitude larger',
       );
     });
   });

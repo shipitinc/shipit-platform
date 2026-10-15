@@ -12,6 +12,7 @@ import 'package:control_plane_server/src/review/engineering_review_gate.dart';
 
 import 'support/design_gate_agents.dart';
 import 'support/git_repo_fixture.dart';
+import 'package:control_plane_server/server.dart';
 
 /// Runs a read-only git command in [repoPath] under the fixture's hermetic
 /// environment (no global/system git config), returning trimmed stdout.
@@ -141,6 +142,9 @@ class EngineeringReviewE2EHost {
           ? engineeringReviewWorkloadResolver(
               workerStore: workerStore,
               runtimeTypeId: 'eng-review-runtime',
+              // The one production budget, named so the resolver holds no literal of
+              // its own. See `AgentExecutionBudgets` — PROVISIONAL.
+              timeoutSeconds: AgentExecutionBudgets.engineeringReviewSeconds,
             )
           : null,
       workload: SchedulerWorkload(

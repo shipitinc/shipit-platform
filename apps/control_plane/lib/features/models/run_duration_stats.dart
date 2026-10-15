@@ -1,0 +1,243 @@
+import 'package:flutter/foundation.dart';
+
+/// Run durations, per role and per terminal status, derived from the rows that
+/// already hold them.
+///
+/// ## Why this is computed on the client, and not added to a wire type
+///
+/// `agent_execution` already carries `role`, `status`, `startedAt` and
+/// `completedAt` — the four columns this question needs — and
+/// `GET executionEndpoints.list` already returns all of them as
+/// `AgentExecutionRecordView`, which the generated client already knows how to
+/// deserialize. So no migration, no duplicate column, no new Serverpod type,
+/// and nothing in `apps/server/lib/src/generated/**` is touched.
+///
+/// The alternative was a new field on `ModelStatsView`, which is a GENERATED
+/// type: adding it means a regeneration, and `apps/server/lib/src/generated/**`
+/// belongs to another lane. Reusing the endpoint that already answers the
+/// question is the smaller change and the honest one.
+///
+/// ## Why MEDIAN and not a mean
+///
+/// Every run this platform produces is either fast or killed at its budget, so
+/// the distribution is bimodal by construction: a cluster of genuine
+/// completions and a spike at exactly the budget. A mean over that set is
+/// dominated by the spike and says nothing about how long a review takes. The
+/// median of the completed runs does.
+///
+/// ## Why the failed runs are a SEPARATE bucket and not filtered out
+///
+/// Dropping failures would hide the thing an operator most needs to see: how
+/// many runs hit the ceiling, and therefore whether the ceiling is the right
+/// number. Mixing them into one number is what made this unanswerable before.
+///
+/// After the coordinator change in `ExecutionCoordinator._expireExecution`, an
+/// execution killed at its budget settles `interrupted` — so the `interrupted`
+/// bucket IS the failed-at-budget bucket, and no reason-string matching is
+/// needed to find it.
+/// Separator between the role and the status inside the internal grouping key.
+///
+/// A control character rather than a space or a dash: a wire value could
+/// contain either, and a collision here would merge two different buckets into
+/// one silently. Written as an ESCAPE rather than as a literal byte so this
+/// file stays text — a raw NUL makes git classify the whole file as binary and
+/// stop showing a diff, which is how this defect hid for one commit.
+const String kRoleStatusSeparator = '\u0000';
+
+@immutable
+class RunDurationSample {
+  const RunDurationSample({
+    required this.role,
+    required this.status,
+    required this.durationSeconds,
+  });
+
+  /// Durable `AgentRole` wire value, e.g. `engineering_reviewer`.
+  final String role;
+
+  /// Durable `AgentSessionStatus` wire value, e.g. `interrupted`.
+  final String status;
+
+  /// Wall-clock seconds between the execution's `startedAt` and its
+  /// `completedAt`.
+  final int durationSeconds;
+}
+
+/// One (role, status) cell of the duration table.
+@immutable
+class RunDurationBucket {
+  const RunDurationBucket({
+    required this.role,
+    required this.status,
+    required this.count,
+    required this.minSeconds,
+    required this.medianSeconds,
+    required this.maxSeconds,
+  });
+
+  final String role;
+  final String status;
+  final int count;
+  final int minSeconds;
+
+  /// The median of [count] samples. For an even count this is the mean of the
+  /// two middle samples, rounded to the nearest second — stated here because a
+  /// median whose even-count rule is undefined is not a number an operator can
+  /// reason about.
+  final int medianSeconds;
+  final int maxSeconds;
+
+  /// True when every sample in this bucket sat at the same duration, which for
+  /// a non-successful bucket is the signature of "killed at the ceiling" rather
+  /// than "took a while".
+  bool get isUniform =>
+      count > 1 && minSeconds == maxSeconds && medianSeconds == minSeconds;
+}
+
+/// The computed table, plus what it is honest about not covering.
+@immutable
+class RunDurationStats {
+  const RunDurationStats({
+    required this.buckets,
+    required this.samplesConsidered,
+    required this.samplesSkipped,
+  });
+
+  static const RunDurationStats empty = RunDurationStats(
+    buckets: [],
+    samplesConsidered: 0,
+    samplesSkipped: 0,
+  );
+
+  /// Ordered by role, then by status, so the table is stable between refreshes.
+  final List<RunDurationBucket> buckets;
+
+  /// Executions that contributed a duration.
+  final int samplesConsidered;
+
+  /// Executions with no `completedAt`, or a negative duration. Counted rather
+  /// than dropped silently: a large number here means the table is not
+  /// describing what the operator thinks it is.
+  final int samplesSkipped;
+
+  bool get isEmpty => buckets.isEmpty;
+
+  /// Every bucket for [role], across statuses.
+  List<RunDurationBucket> forRole(String role) =>
+      buckets.where((b) => b.role == role).toList(growable: false);
+
+  /// The whole table for one role, sorted success-first then by status, so the
+  /// succeeded and failed figures for a role are read together.
+  List<RunDurationBucket> forRoleSorted(String role) {
+    final rows = forRole(role).toList()
+      ..sort((a, b) {
+        final aSucceeded = a.isSuccess ? 0 : 1;
+        final bSucceeded = b.isSuccess ? 0 : 1;
+        if (aSucceeded != bSucceeded) return aSucceeded - bSucceeded;
+        return a.status.compareTo(b.status);
+      });
+    return rows;
+  }
+
+  /// The roles present, in wire-value order.
+  List<String> get roles {
+    final seen = <String>{for (final b in buckets) b.role};
+    final ordered = seen.toList()..sort();
+    return ordered;
+  }
+
+  /// Builds the table from raw samples.
+  ///
+  /// Pure, and the only place the arithmetic lives, so it can be tested without
+  /// a widget, a bloc, a server or a database.
+  static RunDurationStats compute(
+    List<RunDurationSample> samples, {
+    String? roleFilter,
+  }) {
+    final grouped = <String, List<int>>{};
+    var considered = 0;
+    var skipped = 0;
+
+    for (final sample in samples) {
+      if (roleFilter != null && sample.role != roleFilter) continue;
+      if (sample.durationSeconds < 0) {
+        skipped++;
+        continue;
+      }
+      considered++;
+      grouped
+          .putIfAbsent(
+            '${sample.role}$kRoleStatusSeparator${sample.status}',
+            () => <int>[],
+          )
+          .add(sample.durationSeconds);
+    }
+
+    final buckets = <RunDurationBucket>[];
+    grouped.forEach((key, durations) {
+      final parts = key.split(kRoleStatusSeparator);
+      final sorted = durations.toList()..sort();
+      buckets.add(
+        RunDurationBucket(
+          role: parts[0],
+          status: parts[1],
+          count: sorted.length,
+          minSeconds: sorted.first,
+          medianSeconds: median(sorted),
+          maxSeconds: sorted.last,
+        ),
+      );
+    });
+    buckets.sort((a, b) {
+      final byRole = a.role.compareTo(b.role);
+      return byRole != 0 ? byRole : a.status.compareTo(b.status);
+    });
+
+    return RunDurationStats(
+      buckets: buckets,
+      samplesConsidered: considered,
+      samplesSkipped: skipped,
+    );
+  }
+
+  /// The median of an already-sorted-or-not list of non-negative seconds.
+  static int median(List<int> values) {
+    assert(values.isNotEmpty, 'median of nothing is not a number');
+    final sorted = values.toList()..sort();
+    final n = sorted.length;
+    if (n.isOdd) return sorted[(n - 1) ~/ 2];
+    return ((sorted[n ~/ 2 - 1] + sorted[n ~/ 2]) / 2).round();
+  }
+}
+
+/// Whether a durable `AgentSessionStatus` wire value means the run finished its
+/// work. Anything that is not `completed` is a run that did not, and the only
+/// ones worth separating are the ones an operator reads as "we killed it".
+extension RunDurationOutcome on RunDurationBucket {
+  static const Set<String> succeededStatuses = {'completed'};
+
+  /// Settled `interrupted`: the shape a budget expiry takes. After the
+  /// coordinator change, `ExecutionCoordinator._expireExecution` settles
+  /// `interrupted` rather than `failed` precisely so these runs are
+  /// distinguishable from a crash.
+  static const Set<String> killedAtBudgetStatuses = {'interrupted'};
+
+  bool get isSuccess => RunDurationOutcome.succeededStatuses.contains(status);
+
+  bool get isKilledAtBudget =>
+      RunDurationOutcome.killedAtBudgetStatuses.contains(status);
+}
+
+/// Formats a second count the way an operator reads a duration: `45s`,
+/// `12m 30s`, `3h 04m`. Never a bare number of seconds above a minute, because
+/// the numbers this table exists to show are tens of minutes long.
+String formatRunDuration(int seconds) {
+  if (seconds < 60) return '${seconds}s';
+  final hours = seconds ~/ 3600;
+  final minutes = (seconds % 3600) ~/ 60;
+  final remainder = seconds % 60;
+  if (hours > 0) {
+    return '${hours}h ${minutes.toString().padLeft(2, '0')}m';
+  }
+  return '${minutes}m ${remainder.toString().padLeft(2, '0')}s';
+}

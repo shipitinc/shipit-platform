@@ -15,12 +15,21 @@ class FakeAgentSession implements AgentSession {
     this.sessionId = 'ses-fake',
     this.startGate,
     this.instructionGate,
+    this.throwOnStart = false,
   });
 
   final String executionId;
   final String workItemId;
   final String sessionId;
   final FakeBehavior behavior;
+
+  /// When true, [start] throws instead of bringing a session up.
+  ///
+  /// Models a runtime that CRASHES on every start — the negative control for
+  /// the budget-expiry contract. It must settle `failed` and stay
+  /// non-retryable; a coordinator that settled both this and a timeout the same
+  /// way would turn a permanently broken runtime into an unbounded retry loop.
+  final bool throwOnStart;
 
   final _events = StreamController<AgentEvent>.broadcast(sync: true);
   AgentSessionStatus _status = AgentSessionStatus.starting;
@@ -75,6 +84,9 @@ class FakeAgentSession implements AgentSession {
   }
 
   Future<void> start(AgentSessionConfig config) async {
+    if (throwOnStart) {
+      throw StateError('fake runtime could not start a session');
+    }
     final gate = startGate;
     if (gate != null) await gate.future;
     _status = AgentSessionStatus.running;

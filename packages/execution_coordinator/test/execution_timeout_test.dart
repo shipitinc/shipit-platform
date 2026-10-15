@@ -104,7 +104,18 @@ void main() {
 
       // A REAL terminal state, carrying an honest reason - not an abandoned
       // future and not a row left at `running`.
-      expect(execution.status, AgentSessionStatus.failed);
+      //
+      // `interrupted`, NOT `failed`, and that is the load-bearing part. `failed`
+      // maps to `WorkerExecutionStatus.executedFail`, which
+      // `RetryPolicy.classify` calls PERMANENT - so a run killed by its budget
+      // spent no attempt, failed on the spot, and the definition's
+      // `maxAttempts` could never be reached for the one failure this
+      // deployment actually sees. `interrupted` maps to `timedOut`, which is
+      // TRANSIENT and retries inside `maxAttempts`. See `timeout_retries_and_
+      // crashes_do_not_test.dart` for the other half of that contract: a
+      // crash must still settle `failed`, or "make it retry" becomes "retry
+      // forever".
+      expect(execution.status, AgentSessionStatus.interrupted);
       expect(execution.isTerminal, isTrue);
       expect(execution.completedAt, isNotNull);
       expect(execution.reason, contains('never emitted a terminal event'));
@@ -120,7 +131,7 @@ void main() {
 
       // The failure is durable and attributable, not just in-memory.
       final persisted = await executionStore.readExecution('exec-1');
-      expect(persisted.status, AgentSessionStatus.failed);
+      expect(persisted.status, AgentSessionStatus.interrupted);
       expect(persisted.isTerminal, isTrue);
 
       final events = await executionStore.readEvents('exec-1');
@@ -147,7 +158,7 @@ void main() {
 
       final execution = await coordinator.execute(request(timeoutSeconds: 2));
 
-      expect(execution.status, AgentSessionStatus.failed);
+      expect(execution.status, AgentSessionStatus.interrupted);
       expect(execution.isTerminal, isTrue);
       expect(execution.reason, contains('timeout budget'));
 

@@ -15,12 +15,19 @@ class WritingFakeAgentSession implements AgentSession {
     this.behavior = WritingBehavior.writeImplementation,
     this.sessionId = 'ses-fake',
     this.writeTarget,
+    this.throwOnStart = false,
   });
 
   final String executionId;
   final String workItemId;
   final String sessionId;
   final WritingBehavior behavior;
+
+  /// When true, [start] throws instead of bringing a session up — a runtime
+  /// that CRASHES. Deliberately distinct from [WritingBehavior.interrupt]:
+  /// the two must never reach the same worker terminal status, because only
+  /// one of them is retryable.
+  final bool throwOnStart;
 
   /// If set, the agent writes the correct implementation to this absolute
   /// path during execution. Defaults to `<cwd>/lib/calculator.dart`.
@@ -39,6 +46,9 @@ class WritingFakeAgentSession implements AgentSession {
 
   @override
   Future<void> start(AgentSessionConfig config) async {
+    if (throwOnStart) {
+      throw StateError('fake runtime could not start a session');
+    }
     _started = true;
     if (writeTarget == null) {
       writeTarget = File('${config.workingDirectory}/lib/calculator.dart');
@@ -67,6 +77,17 @@ class WritingFakeAgentSession implements AgentSession {
           eventId: 'evt-complete',
           timestamp: DateTime.now(),
           result: await getResult(),
+        ),
+      );
+    } else if (behavior == WritingBehavior.interrupt) {
+      // The session was interrupted rather than reporting a failure of its own
+      // accord. This is what a budget expiry settles as, all the way down.
+      _status = AgentSessionStatus.interrupted;
+      _events.add(
+        SessionInterrupted(
+          eventId: 'evt-interrupt',
+          timestamp: DateTime.now(),
+          reason: 'scripted interruption',
         ),
       );
     } else {
@@ -141,7 +162,13 @@ class WritingFakeAgentSession implements AgentSession {
   }
 }
 
-enum WritingBehavior { writeImplementation, fail }
+enum WritingBehavior {
+  writeImplementation,
+  fail,
+
+  /// The session is interrupted — the shape a budget expiry settles as.
+  interrupt,
+}
 
 class WritingFakeAgentAdapter implements AgentAdapter {
   WritingFakeAgentAdapter(this._session);

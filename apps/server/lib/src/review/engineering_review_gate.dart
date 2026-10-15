@@ -57,6 +57,7 @@ import '../triage/lane_i_tick_hook.dart';
 WorkloadResolver engineeringReviewWorkloadResolver({
   required WorkerStore workerStore,
   required String runtimeTypeId,
+  required int timeoutSeconds,
 }) {
   return (job, item) async {
     final produced = await producedCommitFor(workerStore, item);
@@ -65,7 +66,26 @@ WorkloadResolver engineeringReviewWorkloadResolver({
         return SchedulerWorkload(
           repositoryPath: repositoryPath,
           startingRevision: commit,
-          timeoutSeconds: 300,
+          // INJECTED, not declared here, and that is the whole point.
+          //
+          // This used to be a literal `300` typed into this file with no
+          // justification anywhere in the repository — and it was LESS THAN THE
+          // STATED MINIMUM for the role: an operator reports a review run here,
+          // through opencode, at 15–30 minutes, so every review this resolver
+          // built a workload for was killed before it could finish. A budget
+          // below the observed floor is not a ceiling; it is a coin toss that
+          // always lands on killed.
+          //
+          // The number now lives in ONE place — `AgentExecutionBudgets` in the
+          // composition root — and is required rather than optional so this
+          // signature cannot compile without the caller naming it. That is the
+          // difference between a number someone chose and a number someone
+          // typed: a required argument has to be answered by someone reading
+          // the call site, and there is exactly one call site.
+          //
+          // PROVISIONAL: see `AgentExecutionBudgets` for where the value comes
+          // from and for the measurement that should replace it.
+          timeoutSeconds: timeoutSeconds,
           runtimeTypeId: runtimeTypeId,
         );
       case NoCommitProduced():
