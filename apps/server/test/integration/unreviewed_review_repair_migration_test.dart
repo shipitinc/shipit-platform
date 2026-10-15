@@ -2140,11 +2140,255 @@ void main() {
         },
       );
 
+      test(
+        '(i) a LATE down -- after the tick has moved the items off '
+        '\'agent_completed\' -- is a PARTIAL ROLLBACK: it restores the DECISION '
+        'but not the item, and then deletes the evidence',
+        () async {
+          // WHY THIS TEST EXISTS. An earlier version of the DOWN banner claimed
+          // that once the scheduler tick had dispatched the re-review, what it
+          // "does NOT do is restore the item or un-void the decision", and gave
+          // the reason "it no longer has a row to read a before-image from". Both
+          // halves of that were FALSE, and false in the dangerous direction: it
+          // told an operator running this during an incident that a late
+          // rollback was a clean no-op when it is not. Test (h) covers the
+          // rollback INSIDE the window and cannot see this, because it never
+          // moves the item. This test moves it, exactly as the tick does, and so
+          // is the test that would have caught it.
+          //
+          // It asserts the behaviour as the statements are actually written. If
+          // a future edit adds a `work_item.state` guard to step 2 -- which
+          // would make this a clean no-op, and which is a defensible thing to
+          // want -- then this test FAILS, and the banner has to be rewritten in
+          // the same commit that changes it. That coupling is the point: the
+          // prose and the statements are not allowed to drift apart again.
+          await _seedFixture(db);
+          final decisionsBefore = <String, Map<String, Object?>>{
+            for (final t in _targets)
+              t.decisionId: await _row(
+                db,
+                'human_decision',
+                'decisionId',
+                t.decisionId,
+              ),
+          };
+
+          await db.db.unsafeSimpleExecute(_applyRepairScript(repair));
+
+          // THE TICK. Byte-identical to what (g) does, because it is the same
+          // event: `agent_completed` is an `engineeringReviewDefinition` entry
+          // state, so the ordinary scheduler tick dispatches the re-review this
+          // migration exists to arrange, and the item leaves `agent_completed`.
+          // Nobody chooses this; it is what happens next on its own.
+          await db.db.unsafeSimpleExecute(
+            'UPDATE "$_chainSchema"."work_item" SET "state" = '
+            '\'review_in_progress\', "version" = "version" + 4 '
+            'WHERE "workItemId" IN '
+            '(${_targets.map((t) => '\'${t.workItemId}\'').join(', ')})',
+          );
+
+          // THE LATE ROLLBACK. The real `down`, sliced out of the file between
+          // its own markers, so the statements that are written are the ones
+          // that run.
+          await db.db.unsafeSimpleExecute(_downScript(repair));
+
+          // HALF ONE: THE ITEM IS NOT RESTORED. Step 1's
+          // `AND w."state" = 'agent_completed'` matches nothing, so the item is
+          // left exactly where the tick put it. This is the guard working, it is
+          // correct, and it is the only reason the item is not clobbered back to
+          // `waiting_for_human_decision` / `review_approved`.
+          for (final t in _targets) {
+            final item = await _row(
+              db,
+              'work_item',
+              'workItemId',
+              t.workItemId,
+            );
+            expect(
+              item['state'],
+              'review_in_progress',
+              reason:
+                  '${t.workItemId}: the late rollback must NOT restore the item. '
+                  'If this fails, step 1 has stopped guarding on '
+                  '`agent_completed`, and a blind restore is putting a long-moved '
+                  'item back where it has long since been.',
+            );
+            // The blocking pointer the UP cleared, and that step 1 would have
+            // put back had it matched. It stays NULL, which is the second half
+            // of "nothing links the two".
+            expect(
+              item['blockingHumanDecisionId'],
+              isNull,
+              reason:
+                  '${t.workItemId}: the late rollback must not re-park the item '
+                  'on the decision it is about to un-void',
+            );
+            // The marker is not restored either, for the same reason.
+            expect(
+              _markerOf(item),
+              t.expectedAttempt,
+              reason:
+                  '${t.workItemId}: the UP rewrote the triage attempt to the '
+                  'fresh key; a late rollback leaves it, because step 1 did not '
+                  'run',
+            );
+          }
+
+          // HALF TWO: THE DECISION *IS* UN-VOIDED. Step 2 carries NO
+          // `work_item.state` guard. It keys off `d."status" = 'cancelled'` and
+          // this migration's audit row, and BOTH are still true at this point:
+          // the item moving on does not change a decision's status, and step 3
+          // deletes the audit row only AFTERWARDS. So the fabricated verdict
+          // comes back.
+          for (final t in _targets) {
+            final after = await _row(
+              db,
+              'human_decision',
+              'decisionId',
+              t.decisionId,
+            );
+            final original = decisionsBefore[t.decisionId]!;
+            expect(
+              after['status'],
+              original['status'],
+              reason:
+                  '${t.decisionId}: a LATE rollback DOES un-void the decision, '
+                  'back to ${t.status}. The banner used to claim it did not. If '
+                  'this ever stops holding, step 2 has gained a guard and the '
+                  'DOWN banner has to be rewritten in the same commit.',
+            );
+            expect(
+              after['metadataJson'],
+              original['metadataJson'],
+              reason:
+                  '${t.decisionId}: the prior metadata is restored as the EXACT '
+                  'text it was -- which is the text carrying the fabricated '
+                  'verdict, so this assertion IS the harm',
+            );
+            // Spelled out rather than left inside the byte comparison above, so
+            // that a reader who skips the reason string still sees it: the
+            // fabricated claim is what comes back.
+            expect(
+              _metaOf(after)['reviewVerdict'],
+              'changes_required',
+              reason:
+                  '${t.decisionId}: the whole point of this migration is that a '
+                  'verdict no reviewer produced must not survive unexamined, and '
+                  'a late rollback puts this one back',
+            );
+            // The approval columns are still untouched -- voiding never wrote
+            // them, and neither does un-voiding. So the approved target comes
+            // back as `resolved` WITH a populated choice and signature.
+            for (final column in const [
+              'decider',
+              'choice',
+              'rationale',
+              'signatureJson',
+              'resolvedOptionId',
+              'timestamp',
+            ]) {
+              expect(after[column], original[column], reason: column);
+            }
+          }
+
+          // HALF THREE: NOTHING LINKS THEM ANY MORE. The item is not parked on
+          // the decision, and the decision is not blocking the item, so the
+          // operator's gate cannot surface this pair. Asserted as the PAIR,
+          // because neither half means anything on its own -- a restored
+          // decision that nothing points at is the whole failure mode.
+          //
+          // Scoped to the five enumerated targets on purpose. The fixture's
+          // CONTROL is a deliberately legitimate parked-on-pending pair, and it
+          // must not be counted here: this is about the pairs the rollback
+          // broke, not about every pending decision in the schema.
+          final linked = await db.queryNoTransaction(
+            'SELECT count(*)::int AS n '
+            'FROM "$_chainSchema"."work_item" w '
+            'JOIN "$_chainSchema"."human_decision" d '
+            '  ON d."decisionId" = w."blockingHumanDecisionId" '
+            'WHERE w."workItemId" IN '
+            '(${_targets.map((t) => '\'${t.workItemId}\'').join(', ')}) '
+            'AND d."status" IN (\'pending\', \'resolved\')',
+          );
+          expect(
+            linked.single.toColumnMap()['n'],
+            0,
+            reason:
+                'no enumerated item may still be parked on the decision the '
+                'rollback un-voided. If this is non-zero the restore has become '
+                'ATOMIC by accident, and both this test and the DOWN banner '
+                'need rewriting',
+          );
+
+          // HALF FOUR: THE EVIDENCE IS GONE. Step 3 deletes the audit row that
+          // step 2 just read, so nothing survives to show what the repair did,
+          // or that half of it has just been undone.
+          expect(
+            await _auditRows(db),
+            isEmpty,
+            reason:
+                'step 3 must still run -- that is what makes this a partial '
+                'rollback rather than a failure. It deletes the only record that '
+                'the repair happened.',
+          );
+
+          // THE CONTROL, so the assertions above cannot be satisfied by a
+          // `down` that reached beyond the enumerated set. The control is a
+          // genuine, unfabricated `pending` decision that this migration never
+          // voided, so step 2's join on this migration's audit rows cannot
+          // match it -- and must not.
+          final controlDecision = await _row(
+            db,
+            'human_decision',
+            'decisionId',
+            _controlDecisionId,
+          );
+          expect(
+            controlDecision['status'],
+            'pending',
+            reason:
+                'the control was never voided by the UP, so a rollback that '
+                'restores decisions outside the enumeration would find it '
+                'already `pending` only by having written it -- and this file '
+                'must fail if it ever does',
+          );
+          final controlItem = await _row(
+            db,
+            'work_item',
+            'workItemId',
+            _controlWorkItem,
+          );
+          expect(
+            controlItem['state'],
+            'waiting_for_human_decision',
+            reason:
+                'the control is never moved by the UP, so a late rollback must '
+                'not move it either. This is the assertion that a `down` which '
+                'restored EVERY decision rather than the enumerated five would '
+                'trip',
+          );
+          // And the legitimate parked-on-pending pair this file seeded is still
+          // intact -- proof that HALF THREE's count of 0 above is a fact about
+          // the enumerated targets and not an artefact of the query.
+          expect(
+            controlItem['blockingHumanDecisionId'],
+            _controlDecisionId,
+            reason:
+                'the control pair is the control: if this broke, the HALF THREE '
+                'query would be counting the wrong set',
+          );
+        },
+      );
+
       test('it is a no-op against an empty schema', () async {
-        // Literally what a brand-new database gets from it: the fresh-database
-        // path builds from definition.sql and never replays this file. This is
-        // also why a green `make test-integration` says nothing about this
-        // migration -- see the banner.
+        // Literally what a brand-new database gets from it: the bootstrap path
+        // applies the latest definition.sql ALONE and never replays this file.
+        // This is the narrow claim, and it is all that is claimed -- see the
+        // header, "WHY THE BOOTSTRAP PATH NEVER TOUCHES THIS MIGRATION". It is
+        // NOT the old claim that a green integration run says nothing about
+        // this migration, which was FALSE: this file lives in test/integration
+        // and passes in that gate. What the gate does not do is run
+        // migration.sql against `public`.
         await db.db.unsafeSimpleExecute(_applyRepairScript(repair));
         expect(await _auditRows(db), isEmpty);
         final items = await db.queryNoTransaction(

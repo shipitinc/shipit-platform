@@ -1285,7 +1285,8 @@ INSERT INTO "serverpod_migrations" ("module", "version", "timestamp")
 -- order in which the arms can match anything.
 --
 -- ---------------------------------------------------------------------------
--- THE ROLLBACK HAS A TIME WINDOW, AND IT CLOSES ON ITS OWN
+-- THE ROLLBACK HAS A TIME WINDOW, IT CLOSES ON ITS OWN, AND AFTER IT CLOSES
+-- THE ROLLBACK IS NOT A NO-OP
 --
 -- READ THIS BEFORE RUNNING `down`. Step 1 below carries
 -- `AND w."state" = 'agent_completed'`. That guard is CORRECT and must stay -- a
@@ -1298,25 +1299,88 @@ INSERT INTO "serverpod_migrations" ("module", "version", "timestamp")
 --     so the ordinary scheduler tick treats it as runnable and DISPATCHES the
 --     re-review that this migration was written to set up.
 --
---   * ONCE THE TICK HAS DISPATCHED, THE ITEM LEAVES `agent_completed` -- THE
---     GUARD MATCHES NOTHING, AND THE ROLLBACK IS A SILENT NO-OP ON THAT ITEM.
---     It still deletes this migration's audit rows in step 3, and it still rolls
---     the `serverpod_migrations` version back in step 4. What it does NOT do is
---     restore the item or un-void the decision, because it no longer has a row
---     to read a before-image from. There is no warning, no error and no affected
---     -row count printed: the statements simply match zero rows and succeed.
+--   * ONCE THE TICK HAS DISPATCHED, THE ITEM LEAVES `agent_completed`, STEP 1'S
+--     GUARD MATCHES NOTHING, AND STEP 1 IS A NO-OP ON THAT ITEM. No warning, no
+--     error and no affected-row count: step 1 simply matches zero rows and
+--     succeeds. On the ITEM that is the guard working, and the item is correctly
+--     left where the tick put it.
+--
+--   * STEP 2 IS NOT GUARDED, AND IT IS NOT A NO-OP. Its WHERE clause keys off
+--     `d."status" = 'cancelled'` plus this migration's own audit row, and NEITHER
+--     HAS CHANGED: the item moving on does not change a decision's status, and
+--     the audit row still exists because step 3 deletes it only AFTERWARDS. So
+--     step 2 still has a row to read its before-image from, it finds one, and it
+--     writes. Do not reason about step 2 from step 1's guard -- step 1's guard
+--     says nothing about it.
+--
+-- SO A LATE ROLLBACK IS A PARTIAL ROLLBACK, AND THE STATE IT LEAVES IS WORSE
+-- THAN EITHER END OF THE WINDOW. All four of the following happen, silently, in
+-- a single run:
+--
+--   * THE ITEM IS NOT RESTORED. It is still wherever the tick left it -- in the
+--     reproduced case `review_in_progress` -- which is the right outcome.
+--
+--   * THE DECISION IS UN-VOIDED ANYWAY. Step 2 puts `status` back to `pending` on
+--     four of the five and to `resolved` on the already-approved one, and puts
+--     `metadataJson` back to the exact text it held before. That text is the one
+--     carrying the FABRICATED `"reviewVerdict": "changes_required"` claim. This
+--     migration exists so a fabricated verdict cannot survive unexamined, and a
+--     late rollback puts one back.
+--
+--   * AND NOTHING LINKS THE TWO ANY MORE. `work_item.blockingHumanDecisionId`
+--     was cleared by the UP and is not restored, so the item is NOT parked on
+--     the decision that is `pending` again. It will not surface in `waitingOnYou`
+--     or `pendingDecisions`, and nothing left in the database records that the
+--     two are related. The verdict is restored AND invisible.
+--
+--   * AND THEN THE EVIDENCE IS DELETED. Step 3 removes the very audit row step 2
+--     just read, so the record of the repair -- and of the rollback that
+--     un-did half of it -- is gone. Step 4 rolls the `serverpod_migrations`
+--     version back too, so nothing is left marking this repair as ever applied.
+--
+-- CHECK BEFORE YOU RUN IT. One query answers both questions: the item's `state`
+-- says whether the ITEM can still be restored, and the decision's `status` says
+-- whether it is voided right now.
+--
+--     SELECT w."workItemId", w."state", w."blockingHumanDecisionId",
+--            d."decisionId", d."status"
+--       FROM "work_item" w
+--       LEFT JOIN "human_decision" d
+--              ON d."decisionId" = w."blockingHumanDecisionId"
+--      WHERE w."workItemId" IN (...the five enumerated targets...);
+--
+-- READ IT LIKE THIS:
+--
+--   * `state = 'agent_completed'` -- THE WINDOW IS STILL OPEN. Both halves of the
+--     rollback run and you get the pre-migration shape back.
+--   * ANY OTHER STATE -- THE WINDOW HAS CLOSED. The item will not be restored and
+--     the decision will be, which is the partial state above. You get it whether
+--     you wanted it or not.
+--
+-- The decision's `status` decides only whether step 2 has anything to do: it
+-- matches `d."status" = 'cancelled'` and nothing else. A decision that is not
+-- `cancelled` is skipped by step 2, so the decision half of the partial rollback
+-- applies to exactly the decisions this migration voided -- all five, unless a
+-- hand intervention has already moved one. A `pending` or `resolved` decision
+-- sitting next to an item that is NOT at `agent_completed` is therefore the shape
+-- to be suspicious of after the fact: it is either a rollback that already ran,
+-- or a repair that was undone by hand.
 --
 -- IN SHORT: THE WINDOW IS "BEFORE THE RE-QUEUED REVIEW RUNS", AND IT IS NOT A
 -- TIME YOU CONTROL. If this DOWN is being considered because the re-review is
--- producing bad results, the tick has very probably already dispatched, and the
--- rollback will do nothing to the item. Check the state first:
+-- producing bad results, the tick has very probably already dispatched -- so
+-- assume a PARTIAL rollback and run the query above. Do not assume a no-op. The
+-- item restore is the guard doing its job; the decision restore is not guarded at
+-- all, and the row that would tell you afterwards is deleted by step 3.
 --
---     SELECT "state", "blockingHumanDecisionId" FROM "work_item"
---      WHERE "workItemId" IN (...the five enumerated targets...);
---
--- Anything other than `agent_completed` means this rollback cannot restore it.
--- That is the guard working, not the rollback failing -- but the distinction is
--- invisible without this paragraph, which is why it is here.
+-- THIS IS A MEASURED PROPERTY OF THE STATEMENTS AS WRITTEN, NOT A PREDICTION.
+-- Test `(i)` in
+-- `apps/server/test/integration/unreviewed_review_repair_migration_test.dart`
+-- executes this file's real UP, moves the items exactly as the tick does, runs
+-- this file's real `down` extracted from between its own markers, and asserts
+-- every claim in this paragraph -- including that the item is left alone and that
+-- the audit rows end up empty. If a future edit changes any of it, that test is
+-- what notices.
 --
 -- ---------------------------------------------------------------------------
 -- DOWN SCRIPT -- EXECUTABLE REGION
