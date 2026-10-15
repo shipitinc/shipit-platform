@@ -964,12 +964,13 @@ class WorkItemActionEndpoints extends Endpoint {
   ///
   /// ## WHAT IT IS PROVABLY SCOPED TO
   ///
-  /// [readReviewVerdictProvenance] decides, and it decides from the REVIEWER'S
-  /// OWN durable result. The decision's `metadata` is read only for the
+  /// [readReviewVerdictProvenance] decides repairability, and it decides from the
+  /// REVIEWER'S OWN durable result. The decision's `metadata` is read only for the
   /// execution id it names; its `reviewVerdict` is never taken as evidence that
   /// anyone reviewed anything. Only [ReviewAssessment.noReviewerOutput] — no
   /// result at all, or a result with neither a structured payload nor a
-  /// summary — reaches the write.
+  /// summary — reaches the write, and only for a decision that IS an
+  /// `engineering_review`.
   ///
   /// ## WHAT IT REFUSES, AND WHY EACH REFUSAL IS THE SAFE SIDE
   ///
@@ -990,6 +991,22 @@ class WorkItemActionEndpoints extends Endpoint {
   ///    the reviewer's prose on the execution record.
   ///  * [ReviewAssessment.unreadable] → `reviewerOutputUnreadable`. "I could not
   ///    check" is not "there was nothing there".
+  ///  * a decision that is not an `engineering_review` at all →
+  ///    `decisionTypeNotReviewable`. Said TWICE on purpose, by two independent
+  ///    gates — step (5) reads `decisionType` off the row, and step (6) asks
+  ///    [readReviewVerdictProvenance], which classifies the same fact as
+  ///    [ReviewAssessment.decisionTypeNotReviewable] — because this is the one
+  ///    method here that can void a PENDING human decision and it must not fail
+  ///    OPEN. Until 2026-10-15 both gates answered "no reviewer output", the only
+  ///    repairable class, for all eighteen non-review types: a pending
+  ///    `deployment_approval` or `destructive_migration_approval` was retired as
+  ///    "unreviewed" and its work item re-queued. Latent in production (both
+  ///    `requestHumanDecision` callers raise `engineeringReview`, and every other
+  ///    blocking type uses a synthetic scope that is not a `work_item` row), but
+  ///    the affordance's documentation promised a refusal that did not exist, and
+  ///    a documented safety property that is false is worse than an undocumented
+  ///    one because it is relied on. See
+  ///    [ReviewAssessment.decisionTypeNotReviewable].
   ///  * a decision a human has already RESOLVED → `alreadyDecided`. Someone
   ///    answered the question. Overwriting that answer is not a repair, it is
   ///    discarding a real human decision — and QA has one on record: an operator
@@ -1174,8 +1191,50 @@ class WorkItemActionEndpoints extends Endpoint {
       );
     }
 
-    // (5) THE FABRICATION TEST. Re-derived from the reviewer's own result,
-    // never read off the decision. This is the guardrail.
+    // (5) THE DECISION TYPE GATE — defence in depth, and the FIRST of two
+    // independent gates.
+    //
+    // [readReviewVerdictProvenance] answers
+    // [ReviewAssessment.decisionTypeNotReviewable] for a decision that is not an
+    // engineering review, which is already a refusal. This does not rely on that
+    // being true. The refusal here does not depend on the reader's
+    // classification at all: it reads `decisionType` off the row itself and says
+    // no.
+    //
+    // Two gates on one path is proportionate and not redundant belt-and-braces.
+    // This is the only path in the repository that can retire a PENDING HUMAN
+    // DECISION, and the reader is one `if` away from being re-classified by a
+    // future change to the reviewer's result shape — a change with every reason
+    // to look innocuous. If that happened and the classification moved, one gate
+    // would refuse and the other would write, and which one won would depend on
+    // which side of a single `if` a reader happened to fall. The gates are
+    // independent by construction (one reads the decision's type, the other reads
+    // the reviewer's durable result), they are ordered, and they agree.
+    //
+    // Checked BEFORE the provenance read so the cheapest, most fundamental
+    // question is asked first, and so a future reader that returned
+    // [ReviewAssessment.noReviewerOutput] here would still be caught by step (6)
+    // rather than reaching the write.
+    if (decision.decisionType != HumanDecisionType.engineeringReview) {
+      return _refuse(
+        service,
+        workItemId,
+        'decisionTypeNotReviewable',
+        'this work item is parked behind a ${decision.decisionType.wire} '
+            'decision, not an engineering review, so no reviewer verdict is '
+            'claimed by it and there is nothing here for this repair to have '
+            'fabricated. Answer the question the decision is actually asking, '
+            'or resolve it — nothing has been changed',
+        decisionId: decision.decisionId,
+        logContext: {'decisionType': decision.decisionType.wire},
+      );
+    }
+
+    // (6) THE FABRICATION TEST. Re-derived from the reviewer's own result,
+    // never read off the decision. This is the guardrail, and it is the SECOND
+    // of the two independent gates: it is asked of the REVIEWER'S OWN durable
+    // result, on a decision already known to be an engineering review, and it
+    // is what decides repairability among the classes that remain.
     final provenance = await readReviewVerdictProvenance(
       executionStore: service.executionStore,
       decision: decision,
@@ -1184,10 +1243,20 @@ class WorkItemActionEndpoints extends Endpoint {
       return _refuse(
         service,
         workItemId,
+        // EXHAUSTIVE on purpose. The `_` this replaced defaulted every unknown
+        // class to `reviewerOutputUnreadable`, which would mislabel a
+        // `decisionTypeNotReviewable` read as a reader failure — the exact
+        // conflation [ReviewAssessment.decisionTypeNotReviewable] exists to stop.
+        // A new arm now breaks this switch at compile time instead of silently
+        // acquiring the wrong sentence.
         switch (provenance.assessment) {
           ReviewAssessment.assessed => 'reviewerProducedVerdict',
           ReviewAssessment.reviewerProseOnly => 'reviewerProducedProse',
-          _ => 'reviewerOutputUnreadable',
+          ReviewAssessment.unreadable => 'reviewerOutputUnreadable',
+          ReviewAssessment.decisionTypeNotReviewable =>
+            'decisionTypeNotReviewable',
+          ReviewAssessment.noReviewerOutput =>
+            'reviewerOutputUnreadable', // unreachable: isRepairable is true.
         },
         switch (provenance.assessment) {
           ReviewAssessment.assessed =>
@@ -1200,6 +1269,11 @@ class WorkItemActionEndpoints extends Endpoint {
                 'reviewer assessment exists and the operator has never been '
                 'shown it: ${provenance.detail}. Read it, then resolve the '
                 'decision — repairing it here would throw that assessment away',
+          // Reachable only if step (5) is ever removed. It must still say what
+          // was checked, so the operator is not told a reader failed.
+          ReviewAssessment.decisionTypeNotReviewable =>
+            '${provenance.detail}. This repair only applies to engineering '
+                'review decisions, so nothing is changed',
           _ =>
             '${provenance.detail}. "I could not check" is not "there was '
                 'nothing there", so nothing is changed',
@@ -1212,7 +1286,7 @@ class WorkItemActionEndpoints extends Endpoint {
       );
     }
 
-    // (6) A LIVE ATTEMPT IS NEVER STACKED ON.
+    // (7) A LIVE ATTEMPT IS NEVER STACKED ON.
     final jobs = await service.listJobsForWorkItem(workItemId);
     if (jobs.any((j) => j.state.isActive)) {
       return _refuse(
@@ -1225,7 +1299,7 @@ class WorkItemActionEndpoints extends Endpoint {
       );
     }
 
-    // (7) THE DISCRIMINATOR, computed BEFORE the write so an unreadable marker
+    // (8) THE DISCRIMINATOR, computed BEFORE the write so an unreadable marker
     // fails with nothing written — the same discipline `operatorRetry` uses.
     final attempt = DurableWorkflowEngine.nextTriageAttempt(
       item,
@@ -1245,7 +1319,7 @@ class WorkItemActionEndpoints extends Endpoint {
       version: item.version + 1,
     );
 
-    // (8) THE ONE DURABLE WRITE. The work item's compare-and-swap goes FIRST:
+    // (9) THE ONE DURABLE WRITE. The work item's compare-and-swap goes FIRST:
     // it is the only statement that can fail on a concurrent writer, so
     // ordering it first is what makes "a refusal writes nothing" true on a
     // store that cannot roll back (`InMemoryWorkflowStore.inTransaction` is
@@ -1631,7 +1705,41 @@ enum ReviewAssessment {
   /// A result exists and could not be read, or names an execution that is not
   /// readable. Never repairable: "I could not check" must not be laundered into
   /// "there was nothing there".
-  unreadable;
+  unreadable,
+
+  /// The decision is not an engineering review at all, so there is no reviewer
+  /// whose output this action could have fabricated.
+  ///
+  /// NEVER repairable, and it is its OWN arm rather than an overload of
+  /// [unreadable] because it is a different statement. [unreadable] says "I
+  /// could not check"; this says "this is not the kind of thing I repair". Only
+  /// one of those is true here, and conflating them would tell the operator a
+  /// reader failed when in fact there was never anything to read.
+  ///
+  /// ## WHY THIS ARM EXISTS AT ALL — EIGHTEEN OF NINETEEN TYPES
+  ///
+  /// [readReviewVerdictProvenance] used to answer [noReviewerOutput] for every
+  /// non-review decision type — the ONLY repairable class — with the reason
+  /// "this is not an engineering review decision, so no reviewer verdict is
+  /// claimed by it". That reason is true and the conclusion drawn from it was
+  /// exactly backwards: "no verdict is claimed" is not "a verdict was
+  /// fabricated", and the difference is the whole subject of this repair. Eighteen
+  /// of the nineteen [HumanDecisionType]s — `deployment_approval`,
+  /// `destructive_migration_approval`, `securityDecision` and the rest — took that
+  /// path, so a single operator click would retire a live, pending, consequential
+  /// human question as "unreviewed" and re-queue the work behind it.
+  ///
+  /// It was LATENT rather than live: both `requestHumanDecision` callers raise
+  /// `engineeringReview`, and every other blocking type uses a synthetic scope
+  /// that is not a `work_item` row, so no non-review decision could reach this
+  /// method in production as the code stands. It is still a HIGH rather than a
+  /// theoretical one, for two reasons that survive the latency: this is the one
+  /// path in the repository that can void a human decision, so it must not be the
+  /// path that fails OPEN; and the affordance's own documentation promises the
+  /// server refuses an unrepairable item, which was false for 18 of 19 types. A
+  /// documented safety property that is false is worse than an undocumented one,
+  /// because it is relied on.
+  decisionTypeNotReviewable;
 
   /// Whether this class may be repaired by the operator action.
   ///
@@ -1702,13 +1810,17 @@ Future<ReviewVerdictProvenance> readReviewVerdictProvenance({
   required HumanDecision decision,
 }) async {
   if (decision.decisionType != HumanDecisionType.engineeringReview) {
+    // NOT `noReviewerOutput`. See [ReviewAssessment.decisionTypeNotReviewable]:
+    // answering "the reviewer said nothing" here answered a question nobody
+    // asked, and the only repairable class was the one it picked.
     return ReviewVerdictProvenance(
-      assessment: ReviewAssessment.noReviewerOutput,
+      assessment: ReviewAssessment.decisionTypeNotReviewable,
       decisionId: decision.decisionId,
       workItemId: decision.workItemId,
       detail:
-          'this is not an engineering review decision, so no reviewer '
-          'verdict is claimed by it',
+          'this is a ${decision.decisionType.wire} decision, not an engineering '
+          'review, so it claims no reviewer verdict and there is no reviewer '
+          'output for this action to have fabricated',
     );
   }
 

@@ -142,6 +142,37 @@ void main() {
     return decision;
   }
 
+  /// A PENDING, BLOCKING decision of a type that is NOT an engineering review.
+  ///
+  /// Carries no `reviewVerdict` and names no `reviewExecutionId`, because that
+  /// is what such a decision really looks like: a question a human is being asked
+  /// about their own work. Nothing here is synthetic to make the test pass — the
+  /// absence of a reviewer claim is the point, and a reviewer claim is precisely
+  /// what these decisions do not have.
+  ///
+  /// Deliberately separate from [seedDecision] rather than a `type` parameter on
+  /// it: [seedDecision] builds the GATE's own metadata shape, and giving it a
+  /// non-review `type` would produce a decision no gate would ever write.
+  Future<HumanDecision> seedBlockingDecision({
+    required String decisionId,
+    required String workItemId,
+    required HumanDecisionType type,
+    String question = 'Approve and continue?',
+  }) async {
+    final decision = HumanDecision(
+      decisionId: decisionId,
+      workItemId: workItemId,
+      decisionType: type,
+      status: HumanDecisionStatus.pending,
+      question: question,
+      blocking: true,
+      requestedAt: DateTime.utc(2026, 10, 14, 15),
+      updatedAt: DateTime.utc(2026, 10, 14, 15),
+    );
+    await store.saveHumanDecision(decision);
+    return decision;
+  }
+
   /// A reviewer execution that produced nothing a human could read.
   ///
   /// The QA fabrication exactly: `structuredResultJson = '{}'`, no summary.
@@ -674,41 +705,209 @@ void main() {
   });
 
   test(
-    'a non-review decision type is never treated as a reviewer claim',
+    'a non-review decision type is not repairable, and is refused at BOTH gates',
     () async {
+      // The regression this file's HIGH finding turned on. Until 2026-10-15 the
+      // provenance reader answered `noReviewerOutput` — the ONLY repairable
+      // class — for every decision type that is not `engineeringReview`, and the
+      // endpoint had no guard of its own. So all EIGHTEEN other types were
+      // "repairable", and a single operator click retired a live, pending,
+      // consequential human question and re-queued the work behind it.
+      //
+      // LATENT rather than live (both `requestHumanDecision` callers raise
+      // `engineeringReview`), which is exactly why it is pinned here: nothing in
+      // production reaches it, so only a test protects it.
       const decisionId = 'dec-1';
       await seedParked(decisionId: decisionId);
-      final decision = HumanDecision(
+      final decision = await seedBlockingDecision(
         decisionId: decisionId,
         workItemId: 'defect-DEF-1',
-        decisionType: HumanDecisionType.designApproval,
-        status: HumanDecisionStatus.pending,
-        question: 'Approve the design?',
-        blocking: true,
-        requestedAt: DateTime.utc(2026, 10, 14),
-        updatedAt: DateTime.utc(2026, 10, 14),
-        metadata: const {},
+        type: HumanDecisionType.designApproval,
       );
-      await store.saveHumanDecision(decision);
-      final before = await snapshot('defect-DEF-1', decisionId);
 
-      // A design approval carries no reviewer verdict to fabricate, so the
-      // provenance read reports no reviewer output — and the repair would be
-      // offered. The enumerated migration and the operator's judgement are the
-      // real gates; this test pins that the READ does not invent a claim from a
-      // decision type it does not understand.
+      // GATE 2 — the reader. Its own classification, with no endpoint involved.
       final provenance = await readReviewVerdictProvenance(
         executionStore: executions,
         decision: decision,
       );
-      expect(provenance.assessment, ReviewAssessment.noReviewerOutput);
       expect(
-        await snapshot('defect-DEF-1', decisionId),
-        before,
-        reason: 'nothing was written by the read',
+        provenance.assessment,
+        ReviewAssessment.decisionTypeNotReviewable,
+        reason:
+            'a design approval claims no reviewer verdict, so there is no '
+            'fabrication to repair. It must NOT read as `noReviewerOutput`, which '
+            'is the one repairable class: that turned "no verdict is claimed" '
+            'into "a verdict was fabricated", which is the defect itself.',
+      );
+      expect(
+        provenance.assessment.isRepairable,
+        isFalse,
+        reason: 'exactly one class is repairable, and this is not it',
+      );
+      expect(
+        provenance.detail,
+        contains('design_approval'),
+        reason:
+            'the refusal sentence must name the type it actually checked, or the '
+            'operator is told a reader failed when nothing was ever read',
       );
     },
   );
+
+  // ---------------------------------------------------------------------
+  // The regression: a PENDING, CONSEQUENTIAL, NON-REVIEW decision
+  // ---------------------------------------------------------------------
+
+  test(
+    'it REFUSES a pending non-review blocking decision and writes NOTHING',
+    () async {
+      // THE SHARPEST FORM OF THE HIGH FINDING, and the shape a reviewer probed:
+      // a real question a real human is being asked, parked behind a work item,
+      // with the endpoint's ONLY defence being the reader's classification.
+      //
+      // TWO types, not one, because "a non-review decision" is 18 of 19 types
+      // and the reviewer named two of the most consequential. One type would
+      // pin a single enum member; the defect is structural.
+      for (final parked in const [
+        (
+          workItem: 'defect-DEF-deployment',
+          decision: 'dec-deployment',
+          type: HumanDecisionType.deploymentApproval,
+        ),
+        (
+          workItem: 'defect-DEF-destructive',
+          decision: 'dec-destructive',
+          type: HumanDecisionType.destructiveMigrationApproval,
+        ),
+      ]) {
+        await seedParked(
+          workItemId: parked.workItem,
+          decisionId: parked.decision,
+        );
+        await seedBlockingDecision(
+          decisionId: parked.decision,
+          workItemId: parked.workItem,
+          type: parked.type,
+        );
+        final before = await snapshot(parked.workItem, parked.decision);
+
+        final result = await repair(workItemId: parked.workItem);
+
+        expect(
+          result.outcome,
+          'decisionTypeNotReviewable',
+          reason:
+              'a ${parked.type.wire} decision is not an engineering review, so it '
+              'claims no reviewer verdict and this repair has nothing to '
+              'fabricate. It must be refused.',
+        );
+        expect(
+          result.detail,
+          contains(parked.type.wire),
+          reason:
+              'the refusal must name what was actually checked. A refusal that '
+              'said "a reviewer really did return a verdict" would be refuting '
+              'a claim this decision never made.',
+        );
+        expect(
+          await snapshot(parked.workItem, parked.decision),
+          before,
+          reason:
+              'THE POINT OF THE SNAPSHOT. The refusal wrote nothing: the item is '
+              'not re-queued, the question is not retired, and the history gains '
+              'no audit row.',
+        );
+
+        // Spelled out, because a snapshot compares whole objects and a reader
+        // should be able to see WHICH field is the load-bearing one.
+        expect(
+          (await store.readWorkItem(parked.workItem)).state,
+          WorkItemState.waitingForHumanDecision,
+          reason: 'the item stays parked; it is not re-queued',
+        );
+        expect(
+          (await store.readHumanDecision(parked.decision)).status,
+          HumanDecisionStatus.pending,
+          reason: 'the pending human question is not retired',
+        );
+        expect(
+          (await store.readHumanDecision(
+            parked.decision,
+          )).metadata?[reviewUnreviewableMetadataKey],
+          isNull,
+          reason: 'no retirement marker is written',
+        );
+        expect(
+          await store.readTransitionHistory(parked.workItem),
+          isEmpty,
+          reason: 'a refusal writes no audit row',
+        );
+      }
+    },
+  );
+
+  test(
+    'it REFUSES a non-review decision BEFORE reading any reviewer result',
+    () async {
+      // THE SECOND GATE, PROVEN ON ITS OWN TERMS. The endpoint's own
+      // `decisionType` check does not consult
+      // [readReviewVerdictProvenance] at all, so this refusal is produced by the
+      // endpoint alone — and it is produced before the reader is reached, which
+      // is asserted by the refusal naming the TYPE rather than any provenance
+      // detail.
+      //
+      // Without this test the two gates could not be told apart: if both broke
+      // in the same way, the test above would still pass and would prove nothing
+      // about either.
+      const decisionId = 'dec-1';
+      await seedParked(decisionId: decisionId);
+      await seedBlockingDecision(
+        decisionId: decisionId,
+        workItemId: 'defect-DEF-1',
+        type: HumanDecisionType.securityDecision,
+      );
+      final before = await snapshot('defect-DEF-1', decisionId);
+
+      final result = await repair();
+
+      expect(result.outcome, 'decisionTypeNotReviewable');
+      expect(
+        result.detail,
+        startsWith(
+          'this work item is parked behind a security_decision decision',
+        ),
+        reason:
+            'THE ENDPOINT GUARD\'S OWN SENTENCE, verbatim. This is what '
+            'distinguishes the two gates and makes this test worth having: the '
+            'reader\'s refusal would instead start "this is a '
+            'security_decision decision" and end "...no reviewer output for this '
+            'action to have fabricated. This repair only applies to engineering '
+            'review decisions". Both refuse, so asserting only the outcome would '
+            'pass with EITHER gate removed — which would prove neither does '
+            'anything. Asserting the endpoint\'s own words proves the endpoint '
+            'refused on its own.',
+      );
+      expect(await snapshot('defect-DEF-1', decisionId), before);
+    },
+  );
+
+  test('the repairable class is still the ONLY repairable class', () async {
+    // The reader is the single place `isRepairable` is decided, so a new arm
+    // added to that enum without a decision here would silently become
+    // repairable. This pins the whole closed set at once, which is the shape a
+    // future contributor actually adds a class in.
+    expect(ReviewAssessment.values, hasLength(5));
+    for (final arm in ReviewAssessment.values) {
+      expect(
+        arm.isRepairable,
+        arm == ReviewAssessment.noReviewerOutput,
+        reason:
+            '${arm.name} must be ${arm == ReviewAssessment.noReviewerOutput ? 'repairable' : 'NOT repairable'}. '
+            'This is the only path that can void a pending human decision, so '
+            'the default has to be no.',
+      );
+    }
+  });
 }
 
 const workItemIdKey = 'defect-DEF-1';

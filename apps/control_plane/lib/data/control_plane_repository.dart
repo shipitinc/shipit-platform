@@ -535,8 +535,9 @@ class ControlPlaneRepository {
   /// line is allowed to pre-judge the repair: whether anything is actually
   /// repairable is decided by the server, which re-derives provenance from the
   /// REVIEWER'S OWN durable result and refuses a genuine review
-  /// (`reviewerProducedVerdict`), a human answer (`alreadyDecided`) and a
-  /// decision nothing is parked behind (`notApplicable`).
+  /// (`reviewerProducedVerdict`), a human answer (`alreadyDecided`), a decision
+  /// nothing is parked behind (`notApplicable`), and a decision that is not an
+  /// engineering review at all (`decisionTypeNotReviewable`).
   ///
   /// So [ReviewRepairResultResponse.detail] is not diagnostics to log — it is
   /// the sentence the operator reads when the control was wrong, which is why
@@ -2977,8 +2978,9 @@ class ReviewRepairResultResponse {
   });
 
   /// 'accepted' | 'notApplicable' | 'reviewerProducedVerdict' |
-  /// 'reviewerProducedProse' | 'reviewerOutputUnreadable' | 'alreadyDecided' |
-  /// 'alreadyRunning' | 'concurrentWrite' | 'invalidRequest'.
+  /// 'reviewerProducedProse' | 'reviewerOutputUnreadable' |
+  /// 'decisionTypeNotReviewable' | 'alreadyDecided' | 'alreadyRunning' |
+  /// 'concurrentWrite' | 'invalidRequest'.
   ///
   /// A wire value, and the screen words it — except that every value other than
   /// `accepted` is a refusal whose own sentence is [detail]. `accepted` covers

@@ -1285,6 +1285,40 @@ INSERT INTO "serverpod_migrations" ("module", "version", "timestamp")
 -- order in which the arms can match anything.
 --
 -- ---------------------------------------------------------------------------
+-- THE ROLLBACK HAS A TIME WINDOW, AND IT CLOSES ON ITS OWN
+--
+-- READ THIS BEFORE RUNNING `down`. Step 1 below carries
+-- `AND w."state" = 'agent_completed'`. That guard is CORRECT and must stay -- a
+-- blind restore would put an item back to `waiting_for_human_decision` behind a
+-- decision that has long since moved on, clobbering whatever it has become. But
+-- it has a consequence an operator needs stated rather than discovered:
+--
+--   * THE ROLLBACK RESTORES ONLY WHILE THE REPAIRED ITEMS ARE STILL PARKED AT
+--     `agent_completed`. That state is `engineeringReviewDefinition.entryStates`,
+--     so the ordinary scheduler tick treats it as runnable and DISPATCHES the
+--     re-review that this migration was written to set up.
+--
+--   * ONCE THE TICK HAS DISPATCHED, THE ITEM LEAVES `agent_completed` -- THE
+--     GUARD MATCHES NOTHING, AND THE ROLLBACK IS A SILENT NO-OP ON THAT ITEM.
+--     It still deletes this migration's audit rows in step 3, and it still rolls
+--     the `serverpod_migrations` version back in step 4. What it does NOT do is
+--     restore the item or un-void the decision, because it no longer has a row
+--     to read a before-image from. There is no warning, no error and no affected
+--     -row count printed: the statements simply match zero rows and succeed.
+--
+-- IN SHORT: THE WINDOW IS "BEFORE THE RE-QUEUED REVIEW RUNS", AND IT IS NOT A
+-- TIME YOU CONTROL. If this DOWN is being considered because the re-review is
+-- producing bad results, the tick has very probably already dispatched, and the
+-- rollback will do nothing to the item. Check the state first:
+--
+--     SELECT "state", "blockingHumanDecisionId" FROM "work_item"
+--      WHERE "workItemId" IN (...the five enumerated targets...);
+--
+-- Anything other than `agent_completed` means this rollback cannot restore it.
+-- That is the guard working, not the rollback failing -- but the distinction is
+-- invisible without this paragraph, which is why it is here.
+--
+-- ---------------------------------------------------------------------------
 -- DOWN SCRIPT -- EXECUTABLE REGION
 --
 -- Everything ABOVE this region is prose and stays prose. Everything INSIDE it is

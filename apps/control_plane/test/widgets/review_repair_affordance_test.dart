@@ -354,6 +354,10 @@ void main() {
           sentence:
               'A reviewer really did return a verdict, so this cannot be '
               'repaired.',
+          // Keyed to the decision on screen, because that is what a receipt is
+          // about. A report about some OTHER decision is suppressed and the offer
+          // returns instead — which is its own test, below.
+          decisionId: 'dec-1',
         ),
       ),
     );
@@ -372,7 +376,11 @@ void main() {
         await pump(
           tester,
           affordance(
-            report: ReviewRepairReport(accepted: false, sentence: detail),
+            report: ReviewRepairReport(
+              accepted: false,
+              sentence: detail,
+              decisionId: 'dec-1',
+            ),
           ),
         );
         expect(find.text(reviewRepairRefusedLabel), findsOneWidget);
@@ -440,7 +448,11 @@ void main() {
     await pump(
       tester,
       affordance(
-        report: const ReviewRepairReport(accepted: true, sentence: 'Done.'),
+        report: const ReviewRepairReport(
+          accepted: true,
+          sentence: 'Done.',
+          decisionId: 'dec-1',
+        ),
       ),
     );
     expect(find.text(reviewRepairActionLabel), findsNothing);
@@ -476,4 +488,123 @@ void main() {
     );
     handle.dispose();
   });
+
+  // -------------------------------------------------------------------
+  // THE RECEIPT IS ONE-WAY PER DECISION, NOT PER RUN
+  // -------------------------------------------------------------------
+
+  testWidgets(
+    'THE RECURRENCE: a DIFFERENT decision parks, and the offer IS back',
+    (tester) async {
+      // THE REGRESSION. A work item parks on a decision more than once: a repair
+      // is retired, the re-queued review runs, and the item parks again behind
+      // the next question. That second park used to find a non-null receipt --
+      // `repairReport` is deliberately preserved across `RunDetailLoaded()` --
+      // and therefore rendered the receipt INSTEAD of the offer.
+      //
+      // So the operator was shown a receipt about a decision they never
+      // attempted, and NO WAY TO ACT on the one actually holding their work. The
+      // repair was silently disabled for the next fabrication, which is the
+      // recurring shape this surface exists for.
+      await pump(
+        tester,
+        affordance(
+          decisionId: 'dec-2', // <-- parked somewhere ELSE now.
+          report: const ReviewRepairReport(
+            accepted: false,
+            sentence: 'a reviewer really did return a verdict for dec-1',
+            decisionId: 'dec-1', // <-- the receipt is about dec-1.
+          ),
+        ),
+      );
+
+      // The OFFER, not the stale receipt.
+      expect(find.text(reviewRepairActionLabel), findsOneWidget);
+      expect(find.text(reviewRepairHeading), findsOneWidget);
+      expect(
+        find.text('a reviewer really did return a verdict for dec-1'),
+        findsNothing,
+        reason:
+            'a receipt about a decision that is no longer in front of the '
+            'operator is not information, it is a stale answer to a question '
+            'that is no longer on the table',
+      );
+    },
+  );
+
+  testWidgets(
+    'the SAME decision still shows its receipt — the one-way rule survives '
+    'keying',
+    (tester) async {
+      // The other side of the same comparison, and the one that would break if
+      // the fix were "a receipt always suppresses the offer".
+      await pump(
+        tester,
+        affordance(
+          decisionId: 'dec-1',
+          report: const ReviewRepairReport(
+            accepted: false,
+            sentence: 'a reviewer really did return a verdict',
+            decisionId: 'dec-1',
+          ),
+        ),
+      );
+
+      expect(find.text(reviewRepairActionLabel), findsNothing);
+      expect(
+        find.text('a reviewer really did return a verdict'),
+        findsOneWidget,
+        reason:
+            'asking again would be refused again, identically. An offer that '
+            'lets someone re-ask a question the server already answered on the '
+            'record is an affordance to doubt the answer.',
+      );
+    },
+  );
+
+  testWidgets(
+    'a receipt keyed to NO decision does not stand in for one',
+    (tester) async {
+      // The `invalidRequest` and transport-failure shapes: nothing about any
+      // decision was examined, so the receipt answers no question about the one
+      // on screen and must not suppress the offer.
+      await pump(
+        tester,
+        affordance(
+          decisionId: 'dec-1',
+          report: const ReviewRepairReport(
+            accepted: false,
+            sentence: 'nothing changed',
+          ),
+        ),
+      );
+
+      expect(find.text(reviewRepairActionLabel), findsOneWidget);
+      expect(find.text('nothing changed'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'a receipt survives its OWN repair, when nothing is parked',
+    (tester) async {
+      // The case worth preserving, stated separately because it is easy to lose
+      // while fixing the recurrence: an ACCEPTED repair retires the decision, so
+      // `decisionId` is null. A keying rule that treated "no blocking decision"
+      // as "mismatch" would delete the receipt at the exact moment it became the
+      // only thing left on screen telling the operator what happened.
+      await pump(
+        tester,
+        affordance(
+          decisionId: null,
+          report: const ReviewRepairReport(
+            accepted: true,
+            sentence: 'Done.',
+            decisionId: 'dec-1',
+          ),
+        ),
+      );
+
+      expect(find.text(reviewRepairedHeadline), findsOneWidget);
+    },
+  );
 }

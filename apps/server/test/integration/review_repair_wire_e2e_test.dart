@@ -59,6 +59,12 @@ import 'package:test/test.dart';
 ///    the accepting path would pass against a method that had lost its
 ///    guardrail, so the refusal is asserted here rather than left to the unit
 ///    suite that never touches serialization.
+///  * A PENDING NON-REVIEW DECISION IS REFUSED, over the wire, with a
+///    byte-identical before/after snapshot. `decisionTypeNotReviewable` is a
+///    value the wire contract never carried before 2026-10-15, and a new outcome
+///    string is exactly the kind of thing that exists on the server and never
+///    arrives at a client. Two decision types, because the defect was structural
+///    across all eighteen non-review types.
 void main() {
   final openSessions = <Session>[];
   Serverpod? pod;
@@ -116,6 +122,7 @@ void main() {
     String decisionId, {
     int triageAttempt = 3,
     String claimedVerdict = 'changes_required',
+    String decisionType = 'engineering_review',
   }) async {
     final db = await newDb();
     final ts = DateTime.now().toUtc().toIso8601String();
@@ -141,21 +148,31 @@ void main() {
     // The decision names a reviewer execution and CLAIMS a verdict. The claim
     // is the bug: whether a reviewer really produced it is re-derived from
     // `agent_result`, never read off here.
+    //
+    // `decisionType` is BOUND, never interpolated, and defaults to
+    // `engineering_review`. It exists so a NON-review decision can be seeded as
+    // the row it really is — pending, blocking, claiming no reviewer verdict —
+    // rather than as an engineering review with its type relabelled. The two
+    // differ in whether `reviewExecutionId` and `reviewVerdict` are present at
+    // all, which is precisely the distinction under test.
+    final isReview = decisionType == 'engineering_review';
     await db.query(
       '''
       INSERT INTO human_decision ("decisionId", "workItemId", "decisionType",
         "status", "question", "recommendation", "blocking", "requestedAt",
         "updatedAt", "metadataJson")
-      VALUES (@decisionId, @workItemId, 'engineering_review', 'pending',
+      VALUES (@decisionId, @workItemId, @decisionType, 'pending',
         'Approve the implementation?', 'Approve', true, @ts, @ts,
         @decisionMetadata)
     ''',
       parameters: QueryParameters.named({
         'decisionId': decisionId,
         'workItemId': workItemId,
+        'decisionType': decisionType,
         'decisionMetadata': jsonEncode({
-          'reviewExecutionId': '$workItemId-exec',
-          'reviewVerdict': claimedVerdict,
+          if (isReview) 'reviewExecutionId': '$workItemId-exec',
+          if (isReview && claimedVerdict.isNotEmpty)
+            'reviewVerdict': claimedVerdict,
         }),
         'ts': ts,
       }),
@@ -204,7 +221,10 @@ void main() {
     );
   }
 
-  Future<Map<String, Object?>> snapshot(String workItemId) async {
+  Future<Map<String, Object?>> snapshot(
+    String workItemId, [
+    String? decisionId,
+  ]) async {
     final db = await newDb();
     final item = await rows(
       db,
@@ -216,7 +236,7 @@ void main() {
       db,
       '''SELECT "status", "choice", "metadataJson"
          FROM human_decision WHERE "decisionId" = @id''',
-      {'id': '$workItemId-dec'},
+      {'id': decisionId ?? '$workItemId-dec'},
     );
     final history = await rows(
       db,
@@ -405,6 +425,77 @@ void main() {
           before,
           reason: 'a refusal writes NOTHING',
         );
+      },
+    );
+
+    test(
+      'a PENDING NON-REVIEW decision is refused over the wire, and the '
+      'refusal writes nothing',
+      () async {
+        // THE REGRESSION, ON THE WIRE.
+        //
+        // `readReviewVerdictProvenance` used to answer `noReviewerOutput` — the
+        // only repairable class — for every decision type that is not
+        // `engineering_review`, so all EIGHTEEN of them were "repairable" and a
+        // single click retired a live human question and re-queued the work
+        // behind it. `decisionTypeNotReviewable` is a NEW wire value, so it
+        // needs the wire to prove: an outcome string that exists on the server
+        // and never reaches a client is the exact class of failure this file
+        // exists for.
+        //
+        // TWO types, because the defect is structural across the other eighteen.
+        for (final wire in const [
+          ('rrw-d-deployment', 'deployment_approval'),
+          ('rrw-d-destructive', 'destructive_migration_approval'),
+        ]) {
+          final (workItemId, decisionType) = wire;
+          final decisionId = '$workItemId-dec';
+          await seedParkedReview(
+            workItemId,
+            decisionId,
+            decisionType: decisionType,
+          );
+          final before = await snapshot(workItemId, decisionId);
+
+          final result = await client.workItemActionEndpoints
+              .repairUnreviewedReview(
+                workItemId: workItemId,
+                requestId: 'rrw-req-$decisionType',
+                requestedBy: 'operator@example.com',
+                reason: 'this looks parked and nobody reviewed it',
+                decisionId: decisionId,
+              );
+
+          expect(
+            result.outcome,
+            'decisionTypeNotReviewable',
+            reason:
+                'a $decisionType decision is not an engineering review, so it '
+                'claims no reviewer verdict and there is nothing to fabricate. '
+                'It must be refused, and the value must survive the round trip.',
+          );
+          expect(
+            result.detail,
+            contains(decisionType),
+            reason:
+                'the refusal names what was checked. Saying "a reviewer really '
+                'did return a verdict" here would refute a claim this decision '
+                'never made.',
+          );
+          expect(
+            result.decisionId,
+            decisionId,
+            reason: 'and it names the decision, so the receipt can be keyed',
+          );
+          expect(
+            await snapshot(workItemId, decisionId),
+            before,
+            reason:
+                'THE POINT OF THE SNAPSHOT: the refusal wrote nothing. The item '
+                'is not re-queued, the pending question is not retired, and no '
+                'audit row is appended.',
+          );
+        }
       },
     );
 

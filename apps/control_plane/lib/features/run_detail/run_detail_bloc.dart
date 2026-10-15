@@ -283,6 +283,11 @@ class RunDetailBloc extends Bloc<RunDetailEvent, RunDetailState> {
               result.outcome,
               detail: result.detail,
             ),
+            // The server names the decision it actually examined, which is the
+            // subject this receipt is about. See `ReviewRepairReport.decisionId`
+            // for why the receipt must be keyed to a decision rather than to this
+            // run.
+            decisionId: result.decisionId,
           ),
         ),
       );
@@ -297,6 +302,12 @@ class RunDetailBloc extends Bloc<RunDetailEvent, RunDetailState> {
       // The transport failed, so there is no `detail` to show and nothing
       // truthful to claim. Say that nothing changed, and KEEP the strip so the
       // operator's words survive and the same request id can be retried.
+      //
+      // The receipt is keyed to NO decision, and that is the honest answer: the
+      // request never reached the server, so nothing about any decision was
+      // examined. Which means a later park behind a different decision still
+      // re-offers, which is correct — an attempt that never arrived has not
+      // answered anything.
       emit(
         state.copyWith(
           isSubmittingRepair: false,
@@ -317,7 +328,11 @@ class RunDetailBloc extends Bloc<RunDetailEvent, RunDetailState> {
 /// facts beside a refusal sentence would be the exact false state this whole
 /// surface exists to prevent.
 class ReviewRepairReport {
-  const ReviewRepairReport({required this.accepted, required this.sentence});
+  const ReviewRepairReport({
+    required this.accepted,
+    required this.sentence,
+    this.decisionId,
+  });
 
   /// True only when the endpoint returned `accepted`, i.e. the decision was
   /// actually retired. Every other outcome wrote nothing at all.
@@ -326,6 +341,30 @@ class ReviewRepairReport {
   /// The one sentence the operator reads. On a refusal this is the server's own
   /// `detail`, carried whole.
   final String sentence;
+
+  /// The decision THIS attempt concerned, or null when the attempt never reached
+  /// one — a blank request is refused before the decision is even resolved.
+  ///
+  /// ## WHY THE RECEIPT IS KEYED TO A DECISION AND NOT TO A RUN
+  ///
+  /// The receipt is one-way PER DECISION, and keying it to the run is wrong
+  /// because a work item parks on a decision more than once. Its premise — that
+  /// every refusal is a statement about durable state that cannot change under
+  /// the operator's feet — holds for the SUBJECT of the prior refusal and for
+  /// nothing else. Durable state for the item absolutely does change: a repair is
+  /// retired, the re-queued review runs, and the item parks again behind a
+  /// DIFFERENT decision.
+  ///
+  /// Keyed to the run alone, that second park found `repairReport` already
+  /// non-null — it is deliberately preserved across `RunDetailLoaded()` — so the
+  /// operator saw a receipt about a decision they never attempted and NO OFFER at
+  /// all, silently disabling the repair for the next fabrication. That is the
+  /// recurring shape this feature exists for, so the outage would have been
+  /// precisely where the feature was needed.
+  ///
+  /// Null is a real state, not an absence: it is the `invalidRequest` refusal,
+  /// which is keyed to nothing because nothing about a decision was examined.
+  final String? decisionId;
 }
 
 class RunDetailState {

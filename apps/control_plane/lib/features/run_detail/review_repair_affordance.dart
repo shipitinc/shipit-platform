@@ -40,12 +40,26 @@ import 'run_detail_bloc.dart' show ReviewRepairReport;
 /// anything.
 ///
 /// So the control can be offered on an item that turns out to be unrepairable,
-/// and the server will refuse it. What makes that safe rather than sloppy is
-/// what happens next: the refusal's own sentence reaches the operator, verbatim
+/// and the server will refuse it. What happens next is what makes that safe
+/// rather than sloppy: the refusal's own sentence reaches the operator, verbatim
 /// and readable, instead of the request disappearing. "A reviewer really did
 /// return a verdict for this" is an answer; a silent no-op is not. An affordance
 /// that is wrong about a real review therefore costs the operator a sentence,
 /// never a review.
+///
+/// ## AND THE REFUSAL MATCHES WHAT WAS ACTUALLY CHECKED
+///
+/// "The server will refuse it" is a claim about EVERY decision type, not only
+/// the one this surface was designed around, and it used to be false for
+/// eighteen of the nineteen: the server classified any non-`engineering_review`
+/// decision as "no reviewer output", which was the only repairable class, so a
+/// pending `deployment_approval` or `destructive_migration_approval` would have
+/// been retired as "unreviewed" and the work re-queued behind it. Both gates now
+/// refuse, and the refusal says what was actually checked — that this is not an
+/// engineering review and claims no reviewer verdict — rather than the reviewer's
+/// verdict sentence, which would be a refutation of a claim that was never made.
+/// So the sentence an operator reads on a wrong affordance always names the
+/// reason that decision actually has.
 ///
 /// The reason field works the same way. The button stays disabled until one is
 /// typed — a control that spends durable state on a blank intent is a bad
@@ -84,8 +98,19 @@ class ReviewRepairAffordance extends StatelessWidget {
   /// time the operator needs to read what happened. Gating the receipt on the
   /// offer condition would erase the receipt the instant it became the most
   /// important thing on the screen. The receipt therefore renders on its own
-  /// condition — an attempt has resolved — and is a statement about the past,
-  /// not an offer of a future action.
+  /// condition — it still concerns the item as it stands — and is a statement
+  /// about the past, not an offer of a future action.
+  ///
+  /// ## AND WHY IT IS NOT GATED ON THE RUN EITHER
+  ///
+  /// A work item parks on a decision more than once. A receipt keyed to the RUN
+  /// rather than to its subject would outlive the decision it described and
+  /// suppress the offer for the NEXT one — so the operator would be shown a stale
+  /// receipt about a decision they never attempted and no way to act on the one
+  /// actually holding their work. That is the recurring shape this surface
+  /// exists for, so [build] compares the receipt's [ReviewRepairReport
+  /// .decisionId] against [decisionId] and re-offers on a mismatch. See
+  /// `ReviewRepairReport.decisionId` for the full argument.
   final ReviewRepairReport? report;
 
   /// True once the operator has opened the confirm strip.
@@ -104,9 +129,33 @@ class ReviewRepairAffordance extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final resolved = report;
-    if (resolved != null) return _RepairReceipt(report: resolved);
-
     final id = decisionId;
+
+    // THE RECEIPT IS ONE-WAY PER DECISION, NOT PER RUN.
+    //
+    // Three states, and the third is the one this exists for:
+    //
+    //   * nothing parked (`id == null`) → the receipt stands. This is the
+    //     ordinary after-a-successful-repair case: the repair retired the
+    //     decision, so there is nothing to offer and the receipt must survive
+    //     its OWN repair, which is the moment it matters most.
+    //   * parked behind the very decision the receipt is about → the receipt
+    //     stands. Asking again would be refused again, identically, and an
+    //     offer that lets someone re-ask a question the server has already
+    //     answered on the record is an affordance to doubt the answer.
+    //   * parked behind a DIFFERENT decision → the receipt is about something
+    //     that is no longer in front of the operator, so it is suppressed and
+    //     the offer renders. A work item really does park more than once: a
+    //     repair is retired, the re-queued review runs, and the item parks
+    //     again behind the next question. Without this arm the operator would
+    //     be shown a receipt about a decision they never attempted and NO
+    //     offer at all, silently disabling the repair for the next fabrication.
+    final receiptSuperseded = id != null && resolved != null && resolved.decisionId != id;
+
+    if (!receiptSuperseded && resolved != null) {
+      return _RepairReceipt(report: resolved);
+    }
+
     if (id == null) return const SizedBox.shrink();
 
     return Semantics(
@@ -377,17 +426,26 @@ class _RepairReceipt extends StatelessWidget {
           const SizedBox(height: 32),
           const ContentRule(),
           const SizedBox(height: 20),
-          // The receipt is ONE-WAY on purpose, and that is not an oversight.
-          //
-          // Every refusal this endpoint returns is a statement about durable
-          // state that cannot change under the operator's feet: a reviewer
-          // really returned a verdict, a human already answered, nothing is
-          // parked. Asking again would be refused again, identically, and an
-          // offer that lets someone re-ask a question the server has already
-          // answered on the record is an affordance to doubt the answer. So
-          // once an attempt has resolved, the receipt stands until the run is
-          // left. An ACCEPTED repair is likewise terminal — it retired the
-          // decision, so there is nothing left to offer.
+// The receipt is ONE-WAY PER DECISION, and that is not an oversight.
+//
+// Every refusal this endpoint returns is a statement about the
+// decision it names, and about that decision alone. A reviewer
+// really returned a verdict, a human already answered, nothing is
+// parked, or this was never an engineering review — each is a fact
+// about one question that does not change while the operator reads
+// it. Asking again would be refused again, identically, and an offer
+// that lets someone re-ask a question the server has already
+// answered on the record is an affordance to doubt the answer.
+//
+// "That decision alone" is the whole correction, and it was not in
+// an earlier version of this comment. What does NOT stay stable is the
+// ITEM's durable state: it is parked behind a different decision right
+// now, and a receipt about the previous one says nothing about this
+// one. That is handled in [ReviewRepairAffordance.build], which
+// suppresses this receipt when the item parks elsewhere — so what
+// reaches this widget is already a receipt about the decision in
+// front of the operator. An ACCEPTED repair is likewise terminal: it
+// retired the decision, so there is nothing left to offer.
           const MicroLabel(reviewRepairLabel),
           const SizedBox(height: 6),
           Text(

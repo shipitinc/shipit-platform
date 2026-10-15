@@ -39,17 +39,25 @@ import 'test_tools/serverpod_test_tools.dart';
 /// the migration is applied — the real `migration.sql`, read off disk, not a
 /// paraphrase of it — and, for (h), so is the real `down`.
 ///
-/// ## WHY "GREEN INTEGRATION" SAYS NOTHING ABOUT THIS MIGRATION
+/// ## WHY THE BOOTSTRAP PATH NEVER TOUCHES THIS MIGRATION — AND ONLY THAT
 ///
-/// `make test-integration` and CI build `public` from the LATEST
-/// `definition.sql` ALONE. On a fresh database this migration's `migration.sql`
-/// is therefore never executed — a data repair is a no-op on an empty schema,
-/// which is why the last test in this file asserts exactly that. A DEPLOYED
-/// database is chain-migrated and replays every `migration.sql`, and that path
-/// is the one under test, which is why it is built here rather than assumed.
+/// The integration suite builds its database through
+/// `tool/schema_bootstrap.dart`, which hands Serverpod `--apply-migrations`; on
+/// a fresh database Serverpod applies the LATEST `definition.sql` ALONE. This
+/// migration's `migration.sql` is therefore never executed against `public` — a
+/// data repair is a no-op on an empty schema, which is why the last test in this
+/// file asserts exactly that. A DEPLOYED database is chain-migrated and replays
+/// every `migration.sql`, and that path is the one under test, which is why it is
+/// built here rather than assumed.
 ///
-/// Read a green integration run as saying nothing about whether this migration
-/// works. It is the scratch schema in this file that says so.
+/// So THIS FILE is what says whether the migration works. It would be wrong to
+/// put it more strongly than that, and an earlier version of this comment DID:
+/// it said "Read a green integration run as saying nothing about whether this
+/// migration works", which is FALSE. This test lives in `test/integration/` and
+/// passes in the integration gate, so a green gate IS meaningful evidence here.
+/// The gap is the BOOTSTRAP PATH specifically — what the gate does not do is run
+/// `migration.sql` against `public` — not the gate. Narrowing the claim is the
+/// whole correction; the test itself is unchanged and was not weakened.
 ///
 /// The schema is scratch, never `public`. `test/integration` shares one
 /// database with files that run concurrently; a chain replay builds a whole
