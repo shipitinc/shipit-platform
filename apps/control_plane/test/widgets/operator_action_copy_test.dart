@@ -347,4 +347,91 @@ void main() {
       );
     });
   });
+
+  group('the review repair — the refusal sentence is the product', () {
+    // Every value the endpoint can return other than `accepted` is a refusal.
+    // These are all of them, from `review_repair_result.yaml`, so the set is
+    // closed and a value the server adds later lands on this path too rather
+    // than on a generic string.
+    const refusals = [
+      'notApplicable',
+      'reviewerProducedVerdict',
+      'reviewerProducedProse',
+      'reviewerOutputUnreadable',
+      'alreadyDecided',
+      'alreadyRunning',
+      'concurrentWrite',
+      'invalidRequest',
+    ];
+
+    test('every refusal reads as the SERVER\'s own sentence', () {
+      for (final outcome in refusals) {
+        expect(
+          repairOutcomeSentence(outcome, detail: 'server says so'),
+          'server says so',
+          reason: '$outcome must reach the operator as the server worded it',
+        );
+      }
+    });
+
+    test(
+      'NON-VACUITY: substituting the generic failure for any refusal goes red',
+      () {
+        // The mutation this pins: replacing `detail` with `failedSentence`
+        // makes every one of these fail, because "We could not do that. Nothing
+        // changed." is exactly what an operator must NOT be told instead.
+        for (final outcome in refusals) {
+          expect(
+            repairOutcomeSentence(outcome, detail: 'server says so'),
+            isNot(failedSentence),
+          );
+        }
+      },
+    );
+
+    test('an accepted repair is worded by the client, not by the server', () {
+      // The one outcome that is not a refusal. The server's `detail` is
+      // diagnostic and is deliberately NOT what the success state reads,
+      // because the three facts that must be visible afterwards are the
+      // client's to state and the server does not know about the receipt.
+      expect(
+        repairOutcomeSentence('accepted', detail: 'ok'),
+        reviewRepairedSentence,
+      );
+      expect(reviewRepairedSentence, isNot('ok'));
+    });
+
+    test('an absent or blank detail never renders an empty region', () {
+      // AC-21, applied to the new surface: "nothing to say" must still say
+      // something true rather than leaving a hole.
+      for (final outcome in refusals) {
+        expect(repairOutcomeSentence(outcome), failedSentence);
+        expect(repairOutcomeSentence(outcome, detail: '   '), failedSentence);
+      }
+    });
+
+    test('the success sentence never reads as an approval', () {
+      // The specific false state: a repair that leaves the screen looking like
+      // the work moved forward.
+      expect(reviewRepairedSentence.toLowerCase(), isNot(contains('approved')));
+      expect(
+        reviewRepairedDecisionFact.toLowerCase(),
+        contains('not approved'),
+      );
+      expect(reviewRepairedReviewFact.toLowerCase(), contains('not finished'));
+      expect(
+        reviewRepairedRecordFact.toLowerCase(),
+        contains('kept on record'),
+      );
+    });
+
+    test('the offer never borrows a failed-work verb', () {
+      const offerWords = [reviewRepairActionLabel, reviewRepairHeading];
+      for (final word in offerWords) {
+        expect(word, isNot(contains('Try again')));
+        expect(word, isNot(contains('Start it again')));
+        expect(word, isNot(contains('Stop this work')));
+      }
+    });
+  });
 }

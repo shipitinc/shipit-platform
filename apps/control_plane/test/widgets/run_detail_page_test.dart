@@ -4,6 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:control_plane/data/control_plane_repository.dart';
 import 'package:control_plane/features/run_detail/run_detail_bloc.dart';
 import 'package:control_plane/features/run_detail/run_detail_page.dart';
+import 'package:control_plane/features/run_detail/operator_action_copy.dart';
+import 'package:control_plane/features/run_detail/review_repair_affordance.dart';
+import 'package:control_plane/shared/design_primitives.dart';
 
 import '../fixtures/app_fixtures.dart';
 
@@ -137,5 +140,96 @@ void main() {
       ),
     );
     expect(find.text('Review and decide'), findsNothing);
+  });
+
+  // -------------------------------------------------------------------
+  // THE REPAIR'S PLACEMENT ON THE PAGE
+  //
+  // These are about GEOMETRY, not wording: the requirement is that the repair
+  // is not a peer of approving work, and a peer is a layout property. Asserting
+  // "both exist" would pass whether the two sat side by side in one button row
+  // or one was 300px beneath the other, which is the distinction that matters.
+  // -------------------------------------------------------------------
+
+  group('the review repair sits BELOW the approval, never beside it', () {
+    Future<void> pumpParked(WidgetTester tester) => pump(
+      tester,
+      detail: detail(
+        description: 'Blocked item awaiting approval.',
+        state: 'waiting_for_human_decision',
+        blockingHumanDecisionId: 'dec-1',
+      ),
+    );
+
+    testWidgets('offered, and strictly below "Review and decide"', (
+      tester,
+    ) async {
+      await pumpParked(tester);
+
+      // Both are offered: the operator may legitimately want to answer.
+      expect(find.text('Review and decide'), findsOneWidget);
+      expect(find.text(reviewRepairActionLabel), findsOneWidget);
+
+      final approve = tester.getCenter(find.text('Review and decide'));
+      final repair = tester.getCenter(find.text(reviewRepairActionLabel));
+      expect(
+        repair.dy,
+        greaterThan(approve.dy),
+        reason:
+            'a repair offered beside the approval reads as its equal; it has '
+            'to come after it, below a rule, so the operator has already '
+            'looked at the decision before being offered this',
+      );
+    });
+
+    testWidgets('separated from the approval by a rule, not by whitespace', (
+      tester,
+    ) async {
+      await pumpParked(tester);
+      // "Below a rule" is structural, so it is asserted structurally: the
+      // affordance owns a rule, and nothing else does.
+      expect(
+        find.descendant(
+          of: find.byType(ReviewRepairAffordance),
+          matching: find.byType(ContentRule),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('offered for NOTHING on an item that is not parked', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        detail: detail(
+          description: 'Running normally.',
+          state: 'agent_executing',
+        ),
+      );
+      expect(find.text(reviewRepairActionLabel), findsNothing);
+      expect(find.byType(ReviewRepairAffordance), findsOneWidget);
+      // And the block renders to nothing rather than to a disabled control.
+      expect(
+        find.descendant(
+          of: find.byType(ReviewRepairAffordance),
+          matching: find.byType(OutlinedButton),
+        ),
+        findsNothing,
+      );
+    });
+
+    testWidgets('NOT offered beside a failed item\'s "Try again" panel', (
+      tester,
+    ) async {
+      // The failed-work panel owns the right column when the server offers an
+      // action, and the repair must not appear next to it either — same
+      // argument as with the approval, different surface.
+      await pump(
+        tester,
+        detail: detail(description: 'It failed.', state: 'agent_failed'),
+      );
+      expect(find.text(reviewRepairActionLabel), findsNothing);
+    });
   });
 }

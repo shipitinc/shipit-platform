@@ -1,6 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 
+// Narrow: only the reviewer's own execution store is needed, and the reason the
+// provenance read below is separate from the decision's own claim is precisely
+// that it must never consult the decision for evidence.
+import 'package:execution_coordinator/execution_coordinator.dart'
+    show ExecutionStore;
 import 'package:platform_contracts/platform_contracts.dart';
 // `scheduler.dart` does not barrel-export its capacity directory yet — see the
 // identical, identical-reasoned import in `apps/server/lib/server.dart`, and the
@@ -11,8 +16,12 @@ import 'package:scheduler/src/capacity/execution_capacity.dart'
     show ExecutionCapacityResolution, agentExecutionBudget;
 import 'package:serverpod/serverpod.dart';
 import 'package:workflow_engine/workflow_engine.dart' show WorkItemTransitions;
+// `product_registry` and `postgres_defect_store` each export a
+// `ConcurrentModificationException` of their own; this is the work-item
+// compare-and-swap one, named by the single import that shows it.
 import 'package:workflow_store/workflow_store.dart'
     show
+        ConcurrentModificationException,
         DurableWorkflowEngine,
         OperatorActionKind,
         OperatorActionRecord,
@@ -20,6 +29,7 @@ import 'package:workflow_store/workflow_store.dart'
 
 import '../generated/execution_capacity_view.dart';
 import '../generated/operator_action_summary_view.dart';
+import '../generated/review_repair_result.dart';
 import '../generated/work_item_action_context_view.dart';
 import '../generated/work_item_action_result.dart';
 import '../generated/work_item_action_view.dart';
@@ -933,6 +943,558 @@ class WorkItemActionEndpoints extends Endpoint {
   }
 
   // ---------------------------------------------------------------------
+  // The review repair: an operator path for a work item parked behind a
+  // decision that claims a reviewer verdict nobody produced.
+  // ---------------------------------------------------------------------
+
+  /// WRITE. Returns a work item parked behind a fabricated engineering-review
+  /// decision to `agentCompleted` — retryable and dispatchable — and retires the
+  /// decision without destroying it.
+  ///
+  /// ## WHY THIS IS NOT A TRANSITION
+  ///
+  /// `waitingForHumanDecision -> agentCompleted` has no edge in
+  /// `WorkItemTransitions`, exactly as `agentCompleted ->
+  /// waitingForHumanDecision` never had one (`engineering_review_gate.dart`
+  /// reaches the gate by entering `reviewInProgress` first). Nothing in the
+  /// state machine models "a question was asked that nobody asked", so this
+  /// writes the item directly inside one transaction, and says in its audit row
+  /// that no edge was taken. The same is true of every repair migration in this
+  /// repository, and the reason is the same: there is no edge to take.
+  ///
+  /// ## WHAT IT IS PROVABLY SCOPED TO
+  ///
+  /// [readReviewVerdictProvenance] decides repairability, and it decides from the
+  /// REVIEWER'S OWN durable result. The decision's `metadata` is read only for the
+  /// execution id it names; its `reviewVerdict` is never taken as evidence that
+  /// anyone reviewed anything. Only [ReviewAssessment.noReviewerOutput] — no
+  /// result at all, or a result with neither a structured payload nor a
+  /// summary — reaches the write, and only for a decision that IS an
+  /// `engineering_review`.
+  ///
+  /// ## WHAT IT REFUSES, AND WHY EACH REFUSAL IS THE SAFE SIDE
+  ///
+  ///  * [ReviewAssessment.assessed] → `reviewerProducedVerdict`. A reviewer
+  ///    really returned this verdict. Discarding it would destroy a real review.
+  ///    This is the guardrail, and it is the whole reason the provenance is
+  ///    RE-DERIVED rather than read off the decision.
+  ///  * [ReviewAssessment.reviewerProseOnly] → `reviewerProducedProse`. A real
+  ///    reviewer wrote a real assessment that the machine channel failed to
+  ///    capture and the operator has never seen. Measured live in QA on
+  ///    2026-10-14: one such reviewer wrote
+  ///    *"**Verdict: `APPROVE_WITH_NON_BLOCKING_FOLLOWUP`**"* while the decision
+  ///    it produced claimed `changes_required`. Refusing here is deliberate and
+  ///    is the conservative side of the choice — an operator-triggered path that
+  ///    can throw away a genuine review is worse than the bug it repairs. The
+  ///    operator's safe answer on one of these is to RESOLVE the decision
+  ///    (reject routes to `reviewRejected`, a triage entry state), which keeps
+  ///    the reviewer's prose on the execution record.
+  ///  * [ReviewAssessment.unreadable] → `reviewerOutputUnreadable`. "I could not
+  ///    check" is not "there was nothing there".
+  ///  * a decision that is not an `engineering_review` at all →
+  ///    `decisionTypeNotReviewable`. Said TWICE on purpose, by two independent
+  ///    gates — step (5) reads `decisionType` off the row, and step (6) asks
+  ///    [readReviewVerdictProvenance], which classifies the same fact as
+  ///    [ReviewAssessment.decisionTypeNotReviewable] — because this is the one
+  ///    method here that can void a PENDING human decision and it must not fail
+  ///    OPEN. Until 2026-10-15 both gates answered "no reviewer output", the only
+  ///    repairable class, for all eighteen non-review types: a pending
+  ///    `deployment_approval` or `destructive_migration_approval` was retired as
+  ///    "unreviewed" and its work item re-queued. Latent in production (both
+  ///    `requestHumanDecision` callers raise `engineeringReview`, and every other
+  ///    blocking type uses a synthetic scope that is not a `work_item` row), but
+  ///    the affordance's documentation promised a refusal that did not exist, and
+  ///    a documented safety property that is false is worse than an undocumented
+  ///    one because it is relied on. See
+  ///    [ReviewAssessment.decisionTypeNotReviewable].
+  ///  * a decision a human has already RESOLVED → `alreadyDecided`. Someone
+  ///    answered the question. Overwriting that answer is not a repair, it is
+  ///    discarding a real human decision — and QA has one on record: an operator
+  ///    approved `dec-hn7h7daum6-2atjhe`, whose reviewer had in fact timed out,
+  ///    and the work item moved to `reviewApproved`. This refusal is what stops
+  ///    this method being the thing that did that.
+  ///
+  ///    THE OPERATOR HAS SINCE GONE THE OTHER WAY ON THAT ONE, and the two
+  ///    positions are deliberately not the same. Voiding a human approval is
+  ///    `HUMAN_DECISION_REQUIRED` by construction: migration
+  ///    `20261014210000000` did it for all five fabricated decisions under
+  ///    recorded decision `8f1ed5bf-4147-449a-a221-558aac2303a9`, after being
+  ///    shown that one of them had an approval resting on nothing. THIS method
+  ///    still refuses, because an operator clicking a button on one item is not
+  ///    that: the consent was given for five named rows with a stated reason,
+  ///    and generalising it to an ad-hoc action would hand the one authority
+  ///    nobody granted it. The two decisions disagree on purpose.
+  ///  * a decision that is not the item's blocking one, or an item not at
+  ///    `waitingForHumanDecision` → `notApplicable`. There is nothing parked.
+  ///  * a non-terminal job → `alreadyRunning`. A second operator action must not
+  ///    be layered on a live attempt.
+  ///  * a blank reason or a blank requester → `invalidRequest`. The record must
+  ///    say who and why.
+  ///
+  /// EVERY refusal returns before the transaction opens, so every refusal writes
+  /// NOTHING — no audit row, no decision change, no version bump.
+  ///
+  /// ## THE FRESH DEDUPE KEY IS AN ARITHMETIC BORROW, NOT A RE-DERIVATION
+  ///
+  /// `engineeringReviewDedupeKey` (packages/scheduler/lib/src/scheduler.dart)
+  /// builds `'<workItemId>:engineering_review'` plus `':a<n>'` when
+  /// `metadata.triageAttempt` is readable — and the terminal job that stranded
+  /// the item already holds its key, so the item is inert without a bump. The
+  /// bump reuses [DurableWorkflowEngine.nextTriageAttempt] with the HIGHEST
+  /// attempt this item's own `engineering_review` jobs have consumed as the
+  /// floor, which is the same second-watermark rule
+  /// `20261014093000000` used for the triage key and the same one
+  /// `operatorRetry` uses. The arithmetic is not restated here; only the floor
+  /// is computed, and it is computed from the item's own job rows so the key it
+  /// writes is provably unheld.
+  ///
+  /// ## REPLAY
+  ///
+  /// `requestId` is minted by the caller once per operator intent. A repeat
+  /// finds its own audit row by idempotency key and returns what that request
+  /// DID, without writing again — so a double-click cannot mint a second
+  /// discriminator bump, which would queue a second review.
+  ///
+  /// ## ON THE WIRE
+  ///
+  /// Serverpod dispatches methods from the GENERATED connector table
+  /// (`lib/src/generated/endpoints.dart`), and the matching client method lives
+  /// in `packages/control_plane_client/lib/src/protocol/client.dart`. This
+  /// method used to carry `@doNotGenerate` and to return a hand-written Dart
+  /// class, which made it unreachable from any control-plane client: the
+  /// generator emits an import for a file it never writes, and a type declared
+  /// outside `lib/src/models/` appears ZERO times in `protocol.dart`, so the
+  /// `SerializationManager` cannot decode the return value in either direction.
+  /// A green `dart analyze` on the server proved nothing about that, because
+  /// nothing exercised it.
+  ///
+  /// [ReviewRepairResult] is therefore a YAML model
+  /// (`lib/src/models/review_repair_result.yaml`) and the connector row, the
+  /// client method, the serialization entry and both generated copies all come
+  /// from `serverpod generate`. The evidence that closed it is in
+  /// docs/engineering/learning/a-generated-client-can-reference-a-file-it-never-emitted.md
+  /// and the wire proof is `apps/server/test/integration/review_repair_wire_e2e_test.dart`,
+  /// which drives this method through the REAL generated client over HTTP.
+  Future<ReviewRepairResult> repairUnreviewedReview(
+    Session session, {
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+    String? decisionId,
+  }) async {
+    final service = serviceFor(session);
+
+    // (1) REPLAY, before any read that could refuse: a request that already
+    // happened reports what it did, whatever the item has become since.
+    final prior = await service.workflowStore.findTransitionByIdempotencyKey(
+      workItemId,
+      reviewRepairIdempotencyKey(requestId),
+    );
+    if (prior != null) {
+      return ReviewRepairResult(
+        outcome: 'accepted',
+        detail:
+            'this operator intent was already carried out; reporting it rather '
+            'than running it a second time',
+        workItem: UiViewMappers.workItemView(
+          await service.readWorkItem(prior.workItemId),
+        ),
+        decisionId: prior.decisionId,
+      );
+    }
+
+    final trimmedReason = reason.trim();
+    if (trimmedReason.isEmpty || requestedBy.trim().isEmpty) {
+      return _refuse(
+        service,
+        workItemId,
+        'invalidRequest',
+        'the action must record who pressed it and why; both were blank',
+      );
+    }
+
+    final item = await service.readWorkItem(workItemId);
+    final blockingId = item.blockingHumanDecisionId;
+
+    // (2) THERE IS NOTHING PARKED. Not an error — the item has moved on since
+    // the operator looked at it.
+    if (blockingId == null ||
+        item.state != WorkItemState.waitingForHumanDecision) {
+      return _refuse(
+        service,
+        workItemId,
+        'notApplicable',
+        'this work item is at ${item.state.wire} with '
+            '${blockingId == null ? 'no blocking decision' : 'a blocking decision '
+                      'that is not holding it'}, so there is no fabricated question to '
+            'repair',
+        decisionId: blockingId,
+      );
+    }
+
+    // (3) THE DECISION NAMED MUST BE THE ONE HOLDING THE ITEM. Repairing some
+    // other pending decision on the same item would clear a gate that a real
+    // reviewer had raised.
+    if (decisionId != null && decisionId != blockingId) {
+      return _refuse(
+        service,
+        workItemId,
+        'notApplicable',
+        'decision $decisionId is not the decision holding this item '
+            '($blockingId is)',
+        decisionId: decisionId,
+      );
+    }
+
+    final decision = await service.workflowStore.readHumanDecision(blockingId);
+
+    // (4) A HUMAN ALREADY ANSWERED, OR SOMETHING ALREADY CLOSED IT.
+    //
+    // `isResolved` is false for `cancelled`, so two further arms are needed and
+    // they are DIFFERENT facts, kept apart deliberately:
+    //
+    //  * the marker means THIS METHOD retired it before, and re-running must
+    //    not queue a second review;
+    //  * a bare `cancelled` means something ELSE closed it, so writing the
+    //    marker here would assert a retirement that did not happen.
+    //
+    // Both refuse, because "the decision is no longer pending" is the only
+    // thing either of them establishes, and over either is discarding a real
+    // human decision.
+    //
+    // THIS ARM IS NOT OBSOLETE AFTER MIGRATION 20261014210000000, and it is
+    // worth saying why, because the migration voided exactly the decision this
+    // arm was named after. The `choice != null` arm is what now catches it:
+    // migration `20261014210000000` sets `status = cancelled` but does NOT
+    // write `decider`, `choice`, `rationale`, `signatureJson`,
+    // `resolvedOptionId` or `timestamp`, so the recorded approval is still
+    // there and this method still refuses. Widening the migration to clear
+    // those columns would erase the evidence that a human approved anything,
+    // and would make this arm blind to exactly the case it exists for.
+    final alreadyRetired =
+        decisionIsRetiredUnreviewed(decision) ||
+        decision.status == HumanDecisionStatus.cancelled;
+    if (decision.isResolved || decision.choice != null || alreadyRetired) {
+      return _refuse(
+        service,
+        workItemId,
+        'alreadyDecided',
+        alreadyRetired
+            ? 'this decision was already retired as unreviewable and is kept '
+                  'only as a record'
+            : 'a human already resolved this decision '
+                  '(choice ${decision.choice?.wire ?? 'unknown'} by '
+                  '${decision.decider ?? 'unknown'}); repairing it would '
+                  'discard a real human decision, and QA holds one of those',
+        decisionId: decision.decisionId,
+      );
+    }
+
+    // (5) THE DECISION TYPE GATE — defence in depth, and the FIRST of two
+    // independent gates.
+    //
+    // [readReviewVerdictProvenance] answers
+    // [ReviewAssessment.decisionTypeNotReviewable] for a decision that is not an
+    // engineering review, which is already a refusal. This does not rely on that
+    // being true. The refusal here does not depend on the reader's
+    // classification at all: it reads `decisionType` off the row itself and says
+    // no.
+    //
+    // Two gates on one path is proportionate and not redundant belt-and-braces.
+    // This is the only path in the repository that can retire a PENDING HUMAN
+    // DECISION, and the reader is one `if` away from being re-classified by a
+    // future change to the reviewer's result shape — a change with every reason
+    // to look innocuous. If that happened and the classification moved, one gate
+    // would refuse and the other would write, and which one won would depend on
+    // which side of a single `if` a reader happened to fall. The gates are
+    // independent by construction (one reads the decision's type, the other reads
+    // the reviewer's durable result), they are ordered, and they agree.
+    //
+    // Checked BEFORE the provenance read so the cheapest, most fundamental
+    // question is asked first, and so a future reader that returned
+    // [ReviewAssessment.noReviewerOutput] here would still be caught by step (6)
+    // rather than reaching the write.
+    if (decision.decisionType != HumanDecisionType.engineeringReview) {
+      return _refuse(
+        service,
+        workItemId,
+        'decisionTypeNotReviewable',
+        'this work item is parked behind a ${decision.decisionType.wire} '
+            'decision, not an engineering review, so no reviewer verdict is '
+            'claimed by it and there is nothing here for this repair to have '
+            'fabricated. Answer the question the decision is actually asking, '
+            'or resolve it — nothing has been changed',
+        decisionId: decision.decisionId,
+        logContext: {'decisionType': decision.decisionType.wire},
+      );
+    }
+
+    // (6) THE FABRICATION TEST. Re-derived from the reviewer's own result,
+    // never read off the decision. This is the guardrail, and it is the SECOND
+    // of the two independent gates: it is asked of the REVIEWER'S OWN durable
+    // result, on a decision already known to be an engineering review, and it
+    // is what decides repairability among the classes that remain.
+    final provenance = await readReviewVerdictProvenance(
+      executionStore: service.executionStore,
+      decision: decision,
+    );
+    if (!provenance.assessment.isRepairable) {
+      return _refuse(
+        service,
+        workItemId,
+        // EXHAUSTIVE on purpose. The `_` this replaced defaulted every unknown
+        // class to `reviewerOutputUnreadable`, which would mislabel a
+        // `decisionTypeNotReviewable` read as a reader failure — the exact
+        // conflation [ReviewAssessment.decisionTypeNotReviewable] exists to stop.
+        // A new arm now breaks this switch at compile time instead of silently
+        // acquiring the wrong sentence.
+        switch (provenance.assessment) {
+          ReviewAssessment.assessed => 'reviewerProducedVerdict',
+          ReviewAssessment.reviewerProseOnly => 'reviewerProducedProse',
+          ReviewAssessment.unreadable => 'reviewerOutputUnreadable',
+          ReviewAssessment.decisionTypeNotReviewable =>
+            'decisionTypeNotReviewable',
+          ReviewAssessment.noReviewerOutput =>
+            'reviewerOutputUnreadable', // unreachable: isRepairable is true.
+        },
+        switch (provenance.assessment) {
+          ReviewAssessment.assessed =>
+            'a reviewer really returned '
+                '${provenance.verdict?.wire ?? 'a verdict'} for this work item '
+                '(${provenance.detail}), so this is a real question and '
+                'repairing it would discard a real review result',
+          ReviewAssessment.reviewerProseOnly =>
+            'the verdict this decision claims is still unsupported, but a real '
+                'reviewer assessment exists and the operator has never been '
+                'shown it: ${provenance.detail}. Read it, then resolve the '
+                'decision — repairing it here would throw that assessment away',
+          // Reachable only if step (5) is ever removed. It must still say what
+          // was checked, so the operator is not told a reader failed.
+          ReviewAssessment.decisionTypeNotReviewable =>
+            '${provenance.detail}. This repair only applies to engineering '
+                'review decisions, so nothing is changed',
+          _ =>
+            '${provenance.detail}. "I could not check" is not "there was '
+                'nothing there", so nothing is changed',
+        },
+        decisionId: decision.decisionId,
+        logContext: {
+          'assessment': provenance.assessment.name,
+          'reviewExecutionId': provenance.reviewExecutionId,
+        },
+      );
+    }
+
+    // (7) A LIVE ATTEMPT IS NEVER STACKED ON.
+    final jobs = await service.listJobsForWorkItem(workItemId);
+    if (jobs.any((j) => j.state.isActive)) {
+      return _refuse(
+        service,
+        workItemId,
+        'alreadyRunning',
+        'this work item already holds a non-terminal job, so a repair would '
+            'be layered on top of a live attempt',
+        decisionId: decision.decisionId,
+      );
+    }
+
+    // (8) THE DISCRIMINATOR, computed BEFORE the write so an unreadable marker
+    // fails with nothing written — the same discipline `operatorRetry` uses.
+    final attempt = DurableWorkflowEngine.nextTriageAttempt(
+      item,
+      floor: _consumedReviewAttempt(jobs),
+    );
+    final now = DateTime.now().toUtc();
+    final updated = item.copyWith(
+      state: WorkItemState.agentCompleted,
+      blockingHumanDecisionId: null,
+      blockingReason: null,
+      // MERGED, never replacing: the defect payload the next triage or review
+      // reads must survive, or the re-run classifies nothing while looking
+      // healthy.
+      metadata: Map<String, dynamic>.from(item.metadata ?? const {})
+        ..[DurableWorkflowEngine.triageAttemptMetadataKey] = attempt,
+      updatedAt: now,
+      version: item.version + 1,
+    );
+
+    // (9) THE ONE DURABLE WRITE. The work item's compare-and-swap goes FIRST:
+    // it is the only statement that can fail on a concurrent writer, so
+    // ordering it first is what makes "a refusal writes nothing" true on a
+    // store that cannot roll back (`InMemoryWorkflowStore.inTransaction` is
+    // `body(this)` — there is no rollback to rely on here).
+    try {
+      await service.workflowStore.inTransaction((tx) async {
+        await tx.saveWorkItem(updated, expectedVersion: item.version);
+        // The decision is RETIRED, not deleted and not rewritten: status
+        // `cancelled`, everything a human could read preserved verbatim
+        // (question, options, recommendation, context), and a marker naming
+        // why. `HumanDecision.copyWith` offers exactly `status`, `metadata` and
+        // `updatedAt` — it deliberately refuses `decider`/`choice`/
+        // `rationale`/`signature`, so this cannot forge an approval even by
+        // accident.
+        await tx.saveHumanDecision(
+          decision.copyWith(
+            status: HumanDecisionStatus.cancelled,
+            metadata: {
+              ...(decision.metadata ?? const <String, dynamic>{}),
+              reviewUnreviewableMetadataKey: true,
+              'reviewUnreviewableRetiredAt': now.toIso8601String(),
+              'reviewUnreviewableRetiredBy': requestedBy.trim(),
+              'reviewUnreviewableReason': trimmedReason,
+              'reviewUnreviewedExecutionId': provenance.reviewExecutionId,
+              'reviewUnreviewableAssessment': provenance.assessment.name,
+              'reviewUnreviewableDetail': provenance.detail,
+              // What the decision CLAIMED, kept verbatim as evidence and
+              // explicitly NOT as a verdict.
+              'reviewUnreviewableClaimedVerdict': decision
+                  .metadata?['reviewVerdict']
+                  ?.toString(),
+            },
+            updatedAt: now,
+          ),
+        );
+        await tx.appendTransitionRecord(
+          WorkflowTransitionRecord(
+            transitionId: reviewRepairTransitionId(requestId),
+            workItemId: workItemId,
+            fromState: item.state,
+            toState: WorkItemState.agentCompleted,
+            trigger: TransitionTrigger.systemEvent,
+            actorType: ActorType.orchestrator,
+            actorId: requestedBy.trim(),
+            decisionId: decision.decisionId,
+            outcome: TransitionOutcome.accepted,
+            reason: _repairReason(
+              decision: decision,
+              provenance: provenance,
+              fromAttempt: DurableWorkflowEngine.readTriageAttempt(item),
+              jobFloor: _consumedReviewAttempt(jobs),
+              toAttempt: attempt,
+              by: requestedBy.trim(),
+              because: trimmedReason,
+            ),
+            idempotencyKey: reviewRepairIdempotencyKey(requestId),
+            occurredAt: now,
+          ),
+        );
+      });
+    } on ConcurrentModificationException {
+      // Someone else moved the item between the read and this write. Nothing
+      // was taken, so nothing is audited.
+      return _refuse(
+        service,
+        workItemId,
+        'concurrentWrite',
+        'this work item was moved by another writer while the repair was being '
+            'applied; nothing was changed',
+        decisionId: decision.decisionId,
+      );
+    }
+
+    service.logger.info('work_item.review_repair.accepted', {
+      'workItemId': workItemId,
+      'decisionId': decision.decisionId,
+      'requestId': requestId,
+      'requestedBy': requestedBy.trim(),
+      'assessment': provenance.assessment.name,
+      'reviewExecutionId': provenance.reviewExecutionId,
+      'fromTriageAttempt': DurableWorkflowEngine.readTriageAttempt(item),
+      'toTriageAttempt': attempt,
+    });
+    return ReviewRepairResult(
+      outcome: 'accepted',
+      detail:
+          'the decision was retired as unreviewable and the work item returned '
+          'to agent_completed at review attempt $attempt',
+      workItem: UiViewMappers.workItemView(updated),
+      decisionId: decision.decisionId,
+    );
+  }
+
+  /// A refusal. Reads the item once and writes NOTHING.
+  Future<ReviewRepairResult> _refuse(
+    ControlPlaneService service,
+    String workItemId,
+    String outcome,
+    String detail, {
+    String? decisionId,
+    Map<String, dynamic>? logContext,
+  }) async {
+    service.logger.info('work_item.review_repair.refused', {
+      'workItemId': workItemId,
+      'decisionId': decisionId,
+      'outcome': outcome,
+      'detail': detail,
+      ...?logContext,
+    });
+    return ReviewRepairResult(
+      outcome: outcome,
+      detail: detail,
+      workItem: UiViewMappers.workItemView(
+        await service.readWorkItem(workItemId),
+      ),
+      decisionId: decisionId,
+    );
+  }
+
+  /// The highest attempt number this item's OWN `engineering_review` jobs have
+  /// already consumed, as the second watermark for the discriminator.
+  ///
+  /// Reads the item's real job rows rather than assuming a number, for the same
+  /// reason `20261014093000000` did: the only place an attempt number can
+  /// already have a holder is a job, so taking the max over the jobs is what
+  /// makes the key this writes provably unheld. An UNSUFFIXED key consumes no
+  /// attempt and so contributes nothing, which is correct — it is the bare
+  /// `workItemId:engineering_review` form that every attempt suffix moves away
+  /// from.
+  static int _consumedReviewAttempt(List<Job> jobs) {
+    var floor = 0;
+    for (final job in jobs) {
+      if (job.jobType != JobType.engineeringReview) continue;
+      final match = RegExp(r':engineering_review:a(\d+)$').firstMatch(
+        job.dedupeKey,
+      );
+      if (match == null) continue;
+      final value = int.tryParse(match.group(1)!);
+      if (value != null && value > floor) floor = value;
+    }
+    return floor;
+  }
+
+  /// The audit row's `reason`: what happened, what was NOT taken, and why.
+  static String _repairReason({
+    required HumanDecision decision,
+    required ReviewVerdictProvenance provenance,
+    required int? fromAttempt,
+    required int jobFloor,
+    required int toAttempt,
+    required String by,
+    required String because,
+  }) =>
+      'Operator review repair, by $by: $because. The blocking engineering '
+      'review decision ${decision.decisionId} claimed the verdict '
+      '"${decision.metadata?['reviewVerdict'] ?? 'none'}", but re-deriving '
+      'the verdict from the REVIEWER\'S OWN durable result found none: '
+      '${provenance.detail}. The decision is RETIRED, not deleted: its status '
+      'is cancelled, every human-readable field is preserved verbatim, and it '
+      'carries a marker naming this repair, so the claim stays on the record as '
+      'evidence. The work item returns to agent_completed, which IS '
+      'engineeringReviewDefinition.entryStates, and metadata.triageAttempt '
+      'advances from ${fromAttempt ?? 'absent'} to $toAttempt so '
+      'engineeringReviewDedupeKey offers a key no engineering_review job holds '
+      '(the highest attempt this item\'s own review jobs had consumed was '
+      '$jobFloor, and the discriminator is greatest(marker, that floor) + 1). '
+      'NO TRANSITION EDGE WAS TAKEN: '
+      'waitingForHumanDecision -> agentCompleted does not exist in '
+      'WorkItemTransitions, because no edge models "a question was asked that '
+      'nobody asked", so the state is written directly inside one transaction '
+      'with this row as its record. No verdict was invented, none was read '
+      'from the decision itself, and no row outside human_decision, work_item '
+      'and work_item_transition was written.';
+
+  // ---------------------------------------------------------------------
   // Projections
   // ---------------------------------------------------------------------
 
@@ -1020,3 +1582,392 @@ class WorkItemActionEndpoints extends Endpoint {
       .where((a) => a.requestId == requestId && a.action == kind.wire)
       .firstOrNull;
 }
+
+// ---------------------------------------------------------------------------
+// The review repair: vocabulary.
+//
+// NOT server-authored UI copy. Every string here is a wire value or a
+// log-line-safe sentence, and the control plane words it — the same boundary
+// `WorkItemActionResult.outcome` keeps. `detail` is deliberately diagnostic
+// rather than presentational: it is the "why", and it is the whole value of a
+// refusal that an operator has to act on.
+// ---------------------------------------------------------------------------
+
+/// The `human_decision.metadata` key naming a decision as RETIRED because no
+/// reviewer produced the verdict it claims.
+///
+/// It is a durable marker rather than a status, because `HumanDecisionStatus`
+/// has no member meaning "this question was never really asked" and adding one
+/// would be a `platform_contracts` change — a shared-type change belonging to a
+/// different owner. The status is set to
+/// [HumanDecisionStatus.cancelled] alongside it; this key is what says WHY.
+///
+/// Read by exactly ONE call site — this endpoint's replay and double-repair
+/// refusal. That is stated rather than glossed because an earlier revision of
+/// this comment claimed three readers, naming
+/// `WorkflowEndpoints.resolveDecision` and the decision projections. Neither
+/// reads it: `resolveDecision` has no marker check, and the operator-UI reads
+/// key off `blockingHumanDecisionId` and `isResolved` instead, which a retired
+/// decision fails on either count. A comment that claims a reader which does not
+/// exist is worse than no comment, because the next reader concludes the
+/// property is enforced somewhere and stops checking.
+///
+/// Migration `20261014210000000` writes this same key, so the marker is a
+/// SHARED vocabulary between the migration and this method and not a private
+/// one — which is why it lives at the top level with a name rather than as a
+/// constant buried in a method.
+const String reviewUnreviewableMetadataKey = 'reviewUnreviewable';
+
+/// The repair action's idempotency-key prefix. A REPLAY KEY ONLY, exactly like
+/// [operatorRetryIdempotencyKeyPrefix]: a caller that formats it correctly has
+/// authorised nothing, and nothing treats it as a predicate.
+const String reviewRepairIdempotencyKeyPrefix = 'review-repair:';
+
+/// The idempotency key one operator intent writes.
+///
+/// Deterministic in the caller's `requestId`, so a replay — a lost response, a
+/// double-click — finds its own row and does nothing. It is deliberately NOT
+/// derived from the work item: a work item that is fabricated a SECOND time,
+/// months later, must be repairable again, and a per-item key would forbid
+/// that for ever.
+String reviewRepairIdempotencyKey(String requestId) =>
+    '$reviewRepairIdempotencyKeyPrefix$requestId';
+
+/// The audit row id one operator intent writes. Deterministic in `requestId`
+/// for the same reason the idempotency key is, and distinct from every earlier
+/// repair's prefix in this repository (`tr-stranded-repair-`,
+/// `tr-stranded-exec-repair-`, `tr-dedupe-bump-repair-`,
+/// `tr-stranded-key-repair-`, `tr-product-repoint-`) so no rollback of one of
+/// those can delete this action's rows.
+String reviewRepairTransitionId(String requestId) =>
+    'tr-review-repair-$requestId';
+
+// ---------------------------------------------------------------------------
+// WHAT A PENDING `engineering_review` DECISION ACTUALLY RESTS ON.
+//
+// This is the guardrail, so it is written down once and read by the repair and
+// by nothing else — there is exactly one caller, and one caller cannot come to
+// disagree with itself. A SECOND copy of "did a reviewer return a verdict" is
+// how a repair and the guard that protects the repair come to disagree about
+// which decisions are repairable, and the disagreement is silent: the repair
+// would discard a review the guard had promised to protect.
+//
+// THE DECISION'S OWN CLAIM IS NEVER EVIDENCE. `HumanDecision.metadata` is read
+// for the execution id it names and for nothing else; its `reviewVerdict` says
+// nothing about whether anyone reviewed the code, which is the whole defect this
+// read exists to settle.
+// ---------------------------------------------------------------------------
+
+/// What a reviewer actually produced, read back from the reviewer's OWN durable
+/// result.
+///
+/// The four classes exist because "the decision claims a verdict" and "a
+/// reviewer produced one" come apart, and the ways they come apart need
+/// DIFFERENT answers. Collapsing them into a boolean is how the repair would
+/// come to discard real reviews.
+enum ReviewAssessment {
+  /// A [ReviewVerdict] a reviewer actually produced is present in the reviewer's
+  /// own `AgentResult`. NEVER repairable.
+  assessed,
+
+  /// The reviewer produced nothing a human or a machine could read: no result at
+  /// all, or a result whose structured payload is empty AND whose human summary
+  /// is empty too. This is the ONLY repairable class.
+  noReviewerOutput,
+
+  /// A reviewer turn COMPLETED and wrote human-readable prose into the result's
+  /// `summary`, but no machine-readable verdict.
+  ///
+  /// Deliberately NOT repairable, and this is the class the guardrail exists for.
+  /// The decision's verdict claim is still fabricated — nothing in the machine
+  /// channel supports it — but a human assessment of the code EXISTS, it is
+  /// durable, and the operator has never been shown it. Repairing one of these
+  /// would silently throw away a review a real reviewer spent real credits
+  /// producing.
+  ///
+  /// MEASURED LIVE IN QA ON 2026-10-14, which is why this class is not
+  /// theoretical. Two reviewer executions COMPLETED and wrote 2000 characters of
+  /// prose each, while the decisions they produced claimed `changes_required`:
+  ///
+  ///   * `agx-wx-jb-hn7gq1n2dc-1llxxyk` (`defect-DEF-1791685024220546`)
+  ///     opens *"## Engineering Review"* and states **"Verdict:
+  ///     `APPROVE_WITH_NON_BLOCKING_FOLLOWUP`"**, then reviews the fix,
+  ///     verifies the `qaContractDefectIdMetadataKey` swap is value-preserving,
+  ///     and lists three non-blocking findings.
+  ///   * `agx-wx-jb-hn7itcezii-1igc7vp` (`defect-DEF-1791686357139031`)
+  ///     confirms all three diagnoses by inspection, checks the round-trip drift
+  ///     is the real blank-page cause, and checks two claims the commit message
+  ///     does NOT make.
+  ///
+  /// A repair keyed on "no machine-readable verdict" would have destroyed both.
+  reviewerProseOnly,
+
+  /// A result exists and could not be read, or names an execution that is not
+  /// readable. Never repairable: "I could not check" must not be laundered into
+  /// "there was nothing there".
+  unreadable,
+
+  /// The decision is not an engineering review at all, so there is no reviewer
+  /// whose output this action could have fabricated.
+  ///
+  /// NEVER repairable, and it is its OWN arm rather than an overload of
+  /// [unreadable] because it is a different statement. [unreadable] says "I
+  /// could not check"; this says "this is not the kind of thing I repair". Only
+  /// one of those is true here, and conflating them would tell the operator a
+  /// reader failed when in fact there was never anything to read.
+  ///
+  /// ## WHY THIS ARM EXISTS AT ALL — EIGHTEEN OF NINETEEN TYPES
+  ///
+  /// [readReviewVerdictProvenance] used to answer [noReviewerOutput] for every
+  /// non-review decision type — the ONLY repairable class — with the reason
+  /// "this is not an engineering review decision, so no reviewer verdict is
+  /// claimed by it". That reason is true and the conclusion drawn from it was
+  /// exactly backwards: "no verdict is claimed" is not "a verdict was
+  /// fabricated", and the difference is the whole subject of this repair. Eighteen
+  /// of the nineteen [HumanDecisionType]s — `deployment_approval`,
+  /// `destructive_migration_approval`, `securityDecision` and the rest — took that
+  /// path, so a single operator click would retire a live, pending, consequential
+  /// human question as "unreviewed" and re-queue the work behind it.
+  ///
+  /// It was LATENT rather than live: both `requestHumanDecision` callers raise
+  /// `engineeringReview`, and every other blocking type uses a synthetic scope
+  /// that is not a `work_item` row, so no non-review decision could reach this
+  /// method in production as the code stands. It is still a HIGH rather than a
+  /// theoretical one, for two reasons that survive the latency: this is the one
+  /// path in the repository that can void a human decision, so it must not be the
+  /// path that fails OPEN; and the affordance's own documentation promises the
+  /// server refuses an unrepairable item, which was false for 18 of 19 types. A
+  /// documented safety property that is false is worse than an undocumented one,
+  /// because it is relied on.
+  decisionTypeNotReviewable;
+
+  /// Whether this class may be repaired by the operator action.
+  ///
+  /// Exactly one class may, and this getter is the single place that says so, so
+  /// the action and its refusal cannot drift apart.
+  bool get isRepairable => this == ReviewAssessment.noReviewerOutput;
+}
+
+/// The outcome of reading a decision's verdict provenance: WHAT was found, and
+/// the reviewer execution it was read from.
+class ReviewVerdictProvenance {
+  const ReviewVerdictProvenance({
+    required this.assessment,
+    required this.decisionId,
+    required this.workItemId,
+    this.reviewExecutionId,
+    this.verdict,
+    this.detail = '',
+  });
+
+  final ReviewAssessment assessment;
+  final String decisionId;
+  final String workItemId;
+
+  /// The reviewer execution the decision names, or null when it names none.
+  final String? reviewExecutionId;
+
+  /// The verdict the reviewer actually produced, when it produced one. Null in
+  /// every other case — and in particular null NEVER means
+  /// [ReviewVerdict.changesRequired] or any other stand-in.
+  final ReviewVerdict? verdict;
+
+  /// One sentence naming what was found and where. Carried on refusal paths so
+  /// the operator is told WHY, not only THAT.
+  final String detail;
+}
+
+/// Reads the reviewer verdict provenance of [decision].
+///
+/// [executionStore] is the reviewer's own execution store, and the ONLY thing
+/// consulted.
+///
+/// ## THE ORDER OF THE ARMS IS THE GATE'S ORDER
+///
+/// `EngineeringReviewGate._readReviewVerdict` reads an embedded
+/// `engineeringReviewResult` first and falls THROUGH to a top-level `verdict` on
+/// a parse failure. This reads the same two arms in the same order, with the
+/// same two fail-closed outcomes, and it deliberately does NOT simplify either:
+/// an answer that is right about "the reviewer was silent" and wrong about "the
+/// reviewer answered in a form we can read" is an answer that will eventually
+/// let a real verdict be repaired away.
+///
+/// ## NOTHING HERE INVENTS A VERDICT
+///
+/// There is no default member and no fallback. Every path either reports the
+/// verdict the reviewer actually produced or reports that it could not find one,
+/// and [ReviewAssessment.unreadable] exists so that "I could not read the
+/// result" is never silently read as "the reviewer said nothing".
+///
+/// ## IT NEVER THROWS
+///
+/// Every failure mode resolves to [ReviewAssessment.unreadable] with the reason
+/// in [ReviewVerdictProvenance.detail], because a repair action that crashed on
+/// a bad row would leave the item exactly as stuck as it was and would tell the
+/// operator nothing.
+Future<ReviewVerdictProvenance> readReviewVerdictProvenance({
+  required ExecutionStore executionStore,
+  required HumanDecision decision,
+}) async {
+  if (decision.decisionType != HumanDecisionType.engineeringReview) {
+    // NOT `noReviewerOutput`. See [ReviewAssessment.decisionTypeNotReviewable]:
+    // answering "the reviewer said nothing" here answered a question nobody
+    // asked, and the only repairable class was the one it picked.
+    return ReviewVerdictProvenance(
+      assessment: ReviewAssessment.decisionTypeNotReviewable,
+      decisionId: decision.decisionId,
+      workItemId: decision.workItemId,
+      detail:
+          'this is a ${decision.decisionType.wire} decision, not an engineering '
+          'review, so it claims no reviewer verdict and there is no reviewer '
+          'output for this action to have fabricated',
+    );
+  }
+
+  final metadata = decision.metadata ?? const <String, dynamic>{};
+  final rawExecutionId = metadata['reviewExecutionId'];
+  final executionId = rawExecutionId is String ? rawExecutionId : '';
+  if (executionId.isEmpty) {
+    return ReviewVerdictProvenance(
+      assessment: ReviewAssessment.noReviewerOutput,
+      decisionId: decision.decisionId,
+      workItemId: decision.workItemId,
+      detail:
+          'this decision names no reviewer execution, so there is no reviewer '
+          'output behind it at all',
+    );
+  }
+
+  final AgentResult? result;
+  try {
+    result = await executionStore.readResult(executionId);
+  } on Object catch (error) {
+    return ReviewVerdictProvenance(
+      assessment: ReviewAssessment.unreadable,
+      decisionId: decision.decisionId,
+      workItemId: decision.workItemId,
+      reviewExecutionId: executionId,
+      detail: 'the reviewer result could not be read: $error',
+    );
+  }
+  if (result == null) {
+    return ReviewVerdictProvenance(
+      assessment: ReviewAssessment.noReviewerOutput,
+      decisionId: decision.decisionId,
+      workItemId: decision.workItemId,
+      reviewExecutionId: executionId,
+      detail:
+          'reviewer execution $executionId reached a terminal state without '
+          'writing an agent result',
+    );
+  }
+
+  // The reader refuses on an unreadable payload for the same reason the gate
+  // does: `structuredResult` throws on malformed JSON, and "the reviewer
+  // answered in something this build cannot parse" is not "the reviewer said
+  // nothing".
+  final Map<String, dynamic> structured;
+  try {
+    structured = result.structuredResult;
+  } on Object catch (error) {
+    return ReviewVerdictProvenance(
+      assessment: ReviewAssessment.unreadable,
+      decisionId: decision.decisionId,
+      workItemId: decision.workItemId,
+      reviewExecutionId: executionId,
+      detail: 'the reviewer result payload could not be read: $error',
+    );
+  }
+
+  // ARM 1 — the embedded, fully-formed result. Read first, exactly as the gate
+  // reads it, and a verdict is taken from it only when the WHOLE result parses:
+  // a half-parsed assessment is not a verdict.
+  final embedded = structured['engineeringReviewResult'];
+  if (embedded is Map) {
+    try {
+      final parsed = EngineeringReviewResult.fromJson(
+        Map<String, dynamic>.from(embedded),
+      );
+      return ReviewVerdictProvenance(
+        assessment: ReviewAssessment.assessed,
+        decisionId: decision.decisionId,
+        workItemId: decision.workItemId,
+        reviewExecutionId: executionId,
+        verdict: parsed.verdict,
+        detail:
+            'the reviewer returned an embedded engineering review result '
+            'carrying the verdict ${parsed.verdict.wire}',
+      );
+    } on Object {
+      // FALLS THROUGH to arm 2, deliberately, for the reason the gate gives:
+      // that path can still produce an honest verdict from the same payload.
+    }
+  }
+
+  // ARM 2 — a top-level wire verdict. `ReviewVerdict.fromWire` throws on
+  // anything outside the closed set of four, and that throw is the answer: an
+  // unrecognised string is a reviewer answering in a dialect this build does
+  // not speak, which is not an assessment and is certainly not "no assessment".
+  final rawVerdict = structured['verdict'];
+  if (rawVerdict is String && rawVerdict.isNotEmpty) {
+    try {
+      final verdict = ReviewVerdict.fromWire(rawVerdict);
+      return ReviewVerdictProvenance(
+        assessment: ReviewAssessment.assessed,
+        decisionId: decision.decisionId,
+        workItemId: decision.workItemId,
+        reviewExecutionId: executionId,
+        verdict: verdict,
+        detail:
+            'the reviewer returned the verdict ${verdict.wire} in its own '
+            'result payload',
+      );
+    } on Object catch (error) {
+      return ReviewVerdictProvenance(
+        assessment: ReviewAssessment.unreadable,
+        decisionId: decision.decisionId,
+        workItemId: decision.workItemId,
+        reviewExecutionId: executionId,
+        detail: "'$rawVerdict' is not a review verdict ($error)",
+      );
+    }
+  }
+
+  // NO VERDICT IN THE MACHINE CHANNEL. What distinguishes the two remaining
+  // classes is whether a reviewer wrote anything a human could read: the
+  // `summary` is where this repository stores a reviewer's prose, and it is
+  // truncated at 2000 characters by the runtime. Both classes exist in QA today
+  // — see [ReviewAssessment.reviewerProseOnly] for the two that do.
+  final summary = result.summary?.trim() ?? '';
+  if (summary.isEmpty) {
+    return ReviewVerdictProvenance(
+      assessment: ReviewAssessment.noReviewerOutput,
+      decisionId: decision.decisionId,
+      workItemId: decision.workItemId,
+      reviewExecutionId: executionId,
+      detail:
+          'reviewer execution $executionId produced no agent result payload '
+          'and no summary, so there is no reviewer output of any kind',
+    );
+  }
+  return ReviewVerdictProvenance(
+    assessment: ReviewAssessment.reviewerProseOnly,
+    decisionId: decision.decisionId,
+    workItemId: decision.workItemId,
+    reviewExecutionId: executionId,
+    detail:
+        'reviewer execution $executionId wrote ${summary.length} characters of '
+        'review into its summary but no machine-readable verdict, so a real '
+        'assessment exists and must be read before it is discarded',
+  );
+}
+
+/// Whether [decision] has already been RETIRED by a repair.
+///
+/// The durable marker is checked rather than the status alone, because
+/// `HumanDecisionStatus.cancelled` is reachable by other routes and only this
+/// marker means "no reviewer produced the verdict this claims". The value is
+/// compared to `true` rather than tested for presence, so a row that carries the
+/// key for any other reason is not mistaken for a retired one.
+bool decisionIsRetiredUnreviewed(HumanDecision decision) =>
+    (decision.metadata?[reviewUnreviewableMetadataKey] ?? false) == true;

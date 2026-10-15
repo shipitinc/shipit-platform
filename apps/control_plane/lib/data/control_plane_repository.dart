@@ -525,6 +525,54 @@ class ControlPlaneRepository {
     return _workItemActionResult(result);
   }
 
+  /// Retires an engineering-review decision that no reviewer ever backed, and
+  /// puts the work back in the queue for a real one.
+  ///
+  /// ## WHY THE UI IS NOT THE GUARDRAIL, AND THIS METHOD IS WHERE THAT SHOWS
+  ///
+  /// This client method is a pass-through with no pre-flight opinion. The
+  /// decision's own `reviewVerdict` is NOT trusted here, and nothing above this
+  /// line is allowed to pre-judge the repair: whether anything is actually
+  /// repairable is decided by the server, which re-derives provenance from the
+  /// REVIEWER'S OWN durable result and refuses a genuine review
+  /// (`reviewerProducedVerdict`), a human answer (`alreadyDecided`), a decision
+  /// nothing is parked behind (`notApplicable`), and a decision that is not an
+  /// engineering review at all (`decisionTypeNotReviewable`).
+  ///
+  /// So [ReviewRepairResultResponse.detail] is not diagnostics to log — it is
+  /// the sentence the operator reads when the control was wrong, which is why
+  /// it is carried whole and never collapsed into a generic failure here. The
+  /// affordance can be offered on an item that turns out to be unrepairable;
+  /// the refusal is a readable answer, not a silent no-op.
+  ///
+  /// [decisionId] is passed through when the caller has one and omitted when it
+  /// does not, so the server resolves the item's own blocking decision rather
+  /// than being handed a guess. `requestId` is minted by the CALLER once per
+  /// operator intent, exactly as in [retryFailedWorkItem], so a double-click
+  /// cannot queue a second review.
+  Future<ReviewRepairResultResponse> repairUnreviewedReview({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+    String? decisionId,
+  }) async {
+    final result = await _client.workItemActionEndpoints.repairUnreviewedReview(
+      workItemId: workItemId,
+      requestId: requestId,
+      requestedBy: requestedBy,
+      reason: reason,
+      decisionId: decisionId,
+    );
+    revision.value++;
+    return ReviewRepairResultResponse(
+      outcome: result.outcome,
+      detail: result.detail,
+      workItem: _workItemResponse(result.workItem),
+      decisionId: result.decisionId,
+    );
+  }
+
   WorkItemActionResultResponse _workItemActionResult(WorkItemActionResult r) =>
       WorkItemActionResultResponse(
         outcome: r.outcome,
@@ -2919,6 +2967,53 @@ class WorkItemActionResultResponse {
   final int attemptLimit;
   final int? inFlight;
   final int? cap;
+}
+
+class ReviewRepairResultResponse {
+  const ReviewRepairResultResponse({
+    required this.outcome,
+    required this.detail,
+    required this.workItem,
+    this.decisionId,
+  });
+
+  /// 'accepted' | 'notApplicable' | 'reviewerProducedVerdict' |
+  /// 'reviewerProducedProse' | 'reviewerOutputUnreadable' |
+  /// 'decisionTypeNotReviewable' | 'alreadyDecided' | 'alreadyRunning' |
+  /// 'concurrentWrite' | 'invalidRequest'.
+  ///
+  /// A wire value, and the screen words it — except that every value other than
+  /// `accepted` is a refusal whose own sentence is [detail]. `accepted` covers
+  /// both the first application and a replay of an intent that already was.
+  final String outcome;
+
+  /// Why this outcome, in one sentence.
+  ///
+  /// ## THIS IS CARRIED WHOLE AND IT IS THE POINT
+  ///
+  /// For a refusal it is the entire product of the action: "a reviewer really
+  /// did return a verdict" is knowledge an operator must be given, and the only
+  /// sentence that carries it is the one the server composed from the evidence
+  /// it re-derived. Substituting a generic failure string here would discard
+  /// the only thing the operator can act on, so nothing on the client rewrites
+  /// it. It is only ever *displayed* — [operator_action_copy] decides where —
+  /// and it is never parsed to derive a behaviour.
+  final String detail;
+
+  /// The work item as it stands after this attempt — always re-read, so a
+  /// refusal still reports the true current state rather than a stale one.
+  final WorkItemResponse workItem;
+
+  /// The decision this attempt concerned, or null when none applied.
+  final String? decisionId;
+
+  /// Whether this attempt changed anything.
+  ///
+  /// `accepted` and nothing else wrote. Every refusal returns before the
+  /// transaction opens, so a refusal wrote no audit row, no decision change and
+  /// no version bump — which is the reason the screen must not present a
+  /// refusal as though the work had moved.
+  bool get repaired => outcome == 'accepted';
 }
 
 class ModelPolicyResponse {

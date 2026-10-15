@@ -23,6 +23,9 @@ class RunDetailBloc extends Bloc<RunDetailEvent, RunDetailState> {
     on<RunDetailActionStarted>(_onActionStarted);
     on<RunDetailActionCancelled>(_onActionCancelled);
     on<RunDetailActionSubmitted>(_onActionSubmitted);
+    on<RunDetailReviewRepairStarted>(_onReviewRepairStarted);
+    on<RunDetailReviewRepairCancelled>(_onReviewRepairCancelled);
+    on<RunDetailReviewRepairSubmitted>(_onReviewRepairSubmitted);
   }
 
   final String _runId;
@@ -215,6 +218,153 @@ class RunDetailBloc extends Bloc<RunDetailEvent, RunDetailState> {
   /// an empty string that would read as "nobody acted".
   static String _operatorName() =>
       OperatorAttestation.fromRuntime().confirmedBy ?? 'operator';
+
+  // -------------------------------------------------------------------------
+  // THE REVIEW REPAIR
+  //
+  // Separate from the failed-work action above, and separate state for the same
+  // reason the surfaces are separate: a repair is not a third retry/stop mode,
+  // and sharing one `pendingAction` field would mean the two confirm strips
+  // could be open at once and one of them would silently win.
+  // -------------------------------------------------------------------------
+
+  void _onReviewRepairStarted(
+    RunDetailReviewRepairStarted event,
+    Emitter<RunDetailState> emit,
+  ) {
+    emit(
+      state.copyWith(
+        isRepairStripOpen: true,
+        // A NEW repair clears the previous outcome, so a stale receipt is never
+        // sitting under a fresh confirm strip.
+        repairReport: null,
+      ),
+    );
+  }
+
+  void _onReviewRepairCancelled(
+    RunDetailReviewRepairCancelled event,
+    Emitter<RunDetailState> emit,
+  ) {
+    // Dropping the strip discards its request id with it, so the next
+    // deliberate confirm mints a new one — the same rule as the retry strip.
+    emit(state.copyWith(isRepairStripOpen: false));
+  }
+
+  Future<void> _onReviewRepairSubmitted(
+    RunDetailReviewRepairSubmitted event,
+    Emitter<RunDetailState> emit,
+  ) async {
+    emit(state.copyWith(isSubmittingRepair: true));
+    try {
+      final result = await _repository.repairUnreviewedReview(
+        workItemId: _runId,
+        requestId: event.requestId,
+        requestedBy: _operatorName(),
+        reason: event.reason,
+        // The item's OWN blocking decision, and only when it still has one. The
+        // server resolves it itself when this is null; passing a stale id would
+        // name a decision that is no longer the one being parked on, and
+        // omitting it when one exists leaves the server to do the lookup it was
+        // written to do.
+        decisionId: state.blockingHumanDecisionId,
+      );
+
+      // One sentence, chosen by outcome, and the refusal branch is the server's
+      // own — see `repairOutcomeSentence` for why there is deliberately no
+      // per-outcome table here.
+      emit(
+        state.copyWith(
+          isSubmittingRepair: false,
+          isRepairStripOpen: false,
+          repairReport: ReviewRepairReport(
+            accepted: result.repaired,
+            sentence: repairOutcomeSentence(
+              result.outcome,
+              detail: result.detail,
+            ),
+            // The server names the decision it actually examined, which is the
+            // subject this receipt is about. See `ReviewRepairReport.decisionId`
+            // for why the receipt must be keyed to a decision rather than to this
+            // run.
+            decisionId: result.decisionId,
+          ),
+        ),
+      );
+
+      // Re-read, for the same reason the retry action re-reads: a repair retires
+      // the decision and re-queues the work, so the page is showing a genuinely
+      // different item and must say so. The receipt is deliberately PRESERVED
+      // across this reload — see `ReviewRepairReport`'s field docs on the
+      // widget, which is exactly the state that must outlive the decision id.
+      add(RunDetailLoaded());
+    } on Object {
+      // The transport failed, so there is no `detail` to show and nothing
+      // truthful to claim. Say that nothing changed, and KEEP the strip so the
+      // operator's words survive and the same request id can be retried.
+      //
+      // The receipt is keyed to NO decision, and that is the honest answer: the
+      // request never reached the server, so nothing about any decision was
+      // examined. Which means a later park behind a different decision still
+      // re-offers, which is correct — an attempt that never arrived has not
+      // answered anything.
+      emit(
+        state.copyWith(
+          isSubmittingRepair: false,
+          repairReport: const ReviewRepairReport(
+            accepted: false,
+            sentence: failedSentence,
+          ),
+        ),
+      );
+    }
+  }
+}
+
+/// What one resolved repair attempt did.
+///
+/// Carried as one object rather than two fields so `accepted` and `sentence`
+/// cannot drift apart — a receipt that showed the three "this moved forward"
+/// facts beside a refusal sentence would be the exact false state this whole
+/// surface exists to prevent.
+class ReviewRepairReport {
+  const ReviewRepairReport({
+    required this.accepted,
+    required this.sentence,
+    this.decisionId,
+  });
+
+  /// True only when the endpoint returned `accepted`, i.e. the decision was
+  /// actually retired. Every other outcome wrote nothing at all.
+  final bool accepted;
+
+  /// The one sentence the operator reads. On a refusal this is the server's own
+  /// `detail`, carried whole.
+  final String sentence;
+
+  /// The decision THIS attempt concerned, or null when the attempt never reached
+  /// one — a blank request is refused before the decision is even resolved.
+  ///
+  /// ## WHY THE RECEIPT IS KEYED TO A DECISION AND NOT TO A RUN
+  ///
+  /// The receipt is one-way PER DECISION, and keying it to the run is wrong
+  /// because a work item parks on a decision more than once. Its premise — that
+  /// every refusal is a statement about durable state that cannot change under
+  /// the operator's feet — holds for the SUBJECT of the prior refusal and for
+  /// nothing else. Durable state for the item absolutely does change: a repair is
+  /// retired, the re-queued review runs, and the item parks again behind a
+  /// DIFFERENT decision.
+  ///
+  /// Keyed to the run alone, that second park found `repairReport` already
+  /// non-null — it is deliberately preserved across `RunDetailLoaded()` — so the
+  /// operator saw a receipt about a decision they never attempted and NO OFFER at
+  /// all, silently disabling the repair for the next fabrication. That is the
+  /// recurring shape this feature exists for, so the outage would have been
+  /// precisely where the feature was needed.
+  ///
+  /// Null is a real state, not an absence: it is the `invalidRequest` refusal,
+  /// which is keyed to nothing because nothing about a decision was examined.
+  final String? decisionId;
 }
 
 class RunDetailState {
@@ -239,6 +389,9 @@ class RunDetailState {
     this.pendingAction,
     this.isSubmittingAction = false,
     this.actionAnnouncement,
+    this.isRepairStripOpen = false,
+    this.isSubmittingRepair = false,
+    this.repairReport,
     this.errorMessage,
   });
 
@@ -286,6 +439,24 @@ class RunDetailState {
   /// The live-region sentence for the last resolved action (AC-25).
   final String? actionAnnouncement;
 
+  /// True once the operator has opened the review-repair confirm strip.
+  ///
+  /// Deliberately NOT `pendingAction`: the two surfaces are different actions
+  /// with different consequences, and one shared field would let a repair strip
+  /// and a retry strip both claim to be the open one.
+  final bool isRepairStripOpen;
+
+  final bool isSubmittingRepair;
+
+  /// What the last repair attempt did, or null while none has resolved.
+  ///
+  /// PRESERVED across the reload a repair triggers. A successful repair retires
+  /// the blocking decision, so gating this on the decision still existing would
+  /// delete the receipt at the exact moment it became the most important thing
+  /// on the screen — which is why `copyWith` carries it through the `_unset`
+  /// sentinel rather than the null-defaulting `?? this.x` the plain fields use.
+  final ReviewRepairReport? repairReport;
+
   final String? errorMessage;
 
   RunDetailState copyWith({
@@ -294,14 +465,21 @@ class RunDetailState {
     String? name,
     String? description,
     String? state,
-    String? blockingHumanDecisionId,
+    // `_unset`, not `?? this.x`. These three genuinely go to null when the
+    // blocking decision is retired — which is exactly what a review repair does
+    // — and `?? this.blockingHumanDecisionId` cannot express "set it to null",
+    // so it would have silently kept the dead decision on screen and the screen
+    // would have gone on OFFERING the repair for a decision that no longer
+    // exists. The same defect the sentinel above was introduced for, in the
+    // three fields that were never given it.
+    Object? blockingHumanDecisionId = _unset,
     String? agent,
     String? category,
     DateTime? startedAt,
     List<RunEvent>? events,
     List<String>? heldUpJobs,
-    String? recommendation,
-    String? haltedState,
+    Object? recommendation = _unset,
+    Object? haltedState = _unset,
     List<ArtifactRefResponse>? artifacts,
     List<ModelExecutionRecordResponse>? modelExecutions,
     Object? actionContext = _unset,
@@ -309,6 +487,9 @@ class RunDetailState {
     Object? pendingAction = _unset,
     bool? isSubmittingAction,
     Object? actionAnnouncement = _unset,
+    bool? isRepairStripOpen,
+    bool? isSubmittingRepair,
+    Object? repairReport = _unset,
     String? errorMessage,
   }) {
     return RunDetailState(
@@ -317,15 +498,20 @@ class RunDetailState {
       name: name ?? this.name,
       description: description ?? this.description,
       state: state ?? this.state,
-      blockingHumanDecisionId:
-          blockingHumanDecisionId ?? this.blockingHumanDecisionId,
+      blockingHumanDecisionId: identical(blockingHumanDecisionId, _unset)
+          ? this.blockingHumanDecisionId
+          : blockingHumanDecisionId as String?,
       agent: agent ?? this.agent,
       category: category ?? this.category,
       startedAt: startedAt ?? this.startedAt,
       events: events ?? this.events,
       heldUpJobs: heldUpJobs ?? this.heldUpJobs,
-      recommendation: recommendation ?? this.recommendation,
-      haltedState: haltedState ?? this.haltedState,
+      recommendation: identical(recommendation, _unset)
+          ? this.recommendation
+          : recommendation as String?,
+      haltedState: identical(haltedState, _unset)
+          ? this.haltedState
+          : haltedState as String?,
       artifacts: artifacts ?? this.artifacts,
       modelExecutions: modelExecutions ?? this.modelExecutions,
       actionContext: identical(actionContext, _unset)
@@ -341,6 +527,11 @@ class RunDetailState {
       actionAnnouncement: identical(actionAnnouncement, _unset)
           ? this.actionAnnouncement
           : actionAnnouncement as String?,
+      isRepairStripOpen: isRepairStripOpen ?? this.isRepairStripOpen,
+      isSubmittingRepair: isSubmittingRepair ?? this.isSubmittingRepair,
+      repairReport: identical(repairReport, _unset)
+          ? this.repairReport
+          : repairReport as ReviewRepairReport?,
       errorMessage: errorMessage,
     );
   }
