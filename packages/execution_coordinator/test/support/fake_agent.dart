@@ -16,6 +16,7 @@ class FakeAgentSession implements AgentSession {
     this.startGate,
     this.instructionGate,
     this.throwOnStart = false,
+    this.throwTransportOnStart = false,
   });
 
   final String executionId;
@@ -30,6 +31,16 @@ class FakeAgentSession implements AgentSession {
   /// non-retryable; a coordinator that settled both this and a timeout the same
   /// way would turn a permanently broken runtime into an unbounded retry loop.
   final bool throwOnStart;
+
+  /// When true, [start] throws an [AcpTransportException] instead — the wire
+  /// going quiet during the handshake, which is what `OpenCodeSession.start`
+  /// raises when its own budget expires or the child dies.
+  ///
+  /// Kept separate from [throwOnStart] because the two must NOT settle the same
+  /// way. A plain crash is permanent; a transport failure is transient and
+  /// spends an attempt. Asserting them at the same value would let either
+  /// regression hide behind the other.
+  final bool throwTransportOnStart;
 
   final _events = StreamController<AgentEvent>.broadcast(sync: true);
   AgentSessionStatus _status = AgentSessionStatus.starting;
@@ -86,6 +97,11 @@ class FakeAgentSession implements AgentSession {
   Future<void> start(AgentSessionConfig config) async {
     if (throwOnStart) {
       throw StateError('fake runtime could not start a session');
+    }
+    if (throwTransportOnStart) {
+      throw const AcpTransportException(
+        'opencode did not finish starting within 2s',
+      );
     }
     final gate = startGate;
     if (gate != null) await gate.future;

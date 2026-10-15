@@ -4,6 +4,16 @@ import 'package:agent_runtime/agent_runtime.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:test/test.dart';
 
+/// A budget long enough that no test double in this file is ever bounded by it.
+///
+/// `AgentSessionConfig.timeout` is REQUIRED since this lane: it used to default
+/// to five minutes, which meant every one of these call sites had been running
+/// on a silent fallback rather than on a value anybody chose. Naming it here
+/// keeps that visible — these tests are about the session's behaviour, not its
+/// budget, and the one test that IS about the budget
+/// (`opencode_request_timeout_test.dart`) states its own.
+const Duration _generousBudget = Duration(minutes: 30);
+
 void main() {
   group('AgentRuntime', () {
     test('registers and retrieves adapters', () {
@@ -118,6 +128,7 @@ void main() {
           executionId: 'exec-1',
           workItemId: 'work-1',
           workingDirectory: '/tmp/ws',
+          timeout: _generousBudget,
         ),
       );
       expect(session.sessionId, startsWith('ses_'));
@@ -168,6 +179,7 @@ void main() {
           workItemId: 'work-1',
           workingDirectory: '/tmp/ws',
           runtimeConfig: const {'model': 'opencode/big-pickle'},
+          timeout: _generousBudget,
         ),
       );
       expect(fake.modelConfigCalls, equals(1));
@@ -221,6 +233,7 @@ void main() {
           executionId: 'exec-1',
           workItemId: 'work-1',
           workingDirectory: '/tmp/ws',
+          timeout: _generousBudget,
         ),
       );
 
@@ -250,6 +263,7 @@ void main() {
           workItemId: 'work-1',
           workingDirectory: '/tmp/ws',
           sessionId: 'ses_preexisting',
+          timeout: _generousBudget,
         ),
       );
 
@@ -289,6 +303,7 @@ void main() {
           executionId: 'exec-1',
           workItemId: 'work-1',
           workingDirectory: '/tmp/ws',
+          timeout: _generousBudget,
         ),
       );
 
@@ -567,6 +582,7 @@ AgentSessionConfig minimalConfig() {
     executionId: 'exec-1',
     workItemId: 'work-1',
     workingDirectory: '/tmp/ws',
+    timeout: _generousBudget,
   );
 }
 
@@ -589,6 +605,7 @@ void _environmentSeamingTests() {
           workItemId: 'w1',
           workingDirectory: '/tmp',
           environment: {'SHIPIT_POOL': 'linux-a', 'MAX_JOBS': '4'},
+          timeout: _generousBudget,
         ),
       );
       final spawned = transport as dynamic;
@@ -602,6 +619,7 @@ void _environmentSeamingTests() {
         executionId: 'e2',
         workItemId: 'w2',
         workingDirectory: '/tmp',
+        timeout: _generousBudget,
       ),
     );
     expect((transport as dynamic).environment, isNull);

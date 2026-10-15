@@ -117,6 +117,7 @@ Future<AgentResult> _runTriageTurn(
       executionId: 'exec-1',
       workItemId: 'defect-42',
       workingDirectory: '/tmp/ws',
+      timeout: Duration(minutes: 30),
     ),
   );
   await session.sendInstruction(

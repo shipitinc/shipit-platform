@@ -5,6 +5,10 @@ import 'package:agent_runtime/agent_runtime.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:test/test.dart';
 
+/// See `_generousBudget` in `agent_runtime_test.dart`: `AgentSessionConfig.timeout`
+/// is required, so this double states the budget it runs under.
+const Duration _generousBudget = Duration(minutes: 30);
+
 /// Receiving-side coverage for the `session/update` notifications a live
 /// `opencode acp` process emits.
 ///
@@ -147,6 +151,7 @@ Future<_Run> _drive(
       workItemId: 'defect-42',
       workingDirectory: '/tmp/ws',
       runtimeConfig: runtimeConfig,
+      timeout: _generousBudget,
     ),
   );
   await session.sendInstruction(

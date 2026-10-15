@@ -66,6 +66,11 @@ class OpencodeAdapter implements AgentAdapter {
           executionId: 'health-check',
           workItemId: 'health-check',
           workingDirectory: '/tmp',
+          // Named, not inherited: a probe is a liveness check, not an
+          // execution, so it does not take the role budget — and with
+          // `AgentSessionConfig.timeout` required it must say which bound it
+          // runs under instead of quietly taking a default.
+          timeout: healthProbeTimeout,
         ),
       );
       final result = await probe.initialize();
