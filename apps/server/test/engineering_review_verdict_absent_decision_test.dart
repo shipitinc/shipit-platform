@@ -703,20 +703,41 @@ The diff introduces a retry loop with no bound. It must be capped.
     });
   });
 
-  group('a review that did NOT finish is untouched', () {
-    // The other half of b1, deliberately left exactly as it was. A timed-out or
-    // crashed review still has `maxAttempts` owed to it, and
-    // `Scheduler._returnOneToEntryState` returns the item to a lane entry state
-    // to make the retry claimable — while `waitingForHumanDecision` is
+  group('a review whose job still OWES A RETRY is untouched', () {
+    // The other half of b1, kept deliberately. A timed-out or crashed review
+    // whose job is still inside its bounded budget has `maxAttempts` owed to it,
+    // and `Scheduler._returnOneToEntryState` returns the item to a lane entry
+    // state to make the retry claimable — while `waitingForHumanDecision` is
     // explicitly SKIPPED by that return. Parking those items would pre-empt a
     // retry that is coming, which is the mirror image of the bug this decision
     // fixes.
+    //
+    // The fixture is the row `Scheduler._adopt` actually writes for that case:
+    // `retryWaiting` with a transient failure and `attempt` ALREADY at
+    // `maxAttempts`, because `JobQueue.scheduleRetry` pre-increments it.
     test(
       'a timed-out review still raises NOTHING and stays retryable',
       () async {
         final host = await _Host.notFinished(
           executionStatus: AgentSessionStatus.failed,
           executionReason: 'execution exceeded its 300s timeout budget',
+        );
+
+        expect(
+          host.job.state,
+          JobState.retryWaiting,
+          reason:
+              'this whole group is about the queue owing a retry. A host that '
+              'answered `succeeded` here would be asserting that a stranded '
+              'item is acceptable, which is the defect this lane exists to fix.',
+        );
+        expect(
+          host.job.attempt,
+          host.job.maxAttempts,
+          reason:
+              'and the counter is already spent, because `scheduleRetry` '
+              'pre-increments it. A gate that asked "is the budget spent?" would '
+              'read this perfectly live retry as exhausted.',
         );
 
         await host.drainGate();
@@ -738,8 +759,8 @@ The diff introduces a retry loop with no bound. It must be capped.
     );
 
     test(
-      'the durable absence record says the review had NOT completed, so a '
-      'reader cannot mistake this for a dropped item',
+      'the durable absence record says a retry is STILL OWED, so a reader '
+      'cannot mistake this for a dropped item',
       () async {
         final host = await _Host.notFinished(
           executionStatus: AgentSessionStatus.failed,
@@ -754,10 +775,22 @@ The diff introduces a retry loop with no bound. It must be capped.
         expect(recorded, hasLength(1));
         expect(recorded.single.payload?['reviewCompleted'], isFalse);
         expect(
+          recorded.single.payload?['retryOwed'],
+          isTrue,
+          reason:
+              'the durable record carries BOTH facts. "A retry is still owed" is '
+              'the gate\'s trigger; "the review completed" is a separate fact '
+              'about the reviewer, and a reader needs both to know whether to '
+              'wait or to intervene.',
+        );
+        expect(
           host.loggedEvents
               .firstWhere((l) => l.$1 == 'engineering-review-gate-no-verdict')
               .$2['decision'],
-          contains('maxAttempts'),
+          allOf(
+            contains('maxAttempts'),
+            contains('not raised'),
+          ),
         );
       },
     );
@@ -892,26 +925,29 @@ The diff introduces a retry loop with no bound. It must be capped.
       );
     });
 
-    test('a review that did NOT finish still claims nothing either', () async {
-      // The pre-existing assertion, kept: `maxAttempts` is still owed a retry.
-      final host = await _Host.notFinished(
-        executionStatus: AgentSessionStatus.failed,
-        executionReason: 'execution exceeded its 300s timeout budget',
-      );
+    test(
+      'a review whose retry is still owed still claims nothing either',
+      () async {
+        // The pre-existing assertion, kept: a retry is still owed.
+        final host = await _Host.notFinished(
+          executionStatus: AgentSessionStatus.failed,
+          executionReason: 'execution exceeded its 300s timeout budget',
+        );
 
-      await host.drainGate();
+        await host.drainGate();
 
-      expect(
-        host.loggedEvents
-            .firstWhere((l) => l.$1 == 'engineering-review-gate-no-verdict')
-            .$2['decision'],
-        contains('maxAttempts'),
-      );
-      expect(
-        host.loggedEvents.map((l) => l.$2['decision'] ?? ''),
-        isNot(contains(contains(falseClaim))),
-      );
-    });
+        expect(
+          host.loggedEvents
+              .firstWhere((l) => l.$1 == 'engineering-review-gate-no-verdict')
+              .$2['decision'],
+          contains('maxAttempts'),
+        );
+        expect(
+          host.loggedEvents.map((l) => l.$2['decision'] ?? ''),
+          isNot(contains(contains(falseClaim))),
+        );
+      },
+    );
 
     test(
       'NON-VACUITY: the matcher matches on the raised path, and the four '
@@ -953,6 +989,195 @@ The diff introduces a retry loop with no bound. It must be capped.
         expect(sentences.toSet(), hasLength(4));
         expect(sentences.where((s) => s.contains(falseClaim)), hasLength(1));
         expect(sentences.where((s) => s.contains('not raised')), hasLength(3));
+      },
+    );
+  });
+
+  // ## THE THIRD STRANDED CLASS, AND WHY IT IS A DIFFERENT QUESTION
+  //
+  // `reviewInProgress` was terminal by omission for exactly one failure class: a
+  // PERMANENT review-job failure. Three producers can move an item out of
+  // `reviewInProgress`, and every one of them refuses:
+  //
+  //  1. the retry-return edge `reviewInProgress -> agentCompleted`
+  //     (`work_item_transitions.dart:388`) requires `job.state == retryWaiting`
+  //     AND `failure.kind.isRetryable` — i.e. `== transient`. `_adopt` routes
+  //     `permanent` straight to `complete(failed)` and never calls
+  //     `scheduleRetry`, so there is no retry to return for.
+  //  2. the verdict path needs a parsed `ReviewVerdict`, and a crash produced
+  //     none.
+  //  3. `raiseVerdictAbsentDecision` was gated on
+  //     `execution.status == AgentSessionStatus.completed`, which a permanent
+  //     failure never reaches — it settles `failed`/`interrupted`.
+  //
+  // And nothing can re-mint one: `reviewInProgress` is NOT in
+  // `engineeringReviewDefinition.entryStates` (`{agentCompleted}`), so
+  // `RunnableWorkEvaluator` answers `noAction` before any policy probe runs.
+  //
+  // Measured on 2026-10-15: `defect-DEF-1791685024220546` and
+  // `defect-DEF-1791686357139031`, both `AgpTransportException: ACP request
+  // timed out`, job `failed` with `kind: permanent`.
+  group('a review that FAILED with no retry owed reaches a person', () {
+    test('the live permanent-failure shape is no longer stranded', () async {
+      final host = await _Host.notFinished(
+        executionStatus: AgentSessionStatus.failed,
+        executionReason: 'AgpTransportException: ACP request timed out',
+        retryOwed: false,
+        jobFailureReason: 'AgpTransportException: ACP request timed out',
+      );
+
+      await host.drainGate();
+
+      final item = await host.workflowEngine.loadWorkItem(_Host.workItemId);
+      expect(
+        item.blockingHumanDecisionId,
+        isNotNull,
+        reason:
+            'the job is terminally `failed` with `kind: permanent`, so no retry '
+            'is owed by anything and no other lane can re-mint this item. Before '
+            'the trigger was re-pointed at the queue, the gate tested '
+            '`execution.status == completed`, which this execution never '
+            'satisfies, and the item sat at review_in_progress for ever.',
+      );
+      expect(item.state, WorkItemState.waitingForHumanDecision);
+      expect(
+        host.raisedCount,
+        1,
+        reason:
+            'and exactly one: a repeated tick must not mint a queue of them',
+      );
+    });
+
+    test('it asserts NO verdict, exactly as the completed-review path does', () async {
+      final host = await _Host.notFinished(
+        executionStatus: AgentSessionStatus.failed,
+        executionReason: 'AgpTransportException: ACP request timed out',
+        retryOwed: false,
+      );
+
+      await host.drainGate();
+
+      final decision = await host.requireDecision();
+      expect(
+        verdictAbsentDecisionCarriesAVerdict(decision),
+        isFalse,
+        reason:
+            'reaching a human is not inventing an assessment. This is the whole '
+            'property of this file: the decision exists, and it asserts nothing '
+            'about the quality of the work.',
+      );
+      expect(
+        decision.recommendation,
+        verdictAbsentReviewFailedRecommendation,
+        reason:
+            'not `verdictAbsentRecommendation`: that line instructs an operator '
+            'to read what the reviewer wrote, and on a crash there is nothing '
+            'written. Pointing at prose that does not exist is a different false '
+            'statement, not a smaller version of this one.',
+      );
+      expect(
+        decision.options!.map((o) => o.optionId),
+        unorderedEquals(['rework', 'cancel']),
+        reason:
+            'unchanged: `approve` and `reject` are the two choices that WOULD '
+            'assert an assessment nobody made, and nothing about a failed review '
+            'makes them honest',
+      );
+    });
+
+    test(
+      'the question never claims a review ran that did not, and says the '
+      'worker\'s own words',
+      () async {
+        final host = await _Host.notFinished(
+          executionStatus: AgentSessionStatus.failed,
+          executionReason: 'AgpTransportException: ACP request timed out',
+          retryOwed: false,
+          jobFailureReason: 'AgpTransportException: ACP request timed out',
+        );
+
+        await host.drainGate();
+
+        final decision = await host.requireDecision();
+        expect(
+          decision.question,
+          isNot(contains('ran to completion')),
+          reason:
+              'the reviewer did not finish. A confident sentence about a fact '
+              'nobody established is the same class of defect as a verdict '
+              'nobody produced, and it is the one the b1 text hardcoded.',
+        );
+        expect(decision.question, contains('did not finish'));
+        expect(decision.question, contains('NO VERDICT'));
+        expect(
+          decision.question,
+          contains('AgpTransportException: ACP request timed out'),
+          reason:
+              'the raw worker-side text survives only on `JobFailure.reason` — '
+              'the coordinator composes its own `AgentExecution.reason` — and it '
+              'is the difference an operator is choosing between when they pick '
+              'rework or cancel',
+        );
+
+        // And the same facts are on the record, so a surface can render them
+        // without parsing English.
+        final recorded =
+            decision.metadata![reviewVerdictAbsentMetadataKey]!
+                as Map<String, dynamic>;
+        expect(recorded['reviewCompleted'], isFalse);
+        expect(recorded['verdictRecorded'], isFalse);
+        expect(recorded['reviewProsePresent'], isFalse);
+        final jobFailure =
+            recorded['reviewJobFailure']! as Map<String, dynamic>;
+        expect(jobFailure['kind'], 'permanent');
+        expect(jobFailure['jobState'], 'failed');
+        expect(jobFailure['code'], 'executionFailed');
+      },
+    );
+
+    test(
+      'and it MOVES: the same two answers still route where they always did',
+      () async {
+        // The decision is only worth raising if answering it does something.
+        // `rework` puts the item back in the implementation lane's entry state;
+        // `cancel` ends it. Neither asserts anything about the work's quality,
+        // which is the property that makes them the only honest pair.
+        final host = await _Host.notFinished(
+          executionStatus: AgentSessionStatus.failed,
+          executionReason: 'AgpTransportException: ACP request timed out',
+          retryOwed: false,
+        );
+
+        await host.drainGate();
+
+        final decision = await host.requireDecision();
+        final moved = await host.workflowEngine.resolveHumanDecision(
+          decisionId: decision.decisionId,
+          choice: HumanDecisionChoice.rework,
+          decider: 'operator@example.com',
+          rationale:
+              'The reviewer could not be reached. Build and review again.',
+          signature: _signature,
+        );
+        expect(moved.state, WorkItemState.implementationReady);
+
+        // And `approve` is still refused by the resolution path, so a client
+        // cannot turn this into `reviewApproved` by submitting a choice that
+        // was never offered.
+        final second = await _Host.notFinished(
+          executionStatus: AgentSessionStatus.failed,
+          executionReason: 'AgpTransportException: ACP request timed out',
+          retryOwed: false,
+        );
+        await second.drainGate();
+        final secondDecision = await second.requireDecision();
+        expect(
+          verdictAbsentChoiceIsResolvable(
+            secondDecision,
+            HumanDecisionChoice.approve,
+          ),
+          isFalse,
+        );
       },
     );
   });
@@ -1032,6 +1257,9 @@ class _Host {
   static Future<_Host> _base({
     String? producerActorId,
     bool parkedBetweenReads = false,
+    JobState jobState = JobState.succeeded,
+    JobFailure? failure,
+    int? attempt,
   }) async {
     final workflowStore = InMemoryWorkflowStore();
     final jobStore = InMemoryJobStore();
@@ -1058,7 +1286,9 @@ class _Host {
       instruction: 'Review the implementation.',
     );
     final job = enqueued.job.copyWith(
-      state: JobState.succeeded,
+      state: jobState,
+      failure: failure,
+      attempt: attempt,
       executionReference: JobExecutionReference(
         workerExecutionId: 'wx-review',
         agentExecutionId: reviewerExecutionId,
@@ -1129,11 +1359,46 @@ class _Host {
   }
 
   /// A reviewer that did NOT finish — a budget kill, a crash.
+  ///
+  /// ## `retryOwed` IS THE FACT UNDER TEST, NOT A FIXTURE DETAIL
+  ///
+  /// The gate raises when no retry is still owed, and the two ways to reach that
+  /// state produce the opposite outcomes: a `retryWaiting` job still has a retry
+  /// coming and must be left alone; a `permanent` failure has none and must reach
+  /// a person. `retryOwed` stamps the first (default) or the second, exactly as
+  /// `Scheduler._adopt` would.
+  ///
+  /// `producerActorId` defaults to a real one because these hosts now RAISE on the
+  /// `retryOwed: false` path, and `actorIsNotSelf()` — which
+  /// `reviewInProgress -> waitingForHumanDecision` carries — fails closed without
+  /// it. `ExecutionCoordinator._completeSuccess` stamps it in the same transition
+  /// that puts an item into `agentCompleted`, so a real item always has one.
   static Future<_Host> notFinished({
     required AgentSessionStatus executionStatus,
     required String? executionReason,
+    bool retryOwed = true,
+    String? jobFailureReason,
+    String? producerActorId = producerExecutionId,
   }) async {
-    final host = await _base();
+    final host = await _base(
+      producerActorId: producerActorId,
+      jobState: retryOwed ? JobState.retryWaiting : JobState.failed,
+      // `scheduleRetry` pre-increments, so a live retry has already spent the
+      // counter — which is what makes this the honest non-vacuous shape for
+      // "a retry is still owed".
+      attempt: retryOwed ? engineeringReviewDefinition.maxAttempts : 1,
+      failure: retryOwed
+          ? JobFailure(
+              code: JobFailureCode.executionInterrupted,
+              kind: JobFailureKind.transient,
+              reason: jobFailureReason ?? executionReason,
+            )
+          : JobFailure(
+              code: JobFailureCode.executionFailed,
+              kind: JobFailureKind.permanent,
+              reason: jobFailureReason,
+            ),
+    );
     await host._saveExecution(executionStatus, executionReason);
     return host;
   }

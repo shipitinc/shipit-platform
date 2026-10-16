@@ -120,6 +120,7 @@ void main() {
               'a reviewer that answered in prose and emitted no structured '
               'verdict was assessed by nobody. `changes_required` here was '
               'invented by the default at the top of the read.',
+          reviewCompleted: true,
         );
         expect(host.absenceCauses, ['verdict_absent']);
       },
@@ -176,6 +177,7 @@ void main() {
                 "'$wire' is not one of ReviewVerdict's four wire values. "
                 'Reading it as `changes_required` asserts a finding no reviewer '
                 'made.',
+            reviewCompleted: true,
           );
           expect(
             host.absenceCauses,
@@ -196,6 +198,12 @@ void main() {
       // The live timeout case, verbatim: the execution reached `failed` at
       // exactly 300s with the coordinator's budget reason and the coordinator's
       // own fallback result never landed in the store.
+      //
+      // `_expireExecution` settles that as `interrupted`, which
+      // `RetryPolicy.classify` reads as `transient`, which `_adopt` hands to
+      // `scheduleRetry` — so this host carries a `retryWaiting` job, and that is
+      // WHY nothing is raised. Not because the review stopped: a permanent
+      // failure stops it just as dead and raises (see the other group).
       final host = await _GateHost.noResult(
         executionStatus: AgentSessionStatus.failed,
         executionReason:
@@ -207,10 +215,11 @@ void main() {
 
       await host.expectNoDecisionRaised(
         reason:
-            'no reviewer ran to completion, so there is no assessment. The '
-            'pre-fix gate built an EngineeringReviewResult with '
-            '`findings: const []` and verdict `changesRequired`, which is an '
-            'invented verdict AND an invented empty findings list.',
+            'no reviewer ran to completion, so there is no assessment, AND a '
+            'retry is still owed. The pre-fix gate built an '
+            'EngineeringReviewResult with `findings: const []` and verdict '
+            '`changesRequired`, which is an invented verdict AND an invented '
+            'empty findings list.',
       );
       expect(
         host.absenceCauses,
@@ -426,13 +435,21 @@ void main() {
           executionReason: 'execution exceeded its 300s timeout budget',
         );
 
-        expect(host.job.attempt, 1);
+        expect(host.job.attempt, host.job.maxAttempts);
         expect(
           host.job.maxAttempts,
           engineeringReviewDefinition.maxAttempts,
           reason: 'the budget is the definition\'s, not the gate\'s',
         );
-        expect(host.job.failure, isNull);
+        expect(
+          host.job.failure?.kind,
+          JobFailureKind.transient,
+          reason:
+              'the scheduler wrote this, not the gate — `RetryPolicy` classified '
+              'the interrupted worker execution as transient and `scheduleRetry '
+              'recorded it. The assertion that matters is the one below it: that '
+              'the row is byte-identical after the drain.',
+        );
 
         await host.drainGate();
 
@@ -482,6 +499,207 @@ void main() {
         );
       },
     );
+
+    // ## THE OTHER HALF OF THE SAME QUESTION
+    //
+    // Everything above holds the item because a retry is STILL OWED. The gate's
+    // trigger is that question, not "did the review finish" — so it also has to
+    // hold for the row where the answer is NO, and the row where the answer is
+    // no is a `permanent` failure: `_adopt` completes it `failed` without ever
+    // calling `scheduleRetry`, and `_returnRetriableItemsToEntryStates` only
+    // returns items for a `retryWaiting` job.
+    //
+    // This is the shape measured on 2026-10-15 on `defect-DEF-1791685024220546`
+    // and `defect-DEF-1791686357139031`: `AgpTransportException: ACP request
+    // timed out`, job `failed`, `kind: permanent`, execution `failed`.
+    test(
+      'a PERMANENT failure with no retry owed reaches a person, and still '
+      'fabricates nothing',
+      () async {
+        final host = await _GateHost.noResult(
+          executionStatus: AgentSessionStatus.failed,
+          executionReason: 'AgpTransportException: ACP request timed out',
+          retryOwed: false,
+          jobFailureReason: 'AgpTransportException: ACP request timed out',
+        );
+
+        await host.drainGate();
+
+        // Reached a person. Before this lane the gate tested
+        // `execution.status == completed`, which a permanent failure never
+        // satisfies, so the item sat at review_in_progress for ever.
+        await host.expectNoVerdictRaised(
+          why:
+              'the review job is terminally failed with kind permanent, so '
+              'nothing will ever retry it and no other lane can re-mint it — '
+              'reviewInProgress is not in engineeringReviewDefinition.'
+              'entryStates, so RunnableWorkEvaluator answers noAction before '
+              'any policy probe',
+          reviewCompleted: false,
+        );
+
+        // And it did so without turning the crash into an assessment. This is
+        // the property the whole file exists to protect: reaching a human is
+        // not inventing a verdict.
+        final decision = await host.requireDecision();
+        expect(
+          decision.question,
+          isNot(contains('ran to completion')),
+          reason:
+              'the reviewer did not finish. Telling an operator that a review '
+              'which died on an ACP timeout "ran to completion" is the same '
+              'class of statement as inventing its verdict: a confident '
+              'sentence about a fact nobody established.',
+        );
+        expect(
+          decision.question,
+          contains('did not finish'),
+          reason:
+              'and the operator has to be able to TELL the two apart, which is '
+              'the whole reason the sentence is selected rather than assumed',
+        );
+        expect(
+          decision.recommendation,
+          verdictAbsentReviewFailedRecommendation,
+          reason:
+              'verdictAbsentRecommendation tells an operator to go and read what '
+              'the reviewer wrote. On a review that crashed there is nothing to '
+              'read, so pointing at prose that does not exist is a different '
+              'false statement rather than a smaller version of this one.',
+        );
+        expect(
+          decision.recommendation,
+          startsWith('NO VERDICT'),
+          reason:
+              'both recommendations lead with the literal NO VERDICT, which is '
+              'what stops "WHAT WE SUGGEST" being skimmed as an assessment',
+        );
+      },
+    );
+
+    test(
+      'the failed-review decision records WHY the job is never retried, in the '
+      'job\'s own words',
+      () async {
+        final host = await _GateHost.noResult(
+          executionStatus: AgentSessionStatus.failed,
+          executionReason: 'AgpTransportException: ACP request timed out',
+          retryOwed: false,
+          jobFailureReason: 'AgpTransportException: ACP request timed out',
+        );
+
+        await host.drainGate();
+
+        final decision = await host.requireDecision();
+        final recorded =
+            (decision.metadata![reviewVerdictAbsentMetadataKey]!
+                    as Map<String, dynamic>)['reviewJobFailure']!
+                as Map<String, dynamic>;
+
+        // The raw worker-side text. The coordinator composes its OWN
+        // `AgentExecution.reason`, so this string survives nowhere else, and it
+        // is the difference between "the reviewer was slow" and "the reviewer
+        // could not be reached at all" — which is what an operator is choosing
+        // between when they pick rework or cancel.
+        expect(
+          recorded['reason'],
+          contains('ACP request timed out'),
+        );
+        expect(
+          recorded['kind'],
+          'permanent',
+          reason:
+              '`kind` is the field that answers "will this ever run again", and '
+              'permanent is the class nothing retries',
+        );
+        expect(recorded['jobState'], 'failed');
+        expect(recorded['attempt'], 1);
+        expect(
+          recorded['maxAttempts'],
+          engineeringReviewDefinition.maxAttempts,
+        );
+        expect(
+          decision
+              .metadata![reviewVerdictAbsentMetadataKey]!['reviewCompleted'],
+          isFalse,
+          reason:
+              'the absence and the completion are separate facts. A verdict-less '
+              'review that finished and one that died are both absences, and an '
+              'operator has to be able to tell them apart before acting.',
+        );
+      },
+    );
+
+    test(
+      'a live retry is NOT read as a spent one: retryWaiting at attempt == '
+      'maxAttempts still raises nothing',
+      () async {
+        // NON-VACUITY, and it is the shape production actually writes.
+        // `JobQueue.scheduleRetry` PRE-INCREMENTS `attempt`, so a retry that is
+        // perfectly live answers `attempt == maxAttempts` and `2 < 2`, which is
+        // false. A gate that asked "has the budget been spent?" instead of "is a
+        // retry owed?" would park this item and pre-empt the retry that is
+        // about to be claimed — so this test is written to fail against exactly
+        // that reading, not merely against "the review did not finish".
+        final host = await _GateHost.noResult(
+          executionStatus: AgentSessionStatus.failed,
+          executionReason: 'execution exceeded its 300s timeout budget',
+        );
+
+        expect(
+          host.job.state,
+          JobState.retryWaiting,
+          reason: 'a transient failure is scheduled for retry by the scheduler',
+        );
+        expect(host.job.attempt, host.job.maxAttempts);
+        expect(
+          host.job.failure?.kind.isRetryable,
+          isTrue,
+          reason:
+              'and it is the class `_returnRetriableItemsToEntryStates` returns '
+              'items for — `isRetryable` is `== transient` by construction',
+        );
+
+        await host.drainGate();
+
+        await host.expectNoDecisionRaised(
+          reason:
+              'a retry is still owed, so parking this item at '
+              'waitingForHumanDecision would pre-empt it: that state is the one '
+              'state `_returnOneToEntryState` explicitly skips',
+        );
+      },
+    );
+
+    test(
+      'a review that COMPLETED with no verdict is not regressed by the new '
+      'trigger',
+      () async {
+        // The other stranded pair, `defect-DEF-1791685264570406` and
+        // `defect-DEF-1791685924503981`: the reviewers ran to `completed` and
+        // recorded `{}`, so no verdict parsed. They were fixed by the review
+        // instruction change, and this is the assertion that a trigger keyed on
+        // "no retry is owed" still raises for them — a terminal `succeeded` job
+        // owes no retry either, so the two cases share one path and this guards
+        // against that sharing costing either of them.
+        final host = await _GateHost.reviewerResult(structuredResult: const {});
+
+        await host.drainGate();
+
+        await host.expectNoVerdictRaised(
+          why: 'the job SUCCEEDED, so maxAttempts only ever retries a failure',
+          reviewCompleted: true,
+        );
+        expect(
+          (await host.requireDecision()).recommendation,
+          verdictAbsentRecommendation,
+          reason:
+              'and it keeps its OWN recommendation: the completed-review case '
+              'still has prose to read, and sharing the failed-review one would '
+              'point at prose that is not there',
+        );
+      },
+    );
   });
 }
 
@@ -526,7 +744,17 @@ class _GateHost {
 
   /// A work item at `reviewInProgress` with a real producer identity — the
   /// state every one of the three stranded items was actually in.
-  static Future<_GateHost> _base() async {
+  ///
+  /// [jobState]/[failure]/[attempt] exist because the gate's trigger is a fact
+  /// about the QUEUE, and a fixture that always answered `succeeded` could not tell
+  /// a live retry from a spent one. They are stamped exactly as `Scheduler._adopt`
+  /// stamps them for the same worker outcome, so a host models a row the scheduler
+  /// can really produce rather than one it cannot.
+  static Future<_GateHost> _base({
+    JobState jobState = JobState.succeeded,
+    JobFailure? failure,
+    int? attempt,
+  }) async {
     final workflowStore = InMemoryWorkflowStore();
     final jobStore = InMemoryJobStore();
     await workflowStore.saveWorkItem(
@@ -553,7 +781,9 @@ class _GateHost {
       instruction: 'Review the implementation.',
     );
     final job = enqueued.job.copyWith(
-      state: JobState.succeeded,
+      state: jobState,
+      failure: failure,
+      attempt: attempt,
       executionReference: JobExecutionReference(
         workerExecutionId: 'wx-review',
         agentExecutionId: reviewerExecutionId,
@@ -605,12 +835,44 @@ class _GateHost {
     return host;
   }
 
-  /// A reviewer that produced NO result — the 300s budget case.
+  /// A reviewer that produced NO result — the 300s budget case, or the crash.
+  ///
+  /// ## `retryOwed` IS THE GATE'S TRIGGER, AND IT IS THE QUEUE'S ANSWER
+  ///
+  /// A reviewer that fails transiently is NOT on a `succeeded` job: `RetryPolicy`
+  /// classifies `timedOut`/`orphaned` as `transient`, and `Scheduler._adopt` hands
+  /// those to `JobQueue.scheduleRetry`, which writes `retryWaiting` and
+  /// PRE-INCREMENTS `attempt`. So the real live-retry row is
+  /// `state == retryWaiting` with `attempt == maxAttempts` — a gate that tested
+  /// `attempt < maxAttempts` would read that perfectly live retry as spent. The
+  /// gate checks `retryWaiting` first, and this fixture writes the row that would
+  /// catch it if it did not.
+  ///
+  /// `retryOwed: false` is the other half: a `permanent` failure, which `_adopt`
+  /// routes straight to `complete(failed)` without ever scheduling a retry.
   static Future<_GateHost> noResult({
     required AgentSessionStatus executionStatus,
     required String? executionReason,
+    bool retryOwed = true,
+    String? jobFailureReason,
   }) async {
-    final host = await _base();
+    final host = await _base(
+      jobState: retryOwed ? JobState.retryWaiting : JobState.failed,
+      // `scheduleRetry` pre-increments, so a live retry has already spent the
+      // counter. Modelling that is the whole point — see the doc above.
+      attempt: retryOwed ? engineeringReviewDefinition.maxAttempts : 1,
+      failure: retryOwed
+          ? JobFailure(
+              code: JobFailureCode.executionInterrupted,
+              kind: JobFailureKind.transient,
+              reason: jobFailureReason ?? executionReason,
+            )
+          : JobFailure(
+              code: JobFailureCode.executionFailed,
+              kind: JobFailureKind.permanent,
+              reason: jobFailureReason,
+            ),
+    );
     await host._saveReviewerExecution(executionStatus, executionReason);
     return host;
   }
@@ -684,13 +946,34 @@ class _GateHost {
     return workflowStore.readHumanDecision(id);
   }
 
-  /// The central assertion, UNCHANGED since b1: no decision at all, and the item
-  /// still retryable.
+  /// The central assertion for a review whose JOB STILL OWES A RETRY: no decision
+  /// at all, and the item still retryable.
   ///
-  /// Used by the three tests the ruling did NOT reach — `SITE 3`, the
-  /// double-drain, and `the item is left RETRYABLE`. A review that did not
-  /// finish still has `maxAttempts` owed to it, so it still raises nothing.
+  /// Used by the tests whose host carries `retryOwed: true` — `SITE 3`, the
+  /// double-drain, and `the item is left RETRYABLE`.
+  ///
+  /// ## THE TRIGGER IS THE QUEUE, SO THIS IS NOT ABOUT THE REVIEW
+  ///
+  /// The original assertion was "a review that did not finish raises nothing",
+  /// which was right for the wrong reason: it read the EXECUTION's status to
+  /// decide whether the queue still had work pending. Those came apart on
+  /// 2026-10-15 — a permanent review failure is `failed`/`interrupted` and never
+  /// `completed`, AND is owed no retry by anything, so the execution's status
+  /// could not answer the question.
+  ///
+  /// So every host calling this must carry `retryOwed: true`, which is what makes
+  /// the name true: the reason nothing is raised here is that a retry is coming,
+  /// not that the review stopped. The mirror case — same dead execution, no retry
+  /// owed — is asserted in the other group, and it raises.
   Future<void> expectNoDecisionRaised({String? reason}) async {
+    expect(
+      job.state,
+      JobState.retryWaiting,
+      reason:
+          'this assertion only holds while a retry is owed. A host calling it must '
+          'carry `retryOwed: true`, or it is asserting that a stranded item is '
+          'fine — which is the defect.',
+    );
     final decisions = await workflowStore.readHumanDecisionsForWorkItem(
       workItemId,
     );
@@ -699,8 +982,8 @@ class _GateHost {
       isEmpty,
       reason:
           reason ??
-          'an engineeringReview decision exists for a review that never '
-              'happened',
+          'an engineeringReview decision exists while the reviewer job is still '
+              'owed a retry, so it pre-empts a retry that is coming',
     );
     final item = await workflowEngine.loadWorkItem(workItemId);
     expect(
@@ -711,7 +994,8 @@ class _GateHost {
     expect(item.blockingHumanDecisionId, isNull);
   }
 
-  /// The AMENDED central assertion, for a review that COMPLETED with no verdict.
+  /// The AMENDED central assertion, for a review that produced no verdict while
+  /// its job owed no retry — whether it COMPLETED silently or FAILED.
   ///
   /// ## IT IS STRICTER THAN THE ZERO-ROW ONE IT REPLACES, NOT LOOSER
   ///
@@ -733,7 +1017,15 @@ class _GateHost {
   ///
   /// Plus the positive half: the decision says, in its own text, that no verdict
   /// was produced, and offers only choices that assert none.
-  Future<void> expectNoVerdictRaised({required String why}) async {
+  ///
+  /// [reviewCompleted] is passed rather than read, because the recommendation
+  /// differs on the two paths and this helper is the one place that asserts it —
+  /// it must not be allowed to drift into asserting the completed-review
+  /// sentence for a review that died.
+  Future<void> expectNoVerdictRaised({
+    required String why,
+    required bool reviewCompleted,
+  }) async {
     final item = await workflowEngine.loadWorkItem(workItemId);
     final blockingId = item.blockingHumanDecisionId;
 
@@ -741,9 +1033,9 @@ class _GateHost {
       blockingId,
       isNotNull,
       reason:
-          'the review completed, so nothing else will move this item: $why. '
-          'Leaving it at reviewInProgress with no decision is the silent park '
-          'this decision was resolved to end.',
+          'no retry is owed on this job, so nothing else will ever move this '
+          'item: $why. Leaving it at reviewInProgress with no decision is the '
+          'silent park this decision was resolved to end.',
     );
     expect(
       item.state,
@@ -794,8 +1086,11 @@ class _GateHost {
     );
     expect(
       decision.recommendation,
-      verdictAbsentRecommendation,
-      reason: 'and it must be the one the gate documents',
+      verdictAbsentRecommendationFor(reviewCompleted: reviewCompleted),
+      reason:
+          'and it must be the one the gate documents FOR THIS PATH — the '
+          'completed-review line tells an operator to read what the reviewer '
+          'wrote, which is wrong when it wrote nothing $why',
     );
     expect(
       decision.question,
@@ -852,9 +1147,23 @@ class _GateHost {
 
   /// The substring [expectNoVerdictRaised] requires the question to carry for
   /// the cause this host produced.
-  String absenceReasonFragment() => absenceCauses.isEmpty
-      ? 'no cause recorded'
-      : (absenceCauses.last == 'verdict_absent'
-            ? 'carrying no verdict'
-            : 'is not a review verdict');
+  ///
+  /// Every cause in the gate's `_NoVerdictCause`, not just the two a COMPLETED
+  /// review can produce: the question quotes [Absence.detail] verbatim, and the
+  /// detail is what differs between "the reviewer answered and said nothing
+  /// assessable" and "the reviewer never wrote an answer at all". A helper that
+  /// only knew two causes would have made this assertion vacuous on the path that
+  /// matters most here.
+  String absenceReasonFragment() {
+    final cause = absenceCauses.isEmpty ? '' : absenceCauses.last;
+    return switch (cause) {
+      'verdict_absent' => 'carrying no verdict',
+      'verdict_unreadable' => 'is not a review verdict',
+      'structured_result_unreadable' => 'the reviewer result could not be read',
+      'reviewer_timed_out' ||
+      'reviewer_execution_failed' ||
+      'reviewer_result_missing' => 'without writing an agent result',
+      _ => 'no cause recorded',
+    };
+  }
 }

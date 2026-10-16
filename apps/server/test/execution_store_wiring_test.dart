@@ -457,9 +457,9 @@ void main() {
       () async {
         // The exact production state the wiring fix found: `agent_execution`
         // empty, so the lookup answers `null` rather than raising. The gate
-        // reaches `latestExecutionForWorkItem`, gets nothing, and returns
-        // without transitioning or raising — the silent no-op that ran on every
-        // tick, for every item review was supposed to be able to hand to a human.
+        // reaches the producer lookup, gets nothing, and returns without
+        // transitioning or raising — the silent no-op that ran on every tick,
+        // for every item review was supposed to be able to hand to a human.
         final store = _EmptyExecutionStore();
         final host = await _Host.withProducer(
           workItemId: 'wi-unreadable',
@@ -471,11 +471,26 @@ void main() {
 
         expect(
           store.touched,
-          contains('latestExecutionForWorkItem'),
+          contains('readExecutionOrNull'),
           reason:
               'this branch must actually be reached, or the test is asserting '
               'nothing: the stand-down declined because a commit exists, so '
-              'control reaches the producer-result lookup.',
+              'control reaches the producer-result lookup. It reads the '
+              'producerActorId the work item carries — a primary-key read — '
+              'rather than `latestExecutionForWorkItem`, which was the '
+              'role-blind lookup this finding was raised about.',
+        );
+        expect(
+          store.touched,
+          isNot(contains('latestExecutionForWorkItem')),
+          reason:
+              'the role-blind lookup must not be reachable from here at all. It '
+              'is correct exactly once — for the first review of an item — and '
+              'wrong for every review after, because the REVIEWER is then the '
+              'newest row and its result would be handed to `agentResultValid()` '
+              'as evidence that an implementer succeeded. That is '
+              '`docs/engineering/learning/236-transition-rows-that-moved-'
+              'nothing.md` §2, and it was recorded here as NOT RESOLVED.',
         );
         expect(
           item.state,
@@ -489,6 +504,139 @@ void main() {
               'every run.',
         );
         expect(item.blockingHumanDecisionId, isNull);
+      },
+    );
+
+    test(
+      'the producer lookup is by IDENTITY, not recency: a reviewer NEWER than '
+      'the implementer is not read as the producer',
+      () async {
+        // The defect `236-…md` §2 measured, reproduced at the call site this
+        // finding was raised about. Two executions on one item: the
+        // implementer (older, completed, the one the item's `producerActorId`
+        // names) and a reviewer (newer, FAILED, carrying a failed result).
+        //
+        // Under the old role-blind lookup the gate read the REVIEWER — the
+        // newest row of any role — and handed `agentResultValid()` its failed
+        // result, so the entry transition was refused and the item could never
+        // reach a human no matter how many times it was tried. `resolveProducerExecution`
+        // reads the stamp first, so the implementer's completed result is what
+        // the guard sees and the park happens.
+        //
+        // NON-VACUITY: the reviewer here carries a RESULT. Without it the old
+        // lookup would also have answered `null` and this test would pass for
+        // the wrong reason.
+        final executionStore = InMemoryExecutionStore();
+        const workItemId = 'wi-recency';
+        final host = await _Host.withProducer(
+          workItemId: workItemId,
+          endingRevision: 'a-real-commit',
+          executionStore: executionStore,
+        );
+        final anchor = _anchorFor('wx-$workItemId');
+        final earlier = DateTime.utc(2026, 1, 1);
+        final later = earlier.add(const Duration(hours: 3));
+
+        await executionStore.saveExecution(
+          AgentExecution(
+            executionId: anchor,
+            workItemId: workItemId,
+            requestId: 'req-1',
+            runtimeTypeId: 'rt-impl',
+            role: AgentRole.implementer,
+            status: AgentSessionStatus.completed,
+            sessionId: 'ses-1',
+            resultId: 'res-1',
+            workspace: const AgentWorkspace(
+              workspaceId: 'ws-1',
+              path: '/durable/clone',
+              startingRevision: _startingRevision,
+            ),
+            startedAt: earlier,
+            completedAt: earlier,
+          ),
+        );
+        await executionStore.saveResult(
+          anchor,
+          _producerResult(workItemId: workItemId),
+        );
+
+        // The newer row, and it is a reviewer that FAILED — the exact shape
+        // `236-…md` §2 measured on QA.
+        await executionStore.saveExecution(
+          AgentExecution(
+            executionId: 'agx-wx-review-2',
+            workItemId: workItemId,
+            requestId: 'req-2',
+            runtimeTypeId: 'eng-review-runtime',
+            role: AgentRole.engineeringReviewer,
+            status: AgentSessionStatus.failed,
+            sessionId: 'ses-2',
+            resultId: 'res-2',
+            workspace: const AgentWorkspace(
+              workspaceId: 'ws-2',
+              path: '/worktrees/review',
+              startingRevision: _startingRevision,
+            ),
+            startedAt: later,
+            completedAt: later,
+          ),
+        );
+        await executionStore.saveResult(
+          'agx-wx-review-2',
+          AgentResult(
+            resultId: 'res-2',
+            sessionId: 'ses-2',
+            workItemId: workItemId,
+            executionId: 'agx-wx-review-2',
+            role: AgentRole.engineeringReviewer,
+            // FAILED. `agentResultValid()` requires `completed`, so reading
+            // THIS row is what made the edge unsatisfiable.
+            status: AgentResultStatus.failed,
+            artifacts: const [],
+            diagnostics: const AgentDiagnostics(
+              exitCode: 1,
+              durationMs: 1,
+              toolCalls: 0,
+              errors: [],
+              warnings: [],
+            ),
+            structuredResult: const {},
+            summary: 'the reviewer failed',
+            completedAt: later,
+          ),
+        );
+
+        // The premise, stated: the role-blind lookup really does return the
+        // failed reviewer here. If it did not, this test would be proving
+        // nothing about recency.
+        expect(
+          (await executionStore.latestExecutionForWorkItem(
+            workItemId,
+          ))!.executionId,
+          'agx-wx-review-2',
+          reason:
+              'the newest row of ANY role is the reviewer. This is the read the '
+              'gate used to make, and the reason a second review of this item '
+              'could never enter review.',
+        );
+
+        final item = await host.runMissingArtifact();
+
+        expect(
+          item.state,
+          WorkItemState.waitingForHumanDecision,
+          reason:
+              'the item is `agentCompleted` because an IMPLEMENTER ran and '
+              'succeeded, so the evidence `agentResultValid()` exists to read is '
+              'the implementer\'s result. A reviewer failing afterwards must not '
+              'retroactively un-produce the work.',
+        );
+        expect(
+          item.blockingHumanDecisionId,
+          isNotNull,
+          reason: 'so the item reaches a person instead of self-locking',
+        );
       },
     );
 
