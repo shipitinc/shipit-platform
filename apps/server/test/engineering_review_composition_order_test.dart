@@ -46,6 +46,17 @@
 /// The two shapes of "cannot route" are asserted too, because a route that
 /// cannot route is a dropped work item: the spent automatic re-review budget
 /// and the unreadable artifact both still reach a person.
+///
+/// ## WHY THE BUDGET GROUP IS HERE AND NOT IN ITS OWN FILE
+///
+/// `apps/server/test/agent_execution_budgets_test.dart` is the natural home for
+/// it and is NOT in this lane's ownership, so it cannot be edited. What belongs
+/// here is the half that is about COMPOSITION — this file is where
+/// [AgentExecutionBudgets] is wired into the review workload resolver (line ~694),
+/// so "the budget the review lane actually runs on, and everything derived from
+/// it, still agree with each other" is a composition statement. Every assertion
+/// below READS the table; none of them restates a number, which is the property
+/// that makes the group survive a budget change instead of failing on it.
 library;
 
 import 'package:control_plane_server/server.dart';
@@ -386,6 +397,182 @@ void main() {
         );
       },
     );
+  });
+
+  group('the review budget and everything derived from it stay coherent', () {
+    // NOT A RESTATEMENT OF THE NUMBERS. Every assertion here is an identity
+    // between two things that are BOTH computed from `AgentExecutionBudgets.byRole`.
+    // That is the point: a test that said `engineeringReviewSeconds == 3600`
+    // would break the day the operator changes the budget, which is precisely
+    // the day this group has to keep working.
+    //
+    // The defect these guard is a DERIVED value going quiet. The reclaim window
+    // is not a second budget a human set — it is `budget + stallAllowance`, and
+    // the banner prints both. So the failure mode is not "someone typed the
+    // wrong number" but "someone moved the budget and a derived figure kept
+    // describing the old one", which no assertion on the budget itself can see.
+
+    test('the staleness bound is the budget plus the allowance, for EVERY role '
+        'in the table', () {
+      for (final entry in AgentExecutionBudgets.byRole.entries) {
+        expect(
+          AgentExecutionBudgets.zombieStalenessFor(entry.value),
+          entry.value + AgentExecutionBudgets.stallAllowance,
+          reason:
+              '${entry.key}: the bound must stay EXACTLY budget + allowance. '
+              'Longer reclaims a live run for being slow; shorter reclaims a dead '
+              'one while it still holds its capacity slot',
+        );
+        expect(
+          AgentExecutionBudgets.zombieStalenessFor(entry.value).inSeconds,
+          greaterThan(entry.value.inSeconds),
+          reason: '${entry.key}: the bound must EXCEED the budget it protects',
+        );
+      }
+    });
+
+    test('the startup banner\'s reclaim window equals what the composition '
+        'actually gives the review scheduler', () {
+      final described = AgentExecutionBudgets.describe();
+      final staleness = described['zombieStaleness']! as Map<String, Object>;
+      final printed = (staleness['byRoleSeconds']! as Map<String, int>);
+
+      for (final entry in AgentExecutionBudgets.byRole.entries) {
+        expect(
+          printed[entry.key],
+          AgentExecutionBudgets.zombieStalenessFor(entry.value).inSeconds,
+          reason:
+              '${entry.key}: the banner told the operator ${printed[entry.key]}s '
+              'and the scheduler was given '
+              '${AgentExecutionBudgets.zombieStalenessFor(entry.value).inSeconds}s. '
+              'An operator deciding whether a dead execution is still holding a '
+              'slot is reading the banner',
+        );
+      }
+
+      // And the budget the review lane RUNS on is this table's, not a copy. The
+      // resolver is given `engineeringReviewSeconds` above; this asserts the two
+      // halves of the composition meet.
+      expect(
+        AgentExecutionBudgets.engineeringReviewSeconds,
+        AgentExecutionBudgets.byRole['engineering-review']!.inSeconds,
+      );
+    });
+
+    test(
+      'the banner publishes what the REJECTED default formula would have done, '
+      'computed from the table rather than quoted beside it',
+      () {
+        // The banner used to say, in prose, that the rejected formula "turns a
+        // 3h review budget into a 12.2h reclaim window". That sentence was true
+        // of one value and silent about every other, so moving a budget left an
+        // operator reading a claim about a window twice as wide as the real one.
+        // It is now arithmetic, per role, derived from the same table.
+        final staleness =
+            AgentExecutionBudgets.describe()['zombieStaleness']!
+                as Map<String, Object>;
+        final rejected =
+            staleness['rejectedSchedulerDefault']! as Map<String, Object>;
+        final printed = rejected['byRoleSeconds']! as Map<String, int>;
+
+        // The multiplier is READ FROM THE BANNER, not from the constant that
+        // produced it. That is deliberate on two counts: it makes this an
+        // assertion about the banner being self-consistent, which is what an
+        // operator actually reads; and it keeps the whole group compiling
+        // against the revision it corrects, so its failure there is behavioural
+        // rather than a load error.
+        final multiplier = rejected['multiplier']! as int;
+        expect(multiplier, greaterThan(1));
+
+        for (final entry in AgentExecutionBudgets.byRole.entries) {
+          final ours = AgentExecutionBudgets.zombieStalenessFor(
+            entry.value,
+          ).inSeconds;
+          expect(
+            printed[entry.key],
+            entry.value.inSeconds * multiplier,
+            reason:
+                '${entry.key}: the published figure must be this table\'s budget '
+                'times the multiplier, so it moves when the budget moves',
+          );
+          expect(
+            printed[entry.key]!,
+            greaterThan(ours),
+            reason:
+                '${entry.key}: and it must still be the window this composition '
+                'REFUSES. If it were not larger, decoupling the bound would have '
+                'bought nothing and nothing would need saying',
+          );
+        }
+      },
+    );
+
+    test(
+      'no banner string quotes a reclaim window in hours, because a quoted '
+      'magnitude is one that goes stale',
+      () {
+        final staleness =
+            AgentExecutionBudgets.describe()['zombieStaleness']!
+                as Map<String, Object>;
+        final rule = staleness['rule']! as String;
+        // `Nh` / `NhNm` is how the old sentence spelled it. The rule may still
+        // name the allowance in MINUTES, which is `stallAllowance` interpolated
+        // rather than typed; what it may not do is claim a per-role window.
+        expect(
+          RegExp(r'\d+(\.\d+)?h\b').hasMatch(rule),
+          isFalse,
+          reason:
+              'the rule string still quotes a window in hours ("$rule"). Every '
+              'figure the banner prints has to come from `byRole`, or lowering a '
+              'budget leaves an operator reading a number about the old one. The '
+              'per-role arithmetic belongs in '
+              '`rejectedSchedulerDefault.byRoleSeconds`, which IS computed',
+        );
+        // And the rule still says what the bound actually IS.
+        expect(rule, contains('agentBudget + '));
+        expect(
+          rule,
+          contains('${AgentExecutionBudgets.stallAllowance.inMinutes}m'),
+        );
+        final rejected =
+            staleness['rejectedSchedulerDefault']! as Map<String, Object>;
+        expect(
+          rule,
+          contains('${rejected['multiplier']}'),
+          reason:
+              'the multiplier in the prose must be the one the published block '
+              'declares, so renaming or re-valuing it cannot leave the sentence '
+              'behind',
+        );
+      },
+    );
+
+    test('the review budget the composition hands the resolver is the table\'s', () {
+      // The last coherence check, and the one that would have caught a literal
+      // creeping back in: the resolver this host builds is given
+      // `AgentExecutionBudgets.engineeringReviewSeconds`, and the schedulers
+      // this host builds are given `zombieStalenessFor` of the same table. If a
+      // future edit gives either of them a number, the comparisons above hold
+      // and the composition no longer does.
+      final reviewStaleness = AgentExecutionBudgets.zombieStalenessFor(
+        Duration(seconds: AgentExecutionBudgets.engineeringReviewSeconds),
+      );
+      expect(
+        reviewStaleness.inSeconds,
+        AgentExecutionBudgets.stallAllowance.inSeconds +
+            AgentExecutionBudgets.engineeringReviewSeconds,
+      );
+      expect(
+        reviewStaleness,
+        greaterThan(
+          Duration(seconds: AgentExecutionBudgets.engineeringReviewSeconds),
+        ),
+        reason:
+            'and it must exceed the budget, or a reviewer running long would be '
+            'reclaimed as a zombie for being slow — which is what the original '
+            '3-hour budget made expensive in wall-clock terms',
+      );
+    });
   });
 
   group('a route fabricates no verdict, through the real order', () {
