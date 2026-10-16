@@ -159,8 +159,9 @@ Future<WorkerExecutionResult> Function(WorkerExecutionRequest) _settlingOutcome(
         _ => WorkerFailureCode.none,
       },
       failureDetail: switch (status) {
-        WorkerExecutionStatus.executedFail => 'the agent produced a failing '
-            'coding result',
+        WorkerExecutionStatus.executedFail =>
+          'the agent produced a failing '
+              'coding result',
         _ => null,
       },
     );
@@ -171,218 +172,20 @@ void main() {
   final t0 = DateTime.utc(2026, 3, 1, 12);
 
   group('a transient failure returns the item and the retry REALLY RUNS', () {
-    test(
-      'implementation lane: the second execution runs, not merely the second '
-      'retry is scheduled',
-      () async {
-        var now = t0;
-        final dispatch = ControlledDispatcher();
-        final host = _Host(
-          definition: implementFeatureDefinition,
-          clock: () => now,
-          dispatch: dispatch,
-        );
-        await host.plant(_item());
-
-        // ---- attempt 1: the agent session ends interrupted, which
-        // `RetryPolicy.classify` maps to `transient`. The coordinator settles
-        // the item at `agentFailed`, which is the state that strands it.
-        dispatch.resultBuilder = _settlingOutcome(
-          host.engine,
-          status: WorkerExecutionStatus.timedOut,
-          settleThrough: const [
-            WorkItemState.agentExecuting,
-            WorkItemState.agentFailed,
-          ],
-        );
-        final first = await host.scheduler.tick();
-
-        expect(first.dispatched, hasLength(1));
-        expect(dispatch.runs, hasLength(1));
-
-        var job = await host.job();
-        expect(
-          job.state,
-          JobState.retryWaiting,
-          reason: 'the transient failure DID park a bounded retry',
-        );
-        expect(job.failure?.kind, JobFailureKind.transient);
-        expect(job.attempt, 2, reason: 'scheduleRetry pre-increments');
-        expect(
-          job.availableAt,
-          DateTime.utc(2026, 3, 1, 12, 1),
-          reason: 'the one-minute back-off, which is the only reason the retry '
-              'cannot run yet',
-        );
-        expect(
-          (await host.workflowStore.readWorkItem('wi-1')).state,
-          WorkItemState.agentFailed,
-          reason:
-              'PRECONDITION, and the defect in one line: the item is outside '
-              'every implementFeatureDefinition entry state, so nothing can '
-              'claim the retry',
-        );
-
-        // ---- the next tick. This is the tick that used to cancel the retry.
-        final second = await host.scheduler.tick();
-
-        expect(
-          second.cancelledQueued,
-          isEmpty,
-          reason:
-              'LINK 4 OF THE DEFECT. `cancelledQueued` empty means the retry '
-              'that was just scheduled was NOT retired as superseded. Before '
-              'the fix this list held the job id, on every tick, for ever.',
-        );
-        expect(
-          second.retryReturned.where((m) => m.returned).map((m) => m.to),
-          [WorkItemState.implementationReady],
-          reason:
-              'the item went back to the implementation lane\'s OWN entry '
-              'state — a RETURN, not a widening',
-        );
-        expect(
-          (await host.workflowStore.readWorkItem('wi-1')).state,
-          WorkItemState.implementationReady,
-        );
-        expect(
-          second.dispatched,
-          isEmpty,
-          reason: 'the back-off has not elapsed, so the retry is not due yet',
-        );
-        job = await host.job();
-        expect(
-          job.state,
-          JobState.retryWaiting,
-          reason: 'the retry is still parked, and now it is CLAIMABLE',
-        );
-        expect(
-          host.scheduler.queue.isEligibleAt(job, t0.add(const Duration(hours: 1))),
-          isTrue,
-        );
-
-        // ---- past the back-off, the retry is actually claimed and RUNS.
-        now = t0.add(const Duration(minutes: 2));
-        dispatch.resultBuilder = null;
-        dispatch.statusSeries = () => const [WorkerExecutionStatus.executedPass];
-        final third = await host.scheduler.tick();
-
-        expect(
-          third.dispatched,
-          hasLength(1),
-          reason: 'the scheduled retry was claimed by a scheduler tick',
-        );
-        expect(
-          dispatch.runs,
-          hasLength(2),
-          reason:
-              'THE HEADLINE. Two executions really ran. A job that is merely '
-              'still `retryWaiting` proves nothing; this is the second dispatch.',
-        );
-        final finished = await host.job();
-        expect(finished.state, JobState.succeeded);
-        expect(
-          finished.attempt,
-          2,
-          reason: 'the second execution was attempt 2 and consumed it',
-        );
-      },
-    );
-
-    test(
-      'review lane: a reviewer left at reviewInProgress comes back to '
-      'agentCompleted and a reviewer really runs again',
-      () async {
-        // The review lane is the WORST case and the reason it needs its own
-        // edge: `ExecutionCoordinator._completeFailure` and
-        // `_failWithoutSession` both SKIP the `agentFailed` transition for
-        // `AgentRole.engineeringReviewer`. So a crashed reviewer left its item
-        // AT `reviewInProgress` — neither in an entry state nor in a state a
-        // human would read as failed. It simply looked like a review in
-        // progress while its job was cancelled as superseded.
-        var now = t0;
-        final dispatch = ControlledDispatcher();
-        final host = _Host(
-          definition: engineeringReviewDefinition,
-          clock: () => now,
-          dispatch: dispatch,
-        );
-        await host.plant(_item(state: WorkItemState.agentCompleted));
-
-        dispatch.resultBuilder = (request) async {
-          // The coordinator's reviewer entry transition. There is no
-          // `agentExecuting` step: a reviewer goes straight to
-          // `reviewInProgress`.
-          await host.engine.transition(
-            workItemId: request.workItemId,
-            to: WorkItemState.reviewInProgress,
-            trigger: TransitionTrigger.systemEvent,
-            actor: const WorkflowActor(
-              actorId: 'orchestrator',
-              actorType: ActorType.orchestrator,
-            ),
-            // `agentCompleted -> reviewInProgress` carries `agentResultValid()`,
-            // which reads the IMPLEMENTER's completed result out of
-            // `context['agentResult']`. The coordinator supplies it from the
-            // store; this stand-in supplies it directly, because building a
-            // whole execution history is not what this test is about.
-            context: {
-              'agentAvailable': true,
-              'capabilitiesMatch': true,
-              'agentResult': _producerResult(request.workItemId),
-            },
-          );
-          return _outcome(request, WorkerExecutionStatus.timedOut);
-        };
-
-        expect((await host.scheduler.tick()).dispatched, hasLength(1));
-        expect(dispatch.runs, hasLength(1));
-        expect((await host.job()).state, JobState.retryWaiting);
-        expect(
-          (await host.workflowStore.readWorkItem('wi-1')).state,
-          WorkItemState.reviewInProgress,
-          reason: 'PRECONDITION: a crashed reviewer leaves the item HERE',
-        );
-
-        final second = await host.scheduler.tick();
-        expect(second.cancelledQueued, isEmpty);
-        expect(
-          second.retryReturned.where((m) => m.returned).map((m) => m.to),
-          [
-            WorkItemState.agentCompleted,
-          ],
-          reason:
-              'the item goes back to the REVIEW lane\'s own entry state. Not '
-              'to `agentFailed` — an unreviewed item must not be filed as a '
-              'failed coding result.',
-        );
-        expect(
-          (await host.workflowStore.readWorkItem('wi-1')).state,
-          WorkItemState.agentCompleted,
-        );
-
-        now = t0.add(const Duration(minutes: 2));
-        dispatch.resultBuilder = null;
-        final third = await host.scheduler.tick();
-        expect(third.dispatched, hasLength(1));
-        expect(
-          dispatch.runs,
-          hasLength(2),
-          reason: 'a SECOND REVIEWER really ran',
-        );
-      },
-    );
-
-    test('triage lane: the return resolves to the ONE reachable entry state', () async {
+    test('implementation lane: the second execution runs, not merely the second '
+        'retry is scheduled', () async {
       var now = t0;
       final dispatch = ControlledDispatcher();
       final host = _Host(
-        definition: triageDefectDefinition,
+        definition: implementFeatureDefinition,
         clock: () => now,
         dispatch: dispatch,
       );
-      await host.plant(_item(state: WorkItemState.designNotRequired));
+      await host.plant(_item());
 
+      // ---- attempt 1: the agent session ends interrupted, which
+      // `RetryPolicy.classify` maps to `transient`. The coordinator settles
+      // the item at `agentFailed`, which is the state that strands it.
       dispatch.resultBuilder = _settlingOutcome(
         host.engine,
         status: WorkerExecutionStatus.timedOut,
@@ -391,24 +194,222 @@ void main() {
           WorkItemState.agentFailed,
         ],
       );
-      await host.scheduler.tick();
-      expect((await host.workflowStore.readWorkItem('wi-1')).state,
-          WorkItemState.agentFailed);
+      final first = await host.scheduler.tick();
 
+      expect(first.dispatched, hasLength(1));
+      expect(dispatch.runs, hasLength(1));
+
+      var job = await host.job();
+      expect(
+        job.state,
+        JobState.retryWaiting,
+        reason: 'the transient failure DID park a bounded retry',
+      );
+      expect(job.failure?.kind, JobFailureKind.transient);
+      expect(job.attempt, 2, reason: 'scheduleRetry pre-increments');
+      expect(
+        job.availableAt,
+        DateTime.utc(2026, 3, 1, 12, 1),
+        reason:
+            'the one-minute back-off, which is the only reason the retry '
+            'cannot run yet',
+      );
+      expect(
+        (await host.workflowStore.readWorkItem('wi-1')).state,
+        WorkItemState.agentFailed,
+        reason:
+            'PRECONDITION, and the defect in one line: the item is outside '
+            'every implementFeatureDefinition entry state, so nothing can '
+            'claim the retry',
+      );
+
+      // ---- the next tick. This is the tick that used to cancel the retry.
       final second = await host.scheduler.tick();
 
-      // `triageDefectDefinition.entryStates` holds THREE states. Only
-      // `designNotRequired` is reachable from `agentFailed`, and the pass
-      // returns to it precisely because the answer is unique.
+      expect(
+        second.cancelledQueued,
+        isEmpty,
+        reason:
+            'LINK 4 OF THE DEFECT. `cancelledQueued` empty means the retry '
+            'that was just scheduled was NOT retired as superseded. Before '
+            'the fix this list held the job id, on every tick, for ever.',
+      );
       expect(
         second.retryReturned.where((m) => m.returned).map((m) => m.to),
-        [WorkItemState.designNotRequired],
+        [WorkItemState.implementationReady],
+        reason:
+            'the item went back to the implementation lane\'s OWN entry '
+            'state — a RETURN, not a widening',
       );
       expect(
-        triageDefectDefinition.entryStates,
-        contains(WorkItemState.designNotRequired),
+        (await host.workflowStore.readWorkItem('wi-1')).state,
+        WorkItemState.implementationReady,
+      );
+      expect(
+        second.dispatched,
+        isEmpty,
+        reason: 'the back-off has not elapsed, so the retry is not due yet',
+      );
+      job = await host.job();
+      expect(
+        job.state,
+        JobState.retryWaiting,
+        reason: 'the retry is still parked, and now it is CLAIMABLE',
+      );
+      expect(
+        host.scheduler.queue.isEligibleAt(
+          job,
+          t0.add(const Duration(hours: 1)),
+        ),
+        isTrue,
+      );
+
+      // ---- past the back-off, the retry is actually claimed and RUNS.
+      now = t0.add(const Duration(minutes: 2));
+      dispatch.resultBuilder = null;
+      dispatch.statusSeries = () => const [WorkerExecutionStatus.executedPass];
+      final third = await host.scheduler.tick();
+
+      expect(
+        third.dispatched,
+        hasLength(1),
+        reason: 'the scheduled retry was claimed by a scheduler tick',
+      );
+      expect(
+        dispatch.runs,
+        hasLength(2),
+        reason:
+            'THE HEADLINE. Two executions really ran. A job that is merely '
+            'still `retryWaiting` proves nothing; this is the second dispatch.',
+      );
+      final finished = await host.job();
+      expect(finished.state, JobState.succeeded);
+      expect(
+        finished.attempt,
+        2,
+        reason: 'the second execution was attempt 2 and consumed it',
       );
     });
+
+    test('review lane: a reviewer left at reviewInProgress comes back to '
+        'agentCompleted and a reviewer really runs again', () async {
+      // The review lane is the WORST case and the reason it needs its own
+      // edge: `ExecutionCoordinator._completeFailure` and
+      // `_failWithoutSession` both SKIP the `agentFailed` transition for
+      // `AgentRole.engineeringReviewer`. So a crashed reviewer left its item
+      // AT `reviewInProgress` — neither in an entry state nor in a state a
+      // human would read as failed. It simply looked like a review in
+      // progress while its job was cancelled as superseded.
+      var now = t0;
+      final dispatch = ControlledDispatcher();
+      final host = _Host(
+        definition: engineeringReviewDefinition,
+        clock: () => now,
+        dispatch: dispatch,
+      );
+      await host.plant(_item(state: WorkItemState.agentCompleted));
+
+      dispatch.resultBuilder = (request) async {
+        // The coordinator's reviewer entry transition. There is no
+        // `agentExecuting` step: a reviewer goes straight to
+        // `reviewInProgress`.
+        await host.engine.transition(
+          workItemId: request.workItemId,
+          to: WorkItemState.reviewInProgress,
+          trigger: TransitionTrigger.systemEvent,
+          actor: const WorkflowActor(
+            actorId: 'orchestrator',
+            actorType: ActorType.orchestrator,
+          ),
+          // `agentCompleted -> reviewInProgress` carries `agentResultValid()`,
+          // which reads the IMPLEMENTER's completed result out of
+          // `context['agentResult']`. The coordinator supplies it from the
+          // store; this stand-in supplies it directly, because building a
+          // whole execution history is not what this test is about.
+          context: {
+            'agentAvailable': true,
+            'capabilitiesMatch': true,
+            'agentResult': _producerResult(request.workItemId),
+          },
+        );
+        return _outcome(request, WorkerExecutionStatus.timedOut);
+      };
+
+      expect((await host.scheduler.tick()).dispatched, hasLength(1));
+      expect(dispatch.runs, hasLength(1));
+      expect((await host.job()).state, JobState.retryWaiting);
+      expect(
+        (await host.workflowStore.readWorkItem('wi-1')).state,
+        WorkItemState.reviewInProgress,
+        reason: 'PRECONDITION: a crashed reviewer leaves the item HERE',
+      );
+
+      final second = await host.scheduler.tick();
+      expect(second.cancelledQueued, isEmpty);
+      expect(
+        second.retryReturned.where((m) => m.returned).map((m) => m.to),
+        [WorkItemState.agentCompleted],
+        reason:
+            'the item goes back to the REVIEW lane\'s own entry state. Not '
+            'to `agentFailed` — an unreviewed item must not be filed as a '
+            'failed coding result.',
+      );
+      expect(
+        (await host.workflowStore.readWorkItem('wi-1')).state,
+        WorkItemState.agentCompleted,
+      );
+
+      now = t0.add(const Duration(minutes: 2));
+      dispatch.resultBuilder = null;
+      final third = await host.scheduler.tick();
+      expect(third.dispatched, hasLength(1));
+      expect(
+        dispatch.runs,
+        hasLength(2),
+        reason: 'a SECOND REVIEWER really ran',
+      );
+    });
+
+    test(
+      'triage lane: the return resolves to the ONE reachable entry state',
+      () async {
+        var now = t0;
+        final dispatch = ControlledDispatcher();
+        final host = _Host(
+          definition: triageDefectDefinition,
+          clock: () => now,
+          dispatch: dispatch,
+        );
+        await host.plant(_item(state: WorkItemState.designNotRequired));
+
+        dispatch.resultBuilder = _settlingOutcome(
+          host.engine,
+          status: WorkerExecutionStatus.timedOut,
+          settleThrough: const [
+            WorkItemState.agentExecuting,
+            WorkItemState.agentFailed,
+          ],
+        );
+        await host.scheduler.tick();
+        expect(
+          (await host.workflowStore.readWorkItem('wi-1')).state,
+          WorkItemState.agentFailed,
+        );
+
+        final second = await host.scheduler.tick();
+
+        // `triageDefectDefinition.entryStates` holds THREE states. Only
+        // `designNotRequired` is reachable from `agentFailed`, and the pass
+        // returns to it precisely because the answer is unique.
+        expect(second.retryReturned.where((m) => m.returned).map((m) => m.to), [
+          WorkItemState.designNotRequired,
+        ]);
+        expect(
+          triageDefectDefinition.entryStates,
+          contains(WorkItemState.designNotRequired),
+        );
+      },
+    );
   });
 
   group('the failure classes stay DISTINCT', () {
@@ -568,7 +569,8 @@ void main() {
         expect(
           tick.retryReturned,
           isEmpty,
-          reason: 'the job is terminal, so no retry is owed and nothing returns',
+          reason:
+              'the job is terminal, so no retry is owed and nothing returns',
         );
       }
       expect(
@@ -632,10 +634,7 @@ void main() {
         reason: 'an ambiguous answer must not be guessed at',
       );
       expect(tick.retryReturned, hasLength(1), reason: 'and it is REPORTED');
-      expect(
-        tick.retryReturned.single.reason,
-        contains('ambiguous'),
-      );
+      expect(tick.retryReturned.single.reason, contains('ambiguous'));
       expect(
         (await host.workflowStore.readWorkItem('wi-1')).state,
         WorkItemState.agentFailed,
@@ -654,7 +653,10 @@ void main() {
           clock: () => t0,
         );
         await host.plant(
-          _item(state: WorkItemState.waitingForHumanDecision, qaContractId: null),
+          _item(
+            state: WorkItemState.waitingForHumanDecision,
+            qaContractId: null,
+          ),
         );
 
         final job = await host.scheduler.queue.enqueueIfAbsent(
@@ -707,11 +709,14 @@ void main() {
       // scheduler to honour a retry for an item outside `entryStates` — was
       // rejected for exactly that reason, and this assertion is what would fail
       // if it had been implemented by the back door instead.
-      expect(implementFeatureDefinition.entryStates, {
-        WorkItemState.implementationReady,
-      }, reason: 'the implementation lane is the one-element set that makes '
-          'the collision unreachable. Widening it by even one state destroys '
-          'the property.');
+      expect(
+        implementFeatureDefinition.entryStates,
+        {WorkItemState.implementationReady},
+        reason:
+            'the implementation lane is the one-element set that makes '
+            'the collision unreachable. Widening it by even one state destroys '
+            'the property.',
+      );
       expect(triageDefectDefinition.entryStates, {
         WorkItemState.designNotRequired,
         WorkItemState.designApproved,
@@ -724,7 +729,9 @@ void main() {
         WorkItemState.designRequired,
         WorkItemState.designRejected,
       });
-      expect(designReviewDefinition.entryStates, {WorkItemState.designInReview});
+      expect(designReviewDefinition.entryStates, {
+        WorkItemState.designInReview,
+      });
       expect(defaultImplementFeatureDefinition.entryStates, {
         WorkItemState.designNotRequired,
         WorkItemState.designApproved,

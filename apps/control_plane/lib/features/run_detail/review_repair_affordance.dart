@@ -150,7 +150,8 @@ class ReviewRepairAffordance extends StatelessWidget {
     //     again behind the next question. Without this arm the operator would
     //     be shown a receipt about a decision they never attempted and NO
     //     offer at all, silently disabling the repair for the next fabrication.
-    final receiptSuperseded = id != null && resolved != null && resolved.decisionId != id;
+    final receiptSuperseded =
+        id != null && resolved != null && resolved.decisionId != id;
 
     if (!receiptSuperseded && resolved != null) {
       return _RepairReceipt(report: resolved);
@@ -426,26 +427,26 @@ class _RepairReceipt extends StatelessWidget {
           const SizedBox(height: 32),
           const ContentRule(),
           const SizedBox(height: 20),
-// The receipt is ONE-WAY PER DECISION, and that is not an oversight.
-//
-// Every refusal this endpoint returns is a statement about the
-// decision it names, and about that decision alone. A reviewer
-// really returned a verdict, a human already answered, nothing is
-// parked, or this was never an engineering review — each is a fact
-// about one question that does not change while the operator reads
-// it. Asking again would be refused again, identically, and an offer
-// that lets someone re-ask a question the server has already
-// answered on the record is an affordance to doubt the answer.
-//
-// "That decision alone" is the whole correction, and it was not in
-// an earlier version of this comment. What does NOT stay stable is the
-// ITEM's durable state: it is parked behind a different decision right
-// now, and a receipt about the previous one says nothing about this
-// one. That is handled in [ReviewRepairAffordance.build], which
-// suppresses this receipt when the item parks elsewhere — so what
-// reaches this widget is already a receipt about the decision in
-// front of the operator. An ACCEPTED repair is likewise terminal: it
-// retired the decision, so there is nothing left to offer.
+          // The receipt is ONE-WAY PER DECISION, and that is not an oversight.
+          //
+          // Every refusal this endpoint returns is a statement about the
+          // decision it names, and about that decision alone. A reviewer
+          // really returned a verdict, a human already answered, nothing is
+          // parked, or this was never an engineering review — each is a fact
+          // about one question that does not change while the operator reads
+          // it. Asking again would be refused again, identically, and an offer
+          // that lets someone re-ask a question the server has already
+          // answered on the record is an affordance to doubt the answer.
+          //
+          // "That decision alone" is the whole correction, and it was not in
+          // an earlier version of this comment. What does NOT stay stable is the
+          // ITEM's durable state: it is parked behind a different decision right
+          // now, and a receipt about the previous one says nothing about this
+          // one. That is handled in [ReviewRepairAffordance.build], which
+          // suppresses this receipt when the item parks elsewhere — so what
+          // reaches this widget is already a receipt about the decision in
+          // front of the operator. An ACCEPTED repair is likewise terminal: it
+          // retired the decision, so there is nothing left to offer.
           const MicroLabel(reviewRepairLabel),
           const SizedBox(height: 6),
           Text(

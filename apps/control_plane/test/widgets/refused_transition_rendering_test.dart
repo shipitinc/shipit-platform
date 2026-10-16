@@ -25,37 +25,31 @@ import 'package:flutter_test/flutter_test.dart';
 /// (`accepted` for one row, `rejected` for another, SAME pair) is what proves
 /// the distinction is carried and not merely that the copy changed.
 void main() {
-
   group('the refusal wording', () {
-    test(
-      'a refused agent_completed -> review_in_progress attempt is MARKED as '
-      'not applied, so it cannot be read as a move',
-      () {
-        final message = timelineMessageFor(
-          from: 'agent_completed',
-          to: 'review_in_progress',
-          outcome: 'rejected',
-        );
+    test('a refused agent_completed -> review_in_progress attempt is MARKED as '
+        'not applied, so it cannot be read as a move', () {
+      final message = timelineMessageFor(
+        from: 'agent_completed',
+        to: 'review_in_progress',
+        outcome: 'rejected',
+      );
 
-        // The move copy is reused INVERTED, so the row NAMES the attempt it
-        // failed to make. What it must never do is present that name bare —
-        // `refusedTransitionPrefix` is the whole difference between the
-        // operator reading "review started" and "a review was tried and not
-        // applied", and it is the absence of this prefix that rendered 236
-        // refused attempts on QA as 236 transitions.
-        expect(message, startsWith(refusedTransitionPrefix));
-        expect(
-          message,
-          isNot(
-            plainTransitionMessage('agent_completed', 'review_in_progress'),
-          ),
-          reason:
-              'equality with the bare move sentence is what an operator would '
-              'have read as "review started". It must differ by the marker, and '
-              'the marker is what makes it an attempt',
-        );
-      },
-    );
+      // The move copy is reused INVERTED, so the row NAMES the attempt it
+      // failed to make. What it must never do is present that name bare —
+      // `refusedTransitionPrefix` is the whole difference between the
+      // operator reading "review started" and "a review was tried and not
+      // applied", and it is the absence of this prefix that rendered 236
+      // refused attempts on QA as 236 transitions.
+      expect(message, startsWith(refusedTransitionPrefix));
+      expect(
+        message,
+        isNot(plainTransitionMessage('agent_completed', 'review_in_progress')),
+        reason:
+            'equality with the bare move sentence is what an operator would '
+            'have read as "review started". It must differ by the marker, and '
+            'the marker is what makes it an attempt',
+      );
+    });
 
     test('it names what was ATTEMPTED, in the product own vocabulary', () {
       final message = refusedTransitionMessage(
@@ -88,53 +82,47 @@ void main() {
   });
 
   group('the accepted direction is UNCHANGED', () {
-    test(
-      'an accepted agent_completed -> review_in_progress row still reads '
-      '"Independent review started"',
-      () {
-        expect(
-          timelineMessageFor(
-            from: 'agent_completed',
-            to: 'review_in_progress',
-            outcome: 'accepted',
-          ),
-          plainTransitionMessage('agent_completed', 'review_in_progress'),
-        );
-        expect(
-          timelineMessageFor(
-            from: 'agent_completed',
-            to: 'review_in_progress',
-            outcome: 'accepted',
-          ),
-          'Independent review started',
-        );
-      },
-    );
-
-    test(
-      'the two directions differ for the SAME pair — the distinction is '
-      'carried, not incidental',
-      () {
-        final accepted = timelineMessageFor(
+    test('an accepted agent_completed -> review_in_progress row still reads '
+        '"Independent review started"', () {
+      expect(
+        timelineMessageFor(
           from: 'agent_completed',
           to: 'review_in_progress',
           outcome: 'accepted',
-        );
-        final rejected = timelineMessageFor(
+        ),
+        plainTransitionMessage('agent_completed', 'review_in_progress'),
+      );
+      expect(
+        timelineMessageFor(
           from: 'agent_completed',
           to: 'review_in_progress',
-          outcome: 'rejected',
-        );
+          outcome: 'accepted',
+        ),
+        'Independent review started',
+      );
+    });
 
-        expect(
-          accepted,
-          isNot(rejected),
-          reason:
-              'if these matched, an operator would have no way to tell a move '
-              'from a refusal — which is the defect, not a wording preference',
-        );
-      },
-    );
+    test('the two directions differ for the SAME pair — the distinction is '
+        'carried, not incidental', () {
+      final accepted = timelineMessageFor(
+        from: 'agent_completed',
+        to: 'review_in_progress',
+        outcome: 'accepted',
+      );
+      final rejected = timelineMessageFor(
+        from: 'agent_completed',
+        to: 'review_in_progress',
+        outcome: 'rejected',
+      );
+
+      expect(
+        accepted,
+        isNot(rejected),
+        reason:
+            'if these matched, an operator would have no way to tell a move '
+            'from a refusal — which is the defect, not a wording preference',
+      );
+    });
   });
 
   group('a MISSING outcome is treated as refused, not as accepted', () {

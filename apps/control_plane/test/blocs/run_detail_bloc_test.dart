@@ -463,30 +463,25 @@ void main() {
     // THE RECEIPT IS KEYED TO A DECISION, NOT TO THE RUN
     // -------------------------------------------------------------------
 
-    test(
-      'a receipt carries the decision it CONCERNED, which is not always the '
-      'one on screen',
-      () async {
-        // A work item parks on a decision more than once. The prior receipt's
-        // SUBJECT is stable; the item's durable state is not. The receipt used
-        // to carry no subject at all, so it could not be told apart from a
-        // receipt about whatever is parked now — which is how the repair got
-        // silently disabled for the next fabrication.
-        repository.workItemDetailResponse = parked(blockingDecisionId: 'dec-9');
-        repository.repairResult = result(
-          'reviewerProducedVerdict',
-          detail: 'a reviewer really did return a verdict',
-        );
-        final bloc = await loaded();
+    test('a receipt carries the decision it CONCERNED, which is not always the '
+        'one on screen', () async {
+      // A work item parks on a decision more than once. The prior receipt's
+      // SUBJECT is stable; the item's durable state is not. The receipt used
+      // to carry no subject at all, so it could not be told apart from a
+      // receipt about whatever is parked now — which is how the repair got
+      // silently disabled for the next fabrication.
+      repository.workItemDetailResponse = parked(blockingDecisionId: 'dec-9');
+      repository.repairResult = result(
+        'reviewerProducedVerdict',
+        detail: 'a reviewer really did return a verdict',
+      );
+      final bloc = await loaded();
 
-        bloc.add(
-          RunDetailReviewRepairSubmitted(reason: 'x', requestId: 'op-1'),
-        );
-        await bloc.stream.firstWhere((s) => s.repairReport != null);
+      bloc.add(RunDetailReviewRepairSubmitted(reason: 'x', requestId: 'op-1'));
+      await bloc.stream.firstWhere((s) => s.repairReport != null);
 
-        expect(bloc.state.repairReport!.decisionId, 'dec-9');
-      },
-    );
+      expect(bloc.state.repairReport!.decisionId, 'dec-9');
+    });
 
     test(
       'THE RECURRENCE: a new blocking decision parks and the offer IS back',
@@ -508,9 +503,13 @@ void main() {
         await bloc.stream.firstWhere((s) => s.repairReport != null);
 
         // The review ran and the item parked again — behind a different question.
-        repository.workItemDetailResponse = parked(blockingDecisionId: 'dec-10');
+        repository.workItemDetailResponse = parked(
+          blockingDecisionId: 'dec-10',
+        );
         bloc.add(RunDetailLoaded());
-        await bloc.stream.firstWhere((s) => s.blockingHumanDecisionId == 'dec-10');
+        await bloc.stream.firstWhere(
+          (s) => s.blockingHumanDecisionId == 'dec-10',
+        );
 
         expect(bloc.state.repairReport, isNotNull, reason: 'it is preserved');
         expect(
@@ -533,32 +532,36 @@ void main() {
       },
     );
 
-    test('the SAME decision keeps its receipt, so the one-way rule survives',
-        () async {
-      repository.workItemDetailResponse = parked(blockingDecisionId: 'dec-9');
-      repository.repairResult = result(
-        'reviewerProducedVerdict',
-        detail: 'a reviewer really did return a verdict',
-      );
-      final bloc = await loaded();
+    test(
+      'the SAME decision keeps its receipt, so the one-way rule survives',
+      () async {
+        repository.workItemDetailResponse = parked(blockingDecisionId: 'dec-9');
+        repository.repairResult = result(
+          'reviewerProducedVerdict',
+          detail: 'a reviewer really did return a verdict',
+        );
+        final bloc = await loaded();
 
-      bloc.add(RunDetailReviewRepairSubmitted(reason: 'x', requestId: 'op-1'));
-      await bloc.stream.firstWhere((s) => s.repairReport != null);
+        bloc.add(
+          RunDetailReviewRepairSubmitted(reason: 'x', requestId: 'op-1'),
+        );
+        await bloc.stream.firstWhere((s) => s.repairReport != null);
 
-      repository.workItemDetailResponse = parked(blockingDecisionId: 'dec-9');
-      bloc.add(RunDetailLoaded());
-      await bloc.stream.firstWhere((s) => s.repairReport != null);
-      // Let the reload settle.
-      await Future<void>.delayed(Duration.zero);
+        repository.workItemDetailResponse = parked(blockingDecisionId: 'dec-9');
+        bloc.add(RunDetailLoaded());
+        await bloc.stream.firstWhere((s) => s.repairReport != null);
+        // Let the reload settle.
+        await Future<void>.delayed(Duration.zero);
 
-      expect(
-        bloc.state.repairReport!.decisionId,
-        bloc.state.blockingHumanDecisionId,
-        reason:
-            'asking again would be refused again, identically. Keying must not '
-            'become "any receipt re-offers".',
-      );
-    });
+        expect(
+          bloc.state.repairReport!.decisionId,
+          bloc.state.blockingHumanDecisionId,
+          reason:
+              'asking again would be refused again, identically. Keying must not '
+              'become "any receipt re-offers".',
+        );
+      },
+    );
 
     test(
       'a transport failure keeps the strip, so the reason and the request id '

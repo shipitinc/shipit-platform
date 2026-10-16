@@ -562,49 +562,47 @@ void main() {
     },
   );
 
-  testWidgets(
-    'a receipt keyed to NO decision does not stand in for one',
-    (tester) async {
-      // The `invalidRequest` and transport-failure shapes: nothing about any
-      // decision was examined, so the receipt answers no question about the one
-      // on screen and must not suppress the offer.
-      await pump(
-        tester,
-        affordance(
+  testWidgets('a receipt keyed to NO decision does not stand in for one', (
+    tester,
+  ) async {
+    // The `invalidRequest` and transport-failure shapes: nothing about any
+    // decision was examined, so the receipt answers no question about the one
+    // on screen and must not suppress the offer.
+    await pump(
+      tester,
+      affordance(
+        decisionId: 'dec-1',
+        report: const ReviewRepairReport(
+          accepted: false,
+          sentence: 'nothing changed',
+        ),
+      ),
+    );
+
+    expect(find.text(reviewRepairActionLabel), findsOneWidget);
+    expect(find.text('nothing changed'), findsNothing);
+  });
+
+  testWidgets('a receipt survives its OWN repair, when nothing is parked', (
+    tester,
+  ) async {
+    // The case worth preserving, stated separately because it is easy to lose
+    // while fixing the recurrence: an ACCEPTED repair retires the decision, so
+    // `decisionId` is null. A keying rule that treated "no blocking decision"
+    // as "mismatch" would delete the receipt at the exact moment it became the
+    // only thing left on screen telling the operator what happened.
+    await pump(
+      tester,
+      affordance(
+        decisionId: null,
+        report: const ReviewRepairReport(
+          accepted: true,
+          sentence: 'Done.',
           decisionId: 'dec-1',
-          report: const ReviewRepairReport(
-            accepted: false,
-            sentence: 'nothing changed',
-          ),
         ),
-      );
+      ),
+    );
 
-      expect(find.text(reviewRepairActionLabel), findsOneWidget);
-      expect(find.text('nothing changed'), findsNothing);
-    },
-  );
-
-  testWidgets(
-    'a receipt survives its OWN repair, when nothing is parked',
-    (tester) async {
-      // The case worth preserving, stated separately because it is easy to lose
-      // while fixing the recurrence: an ACCEPTED repair retires the decision, so
-      // `decisionId` is null. A keying rule that treated "no blocking decision"
-      // as "mismatch" would delete the receipt at the exact moment it became the
-      // only thing left on screen telling the operator what happened.
-      await pump(
-        tester,
-        affordance(
-          decisionId: null,
-          report: const ReviewRepairReport(
-            accepted: true,
-            sentence: 'Done.',
-            decisionId: 'dec-1',
-          ),
-        ),
-      );
-
-      expect(find.text(reviewRepairedHeadline), findsOneWidget);
-    },
-  );
+    expect(find.text(reviewRepairedHeadline), findsOneWidget);
+  });
 }
