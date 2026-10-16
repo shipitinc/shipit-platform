@@ -244,6 +244,28 @@ WorkItemState completionRouteFor(ProducedCommit produced) => switch (produced) {
 /// an item that can never be implemented — the exact defect this lane exists to
 /// end, re-created with a different shape.
 ///
+/// ## WHAT IT DOES NOT BOUND
+///
+/// Automatic entries into THIS lane, and nothing else.
+///
+/// `completionRouteFor` answers `reviewInProgress` for a producer that left a
+/// commit. That is `engineeringReviewDefinition.targetState` — the review lane's
+/// state, not an entry into this one — and a counter that bounds entries here
+/// has no standing to refuse a route there. The caller enforces that by
+/// testing the route against its own `entryStates` rather than against a second
+/// list that could drift from the lane's declaration.
+///
+/// Declining to bound the commit route was not harmless even though the item's
+/// state came out the same either way, because the refusal is REPORTED to an
+/// operator: it said the implementation lane's budget had been spent on an item
+/// the lane was never going to run, and that the review lane's fail-closed
+/// handler would raise a blocking human decision for it. Both sentences are
+/// false for an item holding a reviewable commit — the review workload resolver
+/// resolves that one, so no `blockedArtifactMissing` job is ever created and the
+/// handler is never called for it. That is the rule an operator-facing refusal
+/// has to obey — it misstates which lane owns the item — and it is stated here
+/// because it is the one this bound used to break.
+///
 /// ## WHY IT IS A BOUND AND NOT A FAILURE
 ///
 /// Refusing the route is not a failure and not a drop. The item is left at
@@ -254,7 +276,8 @@ WorkItemState completionRouteFor(ProducedCommit produced) => switch (produced) {
 /// decision — but ONLY once the stand-down inside that handler stops deferring
 /// to this bound, which is why the two check the same number. So the bound does
 /// not strand the item — it hands it to a person, which is where an item nobody
-/// can implement belongs.
+/// can implement belongs. Both halves of that sentence are about a route into
+/// THIS lane, and neither reaches a route into the review lane.
 ///
 /// Three, because each attempt costs a real implementer execution and the
 /// historical budget for a lane that re-dispatches the same work is two

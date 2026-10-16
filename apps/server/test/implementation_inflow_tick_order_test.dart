@@ -478,6 +478,149 @@ void main() {
     );
 
     test(
+      'the bound is THIS lane\'s: a commit past it is still reviewed, not '
+      'refused',
+      () async {
+        // The other half of `maxImplementationInflows`'s scope, seen from where
+        // it lands.
+        //
+        // The stand-down above (`the bound still reaches a human`) is about an
+        // item with NO artifact, where the implementation lane is the only thing
+        // that could have acted and its budget is spent. This is the opposite
+        // case: the producer left a commit, so the route is `reviewInProgress` —
+        // `engineeringReviewDefinition`'s own state, not an entry into the
+        // implementation lane — and an implementation-lane counter has no
+        // standing to refuse it.
+        //
+        // What the scheduler refused to do is the tell. Pre-fix, the inflow
+        // answered with a bound refusal that told an operator the lane's budget
+        // had been spent on an item it was never going to run, and that the
+        // review lane's fail-closed handler would raise a blocking human
+        // decision for it. Both sentences are false for a reviewable commit: the
+        // review workload resolver resolves it, so no `blockedArtifactMissing`
+        // job is ever created and that handler is never called for this item at
+        // all. So the assertions below are that the refusal is GONE and that
+        // review still happens — not that a human gate appears.
+        //
+        // BOTH orders, because the composition's order is the other thing this
+        // file exists to hold constant.
+        for (final reviewFirst in const [false, true]) {
+          final host = await _Host.withProducer(
+            metadata: const {
+              'producerActorId': 'agx-wx-1',
+              'triageAttempt': maxImplementationInflows,
+            },
+            endingRevision: 'a-real-commit',
+          );
+
+          final SchedulerTickResult implTick;
+          final SchedulerTickResult reviewTick;
+          if (reviewFirst) {
+            reviewTick = await host.runReviewSection();
+            implTick = await host.implScheduler.tick();
+          } else {
+            implTick = await host.implScheduler.tick();
+            reviewTick = await host.runReviewSection();
+          }
+
+          expect(
+            implTick.completionInflow.single.reason,
+            isNot(contains('re-work discriminator')),
+            reason:
+                'review-first is $reviewFirst: the discriminator is at the '
+                'bound, but this item is not asking for an implementation entry, '
+                'so the bound has nothing to say about its route',
+          );
+          expect(
+            reviewTick.blockedArtifactMissing,
+            isEmpty,
+            reason:
+                'and the item is genuinely reviewable, so the fail-closed '
+                'handler — the one that raises the blocking human decision — '
+                'has no reason to run. Its absence is what makes the refusal '
+                'message the scheduler used to emit a lie',
+          );
+
+          final item = await host.engine.loadWorkItem('wi-1');
+          expect(
+            item.blockingHumanDecisionId,
+            isNull,
+            reason:
+                'a commit at the implementation lane\'s bound is not a budget '
+                'problem, and putting it in front of a person as one would ask '
+                'a human to adjudicate an accounting question',
+          );
+          expect(
+            host.dispatch.requests.where(
+              (r) => r.role == AgentRole.engineeringReviewer,
+            ),
+            hasLength(1),
+            reason:
+                'and a reviewer IS dispatched at the revision the producer left',
+          );
+          expect(
+            host.dispatch.requests
+                .where((r) => r.role == AgentRole.engineeringReviewer)
+                .single
+                .startingRevision,
+            'a-real-commit',
+          );
+          expect(
+            host.dispatch.requests.where(
+              (r) => r.role == AgentRole.implementer,
+            ),
+            isEmpty,
+            reason:
+                'and still nothing is sent to an implementer. Scoping the bound '
+                'away from the commit route must never turn into a second '
+                'implementer over a commit that already exists',
+          );
+        }
+      },
+    );
+
+    test(
+      'the refusal still reaches a human ABOVE the bound, not only at it',
+      () async {
+        // `the bound still reaches a human` seeds the CONSTANT, so it only ever
+        // exercised the exact limit. The live data carries items that read 4 —
+        // and `>=` against `==` is the whole difference between those being
+        // parked and being run for ever.
+        for (final marker in const [
+          maxImplementationInflows + 1,
+          maxImplementationInflows * 2,
+        ]) {
+          final host = await _Host.withProducer(
+            metadata: {
+              'producerActorId': 'agx-wx-1',
+              'triageAttempt': marker,
+            },
+          );
+
+          final item = await host.run(reviewFirst: false);
+
+          expect(
+            item.state,
+            WorkItemState.waitingForHumanDecision,
+            reason:
+                'the re-work discriminator reads $marker, which is at or above '
+                'the bound of $maxImplementationInflows. An item the '
+                'implementation lane cannot take any further and the review lane '
+                'cannot dispatch belongs in front of a person, not in a loop',
+          );
+          expect(item.blockingHumanDecisionId, isNotNull);
+          expect(
+            host.dispatch.requests.where(
+              (r) => r.role == AgentRole.implementer,
+            ),
+            isEmpty,
+            reason: 'and nothing was spent trying',
+          );
+        }
+      },
+    );
+
+    test(
       'an unreadable producer is refused fail-closed, and the lane survives it',
       () async {
         // `readTriageAttempt` throws by design on a present-but-unreadable
