@@ -33,6 +33,11 @@ import 'package:workflow_store/workflow_store.dart';
 /// The reviewer shape is the one QA actually recorded: `end_turn`, `{}` in
 /// `structuredResultJson`, ~2000 bytes of markdown in `summary`, against a real
 /// commit.
+///
+/// The second test is the THIRD stranded class, measured on the same day: a
+/// review job that failed PERMANENTLY. It is here for the same reason as the
+/// first — it names no new symbol, and it is one assertion that the thing
+/// happens at all.
 void main() {
   test(
     'a COMPLETED review that produced no verdict reaches a person, asserts no '
@@ -193,6 +198,135 @@ void main() {
         reason:
             'engineeringReview/rework is the implementation lane\'s entry state: '
             'the work runs again and is reviewed again',
+      );
+    },
+  );
+
+  test(
+    'a review job that failed PERMANENTLY reaches a person, and the decision '
+    'still asserts no verdict',
+    () async {
+      // `defect-DEF-DEF-1791685024220546` / `-DEF-1791686357139031`, verbatim:
+      // `AgpTransportException: ACP request timed out`, job `failed` with
+      // `kind: permanent`.
+      //
+      // The old trigger was `execution.status == completed`, and a permanent
+      // failure settles `failed` — so it never matched, no decision was raised,
+      // and nothing else could move the item: `reviewInProgress` is not in
+      // `engineeringReviewDefinition.entryStates`, so `RunnableWorkEvaluator`
+      // answers `noAction` before any policy probe.
+      final store = InMemoryWorkflowStore();
+      final engine = DurableWorkflowEngine(store: store);
+      final executions = InMemoryExecutionStore();
+      final jobs = InMemoryJobStore();
+
+      final now = DateTime.utc(2026, 10, 15, 12);
+      await store.saveWorkItem(
+        WorkItem(
+          workItemId: 'wi-review-crashed',
+          productId: 'prod-1',
+          category: WorkItemCategory.feature,
+          title: 'A change nobody could review',
+          description: 'The implementer committed; the reviewer timed out.',
+          state: WorkItemState.reviewInProgress,
+          metadata: const {'producerActorId': 'agx-wx-impl'},
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+
+      final enqueued = await JobQueue(store: jobs).enqueueIfAbsent(
+        workItemId: 'wi-review-crashed',
+        definition: engineeringReviewDefinition,
+        dedupeKey: 'wi-review-crashed:engineering_review:a0',
+        instruction: 'Review the implementation.',
+      );
+      // Exactly what `Scheduler._adopt` writes for `permanent`: completed
+      // `failed`, no `scheduleRetry`, so no retry is owed by anything.
+      final job = enqueued.job.copyWith(
+        state: JobState.failed,
+        failure: const JobFailure(
+          code: JobFailureCode.executionFailed,
+          kind: JobFailureKind.permanent,
+          reason: 'AgpTransportException: ACP request timed out',
+        ),
+        executionReference: JobExecutionReference(
+          workerExecutionId: 'wx-review',
+          agentExecutionId: 'agx-wx-review',
+          createdAt: now,
+        ),
+      );
+      await jobs.saveJob(job);
+
+      // The reviewer's own execution: terminal, FAILED, and — as on the live
+      // victims — it never wrote a result.
+      await executions.saveExecution(
+        AgentExecution(
+          executionId: 'agx-wx-review',
+          workItemId: 'wi-review-crashed',
+          requestId: 'agx-wx-review',
+          runtimeTypeId: 'eng-review-runtime',
+          role: AgentRole.engineeringReviewer,
+          status: AgentSessionStatus.failed,
+          workspace: const AgentWorkspace(
+            workspaceId: 'ws-review',
+            path: '/worktrees/review',
+            startingRevision: '18ad90a',
+          ),
+          startedAt: now,
+          completedAt: now,
+          reason: 'AgpTransportException: ACP request timed out',
+        ),
+      );
+
+      await engineeringReviewTickHandler(
+        workflowEngine: engine,
+        executionStore: executions,
+        logger: (message, context) {},
+      )(job);
+
+      // 1. THERE IS SOMETHING TO ACT ON. Without this the item sits at
+      //    review_in_progress for ever, which is the defect.
+      final item = await engine.loadWorkItem('wi-review-crashed');
+      expect(
+        item.blockingHumanDecisionId,
+        isNotNull,
+        reason:
+            'a permanently failed review job is terminal on BOTH sides: there is '
+            'no verdict, and no retry is owed. Nothing in the platform can move '
+            'this item again, so only a person can.',
+      );
+      expect(item.state, WorkItemState.waitingForHumanDecision);
+
+      final decision = await store.readHumanDecision(
+        item.blockingHumanDecisionId!,
+      );
+
+      // 2. IT STILL ASSERTS NO VERDICT. Reaching a human is not inventing an
+      //    assessment — that is the whole invariant of this file.
+      expect(decision.metadata?.containsKey('reviewVerdict'), isFalse);
+      expect(
+        decision.metadata?.containsKey('engineeringReviewResult'),
+        isFalse,
+      );
+      expect(
+        decision.recommendation,
+        isNot(anyOf('APPROVE', 'CHANGES_REQUIRED')),
+        reason: 'the recommendation is rendered under "WHAT WE SUGGEST"',
+      );
+
+      // 3. AND IT NEVER CLAIMS A REVIEW RAN THAT DID NOT. The completed-review
+      //    text says "ran to completion"; repeating that here would be a
+      //    confident sentence about a fact nobody established.
+      expect(decision.question, isNot(contains('ran to completion')));
+      expect(decision.question, contains('did not finish'));
+      expect(
+        decision.question,
+        contains('AgpTransportException: ACP request timed out'),
+        reason:
+            'the raw worker text survives only on `JobFailure.reason`, and it is '
+            'what an operator is choosing between when they pick rework or '
+            'cancel',
       );
     },
   );

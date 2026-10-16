@@ -434,6 +434,17 @@ _VerdictRead _readReviewVerdict({
 /// A store that refuses the write must not take the tick down with it: the
 /// decision is already being raised or deliberately NOT raised, and the log line
 /// below still says why.
+///
+/// ## `retryOwed` AND `reviewCompleted` ARE TWO DIFFERENT FACTS
+///
+/// The gate raises when NO RETRY IS OWED. That is not the same question as
+/// "did the review finish", and conflating the two is the whole defect: a
+/// PERMANENT failure settles its execution `failed`/`interrupted`, so it never
+/// reaches `completed`, and an item waiting on a permanent failure is not
+/// retried by anything. Recorded as two booleans here because an operator
+/// reading the timeline needs both — "a retry is still owed" says the queue is
+/// handling it, and "the review completed" says whether the reviewer got to say
+/// anything at all.
 Future<void> _recordNoVerdict({
   required ExecutionStore executionStore,
   required Job job,
@@ -441,6 +452,7 @@ Future<void> _recordNoVerdict({
   required String executionId,
   required _NoVerdict absence,
   required bool reviewCompleted,
+  required bool retryOwed,
   void Function(String message, Map<String, dynamic> context)? logger,
 }) async {
   final detail = {
@@ -449,12 +461,14 @@ Future<void> _recordNoVerdict({
     'executionId': executionId,
     'cause': absence.cause.wire,
     'why': absence.detail,
+    'jobState': job.state.wire,
+    'retryOwed': retryOwed,
     // Says WHAT WAS DONE about it, because "no verdict" on its own is exactly
     // the sentence that left four items invisible: the reader cannot tell a gate
     // that is handling this from a gate that dropped it.
     //
-    // AND ONLY WHAT IS ALREADY TRUE WHEN THIS LINE IS WRITTEN. When the review
-    // completed, the decision is raised by the CALLER, after this record, and
+    // AND ONLY WHAT IS ALREADY TRUE WHEN THIS LINE IS WRITTEN. When no retry is
+    // owed, the decision is raised by the CALLER, after this record, and
     // `raiseVerdictAbsentDecision` has three outcomes that write nothing
     // (`alreadyPending`, `producerIdentityUnreadable`, `refused`). A sentence
     // emitted here claiming a decision was raised would therefore be false on
@@ -462,14 +476,13 @@ Future<void> _recordNoVerdict({
     // one layer down, and the exact sentence removed at a different layer. So
     // this line claims the absence record and nothing else; the caller logs
     // what the raise actually did.
-    'decision': reviewCompleted
+    'decision': !retryOwed
         ? 'no decision claimed by this record. It states the absence, which is '
               'durable on the reviewer\'s execution timeline; the verdict-less '
               'decision is handled straight afterwards and reports its own '
               'outcome under engineering-review-gate-no-verdict-decision'
-        : 'not raised; this review has not finished, so the reviewer job\'s own '
-              'bounded maxAttempts is still owed a retry and the item is left '
-              'retryable at review_in_progress',
+        : 'not raised; the reviewer job is still owed a retry inside its bounded '
+              'maxAttempts, so the item is left retryable at review_in_progress',
   };
   logger?.call('engineering-review-gate-no-verdict', detail);
 
@@ -491,6 +504,7 @@ Future<void> _recordNoVerdict({
           'cause': absence.cause.wire,
           'detail': absence.detail,
           'reviewCompleted': reviewCompleted,
+          'retryOwed': retryOwed,
         },
       ),
     );
@@ -597,6 +611,37 @@ bool verdictAbsentChoiceIsResolvable(
 const String verdictAbsentRecommendation =
     'NO VERDICT — READ WHAT THE REVIEWER WROTE, THEN SEND THE WORK BACK';
 
+/// The same decision for a review that did NOT finish.
+///
+/// ## WHY IT CANNOT BE [verdictAbsentRecommendation]
+///
+/// That line's whole content is an instruction: read what the reviewer wrote.
+/// For a review that crashed on an ACP timeout there is nothing to read — the
+/// execution never wrote a result, so `reviewProse` is null and the question
+/// says so in its own section. An operator told to go and read prose that does
+/// not exist is being pointed at an absence, which is a different mistake from
+/// the one this file exists to end rather than a smaller version of it.
+///
+/// It is a SEPARATE constant rather than a branch inside one string, because this
+/// is the one field a surface renders on its own under "WHAT WE SUGGEST": a
+/// concatenation would read as two sentences and hide the half that applies.
+const String verdictAbsentReviewFailedRecommendation =
+    'NO VERDICT — THE REVIEW DID NOT FINISH; FIX THE FAILURE, THEN SEND THE '
+    'WORK BACK';
+
+/// The `recommendation` a verdict-less decision carries, chosen by whether the
+/// review reached a terminal state on its own.
+///
+/// Both constants lead with the literal `NO VERDICT`, neither is a
+/// [ReviewVerdict] wire value, and neither is the stall gate's `REWORK`, so the
+/// anti-fabrication property asserted at
+/// `apps/server/test/engineering_review_never_fabricates_verdict_test.dart`
+/// holds identically on both paths.
+String verdictAbsentRecommendationFor({required bool reviewCompleted}) =>
+    reviewCompleted
+    ? verdictAbsentRecommendation
+    : verdictAbsentReviewFailedRecommendation;
+
 /// The two options. Same `optionId`s the routing table understands and the stall
 /// gate uses, different words, and neither one is pre-marked `recommended`:
 /// there is no better answer here, and highlighting one would be the platform
@@ -630,6 +675,16 @@ const List<HumanDecisionOption> verdictAbsentOptions = [
 ///   English cannot be read back as having returned a verdict.
 /// * It names the two actions and says plainly that neither is a verdict.
 ///
+/// ## AND IT NEVER CLAIMS A REVIEW RAN THAT DID NOT
+///
+/// The sentence separating PROCESS from CONCLUSION used to be hardcoded to "the
+/// engineering review ran to completion", which was true for the four parked
+/// items and false for every failure this gate now also answers. Telling an
+/// operator that a reviewer which died on an ACP timeout "ran to completion" is
+/// the same class of statement as inventing its verdict: a confident sentence
+/// about a fact nobody established. [reviewCompleted] selects the sentence
+/// instead of it being assumed.
+///
 /// Takes the facts, not the file-private [_NoVerdict]: this is the operator-facing
 /// text of a durable record, and its inputs are two strings and an id.
 String verdictAbsentQuestion({
@@ -638,18 +693,28 @@ String verdictAbsentQuestion({
   required String executionId,
   required String? producerExecutionId,
   required String? reviewProse,
+  required bool reviewCompleted,
 }) {
   final prose = (reviewProse ?? '').trim();
   final buffer = StringBuffer()
     ..writeln('NO VERDICT. Nothing has been assessed on this work item.')
     ..writeln()
     ..writeln(
-      'The engineering review ran to completion and this build could not read a '
-      'review verdict from what it returned. So there is no approval and no '
-      'request for changes here, and no findings have been accepted or '
-      'rejected — not because a reviewer found none, but because no reviewer '
-      'produced a verdict to act on. The review PROCESS succeeded; that is not '
-      'the same as the review CONCLUDING anything.',
+      reviewCompleted
+          ? 'The engineering review ran to completion and this build could not '
+                'read a review verdict from what it returned. So there is no '
+                'approval and no request for changes here, and no findings have '
+                'been accepted or rejected — not because a reviewer found none, '
+                'but because no reviewer produced a verdict to act on. The review '
+                'PROCESS succeeded; that is not the same as the review CONCLUDING '
+                'anything.'
+          : 'The engineering review did not finish, and this build could not '
+                'read a review verdict from what it returned. So there is no '
+                'approval and no request for changes here, and no findings have '
+                'been accepted or rejected — not because a reviewer found none, '
+                'but because no reviewer reached a conclusion to act on. The '
+                'review PROCESS did not succeed either; nothing will retry it, '
+                'which is why this is in front of you rather than waiting.',
     )
     ..writeln()
     ..writeln('  cause:     $cause')
@@ -698,12 +763,22 @@ String verdictAbsentQuestion({
 /// as null — is the first step of a row that later reads as an assessment. The
 /// absence is named by `cause` and by the key it hangs under, which is what
 /// [isVerdictAbsentDecision] and [verdictAbsentChoiceIsResolvable] read.
+///
+/// [jobFailure] is the REVIEW JOB's own record, not a reviewer's opinion: why
+/// the run ended and how much of its budget was spent. It is the only place the
+/// worker-side text (`AgpTransportException: ACP request timed out`) survives —
+/// the coordinator composes its own [AgentExecution.reason], and the raw failure
+/// detail lives on `JobFailure.reason`. An operator deciding between `rework` and
+/// `cancel` needs that text: it is the difference between "the reviewer was slow"
+/// and "the reviewer could not be reached at all".
 Map<String, dynamic> verdictAbsentMetadata({
   required String cause,
   required String detail,
   required String executionId,
   required String? producerActorId,
   required String? reviewProse,
+  required bool reviewCompleted,
+  Map<String, dynamic>? jobFailure,
 }) => {
   reviewVerdictAbsentMetadataKey: {
     'verdictRecorded': false,
@@ -711,10 +786,17 @@ Map<String, dynamic> verdictAbsentMetadata({
     'detail': detail,
     'reviewExecutionId': executionId,
     'reviewedRevisionExecutionId': producerActorId,
+    // Says whether the reviewer got to the end of its own turn. Distinct from
+    // `cause`, which says why there is no verdict: a `verdict_absent` on a
+    // COMPLETED review and a `reviewer_execution_failed` on one that died are
+    // both absences, and an operator needs to tell them apart before choosing
+    // between rework and cancel.
+    'reviewCompleted': reviewCompleted,
     // Carried so a surface can show how much the reviewer actually said. Null
     // is a real answer here: "it wrote nothing" is what the operator needs to
     // see, and it is different from "its prose is not readable here".
     'reviewProsePresent': (reviewProse ?? '').trim().isNotEmpty,
+    if (jobFailure != null) 'reviewJobFailure': jobFailure,
   },
   // `readReviewVerdictProvenance` reads this key to find the reviewer run when
   // classifying a decision, and it is what makes "set aside and re-review"
@@ -759,8 +841,8 @@ String verdictAbsentDecisionSentence(VerdictAbsentDecisionOutcome outcome) {
   switch (outcome) {
     case VerdictAbsentDecisionOutcome.raised:
       return 'raised a verdict-less engineering review decision: it asserts no '
-          'verdict, carries the reviewer\'s own prose, and offers only rework '
-          'and cancel';
+          'verdict, states whether the review finished at all, and offers only '
+          'rework and cancel';
     case VerdictAbsentDecisionOutcome.alreadyPending:
       return 'not raised by this tick; the item is already parked behind a '
           'pending engineeringReview decision, so a repeated tick did not mint '
@@ -776,8 +858,24 @@ String verdictAbsentDecisionSentence(VerdictAbsentDecisionOutcome outcome) {
   }
 }
 
-/// Raises the verdict-less decision for a review that completed with none,
-/// idempotently.
+/// Raises the verdict-less decision for a review that produced none, idempotently.
+///
+/// ## THE CALLER OWNS THE TRIGGER, AND THE TRIGGER IS NOT "COMPLETED"
+///
+/// This function raises for a review that produced no verdict when NOTHING ELSE
+/// WILL MOVE THE ITEM — no retry is still owed. That includes a review that
+/// completed, and it includes one that FAILED PERMANENTLY: the latter settles
+/// its execution `failed`/`interrupted`, never reaches `completed`, and is never
+/// retried by anything, because `RetryPolicy` routes `permanent` straight to
+/// `complete(failed)` and `_returnRetriableItemsToEntryStates` only returns items
+/// for a `retryWaiting` job. Measured on 2026-10-15:
+/// `defect-DEF-1791685024220546` and `defect-DEF-1791686357139031` both sat at
+/// `reviewInProgress` with `AgpTransportException: ACP request timed out`, a
+/// job `failed` with `kind: permanent`, and nothing on any operator screen.
+///
+/// `reviewInProgress` is not in `engineeringReviewDefinition.entryStates`, so
+/// the review lane can never re-mint one: `RunnableWorkEvaluator` answers
+/// `noAction` before any policy probe runs.
 ///
 /// ## IDEMPOTENCE IS THE ENGINE'S, AND THIS DOES NOT WEAKEN IT
 ///
@@ -796,6 +894,7 @@ Future<VerdictAbsentDecisionOutcome> raiseVerdictAbsentDecision({
   required String detail,
   required String? producerActorId,
   required String? reviewProse,
+  required bool reviewCompleted,
   void Function(String message, Map<String, dynamic> context)? logger,
 }) async {
   final item = await workflowEngine.loadWorkItem(workItemId);
@@ -819,8 +918,8 @@ Future<VerdictAbsentDecisionOutcome> raiseVerdictAbsentDecision({
       'executionId': executionId,
       'cause': cause,
       'action':
-          'no decision was raised. This review completed without a verdict and '
-          'nothing else will move this item, so the absence is on the '
+          'no decision was raised. This review produced no verdict and no retry '
+          'is owed, so nothing else will move this item: the absence is on the '
           'reviewer\'s execution timeline and the item is still parked at '
           'review_in_progress. The missing fact is the implementer\'s execution '
           'id on the work item; nothing was fabricated to get past the guard '
@@ -839,9 +938,12 @@ Future<VerdictAbsentDecisionOutcome> raiseVerdictAbsentDecision({
         executionId: executionId,
         producerExecutionId: producerActorId,
         reviewProse: reviewProse,
+        reviewCompleted: reviewCompleted,
       ),
       options: verdictAbsentOptions,
-      recommendation: verdictAbsentRecommendation,
+      recommendation: verdictAbsentRecommendationFor(
+        reviewCompleted: reviewCompleted,
+      ),
       blocking: true,
       metadata: verdictAbsentMetadata(
         cause: cause,
@@ -849,6 +951,8 @@ Future<VerdictAbsentDecisionOutcome> raiseVerdictAbsentDecision({
         executionId: executionId,
         producerActorId: producerActorId,
         reviewProse: reviewProse,
+        reviewCompleted: reviewCompleted,
+        jobFailure: _reviewJobFailureFacts(job),
       ),
       // The ORCHESTRATOR, not the reviewer. The edge
       // `reviewInProgress -> waitingForHumanDecision` admits
@@ -891,40 +995,130 @@ Future<VerdictAbsentDecisionOutcome> raiseVerdictAbsentDecision({
   return VerdictAbsentDecisionOutcome.raised;
 }
 
-/// Builds a tick handler for engineering review jobs. When the reviewer
-/// execution reaches a terminal state, this raises a blocking
-/// `engineeringReview` HumanDecision to move `reviewInProgress` to
-/// `waitingForHumanDecision`.
+/// Whether the review lane's own bounded retry is STILL OWED on [job] — the one
+/// question that decides whether this gate may take the work item out from under
+/// the queue.
 ///
-/// ## IT RAISES A VERDICT-LESS DECISION FOR A REVIEW THAT COMPLETED WITHOUT ONE
+/// ## THIS IS THE SCHEDULER'S RULE, READ NOT RE-DERIVED
 ///
-/// The original b1 rule was: if the reviewer produced no verdict, record why and
-/// return, leaving the item at `reviewInProgress`. That is still exactly right
-/// for a review that did NOT finish — a budget kill, a crash, a missing result.
-/// There the reviewer job's own bounded `maxAttempts` is still owed a retry, and
+/// [Scheduler._returnRetriableItemsToEntryStates] returns an item to a lane entry
+/// state on exactly two conditions: `job.state == JobState.retryWaiting`, and
+/// `failure.kind.isRetryable` (which is `== transient` on the contract enum). Its
+/// own comment on the second is that `canRetry` is deliberately NOT re-checked,
+/// because `JobQueue.scheduleRetry` PRE-INCREMENTS `attempt` — so a perfectly
+/// live retry answers `2 < 2`, which is false. That is why this function checks
+/// `retryWaiting` FIRST and unconditionally: a job holding a scheduled retry has
+/// spent its whole budget on the counter and owes one anyway.
+///
+/// The other branch is `attempt < maxAttempts` — [RetryPolicy.canRetry], the same
+/// bound, for a job that is live but has not been told to wait. A job that is
+/// live with nothing left is treated as owed nothing, which is the conservative
+/// direction: it is the side that reaches a person rather than stranding.
+///
+/// ## WHY NOT `job.isTerminal` ALONE
+///
+/// The drain hands a terminal job to this handler exactly once
+/// (`drainTriageOutcomesFromTick` consumes `dispatched ∪ terminal ∪ reconciled`),
+/// so through the scheduler the two readings coincide today. This function is
+/// also the gate's own guard, and it is deliberately the narrower claim: a test,
+/// or a future caller, that passes a `retryWaiting` job gets the refusal, because
+/// parking that item at `waitingForHumanDecision` would pre-empt a retry that is
+/// coming — the exact mirror of the bug being fixed.
+bool _reviewRetryOwed(Job job) {
+  if (job.isTerminal) return false;
+  if (job.state == JobState.retryWaiting) return true;
+  return job.attempt < job.maxAttempts;
+}
+
+/// The review JOB's own durable facts, for a decision an operator has to act on.
+///
+/// Recorded because the coordinator composes its own [AgentExecution.reason] and
+/// the worker-side text — `AgpTransportException: ACP request timed out`, the
+/// string on both live victims — survives only on `JobFailure.reason`. `kind` is
+/// the field that answers "will this ever be retried": `permanent` is the class
+/// nothing retries, and `transient` at a spent `attempt` is the other.
+///
+/// Never a verdict and never an assessment. Every value here is read off the job
+/// row the scheduler itself wrote.
+Map<String, dynamic>? _reviewJobFailureFacts(Job job) {
+  final failure = job.failure;
+  return {
+    'jobState': job.state.wire,
+    'attempt': job.attempt,
+    'maxAttempts': job.maxAttempts,
+    if (failure != null) ...{
+      'code': failure.code.name,
+      'kind': failure.kind.name,
+      if (failure.reason != null) 'reason': failure.reason,
+    },
+  };
+}
+
+/// Builds a tick handler for engineering review jobs. When the reviewer's job
+/// reaches a state in which NOTHING will retry it and the reviewer produced no
+/// verdict, this raises a blocking `engineeringReview` HumanDecision to move
+/// `reviewInProgress` to `waitingForHumanDecision`.
+///
+/// ## THE TRIGGER IS "NO RETRY IS OWED", NOT "THE REVIEW FINISHED"
+///
+/// Those are different questions and the earlier version of this gate asked the
+/// second one, which is why `reviewInProgress` was terminal by omission for
+/// exactly one failure class.
+///
+/// The b1 rule was: if the reviewer produced no verdict, record why and return,
+/// leaving the item at `reviewInProgress`. That is right while the review lane's
+/// own bounded `maxAttempts` is still owed a retry —
 /// `Scheduler._returnOneToEntryState` returns the item to a lane entry state to
-/// make it claimable, while `waitingForHumanDecision` is explicitly skipped by
-/// that return. Parking those items would pre-empt a retry that is coming.
+/// make the retry claimable, while `waitingForHumanDecision` is explicitly SKIPPED
+/// by that return, so parking those items pre-empts a retry that is coming.
 ///
-/// It is wrong for a review that DID finish. Measured on 2026-10-15: four review
+/// It is wrong the moment no retry is owed, and there are TWO ways to get there.
+/// The first is a review that DID finish: measured on 2026-10-15, four review
 /// executions reached `completed` against real commits (one `18ad90a`, +957/-199)
 /// and produced real findings in their prose, every one of them recorded `{}` in
 /// `structuredResultJson`, so no verdict was parsed, so no decision was raised,
 /// so all four items sat at `reviewInProgress` with nothing on any operator
 /// screen and no retry coming — the job SUCCEEDED, and `maxAttempts` only ever
-/// retries a failure. A review that concluded nothing and a review that passed
-/// were indistinguishable, and that is the false state this whole programme
-/// exists to end.
+/// retries a failure.
 ///
-/// So the gate now raises ONE more decision, under decision
-/// `c495e02f-5c5d-4b45-8124-42ad0e90d6d4` (ARCHITECTURE, RESOLVED, option A),
-/// and it is a decision that asserts NO VERDICT:
+/// The second is the one this handler's condition used to miss entirely: a
+/// review that FAILED. A PERMANENT failure settles its execution `failed` or
+/// `interrupted` and so never reaches `completed`, but `RetryPolicy` routes
+/// `permanent` straight to `complete(failed)` and never schedules a retry, and
+/// `_returnRetriableItemsToEntryStates` only returns items for a `retryWaiting`
+/// job. So a permanent failure is terminal on both sides at once: no verdict, and
+/// nothing owed. Measured on 2026-10-15, `defect-DEF-1791685024220546` and
+/// `defect-DEF-1791686357139031` both sat there with
+/// `AgpTransportException: ACP request timed out` and a job `failed` with
+/// `kind: permanent`.
+///
+/// Nothing can re-mint them either: `reviewInProgress` is NOT in
+/// `engineeringReviewDefinition.entryStates` (`{agentCompleted}`), so
+/// `RunnableWorkEvaluator` answers `noAction` before any policy probe, and
+/// `_retireSupersededForItem` sweeps anything queued. The item was terminal by
+/// omission.
+///
+/// So the condition is [_reviewRetryOwed]'s negation, evaluated against the JOB
+/// rather than inferred from the execution's status. Asking "did the review
+/// complete" was asking a question about the wrong record: it is a fact about
+/// whether a reviewer got to the end of its turn, not about whether anyone is
+/// still going to try again.
+///
+/// ## AND IT NEVER FABRICATES A VERDICT TO GET THERE
+///
+/// Raising is not inventing. The decision the gate raises is a decision that
+/// asserts NO VERDICT — under decision
+/// `c495e02f-5c5d-4b45-8124-42ad0e90d6d4` (ARCHITECTURE, RESOLVED, option A):
 ///
 ///  * it names the absence and its cause in its own text, and never carries a
 ///    `ReviewVerdict` anywhere — not in `metadata`, not in
 ///    `extraContext`, not in a recommendation that reads like one;
-///  * it carries the reviewer's ACTUAL prose, because the reviewer did real
-///    work and hiding it would replace one false state with another;
+///  * it says whether the review FINISHED, because a decision whose text claims
+///    a review "ran to completion" when it died on an ACP timeout is the same
+///    class of false statement as a verdict nobody produced;
+///  * it carries the reviewer's ACTUAL prose when there is any, because the
+///    reviewer did real work and hiding it would replace one false state with
+///    another — and says plainly when there is none;
 ///  * it offers only `rework` and `cancel`, because `approve` and `reject` are
 ///    the two choices that WOULD assert an assessment nobody made; and
 ///  * it is refused by the resolution path if a client submits any other choice,
@@ -1002,22 +1196,29 @@ TickJobHandler engineeringReviewTickHandler({
     );
     final absence = read.absence;
     if (absence != null) {
+      // TWO FACTS, AND ONLY THE SECOND ONE DECIDES.
+      //
+      // `reviewCompleted` is a fact about the reviewer: did it reach the end of
+      // its own turn. `retryOwed` is a fact about the queue, read off the JOB
+      // rather than inferred from the execution's status, and it is the trigger.
+      // They came apart on 2026-10-15: a PERMANENT review failure is
+      // `failed`/`interrupted` and never completes, and it is also owed no retry
+      // by anything, so the old condition read it as "keep waiting" forever.
+      final reviewCompleted = execution.status == AgentSessionStatus.completed;
+      final retryOwed = _reviewRetryOwed(job);
+
       await _recordNoVerdict(
         executionStore: executionStore,
         job: job,
         workItemId: workItemId,
         executionId: executionId,
         absence: absence,
-        // THE ONLY DIFFERENCE SINCE b1, and it is one word. `completed` means the
-        // review ran to the end of its turn and nothing will retry it, so the
-        // only thing that can still move this item is a person. Anything else
-        // (`failed`, `interrupted`) still has `maxAttempts` owed to it, and this
-        // gate must not take the item out from under that retry.
-        reviewCompleted: execution.status == AgentSessionStatus.completed,
+        reviewCompleted: reviewCompleted,
+        retryOwed: retryOwed,
         logger: logger,
       );
 
-      if (execution.status == AgentSessionStatus.completed) {
+      if (!retryOwed) {
         final producerActorId = item.metadata?['producerActorId'] as String?;
         final outcome = await raiseVerdictAbsentDecision(
           workflowEngine: workflowEngine,
@@ -1028,6 +1229,7 @@ TickJobHandler engineeringReviewTickHandler({
           detail: absence.detail,
           reviewProse: reviewerResult?.summary,
           producerActorId: producerActorId,
+          reviewCompleted: reviewCompleted,
           logger: logger,
         );
         // Written AFTER the raise, and carrying what the raise actually did.
@@ -1038,6 +1240,7 @@ TickJobHandler engineeringReviewTickHandler({
           'jobId': job.jobId,
           'workItemId': workItemId,
           'executionId': executionId,
+          'jobState': job.state.wire,
           'outcome': outcome.name,
           'decision': verdictAbsentDecisionSentence(outcome),
         });
@@ -1250,12 +1453,32 @@ Future<void> engineeringReviewMissingArtifact({
   }
 
   if (item.state == WorkItemState.agentCompleted) {
-    final implementer = await executionStore.latestExecutionForWorkItem(
-      workItemId,
+    // THE PRODUCER, RESOLVED BY THE SHARED RULE — never by recency.
+    //
+    // This read `executionStore.latestExecutionForWorkItem`, the newest
+    // execution of ANY role, which is correct exactly once — for the first
+    // review of an item — and wrong for every one after, because
+    // `LocalWorker` runs the reviewer as an execution too and a failed reviewer
+    // is then the newest row. `agentResultValid()` would be handed the
+    // REVIEWER's result as evidence that an IMPLEMENTER succeeded. That was
+    // recorded unresolved at
+    // `docs/engineering/learning/236-transition-rows-that-moved-nothing.md` §8
+    // (`CONTRADICTION`, NOT RESOLVED) and is fixed here by calling the function
+    // that already fixed it in `ExecutionCoordinator._reviewEntryTransitionContext`
+    // and then in `raiseStallDecision`: `resolveProducerExecution`, which reads
+    // the item's own `producerActorId` first and falls back to the newest
+    // `AgentRole.implementer` — never to "whatever ran last".
+    //
+    // Two call sites re-deriving one rule is how they come to disagree; this is
+    // now the third and last, and it delegates rather than transcribes. See
+    // [ProducerResolution] for why the role fallback exists rather than failing
+    // closed on a legacy item with no stamp.
+    final producer = await resolveProducerExecution(
+      store: executionStore,
+      workItemId: workItemId,
+      producerActorId: item.metadata?['producerActorId'],
     );
-    final implementerResult = implementer == null
-        ? null
-        : await executionStore.readResult(implementer.executionId);
+    final implementerResult = producer.result;
     if (implementerResult == null) {
       // `agentResultValid()` needs the implementer's completed result; without
       // it the entry transition is refused. Forcing it would fabricate the very
@@ -1265,6 +1488,7 @@ Future<void> engineeringReviewMissingArtifact({
         {
           'jobId': job.jobId,
           'workItemId': workItemId,
+          'producer': producer.note,
         },
       );
       return;
