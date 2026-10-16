@@ -58,6 +58,8 @@ import 'package:worker_runtime/worker_runtime.dart'
         GitWorktreeWorkspaceManager,
         LocalWorker,
         WorkerDispatcher,
+        WorkerRegistrationHeartbeat,
+        WorkerRegistrationStore,
         WorkerRegistry,
         WorkerStore;
 
@@ -68,6 +70,7 @@ import 'src/persistence/postgres_execution_store.dart';
 import 'src/persistence/postgres_workflow_store.dart';
 import 'src/persistence/postgres_job_store.dart';
 import 'src/persistence/postgres_worker_store.dart';
+import 'src/persistence/postgres_worker_registration_store.dart';
 import 'src/persistence/postgres_defect_store.dart';
 import 'src/persistence/postgres_triage_store.dart';
 import 'src/persistence/postgres_model_execution_record_store.dart';
@@ -203,6 +206,13 @@ void run(List<String> args) async {
   final workflowStore = PostgresWorkflowStore(db);
   final jobStore = PostgresJobStore(db);
   final WorkerStore workerStore = PostgresWorkerStore(db);
+  // The durable fleet view. `WorkerStore` persists EXECUTIONS; this persists the
+  // workers themselves. They were built from the same `db` and nothing wrote to
+  // this one, which is why the operator surface reported `0 of 0 machines busy`
+  // while three workers were dispatching work — see the three `LocalWorker`
+  // constructions below.
+  final WorkerRegistrationStore workerRegistrationStore =
+      PostgresWorkerRegistrationStore(db);
   final defectStore = PostgresDefectStore(db);
   final triageStore = PostgresTriageStore(db);
 
@@ -331,6 +341,11 @@ void run(List<String> args) async {
     workspaceManager: GitWorktreeWorkspaceManager(workspaceRoot: workspaceRoot),
     executionDriver: CoordinatorAgentExecutionDriver(coordinator),
     workerStore: workerStore,
+    // The three registrations below are the ONLY thing that makes this fleet
+    // visible to `workerEndpoints.listWorkers` and to the Overview's
+    // "N of M machines busy". Without them the table stays empty and the
+    // surface reports a machine shortage that does not exist.
+    registrationStore: workerRegistrationStore,
     platform: Platform.operatingSystem,
   );
   final reviewWorker = LocalWorker(
@@ -340,6 +355,7 @@ void run(List<String> args) async {
     workspaceManager: GitWorktreeWorkspaceManager(workspaceRoot: workspaceRoot),
     executionDriver: CoordinatorAgentExecutionDriver(coordinator),
     workerStore: workerStore,
+    registrationStore: workerRegistrationStore,
     platform: Platform.operatingSystem,
   );
   // THE IMPLEMENTER. A distinct worker id, so it holds its own lease and its own
@@ -371,6 +387,7 @@ void run(List<String> args) async {
     workspaceManager: GitWorktreeWorkspaceManager(workspaceRoot: workspaceRoot),
     executionDriver: CoordinatorAgentExecutionDriver(coordinator),
     workerStore: workerStore,
+    registrationStore: workerRegistrationStore,
     platform: Platform.operatingSystem,
   );
   final workerRegistry = WorkerRegistry()
@@ -379,6 +396,19 @@ void run(List<String> args) async {
     ..register(implementWorker);
   final WorkerDispatch dispatch = WorkerDispatcherAdapter(
     WorkerDispatcher(registry: workerRegistry),
+  );
+
+  // ---- The durable fleet view, started HERE and not one line later. ----
+  //
+  // Placed immediately after the registry, before the dispatcher and long
+  // before the scheduler exists: the first tick can dispatch within 30 seconds
+  // of this line, and a fleet that dispatched before it was readable is the
+  // exact defect this closes. It runs before the composition banner so the
+  // banner can report the registration outcome instead of assuming it.
+  final workerRegistration = await startWorkerRegistrationHeartbeat(
+    workers: <LocalWorker>[triageWorker, reviewWorker, implementWorker],
+    store: workerRegistrationStore,
+    log: _log,
   );
 
   // Provider health monitor runs on a separate timer, not blocking scheduler tick.
@@ -768,6 +798,12 @@ void run(List<String> args) async {
     'runtimeTypeId': triageRuntimeTypeId,
     'providers': agentAdapters.providerIds,
     'workerIds': workerRegistry.workers.map((w) => w.workerId).toList(),
+    // The DURABLE fleet view, and what this start actually wrote into it. Stated
+    // in both directions for the same reason `durableWorkspaceProvision` below
+    // is: a process that registered three workers and one that registered none
+    // must not print the same line. `registered` is what `listWorkers` will now
+    // return; `failed` is what it will not, and why.
+    'workerRegistration': workerRegistration.report.describe(),
     'repositoryPath': triageSource.path,
     'startingRevision': triageSource.startingRevision,
     'workspaceRoot': workspaceRoot,
@@ -1265,6 +1301,62 @@ void run(List<String> args) async {
     // exists to close.
     unawaited(tick.trigger());
   });
+}
+
+/// Starts the durable worker-registration lifecycle for [workers] and returns
+/// the running [WorkerRegistrationHeartbeat]. What it wrote is on that
+/// heartbeat's [WorkerRegistrationHeartbeat.report].
+///
+/// Extracted for the same reason [buildTriageExecutionCoordinator] and
+/// [agentExecutionStore] were: so the exact wiring this server runs is
+/// reachable from a test without booting a server, a database or an `opencode`
+/// binary. A named seam is the difference between a wiring that is PINNED and one
+/// that is merely correct today — this is the third time a healthy-looking
+/// composition has shipped with a real store in scope and nothing routing to it,
+/// and the test that calls this function is the thing that notices the next one.
+///
+/// ## WHY IT IS `Future` AND IT HAS NO ERROR PATH
+///
+/// [WorkerRegistrationHeartbeat.start] reports per-worker failures rather than
+/// throwing. A registration write that fails at boot must not take the control
+/// plane down — every lane in this composition runs off the same database, and a
+/// row that could not be written is a fact the next heartbeat retries and the
+/// startup banner reports. Failing the boot instead would convert a
+/// under-reported fleet into a server that dispatches nothing.
+///
+/// ## THE TIMER IT LEAVES RUNNING, STATED RATHER THAN IMPLIED
+///
+/// This process has NO in-process shutdown hook. `run()` never returns — its
+/// last statement is the `Timer.periodic` that keeps the scheduler ticking — and
+/// `Serverpod.shutdown` was deliberately not adopted (see the note at the
+/// provision-failure branch: with `exitProcess: true` it exits **0**, inverting
+/// the deliberate non-zero signal that branch exists to give, and with
+/// `exitProcess: false` it trades away the immediacy an operator watching a
+/// shell is waiting for). So nothing calls [WorkerRegistrationHeartbeat.stop]
+/// in production today.
+///
+/// That is NOT a hang. A Dart timer cannot keep a process alive that is being
+/// terminated from outside: the container is stopped, not politely asked. It is
+/// the same position the `ProviderHealthMonitor`'s five-minute `Timer.periodic`
+/// and the scheduler's own `Timer.periodic` are already in, and the precedent is
+/// recorded at the provision-failure branch above.
+///
+/// What [WorkerRegistrationHeartbeat.stop] buys is therefore the *other*
+/// direction: the lifecycle is cancellable, bounded, and proven so that a
+/// graceful-shutdown path has one call to make when a future lane adopts one,
+/// rather than a timer nobody can stop.
+Future<WorkerRegistrationHeartbeat> startWorkerRegistrationHeartbeat({
+  required List<LocalWorker> workers,
+  required WorkerRegistrationStore store,
+  void Function(String event, Map<String, dynamic> fields)? log,
+}) async {
+  final heartbeat = WorkerRegistrationHeartbeat(
+    workers: workers,
+    store: store,
+    log: log,
+  );
+  await heartbeat.start();
+  return heartbeat;
 }
 
 /// The platform's independent verification for the TRIAGE role.
