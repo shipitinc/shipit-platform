@@ -1203,26 +1203,42 @@ The diff introduces a retry loop with no bound. It must be capped.
   // ══════════════════════════════════════════════════════════════════════════
 
   group('the route for a review that concluded nothing', () {
-    test('an artifact routes to RE-REVIEW, and no budget can say otherwise', () {
-      // The full budget range, because the asymmetry is the safety argument: an
-      // implementation-lane counter bounds ENTRIES INTO THAT LANE, and a commit's
-      // route into the review lane is not an entry into it. A version of this
-      // function that consulted the bound on the commit branch would refuse to
-      // review a commit precisely because the implementation lane had been busy.
-      for (final attempt in const [0, 1, 2, maxImplementationInflows, 99]) {
+    test('an artifact routes to RE-REVIEW, and the lane\'s answer cannot say '
+        'otherwise', () {
+      // The asymmetry is the safety argument: `implementationLaneWillRoute`
+      // describes entries into the IMPLEMENTATION lane, and a commit's route
+      // into the review lane is not an entry into it. A version of this function
+      // that consulted that answer on the commit branch would refuse to review
+      // a commit precisely because the implementation lane had been busy.
+      //
+      // RE-BASELINED, and the loop now sweeps the real domain. This used to
+      // sweep `[0, 1, 2, maxImplementationInflows, 99]` — readings of a counter
+      // that decision `92d567e3-da03-4c43-99f4-e3726472f0ab` removed
+      // (`RETRY_LIMIT -> REMOVE`), which is why it could not survive the
+      // removal. `implementationLaneWillRoute` is a boolean, so `[true, false]`
+      // is every input this branch can be handed rather than a sample of it, and
+      // no iteration here depends on a quantity that no longer exists.
+      //
+      // Claimed exactly, because the obvious overstatement was checked and is
+      // false: this is NOT a strengthening. Both the old five-value loop and
+      // this one fail against a `CommitProduced` branch that consults
+      // `implementationLaneWillRoute` — the old one on its first
+      // `attempt >= maxImplementationInflows` iteration. What changed is the
+      // dependency, not the detection power.
+      for (final laneWillRoute in const [true, false]) {
         expect(
           reviewGateRouteFor(
             produced: const CommitProduced(
               repositoryPath: '/durable/clone',
               commit: 'a-real-commit',
             ),
-            implementationLaneWillRoute: attempt < maxImplementationInflows,
+            implementationLaneWillRoute: laneWillRoute,
           ),
           ReviewGateRoute.reReview,
           reason:
               'a commit exists and nobody has looked at it. That is the whole '
-              'question, and the re-work discriminator reads $attempt, which is '
-              'irrelevant to it',
+              'question, and the implementation lane is recorded as '
+              '$laneWillRoute, which is irrelevant to it',
         );
       }
     });

@@ -558,52 +558,78 @@ void main() {
         );
 
         test(
-          '$order: the route is IMPOSSIBLE -> it still reaches a human, and the '
-          'reason it could not be taken is on the record',
+          '$order: the artifact CANNOT BE READ -> still reaches a human, and '
+          'nothing was routed on an answer nobody established',
           () async {
-            // Invariant 4 of this lane. An item the implementation lane has no
-            // budget left for must NOT be dropped and must NOT be looped: it
-            // reaches a person on the decision that was already there.
+            // Invariant 4 of this lane, RE-BASELINED. An item whose artifact
+            // cannot be determined must NOT be dropped and must NOT be looped:
+            // it reaches a person on the decision that was already there.
             //
-            // Asserting only the decision would be VACUOUS for this change —
-            // the base revision raises that same decision for this same input,
-            // so the assertion would pass unchanged and prove nothing about the
-            // route. What is asserted INSTEAD, and what base cannot produce, is
-            // that the route was CONSIDERED and declined with its reason. The
-            // decision is then asserted as well, so both halves are covered.
+            // THE INPUT CHANGED AND THE PROPERTY DID NOT. This used to drive the
+            // case with the re-work discriminator at its bound and assert the
+            // `verdict-absent-not-routed` line that `ReviewGateRoute
+            // .humanDecision` emits. Decision
+            // `92d567e3-da03-4c43-99f4-e3726472f0ab` answered
+            // `RETRY_LIMIT -> REMOVE`, so that bound no longer exists, a
+            // no-artifact producer is routed to the implementation lane
+            // unconditionally, and `owns: false` now means only "the producer
+            // DID commit" — which `reviewGateRouteFor` turns into `reReview`.
+            // So `humanDecision` has no input that reaches it, and the case it
+            // used to carry is now reached by a DIFFERENT question entirely: not
+            // "the lane has no budget" but "the artifact could not be READ".
+            //
+            // Deleting the assertion would have been the easy way to reach green
+            // and would have deleted the only thing this file exists to hold:
+            // that automatic routing which cannot route answers with a person.
+            // The one input that still cannot be routed on evidence is an
+            // unreadable artifact, and it is asserted here instead — on the real
+            // handler, through the real store, in both tick orders.
             final host = await _RoutingHost.atReviewInProgress(
-              endingRevision: null,
-              extraMetadata: const {
-                DurableWorkflowEngine.triageAttemptMetadataKey:
-                    maxImplementationInflows,
-              },
+              endingRevision: _RoutingHost.producedCommit,
+              artifactReadThrows: true,
             );
 
             await host.runReviewGate();
 
-            final declined = host.eventNamed(
-              'engineering-review-verdict-absent-not-routed',
+            // NOTHING WAS ROUTED, and that is the first half of the property.
+            // A commit exists here — the fixture produced one — so every other
+            // test in this group routes this item. It is NOT routed in this one,
+            // because the platform never got to look: the answer is an exception,
+            // not a finding. Asserting the ABSENCE of the route log is what
+            // distinguishes "parked because it could not be read" from "parked
+            // because it was read and still went nowhere".
+            expect(
+              host.routeLog,
+              isNull,
+              reason:
+                  'review-first is $order. The item is not returned to the '
+                  'fan-out on an unreadable answer. Routing here would move a '
+                  'work item on the strength of a failure to read, and the '
+                  'revision it would route to is precisely what is unknown',
             );
             expect(
-              declined,
-              isNotNull,
+              host.eventNamed('engineering-review-verdict-absent-not-routed'),
+              isNull,
               reason:
-                  'nothing was committed AND the implementation lane\'s bound is '
-                  'spent, so there is no route. The platform must SAY that, and '
-                  'say why: an item that silently stops moving is the failure '
-                  'this whole gate exists to end',
-            );
-            expect(declined!['artifactProduced'], isFalse);
-            expect(
-              declined['decision'],
-              contains('no decision is claimed by this line'),
-              reason:
-                  'this log line claims only that no route was taken. The line '
-                  'that reports what happened next is the caller\'s, and a '
-                  'sentence here that announced the raise would be false on the '
-                  'outcomes where nothing is raised',
+                  'review-first is $order. `ReviewGateRoute.humanDecision` has '
+                  'no input that reaches it any more — the caller skips '
+                  '`reviewGateRouteFor` entirely when the read fails — so this '
+                  'line cannot be what carries this item to a person. Asserted '
+                  'so this test cannot quietly keep passing through the branch '
+                  'the Human Decision removed',
             );
 
+            // AND THE PARK IS ON THE RECORD.
+            expect(
+              host.eventNamed('engineering-review-missing-artifact.parked'),
+              isNotNull,
+              reason:
+                  'the platform must SAY that it parked, not merely do it: an '
+                  'item that silently stops moving is the failure this whole '
+                  'gate exists to end',
+            );
+
+            // IT REACHED A PERSON, on the existing decision and unchanged.
             final parked = await host.item();
             expect(
               parked.state,
@@ -703,12 +729,23 @@ class _RoutingHost {
   /// re-review dispatch's `agentResultValid()` guard needs them. Without them the
   /// route would still be taken and the reviewer still refused, which would be a
   /// second, quieter version of a dead end.
+  ///
+  /// [artifactReadThrows] makes the one durable read this whole gate decides on
+  /// fail, which is the input that reaches the human fallback. It is simulated
+  /// on the store rather than by stubbing `producedCommitFor`, because the
+  /// handler catches that read itself: a test that replaced the function would
+  /// not be running the code that has to survive the exception, which is the
+  /// entire reason `_readProducedCommit` exists.
   static Future<_RoutingHost> atReviewInProgress({
     required String? endingRevision,
     Map<String, dynamic> extraMetadata = const {},
+    bool artifactReadThrows = false,
   }) async {
     final workflowStore = InMemoryWorkflowStore();
-    final workerStore = InMemoryWorkerStore();
+    final durableWorkerStore = InMemoryWorkerStore();
+    final workerStore = artifactReadThrows
+        ? _UnreadableWorkerStore(durableWorkerStore)
+        : durableWorkerStore;
     final executionStore = InMemoryExecutionStore();
     final jobStore = InMemoryJobStore();
     final dispatch = _NoWorkerDispatch();
@@ -855,7 +892,7 @@ class _RoutingHost {
 
   final InMemoryWorkflowStore workflowStore;
   final DurableWorkflowEngine engine;
-  final InMemoryWorkerStore workerStore;
+  final WorkerStore workerStore;
   final InMemoryExecutionStore executionStore;
   final InMemoryJobStore jobStore;
   final Job job;
@@ -895,4 +932,66 @@ class _RoutingHost {
   /// nothing was routed at all.
   Map<String, dynamic>? get routeLog =>
       eventNamed('engineering-review-verdict-absent-routed');
+}
+
+/// A [WorkerStore] whose ONE read the artifact predicate depends on fails.
+///
+/// `producedCommitFor` reaches durable state through exactly one call —
+/// `listWorkerExecutions` — and this fails that and nothing else. So the
+/// fixture underneath is a real store holding a real commit, and the handler
+/// cannot tell the difference between "there was nothing" and "I could not
+/// look", which is the whole point: the second must not be read as the first.
+///
+/// It throws rather than returning empty on purpose. An empty list is a
+/// legible answer and takes the `producerExecutionMissing` branch, which the
+/// gate routes; only an exception produces the `produced == null` the human
+/// fallback is written for.
+class _UnreadableWorkerStore implements WorkerStore {
+  _UnreadableWorkerStore(this._inner);
+
+  final WorkerStore _inner;
+
+  @override
+  Future<List<WorkerExecution>> listWorkerExecutions() =>
+      throw const _DurableStateUnreadable();
+
+  @override
+  Future<T> inTransaction<T>(Future<T> Function(WorkerStore store) body) =>
+      _inner.inTransaction(body);
+
+  @override
+  Future<void> saveWorkerExecution(
+    WorkerExecution execution, {
+    int? expectedVersion,
+  }) => _inner.saveWorkerExecution(execution, expectedVersion: expectedVersion);
+
+  @override
+  Future<WorkerExecution?> readWorkerExecution(String id) =>
+      _inner.readWorkerExecution(id);
+
+  @override
+  Future<void> saveResult(WorkerExecutionResult result) =>
+      _inner.saveResult(result);
+
+  @override
+  Future<WorkerExecutionResult?> readResult(String id) => _inner.readResult(id);
+
+  @override
+  Future<void> appendEvent(WorkerEventRecord event) =>
+      _inner.appendEvent(event);
+
+  @override
+  Future<List<WorkerEventRecord>> readEvents(String id) =>
+      _inner.readEvents(id);
+}
+
+/// The shape a real durable read fails with. Named so the parking log line
+/// carries a cause an operator can recognise rather than a bare `StateError`.
+class _DurableStateUnreadable implements Exception {
+  const _DurableStateUnreadable();
+
+  @override
+  String toString() =>
+      'durable worker state is unreadable: the worker store could not be '
+      'listed, so no artifact can be confirmed OR denied';
 }
