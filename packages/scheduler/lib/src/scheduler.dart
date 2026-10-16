@@ -1539,11 +1539,22 @@ class Scheduler {
     // runnable `implementationReady` item that tick could have dispatched. The
     // blast radius of one bad byte was the lane, not this inflow. Per-item
     // isolation below is only true if every per-item read is inside it.
+    //
+    // `readTriageAttempt`'s RESULT IS DISCARDED, and that is load-bearing, not
+    // a leftover. Nothing here compares the discriminator any more — the
+    // automatic route is unbounded as of human decision
+    // `92d567e3-da03-4c43-99f4-e3726472f0ab`. What is still load-bearing is the
+    // THROW: this read is the only place in this method where an unreadable
+    // marker is turned into "leave this one item alone" instead of "lose the
+    // whole lane's tick", and `nextTriageAttempt` below reads the same marker
+    // from outside this guard. Deleting the read would delete the isolation
+    // with it. `implementation_completion_inflow_test.dart`, "an UNREADABLE
+    // DISCRIMINATOR on one item does not abort the lane's tick", is the
+    // executable statement of why it stays.
     late final ProducedCommit produced;
-    late final int reWorkAttempt;
     try {
       produced = await producedCommitFor(workerStore, item);
-      reWorkAttempt = DurableWorkflowEngine.readTriageAttempt(item) ?? 0;
+      DurableWorkflowEngine.readTriageAttempt(item);
     } on Object catch (error) {
       return CompletionInflowMove(
         workItemId: item.workItemId,
@@ -1573,73 +1584,51 @@ class Scheduler {
       );
     }
 
-    // THE BOUND — AND IT GOVERNS THIS LANE'S OWN ENTRIES, NOT BOTH ROUTES.
+    // NO BOUND HERE, AND THE ABSENCE IS THE POINT.
     //
-    // Checked before the write, on the item's own durable marker, so a repeated
-    // automatic route into THIS lane cannot spin. See `maxImplementationInflows`
-    // for WHY that marker is the SHARED re-work discriminator and not a count
-    // of entries into this lane — the message below names the discriminator for
-    // the same reason, because an operator-facing refusal that misstates which
-    // counter it read is worse than a tighter bound.
+    // This used to read
     //
-    // ## WHY IT IS SCOPED BY `entryStates` RATHER THAN RUN FOR BOTH ROUTES
+    //     if (_definition.entryStates.contains(target) &&
+    //         reWorkAttempt >= maxImplementationInflows) { …refuse… }
     //
-    // `completionRouteFor` has two answers and only ONE of them is a state this
-    // definition dispatches from. `implementFeatureDefinition.entryStates` is
-    // `{implementationReady}` — the assert at the top of `_runCompletionInflow`
-    // holds the declaration to that — so the no-artifact route lands inside this
-    // lane and the commit route lands on `reviewInProgress`, which is
-    // `engineeringReviewDefinition.targetState`: the REVIEW lane's state.
+    // on the SHARED re-work discriminator (`DurableWorkflowEngine
+    // .triageAttemptMetadataKey`), and refuse to route anything whose marker
+    // read 3 or more. Human decision `92d567e3-da03-4c43-99f4-e3726472f0ab`,
+    // option `RETRY_LIMIT` = `REMOVE`, removed it: the operator's rule is that a
+    // retry limit is justified only for work a MACHINE retries, and the human
+    // limit is already uncounted (`SHIPIT_OPERATOR_MAX_RETRIES`).
     //
-    // A counter that bounds automatic entries into THIS lane has no standing to
-    // refuse a route into ANOTHER one. `maxImplementationInflows` bounds how
-    // many times the platform may spend a real implementer execution on one item
-    // unattended, and a producer that committed is not asking for one. Refusing
-    // its route told an operator the lane's budget had been spent on an item the
-    // lane was never going to run — and claimed the review lane would then park
-    // it for a human, which is the opposite of what happens to an item holding a
-    // reviewable commit: the review workload resolver resolves that one, so no
-    // `blockedArtifactMissing` job is ever created and
-    // `engineeringReviewMissingArtifact` is never called for it.
+    // The discriminator was the wrong counter for it. The operator retry and a
+    // resolved rework/reject decision advance that same marker, so an item that
+    // entered this lane ZERO times could already read `3` because a person had
+    // pressed retry three times — and the bound spent its budget refusing that
+    // person's work. On live QA that stranded four defects at `agentCompleted`
+    // with the marker reading 3 and 4: refused here, refused again by the review
+    // lane's fail-closed handler, owned by nobody.
     //
-    // The predicate is `entryStates.contains(target)` rather than a spelled-out
-    // state, so the bound follows the lane's own declaration — the same
-    // declaration that decides whether the route is dispatchable here at all —
-    // instead of a second list that could drift away from it.
+    // The loop the bound existed to catch is broken upstream instead, and the
+    // break is in a DIFFERENT PACKAGE, which is the reason for the merge order.
+    // `agentCompleted -> implementationReady -> agentExecuting ->
+    // agentCompleted` has an implementer step in it only while an implementer
+    // that produced nothing can reach `agentCompleted`. It cannot any more:
+    // `packages/execution_coordinator` classifies a no-output implementation as
+    // a PERMANENT job failure, so the run stays at `agentFailed` for a human and
+    // never stamps a `producerActorId` that this inflow could route. A TRIAGE
+    // run still arrives here having committed nothing — that is the route's
+    // whole purpose — but it commits nothing once per pass and the next pass is
+    // an implementation, which either commits or fails permanently.
     //
-    // ## AND CYCLE SAFETY IS NOT SPENT ON THE REVIEW ROUTE
+    // **THIS LANE MUST NOT MERGE BEFORE THAT ONE.** Merged alone, this removes
+    // the only brake on that cycle.
     //
-    // The loop this bound exists to break is
-    // `agentCompleted -> implementationReady -> agentExecuting -> agentCompleted`
-    // and every edge of it is inside this lane; the commit route is not on that
-    // cycle. On this code it cannot even be walked from here: the write it would
-    // perform is `agentCompleted -> reviewInProgress`, which carries
-    // `GuardConditions.agentResultValid()` (`work_item_transitions.dart`), and
-    // the scheduler has no execution of its own to supply the producer's
-    // `AgentResult` under `context['agentResult']` — the same unsatisfiable probe
-    // `engineeringReviewDefinition.skipWorkflowPolicyCheck` exists to skip. So
-    // the review route advances no counter and moves no item, which is exactly
-    // why declining to bound it cannot open a loop: an item that keeps returning
-    // to `agentCompleted` spends the counter on the IMPLEMENTATION route, where
-    // the bound still applies and still refuses.
-    if (_definition.entryStates.contains(target) &&
-        reWorkAttempt >= maxImplementationInflows) {
-      return CompletionInflowMove(
-        workItemId: item.workItemId,
-        from: item.state,
-        to: null,
-        reason:
-            'the re-work discriminator on this item already reads '
-            '$reWorkAttempt, which is at or above the platform\'s bound of '
-            '$maxImplementationInflows automatic entries into the '
-            'implementation lane, so no further automatic route is taken. That '
-            'counter is shared: it is also advanced by the operator retry and '
-            'by resolved rework/reject decisions, so this item may never have '
-            'entered the lane at all. Leaving it where it is so the review '
-            'lane\'s fail-closed handler raises a blocking human decision for '
-            'it, rather than the platform re-running it for ever',
-      );
-    }
+    // What this method still refuses, and why the absence is not an absence of
+    // guards: a transition the policy rejects throws below and is reported as
+    // "the item moved while this lane was reading it" — the review route, which
+    // carries `GuardConditions.agentResultValid()`, is refused by the transitions
+    // table exactly as before. That guard is the review route's own and is not
+    // this method's to weaken; see `implementationInflow.dart` for why the commit
+    // route is currently unsatisfiable (design decision F-04, owned by the
+    // coordinator, not by this lane).
 
     // ONE arithmetic rule for every writer of this counter
     // (`DurableWorkflowEngine.nextTriageAttempt`), not `attempt + 1` spelled
@@ -3306,21 +3295,32 @@ const JobDefinition engineeringReviewDefinition = JobDefinition(
 /// "two writers, two different rules, one counter" failure the marker itself
 /// documents, now with two counters — in exchange for no new information.
 ///
-/// ## THE COUPLING'S CONSEQUENCE, STATED RATHER THAN GLOSSED
+/// ## THE COUPLING'S CONSEQUENCE, RESTATED NOW THE BOUND IS GONE
 ///
-/// Sharing ties this key's freshness to `maxImplementationInflows`
-/// (`implementation_inflow.dart`), because that bound is checked on this very
-/// marker and the completion inflow checks it BEFORE writing. So once an item
-/// reads 3, the automatic route stands down, the marker stops moving on its
-/// own, and the item is left at `agentCompleted` for `sched-review` — which is
-/// exactly the hand-off this suffix is here to make usable, and exactly the
-/// shape of every item this fix un-strands.
+/// This section used to say that sharing ties the key's freshness to
+/// `maxImplementationInflows`, because the completion inflow checked that bound
+/// on this very marker before writing: once an item read 3 the automatic route
+/// stood down, the marker stopped moving on its own, and the item sat at
+/// `agentCompleted` for `sched-review`. That is no longer true, and the
+/// consequence recorded underneath it has changed with it.
 ///
-/// The consequence is that this change does NOT close the whole class. A SECOND
-/// exhausted review job on the same item, with no re-work in between, would
-/// ask for the same `:a<n>` again and be refused — the same silent no-op, one
-/// cycle later. Only re-work moves the marker, and the automatic route that
-/// moves it is what the bound stops.
+/// Human decision `92d567e3-da03-4c43-99f4-e3726472f0ab` removed the bound
+/// (`implementation_inflow.dart` records why). The marker now moves whenever
+/// `agentCompleted -> implementationReady` is taken, with no ceiling, so the
+/// `:a<n>` suffix this builder appends is no longer frozen by a spent budget.
+///
+/// ## THE RESIDUAL THAT SURVIVES, AND IS NARROWER
+///
+/// A SECOND exhausted review job on the same item, with no re-work in between,
+/// would ask for the same `:a<n>` again and be refused — the same silent no-op,
+/// one cycle later. It is narrower than it was, not closed: the unfrozen marker
+/// means the item must first be sent back into production, which advances
+/// `triageAttempt` and therefore builds a FRESH suffix. What the bound used to
+/// do was freeze the marker on an item that was not going anywhere, so the
+/// second refusal was reachable with nothing having happened at all. That
+/// specific shape — an item parked at `agentCompleted` whose only remaining
+/// history is a re-review request it cannot key — is the one this coupling
+/// caused, and it is gone with the bound.
 ///
 /// Closing that needs a discriminator that counts REVIEW attempts and is
 /// advanced by whoever requests the re-review. That writer does not exist and

@@ -98,9 +98,15 @@ import 'package:workflow_store/workflow_store.dart' show DurableWorkflowEngine;
 /// ## CYCLE SAFETY
 ///
 /// The route can be taken again: an implementer that commits nothing returns
-/// the item to `agentCompleted`. `maxImplementationInflows` bounds that, and
-/// the bound hands the item to the existing fail-closed human decision rather
-/// than dropping it.
+/// the item to `agentCompleted`. This lane no longer bounds that route — human
+/// decision `92d567e3-da03-4c43-99f4-e3726472f0ab` removed the automatic-entry
+/// bound, because it was refusing human-driven work as often as machine-driven
+/// work and it read a counter the operator retry advances too. The cycle is
+/// stopped upstream instead, by `packages/execution_coordinator` treating a
+/// no-output implementation as a PERMANENT failure, so the run never reaches
+/// `agentCompleted` and there is no implementer step to walk. See
+/// `implementation_inflow.dart`, and note that this lane's removal MUST NOT be
+/// merged before that one.
 const JobDefinition implementFeatureDefinition = JobDefinition(
   jobType: JobType.implementFeature,
   requiredRole: AgentRole.implementer,
@@ -152,10 +158,11 @@ const JobDefinition implementFeatureDefinition = JobDefinition(
 /// It is not named "triage" by accident: it is the re-work discriminator, and
 /// `OD-3` made the implementation lane one of the lanes it counts for. It is
 /// advanced by the operator retry and by every resolved rework/reject decision
-/// — the two human intents that put an item back into production — and it is
-/// bounded by [maxImplementationInflows] on the automatic route. An operator
-/// retry advances it too, so pressing retry genuinely buys another attempt,
-/// which is what the button promises.
+/// — the two human intents that put an item back into production — and by the
+/// completion inflow's own route, which is UNBOUNDED since human decision
+/// `92d567e3-da03-4c43-99f4-e3726472f0ab` removed the automatic-entry bound that
+/// used to read this same marker. An operator retry advances it too, so pressing
+/// retry genuinely buys another attempt, which is what the button promises.
 String implementFeatureDedupeKey(WorkItem item, JobDefinition definition) {
   final base = '${item.workItemId}:${definition.jobType.wire}';
   final attempt = DurableWorkflowEngine.readTriageAttempt(item);

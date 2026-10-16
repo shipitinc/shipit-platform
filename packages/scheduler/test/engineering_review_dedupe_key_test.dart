@@ -32,11 +32,15 @@ import 'package:workflow_store/workflow_store.dart';
 /// anywhere the builder is actually compiled.
 ///
 /// The residual this change does NOT close is stated in the builder's own
-/// documentation and is not tested as if it were closed: once
-/// `triageAttempt` reaches `maxImplementationInflows` the completion inflow
-/// stands down before writing, so a SECOND exhausted review job with no re-work
-/// in between would ask for the same suffix again. That is a separate change
-/// with a separate owner.
+/// documentation and is not tested as if it were closed: a SECOND exhausted
+/// review job on the same item, with no re-work in between, would ask for the
+/// same suffix again. Human decision
+/// `92d567e3-da03-4c43-99f4-e3726472f0ab` removed the `maxImplementationInflows`
+/// bound that used to freeze this marker at 3 — so the marker now moves whenever
+/// `agentCompleted -> implementationReady` is taken, and a frozen marker on an
+/// item that is going nowhere (the shape that made the second refusal reachable
+/// with nothing having happened) is gone with it. A separate change with a
+/// separate owner would still be needed to count REVIEW attempts.
 const _itemId = 'wi-1';
 
 /// The second work item in the isolation tests: healthy, reviewable, and on

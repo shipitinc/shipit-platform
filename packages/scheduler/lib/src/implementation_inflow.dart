@@ -125,12 +125,34 @@ final class NoCommitProduced extends ProducedCommit {
 ///
 /// Every refusal returns [NoCommitProduced], never a guess. That routes the
 /// item to the implementation lane — which is a DEFECT attempt, not a wrong
-/// review: the worst outcome is a build that produces nothing, which lands back
-/// at `agentCompleted` and is bounded by [maxImplementationInflows]. The
-/// opposite failure, calling a commit absent when one exists, would send real
-/// work to a second implementer and manufacture a duplicate commit. The
-/// asymmetry is deliberate and it is the reason every uncertainty resolves the
-/// same way.
+/// review: the worst outcome is a build that produces nothing. The opposite
+/// failure, calling a commit absent when one exists, would send real work to a
+/// second implementer and manufacture a duplicate commit. The asymmetry is
+/// deliberate and it is the reason every uncertainty resolves the same way.
+///
+/// ## WHY THAT IS NO LONGER A RUNAWAY
+///
+/// It was, and a constant in this file used to say so. `agentCompleted ->
+/// implementationReady -> agentExecuting -> agentCompleted` is a cycle; an
+/// implementer that commits nothing walks it, one real execution per pass; and
+/// `maxImplementationInflows` was the brake, checked on the SHARED re-work
+/// discriminator before this route was taken.
+///
+/// The brake is GONE — human decision `92d567e3-da03-4c43-99f4-e3726472f0ab`,
+/// option `RETRY_LIMIT` = `REMOVE` — because it was refusing real work that a
+/// human had already asked for, and because the loop is broken at a better
+/// place. An implementation run that produced no artifact is a PERMANENT failure
+/// in `packages/execution_coordinator`, so it never reaches `agentCompleted` at
+/// all and the cycle has no implementer step to walk. A TRIAGE run still
+/// legitimately arrives here having committed nothing — that is the whole point
+/// of the route below — but triage commits nothing ONCE per pass, and the next
+/// pass is an implementation, which either commits or fails permanently.
+///
+/// That rule is the loop's actual safety and it is NOT in this package. This
+/// file ROUTES; it does not bound. The standing condition to re-check before
+/// trusting this route unattended: if any producer other than triage can reach
+/// `agentCompleted` having produced no commit, the route below is now taken for
+/// ever, because nothing here refuses it.
 Future<ProducedCommit> producedCommitFor(
   WorkerStore workerStore,
   WorkItem item,
@@ -209,79 +231,32 @@ Future<ProducedCommit> producedCommitFor(
 /// One function, one `switch`, both cases named. It is deliberately NOT
 /// inlined at its call site: the asymmetry above is the safety argument, and an
 /// inline `if` is where an asymmetry silently becomes a symmetry.
+///
+/// ## WHAT USED TO BOUND IT, AND WHY THERE IS NOTHING HERE NOW
+///
+/// This function's caller used to refuse the `implementationReady` answer once
+/// the shared re-work discriminator (`DurableWorkflowEngine
+/// .triageAttemptMetadataKey`) read 3 or more — `maxImplementationInflows = 3`,
+/// declared at the bottom of this file until human decision
+/// `92d567e3-da03-4c43-99f4-e3726472f0ab` removed it.
+///
+/// The brake was on the WRONG counter and the WRONG items. The discriminator is
+/// shared: the operator retry and a resolved rework/reject decision advance it,
+/// so an item that entered the implementation lane ZERO times could already read
+/// `3` because a person had pressed retry three times. The bound therefore spent
+/// its budget on human-driven work, which is exactly the work a person had just
+/// asked for, and left the four defects measured on live QA at
+/// `agent_completed` with the marker reading 3 and 4 — refused by the inflow,
+/// refused again by the review lane's fail-closed handler, and owned by nobody.
+///
+/// The loop it was catching — an unattended implementer that commits nothing
+/// walking `agentCompleted -> implementationReady -> agentExecuting ->
+/// agentCompleted` for ever — is broken upstream instead: an implementation run
+/// that produced no artifact is a PERMANENT failure in
+/// `packages/execution_coordinator`, so it never reaches `agentCompleted` and the
+/// cycle has no implementer step to walk. See
+/// `producedCommitFor`'s "WHY THAT IS NO LONGER A RUNAWAY".
 WorkItemState completionRouteFor(ProducedCommit produced) => switch (produced) {
   CommitProduced() => WorkItemState.reviewInProgress,
   NoCommitProduced() => WorkItemState.implementationReady,
 };
-
-/// How many automatic entries into the implementation lane ONE work item may
-/// get, without a human in the loop.
-///
-/// ## WHAT IS ACTUALLY COUNTED
-///
-/// `DurableWorkflowEngine`'s `triageAttemptMetadataKey` — and that is the
-/// SHARED
-/// re-work discriminator, not a tally of this lane's entries. The operator
-/// retry and a resolved rework/reject decision advance it too
-/// (`durable_workflow_engine.dart`), so an item that entered this lane ZERO
-/// times can already read `2` because a person pressed retry twice.
-///
-/// That is a deliberate tightening, not an accident: the whole cycle closes on
-/// ONE counter, so bounding that counter is what bounds the loop. The cost is
-/// that an item with prior human-driven re-work gets FEWER automatic attempts,
-/// and every surface that reports the bound says so in those words —
-/// `CompletionInflowMove.reason` names the discriminator, never "times this
-/// item was implemented". An operator-facing refusal that misstates which
-/// counter it read is worse than a tighter bound.
-///
-/// ## WHY A BOUND IS NOT OPTIONAL
-///
-/// The route closes a cycle:
-/// `agentCompleted -> implementationReady -> agentExecuting -> agentCompleted`.
-/// A producer that commits nothing returns the item to `agentCompleted` with
-/// no commit again, and the discriminator says "implement" again. Unbounded,
-/// that is an unattended machine burning a real worker execution every tick on
-/// an item that can never be implemented — the exact defect this lane exists to
-/// end, re-created with a different shape.
-///
-/// ## WHAT IT DOES NOT BOUND
-///
-/// Automatic entries into THIS lane, and nothing else.
-///
-/// `completionRouteFor` answers `reviewInProgress` for a producer that left a
-/// commit. That is `engineeringReviewDefinition.targetState` — the review lane's
-/// state, not an entry into this one — and a counter that bounds entries here
-/// has no standing to refuse a route there. The caller enforces that by
-/// testing the route against its own `entryStates` rather than against a second
-/// list that could drift from the lane's declaration.
-///
-/// Declining to bound the commit route was not harmless even though the item's
-/// state came out the same either way, because the refusal is REPORTED to an
-/// operator: it said the implementation lane's budget had been spent on an item
-/// the lane was never going to run, and that the review lane's fail-closed
-/// handler would raise a blocking human decision for it. Both sentences are
-/// false for an item holding a reviewable commit — the review workload resolver
-/// resolves that one, so no `blockedArtifactMissing` job is ever created and the
-/// handler is never called for it. That is the rule an operator-facing refusal
-/// has to obey — it misstates which lane owns the item — and it is stated here
-/// because it is the one this bound used to break.
-///
-/// ## WHY IT IS A BOUND AND NOT A FAILURE
-///
-/// Refusing the route is not a failure and not a drop. The item is left at
-/// `agentCompleted`, where `sched-review` already offers it to the reviewer
-/// every tick; the review workload resolver refuses it for the same reason this
-/// one does, and the composition root's fail-closed handler
-/// (`engineeringReviewMissingArtifact`) turns that into a blocking human
-/// decision — but ONLY once the stand-down inside that handler stops deferring
-/// to this bound, which is why the two check the same number. So the bound does
-/// not strand the item — it hands it to a person, which is where an item nobody
-/// can implement belongs. Both halves of that sentence are about a route into
-/// THIS lane, and neither reaches a route into the review lane.
-///
-/// Three, because each attempt costs a real implementer execution and the
-/// historical budget for a lane that re-dispatches the same work is two
-/// (`implementFeatureDefinition.maxAttempts` is the JOB's retry budget, which
-/// is a different quantity and counts retries of one dispatch rather than
-/// re-entries into the lane).
-const int maxImplementationInflows = 3;
