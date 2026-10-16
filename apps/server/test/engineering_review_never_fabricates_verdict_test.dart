@@ -2,6 +2,7 @@ import 'package:execution_coordinator/execution_coordinator.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:scheduler/scheduler.dart';
 import 'package:test/test.dart';
+import 'package:worker_runtime/worker_runtime.dart';
 import 'package:workflow_store/workflow_store.dart';
 
 import 'package:control_plane_server/src/review/engineering_review_gate.dart';
@@ -701,6 +702,223 @@ void main() {
       },
     );
   });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // A ROUTE IS NOT A VERDICT — decision 92d567e3-da03-4c43-99f4-e3726472f0ab.
+  //
+  // Everything above this line is about a review that reached `reviewInProgress`
+  // and left no verdict behind. This block is about the NEW thing that review now
+  // causes: the platform MOVES the item instead of parking it, because the pair
+  // it was parked on (`[rework, reject]`) reaches no reviewer at all.
+  //
+  // Moving a work item between states is the one operation in this repository
+  // with no natural anti-fabrication property of its own. A verdict is carried on
+  // named fields that a reader checks; a route is carried on a state, and a
+  // state says nothing about who assessed what. So the risk is not "a route
+  // writes a verdict-shaped field" — it is "a route reads, six weeks later, as
+  // though somebody had reviewed the work". These tests close both: nothing
+  // verdict-shaped is written on ANY branch, and the durable record of the move
+  // says in its own text that no reviewer looked.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  group('a ROUTE is not a verdict', () {
+    // BOTH BRANCHES, because a one-branch test proves the branch it ran. The
+    // re-review branch is the dangerous one — it is the branch where the item
+    // goes looking, to an operator and to every downstream reader, as though a
+    // review were imminent or had happened.
+    for (final entry in const [
+      (
+        label: 'implementation DID commit (re-review)',
+        endingRevision: 'a-real-commit',
+      ),
+      (
+        label: 'implementation produced NOTHING (implementation)',
+        endingRevision: null,
+      ),
+    ]) {
+      test(
+        '${entry.label}: the routed item carries NO verdict on any record',
+        () async {
+          final host = await _GateHost.producerArtifact(
+            endingRevision: entry.endingRevision,
+          );
+
+          await host.runMissingArtifact();
+
+          final item = await host.workflowEngine.loadWorkItem(
+            _GateHost.workItemId,
+          );
+          expect(
+            await host.workflowStore.readHumanDecisionsForWorkItem(
+              _GateHost.workItemId,
+            ),
+            isEmpty,
+            reason:
+                'a routed item is not offered to anybody, so there is no '
+                'decision on which a verdict could have been smuggled. This is '
+                'the b1 invariant applied to the branch that raises NOTHING',
+          );
+
+          // And nothing on the item itself. `metadata` is where a verdict would
+          // live if the route had been taken as an assessment, and the keys
+          // checked here are the exact keys `readReviewVerdictProvenance` and
+          // every downstream reader look for.
+          final metadata = item.metadata ?? const <String, dynamic>{};
+          expect(
+            metadata.containsKey('reviewVerdict'),
+            isFalse,
+            reason:
+                'its presence is read as "a reviewer assessed this and here is '
+                'how". Nothing assessed it',
+          );
+          expect(
+            metadata.containsKey('engineeringReviewResult'),
+            isFalse,
+            reason: 'a result object would classify this item as `assessed`',
+          );
+          expect(
+            metadata.containsKey('verdictRecorded'),
+            isFalse,
+            reason:
+                'this key is the verdict-less decision\'s own marker. Writing it '
+                'on a routed item would claim a verdict-less DECISION exists, '
+                'and none does',
+          );
+
+          // The log line is the operator-facing half of the same claim.
+          final route = host.eventNamed(
+            'engineering-review-verdict-absent-routed',
+          );
+          expect(route, isNotNull);
+          expect(
+            route!['carriesVerdict'],
+            isFalse,
+            reason: 'and it says so in the field a reader looks at',
+          );
+          expect(
+            route['decision'],
+            contains('not a review verdict'),
+            reason:
+                'the sentence states what kind of statement this is. A move '
+                'that does not label itself is a move a later reader has to '
+                'guess about',
+          );
+        },
+      );
+    }
+
+    test(
+      'the DURABLE transition record of a route reads as a route, and names no '
+      'verdict',
+      () async {
+        // A log line is not a record: it leaves with the process. The transition
+        // record is what an operator, a reviewer of this repository, or a future
+        // agent reads when they ask "why is this item back at agent_completed
+        // and what happened to the review?". A record that said "review
+        // requested changes" would be the b1 defect one layer down.
+        final host = await _GateHost.producerArtifact(
+          endingRevision: 'a-real-commit',
+        );
+
+        await host.runMissingArtifact();
+
+        final records = await host.workflowStore.readTransitionHistory(
+          _GateHost.workItemId,
+        );
+        final route = records.lastWhere(
+          (r) => r.toState == WorkItemState.agentCompleted,
+          orElse: () => throw StateError('no route was recorded'),
+        );
+        expect(route.outcome, TransitionOutcome.accepted);
+        expect(route.actorType, ActorType.orchestrator);
+
+        final reason = route.reason ?? '';
+        expect(reason, contains('the reviewer concluded nothing'));
+        expect(
+          reason,
+          contains('No reviewer assessed this work'),
+          reason:
+              'the record has to deny the assessment in its own words, because '
+              'the state it moves to cannot. `agent_completed` says "a '
+              'producer finished"; only the reason can say nobody looked',
+        );
+        expect(reason, contains('a-real-commit'));
+        for (final wire in ReviewVerdict.values) {
+          expect(
+            reason,
+            isNot(contains(wire.wire)),
+            reason:
+                '${wire.wire} is a reviewer assessment. No reviewer produced '
+                'one, and a durable record asserting otherwise is exactly the '
+                'fabrication this repository has already paid for once',
+          );
+        }
+        expect(reason, isNot(contains('CHANGES_REQUIRED')));
+        expect(reason, isNot(contains('APPROVE')));
+      },
+    );
+
+    test(
+      'a reviewer that DID return a verdict is untouched: unchanged behaviour, '
+      'verdict intact',
+      () async {
+        // Acceptance criterion 1, and the regression guard for the whole block.
+        // The routing was added to a file whose other job is to raise a
+        // verdict-carrying decision, and the failure mode to fear is that it
+        // starts reading as a review that happened.
+        final host = await _GateHost.reviewerResult(
+          structuredResult: const {'verdict': 'approved'},
+        );
+
+        await host.drainGate();
+
+        final item = await host.workflowEngine.loadWorkItem(
+          _GateHost.workItemId,
+        );
+        expect(item.state, WorkItemState.waitingForHumanDecision);
+        final decision = await host.workflowStore.readHumanDecision(
+          item.blockingHumanDecisionId!,
+        );
+        expect(
+          decision.metadata?['reviewVerdict'],
+          'approved',
+          reason:
+              'the real verdict, on the real key, exactly as before. If the '
+              'routing had been wired into this path this would be null and the '
+              'operator would be asked to adjudicate a review that happened',
+        );
+        expect(
+          decision.metadata?['engineeringReviewResult'],
+          isA<Map<String, dynamic>>(),
+          reason: 'and the parsed result is still attached to it',
+        );
+        expect(decision.recommendation, 'APPROVE');
+        expect(
+          decision.options!.map((o) => o.optionId),
+          ['approve', 'reject', 'rework'],
+          reason:
+              'all three, because a reviewer DID conclude. This is the pair '
+              'that only exists when an assessment was actually produced',
+        );
+
+        // And the routing gate, pointed at that same item, changes nothing: it
+        // short-circuits on the already-parked state.
+        await host.runMissingArtifact();
+        final after = await host.workflowEngine.loadWorkItem(
+          _GateHost.workItemId,
+        );
+        expect(after.state, WorkItemState.waitingForHumanDecision);
+        expect(after.blockingHumanDecisionId, decision.decisionId);
+        expect(
+          host.eventNamed('engineering-review-verdict-absent-routed'),
+          isNull,
+          reason:
+              'no route was taken, and a route is never taken on an item that a '
+              'reviewer already assessed',
+        );
+      },
+    );
+  });
 }
 
 /// A minimal, real-by-construction harness for the gate.
@@ -714,6 +932,7 @@ class _GateHost {
     required this.workflowStore,
     required this.workflowEngine,
     required this.executionStore,
+    required this.workerStore,
     required this.jobStore,
     required this.job,
     required this.loggedEvents,
@@ -796,10 +1015,40 @@ class _GateHost {
       workflowStore: workflowStore,
       workflowEngine: DurableWorkflowEngine(store: workflowStore),
       executionStore: InMemoryExecutionStore(),
+      workerStore: InMemoryWorkerStore(),
       jobStore: jobStore,
       job: job,
       loggedEvents: <Map<String, dynamic>>[],
     );
+  }
+
+  /// A producer that left [endingRevision] behind — `null` being the shape that
+  /// started all of this, and a commit being the shape this routing is FOR.
+  ///
+  /// Written the way `LocalWorker` writes it, against the same
+  /// `producerActorId` the coordinator stamps, because `producedCommitFor` joins
+  /// the two records on exactly that pair and refuses to guess when it cannot.
+  static Future<_GateHost> producerArtifact({
+    required String? endingRevision,
+  }) async {
+    final host = await _base();
+    await host.workerStore.saveWorkerExecution(
+      WorkerExecution(
+        workerExecutionId: 'wx-impl',
+        workItemId: workItemId,
+        repositoryPath: '/durable/clone',
+        requestedStartingRevision: 'aaaaaaa',
+        requiredCapabilities: const {
+          WorkerCapability.linux,
+          WorkerCapability.git,
+        },
+        agentExecutionId: producerExecutionId,
+        endingRevision: endingRevision,
+        status: WorkerExecutionStatus.executedPass,
+        cleanupPolicy: WorkerCleanupPolicy.removeAlways,
+      ),
+    );
+    return host;
   }
 
   /// A reviewer that FINISHED and left a result — the shape whose
@@ -904,9 +1153,34 @@ class _GateHost {
   final InMemoryWorkflowStore workflowStore;
   final DurableWorkflowEngine workflowEngine;
   final InMemoryExecutionStore executionStore;
+  final InMemoryWorkerStore workerStore;
   final InMemoryJobStore jobStore;
   final Job job;
   final List<Map<String, dynamic>> loggedEvents;
+
+  /// The gate the operator's item actually reached: the fail-closed handler the
+  /// composition root runs for a review job the scheduler could not resolve an
+  /// artifact for.
+  ///
+  /// Driven rather than hand-built, for the same reason [drainGate] is: a test
+  /// that assembles the expected state itself proves only that a test can build
+  /// two equal objects.
+  Future<void> runMissingArtifact() => engineeringReviewMissingArtifact(
+    workflowEngine: workflowEngine,
+    executionStore: executionStore,
+    workerStore: workerStore,
+    job: job,
+    logger: (message, context) {
+      loggedEvents.add({...context, '_message': message});
+    },
+  );
+
+  Map<String, dynamic>? eventNamed(String name) {
+    for (final event in loggedEvents) {
+      if (event['_message'] == name) return event;
+    }
+    return null;
+  }
 
   /// Every `no_verdict` cause this host's drain(s) recorded, in order.
   List<String> get absenceCauses => loggedEvents

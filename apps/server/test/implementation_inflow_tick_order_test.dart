@@ -228,6 +228,10 @@ class _Host {
   ///
   /// Returns the tick result so a test can assert on the channels the handler
   /// loop above did NOT act on — which is where an unreadable marker lands.
+  ///
+  /// Every handler call also appends to [gateLogs]. It used to discard them;
+  /// collecting costs nothing and it is the only way to tell a stand-down from a
+  /// silent no-op, which is the whole question the bound's removal turns on.
   Future<SchedulerTickResult> runReviewSection() async {
     final tick = await reviewScheduler.tick();
     for (final jobId in tick.blockedArtifactMissing) {
@@ -238,11 +242,16 @@ class _Host {
         executionStore: executionStore,
         workerStore: workerStore,
         job: job,
-        logger: (_, __) {},
+        logger: (message, context) => gateLogs.add((message, context)),
       );
     }
     return tick;
   }
+
+  /// What `engineeringReviewMissingArtifact` logged, in order. Asserted on by
+  /// message name — `engineering-review-missing-artifact-stands-down` and
+  /// `-parking` are mutually exclusive outcomes of the same call.
+  final List<(String, Map<String, dynamic>)> gateLogs = [];
 
   Future<WorkItem> run({required bool reviewFirst}) async {
     if (reviewFirst) {
@@ -278,6 +287,41 @@ AgentResult _producerResult() => AgentResult(
 );
 
 const _noArtifact = {'producerActorId': 'agx-wx-1'};
+
+/// The value `maxImplementationInflows` used to hold.
+///
+/// The constant is GONE — decision `92d567e3-da03-4c43-99f4-e3726472f0ab`
+/// (ARCHITECTURE, RESOLVED) answered `RETRY_LIMIT -> REMOVE` — but the number
+/// is kept here as a literal so these tests can still seed a discriminator that
+/// used to be exactly at the bound. It is DATA, not a rule: nothing in this
+/// file, and nothing in `engineering_review_gate.dart`, compares against it any
+/// more. What the tests below assert is that NO marker value parks an item,
+/// which is what makes them correct whether or not the number ever comes back.
+const _retiredBound = 3;
+
+/// The discriminating assertion for the removal, written once so each test
+/// states its own markers and this states the claim they all share.
+///
+/// A no-artifact producer is NEVER parked by this gate, whatever the re-work
+/// discriminator reads — and it says so out loud rather than doing nothing,
+/// because "the lane is still moving" and "this handler declined silently" are
+/// not the same event. [host]'s logs are asserted by message name, so a gate
+/// that stopped running altogether could not satisfy this.
+void _expectNoParkOnMarker(_Host host, {required String because}) {
+  expect(
+    host.gateLogs.map((entry) => entry.$1),
+    contains('engineering-review-missing-artifact-stands-down'),
+    reason: because,
+  );
+  expect(
+    host.gateLogs.map((entry) => entry.$1),
+    isNot(contains('engineering-review-missing-artifact-parking')),
+    reason:
+        '$because — and specifically it did not park. `parking` is the log '
+        'line that raised the blocking `engineeringReview` decision on '
+        '2026-10-16, with the four QA defects sitting in exactly that state',
+  );
+}
 
 /// Adds a SECOND reviewable work item to [host]: its producer really committed
 /// [_siblingCommit] and its marker is absent, so it is reviewable on every tick.
@@ -438,69 +482,79 @@ void main() {
     );
 
     test(
-      'the bound still reaches a human: with no budget left, review PARKS',
+      'a spent re-work discriminator does NOT park: review stands down',
       () async {
-        // The one case the stand-down must NOT swallow. When the shared re-work
-        // discriminator is already at `maxImplementationInflows`, the inflow will
-        // not route this item — so standing down would leave it at
-        // `agentCompleted` for ever with nobody acting on it. That is the whole
-        // purpose of the human gate, and both sides read the same number so they
-        // cannot disagree about whether the budget is spent.
+        // THIS USED TO ASSERT THE OPPOSITE, AND THAT IS THE POINT.
         //
-        // BOTH orders, because the bound is exactly the case whose reachability
-        // used to depend on which tick went first.
+        // It was `'the bound still reaches a human: with no budget left,
+        // review PARKS'`, and it seeded `triageAttempt` at
+        // `maxImplementationInflows` and required
+        // `waitingForHumanDecision` plus a blocking `engineeringReview`
+        // decision. Decision `92d567e3-da03-4c43-99f4-e3726472f0ab`
+        // (ARCHITECTURE, RESOLVED) answered `RETRY_LIMIT -> REMOVE`, so the
+        // bound this test was about no longer exists, and the implementation
+        // lane's completion inflow routes a no-artifact item UNBOUNDED. The
+        // old expectation therefore asserted a strand: it required the platform
+        // to park work that the platform can still route, in front of a human
+        // whose only options are `rework` and `reject`.
+        //
+        // It was not a hypothetical strand. Four defects sat at
+        // `agent_completed` with a discriminator reading 3 or 4 and every tick
+        // logged `engineering-review-missing-artifact-parking`.
+        //
+        // BOTH orders, because the bound was exactly the case whose
+        // reachability used to depend on which tick went first.
         for (final reviewFirst in const [false, true]) {
           final host = await _Host.withProducer(
             metadata: const {
               'producerActorId': 'agx-wx-1',
-              'triageAttempt': maxImplementationInflows,
+              'triageAttempt': _retiredBound,
             },
           );
 
           final item = await host.run(reviewFirst: reviewFirst);
 
+          _expectNoParkOnMarker(
+            host,
+            because:
+                'review-first is $reviewFirst: a discriminator at the number '
+                'that USED to be the bound says nothing about whether anyone is '
+                'left to act, because the inflow that would act is no longer '
+                'counted',
+          );
           expect(
-            item.state,
-            WorkItemState.waitingForHumanDecision,
+            item.blockingHumanDecisionId,
+            isNull,
             reason:
-                'review-first is $reviewFirst: an item the implementation lane '
-                'has exhausted its budget on belongs in front of a person, not in '
-                'a loop',
+                'no `engineeringReview` decision was raised, so there is no '
+                'question in front of an operator about an item the platform '
+                'can still move by itself',
           );
-          expect(item.blockingHumanDecisionId, isNotNull);
-          final decision = await host.workflowStore.readHumanDecision(
-            item.blockingHumanDecisionId!,
-          );
-          expect(decision.decisionType, HumanDecisionType.engineeringReview);
-          expect(decision.blocking, isTrue);
         }
       },
     );
 
     test(
-      'the bound is THIS lane\'s: a commit past it is still reviewed, not '
-      'refused',
+      'a commit is routed by the artifact alone, whatever the marker reads',
       () async {
-        // The other half of `maxImplementationInflows`'s scope, seen from where
-        // it lands.
+        // The other half of the removed bound's scope, seen from where it lands.
         //
-        // The stand-down above (`the bound still reaches a human`) is about an
-        // item with NO artifact, where the implementation lane is the only thing
-        // that could have acted and its budget is spent. This is the opposite
-        // case: the producer left a commit, so the route is `reviewInProgress` —
-        // `engineeringReviewDefinition`'s own state, not an entry into the
-        // implementation lane — and an implementation-lane counter has no
-        // standing to refuse it.
+        // The stand-down test above is about an item with NO artifact. This is
+        // the opposite case: the producer left a commit, so the route is
+        // `reviewInProgress` — `engineeringReviewDefinition`'s own state, not
+        // an entry into the implementation lane. That was true before the
+        // removal and it is true after; what the removal changes is that there
+        // is no longer any bound whose SCOPE could be argued about, because
+        // there is no bound.
         //
-        // What the scheduler refused to do is the tell. Pre-fix, the inflow
-        // answered with a bound refusal that told an operator the lane's budget
-        // had been spent on an item it was never going to run, and that the
-        // review lane's fail-closed handler would raise a blocking human
-        // decision for it. Both sentences are false for a reviewable commit: the
-        // review workload resolver resolves it, so no `blockedArtifactMissing`
-        // job is ever created and that handler is never called for this item at
-        // all. So the assertions below are that the refusal is GONE and that
-        // review still happens — not that a human gate appears.
+        // What the scheduler refused to do is the tell. Before the scoping fix,
+        // the inflow answered with a bound refusal that told an operator the
+        // lane's budget had been spent on an item it was never going to run,
+        // and that the review lane's fail-closed handler would raise a blocking
+        // human decision for it. Both sentences are false for a reviewable
+        // commit: the review workload resolver resolves it, so no
+        // `blockedArtifactMissing` job is ever created and that handler is
+        // never called for this item at all.
         //
         // BOTH orders, because the composition's order is the other thing this
         // file exists to hold constant.
@@ -508,7 +562,7 @@ void main() {
           final host = await _Host.withProducer(
             metadata: const {
               'producerActorId': 'agx-wx-1',
-              'triageAttempt': maxImplementationInflows,
+              'triageAttempt': _retiredBound,
             },
             endingRevision: 'a-real-commit',
           );
@@ -527,9 +581,10 @@ void main() {
             implTick.completionInflow.single.reason,
             isNot(contains('re-work discriminator')),
             reason:
-                'review-first is $reviewFirst: the discriminator is at the '
-                'bound, but this item is not asking for an implementation entry, '
-                'so the bound has nothing to say about its route',
+                'review-first is $reviewFirst: the discriminator reads '
+                '$_retiredBound, the number that used to be the bound, and it '
+                'still says nothing about this item\'s route — a commit is not '
+                'an implementation entry',
           );
           expect(
             reviewTick.blockedArtifactMissing,
@@ -571,25 +626,23 @@ void main() {
             ),
             isEmpty,
             reason:
-                'and still nothing is sent to an implementer. Scoping the bound '
-                'away from the commit route must never turn into a second '
-                'implementer over a commit that already exists',
+                'and still nothing is sent to an implementer. Removing the '
+                'bound must never turn into a second implementer over a commit '
+                'that already exists',
           );
         }
       },
     );
 
     test(
-      'the refusal still reaches a human ABOVE the bound, not only at it',
+      'markers far above any former bound do not park either',
       () async {
-        // `the bound still reaches a human` seeds the CONSTANT, so it only ever
-        // exercised the exact limit. The live data carries items that read 4 —
-        // and `>=` against `==` is the whole difference between those being
-        // parked and being run for ever.
-        for (final marker in const [
-          maxImplementationInflows + 1,
-          maxImplementationInflows * 2,
-        ]) {
+        // The test above seeds the retired bound exactly, so on its own it
+        // cannot tell `==` from `>=` — and the live data carried items reading
+        // 4, which is what made the old branch fire. The half that covered
+        // those is kept, with the expectation INVERTED: whatever the marker, the
+        // answer is the same, because the gate does not read it.
+        for (final marker in const [_retiredBound + 1, _retiredBound * 2]) {
           final host = await _Host.withProducer(
             metadata: {
               'producerActorId': 'agx-wx-1',
@@ -599,16 +652,14 @@ void main() {
 
           final item = await host.run(reviewFirst: false);
 
-          expect(
-            item.state,
-            WorkItemState.waitingForHumanDecision,
-            reason:
-                'the re-work discriminator reads $marker, which is at or above '
-                'the bound of $maxImplementationInflows. An item the '
-                'implementation lane cannot take any further and the review lane '
-                'cannot dispatch belongs in front of a person, not in a loop',
+          _expectNoParkOnMarker(
+            host,
+            because:
+                'the re-work discriminator reads $marker, which used to be far '
+                'above the bound of $_retiredBound. It is now read only by '
+                '`implementFeatureDedupeKey`, to build a key; it gates nothing',
           );
-          expect(item.blockingHumanDecisionId, isNotNull);
+          expect(item.blockingHumanDecisionId, isNull);
           expect(
             host.dispatch.requests.where(
               (r) => r.role == AgentRole.implementer,

@@ -1308,50 +1308,349 @@ TickJobHandler engineeringReviewTickHandler({
   };
 }
 
-/// Whether the implementation lane's completion inflow will move [item] off
+/// Whether the implementation lane's completion inflow will move the item off
 /// `agentCompleted` this tick, and — when it will not — why this gate is the
 /// one that has to act.
 typedef _InflowStandDown = ({bool owns, String why});
 
-Future<_InflowStandDown> _implementationInflowOwns(
-  WorkItem item,
+/// One read of the ONE artifact predicate, kept whole.
+///
+/// [producedCommitFor] is called on every path through this handler, so it is
+/// called ONCE and its answer carried, rather than re-read per branch. Two
+/// reads could disagree — a second read landing between them is a different
+/// durable state, and the route would be taken on the first answer while the
+/// log reported the second.
+///
+/// [produced] is null exactly when the read itself failed, and `error` carries
+/// why. Every refusal inside [producedCommitFor] is already a
+/// [NoCommitProduced]; a null [produced] therefore means something worse than
+/// "no commit" — the answer is UNKNOWN — and the two are deliberately not the
+/// same value.
+typedef _ProducedCommitRead = ({ProducedCommit? produced, Object? error});
+
+Future<_ProducedCommitRead> _readProducedCommit(
   WorkerStore workerStore,
+  WorkItem item,
 ) async {
   try {
-    final produced = await producedCommitFor(workerStore, item);
-    final reWorkAttempt = DurableWorkflowEngine.readTriageAttempt(item) ?? 0;
-    if (produced.isProduced) {
-      return (
-        owns: false,
-        why:
-            'the producer did leave a commit, so this item is not the '
-            'inflow\'s case and there is still a real question for a human '
-            'here',
-      );
-    }
-    if (reWorkAttempt >= maxImplementationInflows) {
-      return (
-        owns: false,
-        why:
-            'the re-work discriminator already reads $reWorkAttempt, at or '
-            'above the bound of $maxImplementationInflows automatic entries, '
-            'so the implementation lane will not route it either and nobody '
-            'else is left to act',
-      );
-    }
-    return (owns: true, why: 'the implementation inflow will route it');
+    return (produced: await producedCommitFor(workerStore, item), error: null);
   } on Object catch (error) {
-    // Every read above throws by design on unreadable durable state. A handler
-    // that throws takes the whole `review` section of the tick with it, so the
-    // fault is caught here and resolved to the CONSERVATIVE answer: park.
+    // `producedCommitFor` reads durable state that throws by design when it
+    // cannot be read, and a handler that throws takes the whole `review`
+    // section of the tick down with it — every other blocked job in that
+    // section unreported. Caught here and resolved to "unknown", which routes
+    // to the human: parking is the side of the choice that cannot strand an
+    // item on an answer nobody established.
+    return (produced: null, error: error);
+  }
+}
+
+/// THE STAND-DOWN, AND WHY IT NO LONGER ASKS ABOUT THE RE-WORK BOUND
+///
+/// ## THE BRANCH THAT WAS HERE WAS NOT MERELY DEAD — IT WAS WRONG
+///
+/// This used to read the shared re-work discriminator
+/// (`DurableWorkflowEngine.readTriageAttempt`) against `maxImplementationInflows`
+/// and answer `owns: false` once the number was at or above that bound, on the
+/// stated ground that
+///
+/// > so the implementation lane will not route it either and nobody else is
+/// > left to act
+///
+/// That ground was false, and false in the one direction that strands work.
+/// Decision `92d567e3-da03-4c43-99f4-e3726472f0ab` (ARCHITECTURE, RESOLVED)
+/// answered `RETRY_LIMIT -> REMOVE`: the automatic inflow bound is gone, so the
+/// implementation lane's completion inflow routes a no-artifact item back into
+/// `implementationReady` UNBOUNDED. The lane was always going to take it. The
+/// branch refused on behalf of a lane that had never been asked, and then parked
+/// the item in front of a human whose only answers are `rework` and `reject` —
+/// neither of which reaches an implementer.
+///
+/// The cost was measured rather than hypothetical, and it is the operator's own
+/// evidence in the same decision: four defects sat at `agent_completed` with a
+/// discriminator reading 3 or 4, and every tick logged
+/// `engineering-review-missing-artifact-parking` carrying that sentence. An
+/// automatic route had been switched off by a number that was only ever a brake
+/// on a loop, and that loop no longer exists for a better reason — the same
+/// decision makes an implementation that produced nothing a permanent FAILURE,
+/// so it never reaches `agent_completed` and the cycle
+/// `agentCompleted -> implementationReady -> agentExecuting -> agentCompleted`
+/// is broken at the step that started it.
+///
+/// So the answer for a producer that left no commit is `owns: true`,
+/// unconditionally. The item is not parked on an accounting question; it is
+/// returned to the lane that can do the work that is missing.
+///
+/// The re-work discriminator is still read — by
+/// `implementFeatureDedupeKey`, which needs it to build a key a consumed job
+/// does not already hold — but it is no longer read HERE, because nothing about
+/// it bears on who acts next. The parameter that carried the item is gone with
+/// it: this decision is a function of the artifact answer alone.
+_InflowStandDown _implementationInflowOwns(ProducedCommit produced) {
+  if (produced.isProduced) {
     return (
       owns: false,
       why:
-          'this item\'s producer could not be read ($error), so it is not '
-          'possible to say the implementation lane would take it. Parking is '
-          'the side of the choice that cannot strand the item',
+          'the producer did leave a commit, so this item is not the '
+          'inflow\'s case and there is still a real question for a human '
+          'here',
     );
   }
+  return (
+    owns: true,
+    why:
+        'the producer left no commit, and the implementation lane\'s completion '
+        'inflow routes it back into implementationReady without a bound — so '
+        'this gate stands down rather than asking a human a question whose '
+        'options are only rework and reject',
+  );
+}
+
+/// WHERE A REVIEW THAT CONCLUDED NOTHING IS SENT, AND WHY THAT IS NOT A VERDICT
+///
+/// Decision `92d567e3-da03-4c43-99f4-e3726472f0ab` (ARCHITECTURE, RESOLVED)
+/// recorded what the operator measured on the live QA stack: a work item at
+/// `review_in_progress` whose reviewer concluded nothing was parked behind a
+/// decision whose options were exactly `[rework, reject]`, and
+///
+/// > how would a reviewer actually review it.
+///
+/// Neither option answers that question. `rework` runs the IMPLEMENTATION lane
+/// again — throwing away a commit that already exists — and `reject` is the
+/// shape that means "a reviewer rejected this work" for work no reviewer
+/// assessed. The same decision answered `REREVIEW`: `AUTOMATIC`, "platform
+/// routes automatically", explicitly NOT a human decision with a third option.
+///
+/// ## THIS ENUM SAYS WHICH LANE ACTS NEXT. IT ASSESSES NOTHING
+///
+/// There is no member meaning "the work is good" and none meaning "the work is
+/// bad". [reReview] is "there is an artifact and nobody has looked at it yet";
+/// [implementation] is "there is no artifact, so there is nothing to look at";
+/// [humanDecision] is "the platform cannot tell, so a person must". Read as a
+/// verdict any of those three would be a fabrication, and the anti-fabrication
+/// property asserted in
+/// `apps/server/test/engineering_review_never_fabricates_verdict_test.dart`
+/// would hold only by accident. What keeps them apart is that no member carries
+/// a [ReviewVerdict] and no branch below writes one.
+///
+/// ## WHY `humanDecision` IS A MEMBER AND NOT A FAILURE
+///
+/// Automatic routing that cannot route is a dropped work item, so the member
+/// stays and stays meaningful as the exhaustive case. What CHANGED is which
+/// inputs reach it.
+///
+/// It used to be reached by two: a producer whose artifact could not be read,
+/// and a no-artifact producer whose re-work discriminator was at the bound. The
+/// second is gone with the bound it was reading — a discriminator at its former
+/// ceiling is no longer evidence that nobody is left to act, because the
+/// implementation lane now routes such an item unbounded. See
+/// [_implementationInflowOwns] for the whole of that.
+///
+/// ## AND WHY IT IS CURRENTLY UNREACHABLE, WHICH IS NOT THE SAME AS POINTLESS
+///
+/// Stated plainly rather than left for a reader to discover: after the removal,
+/// `owns: false` from the stand-down means the producer DID commit, and
+/// [reviewGateRouteFor] turns a commit into [reReview]. The artifact-unreadable
+/// case never arrives here either — it arrives as `produced == null`, and the
+/// caller skips [reviewGateRouteFor] entirely and falls through to the decision.
+/// So today this member has no input that reaches it.
+///
+/// It is kept because the safety property it encodes is the one that was just
+/// paid for in production: "if this function ever cannot route, the answer is a
+/// person, not a loop". Deleting the member would delete the case from the
+/// switch and make a future unroutable input a silent no-route instead of a
+/// compile-forced one. The guard that actually keeps the unreadable case out of
+/// a loop is unchanged and is asserted by
+/// `apps/server/test/engineering_review_verdict_absent_smoke_test.dart`.
+enum ReviewGateRoute {
+  /// An artifact exists and no reviewer has concluded anything about it. The
+  /// item goes back to the review lane's entry state so a reviewer is
+  /// dispatched at the revision the producer actually left.
+  reReview('re_review'),
+
+  /// No artifact exists, so there is nothing to review. The item goes back
+  /// through the completion fan-out, where the implementation lane's own
+  /// completion inflow routes it into `implementationReady` — the lane that can
+  /// do the work that is missing.
+  implementation('implementation'),
+
+  /// Neither. A human decides, on the existing decision.
+  humanDecision('human_decision');
+
+  const ReviewGateRoute(this.wire);
+
+  final String wire;
+}
+
+/// The route for a review that concluded nothing, from the ONE artifact
+/// predicate.
+///
+/// A `switch`, not an inline `if`, and not re-stated from the source: the input
+/// is already a named function — [producedCommitFor] — and the asymmetry
+/// between the two branches is the whole safety argument. A commit routes on
+/// NO question about the implementation lane's budget at all, because
+/// `agentCompleted -> reviewInProgress` is not an entry into that lane. A
+/// producer that left nothing routes TO that lane, which under decision
+/// `92d567e3-da03-4c43-99f4-e3726472f0ab` no longer has a budget to be out of.
+///
+/// [humanDecision] is unreachable from the current caller; see its own
+/// documentation for why it is kept anyway.
+ReviewGateRoute reviewGateRouteFor({
+  required ProducedCommit produced,
+  required bool implementationLaneWillRoute,
+}) => switch (produced) {
+  CommitProduced() => ReviewGateRoute.reReview,
+  NoCommitProduced() =>
+    implementationLaneWillRoute
+        ? ReviewGateRoute.implementation
+        : ReviewGateRoute.humanDecision,
+};
+
+/// The evidence a route was taken on, in a form the next operator can check.
+///
+/// [ProducedCommit.reason] alone is a GENERIC statement — "a commit was produced
+/// that differs from the starting revision" — which is true of every commit in
+/// the system and therefore falsifies nothing. A route decided on an
+/// unidentifiable answer is not a route somebody can audit a week later, so the
+/// revision and the repository are named here. Read off the same
+/// [CommitProduced] the gate just decided on, never re-derived.
+String _artifactEvidence(ProducedCommit produced) => switch (produced) {
+  CommitProduced(:final repositoryPath, :final commit) =>
+    'a commit exists to review: $commit in $repositoryPath ($produced)',
+  NoCommitProduced() => 'no commit exists to review: $produced',
+};
+
+/// Returns an item that a reviewer entered but that concluded nothing to
+/// `agentCompleted`, and reports whether the route was taken.
+///
+/// ## `agentCompleted` IS THE FAN-OUT, AND IT IS ALREADY BUILT
+///
+/// `agentCompleted` is where `sched-review`'s `entryStates` and
+/// `sched-impl`'s `completionInflowFrom` meet, and `completionRouteFor` is
+/// already the one function that decides which of them owns a producer's
+/// output, on the same [producedCommitFor] answer read here. So the gate does
+/// NOT re-decide the second hop, and it does NOT take the
+/// `agentCompleted -> implementationReady` edge itself: that move is written in
+/// the SAME transaction as the dispatch discriminator stamp
+/// (`Scheduler._applyCompletionInflow`), and a move taken here without that
+/// stamp would re-use an `implementFeatureDedupeKey` the previous
+/// implementation job already consumed — `enqueueIfAbsent` would answer
+/// `created: false` and the re-run would silently do nothing.
+///
+/// That is why this returns the item to the fan-out instead of to
+/// `implementationReady`: the decision stays with the component that makes it,
+/// and under decision `92d567e3-da03-4c43-99f4-e3726472f0ab` that component no
+/// longer holds a bound this gate could keep a private copy of. A second copy
+/// would have outlived the rule it enforced and refused routes against a bound
+/// that no longer exists — which is precisely the defect that stranded four
+/// defects on the live QA stack.
+///
+/// ## AND `implementationLaneWillRoute` IS NOT A BUDGET CHECK
+///
+/// Not because the inflow's answer is taken on trust — it is
+/// [_implementationInflowOwns]'s, and it is only `false` when the producer DID
+/// commit — but because there is no longer any per-item question to ask. A
+/// no-artifact producer is routed by the inflow unconditionally, so the
+/// parameter records which branch of the stand-down was taken rather than
+/// consulting a counter that no longer gates anything. An item the platform
+/// genuinely cannot route — a producer that cannot be read at all — still
+/// returns `false`, and that is what falls back to the existing decision so a
+/// person still sees it.
+Future<bool> _routeVerdictAbsentItem({
+  required DurableWorkflowEngine workflowEngine,
+  required WorkItem item,
+  required Job job,
+  required _ProducedCommitRead produced,
+  required bool implementationLaneWillRoute,
+  void Function(String message, Map<String, dynamic> context)? logger,
+}) async {
+  final commit = produced.produced!;
+  final route = reviewGateRouteFor(
+    produced: commit,
+    implementationLaneWillRoute: implementationLaneWillRoute,
+  );
+  if (route == ReviewGateRoute.humanDecision) {
+    // NO CLAIM IS MADE HERE. What the caller does next is its own business and
+    // it reports it; this returns false and says only that no route was taken.
+    logger?.call('engineering-review-verdict-absent-not-routed', {
+      'jobId': job.jobId,
+      'workItemId': item.workItemId,
+      'state': item.state.wire,
+      'artifactEvidence': _artifactEvidence(commit),
+      'artifactProduced': commit.isProduced,
+      'carriesVerdict': false,
+      'decision':
+          'no route was taken by this step and no decision is claimed by this '
+          'line. The caller states what it did next',
+    });
+    return false;
+  }
+
+  final destination = route == ReviewGateRoute.reReview
+      ? 'so a reviewer is dispatched at the revision the producer left'
+      : 'so the implementation lane\'s completion inflow routes it into '
+            'implementationReady, which is the lane that can do the work that '
+            'is missing';
+  try {
+    await workflowEngine.transition(
+      workItemId: item.workItemId,
+      to: WorkItemState.agentCompleted,
+      trigger: TransitionTrigger.systemEvent,
+      // The ORCHESTRATOR, holding no execution. The same actor the entry
+      // transition above uses, and the same one the edge
+      // `reviewInProgress -> agentCompleted` admits.
+      actor: const WorkflowActor(
+        actorId: 'orchestrator',
+        actorType: ActorType.orchestrator,
+      ),
+      // Written so that it cannot be read as an assessment. It names the
+      // artifact evidence, the destination and the absence of a verdict —
+      // nothing here claims a reviewer looked at this work, because by
+      // construction none did.
+      reason:
+          'the reviewer concluded nothing, so this item is returned to '
+          'agent_completed $destination. No reviewer assessed this work and '
+          'this route asserts no verdict either way. Artifact evidence: '
+          '${_artifactEvidence(commit)}',
+    );
+  } on WorkflowTransitionRejectedException catch (e) {
+    // Someone else owns the item now — a human, a gate, another tick. Not an
+    // error here: nothing was written, and the next tick re-reads and decides
+    // again. Reported rather than swallowed, because a lane that looks idle
+    // with no item to explain it is the failure this whole gate exists to end.
+    logger?.call('engineering-review-verdict-absent-route-refused', {
+      'jobId': job.jobId,
+      'workItemId': item.workItemId,
+      'route': route.wire,
+      'error': e.toString(),
+      'carriesVerdict': false,
+      'decision':
+          'no route was taken and no decision was raised. Nothing was '
+          'written, nothing was consumed, and the next tick re-reads the item '
+          'and decides again',
+    });
+    return false;
+  }
+
+  logger?.call('engineering-review-verdict-absent-routed', {
+    'jobId': job.jobId,
+    'workItemId': item.workItemId,
+    'route': route.wire,
+    'fromState': item.state.wire,
+    'toState': WorkItemState.agentCompleted.wire,
+    'artifactEvidence': _artifactEvidence(commit),
+    'artifactProduced': commit.isProduced,
+    'implementationLaneWillRoute': implementationLaneWillRoute,
+    // The b1 invariant, restated on the route itself rather than on a
+    // decision: a routed item carries no `reviewVerdict` and no
+    // `engineeringReviewResult`, and this gate wrote neither.
+    'carriesVerdict': false,
+    'decision':
+        'none raised. This is a routing decision about which lane acts next, '
+        'not a review verdict: no reviewer assessed this work, and this item '
+        'carries no verdict on any field a reader could take one from',
+  });
+  return true;
 }
 
 /// Fail-closed handling for an engineering-review job the scheduler refused to
@@ -1360,10 +1659,30 @@ Future<_InflowStandDown> _implementationInflowOwns(
 /// The scheduler never runs a reviewer against the triage tree: with no artifact
 /// its workload resolver returns `null` and the job surfaces in
 /// `SchedulerTickResult.blockedArtifactMissing`. This is where that becomes
-/// either a blocking `engineeringReview` HumanDecision or NOTHING AT ALL, and
-/// which one it is depends on whether anything else can move the item.
+/// either an automatic ROUTE or a blocking `engineeringReview` HumanDecision,
+/// and which one it is depends on whether the platform can move the item at all.
 ///
-/// ## WHY THIS STANDS DOWN FOR A NO-ARTIFACT PRODUCER
+/// ## WHY THERE IS NOW A ROUTE, AND WHY IT IS AUTOMATIC
+///
+/// This handler used to answer one question — "can the implementation inflow
+/// take it?" — and park everything else. Decision
+/// `92d567e3-da03-4c43-99f4-e3726472f0ab` (ARCHITECTURE, RESOLVED) added the
+/// second: an item a reviewer entered and that concluded nothing is ROUTED, by
+/// the artifact answer, to whichever lane can actually act on it.
+///
+/// The reason is the operator's own measurement on the live QA stack: the
+/// decision this handler raised offered exactly `[rework, reject]`, and asked
+///
+/// > how would a reviewer actually review it.
+///
+/// `rework` runs the IMPLEMENTATION lane again, discarding a commit that
+/// already exists; `reject` records a reviewer having rejected work no reviewer
+/// assessed. Neither reaches a reviewer, so an item with a reviewable commit
+/// was a dead end an operator could not act their way out of. The decision
+/// answered `REREVIEW -> AUTOMATIC`: the platform routes, rather than offering a
+/// human a third option.
+///
+/// ## WHY IT STILL STANDS DOWN FOR A NO-ARTIFACT PRODUCER AT `agentCompleted`
 ///
 /// `agentCompleted` is `sched-impl`'s inflow source. When the producer left no
 /// commit there is nothing to review, and `producedCommitFor` — the SAME
@@ -1384,14 +1703,31 @@ Future<_InflowStandDown> _implementationInflowOwns(
 /// the same place; `apps/server/test/implementation_inflow_tick_order_test.dart`
 /// runs both orders against both schedulers and asserts it.
 ///
-/// ## THE ONE CASE THAT IS NOT A STAND-DOWN
+/// ## AND WHY `agentCompleted` IS NOT RE-ROUTED
 ///
-/// `maxImplementationInflows`. When the shared re-work discriminator is already
-/// at the bound, the inflow will NOT route this item — the implementation lane
-/// has already had its budget — so standing down would leave the item at
-/// `agentCompleted` for ever with nobody acting on it. That is the case the
-/// human gate exists for, and the stand-down checks the SAME number so the two
-/// can never disagree about whether the budget is spent.
+/// An item at `agentCompleted` whose producer DID commit is not this handler's
+/// to move: the workload resolver resolves that one, so no
+/// `blockedArtifactMissing` job is ever created for it, and the case survives
+/// here only as a defensive path (asserted against a real store in
+/// `apps/server/test/integration/execution_store_roundtrip_test.dart`). Routing
+/// it would be routing something review is already going to pick up. The
+/// routing below is scoped to `reviewInProgress`, which is the state the
+/// operator's item was actually in and the one nothing else can move.
+///
+/// ## THERE IS NO LONGER A CASE THAT IS NOT A ROUTE, AND THAT IS THE FIX
+///
+/// This section used to be titled after `maxImplementationInflows`: when the
+/// shared re-work discriminator was at the bound, the inflow would NOT route the
+/// item, so routing it to `implementationReady` would leave it at
+/// `agentCompleted` for ever with nobody acting on it, and this handler parked
+/// it instead. Both halves of that argument are now false. The bound is removed
+/// (decision `92d567e3-da03-4c43-99f4-e3726472f0ab`, `RETRY_LIMIT -> REMOVE`),
+/// so the inflow routes such an item, and it no longer stands down in any case
+/// that depends on how many times the item has been through this lane.
+///
+/// The parking that remains is the one that is still a parking: a producer that
+/// could not be READ at all. That is an unknown, not a number, and an unknown
+/// is not evidence that the platform is out of moves.
 ///
 /// ## THE TRANSITION, WHEN IT DOES PARK
 ///
@@ -1421,17 +1757,32 @@ Future<void> engineeringReviewMissingArtifact({
     return;
   }
 
-  // THE STAND-DOWN. Scoped to `agentCompleted`, the one state the inflow reads,
-  // so this can never suppress a park for an item that is somewhere else.
+  // ONE read of the ONE artifact predicate, and then the stand-down it decides
+  // with. There is no second read: the re-work discriminator is no longer
+  // consulted here, so an unreadable one cannot fail this handler.
   //
-  // Every read here is guarded: the inflow's own discriminator and the
-  // discriminator read below BOTH throw on unreadable durable state, and a
-  // handler that throws would take the whole `review` section of the tick with
-  // it — every other blocked job in that section unreported. An unreadable
-  // answer falls through to the fail-closed park, which is the conservative
-  // side of the choice: this handler's job is to stop something being stranded.
+  // The read throws by design on unreadable durable state, and a handler that
+  // throws would take the whole `review` section of the tick with it — every
+  // other blocked job in that section unreported. An unreadable answer resolves
+  // to `owns: false` with its reason, which is the conservative side of the
+  // choice: this handler's job is to stop something being stranded on an
+  // answer nobody established.
+  //
+  // The stand-down this feeds is scoped to `agentCompleted`, the one state the
+  // inflow reads, so it can never suppress a park for an item that is somewhere
+  // else.
+  final produced = await _readProducedCommit(workerStore, item);
+  final standDown = produced.produced == null
+      ? (
+          owns: false,
+          why:
+              'this item\'s producer could not be read (${produced.error}), so '
+              'it is not possible to say the implementation lane would take it. '
+              'Parking is the side of the choice that cannot strand the item',
+        )
+      : _implementationInflowOwns(produced.produced!);
+
   if (item.state == WorkItemState.agentCompleted) {
-    final standDown = await _implementationInflowOwns(item, workerStore);
     if (standDown.owns) {
       logger?.call('engineering-review-missing-artifact-stands-down', {
         'jobId': job.jobId,
@@ -1450,6 +1801,32 @@ Future<void> engineeringReviewMissingArtifact({
       'workItemId': workItemId,
       'why': standDown.why,
     });
+  } else if (item.state == WorkItemState.reviewInProgress) {
+    // THE AUTOMATIC ROUTE. An item a reviewer entered and that concluded
+    // nothing: the artifact answer says which lane can actually act, and
+    // nothing else is going to ask.
+    //
+    // Reached only when the artifact answer is READABLE. An unreadable one is
+    // `standDown.owns == false` with a reason, and it falls through to the
+    // decision below rather than routing on an answer nobody established.
+    final routed =
+        produced.produced != null &&
+        await _routeVerdictAbsentItem(
+          workflowEngine: workflowEngine,
+          item: item,
+          job: job,
+          produced: produced,
+          implementationLaneWillRoute: standDown.owns,
+          logger: logger,
+        );
+    if (routed) return;
+  } else {
+    logger?.call('engineering-review-missing-artifact-unexpected-state', {
+      'jobId': job.jobId,
+      'workItemId': workItemId,
+      'state': item.state.wire,
+    });
+    return;
   }
 
   if (item.state == WorkItemState.agentCompleted) {
@@ -1507,14 +1884,22 @@ Future<void> engineeringReviewMissingArtifact({
         'agentResult': implementerResult,
       },
     );
-  } else if (item.state != WorkItemState.reviewInProgress) {
-    logger?.call('engineering-review-missing-artifact-unexpected-state', {
-      'jobId': job.jobId,
-      'workItemId': workItemId,
-      'state': item.state.name,
-    });
-    return;
   }
+  // REACHED FROM EXACTLY TWO PLACES, and both are deliberate.
+  //
+  //  * `agentCompleted` — the stand-down above declined, so this handler has
+  //    entered `reviewInProgress` (the only edge out of `agentCompleted` that
+  //    leads to a human gate) and is about to raise.
+  //  * `reviewInProgress` — the route above could not be taken: the artifact
+  //    answer could not be read at all. THIS IS THE FALLBACK THAT INVARIANT 4
+  //    REQUIRES. An item the platform cannot route is never dropped and never
+  //    looped; it reaches a person on the decision that was already here. A
+  //    producer that merely committed nothing is NOT in this list: the inflow
+  //    routes that item, so it never reaches here.
+  //
+  // Every other state returned above, so no state check is repeated here: an
+  // item in one of them is somebody else's to move and this handler is not
+  // entitled to a say.
 
   // Same no-literal-fallback rule as the verdict path: the producer id is the
   // implementer's execution id, and `actorIsNotSelf()` needs both sides real.
