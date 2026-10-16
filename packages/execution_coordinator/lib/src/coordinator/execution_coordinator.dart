@@ -9,6 +9,8 @@ import '../store/execution_store.dart';
 import '../store/model_execution_record_store.dart';
 import '../verifier/workspace_verifier.dart';
 import 'producer_execution.dart';
+import 'success_artifact.dart';
+import 'workspace_delta_probe.dart';
 
 /// Thrown when [ExecutionCoordinator.execute] is called for an execution that
 /// already has a live, non-terminal record. Executions are single-shot; replay
@@ -148,7 +150,10 @@ class ExecutionCoordinator {
     this.verifier = const WorkspaceVerifier(),
     this.verificationPlan,
     this.modelExecutionRecordStore,
-  });
+    SuccessArtifactChecker? successArtifacts,
+  }) : successArtifacts =
+           successArtifacts ??
+           RoleAwareSuccessArtifacts(probe: const GitWorkspaceDeltaProbe());
 
   final ExecutionStore store;
   final DurableWorkflowEngine workflowEngine;
@@ -156,6 +161,14 @@ class ExecutionCoordinator {
   final WorkspaceVerifier verifier;
   final VerificationPlan? verificationPlan;
   final ModelExecutionRecordStore? modelExecutionRecordStore;
+
+  /// Decides whether a completed execution produced its lane's artifact.
+  ///
+  /// Injectable so the rule can be exercised without a git worktree, and so a
+  /// caller needing different lane expectations can supply them without this
+  /// class growing a second source of truth. See [RoleAwareSuccessArtifacts] for
+  /// the default and for why the rule is role-aware at all.
+  final SuccessArtifactChecker successArtifacts;
 
   /// How long a timeout is allowed to wait for the agent process to confirm it
   /// is stopping. Short on purpose: it must not extend the execution's budget
@@ -928,9 +941,46 @@ class ExecutionCoordinator {
     // that never ran has no verdict, and inventing one would strand work items
     // on a failure nothing observed.
     final verificationFailed = verification?.status == AgentClaimStatus.failed;
+
+    // ## THE ROLE-AWARE SUCCESS ARTIFACT
+    //
+    // A clean finish is not a success. Measured on QA: seven IMPLEMENTER
+    // executions completed with zero files touched and zero commits, and all
+    // seven reached `agent_completed` — the state `engineeringReviewDefinition`
+    // dispatches FROM, so the review lane then failed closed for ever because
+    // there was nothing to review. Four defects were parked there.
+    //
+    // `agent_completed` is SHARED, so this cannot be one universal rule: triage
+    // legitimately finishes without touching the product. Each lane is asked
+    // whether it produced ITS OWN artifact instead. See
+    // [RoleAwareSuccessArtifacts].
+    //
+    // Skipped when verification already refuted the run: a refuted run is a
+    // stronger and more specific failure than "produced nothing", and reporting
+    // the vaguer one would hide the check that actually caught it.
+    final artifact = verificationFailed
+        ? null
+        : await successArtifacts.inspect(
+            executionId: request.executionId,
+            role: request.role,
+            workspace: request.workspace,
+            result: stamped,
+          );
+    final artifactMissing = artifact?.isMissing ?? false;
+    // Promoted explicitly: the `if (artifactMissing)` block below is the only
+    // reader, and forcing a `!` at each of six use sites would make the
+    // invariant "missing implies non-null" a thing to re-check by eye.
+    final missingArtifact = artifactMissing ? artifact : null;
+
     if (request.role == AgentRole.engineeringReviewer) {
       // For engineering reviewers, the coordinator must NOT transition out of
       // reviewInProgress; the tick handler will raise a human decision instead.
+      //
+      // That applies to the artifact rule too, and is the reason this lane can
+      // enforce an artifact without owning its routing: where a verdict-absent
+      // review GOES is `apps/server`'s, and this package owns no part of it.
+      // What is decided here is only whether this execution completed
+      // truthfully.
     } else if (verificationFailed) {
       // The platform's independent check ran and disagreed with the agent's
       // success report. Recording `agentCompleted` anyway advanced a work item
@@ -967,6 +1017,50 @@ class ExecutionCoordinator {
           'reason': reason,
         },
       );
+    } else if (artifactMissing) {
+      // The run finished cleanly and produced none of its lane's artifact.
+      //
+      // `AgentSessionStatus.failed` — deliberately, and it is the whole argument
+      // for this branch existing. The chain downstream has no discretion in it:
+      //
+      // ```text
+      // AgentSessionStatus.failed -> WorkerExecutionStatus.executedFail
+      //                              (LocalWorker._drive)
+      // WorkerExecutionStatus.executedFail -> JobFailureKind.permanent
+      //                              (RetryPolicy.classify)
+      // JobFailureKind.permanent -> JobState.failed, ZERO attempts spent,
+      //                              and NOT returned to a lane entry state
+      //                              (_returnRetriableItemsToEntryStates only
+      //                               acts on `retryWaiting` + isRetryable)
+      // ```
+      //
+      // That last line is the operator's requirement — "that should be a fail
+      // allow an unlimited human try again". `interrupted` would have been the
+      // obvious wrong answer: it classifies TRANSIENT, so the item would be
+      // returned to a lane entry state and re-dispatched automatically, and an
+      // automatic retry of a run that produced nothing will produce nothing
+      // again. So the item waits at `agentFailed` for a human, whose retry is
+      // already uncounted. `WorkItemState.agentExecuting -> agentFailed` is
+      // legal for the orchestrator actor
+      // (packages/workflow_engine/.../work_item_transitions.dart:105).
+      //
+      // No `metadataMerge`, for the same reason the verification branch omits
+      // it: `producerActorId` names the execution whose result the
+      // engineering-review gate's `actorIsNotSelf()` guard is checked against,
+      // and a run that produced nothing is not a producer.
+      final reason = missingArtifact!.reason!;
+      await workflowEngine.transition(
+        workItemId: request.workItemId,
+        to: WorkItemState.agentFailed,
+        trigger: TransitionTrigger.agentResult,
+        actor: _orchestrator,
+        // The engine's own `reason` parameter, which is the field PERSISTED on
+        // the transition record. Without it the item settles at `agentFailed`
+        // with nothing in its history saying why, which is the "stranded with no
+        // signal" half of the very defect this rule closes.
+        reason: reason,
+        context: {'agentResult': stamped, 'reason': reason},
+      );
     } else {
       await workflowEngine.transition(
         workItemId: request.workItemId,
@@ -983,11 +1077,63 @@ class ExecutionCoordinator {
         // guard has only a literal to fall back on — a check that can never
         // fail is not a check. `metadataMerge` is additive: it never replaces
         // the rest of the metadata (defect payload, retry attempt, …).
-        metadataMerge: {'producerActorId': stamped.executionId},
+        //
+        // ## THE ARTIFACT VERDICT TRAVELS WITH IT
+        //
+        // The event payload below also carries
+        // `successArtifactUndetermined`, and that is observability only. The
+        // scheduler — the component that spends a real implementer execution
+        // per pass of the completion cycle — reads `worker_execution`,
+        // `worker_result` and `worker_event`, and `agent_event` is none of them,
+        // so a verdict published only there is invisible to the thing that has
+        // to act on it. This is the same channel `producerActorId` uses, on the
+        // same transition, inside the same transaction: the flag and the state
+        // move together or not at all.
+        //
+        // WRITTEN ON EVERY PASS, `false` included. `artifact` is non-null on
+        // this branch by construction — `verificationFailed` short-circuits to
+        // `null` and routes to `agentFailed` above, and `artifactMissing` routes
+        // there too — so there is no "unknown" case to express here and an
+        // absent key would mean only "this item predates the flag". Leaving a
+        // stale `true` in place for a determined completion would let the
+        // scheduler's brake count a streak that never happened.
+        metadataMerge: {
+          'producerActorId': stamped.executionId,
+          SuccessArtifactArtifacts.undeterminedMetadataKey:
+              SuccessArtifactArtifacts.undeterminedFlagFor(
+                artifact!.satisfaction,
+              ),
+        },
       );
     }
 
-    await _insertModelExecutionRecord(request, stamped, true, null);
+    await _insertModelExecutionRecord(
+      request,
+      stamped,
+      !verificationFailed && !artifactMissing,
+      artifactMissing
+          ? missingArtifact?.reason
+          : verificationFailed
+          ? verification?.detail ?? 'platform verification failed'
+          : null,
+    );
+
+    if (artifactMissing) {
+      final missing = missingArtifact!;
+      return _Completion(
+        status: AgentSessionStatus.failed,
+        result: stamped,
+        reason: missing.reason!,
+        eventType: AgentEventType.executionFailed,
+        eventPayload: {
+          'role': request.role.wire,
+          'kind': SuccessArtifactArtifacts.eventKind,
+          'expectedArtifact': missing.kind.name,
+          'reason': missing.reason,
+          ...missing.details,
+        },
+      );
+    }
 
     return _Completion(
       status: AgentSessionStatus.completed,
@@ -1001,6 +1147,13 @@ class ExecutionCoordinator {
       eventPayload: {
         'role': request.role.wire,
         'verificationStatus': verification?.status.wire,
+        // An artifact that could not be established is recorded rather than
+        // silently dropped. It did NOT fail the execution — see
+        // [RoleAwareSuccessArtifacts] — but "the platform could not look" must
+        // not be indistinguishable in the record from "the platform looked and
+        // saw the artifact".
+        if (artifact?.satisfaction == ArtifactSatisfaction.undetermined)
+          'successArtifactUndetermined': artifact?.reason,
       },
     );
   }

@@ -18,6 +18,7 @@ import 'package:product_registry/product_registry.dart'
     show ProductRegistryEngine, ProductRegistryStore;
 import 'package:scheduler/scheduler.dart'
     show
+        JobStore,
         Scheduler,
         liveSessionLivenessProbe,
         triageDefectDefinition,
@@ -99,7 +100,8 @@ import 'src/services/control_plane_service.dart'
 import 'src/implementation/implementation_readiness_probe.dart'
     show ImplementationReadinessProbe, toWorkloadResolver;
 import 'src/triage/defect_triage_sweep.dart';
-import 'src/triage/lane_i_tick_hook.dart' show drainTriageOutcomesFromTick;
+import 'src/triage/lane_i_tick_hook.dart'
+    show TriageTickDrainResult, drainTriageOutcomesFromTick;
 import 'src/triage/stalled_work_item_gate.dart'
     show StallGateResult, raiseStallDecisions;
 import 'src/triage/triage_processor.dart';
@@ -1006,6 +1008,13 @@ void run(List<String> args) async {
             JobType.engineeringReview: engineeringReviewTickHandler(
               workflowEngine: durableWorkflowEngine,
               executionStore: coordinator.store,
+              // The triage lane never settles a review job — the registration is
+              // completeness, not a live path (see the note above) — but the
+              // handler is the SAME one the review section builds, and it routes
+              // rather than parks, so it needs the same artifact source. Wiring
+              // it here keeps the two registrations from describing different
+              // gates.
+              workerStore: workerStore,
               logger: _log,
             ),
           },
@@ -1140,94 +1149,16 @@ void run(List<String> args) async {
       // `agentCompleted`, so this lane's entry set no longer claims it and the
       // stale review job it left is retired as `noAction`.
       try {
-        final reviewTick = await reviewScheduler.tick();
-
-        // THIRD and last stall drain. `SchedulerStall` is scoped to the lane
-        // that raised it (two schedulers share one `JobStore`), so each lane
-        // drains its own — a lane's refusal to launch is not another lane's
-        // business, and merging them would raise a decision one lane's refusal
-        // caused on an item another lane owns.
-        outcome.foldStalls(
-          await raiseStallDecisions(
-            workflowEngine: durableWorkflowEngine,
-            executionStore: coordinator.store,
-            stalls: reviewTick.stalled,
-            logger: _log,
-          ),
-        );
-
-        final reviewDrain = await drainTriageOutcomesFromTick(
-          tickResult: reviewTick,
+        await runReviewLaneTick(
+          reviewScheduler: reviewScheduler,
           jobStore: jobStore,
           triageProcessor: triageProcessor,
-          // The dispatch table must be as COMPLETE as the triage drain's above.
-          // `onboardProduct` jobs are product-scoped and claimed by
-          // `BaselineProductDispatcher`, so they never appear in this tick's
-          // result — the handler is registered anyway because the alternative is
-          // an `UnhandledJobTypeException`: `drainTriageOutcomesFromTick`
-          // dispatches BY TYPE and THROWS for any job it considers with no
-          // handler, which would fail this whole review section rather than just
-          // the one job. Registering it is how the triage drain already stays
-          // complete, and the two must not drift.
-          handlers: {
-            JobType.onboardProduct: (job) => observeCompletedOnboardingJob(
-              job: job,
-              logger: _log,
-            ),
-            JobType.engineeringReview: engineeringReviewTickHandler(
-              workflowEngine: durableWorkflowEngine,
-              executionStore: coordinator.store,
-              logger: _log,
-            ),
-          },
-          logger: _log,
+          workflowEngine: durableWorkflowEngine,
+          executionStore: coordinator.store,
+          workerStore: workerStore,
+          foldStalls: outcome.foldStalls,
+          log: _log,
         );
-        if (reviewDrain.handedOff > 0) {
-          _log('review.tick.drained', {
-            'considered': reviewDrain.considered,
-            'skipped': reviewDrain.skipped,
-            'handedOff': reviewDrain.handedOff,
-          });
-        }
-
-        // Fail closed. A review job the scheduler could not resolve a produced
-        // artifact for was never dispatched (the resolver returned null), so no
-        // reviewer ran and the work item is still at `agentCompleted`. Turn each
-        // into a blocking human decision, entering `reviewInProgress` first
-        // because `agentCompleted` has no direct edge to the human-decision
-        // state. The scheduler re-surfaces the same job every tick until the
-        // item leaves `agentCompleted`, so this must be idempotent — the
-        // handler is.
-        //
-        // It also STANDS DOWN for a no-artifact producer, because the item is
-        // not review's to decide about: `producedCommitFor` says nothing was
-        // committed, so the implementation lane's inflow owns it. Parking there
-        // instead is what used to make the outcome depend on the order of the
-        // two `await`s above.
-        for (final jobId in reviewTick.blockedArtifactMissing) {
-          try {
-            final job = await jobStore.readJob(jobId);
-            if (job == null) {
-              _log('review.missing-artifact.job-not-found', {'jobId': jobId});
-              continue;
-            }
-            await engineeringReviewMissingArtifact(
-              workflowEngine: durableWorkflowEngine,
-              executionStore: coordinator.store,
-              workerStore: workerStore,
-              job: job,
-              logger: _log,
-            );
-          } catch (e, st) {
-            _log('review.missing-artifact.failed', {
-              'jobId': jobId,
-              'error': '$e',
-              'stack': st.toString(),
-              'action':
-                  'fail-closed decision is retried on the next tick; other lanes unaffected',
-            });
-          }
-        }
       } catch (e, st) {
         outcome.failedSections.add('review');
         _log('review.tick.failed', {
@@ -1357,6 +1288,164 @@ Future<WorkerRegistrationHeartbeat> startWorkerRegistrationHeartbeat({
   );
   await heartbeat.start();
   return heartbeat;
+}
+
+/// What one [runReviewLaneTick] concluded, for the composition root to report.
+class ReviewLaneTickResult {
+  const ReviewLaneTickResult({
+    required this.drain,
+    required this.missingArtifactJobIds,
+  });
+
+  /// The terminal-job drain.
+  final TriageTickDrainResult drain;
+
+  /// Every `blockedArtifactMissing` job id this pass turned into a route or a
+  /// decision, in the order the scheduler reported them.
+  final List<String> missingArtifactJobIds;
+}
+
+/// The composition root's REVIEW section, in the one order production runs it.
+///
+/// ## WHY THIS IS A NAMED FUNCTION AND NOT A BLOCK OF `run`
+///
+/// Because a test cannot exercise an `await` order it can only read, and the
+/// order in this section decided the outcome of a shipped feature. Reviewer
+/// `DO_NOT_MERGE` finding B2 on `integrate/combined-3@43b2faa` was that
+/// decision `92d567e3-da03-4c43-99f4-e3726472f0ab`'s `REREVIEW -> AUTOMATIC`
+/// route was built, tested green, and unreachable: this drain runs BEFORE the
+/// `blockedArtifactMissing` loop below, so the verdict-absent case was parked at
+/// `waitingForHumanDecision` here, and `engineeringReviewMissingArtifact` —
+/// which holds the route — returned at its first guard on an already-parked item.
+/// The branch could not have reached it either, for a structural reason recorded
+/// on that function.
+///
+/// Every test of it called one handler in isolation instead, which is a green
+/// suite over a dead end. Extracting the order makes it callable, so
+/// `apps/server/test/engineering_review_composition_order_test.dart` drives
+/// THESE `await`s against the real [Scheduler]s and the real stores. A replica
+/// in the test file would drift on the next edit, which is the failure mode this
+/// extraction exists to close.
+///
+/// The order itself is unchanged and is still load-bearing; see the call site for
+/// why the implementation lane's tick comes first.
+Future<ReviewLaneTickResult> runReviewLaneTick({
+  required Scheduler reviewScheduler,
+  required JobStore jobStore,
+  required TriageProcessor? triageProcessor,
+  required DurableWorkflowEngine workflowEngine,
+  required ExecutionStore executionStore,
+  required WorkerStore workerStore,
+  required void Function(StallGateResult stalls) foldStalls,
+  required void Function(String event, Map<String, dynamic> data) log,
+}) async {
+  final reviewTick = await reviewScheduler.tick();
+
+  // THIRD and last stall drain. `SchedulerStall` is scoped to the lane
+  // that raised it (two schedulers share one `JobStore`), so each lane
+  // drains its own — a lane's refusal to launch is not another lane's
+  // business, and merging them would raise a decision one lane's refusal
+  // caused on an item another lane owns.
+  //
+  // Folded HERE, where the inline block folded it, and not returned for the
+  // caller to fold at the end: a stall conclusion must survive a failure in a
+  // LATER step of this section, or the review section throws on an unhandled
+  // job type and the stall it had already reached a human about disappears
+  // from the report.
+  foldStalls(
+    await raiseStallDecisions(
+      workflowEngine: workflowEngine,
+      executionStore: executionStore,
+      stalls: reviewTick.stalled,
+      logger: log,
+    ),
+  );
+
+  final reviewDrain = await drainTriageOutcomesFromTick(
+    tickResult: reviewTick,
+    jobStore: jobStore,
+    triageProcessor: triageProcessor,
+    // The dispatch table must be as COMPLETE as the triage drain's above.
+    // `onboardProduct` jobs are product-scoped and claimed by
+    // `BaselineProductDispatcher`, so they never appear in this tick's
+    // result — the handler is registered anyway because the alternative is
+    // an `UnhandledJobTypeException`: `drainTriageOutcomesFromTick`
+    // dispatches BY TYPE and THROWS for any job it considers with no
+    // handler, which would fail this whole review section rather than just
+    // the one job. Registering it is how the triage drain already stays
+    // complete, and the two must not drift.
+    handlers: {
+      JobType.onboardProduct: (job) =>
+          observeCompletedOnboardingJob(job: job, logger: log),
+      JobType.engineeringReview: engineeringReviewTickHandler(
+        workflowEngine: workflowEngine,
+        executionStore: executionStore,
+        workerStore: workerStore,
+        logger: log,
+      ),
+    },
+    logger: log,
+  );
+  if (reviewDrain.handedOff > 0) {
+    log('review.tick.drained', {
+      'considered': reviewDrain.considered,
+      'skipped': reviewDrain.skipped,
+      'handedOff': reviewDrain.handedOff,
+    });
+  }
+
+  // Fail closed. A review job the scheduler could not resolve a produced
+  // artifact for was never dispatched (the resolver returned null), so no
+  // reviewer ran and the work item is still at `agentCompleted`. Turn each
+  // into a route or a blocking human decision, entering `reviewInProgress`
+  // first because `agentCompleted` has no direct edge to the
+  // human-decision state. The scheduler re-surfaces the same job every tick
+  // until the item leaves `agentCompleted`, so this must be idempotent — the
+  // handler is.
+  //
+  // It also STANDS DOWN for a no-artifact producer, because the item is
+  // not review's to decide about: `producedCommitFor` says nothing was
+  // committed, so the implementation lane's inflow owns it. Parking there
+  // instead is what used to make the outcome depend on the order of the
+  // two `await`s above.
+  //
+  // AFTER the drain, and that is deliberate rather than incidental. The drain
+  // owns every job this tick settled; a job in `blockedArtifactMissing` is
+  // still `queued` and is in none of the drain's three sets, so the two cannot
+  // both reach one job in one tick. The order is kept because reversing it was
+  // tried and `implementation_inflow_tick_order_test.dart` exists to keep it
+  // tried.
+  final handled = <String>[];
+  for (final jobId in reviewTick.blockedArtifactMissing) {
+    try {
+      final job = await jobStore.readJob(jobId);
+      if (job == null) {
+        log('review.missing-artifact.job-not-found', {'jobId': jobId});
+        continue;
+      }
+      await engineeringReviewMissingArtifact(
+        workflowEngine: workflowEngine,
+        executionStore: executionStore,
+        workerStore: workerStore,
+        job: job,
+        logger: log,
+      );
+      handled.add(jobId);
+    } catch (e, st) {
+      log('review.missing-artifact.failed', {
+        'jobId': jobId,
+        'error': '$e',
+        'stack': st.toString(),
+        'action':
+            'fail-closed decision is retried on the next tick; other lanes unaffected',
+      });
+    }
+  }
+
+  return ReviewLaneTickResult(
+    drain: reviewDrain,
+    missingArtifactJobIds: List.unmodifiable(handled),
+  );
 }
 
 /// The platform's independent verification for the TRIAGE role.

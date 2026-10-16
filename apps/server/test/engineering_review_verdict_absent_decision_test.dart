@@ -7,6 +7,7 @@ import 'package:platform_contracts/platform_contracts.dart';
 import 'package:scheduler/scheduler.dart';
 import 'package:serverpod/serverpod.dart';
 import 'package:test/test.dart';
+import 'package:worker_runtime/worker_runtime.dart';
 import 'package:workflow_store/workflow_store.dart';
 
 /// ## WHAT THIS FILE PROVES, AND WHY IT IS A SEPARATE FILE
@@ -219,7 +220,41 @@ void main() {
           );
           expect(
             host.loggedEvents.map((l) => l.$1),
+            contains('engineering-review-verdict-absent-routed'),
+            reason:
+                'RE-BASELINED by the B2 correction. An item naming no producer '
+                'is read by `producedCommitFor` as `producerNotIdentified`, so '
+                'there is nothing to review and the route takes it to the '
+                'implementation lane — which stamps a fresh producer identity '
+                'when it succeeds. Parking it would have asked a human a '
+                'question the platform could answer.',
+          );
+
+          // AND THE RAISE STILL FAILS CLOSED WITHOUT ONE, which is the property
+          // this test was written for and which no longer needs the gate to
+          // reach it. See `raiseDirectly`.
+          expect(
+            await host.raiseDirectly(),
+            VerdictAbsentDecisionOutcome.producerIdentityUnreadable,
+          );
+          expect(
+            host.loggedEvents.map((l) => l.$1),
             contains('engineering-review-no-verdict-decision-no-producer'),
+            reason:
+                '`actorIsNotSelf()` refuses a gate entry with no producer '
+                'identity, so raising would THROW rather than land, and a '
+                'throwing gate takes the whole `review` section of the tick with '
+                'it. The function notices first and writes nothing',
+          );
+          expect(
+            await host.workflowStore.readHumanDecisionsForWorkItem(
+              _Host.workItemId,
+            ),
+            isEmpty,
+            reason:
+                'a fabricated producer identity is the one thing never to do '
+                'here, and this assertion now runs twice because the routed '
+                'branch could have written something too',
           );
           expect(
             (await host.executionStore.readEvents(
@@ -881,7 +916,11 @@ The diff introduces a retry loop with no bound. It must be capped.
           producerActorId: null,
         );
 
-        await host.drainGate();
+        // Raised directly rather than through the gate, which now ROUTES an
+        // unidentified producer instead of raising for it. The reason is on
+        // `_Host.raiseDirectly`; the outcome and the sentence are the raise's
+        // own contract and both are unchanged.
+        await host.raiseDirectly();
 
         expect(outcomeName(host), 'producerIdentityUnreadable');
         expect(decisionSentence(host), contains('not raised'));
@@ -971,7 +1010,12 @@ The diff introduces a retry loop with no bound. It must be capped.
           prose: _realReviewProse,
           producerActorId: null,
         );
-        await unreadable.drainGate();
+        // Raised DIRECTLY, and the reason is on `raiseDirectly`: the gate routes
+        // an unidentified producer to the implementation lane rather than
+        // raising, so this outcome no longer has a gate-shaped input. The four
+        // sentences this asserts are the four the RAISE can produce, and all
+        // four are still reachable — one of them by a direct caller.
+        await unreadable.raiseDirectly();
 
         final refused = await _Host.completedWithoutVerdict(
           prose: _realReviewProse,
@@ -1181,6 +1225,164 @@ The diff introduces a retry loop with no bound. It must be capped.
       },
     );
   });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // THE ROUTE THAT REPLACES THE DEAD END — decision
+  // 92d567e3-da03-4c43-99f4-e3726472f0ab (`REREVIEW -> AUTOMATIC`).
+  //
+  // The measured dead end this file's sibling group above documents the cause
+  // of: an item at `review_in_progress` whose reviewer concluded nothing was
+  // parked behind `[rework, reject]`, and
+  //
+  //   > how would a reviewer actually review it.
+  //
+  // `reviewGateRouteFor` is the whole routing rule, as a pure function over two
+  // answers this repository already has one named function each for. It is
+  // tested HERE, exhaustively, because it is the one place where a wrong branch
+  // is invisible: both branches end at the same state, so the observable
+  // difference is entirely in WHICH lane the item is handed to and WHETHER a
+  // human is asked. The behavioural evidence — the real schedulers, the real
+  // dispatch — is in `engineering_review_verdict_absent_smoke_test.dart`, which
+  // names no new symbol and so can be run against the unmodified gate.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  group('the route for a review that concluded nothing', () {
+    test('an artifact routes to RE-REVIEW, and the lane\'s answer cannot say '
+        'otherwise', () {
+      // The asymmetry is the safety argument: `implementationLaneWillRoute`
+      // describes entries into the IMPLEMENTATION lane, and a commit's route
+      // into the review lane is not an entry into it. A version of this function
+      // that consulted that answer on the commit branch would refuse to review
+      // a commit precisely because the implementation lane had been busy.
+      //
+      // RE-BASELINED, and the loop now sweeps the real domain. This used to
+      // sweep `[0, 1, 2, maxImplementationInflows, 99]` — readings of a counter
+      // that decision `92d567e3-da03-4c43-99f4-e3726472f0ab` removed
+      // (`RETRY_LIMIT -> REMOVE`), which is why it could not survive the
+      // removal. `implementationLaneWillRoute` is a boolean, so `[true, false]`
+      // is every input this branch can be handed rather than a sample of it, and
+      // no iteration here depends on a quantity that no longer exists.
+      //
+      // Claimed exactly, because the obvious overstatement was checked and is
+      // false: this is NOT a strengthening. Both the old five-value loop and
+      // this one fail against a `CommitProduced` branch that consults
+      // `implementationLaneWillRoute` — the old one on its first
+      // `attempt >= maxImplementationInflows` iteration. What changed is the
+      // dependency, not the detection power.
+      //
+      // `automaticRerouteBudgetSpent` is swept here too, and it is a DEPENDENT
+      // input, not an extra dimension: a commit routes on the re-review budget
+      // and on nothing else, and `false` is the only reading under which the
+      // loop above is reachable at all.
+      for (final laneWillRoute in const [true, false]) {
+        expect(
+          reviewGateRouteFor(
+            produced: const CommitProduced(
+              repositoryPath: '/durable/clone',
+              commit: 'a-real-commit',
+            ),
+            implementationLaneWillRoute: laneWillRoute,
+            automaticRerouteBudgetSpent: false,
+          ),
+          ReviewGateRoute.reReview,
+          reason:
+              'a commit exists and nobody has looked at it, and this item has '
+              'automatic re-reviews left. That is the whole question, and the '
+              'implementation lane is recorded as $laneWillRoute, which is '
+              'irrelevant to it',
+        );
+      }
+
+      // AND THE BOUND IS THE OTHER HALF OF THE SAME BRANCH. Added by the B2
+      // correction: at the reviewed HEAD this member of the enum had NO input
+      // that reached it, because `CommitProduced` short-circuited to `reReview`
+      // and nothing consulted anything else.
+      for (final laneWillRoute in const [true, false]) {
+        expect(
+          reviewGateRouteFor(
+            produced: const CommitProduced(
+              repositoryPath: '/durable/clone',
+              commit: 'a-real-commit',
+            ),
+            implementationLaneWillRoute: laneWillRoute,
+            automaticRerouteBudgetSpent: true,
+          ),
+          ReviewGateRoute.humanDecision,
+          reason:
+              'the platform has already spent its automatic re-reviews on this '
+              'item in this production pass, so an unbounded automatic re-arm '
+              'would be an unbounded automatic LLM retry loop — the thing '
+              '`RetryPolicy` exists to prevent. It reaches a person instead. '
+              'Recorded from the artifact read as $laneWillRoute',
+        );
+      }
+    });
+
+    test('no artifact routes to IMPLEMENTATION while the lane will take it', () {
+      expect(
+        reviewGateRouteFor(
+          produced: const NoCommitProduced(
+            NoProducedCommitReason.noCommitProduced,
+            'the producing execution committed no code',
+          ),
+          implementationLaneWillRoute: true,
+          // The implementation route is NOT charged for the re-review budget.
+          // That lane advances the dispatch discriminator in its own
+          // transaction when it takes the second hop, and an implementation run
+          // that produces nothing is a permanent failure rather than a loop, so
+          // there is nothing here for the bound to stop.
+          automaticRerouteBudgetSpent: false,
+        ),
+        ReviewGateRoute.implementation,
+        reason:
+            'nothing to review, so the item belongs to the lane that can do the '
+            'work that is missing. This is `completionRouteFor`\'s own answer '
+            'for a no-commit producer, reached without transcribing it',
+      );
+    });
+
+    test('no artifact AND no budget routes to a HUMAN, never nowhere', () {
+      // The invariant that keeps automatic routing from becoming a drop. Four
+      // different "no commit" causes, because they are four different incidents
+      // an operator reads differently, and none of them may be quietly looped.
+      for (final cause in NoProducedCommitReason.values) {
+        expect(
+          reviewGateRouteFor(
+            produced: NoCommitProduced(cause, 'no artifact: $cause'),
+            implementationLaneWillRoute: false,
+            automaticRerouteBudgetSpent: false,
+          ),
+          ReviewGateRoute.humanDecision,
+          reason:
+              '${cause.name}: the implementation lane will not take this item, so '
+              'there is no route. It reaches a person on the decision that was '
+              'already there — never nowhere',
+        );
+      }
+    });
+
+    test('NO member of the route reads as a verdict', () {
+      // The b1 property, on the new type. `reReview` is the member a reader
+      // could most plausibly mistake for progress on a review; asserting the
+      // wire values against it is what stops a future edit from renaming it to
+      // something like `approved`.
+      for (final route in ReviewGateRoute.values) {
+        for (final wire in ReviewVerdict.values) {
+          expect(
+            route.wire,
+            isNot(wire.wire),
+            reason:
+                '${wire.wire} is a reviewer assessment. $route says which lane '
+                'acts next and nothing else',
+          );
+        }
+        expect(
+          route.wire,
+          isNot(anyOf('APPROVE', 'CHANGES_REQUIRED', 'REWORK')),
+        );
+      }
+    });
+  });
 }
 
 /// Verbatim from the QA record on 2026-10-14, trimmed. This is what a real
@@ -1244,6 +1446,7 @@ class _Host {
     required this.workflowStore,
     required this.workflowEngine,
     required this.executionStore,
+    required this.workerStore,
     required this.jobStore,
     required this.job,
     required this.loggedEvents,
@@ -1252,17 +1455,81 @@ class _Host {
   static const workItemId = 'wi-no-verdict';
   static const reviewerExecutionId = 'agx-wx-review';
   static const producerExecutionId = 'agx-wx-impl';
+
+  /// A real commit, so `producedCommitFor` answers `CommitProduced` and the
+  /// verdict-absent ROUTE would re-review — were the automatic re-review budget
+  /// not already spent, which is what these hosts seed. See `_base`.
+  static const _producedCommit = 'c0ffee1';
+
+  /// The revision the producer started at, so `_producedCommit` differs from it.
+  static const _startingRevision = 'aaaaaaa';
+
   static final _now = DateTime.utc(2026, 10, 15, 12);
 
+  /// ## WHY EVERY HOST HERE SEEDS A SPENT RE-REVIEW BUDGET
+  ///
+  /// RE-BASELINED by the B2 correction, and this is the whole of the
+  /// justification.
+  ///
+  /// Decision `92d567e3-da03-4c43-99f4-e3726472f0ab` resolved `REREVIEW ->
+  /// AUTOMATIC`: "platform routes automatically", explicitly NOT a human
+  /// decision with a third option. So a review that concluded nothing is now
+  /// ROUTED first, and the verdict-less decision is the FALLBACK for an item
+  /// routing genuinely cannot handle.
+  ///
+  /// Every host in this file is such an item. It records no producer
+  /// `WorkerExecution`, so `producedCommitFor` answers `NoCommitProduced`; the
+  /// route then asks whether this item has already spent its automatic
+  /// re-reviews in this production pass, and seeding the ledger as spent is the
+  /// honest way to model that.
+  ///
+  /// The alternative — letting every one of these hosts route — would have
+  /// deleted the entire file, and with it every property the b1 decision
+  /// `c495e02f-5c5d-4b45-8124-42ad0e90d6d4` was paid for: that the fallback
+  /// decision asserts no verdict, is idempotent, is distinguishable from a
+  /// stall, states whether the review finished, and moves when answered. Those
+  /// properties are unchanged; what changed is which branch of the gate produces
+  /// the object they are about. The route itself, and the proof that it is the
+  /// branch production takes, is
+  /// `apps/server/test/engineering_review_composition_order_test.dart`.
+  ///
+  /// Pass `automaticReroutesSpent: 0` to model the routed branch instead.
   static Future<_Host> _base({
     String? producerActorId,
     bool parkedBetweenReads = false,
     JobState jobState = JobState.succeeded,
     JobFailure? failure,
     int? attempt,
+    int automaticReroutesSpent = maxAutomaticReviewReroutes,
+    String? producedCommit = _producedCommit,
   }) async {
     final workflowStore = InMemoryWorkflowStore();
     final jobStore = InMemoryJobStore();
+    final workerStore = InMemoryWorkerStore();
+    // The producer's own durable worker execution, recorded only when the item
+    // names one. `producedCommitFor` joins the two records on exactly that
+    // `producerActorId` pair and refuses to guess, so a host that passes
+    // `producerActorId: null` must record nothing — and that host's artifact
+    // read then answers `producerNotIdentified`, which is the
+    // `producerIdentityUnreadable` outcome its test exists for.
+    if (producerActorId != null && producedCommit != null) {
+      await workerStore.saveWorkerExecution(
+        WorkerExecution(
+          workerExecutionId: 'wx-impl',
+          workItemId: workItemId,
+          repositoryPath: '/durable/clone',
+          requestedStartingRevision: _startingRevision,
+          requiredCapabilities: const {
+            WorkerCapability.linux,
+            WorkerCapability.git,
+          },
+          agentExecutionId: producerActorId,
+          endingRevision: producedCommit,
+          status: WorkerExecutionStatus.executedPass,
+          cleanupPolicy: WorkerCleanupPolicy.removeAlways,
+        ),
+      );
+    }
     await workflowStore.saveWorkItem(
       WorkItem(
         workItemId: workItemId,
@@ -1273,6 +1540,14 @@ class _Host {
         state: WorkItemState.reviewInProgress,
         metadata: {
           if (producerActorId != null) 'producerActorId': producerActorId,
+          // `productionPass: null` is the item's own reading of
+          // `triageAttemptMetadataKey` — this item has never been re-triaged —
+          // and the ledger is scoped to the pass it was spent in, so it has to
+          // carry the same null rather than a literal 0.
+          engineeringReviewAutoRerouteMetadataKey: {
+            'productionPass': null,
+            'spent': automaticReroutesSpent,
+          },
         },
         createdAt: _now,
         updatedAt: _now,
@@ -1308,6 +1583,7 @@ class _Host {
       workflowStore: workflowStore,
       workflowEngine: DurableWorkflowEngine(store: engineStore),
       executionStore: InMemoryExecutionStore(),
+      workerStore: workerStore,
       jobStore: jobStore,
       job: job,
       loggedEvents: <(String, Map<String, dynamic>)>[],
@@ -1461,6 +1737,7 @@ class _Host {
   final InMemoryWorkflowStore workflowStore;
   final DurableWorkflowEngine workflowEngine;
   final InMemoryExecutionStore executionStore;
+  final InMemoryWorkerStore workerStore;
   final InMemoryJobStore jobStore;
   final Job job;
   final List<(String, Map<String, dynamic>)> loggedEvents;
@@ -1477,8 +1754,56 @@ class _Host {
   Future<void> drainGate() => engineeringReviewTickHandler(
     workflowEngine: workflowEngine,
     executionStore: executionStore,
+    workerStore: workerStore,
     logger: (message, context) => loggedEvents.add((message, context)),
   )(job);
+
+  /// Calls [raiseVerdictAbsentDecision] directly, with [producerActorId] exactly
+  /// as this host records it, and logs the outcome the way the tick handler
+  /// does.
+  ///
+  /// ## WHY A DIRECT CALL IS NOW NEEDED FOR ONE OUTCOME
+  ///
+  /// RE-BASELINED by the B2 correction. `producerIdentityUnreadable` used to be
+  /// reachable through the gate whenever an item named no producer, because the
+  /// gate went straight to the raise. It no longer is: the gate ROUTES first,
+  /// and an item with no `producerActorId` is read by `producedCommitFor` as
+  /// `producerNotIdentified` — a `NoCommitProduced` — which routes to the
+  /// implementation lane, which is the right answer for it. There is nothing to
+  /// review when nothing can be attributed, and the implementation lane stamps a
+  /// fresh producer identity the moment it succeeds.
+  ///
+  /// So the outcome is now reachable only from a caller that raises directly,
+  /// and the property it encodes — `actorIsNotSelf()` fails closed and nothing
+  /// is fabricated to get past it — is asserted here rather than deleted. The
+  /// function is public and this is its own contract, not the gate's.
+  Future<VerdictAbsentDecisionOutcome> raiseDirectly({
+    String? producerActorId,
+    String cause = 'no_verdict_parsed',
+    String detail = 'the reviewer recorded no verdict',
+    bool reviewCompleted = true,
+  }) async {
+    final outcome = await raiseVerdictAbsentDecision(
+      workflowEngine: workflowEngine,
+      workItemId: workItemId,
+      job: job,
+      executionId: reviewerExecutionId,
+      cause: cause,
+      detail: detail,
+      producerActorId: producerActorId,
+      reviewProse: null,
+      reviewCompleted: reviewCompleted,
+      logger: (message, context) => loggedEvents.add((message, context)),
+    );
+    loggedEvents.add((
+      'engineering-review-gate-no-verdict-decision',
+      {
+        'outcome': outcome.name,
+        'decision': verdictAbsentDecisionSentence(outcome),
+      },
+    ));
+    return outcome;
+  }
 
   /// Raises b8's supersession stall on this item, through its own gate.
   ///

@@ -22,4 +22,24 @@ dependencies:
     path: ../worker_runtime
 
 dev_dependencies:
+  # TEST-ONLY, and deliberately so.
+  #
+  # `test/undetermined_return_brake_test.dart` walks the completion cycle on the
+  # COMBINED tree: a real `ExecutionCoordinator` settles each return and a real
+  # `Scheduler` routes it, which is the only way to prove the cycle terminates —
+  # the cycle spans both packages and neither suite can see the other half.
+  #
+  # It is a dev dependency and NOT a runtime one for two reasons. `Scheduler` has
+  # no reason to know about the artifact rule at dispatch time: the verdict
+  # reaches it as a flag on the work item, over the channel it already reads for
+  # `producerActorId`. And `execution_coordinator` cannot be a runtime
+  # dependency of anything above `worker_runtime` without turning the flag into
+  # a second, parallel contract. `lib/` therefore imports nothing from this
+  # package, and the wiring below exists only so the test can assert that the
+  # two sides agree on the key — see `SuccessArtifactArtifacts
+  # .undeterminedMetadataKey` and the test named "one key, declared twice".
+  agent_runtime:
+    path: ../agent_runtime
+  execution_coordinator:
+    path: ../execution_coordinator
   test: ^1.25.2

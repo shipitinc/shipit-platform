@@ -32,16 +32,29 @@ import 'package:control_plane_server/server.dart';
 /// ## WHY THE IMPL FLOWER RUNS HERE AT ALL
 ///
 /// Because it is what puts the item in front of `sched-review` in production.
-/// `sched-impl` ticks first (`server.dart`), and its completion inflow routes
-/// every `agentCompleted` item away: a commit goes to `reviewInProgress`, no
-/// commit goes to `implementationReady`. The one exception is the bound — when
-/// `triageAttempt` is already at `maxImplementationInflows` the inflow
-/// STANDS DOWN and leaves the item at `agentCompleted` precisely so the review
-/// lane can take it (`implementation_inflow.dart`, "WHY A BOUND IS NOT
-/// OPTIONAL"). Every one of the five stranded items reads 3 or 4, so this is
-/// the real path and not a corner: the test runs `implScheduler.tick()` first
-/// and asserts the stand-down happened, rather than asserting the review lane
-/// in isolation and calling that end to end.
+/// `sched-impl` ticks first (`server.dart`), and its completion inflow is
+/// handed every `agentCompleted` item. For this one — a producer that DID commit
+/// — the route is `reviewInProgress`, which is `engineeringReviewDefinition`'s
+/// own state and is not an entry into the implementation lane. The test runs
+/// `implScheduler.tick()` first and asserts the item was left where it was,
+/// rather than asserting the review lane in isolation and calling that end to
+/// end.
+///
+/// ## THE BOUND IS GONE, AND IT WAS NEVER WHAT STOPPED THIS ITEM
+///
+/// This file used to say that the inflow "STANDS DOWN — its budget is spent" for
+/// these items, and to cite `maxImplementationInflows` for it. That was never
+/// quite right and it is now certainly wrong. The bound was scoped to the
+/// IMPLEMENTATION route (`_definition.entryStates.contains(target)`), so it
+/// never applied to a commit; and decision `92d567e3-da03-4c43-99f4-e3726472f0ab`
+/// (ARCHITECTURE, RESOLVED) answered `RETRY_LIMIT -> REMOVE` and deleted it.
+///
+/// What actually refuses the route is the workflow guard on
+/// `agentCompleted -> reviewInProgress`, which carries
+/// `GuardConditions.agentResultValid()` and the scheduler has no execution of
+/// its own to supply an `AgentResult` for. That is unchanged by the removal, so
+/// the assertion below survives it. The old reason text named the bound; it now
+/// names the guard.
 ///
 /// ## WHY IT IS NOT VACUOUS
 ///
@@ -54,16 +67,26 @@ import 'package:control_plane_server/server.dart';
 /// ## WHAT IT DELIBERATELY DOES NOT CLAIM
 ///
 /// It does not claim the whole class is closed, and it is not written to look
-/// as if it did. Once `triageAttempt` reaches `maxImplementationInflows` the
-/// completion inflow stands down BEFORE it writes, so the marker stops moving
-/// on its own: a SECOND exhausted review job on the same item, with no re-work
-/// in between, would ask for the same `:a<n>` and be refused. That residual is
-/// recorded in `engineeringReviewDedupeKey`'s own documentation and needs a
-/// discriminator that counts review attempts and a writer for it, which does not
-/// exist and is not being smuggled in here. The test below shows the stand-down
-/// behaving as documented rather than pretending the stand-down is a fix.
+/// as if it did. What remains is a narrow residual recorded in
+/// `engineeringReviewDedupeKey`'s own documentation: a SECOND exhausted review
+/// job on the same item, with no re-work in between, would ask for the same
+/// `:a<n>` and be refused, because the suffix tracks the re-work discriminator
+/// rather than counting review attempts, and nothing writes a review-attempt
+/// discriminator. The test below shows that refusing behaviour rather than
+/// pretending it is a fix.
 const _itemId = 'wi-1';
 const _startingRevision = 'aaaaaaa';
+
+/// The value `maxImplementationInflows` held before decision
+/// `92d567e3-da03-4c43-99f4-e3726472f0ab` removed it.
+///
+/// It is a SEED and not a rule. This file needs a re-work discriminator to be
+/// present at all, because `engineeringReviewDedupeKey` appends `:a<n>` only
+/// when one is — and the suffixed key is the entire recovery, since the
+/// stranded items hold the unsuffixed one. Nothing here compares this number
+/// against anything, and after the removal the number an item happens to carry
+/// has no bearing on which lane acts next.
+const _strandedMarker = 3;
 
 /// The commit today's implementation run left. It differs from
 /// `_startingRevision`, which is the only thing that makes it a produced
@@ -102,7 +125,7 @@ class _Host {
   });
 
   /// Builds the QA state: a work item at `agentCompleted` whose producer left
-  /// [_producedCommit], with `triageAttempt` at [maxImplementationInflows].
+  /// [_producedCommit], with a re-work discriminator reading [_strandedMarker].
   ///
   /// The `WorkerExecution` row is written the way a real `LocalWorker` writes
   /// it: `agentExecutionId` is the same id the coordinator stamped on the item
@@ -110,6 +133,10 @@ class _Host {
   /// committed. `producedCommitFor` joins on that equality, so an item without
   /// the row would read as a producer that committed nothing — which routes to
   /// the implementation lane and would prove nothing about review at all.
+  ///
+  /// The marker is seeded only so `engineeringReviewDedupeKey` builds a
+  /// SUFFIXED key. Its value is the retired `maxImplementationInflows` for
+  /// fidelity to the QA rows, not because anything compares against it.
   static Future<_Host> strandedReviewItem() async {
     final workflowStore = InMemoryWorkflowStore();
     final workerStore = InMemoryWorkerStore();
@@ -127,7 +154,7 @@ class _Host {
         state: WorkItemState.agentCompleted,
         metadata: const {
           'producerActorId': 'agx-wx-1',
-          'triageAttempt': maxImplementationInflows,
+          'triageAttempt': _strandedMarker,
         },
         createdAt: now,
         updatedAt: now,
@@ -280,18 +307,32 @@ void main() {
         expect(oldKeyAttempt.job.jobId, stranded.jobId);
         expect(oldKeyAttempt.job.state, JobState.failed);
 
-        // The composition's order: implementation first. It must STAND DOWN —
-        // its budget is spent — and leave the item at `agentCompleted` for the
-        // review lane. Asserted, not assumed: if the inflow took this item the
-        // rest of this file would be proving something about implementation.
+        // The composition's order: implementation first. It must leave the item at
+        // `agentCompleted` for the review lane.
+        //
+        // NOT because a budget is spent: this item holds a commit, so the route
+        // is `reviewInProgress`, which is not an entry into the implementation
+        // lane, and the bound never applied to it (it was scoped by
+        // `_definition.entryStates.contains(target)`). The decision
+        // `92d567e3-da03-4c43-99f4-e3726472f0ab` removed the bound entirely.
+        //
+        // What refuses the write is `GuardConditions.agentResultValid()` on
+        // `agentCompleted -> reviewInProgress`: the scheduler has no execution of
+        // its own to supply the producer's `AgentResult`, so the transition is
+        // rejected. The old reason text credited the bound, which was a second
+        // reason and the wrong one to credit. Asserted, not assumed: if the
+        // inflow took this item the rest of this file would be proving
+        // something about implementation.
         final implTick = await host.implScheduler.tick();
         expect(
           implTick.completionInflow.single.to,
           isNull,
           reason:
-              'with a commit produced and no budget left the inflow must refuse '
-              'the route. This is the documented hand-off to sched-review '
-              '(`implementation_inflow.dart`, WHY A BOUND IS NOT OPTIONAL).',
+              'with a commit produced the route is review_in_progress, which '
+              'the implementation lane does not dispatch from, and the workflow '
+              'guard on agent_completed -> review_in_progress refuses the write '
+              'for want of an AgentResult. Either way the item stays put for '
+              'sched-review.',
         );
         expect(
           (await host.engine.loadWorkItem(_itemId)).state,
@@ -311,14 +352,15 @@ void main() {
         );
         expect(
           second.dedupeKey,
-          '$_itemId:engineering_review:a$maxImplementationInflows',
+          '$_itemId:engineering_review:a$_strandedMarker',
           reason:
               'the attempt suffix read from the durable marker is the whole '
-              'fix. The item\'s marker reads '
-              '$maxImplementationInflows, the completion inflow\'s bound is '
-              '$maxImplementationInflows, and the keys the old review jobs '
-              'hold are unsuffixed — so `:a$maxImplementationInflows` has no '
-              'holder anywhere.',
+              'fix. The item\'s marker reads $_strandedMarker and the keys the '
+              'old review jobs hold are unsuffixed — so `:a$_strandedMarker` has '
+              'no holder anywhere. (It used to be spelled with '
+              '`maxImplementationInflows`, because that was the bound and the '
+              'marker had to reach it; the bound is gone and the suffix is not, '
+              'so the marker only has to be PRESENT.)',
         );
 
         // AND IT IS A REAL REVIEW OF THE REAL ARTIFACT, not an inert row.
@@ -391,7 +433,7 @@ void main() {
         // stops an unattended machine re-reviewing the same artifact for ever.
         final host = await _Host.strandedReviewItem();
         await host.holdTerminalReviewJob(
-          '$_itemId:engineering_review:a$maxImplementationInflows',
+          '$_itemId:engineering_review:a$_strandedMarker',
         );
 
         await host.runCompositionOrder();

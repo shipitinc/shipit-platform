@@ -2,6 +2,159 @@ import 'package:meta/meta.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:worker_runtime/worker_runtime.dart' show WorkerStore;
 
+/// The `WorkItem.metadata` key carrying the coordinator's artifact verdict for
+/// the completion that last settled the item.
+///
+/// ## THIS IS A WIRE CONTRACT WITH ANOTHER PACKAGE, AND IT IS DECLARED TWICE
+///
+/// `packages/execution_coordinator` WRITES it
+/// (`SuccessArtifactArtifacts.undeterminedMetadataKey`) and this file READS it.
+/// Neither package may depend on the other: `execution_coordinator` cannot
+/// depend on `worker_runtime` (which depends on it), and `scheduler` sitting
+/// above both is the only direction the graph allows. So the key is spelled out
+/// on both sides, exactly as `producerActorId` already is — and
+/// `test/undetermined_brake_contract_test.dart`, "one key, declared twice",
+/// pins the two literals to each other, which `producerActorId` is not pinned
+/// by. That pin is the price of the shared key, and paying it is why a rename
+/// fails a test instead of silently disabling a brake.
+///
+/// ## WHY THIS AND NOT `agent_event`
+///
+/// The same marker is ALSO written into `_Completion.eventPayload`, which
+/// reaches `ExecutionStore.appendEvent` and the `agent_event` table. That row
+/// is kept — it is the record an operator reads — and it is not the channel the
+/// brake uses, because `PostgresWorkerStore` reads `worker_execution`,
+/// `worker_result` and `worker_event` and never `agent_event`. Publishing there
+/// alone is how the unbounded loop went unnoticed: the verdict was recorded
+/// faithfully, in a table nobody reads, by a package the scheduler cannot even
+/// import.
+const String successArtifactUndeterminedMetadataKey =
+    'successArtifactUndetermined';
+
+/// The `WorkItem.metadata` key carrying how many CONSECUTIVE completions came
+/// back `UNDETERMINED`, spent by this lane's automatic route.
+///
+/// Written by exactly one writer — the completion inflow's own
+/// `metadataMerge`, in the same transaction as the route it authorises — and
+/// read by exactly one reader. See [maxConsecutiveUndeterminedReturns].
+const String undeterminedReturnStreakMetadataKey =
+    'successArtifactUndeterminedStreak';
+
+/// How many consecutive `UNDETERMINED` completions the platform will absorb
+/// before it stops taking the automatic route and hands the item to a human.
+///
+/// ## WHAT THE OPERATOR CHOSE, VERBATIM
+///
+/// Human decision on finding H1: **"Stop auto-routing after N undetermined
+/// returns."** This constant is the N.
+///
+/// ## WHY `UNDETERMINED` NEEDS ITS OWN BOUND AT ALL
+///
+/// `RoleAwareSuccessArtifacts` deliberately refuses to call an unreadable
+/// workspace "no artifact". That is right — a wedged filesystem is not an agent
+/// that did nothing — but it has a consequence the `MISSING` path does not: a
+/// run classified `UNDETERMINED` still completes normally, still reaches
+/// `agent_completed`, still leaves no commit for `producedCommitFor`, and is
+/// therefore still routed to `implementationReady`. Every pass spends a real
+/// implementer execution. With `maxImplementationInflows` gone and `maxAttempts`
+/// being a JOB budget that each pass resets by minting a fresh job, there is
+/// nothing left to stop it. This is that something.
+///
+/// ## WHY THREE, AND NOT ONE MORE OR ONE LESS
+///
+/// The spend is `N - 1`: the Nth undetermined return is REFUSED, so the
+/// platform buys at most **two** unattended implementer executions before it
+/// stops.
+///
+/// Two is not an arbitrary number, it is the number this platform already
+/// spends on a machine retry of this very job type:
+/// `implementFeatureDefinition.maxAttempts` is 2, and `Scheduler._adopt`'s own
+/// documentation states the contract as "exactly N executions, never N+1". So
+/// the brake grants a platform-tooling fault the same single retry a routine
+/// transient failure gets, and not one execution more. Stating it as `N - 1 ==
+/// maxAttempts` is what keeps the value honest: a future edit to either number
+/// has to confront the other.
+///
+/// One less (N = 2) would escalate on a SINGLE probe fault. That is the wrong
+/// threshold for this probe specifically: `GitWorkspaceDeltaProbe` runs one or
+/// two git subprocesses per completion under a 30s timeout, so a single slow or
+/// contended filesystem is the expected transient shape rather than a fault worth
+/// a human decision. A brake that fires on the first blip gets ignored by the
+/// first operator who sees it, and then it is not a brake.
+///
+/// One more (N = 4) would buy a third execution. The cause here is the
+/// PLATFORM'S, not the agent's: a missing `git`, a wedged mount and an expired
+/// probe timeout are not conditions that an extra pass of the same broken
+/// tooling repairs. If one retry has not fixed it, the next execution buys no
+/// information — it buys a bill, against a durable clone, with a four-hour
+/// budget. Measured, each of those passes is minutes of real execution.
+///
+/// ## WHY IT IS A RETURN COUNT AND NOT AN EXECUTION COUNT
+///
+/// Because a return is the fact that is OBSERVED. Whether that return spent an
+/// execution is this lane's business, and this lane knows — but the return is
+/// what both ends of the platform can see, which is what makes the counter
+/// legible to an operator reading `work_item.metadata` in SQL.
+const int maxConsecutiveUndeterminedReturns = 3;
+
+/// Whether the completion that last settled [item] could not establish its
+/// artifact.
+///
+/// `false` for an ABSENT key, and that is the whole of the absence case: the
+/// key is written on every completion the coordinator settles (including
+/// `false`), so an absent one means only that this item has never been through
+/// a coordinator that writes it. Absence is not evidence of a tooling fault and
+/// must not be counted as one.
+bool lastCompletionWasUndetermined(WorkItem item) =>
+    (item.metadata ??
+        const <String, dynamic>{})[successArtifactUndeterminedMetadataKey] ==
+    true;
+
+/// The consecutive-`UNDETERMINED` return count recorded on [item], or 0 when
+/// absent.
+///
+/// ## WHY A PRESENT-BUT-UNREADABLE MARKER THROWS, LIKE `readTriageAttempt`
+///
+/// Because the two answers are "the platform has already decided this item has
+/// had its budget" and "it has not", and guessing wrong in either direction is
+/// a runaway. The same reasoning applies for the same reason: this value is
+/// compared against a ceiling, so silently coercing a bad byte to 0 would reset
+/// a brake and silently coercing it to the ceiling would park work on garbage.
+///
+/// It throws INSIDE `_routeOneCompletion`'s per-item guard, which turns that
+/// throw into "leave this one item alone and say so", rather than out of
+/// `tick`, which would cost the whole lane its pass.
+int readUndeterminedReturnStreak(WorkItem item) {
+  final marker =
+      (item.metadata ??
+      const <String, dynamic>{})[undeterminedReturnStreakMetadataKey];
+  if (marker == null) return 0;
+  return switch (marker) {
+    final int value => value,
+    final double value when value.isFinite && value == value.roundToDouble() =>
+      value.toInt(),
+    final String value when int.tryParse(value) != null => int.parse(value),
+    _ => throw FormatException(
+      'Unreadable $undeterminedReturnStreakMetadataKey on work item '
+      '${item.workItemId}: expected an int, a whole-valued double or a '
+      'numeric String, got ${marker.runtimeType} ($marker). Reading it as 0 '
+      'would reset a spent brake; reading it as the ceiling would park work on '
+      'a byte nobody wrote deliberately.',
+    ),
+  };
+}
+
+/// The streak the NEXT accepted route records — ONE arithmetic rule, the reason
+/// this is a function.
+///
+/// [undetermined] true advances the count by exactly one; false resets it to
+/// zero, which is what makes the counter measure CONSECUTIVE returns rather
+/// than all-time ones: a determined completion in between is evidence that the
+/// platform can see its own workspaces again, and it must not be remembered
+/// against the item for ever.
+int nextUndeterminedReturnStreak(WorkItem item, {required bool undetermined}) =>
+    undetermined ? readUndeterminedReturnStreak(item) + 1 : 0;
+
 /// Why a completed producer left no commit behind.
 ///
 /// Four shapes, because "there is nothing to review" is one sentence sent to
@@ -125,12 +278,59 @@ final class NoCommitProduced extends ProducedCommit {
 ///
 /// Every refusal returns [NoCommitProduced], never a guess. That routes the
 /// item to the implementation lane — which is a DEFECT attempt, not a wrong
-/// review: the worst outcome is a build that produces nothing, which lands back
-/// at `agentCompleted` and is bounded by [maxImplementationInflows]. The
-/// opposite failure, calling a commit absent when one exists, would send real
-/// work to a second implementer and manufacture a duplicate commit. The
-/// asymmetry is deliberate and it is the reason every uncertainty resolves the
-/// same way.
+/// review: the worst outcome is a build that produces nothing. The opposite
+/// failure, calling a commit absent when one exists, would send real work to a
+/// second implementer and manufacture a duplicate commit. The asymmetry is
+/// deliberate and it is the reason every uncertainty resolves the same way.
+///
+/// ## WHY THAT IS NO LONGER A RUNAWAY
+///
+/// It was, and a constant in this file used to say so. `agentCompleted ->
+/// implementationReady -> agentExecuting -> agentCompleted` is a cycle; an
+/// implementer that commits nothing walks it, one real execution per pass; and
+/// `maxImplementationInflows` was the brake, checked on the SHARED re-work
+/// discriminator before this route was taken.
+///
+/// The brake is GONE — human decision `92d567e3-da03-4c43-99f4-e3726472f0ab`,
+/// option `RETRY_LIMIT` = `REMOVE` — because it was refusing real work that a
+/// human had already asked for, and because the loop is broken at a better
+/// place. An implementation run that produced no artifact is a PERMANENT failure
+/// in `packages/execution_coordinator`, so it never reaches `agentCompleted` at
+/// all and the cycle has no implementer step to walk. A TRIAGE run still
+/// legitimately arrives here having committed nothing — that is the whole point
+/// of the route below — but triage commits nothing ONCE per pass, and the next
+/// pass is an implementation, which either commits or fails permanently.
+///
+/// That rule is the loop's actual safety and it is NOT in this package. This
+/// file ROUTES; it does not bound.
+///
+/// ## AND THE ONE WAY IT IS STILL WALKED — finding H1, and its brake
+///
+/// The permanent-failure rule covers a run that produced NO artifact. It does
+/// not cover a run whose artifact could not be ESTABLISHED. `RoleAwareSuccess
+/// Artifacts` returns `UNDETERMINED` — not `MISSING` — when git is absent, the
+/// filesystem is wedged or the probe's 30s timeout expires, because reporting a
+/// tooling fault as an agent that did nothing would be a verdict asserted
+/// without a reading. That run is not failed, so it still reaches
+/// `agentCompleted`, still leaves `endingRevision` where it was, and is still
+/// routed to `implementationReady` here. Every pass spends a real implementer
+/// execution, and nothing bounded it.
+///
+/// That is what [maxConsecutiveUndeterminedReturns] now bounds, through the
+/// streak [nextUndeterminedReturnStreak] keeps on the work item's own metadata
+/// and [lastCompletionWasUndetermined] seeds it from. It is scoped to entries
+/// into THIS lane for the reason the removed bound was scoped: the commit route
+/// spends nothing here, so a counter about this lane's entries has no standing
+/// to refuse a route into another lane — and a producer that left a commit must
+/// reach review whatever its probe reported.
+///
+/// So the standing condition, restated with its one remaining hole: if a producer
+/// OTHER THAN triage can reach `agentCompleted` having produced no commit AND
+/// without the coordinator having marked the completion `UNDETERMINED`, the
+/// route below is taken for ever, because nothing here refuses it. That is the
+/// exact shape the `MISSING` branch in `packages/execution_coordinator` exists
+/// to prevent, and it is the shape to re-check first if a new lane is ever
+/// pointed at `agentCompleted`.
 Future<ProducedCommit> producedCommitFor(
   WorkerStore workerStore,
   WorkItem item,
@@ -209,79 +409,32 @@ Future<ProducedCommit> producedCommitFor(
 /// One function, one `switch`, both cases named. It is deliberately NOT
 /// inlined at its call site: the asymmetry above is the safety argument, and an
 /// inline `if` is where an asymmetry silently becomes a symmetry.
+///
+/// ## WHAT USED TO BOUND IT, AND WHY THERE IS NOTHING HERE NOW
+///
+/// This function's caller used to refuse the `implementationReady` answer once
+/// the shared re-work discriminator (`DurableWorkflowEngine
+/// .triageAttemptMetadataKey`) read 3 or more — `maxImplementationInflows = 3`,
+/// declared at the bottom of this file until human decision
+/// `92d567e3-da03-4c43-99f4-e3726472f0ab` removed it.
+///
+/// The brake was on the WRONG counter and the WRONG items. The discriminator is
+/// shared: the operator retry and a resolved rework/reject decision advance it,
+/// so an item that entered the implementation lane ZERO times could already read
+/// `3` because a person had pressed retry three times. The bound therefore spent
+/// its budget on human-driven work, which is exactly the work a person had just
+/// asked for, and left the four defects measured on live QA at
+/// `agent_completed` with the marker reading 3 and 4 — refused by the inflow,
+/// refused again by the review lane's fail-closed handler, and owned by nobody.
+///
+/// The loop it was catching — an unattended implementer that commits nothing
+/// walking `agentCompleted -> implementationReady -> agentExecuting ->
+/// agentCompleted` for ever — is broken upstream instead: an implementation run
+/// that produced no artifact is a PERMANENT failure in
+/// `packages/execution_coordinator`, so it never reaches `agentCompleted` and the
+/// cycle has no implementer step to walk. See
+/// `producedCommitFor`'s "WHY THAT IS NO LONGER A RUNAWAY".
 WorkItemState completionRouteFor(ProducedCommit produced) => switch (produced) {
   CommitProduced() => WorkItemState.reviewInProgress,
   NoCommitProduced() => WorkItemState.implementationReady,
 };
-
-/// How many automatic entries into the implementation lane ONE work item may
-/// get, without a human in the loop.
-///
-/// ## WHAT IS ACTUALLY COUNTED
-///
-/// `DurableWorkflowEngine`'s `triageAttemptMetadataKey` — and that is the
-/// SHARED
-/// re-work discriminator, not a tally of this lane's entries. The operator
-/// retry and a resolved rework/reject decision advance it too
-/// (`durable_workflow_engine.dart`), so an item that entered this lane ZERO
-/// times can already read `2` because a person pressed retry twice.
-///
-/// That is a deliberate tightening, not an accident: the whole cycle closes on
-/// ONE counter, so bounding that counter is what bounds the loop. The cost is
-/// that an item with prior human-driven re-work gets FEWER automatic attempts,
-/// and every surface that reports the bound says so in those words —
-/// `CompletionInflowMove.reason` names the discriminator, never "times this
-/// item was implemented". An operator-facing refusal that misstates which
-/// counter it read is worse than a tighter bound.
-///
-/// ## WHY A BOUND IS NOT OPTIONAL
-///
-/// The route closes a cycle:
-/// `agentCompleted -> implementationReady -> agentExecuting -> agentCompleted`.
-/// A producer that commits nothing returns the item to `agentCompleted` with
-/// no commit again, and the discriminator says "implement" again. Unbounded,
-/// that is an unattended machine burning a real worker execution every tick on
-/// an item that can never be implemented — the exact defect this lane exists to
-/// end, re-created with a different shape.
-///
-/// ## WHAT IT DOES NOT BOUND
-///
-/// Automatic entries into THIS lane, and nothing else.
-///
-/// `completionRouteFor` answers `reviewInProgress` for a producer that left a
-/// commit. That is `engineeringReviewDefinition.targetState` — the review lane's
-/// state, not an entry into this one — and a counter that bounds entries here
-/// has no standing to refuse a route there. The caller enforces that by
-/// testing the route against its own `entryStates` rather than against a second
-/// list that could drift from the lane's declaration.
-///
-/// Declining to bound the commit route was not harmless even though the item's
-/// state came out the same either way, because the refusal is REPORTED to an
-/// operator: it said the implementation lane's budget had been spent on an item
-/// the lane was never going to run, and that the review lane's fail-closed
-/// handler would raise a blocking human decision for it. Both sentences are
-/// false for an item holding a reviewable commit — the review workload resolver
-/// resolves that one, so no `blockedArtifactMissing` job is ever created and the
-/// handler is never called for it. That is the rule an operator-facing refusal
-/// has to obey — it misstates which lane owns the item — and it is stated here
-/// because it is the one this bound used to break.
-///
-/// ## WHY IT IS A BOUND AND NOT A FAILURE
-///
-/// Refusing the route is not a failure and not a drop. The item is left at
-/// `agentCompleted`, where `sched-review` already offers it to the reviewer
-/// every tick; the review workload resolver refuses it for the same reason this
-/// one does, and the composition root's fail-closed handler
-/// (`engineeringReviewMissingArtifact`) turns that into a blocking human
-/// decision — but ONLY once the stand-down inside that handler stops deferring
-/// to this bound, which is why the two check the same number. So the bound does
-/// not strand the item — it hands it to a person, which is where an item nobody
-/// can implement belongs. Both halves of that sentence are about a route into
-/// THIS lane, and neither reaches a route into the review lane.
-///
-/// Three, because each attempt costs a real implementer execution and the
-/// historical budget for a lane that re-dispatches the same work is two
-/// (`implementFeatureDefinition.maxAttempts` is the JOB's retry budget, which
-/// is a different quantity and counts retries of one dispatch rather than
-/// re-entries into the lane).
-const int maxImplementationInflows = 3;

@@ -4,6 +4,39 @@ import 'dart:io';
 import 'package:agent_runtime/agent_runtime.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 
+/// A triage classification the PLATFORM ITSELF would accept.
+///
+/// ## WHY THE FIXTURE NEEDS ONE AT ALL
+///
+/// Under human decision `92d567e3-da03-4c43-99f4-e3726472f0ab`
+/// (`NO_OUTPUT -> ROLE_AWARE`) a completed execution only succeeds if it
+/// produced ITS LANE's artifact, and triage's artifact is a structured
+/// classification. `classificationMissingIn`
+/// (`packages/execution_coordinator/lib/src/coordinator/success_artifact.dart`)
+/// is the authority on what counts as one: a non-empty `structuredResult`
+/// carrying a wire-legal `classification`, a wire-legal `status`, a numeric
+/// `confidence` and a `suspectedCategory`. Everything else the triage parser
+/// reads is optional there, and a classification this rule accepts is one
+/// `TriageProcessor._parseTriageResult` would have persisted.
+///
+/// The values below are that shape, measured on QA: the four required fields
+/// plus the optional ones, each with a value that parser accepts.
+const Map<String, dynamic> validTriageClassification = {
+  'classification': 'implementation_defect',
+  'status': 'triaging',
+  'confidence': 0.72,
+  'suspectedCategory': 'backend/data',
+  'suspectedComponents': <String>['packages/scheduler/lib/src/scheduler.dart'],
+  'reproductionSupported': true,
+  'evidenceUsed': <String>['EVD-fixture-1'],
+  'clarificationRequired': <String>[],
+  'recommendedNextAction': 'investigate',
+  'recommendedWorkItemCategory': 'bugfix',
+  'summary':
+      'The fixture triage run classified the defect and produced no code, '
+      'because triage is not the lane that writes code.',
+};
+
 /// A scripted [AgentSession] that starts, then PAUSES until [release] (or
 /// [cancel]) so a test can deterministically observe the scheduler holding one
 /// worker execution in flight (capacity-1 behaviour) without any timers. When
@@ -20,11 +53,36 @@ class GateFakeAgentSession implements AgentSession {
     required this.executionId,
     required this.workItemId,
     this.sessionId = 'ses-fake',
+    this.structuredResult = validTriageClassification,
   });
 
   final String executionId;
   final String workItemId;
   String sessionId;
+
+  /// The `structuredResult` a COMPLETED run hands back.
+  ///
+  /// Defaults to [validTriageClassification] because a fake that reports a
+  /// clean finish has to have produced something: with an empty map this
+  /// session asserted a success that the role-aware rule correctly reads as
+  /// "this lane produced nothing", so every triage-role run failed.
+  ///
+  /// ## THE EMPTY CASE IS STILL REACHABLE, ON PURPOSE
+  ///
+  /// The absent/malformed result is the case the rule exists to catch, and it
+  /// must stay expressible — a fixture that cannot be asked for a run that
+  /// produced nothing cannot test the rule that catches one. Pass it
+  /// explicitly:
+  ///
+  /// ```dart
+  /// GateFakeAgentSession(executionId: 'agx-1', workItemId: 'wi-1',
+  ///     structuredResult: const {});
+  /// ```
+  ///
+  /// A non-completed run (cancelled, or never finished) reports no
+  /// classification whatever this is set to, because a run that did not
+  /// complete cannot have classified anything.
+  final Map<String, dynamic> structuredResult;
 
   StreamController<AgentEvent> _events = StreamController<AgentEvent>.broadcast(
     sync: true,
@@ -146,9 +204,10 @@ class GateFakeAgentSession implements AgentSession {
         errors: complete ? const [] : const [],
         warnings: const [],
       ),
-      structuredResult: const {},
+      structuredResult: complete ? structuredResult : const {},
       summary: complete
-          ? 'implemented the calculator in the worktree'
+          ? 'implemented the calculator in the worktree and classified the '
+                'defect in its structured result'
           : 'did not complete',
       completedAt: DateTime.now().toUtc(),
     );

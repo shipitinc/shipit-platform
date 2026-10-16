@@ -50,6 +50,7 @@ import 'package:execution_coordinator/execution_coordinator.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:scheduler/scheduler.dart';
 import 'package:test/test.dart';
+import 'package:worker_runtime/worker_runtime.dart';
 import 'package:workflow_store/workflow_store.dart';
 
 import 'package:control_plane_server/src/review/engineering_review_gate.dart';
@@ -132,6 +133,7 @@ class _ReviewHost {
     required this.workflowStore,
     required this.workflowEngine,
     required this.executionStore,
+    required this.workerStore,
     required this.jobStore,
     required this.job,
   });
@@ -145,6 +147,29 @@ class _ReviewHost {
   static Future<_ReviewHost> create() async {
     final workflowStore = InMemoryWorkflowStore();
     final jobStore = InMemoryJobStore();
+    final workerStore = InMemoryWorkerStore();
+    // The reviewed commit, recorded as the PRODUCER's artifact, which is what
+    // the item's own `startingRevision` names and what `producedCommitFor`
+    // reads back. Without it the artifact predicate answers "nothing was
+    // produced" and a verdict-less review routes to the implementation lane
+    // instead of reaching a person — the B2 re-baselining, recorded here so the
+    // next reader does not have to rediscover it.
+    await workerStore.saveWorkerExecution(
+      WorkerExecution(
+        workerExecutionId: 'wx-impl',
+        workItemId: workItemId,
+        repositoryPath: '/durable/clone',
+        requestedStartingRevision: 'aaaaaaa',
+        requiredCapabilities: const {
+          WorkerCapability.linux,
+          WorkerCapability.git,
+        },
+        agentExecutionId: producerExecutionId,
+        endingRevision: reviewedCommit,
+        status: WorkerExecutionStatus.executedPass,
+        cleanupPolicy: WorkerCleanupPolicy.removeAlways,
+      ),
+    );
     await workflowStore.saveWorkItem(
       WorkItem(
         workItemId: workItemId,
@@ -153,7 +178,17 @@ class _ReviewHost {
         title: 'Fix the desktop skeleton row',
         description: 'Align trailing placeholders with the column constants.',
         state: WorkItemState.reviewInProgress,
-        metadata: const {'producerActorId': producerExecutionId},
+        metadata: {
+          'producerActorId': producerExecutionId,
+          // The automatic re-review budget is spent, so this host is the
+          // FALLBACK: a real commit that has been through the automatic re-review
+          // once already. That is the shape in which the verdict-less decision
+          // is the right answer, and these tests are about that decision.
+          engineeringReviewAutoRerouteMetadataKey: {
+            'productionPass': null,
+            'spent': maxAutomaticReviewReroutes,
+          },
+        },
         createdAt: now,
         updatedAt: now,
       ),
@@ -203,6 +238,7 @@ class _ReviewHost {
       workflowStore: workflowStore,
       workflowEngine: DurableWorkflowEngine(store: workflowStore),
       executionStore: executionStore,
+      workerStore: workerStore,
       jobStore: jobStore,
       job: job,
     );
@@ -211,6 +247,7 @@ class _ReviewHost {
   final InMemoryWorkflowStore workflowStore;
   final DurableWorkflowEngine workflowEngine;
   final InMemoryExecutionStore executionStore;
+  final InMemoryWorkerStore workerStore;
   final InMemoryJobStore jobStore;
   final Job job;
 
@@ -247,6 +284,7 @@ class _ReviewHost {
   Future<void> drainGate() => engineeringReviewTickHandler(
     workflowEngine: workflowEngine,
     executionStore: executionStore,
+    workerStore: workerStore,
     logger: (message, context) {
       if (message == 'engineering-review-gate-no-verdict') {
         noVerdictLogs.add(context);

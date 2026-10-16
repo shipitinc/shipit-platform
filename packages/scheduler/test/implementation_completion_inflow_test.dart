@@ -492,9 +492,14 @@ void main() {
       // -> agentCompleted`, NOT a direct hop back: `agentExecuting` is the only
       // edge into `agentCompleted` and it carries `qaContractExists()` and
       // `agentResultValid()`. Walking it is what makes this the same shape as a
-      // real implementer run that produced nothing, and it is what proves the
-      // bound below is reached through the actual cycle rather than a
+      // real implementer run that produced nothing — and it is what proved the
+      // removed bound was reachable through the actual cycle rather than a
       // hand-written state.
+      //
+      // It also still has a job after the bound is gone: the route is
+      // UNBOUNDED now, so "the inflow cannot run twice for the same producer"
+      // is the only thing standing between one producer and two automatic
+      // entries into the lane. Idempotency, not a counter.
       final engine = DurableWorkflowEngine(store: workflowStore);
       await engine.transition(
         workItemId: 'wi-1',
@@ -518,66 +523,238 @@ void main() {
         attemptsAfterFirst,
         reason:
             'the replay of the same producer must not advance the attempt '
-            'counter again, or one producer costs the item two of its three '
-            'budgeted attempts',
+            'counter again. With the automatic route unbounded, idempotency per '
+            'producer is the ONLY thing preventing one producer from buying two '
+            'automatic entries into this lane',
       );
     });
 
-    test('the automatic route is BOUNDED, and the bound hands the item to a '
-        'human rather than dropping it', () async {
+    test('the automatic route is UNBOUNDED — a marker far above the removed '
+        'bound still routes', () async {
+      // THE INVERSE OF THE TEST THAT WAS HERE, and the only assertion in this
+      // file that would have failed before this change.
+      //
+      // It used to read `the automatic route is BOUNDED, and the bound hands the
+      // item to a human rather than dropping it`, seeded `triageAttempt: 3` and
+      // asserted the item stayed at `agentCompleted`, `moved` was false and the
+      // reason named the bound. Human decision
+      // `92d567e3-da03-4c43-99f4-e3726472f0ab` (option `RETRY_LIMIT` =
+      // `REMOVE`) reverses exactly that, so the old assertions are the bug and
+      // the ones below are the contract.
+      //
+      // The markers are the values MEASURED on live QA by
+      // `RESEARCH-AGENT-COMPLETED-INFLOW`: the four defects this unblocks read 3,
+      // 4, 3 and 4. 9 and 12 are past anything observed, so none of these can
+      // pass on a coincidence about the size of the numbers. They are LITERALS,
+      // not the removed constant — a test that seeded the constant would have
+      // validated the mechanism against itself and said nothing about the value,
+      // which is why the bound's value was pinned with a separate literal until
+      // there was no value left to pin.
+      //
+      // WHY THE ROUTE IS SAFE WITHOUT THE BRAKE, in one line: the cycle this
+      // used to bound has an implementer step in it only while an implementer
+      // that produced nothing can reach `agentCompleted`, and
+      // `packages/execution_coordinator` now makes that run a PERMANENT
+      // failure. This lane is deliberately merged AFTER that one.
+      const markers = <int>[3, 4, 9, 12];
+      for (final marker in markers) {
+        final workflowStore = InMemoryWorkflowStore();
+        await workflowStore.saveWorkItem(
+          _completed(metadata: {'triageAttempt': marker}),
+        );
+        final workerStore = await _storeWith([
+          _execution(
+            workerExecutionId: 'wx-triage',
+            agentExecutionId: 'agx-exec-impl-1',
+            endingRevision: null,
+          ),
+        ]);
+        final jobStore = InMemoryJobStore();
+        final dispatch = _CapturingDispatch();
+
+        final scheduler = Scheduler(
+          schedulerId: 'sched-impl',
+          workflowStore: workflowStore,
+          jobStore: jobStore,
+          workerStore: workerStore,
+          dispatch: dispatch,
+          definition: implementFeatureDefinition,
+          workload: _workload,
+          dedupeKeyBuilder: implementFeatureDedupeKey,
+          instructionBuilder: implementFeatureInstruction,
+          requestBuilder: implementFeatureRequest,
+          workloadResolver: (job, item) async => _workload,
+          clock: () => DateTime.utc(2026, 1, 1),
+        );
+
+        final result = await scheduler.tick();
+
+        expect(
+          (await workflowStore.readWorkItem('wi-1')).state,
+          WorkItemState.implementationReady,
+          reason:
+              'the re-work discriminator reads $marker and nothing reads it '
+              'any more. The operator retry and resolved rework/reject '
+              'decisions advance that same marker, so an item can reach a high '
+              'value having entered this lane ZERO times — and the operator '
+              'asking for work is the one case that must never be refused',
+        );
+        expect(result.completionInflow.single.moved, isTrue);
+        expect(
+          result.completionInflow.single.to,
+          WorkItemState.implementationReady,
+        );
+        // Dispatched, not merely moved. A route that parks the item in a
+        // dispatchable state that this lane will not pick up would look identical
+        // to progress on a state read alone, and it is the shape the 870-job
+        // churn class had.
+        expect(result.enqueued, hasLength(1));
+        expect(dispatch.requests, hasLength(1));
+        // The marker still advances by exactly one, through the engine's own
+        // rule. The bound is gone; the discriminator that builds
+        // `implementFeatureDedupeKey` is not, and an unfrozen marker that no
+        // longer moved would hand every later pass the same consumed key.
+        expect(
+          (await workflowStore.readWorkItem('wi-1')).metadata?['triageAttempt'],
+          marker + 1,
+          reason:
+              'the inflow writes through `DurableWorkflowEngine'
+              '.nextTriageAttempt`, not an inline `attempt + 1`, so the number '
+              'the dedupe key builder reads back cannot be derived by a second '
+              'rule',
+        );
+      }
+    });
+
+    test('the operator\'s chosen path — re-triage, then implement — repeats for '
+        'as many passes as asked, and each pass is dispatched under a FRESH '
+        'dedupe key', () async {
+      // THE PROPERTY THAT MAKES "UNBOUNDED" TRUE RATHER THAN NOMINAL, and the
+      // one the deleted cycle test used to stand in for.
+      //
+      // The operator chose "re-triage first, then implementation" over "straight
+      // back to implementation", so the path that has to work for ever is
+      // `designNotRequired -> [triage] -> agentCompleted -> implementationReady`.
+      // This lane's half of it is the second arrow.
+      //
+      // An unbounded route that stopped minting jobs would be worse than the
+      // bound it replaced. `JobQueue.enqueueIfAbsent` refuses a dedupe key ANY
+      // job already holds, and the implementation key is
+      // `'<id>:implement_feature:a<marker>'` — so if the marker froze, pass two
+      // would ask for a key pass one already burned, the enqueue would return
+      // `created: false`, and the item would sit in a dispatchable state with
+      // nothing running. That is the inert item, and it is exactly what the
+      // marker exists to prevent. This walks the real cycle four times and
+      // asserts a DISTINCT key each pass.
       final workflowStore = InMemoryWorkflowStore();
-      // THE LITERAL, not the constant. A test that seeds
-      // `maxImplementationInflows` validates the mechanism against itself and
-      // says nothing at all about the value: setting the constant to 99 left
-      // every test in this file green. The value is pinned separately, in the
-      // "the bound IS three" test below.
       await workflowStore.saveWorkItem(
-        _completed(metadata: const {'triageAttempt': 3}),
+        _completed(producerActorId: 'agx-triage-0'),
       );
-      final workerStore = await _storeWith([
+      final workerStore = InMemoryWorkerStore();
+      // The triage shape each pass ends in: a run that completed, wrote a
+      // classification, and committed nothing because no file was touched.
+      await workerStore.saveWorkerExecution(
         _execution(
-          workerExecutionId: 'wx-triage',
-          agentExecutionId: 'agx-exec-impl-1',
+          workerExecutionId: 'wx-triage-0',
+          agentExecutionId: 'agx-triage-0',
           endingRevision: null,
         ),
-      ]);
-      final jobStore = InMemoryJobStore();
-      final dispatch = _CapturingDispatch();
-
-      final scheduler = Scheduler(
-        schedulerId: 'sched-impl',
-        workflowStore: workflowStore,
-        jobStore: jobStore,
-        workerStore: workerStore,
-        dispatch: dispatch,
-        definition: implementFeatureDefinition,
-        workload: _workload,
-        dedupeKeyBuilder: implementFeatureDedupeKey,
-        instructionBuilder: implementFeatureInstruction,
-        requestBuilder: implementFeatureRequest,
-        workloadResolver: (job, item) async => _workload,
-        clock: () => DateTime.utc(2026, 1, 1),
       );
+      final lane = _implLane(workflowStore, workerStore);
 
-      final result = await scheduler.tick();
+      final keys = <String>{};
+      for (var pass = 1; pass <= 4; pass++) {
+        if (pass > 1) {
+          // The implementer for the previous pass ran and produced nothing, so
+          // the coordinator would have failed it permanently and this item would
+          // never have come back. Walking the cycle by hand is the only way to
+          // reach a second pass here, and it is exactly the state that rule
+          // exists to make unreachable in production.
+          await _completeAnImplementationRun(workflowStore);
+          await workerStore.saveWorkerExecution(
+            _execution(
+              workerExecutionId: 'wx-triage-$pass',
+              agentExecutionId: 'agx-triage-$pass',
+              endingRevision: null,
+            ),
+          );
+          await _restampProducer(workflowStore, 'agx-triage-$pass');
+        }
+
+        final dispatchedBefore = lane.dispatch.requests.length;
+        final result = await lane.scheduler.tick();
+        final dispatchedThisPass =
+            lane.dispatch.requests.length - dispatchedBefore;
+        final item = await workflowStore.readWorkItem('wi-1');
+
+        expect(
+          result.completionInflow
+              .singleWhere((m) => m.workItemId == 'wi-1')
+              .moved,
+          isTrue,
+          reason:
+              'pass $pass of the re-triage path must be routed, not refused',
+        );
+        expect(
+          item.state,
+          WorkItemState.implementationReady,
+          reason:
+              'the operator chose re-triage-then-implement, so pass $pass has to '
+              'reach the lane that does the work rather than terminate',
+        );
+        expect(
+          item.metadata?['triageAttempt'],
+          pass,
+          reason:
+              'every accepted route spends the shared discriminator exactly '
+              'once, so the next pass builds a new key',
+        );
+        // A PER-PASS DELTA, never a total over `lane.dispatch.requests`. Nothing
+        // in this file consumes a dispatched job the way the coordinator consumes
+        // a real one, so the jobs minted by earlier passes stay queued and are
+        // offered again on every later pass; a total would measure that fixture
+        // artefact rather than the spend. What has to be true is that THIS pass
+        // reached a worker at all.
+        expect(
+          dispatchedThisPass,
+          greaterThan(0),
+          reason:
+              'and it must actually reach a worker request, not merely move a '
+              'state — a route that looks like progress while nothing is '
+              'dispatched is the shape this has to rule out',
+        );
+        keys.addAll(
+          (await lane.jobStore.listJobsForWorkItem(
+            'wi-1',
+          )).map((j) => j.dedupeKey),
+        );
+        expect(
+          keys,
+          hasLength(pass),
+          reason:
+              'a fresh dedupe key per pass. A frozen marker would re-ask for a '
+              'consumed key, the enqueue would refuse it, and "unbounded" would '
+              'mean an item that loops on nothing',
+        );
+      }
 
       expect(
-        (await workflowStore.readWorkItem('wi-1')).state,
-        WorkItemState.agentCompleted,
+        keys,
+        equals({
+          'wi-1:implement_feature:a1',
+          'wi-1:implement_feature:a2',
+          'wi-1:implement_feature:a3',
+          'wi-1:implement_feature:a4',
+        }),
         reason:
-            'an item that cannot be implemented after its re-work budget is '
-            'spent belongs in front of a person. Leaving it at agent_completed '
-            'is what lets the review lane\'s fail-closed handler raise a '
-            'blocking decision for it — and that handler STANDS DOWN while the '
-            'budget lasts, so the two check the same number',
+            'spelled out rather than computed, so a change to the key builder or '
+            'to which marker it reads fails here instead of passing by '
+            'coincidence. Note the FIRST pass is already suffixed `a1`, not the '
+            'historical unsuffixed key: the route and the enqueue happen in one '
+            'tick and the enqueue reads the marker the route just wrote, so the '
+            'key is fresh from the very first dispatch. That is why this is the '
+            'property that makes an unbounded route actually run',
       );
-      expect(result.completionInflow.single.moved, isFalse);
-      expect(
-        result.completionInflow.single.reason,
-        contains('re-work discriminator'),
-      );
-      expect(result.enqueued, isEmpty);
-      expect(dispatch.requests, isEmpty);
     });
 
     test(
@@ -803,70 +980,31 @@ void main() {
       );
     });
 
-    test('the bound is THREE, stated here rather than read from the constant', () async {
-      // Why the value is three, and why it is pinned with a literal.
+    test('the discriminator is advanced by the ENGINE\'s rule, not an inline '
+        'attempt + 1', () async {
+      // THE HALF OF THIS TEST THAT SURVIVED THE BOUND'S REMOVAL, kept for its
+      // own subject.
       //
-      // Three, because the inflow buys an unattended IMPLEMENTATION attempt and
-      // each one costs a real implementer execution against a product's durable
-      // clone. Two covers the normal shape (an implementer that commits nothing
-      // once, then succeeds); a third covers the run that failed for a reason
-      // that fixed itself. The next step is a human, because the alternative is
-      // an unattended machine spending real executions on an item that cannot
-      // be implemented — the defect this lane exists to end, re-created with a
-      // different shape.
+      // The test used to be called `the bound message names the counter it
+      // actually read` and had two halves. The second half asserted the wording
+      // of the REFUSAL — that it names the shared re-work discriminator rather
+      // than "already put into the implementation lane 2 time(s)". There is no
+      // refusal any more, so that half is deleted rather than re-pointed: an
+      // assertion about a message no code emits can only be trivially true.
       //
-      // Pinned with a literal on purpose: every other test in this file that
-      // touches the bound seeds the CONSTANT, which makes the constant validate
-      // itself. Changing 3 to 99 left all sixteen tests green.
-      expect(
-        maxImplementationInflows,
-        3,
-        reason:
-            'the automatic-entry budget. If this value is genuinely wrong, change '
-            'it HERE with the reasoning updated, not silently in the constant',
-      );
-
-      // And behaviourally: two still routes, three does not. Both literals, so
-      // the off-by-one in the comparison is caught rather than inherited.
-      Future<WorkItemState> routeAt(Object marker) async {
-        final workflowStore = InMemoryWorkflowStore();
-        await workflowStore.saveWorkItem(
-          _completed(metadata: {'triageAttempt': marker}),
-        );
-        final scheduler = Scheduler(
-          schedulerId: 'sched-impl',
-          workflowStore: workflowStore,
-          jobStore: InMemoryJobStore(),
-          workerStore: await _storeWith([
-            _execution(
-              workerExecutionId: 'wx-1',
-              agentExecutionId: 'agx-exec-impl-1',
-              endingRevision: null,
-            ),
-          ]),
-          dispatch: _CapturingDispatch(),
-          definition: implementFeatureDefinition,
-          workload: _workload,
-          dedupeKeyBuilder: implementFeatureDedupeKey,
-          instructionBuilder: implementFeatureInstruction,
-          requestBuilder: implementFeatureRequest,
-          workloadResolver: (job, item) async => _workload,
-          clock: () => DateTime.utc(2026, 1, 1),
-        );
-        await scheduler.tick();
-        return (await workflowStore.readWorkItem('wi-1')).state;
-      }
-
-      expect(await routeAt(2), WorkItemState.implementationReady);
-      expect(await routeAt(3), WorkItemState.agentCompleted);
-    });
-
-    test('the bound message names the counter it actually read', () async {
-      // An item that entered the implementation lane ZERO times can carry a
-      // high `triageAttempt`: the operator retry and resolved rework/reject
-      // decisions advance the same marker. A refusal that said "already been put
-      // into the implementation lane 2 time(s)" would be a false statement in
-      // the one sentence an operator actually reads.
+      // The first half is untouched by the decision and is the reason this test
+      // still exists: the marker this write stamps is what
+      // `implementFeatureDedupeKey` reads back to build the key the job will be
+      // dispatched under, so the number the inflow writes and the number the
+      // builder asks for must come from ONE function. `nextTriageAttempt` is
+      // that function; an inline `attempt + 1` is the "two writers, two rules,
+      // one counter" hazard the marker documents, and it was in this file once.
+      //
+      // The marker still moves at marker 2, which is not remarkable. What is
+      // load-bearing after the bound is gone is that it moves AT ALL: nothing
+      // reads it as a ceiling any more, so an inflow that stopped advancing it
+      // would build the same key on every later pass and be refused by
+      // `enqueueIfAbsent` for ever.
       final workflowStore = InMemoryWorkflowStore();
       await workflowStore.saveWorkItem(
         _completed(metadata: const {'triageAttempt': 2}),
@@ -892,8 +1030,8 @@ void main() {
         clock: () => DateTime.utc(2026, 1, 1),
       );
 
-      // Two prior operator retries and no lane entry: the route is still taken
-      // (2 < 3), and the item's marker is advanced by the ENGINE's own rule.
+      // Two prior operator retries and no lane entry: the route is taken, and
+      // the item's marker is advanced by the ENGINE's own rule.
       final result = await scheduler.tick();
       expect(
         (await workflowStore.readWorkItem('wi-1')).metadata?['triageAttempt'],
@@ -904,48 +1042,6 @@ void main() {
             'reads back cannot be derived by a second rule',
       );
       expect(result.completionInflow.single.moved, isTrue);
-
-      // And at the bound, the words are the ones an operator can act on.
-      final bounded = InMemoryWorkflowStore();
-      await bounded.saveWorkItem(
-        _completed(metadata: const {'triageAttempt': 3}),
-      );
-      final boundedScheduler = Scheduler(
-        schedulerId: 'sched-impl',
-        workflowStore: bounded,
-        jobStore: InMemoryJobStore(),
-        workerStore: await _storeWith([
-          _execution(
-            workerExecutionId: 'wx-1',
-            agentExecutionId: 'agx-exec-impl-1',
-            endingRevision: null,
-          ),
-        ]),
-        dispatch: _CapturingDispatch(),
-        definition: implementFeatureDefinition,
-        workload: _workload,
-        dedupeKeyBuilder: implementFeatureDedupeKey,
-        instructionBuilder: implementFeatureInstruction,
-        requestBuilder: implementFeatureRequest,
-        workloadResolver: (job, item) async => _workload,
-        clock: () => DateTime.utc(2026, 1, 1),
-      );
-      final boundedResult = await boundedScheduler.tick();
-      final reason = boundedResult.completionInflow.single.reason;
-      expect(reason, contains('re-work discriminator'));
-      expect(
-        reason,
-        contains('operator retry'),
-        reason:
-            'the counter is shared with human-driven re-work, so the operator '
-            'has to be told that — otherwise a high number reads as "the lane '
-            'failed three times" for an item the lane never ran on',
-      );
-      expect(
-        reason,
-        isNot(contains('implementation lane 3 time')),
-        reason: 'the false reading this message used to give',
-      );
     });
 
     test('the inflow is declared on the implementation lane only', () {
@@ -1017,25 +1113,46 @@ void main() {
     });
   });
 
-  group('the bound governs THIS lane, and only this lane', () {
-    // THE DEFECT THIS GROUP EXISTS FOR.
+  group('the commit route is not this lane\'s to take', () {
+    // THE DEFECT THIS GROUP EXISTED FOR, and what survives it.
     //
-    // `maxImplementationInflows` bounds automatic entries into the IMPLEMENTATION
-    // lane. The check used to run for BOTH answers `completionRouteFor` can give,
-    // so it also refused a producer that left a commit — whose route is
-    // `reviewInProgress`, the review lane's state and not an entry into this one
-    // at all. A counter about this lane's entries has no standing to refuse a
-    // route into another lane.
+    // It used to be called `the bound governs THIS lane, and only this lane`, and
+    // every test in it was about SCOPING `maxImplementationInflows`: the check
+    // used to run for BOTH answers `completionRouteFor` can give, so it also
+    // refused a producer that left a commit — whose route is `reviewInProgress`,
+    // the review lane's state and not an entry into this one at all. A counter
+    // about this lane\'s entries had no standing to refuse a route into another
+    // lane. Human decision `92d567e3-da03-4c43-99f4-e3726472f0ab` removed the
+    // bound outright, which deletes the scoping question and leaves the property
+    // the scoping was defending.
+    //
+    // What remains is stronger and does not mention a bound: a producer that
+    // committed is never moved by this lane, never consumes the shared
+    // discriminator, and never mints an implementer job. A real artifact sent to
+    // the build queue is a duplicate commit of work that already exists, and that
+    // is the one outcome in this file that is not recoverable.
+    //
+    // THREE tests were removed from this group. Two asserted the bound itself,
+    // which the decision reverses — `a producer that DID commit is not refused by
+    // this lane\'s bound` (its assertion became unfalsifiable: nothing emits that
+    // string any more) and `the bound is AT OR ABOVE the limit, not exactly at
+    // it`. The third, `the cycle still terminates … and the bound closes the
+    // loop`, was the only executable statement that this lane\'s cycle
+    // terminates; its inverted form would assert an unattended runaway as correct
+    // behaviour, which is only true once the rule that prevents it exists, and
+    // that rule is in `packages/execution_coordinator`. The gap is deliberate
+    // and it is the reason for the merge order.
     //
     // The markers are the values measured on the live QA data by
     // `RESEARCH-AGENT-COMPLETED-INFLOW`: the one item that routed out of
     // `agentCompleted` read 2, and the four that stalled read 3, 4, 3 and 4. 9 is
     // past anything observed, so none of these can pass on a coincidence about
     // the size of the numbers.
-    const aboveTheBound = <int>[3, 4, 9];
+    const aboveTheRemovedBound = <int>[3, 4, 9];
 
-    test('a producer that DID commit is not refused by this lane\'s bound', () async {
-      for (final marker in aboveTheBound) {
+    test('a producer that DID commit is left in place and spends nothing, at '
+        'any marker', () async {
+      for (final marker in aboveTheRemovedBound) {
         final workflowStore = InMemoryWorkflowStore();
         await workflowStore.saveWorkItem(
           _completed(metadata: {'triageAttempt': marker}),
@@ -1051,277 +1168,59 @@ void main() {
           ]),
         );
 
-        final result = await lane.scheduler.tick();
+        await lane.scheduler.tick();
 
-        expect(
-          result.completionInflow.single.reason,
-          isNot(contains('re-work discriminator')),
-          reason:
-              'the discriminator reads $marker, but the route this item took is '
-              '${WorkItemState.reviewInProgress.wire} — not an entry into this '
-              'lane. The refusal it used to be given also told an operator the '
-              'review lane would park the item for a human, and that is false '
-              'here: the review workload resolver resolves an item holding a '
-              'reviewable commit, so no blockedArtifactMissing job is ever '
-              'created and the park handler never runs for it',
-        );
-      }
-    });
-
-    test(
-      'a route that leaves this lane spends none of this lane\'s budget',
-      () async {
-        for (final marker in aboveTheBound) {
-          final workflowStore = InMemoryWorkflowStore();
-          await workflowStore.saveWorkItem(
-            _completed(metadata: {'triageAttempt': marker}),
-          );
-          final lane = _implLane(
-            workflowStore,
-            await _storeWith([
-              _execution(
-                workerExecutionId: 'wx-impl',
-                agentExecutionId: 'agx-exec-impl-1',
-                endingRevision: _produced,
-              ),
-            ]),
-          );
-
-          await lane.scheduler.tick();
-
-          // THE RUNAWAY THIS BOUND EXISTS TO STOP, at a counter far past anything
-          // the platform should reach. The item stays where it is, no implementer
-          // job is minted, and nothing is dispatched — so scoping the bound away
-          // from the commit route cannot have handed a real commit to a second
-          // implementer, which is the one outcome that is not recoverable.
-          expect(
-            (await workflowStore.readWorkItem('wi-1')).state,
-            WorkItemState.agentCompleted,
-          );
-          expect(
-            (await workflowStore.readWorkItem(
-              'wi-1',
-            )).metadata?['triageAttempt'],
-            marker,
-            reason:
-                'a route into the review lane must not consume the shared '
-                'implementation budget, or the two would starve each other',
-          );
-          expect(await lane.jobStore.listJobsForWorkItem('wi-1'), isEmpty);
-          expect(lane.dispatch.requests, isEmpty);
-        }
-      },
-    );
-
-    test('the bound is AT OR ABOVE the limit, not exactly at it', () async {
-      // `the bound is THREE` pins the literal and its immediate neighbours, and
-      // the live data carries items at 4 — so a comparison that had become `==`
-      // would let exactly those through.
-      for (final marker in const [4, 9]) {
-        final workflowStore = InMemoryWorkflowStore();
-        await workflowStore.saveWorkItem(
-          _completed(metadata: {'triageAttempt': marker}),
-        );
-        final lane = _implLane(
-          workflowStore,
-          await _storeWith([
-            _execution(
-              workerExecutionId: 'wx-triage',
-              agentExecutionId: 'agx-exec-impl-1',
-              endingRevision: null,
-            ),
-          ]),
-        );
-
-        final result = await lane.scheduler.tick();
-
+        // The commit route is `reviewInProgress`, a state this lane does not
+        // declare, so the write it attempts is refused by the TRANSITIONS TABLE:
+        // the edge carries `GuardConditions.agentResultValid()` and the
+        // scheduler has no execution of its own to supply the producer's
+        // `AgentResult` under `context['agentResult']`. That guard belongs to the
+        // review route, not to this lane, and nothing here weakens it — the same
+        // unsatisfiable probe `engineeringReviewDefinition
+        // .skipWorkflowPolicyCheck` exists to skip, recorded as design decision
+        // F-04 and owned by the coordinator.
         expect(
           (await workflowStore.readWorkItem('wi-1')).state,
           WorkItemState.agentCompleted,
+          reason:
+              'the item holds a reviewable commit, so engineering review owns '
+              'it. This lane must not move it, and with the bound gone there is '
+              'no longer any counter here that could refuse it either — the '
+              'refusal has to come from the transition policy, and it does',
         );
         expect(
-          result.completionInflow.single.reason,
-          contains('re-work discriminator'),
+          (await workflowStore.readWorkItem('wi-1')).metadata?['triageAttempt'],
+          marker,
           reason:
-              'marker $marker is past the bound, so this item is one the '
-              'implementation lane has spent its budget on — the exact case '
-              'that must reach a human rather than run for ever',
+              'a refused write must consume nothing. A route this lane cannot '
+              'take may not advance the shared discriminator, or the next pass '
+              'would be dispatched under a key this one already burned',
+        );
+        expect(
+          await lane.jobStore.listJobsForWorkItem('wi-1'),
+          isEmpty,
+          reason: 'no implementer job for an item that already has a commit',
         );
         expect(lane.dispatch.requests, isEmpty);
       }
     });
 
-    test('the cycle still terminates: the commit route spends nothing, and the '
-        'bound closes the loop', () async {
-      // THE REGRESSION THIS FIX IS NOT ALLOWED TO BUY.
+    test('the route this lane cannot dispatch is a state it never declares', () {
+      // Assertions KEPT, subject retargeted.
       //
-      // Scoping the bound away from the review route must not open the
-      // runaway. It cannot, and this is the executable argument rather than
-      // the prose one: the commit route spends no counter, so every pass of
-      // the cycle that returns to `agentCompleted` spends the budget on the
-      // IMPLEMENTATION route, where the bound still applies. The loop below
-      // walks the real cycle — commit, reviewer completes, then implementers
-      // that commit nothing — and asserts exactly three entries and then the
-      // refusal, with the refusal terminal.
-      final workflowStore = InMemoryWorkflowStore();
-      await workflowStore.saveWorkItem(
-        _completed(producerActorId: 'agx-impl-1'),
-      );
-      final workerStore = InMemoryWorkerStore();
-      final lane = _implLane(workflowStore, workerStore);
-
-      // PASS 1 — the implementer committed, so the route leaves this lane.
-      await workerStore.saveWorkerExecution(
-        _execution(
-          workerExecutionId: 'wx-impl-1',
-          agentExecutionId: 'agx-impl-1',
-          endingRevision: _produced,
-        ),
-      );
-      await lane.scheduler.tick();
-
-      expect(
-        (await workflowStore.readWorkItem('wi-1')).state,
-        WorkItemState.agentCompleted,
-        reason:
-            'a commit belongs to the review lane and this one does not move '
-            'it — which is the existing invariant, asserted here at the start '
-            'of a loop rather than only in isolation',
-      );
-      expect(
-        (await workflowStore.readWorkItem('wi-1')).metadata?['triageAttempt'],
-        isNull,
-        reason: 'the pass that leaves this lane must spend no budget',
-      );
-
-      // The reviewer runs to completion. Its execution carries
-      // `engineeringReview`, which is exactly what `producedCommitFor`'s
-      // candidate loop skips — so once the producer stamp names it, the
-      // discriminator cannot attribute an artifact and the route comes back
-      // INTO this lane. That hand-back is what makes the loop real: it is the
-      // step where the budget starts being spent.
-      await workerStore.saveWorkerExecution(
-        _execution(
-          workerExecutionId: 'wx-review-1',
-          agentExecutionId: 'agx-review-1',
-          endingRevision: 'c-review',
-          capabilities: const {
-            WorkerCapability.linux,
-            WorkerCapability.git,
-            WorkerCapability.engineeringReview,
-          },
-        ),
-      );
-      await _restampProducer(workflowStore, 'agx-review-1');
-
-      // Passes 2..5. Pass 2 is that hand-back; each later pass is a fresh
-      // implementer execution that committed nothing.
-      final entered = <int>[];
-      for (var pass = 2; pass <= 5; pass++) {
-        if (pass > 2) {
-          await _completeAnImplementationRun(workflowStore);
-          await workerStore.saveWorkerExecution(
-            _execution(
-              workerExecutionId: 'wx-impl-$pass',
-              agentExecutionId: 'agx-impl-$pass',
-              endingRevision: null,
-            ),
-          );
-          await _restampProducer(workflowStore, 'agx-impl-$pass');
-        }
-
-        final dispatchedBefore = lane.dispatch.requests.length;
-        final result = await lane.scheduler.tick();
-        final dispatchedThisPass =
-            lane.dispatch.requests.length - dispatchedBefore;
-        final item = await workflowStore.readWorkItem('wi-1');
-        final move = result.completionInflow.singleWhere(
-          (m) => m.workItemId == 'wi-1',
-        );
-
-        if (move.moved) {
-          entered.add(pass);
-          expect(
-            item.metadata?['triageAttempt'],
-            entered.length,
-            reason:
-                'every ACCEPTED entry into this lane spends the shared '
-                'counter exactly once, which is what makes the bound a bound',
-          );
-          expect(item.state, WorkItemState.implementationReady);
-          expect(
-            dispatchedThisPass,
-            greaterThan(0),
-            reason:
-                'each automatic entry spends a REAL implementer execution, '
-                'and it is spent in the same tick as the route. That is what '
-                'makes the bound worth having, so the runaway has to be '
-                'counted in executions and not only in state changes',
-          );
-        } else {
-          expect(
-            move.reason,
-            contains('re-work discriminator'),
-            reason:
-                'the first refused pass must be the bound. Anything else '
-                'means the loop stopped for a reason that has nothing to do '
-                'with the budget, and this test would be proving the wrong '
-                'thing',
-          );
-          expect(item.state, WorkItemState.agentCompleted);
-          expect(
-            dispatchedThisPass,
-            0,
-            reason:
-                'the refused pass is where the spend stops. One more '
-                'dispatch here and the bound is not bounding anything',
-          );
-        }
-      }
-
-      expect(
-        entered,
-        [2, 3, 4],
-        reason:
-            'three automatic entries and no fourth: the review round-trip '
-            'brought the item back into this lane, and from there the bound '
-            '— not the route — is what stopped it. `maxImplementationInflows` '
-            'is 3 and an item may enter at most that many times unattended',
-      );
-      // NOT a total over `lane.dispatch.requests`. Nothing here consumes a
-      // dispatched job the way the coordinator consumes a real one, so the
-      // jobs minted by earlier passes stay queued and are offered again on
-      // every later pass — a total would measure that fixture artefact rather
-      // than the spend. The per-pass delta above is the real quantity.
-
-      // AND TERMINAL: one more tick on the refused item must not start a
-      // fifth pass. The item is now at `agentCompleted` again with a producer
-      // that committed nothing, so a bound that had been narrowed instead of
-      // scoped would move it here.
-      final finalTick = await lane.scheduler.tick();
-      expect(
-        finalTick.completionInflow
-            .singleWhere((m) => m.workItemId == 'wi-1')
-            .moved,
-        isFalse,
-      );
-      expect(
-        (await workflowStore.readWorkItem('wi-1')).state,
-        WorkItemState.agentCompleted,
-        reason:
-            'the bound has nothing left to spend, so the item waits for the '
-            'review lane\'s fail-closed handler to raise the blocking human '
-            'decision that this is the human gate for',
-      );
-    });
-
-    test('the route this lane cannot dispatch is the route it does not bound', () {
-      // The predicate the bound is scoped by, stated as the property that makes
-      // it correct: the no-artifact route is inside this lane and the commit
-      // route is outside it. If a future change put `reviewInProgress` into
-      // `entryStates`, this lane would genuinely dispatch it and the bound would
-      // correctly start applying again — and this assertion is what would say
-      // so before anyone relied on it.
+      // It used to be `the route this lane cannot dispatch is the route it does
+      // not bound`, and existed to state the predicate the bound was scoped by.
+      // The bound is gone (`92d567e3-da03-4c43-99f4-e3726472f0ab`), but the
+      // declaration it was reading is load-bearing on its own and for a reason
+      // that did not change with it:
+      //
+      // Invariant D-10. `agentCompleted` is `engineeringReviewDefinition`'s
+      // ENTRY state. Listing it here as well would put both definitions on one
+      // item in the same tick and destroy the disjointness that makes the
+      // collision structurally impossible. `implementFeatureDefinition.entryStates`
+      // is one element wide, `reviewInProgress` is not in it, and the commit route
+      // is therefore not dispatchable here — which is also why no state read
+      // here can be `reviewInProgress` after a tick.
       expect(implementFeatureDefinition.entryStates, {
         WorkItemState.implementationReady,
       });
@@ -1329,9 +1228,9 @@ void main() {
         implementFeatureDefinition.entryStates,
         isNot(contains(WorkItemState.reviewInProgress)),
         reason:
-            'a bound on entries into this lane cannot reach a state this lane '
-            'does not dispatch from. This is the whole scoping rule, and it is '
-            'a declaration rather than a hardcoded list so the two cannot drift',
+            'this lane must not be able to dispatch the review lane\'s state. '
+            'A declaration rather than a hardcoded list, so the two lanes cannot '
+            'drift into contending for one item in one tick',
       );
     });
   });
