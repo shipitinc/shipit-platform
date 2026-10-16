@@ -750,6 +750,13 @@ class Scheduler {
     final blockedArtifactMissing = <String>[];
     final entryHopRefused = <EntryHopRefusal>[];
     final completionInflow = <CompletionInflowMove>[];
+    // Declared BEFORE step 2 because the completion inflow raises stalls on it
+    // too, not only step 3.5: the undetermined brake is a conclusion about this
+    // item reached by this lane, and `SchedulerStall` is the one channel the
+    // composition root already drains into `raiseStallDecisions`. Two lists
+    // would mean two drains and a tick that could stop for a reason its own
+    // result never carried.
+    final stalled = <SchedulerStall>[];
 
     // 1. Recover claims that outlived their lease without ever persisting a
     //    terminal outcome.
@@ -805,7 +812,7 @@ class Scheduler {
     //    changes by one read.
     var items = await _workflowStore.readAllWorkItems();
     if (_definition.hasCompletionInflow) {
-      completionInflow.addAll(await _runCompletionInflow(items));
+      completionInflow.addAll(await _runCompletionInflow(items, stalled));
       if (completionInflow.isNotEmpty) {
         items = await _workflowStore.readAllWorkItems();
       }
@@ -845,7 +852,6 @@ class Scheduler {
     //     job and stopping the producer are different acts, and only the
     //     second one ends a loop.
     final stalls = await _supersessionStalls(items);
-    final stalled = <SchedulerStall>[];
 
     // 4. Terminal items: cancel any residual queued jobs. Runnable items:
     //    enqueue the missing job idempotently. No-action items: RETIRE the jobs
@@ -1482,6 +1488,7 @@ class Scheduler {
   /// turns one bad byte on one work item into the loss of the whole lane's tick.
   Future<List<CompletionInflowMove>> _runCompletionInflow(
     List<WorkItem> items,
+    List<SchedulerStall> stalled,
   ) async {
     final sources = _definition.completionInflowFrom!;
     // A lane that declares an inflow must be able to DISPATCH what the inflow
@@ -1513,14 +1520,23 @@ class Scheduler {
     final moves = <CompletionInflowMove>[];
     for (final item in items) {
       if (!sources.contains(item.state)) continue;
-      final move = await _routeOneCompletion(item);
+      final move = await _routeOneCompletion(item, stalled);
       if (move != null) moves.add(move);
     }
     return moves;
   }
 
   /// Routes one item, or returns why it was not routed.
-  Future<CompletionInflowMove?> _routeOneCompletion(WorkItem item) async {
+  ///
+  /// [stalled] collects the `SchedulerStall`s the undetermined brake raises.
+  /// It is the tick's own list, handed down rather than re-declared, so a stall
+  /// raised from the completion inflow and one raised from the supersession cap
+  /// land on ONE channel and one composition-root drain. Two lists would mean
+  /// the drain had to know which lane of the tick raised what.
+  Future<CompletionInflowMove?> _routeOneCompletion(
+    WorkItem item,
+    List<SchedulerStall> stalled,
+  ) async {
     final workerStore = _workerStore;
     final engine = _reclaimEngine;
 
@@ -1551,10 +1567,23 @@ class Scheduler {
     // with it. `implementation_completion_inflow_test.dart`, "an UNREADABLE
     // DISCRIMINATOR on one item does not abort the lane's tick", is the
     // executable statement of why it stays.
+    //
+    // THE UNDETERMINED STREAK IS READ HERE FOR THE SAME REASON, and it is not
+    // optional housekeeping: `readUndeterminedReturnStreak` raises
+    // `FormatException` on a marker that is present and unreadable, because the
+    // two coercions available for it both destroy the brake (see its doc).
+    // Outside this guard that throw would take the whole lane's tick, which is
+    // the exact failure mode `implementation_completion_inflow_test.dart`,
+    // "an UNREADABLE DISCRIMINATOR on one item does not abort the lane's tick",
+    // was written for and would now apply to a second marker.
     late final ProducedCommit produced;
+    late final bool undetermined;
+    late final int streak;
     try {
       produced = await producedCommitFor(workerStore, item);
       DurableWorkflowEngine.readTriageAttempt(item);
+      undetermined = lastCompletionWasUndetermined(item);
+      streak = nextUndeterminedReturnStreak(item, undetermined: undetermined);
     } on Object catch (error) {
       return CompletionInflowMove(
         workItemId: item.workItemId,
@@ -1618,9 +1647,6 @@ class Scheduler {
     // whole purpose — but it commits nothing once per pass and the next pass is
     // an implementation, which either commits or fails permanently.
     //
-    // **THIS LANE MUST NOT MERGE BEFORE THAT ONE.** Merged alone, this removes
-    // the only brake on that cycle.
-    //
     // What this method still refuses, and why the absence is not an absence of
     // guards: a transition the policy rejects throws below and is reported as
     // "the item moved while this lane was reading it" — the review route, which
@@ -1629,6 +1655,80 @@ class Scheduler {
     // this method's to weaken; see `implementationInflow.dart` for why the commit
     // route is currently unsatisfiable (design decision F-04, owned by the
     // coordinator, not by this lane).
+
+    // ## THE UNDETERMINED BRAKE — the ONE bound this method still has
+    //
+    // The permanent-failure rule above closes the loop for a run that produced
+    // nothing. It cannot close it for a run whose artifact could not be
+    // ESTABLISHED: `RoleAwareSuccessArtifacts` answers `UNDETERMINED` when git
+    // is missing, the filesystem is wedged or the probe's 30s timeout expires,
+    // and refuses to report a tooling fault as an agent that did nothing. Such
+    // a run is NOT failed, so it reaches `agentCompleted`, leaves
+    // `endingRevision` where it was, and arrives here as a no-commit producer —
+    // indistinguishable, in this method's own inputs, from the triage shape this
+    // route exists to serve. Every pass spends a real implementer execution, and
+    // with `maxImplementationInflows` gone and each pass minting a FRESH job
+    // (and so a fresh `maxAttempts` budget), nothing bounded it.
+    //
+    // ## WHY IT IS SCOPED BY `entryStates`, EXACTLY AS THE REMOVED BOUND WAS
+    //
+    // Because the same counter would otherwise be refusing a route this lane
+    // does not take. A producer that left a commit routes to `reviewInProgress`,
+    // which is `engineeringReviewDefinition.entryStates` and not this one's;
+    // withholding that route because an earlier pass could not be probed would
+    // deny a reviewer a REAL commit — the one outcome in this file that is not
+    // recoverable. The predicate is `entryStates.contains(target)` rather than a
+    // spelled-out state so the brake follows the lane's own declaration, the same
+    // declaration that decides whether the route is dispatchable here at all.
+    //
+    // ## WHY THE STALL AND NOT JUST A REFUSAL
+    //
+    // Because a refusal alone is the failure mode finding H1 describes, one level
+    // up: the item sits at `agentCompleted` — which every operator screen calls
+    // "Awaiting review" — and the only sentence explaining it is a tick result
+    // field. `SchedulerStall` is the one channel on this type whose documented
+    // purpose is exactly this ("the item is runnable, the lane understands why,
+    // and it has declined to launch again until a human says so"), it is
+    // already drained by the composition root into `raiseStallDecisions`, and
+    // that gate raises a BLOCKING `HumanDecision` the existing control-plane
+    // decision screen already renders. So a human is engaged by a mechanism that
+    // exists, not by one this change had to invent — and the item's `deferrals`
+    // is the executions actually burned, which is `streak - 1` because the Nth
+    // return is the one that is refused.
+    if (_definition.entryStates.contains(target) &&
+        undetermined &&
+        streak >= maxConsecutiveUndeterminedReturns) {
+      stalled.add(
+        SchedulerStall(
+          workItemId: item.workItemId,
+          state: item.state,
+          jobType: _definition.jobType,
+          deferrals: streak - 1,
+          reason:
+              'the last $streak consecutive completions of this item could not '
+              'be checked for their artifact at all: the platform\'s own '
+              'workspace probe could not read the workspace (no git, a wedged '
+              'filesystem, or the probe\'s own timeout). That is a tooling '
+              'fault, not an agent that did nothing, so no run was failed for '
+              'it — but every pass it survives spends a real implementer '
+              'execution, so the platform has stopped taking the automatic '
+              'route. This needs a person: the cause is in the platform, not in '
+              'the work, and an operator retry of this item is uncounted',
+        ),
+      );
+      return CompletionInflowMove(
+        workItemId: item.workItemId,
+        from: item.state,
+        to: null,
+        reason:
+            'no automatic route is taken: $streak consecutive completions came '
+            'back with an undetermined artifact verdict, at or above the '
+            'platform\'s ceiling of $maxConsecutiveUndeterminedReturns, and '
+            'the lane has spent ${streak - 1} real implementer executions on a '
+            'fault in its own tooling. The item is left where it is and parked '
+            'for a human',
+      );
+    }
 
     // ONE arithmetic rule for every writer of this counter
     // (`DurableWorkflowEngine.nextTriageAttempt`), not `attempt + 1` spelled
@@ -1679,8 +1779,36 @@ class Scheduler {
         // dedupe key this route will be dispatched under is computed from this
         // marker, so a crash between the two would strand the item at a
         // dispatchable state with a consumed key — the inert item, exactly.
+        //
+        // ## THE UNDETERMINED STREAK RIDES HERE, AND THAT IS THE POINT
+        //
+        // This is the counter finding H1 asked for, and `metadataMerge` on this
+        // transition is what makes it survive a restart. It is DURABLE state on
+        // the work item, written in the same transaction as the move it
+        // authorises — not a field on `Scheduler`, which is a fresh object on
+        // every redeploy and would hand the platform a fresh budget every time
+        // it restarted. The brake's whole job is to hold across process
+        // boundaries: an in-memory counter is reset by exactly the redeploy an
+        // operator reaches for when the fleet starts looping.
+        //
+        // It is written on EVERY accepted route, including `0`. A determined
+        // completion resetting the streak is what makes the counter mean
+        // CONSECUTIVE; leaving the previous value in place would turn a recovery
+        // into a permanent stall on a later, unrelated fault.
+        //
+        // THE ONE PLACE A RESET DOES NOT LAND, STATED RATHER THAN HIDDEN: a
+        // route the transitions table REFUSES writes nothing at all, so a
+        // determined completion that also left a commit cannot clear a streak
+        // left by an earlier undetermined pass. The consequence is an
+        // over-count in one compound shape — undetermined, then determined-and-
+        // committed, then undetermined — and it errs toward the human, not away
+        // from them. Clearing it would need a metadata-only write outside a
+        // transition, which this codebase forbids by contract
+        // (`ControlPlaneService`: nothing writes the work item outside the
+        // engine), so the write stays where the engine can make it atomic.
         metadataMerge: {
           DurableWorkflowEngine.triageAttemptMetadataKey: nextAttempt,
+          undeterminedReturnStreakMetadataKey: streak,
         },
       );
       return CompletionInflowMove(
@@ -1689,7 +1817,8 @@ class Scheduler {
         to: target,
         reason:
             'routed to ${target.wire}: $produced. Dispatch discriminator '
-            'advanced to a$nextAttempt',
+            'advanced to a$nextAttempt'
+            '${undetermined ? '. Undetermined-artifact streak advanced to $streak of $maxConsecutiveUndeterminedReturns' : ''}',
       );
     } on WorkflowTransitionRejectedException catch (error) {
       // Someone else owns the item now — a human, a gate, another tick. Not an
