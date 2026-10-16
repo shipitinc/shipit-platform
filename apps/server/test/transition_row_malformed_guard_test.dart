@@ -1,0 +1,475 @@
+import 'dart:collection';
+import 'dart:convert';
+
+import 'package:control_plane_server/src/persistence/persistence_database.dart';
+import 'package:control_plane_server/src/persistence/postgres_workflow_store.dart';
+import 'package:control_plane_server/src/persistence/util/db_row_util.dart';
+import 'package:platform_contracts/platform_contracts.dart';
+import 'package:serverpod/database.dart';
+import 'package:test/test.dart';
+
+/// ## WHAT THIS FILE EXISTS TO PROVE
+///
+/// Five `work_item_transition` rows carry a JSON OBJECT in `guardEvaluationsJson`,
+/// which the column is declared to hold as an ARRAY of guard evaluations.
+/// `decodeJsonArray` casts to `List<dynamic>`, a decoded `Map` fails that cast,
+/// and the `TypeError` left both `workflowEndpoints.inspect` and
+/// `defectEndpoints.inspect` returning HTTP 500 for five of ten QA defects.
+///
+/// The assertions here run against the REAL `PostgresWorkflowStore.readTransitionHistory`
+/// — the exact method both endpoints reach — over a database double that returns
+/// whatever rows it is given. No PostgreSQL is involved and none is needed: the
+/// defect is in the row -> record mapping, which happens entirely on the Dart
+/// side of the wire.
+///
+/// ## WHY A DOUBLE AND NOT A DATABASE
+///
+/// `make test-integration` is the only sanctioned way to obtain a real database,
+/// and it is not available to this lane: `AGENTS.md` read-only-Docker binds
+/// every lane without infrastructure authority, and this dispatch forbids every
+/// docker command outright. The integration suite is therefore NOT a gate for
+/// this change, and this file is written so that it is a real gate on its own —
+/// it drives production code, not a re-declaration of it. What it does not
+/// prove is stated at the bottom of this comment rather than implied.
+///
+/// ## THE FOUR CASES, AND WHICH OF THEM IS THE BUG
+///
+///   * malformed OBJECT — the reproduced defect. Must not throw; must be REPORTED.
+///   * malformed SCALAR — the same defect in another JSON type. Must not throw.
+///   * NULL — NOT the defect. Twelve work items carry NULL and all read fine.
+///   * valid ARRAY — must keep working exactly as it did.
+///
+/// The NULL case is asserted as a non-defect ON PURPOSE. An earlier framing of
+/// this bug treated "guardEvaluationsJson can be NULL" as the cause; it is not,
+/// `decodeJsonArray` returns null for NULL and `WorkflowTransitionRecord` maps a
+/// null list to `const []`. A fix that "handled NULL" would have left all five
+/// broken rows throwing, so the NULL assertion below is load-bearing: it pins
+/// the behaviour that must NOT change, and it is why the new reader classifies
+/// absent and defective as two different outcomes rather than one `null`.
+void main() {
+  group('readJsonArrayColumn — classifies every outcome, never throws', () {
+    test('NULL and blank are ABSENT, which is data and not a defect', () {
+      for (final column in <String?>[null, '', '   ', '\n\t ']) {
+        final read = readJsonArrayColumn(column);
+        expect(read.isDefective, isFalse, reason: 'column was $column');
+        expect(read.defect, isNull);
+        expect(read.value, isNull);
+      }
+    });
+
+    test('a well-formed array is returned unchanged', () {
+      final read = readJsonArrayColumn('[{"guardName":"g","passed":true}]');
+      expect(read.isDefective, isFalse);
+      expect(read.defect, isNull);
+      expect(read.value, hasLength(1));
+      expect(read.value!.single, {'guardName': 'g', 'passed': true});
+    });
+
+    test('an EMPTY array is an array, not a defect', () {
+      final read = readJsonArrayColumn('[]');
+      expect(read.isDefective, isFalse);
+      expect(read.value, isEmpty);
+    });
+
+    test('an object is notAnArray and carries the raw text as evidence', () {
+      final raw = '{"migration":"20261014210000000","decisionId":"dec-1"}';
+      final read = readJsonArrayColumn(raw);
+      expect(read.defect, JsonArrayDefect.notAnArray);
+      expect(read.value, isNull);
+      // The evidence travels with the verdict, so a caller can never log only
+      // the conclusion without being able to log what it concluded from.
+      expect(read.raw, raw);
+    });
+
+    test('every scalar JSON type is notAnArray, not an exception', () {
+      for (final scalar in <String>[
+        '5',
+        '5.5',
+        'true',
+        'false',
+        '"text"',
+        'null',
+      ]) {
+        final read = readJsonArrayColumn(scalar);
+        expect(
+          read.defect,
+          JsonArrayDefect.notAnArray,
+          reason: 'scalar $scalar',
+        );
+        expect(read.value, isNull);
+        expect(read.raw, scalar);
+      }
+    });
+
+    test('text that is not JSON at all is unparseable, not notAnArray', () {
+      for (final garbage in <String>['not json', '{oops', '[1,', '\x00']) {
+        final read = readJsonArrayColumn(garbage);
+        expect(
+          read.defect,
+          JsonArrayDefect.unparseable,
+          reason: 'garbage: $garbage',
+        );
+        expect(read.value, isNull);
+      }
+    });
+  });
+
+  group('decodeJsonArray — the STRICT decoder is unchanged', () {
+    // Acceptance criterion 3. Fourteen call sites across six other stores depend
+    // on this function THROWING on a wrong-typed column, because they hand the
+    // result straight to a typed constructor where a silent null would be
+    // indistinguishable from an absent value. If this test ever fails, the
+    // tolerance was moved into the shared decoder instead of the one reader that
+    // needs it, and a wrong-typed column has just started returning "no data"
+    // on a reader that has no way to tell.
+    test('still throws on an object — loudness is the contract', () {
+      expect(
+        () => decodeJsonArray('{"a":1}'),
+        throwsA(isA<TypeError>()),
+      );
+    });
+
+    test('still throws on a scalar', () {
+      expect(() => decodeJsonArray('7'), throwsA(isA<TypeError>()));
+    });
+
+    test('still returns null for NULL and blank — unchanged', () {
+      expect(decodeJsonArray(null), isNull);
+      expect(decodeJsonArray(''), isNull);
+      expect(decodeJsonArray('  '), isNull);
+    });
+
+    test('still returns the array for a well-formed array — unchanged', () {
+      expect(decodeJsonArray('[1,2,3]'), [1, 2, 3]);
+    });
+  });
+
+  group('readTransitionHistory — one malformed row no longer fails the read', () {
+    late List<String> events;
+    late List<Map<String, Object?>> fields;
+
+    /// The real store, over a database that answers the transition query with
+    /// [rows]. [events]/[fields] collect what the store reported.
+    Future<List<WorkflowTransitionRecord>> readWith(
+      List<Map<String, Object?>> rows,
+    ) async {
+      final store = PostgresWorkflowStore(
+        PersistenceDatabase(_StubDatabase(rows)),
+        reportJsonArrayDefect: (event, data) {
+          events.add(event);
+          fields.add(data);
+        },
+      );
+      return store.readTransitionHistory('wi-malformed');
+    }
+
+    setUp(() {
+      events = <String>[];
+      fields = <Map<String, Object?>>[];
+    });
+
+    /// A row shaped exactly like the five QA rows, minus the defect.
+    Map<String, Object?> row({required Object? guardEvaluationsJson}) =>
+        <String, Object?>{
+          'transitionId': 'tr-unreviewed-review-repair-wi-malformed',
+          'workItemId': 'wi-malformed',
+          'fromState': 'waiting_for_human_decision',
+          'toState': 'agent_completed',
+          'trigger': 'system_event',
+          'actorType': 'orchestrator',
+          'actorId': 'orchestrator',
+          'decisionId': 'dec-hn7h7d9j8i-1oh8pgm',
+          'outcome': 'accepted',
+          'reason': 'Data repair (migration 20261014210000000).',
+          'guardEvaluationsJson': guardEvaluationsJson,
+          'idempotencyKey': 'unreviewed-review-repair:void-fabricated-verdict',
+          'occurredAt': DateTime.utc(2026, 10, 14, 21),
+        };
+
+    test(
+      'malformed OBJECT: the read SUCCEEDS and the row comes back',
+      () async {
+        final repairMetadata =
+            '{"migration": "20261014210000000", '
+            '"decisionId": "dec-hn7h7d9j8i-1oh8pgm", '
+            '"newTriageAttempt": 3, "priorTriageAttempt": 2}';
+
+        final history = await readWith([
+          row(guardEvaluationsJson: repairMetadata),
+        ]);
+
+        // The acceptance criterion: no 500. Before this change this threw a
+        // TypeError out of readTransitionHistory.
+        expect(history, hasLength(1));
+        expect(
+          history.single.transitionId,
+          'tr-unreviewed-review-repair-wi-malformed',
+        );
+        // Every OTHER column on the row is unaffected by the one bad column.
+        expect(history.single.decisionId, 'dec-hn7h7d9j8i-1oh8pgm');
+        expect(history.single.fromState, WorkItemState.waitingForHumanDecision);
+        expect(history.single.toState, WorkItemState.agentCompleted);
+        expect(history.single.outcome, TransitionOutcome.accepted);
+      },
+    );
+
+    test('malformed OBJECT: it is REPORTED, not silently coerced', () async {
+      await readWith([
+        row(
+          guardEvaluationsJson:
+              '{"migration":"20261014210000000","decisionId":"dec-1"}',
+        ),
+      ]);
+
+      expect(events, hasLength(1));
+      expect(
+        events.single,
+        'workflow.transition.guard_evaluations_malformed',
+      );
+      final report = fields.single;
+      expect(
+        report['transitionId'],
+        'tr-unreviewed-review-repair-wi-malformed',
+      );
+      expect(report['workItemId'], 'wi-malformed');
+      expect(report['column'], 'guardEvaluationsJson');
+      expect(report['declaredType'], 'array');
+      expect(report['defect'], 'notAnArray');
+      // The offending text is quoted back, so an operator can identify the row's
+      // provenance without going to the database to look.
+      expect(report['observed'], contains('20261014210000000'));
+    });
+
+    test('malformed SCALAR: also reported, also does not throw', () async {
+      for (final scalar in <String>['7', 'true', '"gone"']) {
+        // Collected locally rather than through the group's `events`, because
+        // `setUp` cannot be re-entered once tests are running and this asserts
+        // one report PER SCALAR, not one across the whole loop.
+        final seenEvents = <String>[];
+        final seenFields = <Map<String, Object?>>[];
+        final store = PostgresWorkflowStore(
+          PersistenceDatabase(
+            _StubDatabase([row(guardEvaluationsJson: scalar)]),
+          ),
+          reportJsonArrayDefect: (event, data) {
+            seenEvents.add(event);
+            seenFields.add(data);
+          },
+        );
+
+        final history = await store.readTransitionHistory('wi-malformed');
+
+        expect(history, hasLength(1), reason: 'scalar $scalar');
+        expect(seenEvents, hasLength(1), reason: 'scalar $scalar');
+        expect(
+          seenEvents.single,
+          'workflow.transition.guard_evaluations_malformed',
+        );
+        expect(
+          seenFields.single['defect'],
+          'notAnArray',
+          reason: 'scalar $scalar',
+        );
+        expect(seenFields.single['observed'], scalar, reason: 'scalar $scalar');
+      }
+    });
+
+    test('unparseable text: reported as unparseable, not coerced', () async {
+      final history = await readWith([row(guardEvaluationsJson: 'not json')]);
+      expect(history, hasLength(1));
+      expect(events, hasLength(1));
+      expect(fields.single['defect'], 'unparseable');
+    });
+
+    test('NULL: unchanged, and NOT reported — this is not the defect', () async {
+      final history = await readWith([row(guardEvaluationsJson: null)]);
+      expect(history, hasLength(1));
+      // Absent reads as `const []` inside WorkflowTransitionRecord, which is what
+      // it always did.
+      expect(history.single.guardEvaluations, isEmpty);
+      // And nothing is logged: a NULL column is data, and turning data into a
+      // report would bury the five real defects in noise on every read of every
+      // work item that never recorded a guard evaluation.
+      expect(events, isEmpty);
+    });
+
+    test('valid ARRAY: unchanged, and NOT reported', () async {
+      const guard = '[{"guardName":"engineering_review","passed":true}]';
+      final history = await readWith([row(guardEvaluationsJson: guard)]);
+
+      expect(history.single.guardEvaluations, hasLength(1));
+      final evaluation = history.single.guardEvaluations.single;
+      expect(evaluation.guardName, 'engineering_review');
+      expect(evaluation.passed, isTrue);
+      expect(events, isEmpty);
+    });
+
+    test('EMPTY array: valid, not reported, reads as no evaluations', () async {
+      final history = await readWith([row(guardEvaluationsJson: '[]')]);
+      expect(history.single.guardEvaluations, isEmpty);
+      expect(events, isEmpty);
+    });
+
+    test('ONE malformed row does not stop the OTHER rows being read', () async {
+      // The blast radius this bug had: `SELECT * … WHERE "workItemId" = $1`,
+      // so one bad row failed the whole list for every caller of the detail
+      // screen. Asserted as a list, because "the read did not throw" would also
+      // be true of a reader that returned only the good rows.
+      final history = await readWith([
+        row(guardEvaluationsJson: '[{"guardName":"a","passed":true}]'),
+        row(guardEvaluationsJson: '{"migration":"20261014210000000"}'),
+        row(guardEvaluationsJson: null),
+      ]);
+
+      expect(history, hasLength(3));
+      expect(history[0].guardEvaluations, hasLength(1));
+      expect(history[1].guardEvaluations, isEmpty);
+      expect(history[2].guardEvaluations, isEmpty);
+      expect(events, hasLength(1));
+      expect(fields.single['observed'], contains('20261014210000000'));
+    });
+
+    test(
+      'findTransitionByIdempotencyKey shares the same hardened reader',
+      () async {
+        // The second reader on this store. It is reached by the engine's own
+        // replay/dedupe path, and it maps rows through the same `_transitionFromRow`,
+        // so the same row would break it. Asserted so that hardening only one
+        // entry point is a visible failure rather than a latent one.
+        final store = PostgresWorkflowStore(
+          PersistenceDatabase(
+            _StubDatabase([
+              row(guardEvaluationsJson: '{"migration":"20261014210000000"}'),
+            ]),
+          ),
+          reportJsonArrayDefect: (_, _) {},
+        );
+        final found = await store.findTransitionByIdempotencyKey(
+          'wi-malformed',
+          'unreviewed-review-repair:void-fabricated-verdict',
+        );
+        expect(found, isNotNull);
+        expect(found!.guardEvaluations, isEmpty);
+      },
+    );
+
+    test(
+      'a very long malformed column is quoted into the log, truncated',
+      () async {
+        // The log line is unbounded otherwise, and this is a per-READ emission on
+        // a per-item screen: a multi-kilobyte payload would put megabytes in the
+        // process log on every page view.
+        final huge = '{"migration":"20261014210000000","pad":"${'x' * 5000}"}';
+        final history = await readWith([row(guardEvaluationsJson: huge)]);
+
+        expect(history, hasLength(1));
+        final observed = fields.single['observed']! as String;
+        expect(observed, contains('truncated'));
+        // Truncated, not dropped: the row is still identifiable by its prefix.
+        expect(observed, contains('20261014210000000'));
+        expect(observed.length, lessThan(huge.length));
+      },
+    );
+  });
+
+  group('why the reader degrades to ABSENT rather than wrapping in an array', () {
+    test('a wrapped repair-metadata object is STILL not a guard evaluation', () {
+      // This is the negative fact that decides the reader's design. Wrapping the
+      // malformed value in a one-element list — the obvious "make it conform"
+      // fix, at read time or in the data — would satisfy the `as List<dynamic>`
+      // cast and then fail one line further down, inside the generated
+      // constructor, on `guardName`.
+      //
+      // A repair migration that wrote exactly this shape existed, passed its own
+      // migration test, and was withdrawn at review because of THIS test: the
+      // wrap does not remove the fault, it relocates it, and it takes the
+      // defect report with it. A repair of malformed data must produce a value
+      // the reader can actually read; "the cast that failed now succeeds" is
+      // not that, and asserting it here is cheaper than discovering it in QA.
+      final wrapped = jsonEncode([
+        jsonDecode('{"migration":"20261014210000000","decisionId":"dec-1"}'),
+      ]);
+
+      expect(
+        readJsonArrayColumn(wrapped).isDefective,
+        isFalse,
+        reason: 'the container cast would succeed',
+      );
+      expect(
+        () => TransitionGuardEvaluation.fromJson(
+          (jsonDecode(wrapped) as List).single as Map<String, dynamic>,
+        ),
+        throwsA(isA<TypeError>()),
+        reason: 'so the element shape is wrong too, not just the container',
+      );
+    });
+  });
+}
+
+/// A `Database` that answers the transition-history query with fixed rows.
+///
+/// [Database] has a private constructor, so this implements the interface and
+/// forwards everything it does not care about to [noSuchMethod]. Nothing here
+/// emulates PostgreSQL: the question is what the production reader does with a
+/// row it was handed, and a real server answers that identically.
+class _StubDatabase implements Database {
+  _StubDatabase(this.rows);
+
+  final List<Map<String, Object?>> rows;
+
+  @override
+  Future<DatabaseResult> unsafeQuery(
+    String query, {
+    QueryParameters? parameters,
+    int? timeoutInSeconds,
+    Transaction? transaction,
+  }) async => _StubResult(rows.map(_StubRow.new).toList());
+
+  @override
+  Future<int> unsafeExecute(
+    String query, {
+    QueryParameters? parameters,
+    int? timeoutInSeconds,
+    Transaction? transaction,
+  }) async => 0;
+
+  @override
+  Future<R> transaction<R>(
+    Future<R> Function(Transaction) transactionFn, {
+    TransactionSettings? settings,
+  }) => transactionFn(_StubTransaction());
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _StubTransaction implements Transaction {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _StubResult extends UnmodifiableListView<DatabaseResultRow>
+    implements DatabaseResult {
+  _StubResult(super.rows);
+
+  @override
+  int get affectedRowCount => length;
+
+  @override
+  DatabaseResultSchema get schema => throw StateError(
+    'the stub database never parses a row description',
+  );
+}
+
+/// A row whose [toColumnMap] returns the map it was built from.
+///
+/// The VALUES the query returns are the columns in order; [toColumnMap] is the
+/// accessor the production reader uses, so only it has to be faithful.
+class _StubRow extends DatabaseResultRow {
+  _StubRow(this.columns) : super(columns.values.toList());
+
+  final Map<String, Object?> columns;
+
+  @override
+  Map<String, dynamic> toColumnMap() => Map<String, dynamic>.from(columns);
+}

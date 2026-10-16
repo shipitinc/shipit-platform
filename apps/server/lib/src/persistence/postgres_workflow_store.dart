@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:serverpod/database.dart';
 import 'package:workflow_store/workflow_store.dart';
@@ -6,15 +8,58 @@ import 'persistence_database.dart';
 
 import 'util/db_row_util.dart';
 
+/// Receives one event per JSON column that did not hold the shape it is
+/// declared to hold.
+///
+/// Signature matches the repository's existing operator-log convention
+/// (`[$event] $fields`) so a line from the persistence layer is greppable
+/// beside the lines `server.dart` and `StructuredLogger` already emit.
+typedef JsonArrayDefectReporter =
+    void Function(String event, Map<String, Object?> fields);
+
 /// PostgreSQL implementation of [WorkflowStore].
 ///
 /// Primary work item fields are persisted as real columns; only nested
 /// structures (artifact references, metadata, decision context, options,
 /// signature, guard evaluations) are stored as JSON documents.
 class PostgresWorkflowStore implements WorkflowStore {
-  PostgresWorkflowStore(this._db);
+  PostgresWorkflowStore(
+    this._db, {
+    JsonArrayDefectReporter? reportJsonArrayDefect,
+  }) : _reportJsonArrayDefect = reportJsonArrayDefect ?? _stdoutJsonArrayDefect;
 
   final PersistenceDatabase _db;
+  final JsonArrayDefectReporter _reportJsonArrayDefect;
+
+  /// How much of an offending column is quoted back in the operator log.
+  ///
+  /// The repair metadata that lands in `guardEvaluationsJson` is a few hundred
+  /// bytes; the cap exists so that a pathological column cannot turn one log
+  /// line into a megabyte. The truncation is marked in the line itself, so a
+  /// reader can tell a shortened value from a short one.
+  static const int _maxQuotedColumnChars = 2000;
+
+  /// The default defect sink: stdout.
+  ///
+  /// Not [StructuredLogger], because this store has no `Session` — it is
+  /// constructed from a `Database` alone at every composition site — and a sink
+  /// that needs a session this class cannot reach would mean no sink at all.
+  ///
+  /// STDOUT, and not stderr, because stdout is where every other
+  /// composition-level operator line goes: `server.dart`'s `_log` writes
+  /// `[$event] $data` with `stdout.writeln`, and this sink exists to be
+  /// greppable beside those lines. stderr would be the more defensive-looking
+  /// choice and the wrong one: a supervisor or log shipper configured to
+  /// collect stdout only would drop every one of these reports silently, and
+  /// the whole point of this sink is that the degradation is never silent. A
+  /// process that dies is already logged; this is not that, it is a per-read
+  /// fault report that must reach the same stream an operator already reads.
+  static void _stdoutJsonArrayDefect(
+    String event,
+    Map<String, Object?> fields,
+  ) {
+    stdout.writeln('[$event] $fields');
+  }
 
   @override
   Future<T> inTransaction<T>(
@@ -369,12 +414,97 @@ class PostgresWorkflowStore implements WorkflowStore {
       'decisionId': m['decisionId'],
       'outcome': m['outcome'],
       'reason': m['reason'],
-      'guardEvaluations': decodeJsonArray(
-        m['guardEvaluationsJson'] as String?,
-      ),
+      'guardEvaluations': _guardEvaluationsFromRow(m),
       'idempotencyKey': m['idempotencyKey'],
       'occurredAt': decodeUtc(m['occurredAt'])?.toIso8601String(),
     });
+  }
+
+  /// Reads `guardEvaluationsJson`, which one stored row can hold malformed
+  /// WITHOUT ITS FAULT BEING ANYBODY ELSE'S.
+  ///
+  /// ## WHY THIS IS NOT `decodeJsonArray`
+  ///
+  /// `guardEvaluationsJson` is declared to hold an array of guard evaluations,
+  /// and `decodeJsonArray` casts to `List<dynamic>`. Five rows written by
+  /// migration `20261014210000000` hold a JSON OBJECT there instead — repair
+  /// metadata, not guard evaluations — and the cast threw a `TypeError`. The
+  /// throw propagated out of `readTransitionHistory`, past
+  /// `ControlPlaneService.readTransitionHistory`, and out of BOTH
+  /// `workflowEndpoints.inspect` and `defectEndpoints.inspect` as HTTP 500.
+  ///
+  /// The blast radius is the whole table, not the bad row. The reader is
+  /// `SELECT * … WHERE "workItemId" = $1`, so ONE malformed row takes down the
+  /// detail screen of its work item AND its defect — which is a different
+  /// defect's screen, from a different table's row.
+  ///
+  /// ## WHY WRAPPING IT IN AN ARRAY IS NOT THE FIX
+  ///
+  /// It is tempting to "make the row conform" at read time by wrapping the
+  /// object in a one-element list, because then the cast succeeds. It does not:
+  /// `TransitionGuardEvaluation.fromJson` reads `guardName` with `as String`,
+  /// and the repair metadata has no `guardName`. The cast failure would simply
+  /// move one line down, from `decodeJsonArray` into
+  /// `workflow_transition_record.g.dart`. The shape is wrong at the level of
+  /// the ELEMENTS, not the container, and this column's fault cannot be papered
+  /// over by a container.
+  ///
+  /// ## WHAT IT DOES INSTEAD
+  ///
+  /// A malformed column degrades to ABSENT and is reported. Absent is the
+  /// honest answer — this row has no guard evaluations that can be read — and it
+  /// is the answer `WorkflowTransitionRecord` already maps to `const []`. The
+  /// fault is surfaced as `workflow.transition.guard_evaluations_malformed`,
+  /// naming the row, the JSON type that was found and the offending text, so
+  /// the degradation is visible rather than silent.
+  ///
+  /// The bytes are NOT lost, and nothing here rewrites them. The object in that
+  /// column is the RESTORE PAYLOAD of `20261014210000000` — the fields its own
+  /// `down` puts back verbatim — so a repair that replaced it, deleted it or
+  /// reshaped it would destroy the evidence of a human's voided approval. This
+  /// reader only READS the column and reports; the stored value is left exactly
+  /// as `20261014210000000` wrote it, which is also why the report quotes the
+  /// offending text rather than summarising it.
+  ///
+  /// ## A REPAIR MIGRATION FOR THIS COLUMN WAS PROPOSED AND WITHDRAWN
+  ///
+  /// Wrapping each non-array value in a one-element array was written, reviewed
+  /// and removed: it satisfies the `as List<dynamic>` cast above, so it makes
+  /// this report — the only thing standing between a malformed row and a silent
+  /// wrong answer — unreachable, and the element it wraps still fails
+  /// `guardName` one layer in, inside the generated record constructor at
+  /// `packages/platform_contracts/lib/src/types/workflow_transition_record.g.dart`.
+  /// The failure would have moved one layer down, not gone away. The negative
+  /// fact is an assertion rather than a comment:
+  /// `test/transition_row_malformed_guard_test.dart`, group "why the reader
+  /// degrades to ABSENT rather than wrapping in an array". Why the wrap was
+  /// tempting, and what it cost, is recorded in
+  /// `docs/engineering/learning/a-container-that-conforms-is-not-a-payload-that-does.md`.
+  List<dynamic>? _guardEvaluationsFromRow(Map<String, dynamic> m) {
+    final read = readJsonArrayColumn(m['guardEvaluationsJson'] as String?);
+    if (!read.isDefective) return read.value;
+    final raw = read.raw ?? '';
+    final quoted = raw.length > _maxQuotedColumnChars
+        ? '${raw.substring(0, _maxQuotedColumnChars)}…[truncated, '
+              '${raw.length} chars total]'
+        : raw;
+    _reportJsonArrayDefect(
+      'workflow.transition.guard_evaluations_malformed',
+      <String, Object?>{
+        'transitionId': m['transitionId'],
+        'workItemId': m['workItemId'],
+        'column': 'guardEvaluationsJson',
+        'declaredType': 'array',
+        'defect': read.defect?.name,
+        'observedChars': raw.length,
+        'observed': quoted,
+        'effect': 'guardEvaluations read as absent; row returned',
+        'sourcePayload':
+            'restore payload of migration 20261014210000000; '
+            'left exactly as stored',
+      },
+    );
+    return null;
   }
 
   Map<String, Object?> _workItemToParams(WorkItem item) {
