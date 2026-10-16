@@ -3308,10 +3308,128 @@ String engineeringReviewDedupeKey(WorkItem item, JobDefinition definition) {
   return '$base:a$attempt';
 }
 
+/// The four [ReviewVerdict] wire tokens, as a `"a" | "b"` alternation, rendered
+/// from the enum rather than transcribed.
+///
+/// Transcribing them is what `triageDefectInstruction` had to do by hand, and
+/// hand-transcribed enumerations are how a prompt ends up documenting a value the
+/// contract does not serialise — see that function's own drift-guard note, and
+/// `test/engineering_review_prompt_contract_test.dart` for the same guard here.
+/// Rendering them means adding or renaming a [ReviewVerdict] member changes this
+/// prompt on the next build instead of silently un-parsing reviewer output.
+String _reviewVerdictAlternation() =>
+    ReviewVerdict.values.map((v) => '"${v.wire}"').join(' | ');
+
+/// The documented shape of one entry in the reviewer's `findings` array: the
+/// fields the REVIEWER legitimately owns.
+///
+/// [DesignFinding] also requires `findingId`, `revisionId`, `reviewExecutionId`,
+/// `createdAt` and `version`, which are platform identity rather than review
+/// content: a reviewer cannot know its own `reviewExecutionId`. Asking for them
+/// would invite invented identifiers, and omitting them without a matching
+/// change at the reader would have every finding dropped as unparseable — which
+/// is exactly what `engineering_review_gate.dart` used to do. The gate stamps
+/// those five from the run it is already holding. See `_readReviewVerdict`.
+String _reviewFindingShape() =>
+    '''{
+    "severity": ${DesignFindingSeverity.values.map((v) => '"${v.wire}"').join(' | ')},
+    "dimension": "<the area you assessed, e.g. correctness, tests, security>",
+    "evidence": "<file:line, command and output, or commit that shows it>",
+    "requiredCorrection": "<what must change; empty string if nothing must>",
+    "affectedSurface": "<the files or surfaces the finding is about>"
+  }''';
+
 /// Builds an instruction for engineering review jobs.
-String engineeringReviewInstruction(WorkItem item, JobDefinition definition) =>
-    'Review the implementation for "${item.title}" (${item.workItemId}). '
-    'Provide independent assessment and return an engineering review verdict.';
+///
+/// ## WHY THIS IS A PAYLOAD CONTRACT AND NOT A SENTENCE
+///
+/// This used to be two lines that asked for "an engineering review verdict" in
+/// prose, and it is the whole reason no verdict was ever recorded. The review
+/// lane's only failure mode in QA was four reviews that ran to completion and
+/// produced real, specific findings — and four work items left at
+/// `review_in_progress` with `structuredResultJson` = `{}` and no decision,
+/// because nothing ever told the reviewer what to emit or where.
+///
+/// Three separate facts make that prompt's silence fatal, and each is verifiable:
+///
+///  * **It is the only instruction the reviewer gets.** `OpenCodeSession` opens
+///    its session with `{'cwd': ..., 'mcpServers': []}`
+///    (`packages/agent_runtime/lib/src/adapters/opencode/opencode_session.dart`)
+///    — no agent name, no system prompt, no role. Whatever this string says is
+///    the entire specification the reviewer has.
+///  * **The reader is strict.** `_readReviewVerdict` in
+///    `apps/server/lib/src/review/engineering_review_gate.dart` reads
+///    `structuredResult['verdict']` and feeds it to `ReviewVerdict.fromWire`,
+///    which throws `FormatException` on anything that is not an exact wire
+///    token. `CHANGES_REQUIRED`, `changesRequired` and `APPROVED` all fail.
+///  * **Nothing recovers a prose answer.** A completed turn with no JSON object
+///    yields `structuredResult == {}` plus a `structured_result_absent`
+///    diagnostic, and b1 correctly refuses to invent a verdict from that — so
+///    the item parks. The prompt is therefore load-bearing: without a stated
+///    shape there is no verdict, and without a verdict there is no decision.
+///
+/// ## WHY IT DOES NOT STEER THE VERDICT
+///
+/// The reviewer is told what each of the four verdicts MEANS and that the
+/// platform records whichever one comes back. It is not told which one to
+/// reach, no verdict is named as a default or as an expected answer, and the
+/// single most likely failure mode of a prompt like this one — a model choosing
+/// a token because the shape demands one — is forbidden explicitly.
+///
+/// "Found nothing blocking" is stated as a real outcome that has an honest
+/// answer among the four, because a reviewer that has genuinely found nothing
+/// must be able to say so without inventing a minor finding in order to
+/// justify a harsher token. That is the opposite of a nudge, and it is
+/// symmetric with the rule against softening a real one — and note that it
+/// names no token, because the WHAT-EACH-VERDICT-MEANS block above already
+/// maps every one of them exactly once, which is what keeps the presentation
+/// symmetric (`test/engineering_review_prompt_contract_test.dart` asserts
+/// that each token appears the same number of times).
+///
+/// This is the same discipline `triageDefectInstruction` follows, which is why
+/// the triage lane produces parseable output and this one did not.
+/// `test/engineering_review_prompt_contract_test.dart` is the drift guard.
+String engineeringReviewInstruction(WorkItem item, JobDefinition definition) {
+  return '''Review the implementation for "${item.title}" (${item.workItemId}).
+
+YOUR TASK:
+Independently review the change at the revision you were given. Verify it
+yourself rather than taking any claim about it on trust, and do not consult the
+work you are reviewing. Then report the conclusion you actually reached.
+
+OUTPUT FORMAT:
+Your final message must be a single JSON object and nothing else — no prose
+before it, none after it. It must have these fields:
+
+{
+  "verdict": ${_reviewVerdictAlternation()},
+  "findings": [${_reviewFindingShape()}],
+  "summary": "<2-3 sentences: what you checked and what you concluded>"
+}
+
+WHAT EACH VERDICT MEANS:
+- "approved"            no blockers found.
+- "approved_with_minor_findings"
+                        no blockers, but minor or advisory points are worth recording.
+- "changes_required"    the change must be corrected before it is accepted.
+- "rejected"            the change is not acceptable as an approach.
+
+RULES:
+1. "verdict" MUST be spelled exactly as one of the four tokens above, using those exact
+   lowercase tokens. No other spelling — no capitals, no camelCase, no trailing space —
+   is accepted.
+2. Report the verdict you actually reached. All four are valid answers and the platform
+   records whichever one you return. If this field is missing or unreadable, NO verdict
+   is recorded at all and the item stops for a person; the platform never supplies one
+   on your behalf.
+3. Do not report a problem you did not find, and do not soften one you did.
+   A review that finds nothing blocking is a real result with an honest answer
+   among the tokens above; it is not a gap to be filled with an invented
+   observation, and it is not a worse review than one that found something.
+4. "findings" MUST be an array — use [] when you have none. Put every finding that
+   supports your verdict in it.
+5. Do NOT include any prose outside the JSON output.''';
+}
 
 /// Builds a worker execution request for engineering review jobs.
 Future<WorkerExecutionRequest> engineeringReviewRequest(
