@@ -445,7 +445,7 @@ void main() {
 
   test(
     'fails closed: a review job with no resolvable artifact is not dispatched, '
-    'and review STANDS DOWN while the implementation inflow still has budget',
+    'and review STANDS DOWN so the implementation inflow can route it',
     () async {
       // The implementer completes WITHOUT producing a change, so no artifact
       // commit exists (`endingRevision == startingRevision`). The review
@@ -543,16 +543,27 @@ void main() {
   );
 
   test(
-    'fails closed: once the re-work budget is spent, the missing artifact '
-    'DOES raise a blocking engineeringReview decision',
+    'a re-work marker at its RETIRED bound does not raise a decision either — '
+    'it stands down like any other no-artifact item',
     () async {
-      // The one case the stand-down must not swallow. When the shared re-work
-      // discriminator has already reached `maxImplementationInflows`, the
-      // implementation lane will NOT route this item either — so review
-      // standing down would leave it at `agentCompleted` for ever with nobody
-      // acting on it. This is what the human gate is for, and the two sides
-      // read the same number precisely so they cannot disagree about whether
-      // the budget is spent.
+      // THIS USED TO ASSERT THE OPPOSITE.
+      //
+      // It was `'fails closed: once the re-work budget is spent, the missing
+      // artifact DOES raise a blocking engineeringReview decision'`, and it
+      // seeded `triageAttempt: maxImplementationInflows` and required
+      // `waitingForHumanDecision` plus a blocking `engineeringReview` decision
+      // with `missingArtifact: true`.
+      //
+      // Decision `92d567e3-da03-4c43-99f4-e3726472f0ab` (ARCHITECTURE,
+      // RESOLVED) answered `RETRY_LIMIT -> REMOVE`. There is no budget to be
+      // spent any more, so the premise of this test no longer exists, and the
+      // expectation encoded a strand: it required a human question about an
+      // item the implementation lane routes on its own, unbounded. The decision
+      // it would raise still offers only `rework` and `reject`, and neither
+      // reaches an implementer.
+      //
+      // The seed is kept, as a literal, because the point is precisely that the
+      // number no longer decides anything.
       final host = EngineeringReviewE2EHost(
         repo: repo,
         workspaceRoot: '${temp.path}/workspaces',
@@ -584,15 +595,14 @@ void main() {
 
       await host.runImplementer();
 
-      // The counter the implementation lane's bound reads, advanced as a human
-      // retry or a resolved rework decision would have advanced it.
+      // The value `maxImplementationInflows` used to hold. The constant is gone;
+      // the number is data, and nothing in this gate compares against it.
       final item = await host.workflowStore.readWorkItem('wi-er');
       await host.workflowStore.saveWorkItem(
         item.copyWith(
           metadata: {
             ...?item.metadata,
-            DurableWorkflowEngine.triageAttemptMetadataKey:
-                maxImplementationInflows,
+            DurableWorkflowEngine.triageAttemptMetadataKey: 3,
           },
         ),
       );
@@ -604,36 +614,61 @@ void main() {
       );
       expect(job, isNotNull);
 
+      // Captured, because "nothing was raised" and "the handler never ran" are
+      // different claims and only one of them is what the decision asked for.
+      final logs = <String>[];
       await engineeringReviewMissingArtifact(
         workflowEngine: host.workflowEngine,
         executionStore: host.executionStore,
         workerStore: host.workerStore,
         job: job!,
-        logger: (_, __) {},
+        logger: (message, _) => logs.add(message),
       );
 
-      final parked = await host.workflowEngine.loadWorkItem('wi-er');
-      expect(parked.state, WorkItemState.waitingForHumanDecision);
-      final decisionId = parked.blockingHumanDecisionId;
-      expect(decisionId, isNotNull);
-      final decision = await host.workflowStore.readHumanDecision(decisionId!);
-      expect(decision.decisionType, HumanDecisionType.engineeringReview);
-      expect(decision.blocking, isTrue);
-      expect(decision.metadata?['missingArtifact'], isTrue);
+      expect(
+        logs,
+        contains('engineering-review-missing-artifact-stands-down'),
+        reason:
+            'the marker is the number the bound used to hold, and the answer is '
+            'the same as for any other no-artifact producer: stand down',
+      );
+      expect(
+        logs,
+        isNot(contains('engineering-review-missing-artifact-parking')),
+        reason:
+            'and it did not park. `parking` is the log line that put the four QA '
+            'defects of 2026-10-16 in front of an operator whose only answers '
+            'were rework and reject',
+      );
 
-      // Idempotent: handling the same blocked job again is a no-op that leaves
-      // the SAME parked decision in place (the handler short-circuits on the
-      // already-parked state, so a retry cannot raise a second decision).
+      final stoodDown = await host.workflowEngine.loadWorkItem('wi-er');
+      expect(
+        stoodDown.blockingHumanDecisionId,
+        isNull,
+        reason:
+            'no `engineeringReview` decision exists, so nothing is waiting on a '
+            'person for an item the platform can still route itself',
+      );
+      expect(
+        stoodDown.state,
+        isNot(WorkItemState.waitingForHumanDecision),
+        reason: 'and the item was never moved into the parking state either',
+      );
+
+      // Idempotent: handling the same blocked job again is still a no-op, and
+      // still raises nothing. Before this change the idempotency assertion was
+      // that the SAME parked decision stayed in place; now it is that no
+      // decision appears at all, which is the stronger statement of the same
+      // property.
       await engineeringReviewMissingArtifact(
         workflowEngine: host.workflowEngine,
         executionStore: host.executionStore,
         workerStore: host.workerStore,
         job: job,
-        logger: (_, __) {},
+        logger: (message, _) => logs.add(message),
       );
-      final parkedAgain = await host.workflowEngine.loadWorkItem('wi-er');
-      expect(parkedAgain.state, WorkItemState.waitingForHumanDecision);
-      expect(parkedAgain.blockingHumanDecisionId, decisionId);
+      final stoodDownAgain = await host.workflowEngine.loadWorkItem('wi-er');
+      expect(stoodDownAgain.blockingHumanDecisionId, isNull);
     },
   );
 }
