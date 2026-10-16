@@ -762,6 +762,200 @@ The diff introduces a retry loop with no bound. It must be capped.
       },
     );
   });
+
+  // THE MEDIUM FINDING: `_recordNoVerdict` logged
+  // `'raised a verdict-less engineering review decision: …'` BEFORE
+  // `raiseVerdictAbsentDecision` ran, and that raise has three outcomes which
+  // write nothing. So the line asserted a fact about a call whose result was not
+  // yet known, and on those three paths it asserted something that did not
+  // happen — the same false-state class this lane exists to end, one layer down.
+  //
+  // The fix moved the claim AFTER the raise and made it read the returned
+  // outcome. These tests hold that on all FOUR outcomes, and the non-vacuity
+  // test at the end proves the matcher can actually match: a negative assertion
+  // over a string that never occurs would pass forever.
+  group('the decision log states what the raise DID, on every outcome', () {
+    /// The sentence the gate reports about the decision, read from the log line
+    /// written AFTER the raise returned.
+    String decisionSentence(_Host host) =>
+        host.loggedEvents
+                .firstWhere(
+                  (l) => l.$1 == 'engineering-review-gate-no-verdict-decision',
+                )
+                .$2['decision']
+            as String;
+
+    String outcomeName(_Host host) =>
+        host.loggedEvents
+                .firstWhere(
+                  (l) => l.$1 == 'engineering-review-gate-no-verdict-decision',
+                )
+                .$2['outcome']
+            as String;
+
+    /// The exact false claim the finding named. Matched as a whole phrase so a
+    /// line may still use the word "raised" truthfully without tripping it.
+    const falseClaim = 'raised a verdict-less engineering review decision';
+
+    test('when the decision IS raised, the log says so', () async {
+      final host = await _Host.completedWithoutVerdict(
+        prose: _realReviewProse,
+      );
+
+      await host.drainGate();
+
+      expect(outcomeName(host), 'raised');
+      expect(decisionSentence(host), contains(falseClaim));
+    });
+
+    test(
+      'alreadyPending: the log says NOT raised, and no line claims it',
+      () async {
+        final host = await _Host.completedWithoutVerdict(
+          prose: _realReviewProse,
+          parkedBetweenReads: true,
+        );
+
+        await host.drainGate();
+
+        expect(outcomeName(host), 'alreadyPending');
+        expect(decisionSentence(host), contains('not raised'));
+        // Checked across EVERY line, not just the decision field: the pre-raise
+        // record is where the false sentence used to live.
+        expect(
+          host.loggedEvents.map((l) => l.$2['decision'] ?? ''),
+          isNot(contains(contains(falseClaim))),
+          reason:
+              'NO log line may claim a decision was raised when the raise '
+              'returned alreadyPending and wrote nothing',
+        );
+        expect(
+          await host.workflowStore.readHumanDecisionsForWorkItem(
+            _Host.workItemId,
+          ),
+          isEmpty,
+          reason: 'and the write-nothing claim has to be true as well',
+        );
+      },
+    );
+
+    test(
+      'producerIdentityUnreadable: the log says NOT raised, and no line claims '
+      'it',
+      () async {
+        final host = await _Host.completedWithoutVerdict(
+          prose: _realReviewProse,
+          producerActorId: null,
+        );
+
+        await host.drainGate();
+
+        expect(outcomeName(host), 'producerIdentityUnreadable');
+        expect(decisionSentence(host), contains('not raised'));
+        expect(decisionSentence(host), contains('actorIsNotSelf()'));
+        expect(
+          host.loggedEvents.map((l) => l.$2['decision'] ?? ''),
+          isNot(contains(contains(falseClaim))),
+        );
+        expect(
+          await host.workflowStore.readHumanDecisionsForWorkItem(
+            _Host.workItemId,
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    test('refused: the log says NOT raised, and no line claims it', () async {
+      // A REAL refusal, not a stub: the producer identity is the orchestrator's
+      // own actor id, so `actorIsNotSelf()` — which
+      // `reviewInProgress -> waitingForHumanDecision` carries — rejects the
+      // entry exactly as it would for a mis-stamped producer id in production.
+      final host = await _Host.completedWithoutVerdict(
+        prose: _realReviewProse,
+        producerActorId: 'orchestrator',
+      );
+
+      await host.drainGate();
+
+      expect(outcomeName(host), 'refused');
+      expect(decisionSentence(host), contains('not raised'));
+      expect(
+        host.loggedEvents.map((l) => l.$2['decision'] ?? ''),
+        isNot(contains(contains(falseClaim))),
+      );
+      expect(
+        await host.workflowStore.readHumanDecisionsForWorkItem(
+          _Host.workItemId,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('a review that did NOT finish still claims nothing either', () async {
+      // The pre-existing assertion, kept: `maxAttempts` is still owed a retry.
+      final host = await _Host.notFinished(
+        executionStatus: AgentSessionStatus.failed,
+        executionReason: 'execution exceeded its 300s timeout budget',
+      );
+
+      await host.drainGate();
+
+      expect(
+        host.loggedEvents
+            .firstWhere((l) => l.$1 == 'engineering-review-gate-no-verdict')
+            .$2['decision'],
+        contains('maxAttempts'),
+      );
+      expect(
+        host.loggedEvents.map((l) => l.$2['decision'] ?? ''),
+        isNot(contains(contains(falseClaim))),
+      );
+    });
+
+    test(
+      'NON-VACUITY: the matcher matches on the raised path, and the four '
+      'outcomes produce four DIFFERENT sentences',
+      () async {
+        // Without this, every negative assertion above would also pass if
+        // `verdictAbsentDecisionSentence` returned one constant string for all
+        // four outcomes — including the raised one.
+        final raised = await _Host.completedWithoutVerdict(
+          prose: _realReviewProse,
+        );
+        await raised.drainGate();
+
+        final alreadyPending = await _Host.completedWithoutVerdict(
+          prose: _realReviewProse,
+          parkedBetweenReads: true,
+        );
+        await alreadyPending.drainGate();
+
+        final unreadable = await _Host.completedWithoutVerdict(
+          prose: _realReviewProse,
+          producerActorId: null,
+        );
+        await unreadable.drainGate();
+
+        final refused = await _Host.completedWithoutVerdict(
+          prose: _realReviewProse,
+          producerActorId: 'orchestrator',
+        );
+        await refused.drainGate();
+
+        final sentences = [
+          decisionSentence(raised),
+          decisionSentence(alreadyPending),
+          decisionSentence(unreadable),
+          decisionSentence(refused),
+        ];
+
+        expect(sentences.toSet(), hasLength(4));
+        expect(sentences.where((s) => s.contains(falseClaim)), hasLength(1));
+        expect(sentences.where((s) => s.contains('not raised')), hasLength(3));
+      },
+    );
+  });
 }
 
 /// Verbatim from the QA record on 2026-10-14, trimmed. This is what a real
@@ -835,7 +1029,10 @@ class _Host {
   static const producerExecutionId = 'agx-wx-impl';
   static final _now = DateTime.utc(2026, 10, 15, 12);
 
-  static Future<_Host> _base({String? producerActorId}) async {
+  static Future<_Host> _base({
+    String? producerActorId,
+    bool parkedBetweenReads = false,
+  }) async {
     final workflowStore = InMemoryWorkflowStore();
     final jobStore = InMemoryJobStore();
     await workflowStore.saveWorkItem(
@@ -870,9 +1067,16 @@ class _Host {
     );
     await jobStore.saveJob(job);
 
+    // Only the ENGINE sees the decorator. `workflowStore` stays the real
+    // in-memory store, so assertions in these tests read what was actually
+    // persisted rather than what the decorator answered.
+    final engineStore = parkedBetweenReads
+        ? _ParkedBetweenReads(workflowStore)
+        : workflowStore;
+
     return _Host._(
       workflowStore: workflowStore,
-      workflowEngine: DurableWorkflowEngine(store: workflowStore),
+      workflowEngine: DurableWorkflowEngine(store: engineStore),
       executionStore: InMemoryExecutionStore(),
       jobStore: jobStore,
       job: job,
@@ -885,8 +1089,12 @@ class _Host {
     required String prose,
     Map<String, dynamic> structuredResult = const {},
     String? producerActorId = producerExecutionId,
+    bool parkedBetweenReads = false,
   }) async {
-    final host = await _base(producerActorId: producerActorId);
+    final host = await _base(
+      producerActorId: producerActorId,
+      parkedBetweenReads: parkedBetweenReads,
+    );
     await host._saveExecution(AgentSessionStatus.completed, null);
     await host.executionStore.saveResult(
       reviewerExecutionId,
@@ -1079,4 +1287,79 @@ class _FakeSession implements Session {
   dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
     'Session.${invocation.memberName} is not used here',
   );
+}
+
+/// Answers the SECOND and later `readWorkItem` calls with an item already parked
+/// behind a pending decision, and delegates everything else unchanged.
+///
+/// This is the race `raiseVerdictAbsentDecision`'s `alreadyPending` branch exists
+/// for: the gate has already read the item at `review_in_progress` and recorded
+/// the absence, and by the time the raise re-reads the item something else has
+/// parked it. It cannot be simulated by parking the item up front — the gate
+/// returns early for an item already at `waitingForHumanDecision`, so the branch
+/// would never be reached and the assertion would be vacuous.
+class _ParkedBetweenReads implements WorkflowStore {
+  _ParkedBetweenReads(this._inner);
+
+  final WorkflowStore _inner;
+  int _reads = 0;
+
+  @override
+  Future<WorkItem> readWorkItem(String workItemId) async {
+    final item = await _inner.readWorkItem(workItemId);
+    _reads++;
+    if (_reads < 2) return item;
+    return item.copyWith(
+      state: WorkItemState.waitingForHumanDecision,
+      blockingHumanDecisionId: 'dec-parked-by-something-else',
+    );
+  }
+
+  @override
+  Future<List<WorkItem>> readAllWorkItems() => _inner.readAllWorkItems();
+
+  @override
+  Future<void> saveWorkItem(WorkItem item, {int? expectedVersion}) =>
+      _inner.saveWorkItem(item, expectedVersion: expectedVersion);
+
+  @override
+  Future<HumanDecision> readHumanDecision(String decisionId) =>
+      _inner.readHumanDecision(decisionId);
+
+  @override
+  Future<List<HumanDecision>> readHumanDecisionsForWorkItem(
+    String workItemId,
+  ) => _inner.readHumanDecisionsForWorkItem(workItemId);
+
+  @override
+  Future<void> saveHumanDecision(HumanDecision decision) =>
+      _inner.saveHumanDecision(decision);
+
+  @override
+  Future<List<WorkflowTransitionRecord>> readTransitionHistory(
+    String workItemId,
+  ) => _inner.readTransitionHistory(workItemId);
+
+  @override
+  Future<WorkflowTransitionRecord?> findTransitionByIdempotencyKey(
+    String workItemId,
+    String idempotencyKey,
+  ) => _inner.findTransitionByIdempotencyKey(workItemId, idempotencyKey);
+
+  @override
+  Future<void> appendTransitionRecord(WorkflowTransitionRecord record) =>
+      _inner.appendTransitionRecord(record);
+
+  @override
+  Future<void> appendOperatorAction(OperatorActionRecord record) =>
+      _inner.appendOperatorAction(record);
+
+  @override
+  Future<List<OperatorActionRecord>> readOperatorActionsForWorkItem(
+    String workItemId,
+  ) => _inner.readOperatorActionsForWorkItem(workItemId);
+
+  @override
+  Future<T> inTransaction<T>(Future<T> Function(WorkflowStore store) body) =>
+      _inner.inTransaction(body);
 }

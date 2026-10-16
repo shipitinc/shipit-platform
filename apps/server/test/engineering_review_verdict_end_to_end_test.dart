@@ -500,11 +500,13 @@ that do not line up.
             hasLength(1),
             reason: 'the review completed, so it must reach a person',
           );
-          final metadata = decisions.single.metadata ?? const <String, dynamic>{};
+          final metadata =
+              decisions.single.metadata ?? const <String, dynamic>{};
           expect(
             metadata.containsKey('reviewVerdict'),
             isFalse,
-            reason: '"$wire" is not a ReviewVerdict wire value, so it must not '
+            reason:
+                '"$wire" is not a ReviewVerdict wire value, so it must not '
                 'become one — not in the record, and not in the '
                 'recommendation',
           );

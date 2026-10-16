@@ -452,10 +452,21 @@ Future<void> _recordNoVerdict({
     // Says WHAT WAS DONE about it, because "no verdict" on its own is exactly
     // the sentence that left four items invisible: the reader cannot tell a gate
     // that is handling this from a gate that dropped it.
+    //
+    // AND ONLY WHAT IS ALREADY TRUE WHEN THIS LINE IS WRITTEN. When the review
+    // completed, the decision is raised by the CALLER, after this record, and
+    // `raiseVerdictAbsentDecision` has three outcomes that write nothing
+    // (`alreadyPending`, `producerIdentityUnreadable`, `refused`). A sentence
+    // emitted here claiming a decision was raised would therefore be false on
+    // every one of them — the same class of statement this gate exists to end,
+    // one layer down, and the exact sentence removed at a different layer. So
+    // this line claims the absence record and nothing else; the caller logs
+    // what the raise actually did.
     'decision': reviewCompleted
-        ? 'raised a verdict-less engineering review decision: it asserts no '
-              'verdict, carries the reviewer\'s own prose, and offers only '
-              'rework and cancel'
+        ? 'no decision claimed by this record. It states the absence, which is '
+              'durable on the reviewer\'s execution timeline; the verdict-less '
+              'decision is handled straight afterwards and reports its own '
+              'outcome under engineering-review-gate-no-verdict-decision'
         : 'not raised; this review has not finished, so the reviewer job\'s own '
               'bounded maxAttempts is still owed a retry and the item is left '
               'retryable at review_in_progress',
@@ -601,8 +612,7 @@ const List<HumanDecisionOption> verdictAbsentOptions = [
   HumanDecisionOption(
     optionId: 'cancel',
     label: 'Abandon this work item',
-    description:
-        'Stop working on this. The review and its record are kept.',
+    description: 'Stop working on this. The review and its record are kept.',
   ),
 ];
 
@@ -732,6 +742,38 @@ enum VerdictAbsentDecisionOutcome {
   /// The engine refused the gate entry. The item is left exactly where it was
   /// and still needs a person; this is a visible block, not a quiet one.
   refused,
+}
+
+/// The sentence that states what raising the verdict-less decision ACTUALLY did
+/// with one work item.
+///
+/// ## ONLY `raised` MAY CLAIM THAT SOMETHING WAS RAISED
+///
+/// The other three outcomes write nothing, and each has to say so in the same
+/// words a reader can grep. A log line that said "raised" on a path that raised
+/// nothing would be the false-state class this file exists to eliminate, one
+/// layer below the reviewer verdict — so the claim is made by exactly one branch
+/// and the three write-nothing branches each carry `not raised` plus what the
+/// item is left needing.
+String verdictAbsentDecisionSentence(VerdictAbsentDecisionOutcome outcome) {
+  switch (outcome) {
+    case VerdictAbsentDecisionOutcome.raised:
+      return 'raised a verdict-less engineering review decision: it asserts no '
+          'verdict, carries the reviewer\'s own prose, and offers only rework '
+          'and cancel';
+    case VerdictAbsentDecisionOutcome.alreadyPending:
+      return 'not raised by this tick; the item is already parked behind a '
+          'pending engineeringReview decision, so a repeated tick did not mint '
+          'a second question';
+    case VerdictAbsentDecisionOutcome.producerIdentityUnreadable:
+      return 'not raised; the producer identity is unreadable, so '
+          'actorIsNotSelf() fails closed. Nothing was written and nothing was '
+          'fabricated to get past the guard that refused it';
+    case VerdictAbsentDecisionOutcome.refused:
+      return 'not raised; the engine refused the gate entry and wrote nothing. '
+          'The item is still at review_in_progress, still needs a person, and '
+          'the absence is on its reviewer\'s timeline';
+  }
 }
 
 /// Raises the verdict-less decision for a review that completed with none,
@@ -977,7 +1019,7 @@ TickJobHandler engineeringReviewTickHandler({
 
       if (execution.status == AgentSessionStatus.completed) {
         final producerActorId = item.metadata?['producerActorId'] as String?;
-        await raiseVerdictAbsentDecision(
+        final outcome = await raiseVerdictAbsentDecision(
           workflowEngine: workflowEngine,
           workItemId: workItemId,
           job: job,
@@ -988,6 +1030,17 @@ TickJobHandler engineeringReviewTickHandler({
           producerActorId: producerActorId,
           logger: logger,
         );
+        // Written AFTER the raise, and carrying what the raise actually did.
+        // This is the only place in the file that is allowed to say a decision
+        // was raised, and it says it from the returned outcome rather than from
+        // the fact that the call was attempted.
+        logger?.call('engineering-review-gate-no-verdict-decision', {
+          'jobId': job.jobId,
+          'workItemId': workItemId,
+          'executionId': executionId,
+          'outcome': outcome.name,
+          'decision': verdictAbsentDecisionSentence(outcome),
+        });
       }
       return;
     }

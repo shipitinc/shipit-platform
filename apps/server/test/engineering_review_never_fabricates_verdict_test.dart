@@ -784,7 +784,9 @@ class _GateHost {
     );
     expect(
       decision.recommendation,
-      isNot(anyOf('APPROVE', 'CHANGES_REQUIRED', 'approved', 'changes_required')),
+      isNot(
+        anyOf('APPROVE', 'CHANGES_REQUIRED', 'approved', 'changes_required'),
+      ),
       reason:
           'the recommendation is rendered to an operator under "WHAT WE '
           'SUGGEST". On this decision it must not be readable as an assessment. '
@@ -837,8 +839,9 @@ class _GateHost {
       reason: 'one question, not a queue of them',
     );
     expect(
-      (await executionStore.readEvents(reviewerExecutionId))
-          .where((e) => e.payload?['reviewGate'] == 'no_verdict'),
+      (await executionStore.readEvents(
+        reviewerExecutionId,
+      )).where((e) => e.payload?['reviewGate'] == 'no_verdict'),
       isNotEmpty,
       reason:
           'b1\'s durable absence record is kept as well: the decision is the '
