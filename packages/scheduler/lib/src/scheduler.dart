@@ -1573,13 +1573,57 @@ class Scheduler {
       );
     }
 
-    // THE BOUND. Checked before the write, on the item's own durable marker, so
-    // a repeated automatic route cannot spin. See `maxImplementationInflows`
+    // THE BOUND — AND IT GOVERNS THIS LANE'S OWN ENTRIES, NOT BOTH ROUTES.
+    //
+    // Checked before the write, on the item's own durable marker, so a repeated
+    // automatic route into THIS lane cannot spin. See `maxImplementationInflows`
     // for WHY that marker is the SHARED re-work discriminator and not a count
     // of entries into this lane — the message below names the discriminator for
     // the same reason, because an operator-facing refusal that misstates which
     // counter it read is worse than a tighter bound.
-    if (reWorkAttempt >= maxImplementationInflows) {
+    //
+    // ## WHY IT IS SCOPED BY `entryStates` RATHER THAN RUN FOR BOTH ROUTES
+    //
+    // `completionRouteFor` has two answers and only ONE of them is a state this
+    // definition dispatches from. `implementFeatureDefinition.entryStates` is
+    // `{implementationReady}` — the assert at the top of `_runCompletionInflow`
+    // holds the declaration to that — so the no-artifact route lands inside this
+    // lane and the commit route lands on `reviewInProgress`, which is
+    // `engineeringReviewDefinition.targetState`: the REVIEW lane's state.
+    //
+    // A counter that bounds automatic entries into THIS lane has no standing to
+    // refuse a route into ANOTHER one. `maxImplementationInflows` bounds how
+    // many times the platform may spend a real implementer execution on one item
+    // unattended, and a producer that committed is not asking for one. Refusing
+    // its route told an operator the lane's budget had been spent on an item the
+    // lane was never going to run — and claimed the review lane would then park
+    // it for a human, which is the opposite of what happens to an item holding a
+    // reviewable commit: the review workload resolver resolves that one, so no
+    // `blockedArtifactMissing` job is ever created and
+    // `engineeringReviewMissingArtifact` is never called for it.
+    //
+    // The predicate is `entryStates.contains(target)` rather than a spelled-out
+    // state, so the bound follows the lane's own declaration — the same
+    // declaration that decides whether the route is dispatchable here at all —
+    // instead of a second list that could drift away from it.
+    //
+    // ## AND CYCLE SAFETY IS NOT SPENT ON THE REVIEW ROUTE
+    //
+    // The loop this bound exists to break is
+    // `agentCompleted -> implementationReady -> agentExecuting -> agentCompleted`
+    // and every edge of it is inside this lane; the commit route is not on that
+    // cycle. On this code it cannot even be walked from here: the write it would
+    // perform is `agentCompleted -> reviewInProgress`, which carries
+    // `GuardConditions.agentResultValid()` (`work_item_transitions.dart`), and
+    // the scheduler has no execution of its own to supply the producer's
+    // `AgentResult` under `context['agentResult']` — the same unsatisfiable probe
+    // `engineeringReviewDefinition.skipWorkflowPolicyCheck` exists to skip. So
+    // the review route advances no counter and moves no item, which is exactly
+    // why declining to bound it cannot open a loop: an item that keeps returning
+    // to `agentCompleted` spends the counter on the IMPLEMENTATION route, where
+    // the bound still applies and still refuses.
+    if (_definition.entryStates.contains(target) &&
+        reWorkAttempt >= maxImplementationInflows) {
       return CompletionInflowMove(
         workItemId: item.workItemId,
         from: item.state,
@@ -1618,10 +1662,30 @@ class Scheduler {
         idempotencyKey:
             'completion-inflow-${item.workItemId}-'
             '${item.metadata?['producerActorId'] ?? 'no-producer'}',
-        reason:
+        // WRITTEN INTO THE DURABLE TRANSITION RECORD, so it has to be true for
+        // whichever route was taken. It used to be one string written for the
+        // no-artifact case and used for both, so a rejected commit route left a
+        // permanent audit row asserting "the producer ... left no implementation
+        // artifact ... so there is nothing to review and the item is routed into
+        // the implementation lane" — about an item whose producer had committed,
+        // on a route to `reviewInProgress`. An operator reading the history of
+        // this item would have been told the exact opposite of what happened.
+        //
+        // Two branches rather than one interpolated sentence, for the same
+        // reason `completionRouteFor` is a `switch` and not an inline `if`: the
+        // asymmetry between the two verdicts is the whole safety argument, and a
+        // single string with a hole in it is where the asymmetry silently
+        // becomes a lie.
+        reason: switch (produced) {
+          CommitProduced() =>
+            'the producer of ${item.workItemId} left an implementation '
+                'artifact ($produced), so the item is routed to '
+                '${target.wire} for engineering review',
+          NoCommitProduced() =>
             'the producer of ${item.workItemId} left no implementation '
-            'artifact ($produced), so there is nothing to review and the item '
-            'is routed into the implementation lane',
+                'artifact ($produced), so there is nothing to review and the '
+                'item is routed to ${target.wire}',
+        },
         // Same transaction as the move, through the engine's own merge: the
         // dedupe key this route will be dispatched under is computed from this
         // marker, so a crash between the two would strand the item at a
