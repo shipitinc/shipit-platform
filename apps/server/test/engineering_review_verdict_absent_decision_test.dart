@@ -1181,6 +1181,110 @@ The diff introduces a retry loop with no bound. It must be capped.
       },
     );
   });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // THE ROUTE THAT REPLACES THE DEAD END — decision
+  // 92d567e3-da03-4c43-99f4-e3726472f0ab (`REREVIEW -> AUTOMATIC`).
+  //
+  // The measured dead end this file's sibling group above documents the cause
+  // of: an item at `review_in_progress` whose reviewer concluded nothing was
+  // parked behind `[rework, reject]`, and
+  //
+  //   > how would a reviewer actually review it.
+  //
+  // `reviewGateRouteFor` is the whole routing rule, as a pure function over two
+  // answers this repository already has one named function each for. It is
+  // tested HERE, exhaustively, because it is the one place where a wrong branch
+  // is invisible: both branches end at the same state, so the observable
+  // difference is entirely in WHICH lane the item is handed to and WHETHER a
+  // human is asked. The behavioural evidence — the real schedulers, the real
+  // dispatch — is in `engineering_review_verdict_absent_smoke_test.dart`, which
+  // names no new symbol and so can be run against the unmodified gate.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  group('the route for a review that concluded nothing', () {
+    test('an artifact routes to RE-REVIEW, and no budget can say otherwise', () {
+      // The full budget range, because the asymmetry is the safety argument: an
+      // implementation-lane counter bounds ENTRIES INTO THAT LANE, and a commit's
+      // route into the review lane is not an entry into it. A version of this
+      // function that consulted the bound on the commit branch would refuse to
+      // review a commit precisely because the implementation lane had been busy.
+      for (final attempt in const [0, 1, 2, maxImplementationInflows, 99]) {
+        expect(
+          reviewGateRouteFor(
+            produced: const CommitProduced(
+              repositoryPath: '/durable/clone',
+              commit: 'a-real-commit',
+            ),
+            implementationLaneWillRoute: attempt < maxImplementationInflows,
+          ),
+          ReviewGateRoute.reReview,
+          reason:
+              'a commit exists and nobody has looked at it. That is the whole '
+              'question, and the re-work discriminator reads $attempt, which is '
+              'irrelevant to it',
+        );
+      }
+    });
+
+    test('no artifact routes to IMPLEMENTATION while the lane will take it', () {
+      expect(
+        reviewGateRouteFor(
+          produced: const NoCommitProduced(
+            NoProducedCommitReason.noCommitProduced,
+            'the producing execution committed no code',
+          ),
+          implementationLaneWillRoute: true,
+        ),
+        ReviewGateRoute.implementation,
+        reason:
+            'nothing to review, so the item belongs to the lane that can do the '
+            'work that is missing. This is `completionRouteFor`\'s own answer '
+            'for a no-commit producer, reached without transcribing it',
+      );
+    });
+
+    test('no artifact AND no budget routes to a HUMAN, never nowhere', () {
+      // The invariant that keeps automatic routing from becoming a drop. Four
+      // different "no commit" causes, because they are four different incidents
+      // an operator reads differently, and none of them may be quietly looped.
+      for (final cause in NoProducedCommitReason.values) {
+        expect(
+          reviewGateRouteFor(
+            produced: NoCommitProduced(cause, 'no artifact: $cause'),
+            implementationLaneWillRoute: false,
+          ),
+          ReviewGateRoute.humanDecision,
+          reason:
+              '${cause.name}: the implementation lane will not take this item, so '
+              'there is no route. It reaches a person on the decision that was '
+              'already there — never nowhere',
+        );
+      }
+    });
+
+    test('NO member of the route reads as a verdict', () {
+      // The b1 property, on the new type. `reReview` is the member a reader
+      // could most plausibly mistake for progress on a review; asserting the
+      // wire values against it is what stops a future edit from renaming it to
+      // something like `approved`.
+      for (final route in ReviewGateRoute.values) {
+        for (final wire in ReviewVerdict.values) {
+          expect(
+            route.wire,
+            isNot(wire.wire),
+            reason:
+                '${wire.wire} is a reviewer assessment. $route says which lane '
+                'acts next and nothing else',
+          );
+        }
+        expect(
+          route.wire,
+          isNot(anyOf('APPROVE', 'CHANGES_REQUIRED', 'REWORK')),
+        );
+      }
+    });
+  });
 }
 
 /// Verbatim from the QA record on 2026-10-14, trimmed. This is what a real
