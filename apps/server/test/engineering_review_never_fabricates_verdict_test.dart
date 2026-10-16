@@ -941,6 +941,13 @@ class _GateHost {
   static const workItemId = 'wi-verdict';
   static const reviewerExecutionId = 'agx-wx-review';
   static const producerExecutionId = 'agx-wx-impl';
+
+  /// A real commit, so `_base`'s producer produces `CommitProduced`.
+  static const _producerCommit = 'c0ffee1';
+
+  /// What that producer started at, so [_producerCommit] differs from it.
+  static const _producerStartingRevision = 'aaaaaaa';
+
   static final _now = DateTime.utc(2026, 10, 14, 9);
 
   /// A finding in [DesignFinding]'s own wire shape — every required field
@@ -969,13 +976,49 @@ class _GateHost {
   /// a live retry from a spent one. They are stamped exactly as `Scheduler._adopt`
   /// stamps them for the same worker outcome, so a host models a row the scheduler
   /// can really produce rather than one it cannot.
+  /// ## WHY EVERY HOST HERE ALSO SPENDS ITS AUTOMATIC RE-REVIEW BUDGET
+  ///
+  /// RE-BASELINED by the B2 correction. Decision
+  /// `92d567e3-da03-4c43-99f4-e3726472f0ab` resolved `REREVIEW -> AUTOMATIC`, so
+  /// the gate now ROUTES a review that concluded nothing before it raises, and
+  /// the verdict-less decision is the fallback for an item routing cannot
+  /// handle.
+  ///
+  /// These hosts assert that the fallback carries no verdict anywhere. They are
+  /// therefore models of the fallback: a real commit to review, and the
+  /// automatic re-review budget already spent, which is the shape a person is
+  /// genuinely right for. `_GateHost.routable` is the same item with the budget
+  /// intact, and it is where the ROUTE is asserted — behaviourally, against the
+  /// real schedulers, in
+  /// `apps/server/test/engineering_review_composition_order_test.dart`.
   static Future<_GateHost> _base({
     JobState jobState = JobState.succeeded,
     JobFailure? failure,
     int? attempt,
+    int automaticReroutesSpent = maxAutomaticReviewReroutes,
+    String? producerEndingRevision = _producerCommit,
   }) async {
     final workflowStore = InMemoryWorkflowStore();
     final jobStore = InMemoryJobStore();
+    final workerStore = InMemoryWorkerStore();
+    if (producerEndingRevision != null) {
+      await workerStore.saveWorkerExecution(
+        WorkerExecution(
+          workerExecutionId: 'wx-impl',
+          workItemId: workItemId,
+          repositoryPath: '/durable/clone',
+          requestedStartingRevision: _producerStartingRevision,
+          requiredCapabilities: const {
+            WorkerCapability.linux,
+            WorkerCapability.git,
+          },
+          agentExecutionId: producerExecutionId,
+          endingRevision: producerEndingRevision,
+          status: WorkerExecutionStatus.executedPass,
+          cleanupPolicy: WorkerCleanupPolicy.removeAlways,
+        ),
+      );
+    }
     await workflowStore.saveWorkItem(
       WorkItem(
         workItemId: workItemId,
@@ -984,7 +1027,13 @@ class _GateHost {
         title: 'A change nobody reviewed',
         description: 'The implementer committed; the reviewer did not answer.',
         state: WorkItemState.reviewInProgress,
-        metadata: const {'producerActorId': producerExecutionId},
+        metadata: {
+          'producerActorId': producerExecutionId,
+          engineeringReviewAutoRerouteMetadataKey: {
+            'productionPass': null,
+            'spent': automaticReroutesSpent,
+          },
+        },
         createdAt: _now,
         updatedAt: _now,
       ),
@@ -1015,7 +1064,7 @@ class _GateHost {
       workflowStore: workflowStore,
       workflowEngine: DurableWorkflowEngine(store: workflowStore),
       executionStore: InMemoryExecutionStore(),
-      workerStore: InMemoryWorkerStore(),
+      workerStore: workerStore,
       jobStore: jobStore,
       job: job,
       loggedEvents: <Map<String, dynamic>>[],
@@ -1028,10 +1077,20 @@ class _GateHost {
   /// Written the way `LocalWorker` writes it, against the same
   /// `producerActorId` the coordinator stamps, because `producedCommitFor` joins
   /// the two records on exactly that pair and refuses to guess when it cannot.
+  ///
+  /// The BUDGET IS LEFT INTACT here, unlike `_base`'s default, because these
+  /// hosts assert the ROUTE and a route needs a re-review to spend. `null` for
+  /// [producerEndingRevision] keeps `_base` from writing a producer execution of
+  /// its own, which would make two carry the same `producerActorId` and turn
+  /// `producedCommitFor`'s answer into `producerExecutionAmbiguous` — a refusal
+  /// to attribute, which is a different question from the one these hosts ask.
   static Future<_GateHost> producerArtifact({
     required String? endingRevision,
   }) async {
-    final host = await _base();
+    final host = await _base(
+      automaticReroutesSpent: 0,
+      producerEndingRevision: null,
+    );
     await host.workerStore.saveWorkerExecution(
       WorkerExecution(
         workerExecutionId: 'wx-impl',
@@ -1196,6 +1255,7 @@ class _GateHost {
   Future<void> drainGate() => engineeringReviewTickHandler(
     workflowEngine: workflowEngine,
     executionStore: executionStore,
+    workerStore: workerStore,
     logger: (message, context) {
       if (message == 'engineering-review-gate-no-verdict') {
         loggedEvents.add(context);

@@ -307,6 +307,7 @@ class EngineeringReviewE2EHost {
   Future<void> drainGate(Job job) => engineeringReviewTickHandler(
     workflowEngine: workflowEngine,
     executionStore: executionStore,
+    workerStore: workerStore,
     logger: (_, _) {},
   )(job);
 

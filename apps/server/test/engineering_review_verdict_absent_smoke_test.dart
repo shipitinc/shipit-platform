@@ -68,6 +68,10 @@ void main() {
       final engine = DurableWorkflowEngine(store: store);
       final executions = InMemoryExecutionStore();
       final jobs = InMemoryJobStore();
+      final workers = await _producerCommitted(
+        workItemId: 'wi-no-verdict',
+        producerActorId: 'agx-wx-impl',
+      );
 
       final now = DateTime.utc(2026, 10, 15, 12);
       await store.saveWorkItem(
@@ -78,7 +82,16 @@ void main() {
           title: 'A change nobody could review',
           description: 'The implementer committed; the review said nothing.',
           state: WorkItemState.reviewInProgress,
-          metadata: const {'producerActorId': 'agx-wx-impl'},
+          metadata: {
+            'producerActorId': 'agx-wx-impl',
+            // The automatic re-review budget is already spent, so the ROUTE
+            // cannot take this item and the fallback decision is what is
+            // left. See `_producerCommitted`.
+            engineeringReviewAutoRerouteMetadataKey: {
+              'productionPass': null,
+              'spent': maxAutomaticReviewReroutes,
+            },
+          },
           createdAt: now,
           updatedAt: now,
         ),
@@ -151,6 +164,11 @@ void main() {
       await engineeringReviewTickHandler(
         workflowEngine: engine,
         executionStore: executions,
+        // Holding the producer's real commit — see `_producerCommitted`. These
+        // two hosts are the FALLBACK: a real artifact and a spent automatic
+        // re-review budget, which is the only shape in which a person is the
+        // right answer now that the route exists.
+        workerStore: workers,
         logger: (message, context) {},
       )(job);
 
@@ -240,6 +258,10 @@ void main() {
       final engine = DurableWorkflowEngine(store: store);
       final executions = InMemoryExecutionStore();
       final jobs = InMemoryJobStore();
+      final workers = await _producerCommitted(
+        workItemId: 'wi-review-crashed',
+        producerActorId: 'agx-wx-impl',
+      );
 
       final now = DateTime.utc(2026, 10, 15, 12);
       await store.saveWorkItem(
@@ -250,7 +272,14 @@ void main() {
           title: 'A change nobody could review',
           description: 'The implementer committed; the reviewer timed out.',
           state: WorkItemState.reviewInProgress,
-          metadata: const {'producerActorId': 'agx-wx-impl'},
+          metadata: {
+            'producerActorId': 'agx-wx-impl',
+            // Spent, for the same reason and with the same consequence as above.
+            engineeringReviewAutoRerouteMetadataKey: {
+              'productionPass': null,
+              'spent': maxAutomaticReviewReroutes,
+            },
+          },
           createdAt: now,
           updatedAt: now,
         ),
@@ -303,6 +332,11 @@ void main() {
       await engineeringReviewTickHandler(
         workflowEngine: engine,
         executionStore: executions,
+        // Holding the producer's real commit — see `_producerCommitted`. These
+        // two hosts are the FALLBACK: a real artifact and a spent automatic
+        // re-review budget, which is the only shape in which a person is the
+        // right answer now that the route exists.
+        workerStore: workers,
         logger: (message, context) {},
       )(job);
 
@@ -465,19 +499,30 @@ void main() {
             final dispatched = host.dispatched(AgentRole.engineeringReviewer);
             expect(
               dispatched,
-              hasLength(1),
+              isNotEmpty,
               reason:
                   'review-first is $order. The route is only worth taking if '
                   'something acts on it, so this runs the REAL review scheduler '
                   'with the REAL workload resolver rather than asserting a state',
             );
+            // EVERY reviewer, at the revision the producer left. Sending one to
+            // any other revision is the wrong-revision dispatch this gate exists
+            // to prevent, and that is the property — so it is asserted over the
+            // whole list rather than on a `single`.
+            //
+            // Why the COUNT is not asserted here: this fixture's job is
+            // `queued`, because it models a review job the scheduler refused to
+            // dispatch, which is what `SchedulerTickResult.blockedArtifactMissing`
+            // carries. The route stamps the dispatch discriminator, so the lane
+            // ALSO mints a fresh job under a key no earlier one holds, and both
+            // are dispatchable. In production the exhausted job is TERMINAL and
+            // only the fresh one can be dispatched; that shape — and the
+            // "exactly one reviewer" property with it — is asserted against a
+            // terminal job in
+            // `apps/server/test/engineering_review_composition_order_test.dart`.
             expect(
-              dispatched.single.startingRevision,
-              _RoutingHost.producedCommit,
-              reason:
-                  'at the revision the producer left. Sending a reviewer to any '
-                  'other revision is the wrong-revision dispatch this gate '
-                  'exists to prevent',
+              dispatched.map((r) => r.startingRevision),
+              everyElement(_RoutingHost.producedCommit),
             );
           },
         );
@@ -663,10 +708,55 @@ void main() {
   );
 }
 
+/// A producer `WorkerExecution` with a real commit, recorded in [workers], so
+/// `producedCommitFor` answers `CommitProduced` for an item stamped with
+/// [producerActorId].
+///
+/// ## WHY THE FIRST TWO TESTS HERE NEED IT
+///
+/// RE-BASELINED by the B2 correction. They used to carry no producer execution
+/// at all, which meant the artifact read answered `producerExecutionMissing` —
+/// and the verdict-absent ROUTE sends that to the implementation lane rather
+/// than to a person. That is correct: nothing was produced, so there is nothing
+/// to review and the implementation lane can do the work.
+///
+/// These two tests are about the FALLBACK, so their items now carry a real
+/// commit AND a spent automatic re-review budget
+/// ([engineeringReviewAutoRerouteMetadataKey]). That is the shape the operator's
+/// dead end has in production after the platform has already re-reviewed once
+/// and that reviewer also concluded nothing — and the shape in which a person is
+/// genuinely the right answer.
+Future<InMemoryWorkerStore> _producerCommitted({
+  required String workItemId,
+  required String producerActorId,
+}) async {
+  final workers = InMemoryWorkerStore();
+  await workers.saveWorkerExecution(
+    WorkerExecution(
+      workerExecutionId: 'wx-impl',
+      workItemId: workItemId,
+      repositoryPath: '/durable/clone',
+      requestedStartingRevision: _startingRevision,
+      requiredCapabilities: const {
+        WorkerCapability.linux,
+        WorkerCapability.git,
+      },
+      agentExecutionId: producerActorId,
+      endingRevision: _producedCommit,
+      status: WorkerExecutionStatus.executedPass,
+      cleanupPolicy: WorkerCleanupPolicy.removeAlways,
+    ),
+  );
+  return workers;
+}
+
 /// The revision a producer execution starts at. Any `endingRevision` equal to it
 /// is the "committed nothing" shape, which is the triage report and — after
 /// `db6ec6e` — seven IMPLEMENTER runs on the live QA stack.
 const _startingRevision = 'aaaaaaa';
+
+/// A real commit, so `_producerCommitted` produces `CommitProduced`.
+const _producedCommit = 'c0ffee1';
 
 /// Reports "no compatible worker" so each scheduler BUILDS the request — proving
 /// what it would have dispatched — and never runs one. The technique
