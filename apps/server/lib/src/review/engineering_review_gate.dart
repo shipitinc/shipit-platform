@@ -1157,6 +1157,248 @@ Map<String, dynamic>? _reviewJobFailureFacts(Job job) {
 /// So the routing lives HERE, where the verdict-absent case actually arrives, and
 /// `engineeringReviewMissingArtifact` keeps its own `reviewInProgress` branch as
 /// the defensive second door onto the same function.
+//
+// ---------------------------------------------------------------------------
+// WHICH REVIEW EXECUTION IS BEING ADJUDICATED, AND WHY IT IS NOT THE JOB'S
+// ---------------------------------------------------------------------------
+//
+// ## THE QUESTION THIS GATE ACTUALLY HAS TO ANSWER
+//
+// "Has a reviewer that FINISHED produced a verdict on this item?"
+//
+// It used to answer a different question — "did the execution this job is
+// holding have a verdict?" — and by the time an answer exists that is the wrong
+// execution. The job was retired underneath its own reviewer, a replacement
+// reviewer was dispatched behind it, and the job row the gate is handed now
+// names the replacement. So the gate read a fresh, unfinished reviewer, found no
+// verdict on it, and said so:
+//
+//     [engineering-review-verdict-absent-routed] x7   route: re_review
+//     [engineering-review-gate-no-verdict]      x7
+//
+// while the reviewer that DID conclude sat on a row nobody looked at again:
+//
+//     work item  defect-DEF-1791684804452198
+//     execution  (ENGINEERING_REVIEWER, completed 2026-10-16 20:02:28)
+//     result     {"verdict":"changes_required","findings":[{"severity":"major", ...}]}
+//
+// Seven statements that "this review returned nothing" and one item with a real
+// `changes_required` nobody acted on. Asking about the job is asking about the
+// QUEUE; the question is about the WORK.
+//
+// ## WHY `item.metadata['producerActorId']` IS NOT THE ANSWER EITHER
+//
+// That key is the IMPLEMENTER's execution id — `ExecutionCoordinator._complete-
+// Success` stamps the producer, not the producer's reviewer. Reading a verdict
+// off it would be reading the implementer's run, which is both the wrong record
+// and the one `actorIsNotSelf()` exists to keep apart from the reviewer.
+//
+// ## AND WHY THIS SCANS, INSTEAD OF FOLLOWING A POINTER
+//
+// There is no "the review execution for this item" column to follow. The durable
+// facts are per execution — role, status, result — and a re-routed review leaves
+// several reviewer executions on one item with only ONE of them concluded. The
+// honest answer is a query over this item's settled reviewers, made with the
+// SAME parser the verdict path uses, so "carries a verdict" can never mean one
+// thing to the scan and another to the raise.
+//
+// ## AND IT NEVER MAKES UP AN EXECUTION
+//
+// [_readReviewVerdict] is the only thing in this file that turns a payload into
+// a verdict, and it is called here with the logger suppressed, as a PROBE. A
+// payload that does not parse to a verdict simply is not a match, so a scan that
+// finds nothing resolves to "there is no verdict here" — the same answer the
+// gate gave before, from the same parser. There is no default, no fallback id
+// and no synthesised `ReviewVerdict` anywhere below.
+enum ReviewSubjectSource {
+  /// The execution this job was holding carried the verdict itself.
+  jobExecutionReference,
+
+  /// A DIFFERENT, settled reviewer execution on this same item carried the
+  /// verdict, and the job now names somewhere else. This is the live QA shape.
+  verdictBearingExecution,
+}
+
+/// The one review execution this gate is adjudicating right now.
+class ReviewSubject {
+  const ReviewSubject({
+    required this.executionId,
+    required this.execution,
+    required this.result,
+    required this.source,
+  });
+
+  final String executionId;
+  final AgentExecution execution;
+  final AgentResult? result;
+  final ReviewSubjectSource source;
+
+  @override
+  String toString() =>
+      'ReviewSubject($executionId, ${execution.status.name}, '
+      '${source.name})';
+}
+
+/// Most-recently-concluded first, deterministically.
+///
+/// The store's own ordering is not usable for this: `InMemoryExecutionStore`
+/// returns insertion order and `PostgresExecutionStore` orders by `startedAt`
+/// with a tie-break on a surrogate key the caller cannot see. Two passes over
+/// the same durable rows must agree, so the order is computed here from fields
+/// the caller can read, with the execution id as the final tie-break so it never
+/// depends on which store answered.
+int _byRecencyThenId(AgentExecution a, AgentExecution b) {
+  final aAt = a.completedAt ?? a.startedAt;
+  final bAt = b.completedAt ?? b.startedAt;
+  if (aAt != null && bAt != null && !aAt.isAtSameMomentAs(bAt)) {
+    return bAt.compareTo(aAt);
+  }
+  if (aAt == null && bAt != null) return 1;
+  if (aAt != null && bAt == null) return -1;
+  return a.executionId.compareTo(b.executionId);
+}
+
+/// The status of the execution a job points at, for a log line that has to say
+/// both executions' states side by side.
+///
+/// `'absent'` for a job with no execution reference and `'null'` for a
+/// reference that names no row, because those are different facts about a log
+/// line an operator is reading to work out which reviewer is live.
+Future<String> _statusNameFor(
+  ExecutionStore executionStore,
+  String? executionId,
+) async {
+  if (executionId == null || executionId.isEmpty) return 'absent';
+  final execution = await executionStore.readExecutionOrNull(executionId);
+  return execution?.status.name ?? 'null';
+}
+
+/// The verdict wire a result carries, for a log line that reports WHAT was
+/// found rather than THAT something was.
+///
+/// Returns `null` unless the payload's `verdict` is a string this build
+/// recognises as a [ReviewVerdict]. That check is the whole point: an
+/// unrecognised wire value reported under a key called `reviewVerdict` is a
+/// verdict-shaped string nobody produced, and a log line is the easiest place in
+/// a file like this to accidentally assert one. It never defaults, and it never
+/// returns a value the payload does not contain.
+String? _verdictWireOf(AgentResult? result) {
+  if (result == null) return null;
+  try {
+    final raw = result.structuredResult['verdict'];
+    if (raw is! String || raw.isEmpty) return null;
+    return ReviewVerdict.fromWire(raw).wire;
+  } on Object {
+    return null;
+  }
+}
+
+/// Resolves the review execution this gate must adjudicate, or `null` when there
+/// is nothing settled to adjudicate.
+///
+/// `null` means EXACTLY "the job's own execution is missing or still open, and
+/// no settled reviewer on this item produced a verdict". That is the shape the
+/// caller must leave alone — a reviewer executing right now is not a thing this
+/// gate has an opinion about.
+///
+/// A terminal job execution that produced NO verdict still resolves, to itself.
+/// That is the verdict-absent rescue the whole file exists for, and it must keep
+/// resolving to the job's own execution so that path's records, logs and decision
+/// metadata keep naming the run they have always named.
+Future<ReviewSubject?> resolveReviewSubject({
+  required ExecutionStore executionStore,
+  required Job job,
+  required String workItemId,
+}) async {
+  final jobExecutionId = job.executionReference?.agentExecutionId;
+  if (jobExecutionId != null && jobExecutionId.isNotEmpty) {
+    final jobExecution = await executionStore.readExecutionOrNull(
+      jobExecutionId,
+    );
+    if (jobExecution != null && jobExecution.isTerminal) {
+      final result = await executionStore.readResult(jobExecutionId);
+      final read = _readReviewVerdict(
+        job: job,
+        workItemId: workItemId,
+        executionId: jobExecutionId,
+        execution: jobExecution,
+        reviewerResult: result,
+        // PROBE. The verdict path re-reads this same execution WITH the logger
+        // once the subject is settled, so the raise reports its own findings
+        // once. Logging inside the scan would attribute a parse complaint to an
+        // execution that was only ever a candidate.
+        logger: null,
+      );
+      if (read.result != null) {
+        return ReviewSubject(
+          executionId: jobExecutionId,
+          execution: jobExecution,
+          result: result,
+          source: ReviewSubjectSource.jobExecutionReference,
+        );
+      }
+      // Terminal, no verdict here. Fall through: a DIFFERENT settled reviewer on
+      // this item may have concluded, and that outranks a verdict-absent record
+      // about this one.
+    }
+  }
+
+  // THE SCAN. Only settled reviewers, most recent first, and only the ones the
+  // gate's own parser can read a verdict out of.
+  final executions = await executionStore.listExecutions(
+    workItemId: workItemId,
+  );
+  final candidates =
+      executions
+          .where(
+            (e) =>
+                e.role == AgentRole.engineeringReviewer &&
+                e.isTerminal &&
+                (jobExecutionId == null || e.executionId != jobExecutionId),
+          )
+          .toList()
+        ..sort(_byRecencyThenId);
+
+  for (final execution in candidates) {
+    final result = await executionStore.readResult(execution.executionId);
+    if (result == null) continue;
+    final read = _readReviewVerdict(
+      job: job,
+      workItemId: workItemId,
+      executionId: execution.executionId,
+      execution: execution,
+      reviewerResult: result,
+      logger: null,
+    );
+    if (read.result != null) {
+      return ReviewSubject(
+        executionId: execution.executionId,
+        execution: execution,
+        result: result,
+        source: ReviewSubjectSource.verdictBearingExecution,
+      );
+    }
+  }
+
+  // Nothing anywhere produced a verdict. If the job's own execution is settled
+  // it is still the subject — of the VERDICT-ABSENT path, which is about that run
+  // and names that run everywhere it writes.
+  if (jobExecutionId != null && jobExecutionId.isNotEmpty) {
+    final jobExecution = await executionStore.readExecutionOrNull(
+      jobExecutionId,
+    );
+    if (jobExecution != null && jobExecution.isTerminal) {
+      return ReviewSubject(
+        executionId: jobExecutionId,
+        execution: jobExecution,
+        result: await executionStore.readResult(jobExecutionId),
+        source: ReviewSubjectSource.jobExecutionReference,
+      );
+    }
+  }
+  return null;
+}
+
 TickJobHandler engineeringReviewTickHandler({
   required DurableWorkflowEngine workflowEngine,
   required ExecutionStore executionStore,
@@ -1185,31 +1427,71 @@ TickJobHandler engineeringReviewTickHandler({
       return;
     }
 
-    final executionId = job.executionReference?.agentExecutionId;
-    if (executionId == null || executionId.isEmpty) {
-      logger?.call(
-        'engineering-review-gate-missing-execution',
-        {'jobId': job.jobId, 'workItemId': workItemId},
-      );
-      return;
-    }
+    // WHICH REVIEW EXECUTION IS UNDER ADJUDICATION. Not "the one this job
+    // names": see the section header on [resolveReviewSubject] for the live
+    // seven-times-ignored-verdict shape that made the difference.
+    final subject = await resolveReviewSubject(
+      executionStore: executionStore,
+      job: job,
+      workItemId: workItemId,
+    );
 
-    final execution = await executionStore.readExecutionOrNull(executionId);
-    if (execution == null || !execution.isTerminal) {
-      final statusName = execution?.status.name ?? 'null';
+    if (subject == null) {
+      final jobExecutionId = job.executionReference?.agentExecutionId;
+      if (jobExecutionId == null || jobExecutionId.isEmpty) {
+        logger?.call(
+          'engineering-review-gate-missing-execution',
+          {'jobId': job.jobId, 'workItemId': workItemId},
+        );
+        return;
+      }
+      final open = await executionStore.readExecutionOrNull(jobExecutionId);
       logger?.call(
         'engineering-review-gate-execution-not-terminal',
         {
           'jobId': job.jobId,
           'workItemId': workItemId,
-          'executionId': executionId,
-          'status': statusName,
+          'executionId': jobExecutionId,
+          'status': open?.status.name ?? 'null',
+          'carriesVerdict': false,
+          'decision':
+              'the execution this job was holding has not settled and no other '
+              'settled reviewer on this item produced a verdict, so there is '
+              'nothing here to adjudicate. This gate does not reach past a live '
+              'reviewer to some older run on its own initiative',
         },
       );
       return;
     }
 
-    final reviewerResult = await executionStore.readResult(executionId);
+    final executionId = subject.executionId;
+    final execution = subject.execution;
+    final reviewerResult = subject.result;
+
+    if (subject.source == ReviewSubjectSource.verdictBearingExecution) {
+      // Named, because "this gate read a verdict off an execution the job does
+      // not reference" is otherwise invisible on a live stack, and it is the
+      // whole of this correction: an operator reading the item would otherwise
+      // see a decision whose `reviewExecutionId` matches no job they can find.
+      logger?.call('engineering-review-gate-verdict-bearing-execution', {
+        'jobId': job.jobId,
+        'workItemId': workItemId,
+        'executionId': executionId,
+        'jobExecutionId': job.executionReference?.agentExecutionId,
+        'jobExecutionStatus': await _statusNameFor(
+          executionStore,
+          job.executionReference?.agentExecutionId,
+        ),
+        'executionStatus': execution.status.name,
+        'reviewVerdict': _verdictWireOf(reviewerResult),
+        'carriesVerdict': true,
+        'decision':
+            'the job this gate was handed points at an execution that did not '
+            'conclude; the verdict being adjudicated is on this other settled '
+            'reviewer execution for the same item. The job row is not changed '
+            'and no execution is written to by this line',
+      });
+    }
 
     // THE INVARIANT, IN ONE LINE. Either a reviewer returned a verdict, or this
     // gate records why it did not and leaves the item alone. There is no third
@@ -1481,6 +1763,13 @@ TickJobHandler engineeringReviewTickHandler({
 // attempt the gate appends [reviewGateConsumedPayloadKey] to that execution, and
 // every later pass sees it and skips.
 //
+// It is written at [reviewGateConsumedSequence], which is negative on purpose.
+// The bound is the safety property of this whole function, and the previous
+// version of the marker write collided with `agent_event`'s unique
+// `(executionId, sequence)` index and therefore never persisted — so the bound
+// was inert on a live stack while reading as protection. That section records
+// the measured failure and why each rejected alternative leaves it worse.
+//
 // Why "attempt", not "success": a re-drive that cannot act — a producer identity
 // nobody can read, a transition another writer has already taken — must not be
 // retried for ever either. Bounding on success would make an un-actionable
@@ -1497,6 +1786,90 @@ TickJobHandler engineeringReviewTickHandler({
 // actually broken: a settled reviewer, an item still claiming to be in review,
 // and no consumption marker.
 const String reviewGateConsumedPayloadKey = 'reviewGateConsumed';
+
+/// THE SEQUENCE THIS GATE'S CONSUMPTION MARKER IS WRITTEN AT, AND WHY IT IS
+/// NEGATIVE.
+///
+/// ## THE BOUND IS THE SAFETY PROPERTY, AND IT WAS INERT
+///
+/// The previous version of [_markSettledReviewConsumed] computed the marker's
+/// `sequence` as `max(prior events) + 1` from a snapshot of the execution's
+/// events read BEFORE the re-drive ran. But the re-drive itself appends —
+/// [_recordNoVerdict] reads fresh and writes `max + 1` — so by the time the
+/// marker wrote, `max + 1` was already taken, and the insert hit the index that
+/// guards the whole table:
+///
+/// ```sql
+/// CREATE UNIQUE INDEX agent_event_execution_sequence_unique
+///   ON agent_event ("executionId", "sequence");
+/// ```
+///
+/// Every marker write failed, so `alreadyConsumed` was never recorded, so the
+/// bound never advanced, and every pass re-drove the same settled review. One
+/// tick of live QA:
+///
+///     [engineering-review-settled-redrive] {considered: 18, redriven: 0,
+///                                           alreadyConsumed: 0, failed: 7}
+///     [engineering-review-settled-redrive-not-marked] x7
+///         error: duplicate key value violates unique constraint
+///                "agent_event_execution_sequence_unique"
+///
+/// A bound that reads as protection and protects nothing is worse than no bound,
+/// because an operator reading `redriveSettledReviews` concludes the loop is
+/// closed.
+///
+/// ## WHY "COMPUTE THE NEXT FREE SEQUENCE" IS NOT THE FIX
+///
+/// A fresh read still allocates client-side, so it fixes the *stale snapshot*
+/// and leaves the *race*: two writers on one execution both read `max = N`, both
+/// write `N + 1`, one loses. The bound would hold on a quiet stack and fail the
+/// first time two review ticks overlapped. Read-then-append cannot be correct
+/// against a unique index it cannot see, and this marker is written by a lane
+/// that shares its timeline with the coordinator writing that same timeline.
+///
+/// MEASURED, not assumed: re-reading immediately before the write does stop the
+/// collision — the handler's append is already visible — and
+/// `engineering_review_verdict_bearing_execution_test.dart` confirms it, which
+/// is why "just read fresh" is the tempting answer. It is rejected because it
+/// converts a certain failure into a timing-dependent one, and a safety property
+/// that holds until two writers arrive is not a safety property.
+///
+/// ## WHY A PURPOSE-APPROPRIATE TABLE IS NOT AVAILABLE HERE
+///
+/// It is the right answer in the abstract — one row per execution, keyed by
+/// execution, no shared sequence space. It is not reachable in this change:
+/// `apps/server/migrations/**` is outside this correction's ownership, so there
+/// is no new table to write into, and no existing table has the shape. The
+/// nearest is `scheduler_event`, which is keyed by JOB — and the job is precisely
+/// the record this defect proved to be the wrong key, since a re-routed review
+/// leaves the verdict on an execution no job names.
+///
+/// ## SO: A RESERVED NAMESPACE, DISJOINT BY CONSTRUCTION
+///
+/// Every other writer of `agent_event` allocates a POSITIVE sequence starting at
+/// one. `ExecutionCoordinator._nextSequence` is an in-process counter over 0, and
+/// [_recordNoVerdict] is `max(prior) + 1` over a floor of 0. Neither can ever
+/// produce a negative number, for any input, ever.
+///
+/// So the marker takes the negative half-line, which is therefore unreachable by
+/// every other allocator — not "unlikely to be free", but *not producible*. The
+/// collision is impossible by construction rather than avoided by timing.
+///
+/// Negative is also the direction that cannot perturb anybody: `max(prior)`
+/// never selects a negative while a positive exists, so [_recordNoVerdict]'s
+/// allocation is unchanged whether or not the marker is present, and the marker
+/// is still the first row of its own timeline when read back in
+/// `sequence ASC` order.
+///
+/// ## AND THE ID IS DETERMINISTIC, SO A SECOND WRITE IS A CONFLICT AND NOT A ROW
+///
+/// The id names the execution and nothing else. A marker that is written twice
+/// must collide — on `agent_event_id_unique` as well as on the sequence index —
+/// rather than append a second marker with a fresh timestamp. The bound is
+/// "exactly one marker per review execution", and only a deterministic id makes
+/// that true under a retry. A timestamped id, which is what this used, would let
+/// a duplicate through the one index a disjoint sequence cannot protect.
+const int reviewGateConsumedSequence = -1;
 
 /// What one [redriveSettledReviews] pass did with the terminal review jobs it
 /// found.
@@ -1555,22 +1928,30 @@ bool _settledReviewAlreadyConsumed(List<AgentEventRecord> events) =>
 /// about the review, not a claim that the review went wrong, and
 /// `executionFailed` would be the second fabrication in a file that exists to
 /// prevent the first.
+///
+/// It takes NO `prior` event list, and that is the fix rather than a detail.
+/// The previous signature was handed a snapshot read before the re-drive ran and
+/// allocated `max + 1` from it, which collided with the very append the re-drive
+/// itself had just made — see [reviewGateConsumedSequence] for the whole of it
+/// and for why reading fresh instead would only have narrowed the window.
+///
+/// Nothing here is derived from the review's outcome: the payload records which
+/// job this gate reached, and that is all it is allowed to say.
 Future<void> _markSettledReviewConsumed({
   required ExecutionStore executionStore,
   required Job job,
   required String executionId,
-  required List<AgentEventRecord> prior,
 }) async {
-  final sequence =
-      prior.fold<int>(0, (max, e) => e.sequence > max ? e.sequence : max) + 1;
   final now = DateTime.now().toUtc();
   await executionStore.appendEvent(
     AgentEventRecord(
-      eventId:
-          'review-gate-consumed-$executionId-${now.microsecondsSinceEpoch}',
+      // Deterministic on purpose — see the id argument on
+      // [reviewGateConsumedSequence]. One marker per execution, and a retry is
+      // a conflict rather than a second row.
+      eventId: 'review-gate-consumed-$executionId',
       executionId: executionId,
       workItemId: job.workItemId,
-      sequence: sequence,
+      sequence: reviewGateConsumedSequence,
       type: AgentEventType.warning,
       occurredAt: now,
       payload: {
@@ -1579,6 +1960,7 @@ Future<void> _markSettledReviewConsumed({
         reviewGateConsumedPayloadKey: true,
         'jobId': job.jobId,
         'jobState': job.state.wire,
+        'markedAt': now.toIso8601String(),
       },
     ),
   );
@@ -1633,7 +2015,6 @@ Future<SettledReviewRedrive> redriveSettledReviews({
 
   for (final job in candidates) {
     considered.add(job.jobId);
-    final executionId = job.executionReference!.agentExecutionId!;
 
     // THE ITEM FILTER, and it is the only state this sweep acts from.
     // `waitingForHumanDecision` means somebody already decided, `agentCompleted`
@@ -1642,15 +2023,29 @@ Future<SettledReviewRedrive> redriveSettledReviews({
     final item = await workflowEngine.loadWorkItem(job.workItemId);
     if (item.state != WorkItemState.reviewInProgress) continue;
 
-    // THE LIVENESS FILTER, and the reason a reviewer executing right now is not
-    // disturbed. A non-terminal execution is not "not ready yet" — it is a
-    // reviewer this sweep must not have an opinion about.
-    final execution = await executionStore.readExecutionOrNull(executionId);
-    if (execution == null ||
-        !execution.isTerminal ||
-        execution.role != AgentRole.engineeringReviewer) {
-      continue;
-    }
+    // THE LIVENESS FILTER, restated in terms of the execution that will actually
+    // be adjudicated rather than the one the job happens to name.
+    //
+    // It used to read `job.executionReference!.agentExecutionId` and skip
+    // anything not terminal — which is precisely the job-relative mistake the
+    // verdict path was just corrected for. A re-routed review leaves the verdict
+    // on an execution no job names, and the jobs that DO get handed to this
+    // sweep name the replacements, so the one settled, verdict-bearing reviewer
+    // on the item was filtered out as "not a candidate" and its verdict stayed
+    // unconsumed.
+    //
+    // The rule is unchanged in what it protects: a candidate is admitted only
+    // when [resolveReviewSubject] returns a SETTLED reviewer execution to act
+    // on, and returns `null` — so this sweep declines — whenever every reviewer
+    // on this item is still running. A reviewer executing right now is still not
+    // a thing this gate has an opinion about.
+    final subject = await resolveReviewSubject(
+      executionStore: executionStore,
+      job: job,
+      workItemId: job.workItemId,
+    );
+    if (subject == null) continue;
+    final executionId = subject.executionId;
 
     final events = await executionStore.readEvents(executionId);
     if (_settledReviewAlreadyConsumed(events)) {
@@ -1673,10 +2068,25 @@ Future<SettledReviewRedrive> redriveSettledReviews({
         executionStore: executionStore,
         job: job,
         executionId: executionId,
-        prior: events,
       );
       redriven.add(job.jobId);
     } on Object catch (error) {
+      // RE-READ BEFORE CALLING IT A FAILURE. A concurrent pass may have written
+      // this exact marker between the bound check above and this write — the id
+      // is deterministic, so the loser of that race gets a unique violation it
+      // did not cause. The marker exists in that case, so the bound HOLDS, and
+      // reporting it as `failed` would be a false statement about the safety
+      // property this whole function exists to provide.
+      //
+      // Durable state is re-read rather than the error string being parsed: the
+      // question is "is the marker there", and that has one honest answer.
+      final marked = _settledReviewAlreadyConsumed(
+        await executionStore.readEvents(executionId),
+      );
+      if (marked) {
+        consumed.add(job.jobId);
+        continue;
+      }
       failed.add(job.jobId);
       logger?.call('engineering-review-settled-redrive-not-marked', {
         'jobId': job.jobId,
@@ -1686,10 +2096,10 @@ Future<SettledReviewRedrive> redriveSettledReviews({
         'error': '$error',
         'carriesVerdict': false,
         'decision':
-            'the handler ran but this gate could not record that it did, so the '
-            'next pass will reach the same settled review again. That is the one '
-            'shape here that is not bounded, and it is a store fault rather than '
-            'a review outcome',
+            'the handler ran and the marker is still absent after a re-read, so '
+            'the next pass will reach the same settled review again. That is the '
+            'one shape here that is not bounded, and it is a store fault rather '
+            'than a review outcome',
       });
     }
   }
