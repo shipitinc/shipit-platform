@@ -66,6 +66,41 @@ class EngineeringReviewE2EHost {
       executionId: 'agx-impl',
       writeArtifact: writeImplementerArtifact,
     );
+    // THE TRIAGE PRODUCER, and the reason it exists here at all.
+    //
+    // The two stand-down tests below used to produce their no-artifact item
+    // with an IMPLEMENTER run. Under human decision
+    // `92d567e3-da03-4c43-99f4-e3726472f0ab` (`NO_OUTPUT -> ROLE_AWARE`, and
+    // the role-aware success-artifact rule in
+    // `packages/execution_coordinator`), an IMPLEMENTER that produces no
+    // artifact is a PERMANENT failure: it settles
+    // `AgentSessionStatus.failed`, spends zero attempts, and the work item
+    // lands at `agentFailed` — never at `agentCompleted`. So the implementer
+    // can no longer construct the state these tests are about at all.
+    //
+    // TRIAGE is the producer that still legitimately reaches `agentCompleted`
+    // having committed nothing, and it is not a workaround — it is the case
+    // the decision named when it made the rule role-aware:
+    //
+    //   "agentCompleted is SHARED, and triage legitimately finishes without
+    //    touching the product — it writes a classification report to a scratch
+    //    repo, never code. A universal no-file-changed rule would fail every
+    //    triage run."
+    //
+    // and the route that depends on it is still live in production:
+    // `completionRouteFor(NoCommitProduced()) == implementationReady`, with
+    // the comment "A TRIAGE run still legitimately arrives here having
+    // committed nothing — that is the whole point of the route below."
+    //
+    // `structuredResult` is a real classification, field for field as
+    // `classificationMissingIn` requires it
+    // (`packages/execution_coordinator/lib/src/coordinator/success_artifact.dart`),
+    // so this run SATISFIES its lane's artifact and is allowed to complete.
+    triageSession = DesignGateAgentSession(
+      executionId: 'agx-triage',
+      writeArtifact: false,
+      structuredResult: _triageClassification,
+    );
     reviewSession = DesignGateAgentSession(
       executionId: 'agx-eng-review',
       // THE REVIEWER ANSWERS. This session used to emit `{}` — no structured
@@ -81,6 +116,12 @@ class EngineeringReviewE2EHost {
       registry: AgentAdapterRegistry()
         ..register(
           DesignGateAgentAdapter(implSession, providerId: 'impl-runtime'),
+        )
+        ..register(
+          DesignGateAgentAdapter(
+            triageSession,
+            providerId: 'triage-runtime',
+          ),
         )
         ..register(
           DesignGateAgentAdapter(
@@ -118,9 +159,21 @@ class EngineeringReviewE2EHost {
       workerStore: workerStore,
       platform: Platform.operatingSystem,
     );
+    triageWorker = LocalWorker(
+      workerId: 'w-triage',
+      poolId: 'triage-pool',
+      capabilities: triageDefectDefinition.requiredCapabilities,
+      workspaceManager: GitWorktreeWorkspaceManager(
+        workspaceRoot: workspaceRoot,
+      ),
+      executionDriver: CoordinatorAgentExecutionDriver(coordinator),
+      workerStore: workerStore,
+      platform: Platform.operatingSystem,
+    );
 
     final workerRegistry = WorkerRegistry()
       ..register(implWorker)
+      ..register(triageWorker)
       ..register(reviewWorker);
     final dispatch = WorkerDispatcherAdapter(
       WorkerDispatcher(registry: workerRegistry),
@@ -167,6 +220,24 @@ class EngineeringReviewE2EHost {
       instructionBuilder: engineeringReviewInstruction,
       requestBuilder: engineeringReviewRequest,
     );
+
+    triageScheduler = Scheduler(
+      schedulerId: 'sched-triage',
+      workflowStore: workflowStore,
+      jobStore: jobStore,
+      workerStore: workerStore,
+      dispatch: dispatch,
+      definition: triageDefectDefinition,
+      workload: SchedulerWorkload(
+        repositoryPath: repo.root.path,
+        startingRevision: repo.startingRevision,
+        timeoutSeconds: 60,
+        runtimeTypeId: 'triage-runtime',
+      ),
+      dedupeKeyBuilder: triageDefectDedupeKey,
+      instructionBuilder: triageDefectInstruction,
+      requestBuilder: triageDefectRequest,
+    );
   }
 
   late InMemoryWorkflowStore workflowStore;
@@ -175,18 +246,48 @@ class EngineeringReviewE2EHost {
   late InMemoryWorkerStore workerStore;
   late InMemoryJobStore jobStore;
   late DesignGateAgentSession implSession;
+  late DesignGateAgentSession triageSession;
   late DesignGateAgentSession reviewSession;
   late AgentRuntime runtime;
   late ExecutionCoordinator coordinator;
   late LocalWorker implWorker;
+  late LocalWorker triageWorker;
   late LocalWorker reviewWorker;
   late Scheduler implScheduler;
+  late Scheduler triageScheduler;
   late Scheduler reviewScheduler;
+
+  /// A classification the platform's OWN triage parser would have kept, so the
+  /// run below genuinely satisfies `SuccessArtifactKind.classificationResult`
+  /// rather than being waved through. Field for field, per
+  /// `classificationMissingIn`:
+  ///
+  ///   classification     — a `DefectClassification` wire token
+  ///   status             — a `DefectStatus` wire token
+  ///   confidence         — a number
+  ///   suspectedCategory  — a string
+  static final _triageClassification = <String, dynamic>{
+    'classification': DefectClassification.implementationDefect.wire,
+    'status': DefectStatus.confirmed.wire,
+    'confidence': 0.9,
+    'suspectedCategory': 'checkout',
+  };
 
   Future<SchedulerTickResult> runImplementer() async {
     final tick = implScheduler.tick();
     await implSession.awaitingGate;
     implSession.release();
+    return tick;
+  }
+
+  /// Runs the TRIAGE producer: it emits [_triageClassification] and writes no
+  /// code, which is the one real-world shape that still lands at
+  /// `agentCompleted` with nothing committed. See the constructor for why the
+  /// implementer can no longer produce this state.
+  Future<SchedulerTickResult> runTriage() async {
+    final tick = triageScheduler.tick();
+    await triageSession.awaitingGate;
+    triageSession.release();
     return tick;
   }
 
@@ -447,7 +548,7 @@ void main() {
     'fails closed: a review job with no resolvable artifact is not dispatched, '
     'and review STANDS DOWN so the implementation inflow can route it',
     () async {
-      // The implementer completes WITHOUT producing a change, so no artifact
+      // A TRIAGE run completes WITHOUT producing a change, so no artifact
       // commit exists (`endingRevision == startingRevision`). The review
       // scheduler uses the REAL resolver, so it must refuse to dispatch.
       //
@@ -456,6 +557,24 @@ void main() {
       // must NOT park the item. There is nothing to review, so a human gate is
       // the wrong place for it: the decision's only answers are rework and
       // reject, and the implementation lane can simply do the work.
+      //
+      // ## WHY THIS USES THE TRIAGE LANE AND NOT THE IMPLEMENTER LANE
+      //
+      // It used to run an IMPLEMENTER, and it used to PASS, because an
+      // implementer that produced nothing still reached `agentCompleted`. It
+      // does not any more, and that is the decided world rather than a
+      // regression: decision `92d567e3-da03-4c43-99f4-e3726472f0ab` answered
+      // `NO_OUTPUT -> ROLE_AWARE`, and `packages/execution_coordinator` now
+      // settles such a run `AgentSessionStatus.failed`, which classifies
+      // PERMANENT and lands the item at `agentFailed`.
+      //
+      // That would have made this test vacuous in the worst way — it would
+      // still have "passed" while asserting nothing about the gate, because an
+      // item at `agentFailed` is not reviewable at all and the resolver is
+      // never asked. So the producer was moved to the lane that still
+      // legitimately produces this state, and every assertion below is
+      // unchanged. Measured before this change, the same setup gave
+      // `state=agentFailed` and `blockedArtifactMissing=[]`.
       final host = EngineeringReviewE2EHost(
         repo: repo,
         workspaceRoot: '${temp.path}/workspaces',
@@ -489,9 +608,18 @@ void main() {
         trigger: TransitionTrigger.systemEvent,
       );
 
-      await host.runImplementer();
-      final afterImpl = await host.workflowEngine.loadWorkItem('wi-er');
-      expect(afterImpl.state, WorkItemState.agentCompleted);
+      await host.runTriage();
+      final afterTriage = await host.workflowEngine.loadWorkItem('wi-er');
+      expect(
+        afterTriage.state,
+        WorkItemState.agentCompleted,
+        reason:
+            'a triage run that emitted a real classification SATISFIED its '
+            'lane\'s artifact, so it completed — and it committed no code, '
+            'which is exactly the state this gate exists for. This is the '
+            'assertion that would have gone quietly vacuous had the producer '
+            'stayed on the implementer lane',
+      );
 
       // The resolver cannot vouch for an artifact, so the reviewer is NEVER
       // dispatched and the job is reported blocked rather than run.
@@ -564,6 +692,13 @@ void main() {
       //
       // The seed is kept, as a literal, because the point is precisely that the
       // number no longer decides anything.
+      //
+      // The producer moved from the IMPLEMENTER lane to the TRIAGE lane, for
+      // the reason spelled out in the first test: an implementer that commits
+      // nothing is now a PERMANENT failure at `agentFailed` and is not
+      // reviewable, so keeping it here would have made every assertion below
+      // pass without ever reaching the gate. The marker is seeded exactly as
+      // before and the handler is called exactly as before.
       final host = EngineeringReviewE2EHost(
         repo: repo,
         workspaceRoot: '${temp.path}/workspaces',
@@ -593,7 +728,7 @@ void main() {
         );
       }
 
-      await host.runImplementer();
+      await host.runTriage();
 
       // The value `maxImplementationInflows` used to hold. The constant is gone;
       // the number is data, and nothing in this gate compares against it.

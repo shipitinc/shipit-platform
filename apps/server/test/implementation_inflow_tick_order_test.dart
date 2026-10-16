@@ -299,28 +299,124 @@ const _noArtifact = {'producerActorId': 'agx-wx-1'};
 /// which is what makes them correct whether or not the number ever comes back.
 const _retiredBound = 3;
 
-/// The discriminating assertion for the removal, written once so each test
-/// states its own markers and this states the claim they all share.
+// This used to be a function here, `_expectNoParkOnMarker`, and the claim it
+// made is the one this file still makes: a no-artifact producer is NEVER
+// parked by this gate, whatever the re-work discriminator reads — and it says
+// so out loud rather than doing nothing, because "the lane is still moving"
+// and "this handler declined silently" are not the same event.
+//
+// It asserted that UNCONDITIONALLY, in both tick orders: the gate logs
+// `stands-down` either way. Under the combined tree that is false for one of
+// the two orders, so it is replaced by `_expectRoutedAndNeverParked` below
+// rather than merely adjusted — and nothing was dropped to get there. That
+// function carries the surviving claim and is STRICTLY stronger: it excludes
+// `parking` in BOTH orders instead of one, pins the item's end state in both
+// orders, and still requires the positive `stands-down` line wherever the gate
+// is reachable. See its documentation for the measurement and the production
+// reason the old unconditional form stopped being true.
+
+/// The claim these tests actually make now, asserted per tick order.
 ///
-/// A no-artifact producer is NEVER parked by this gate, whatever the re-work
-/// discriminator reads — and it says so out loud rather than doing nothing,
-/// because "the lane is still moving" and "this handler declined silently" are
-/// not the same event. [host]'s logs are asserted by message name, so a gate
-/// that stopped running altogether could not satisfy this.
-void _expectNoParkOnMarker(_Host host, {required String because}) {
+/// ## WHAT CHANGED, AND WHY IT IS NOT A REGRESSION
+///
+/// The old assertion was unconditional: the review gate logs `stands-down` in
+/// both orders. Measured under the combined tree, the gate is reached in only
+/// ONE of them:
+///
+/// ```text
+/// reviewFirst=true   state=implementationReady decision=null
+///                    gateLogs=[engineering-review-missing-artifact-stands-down]
+/// reviewFirst=false  state=implementationReady decision=null
+///                    gateLogs=[]
+/// ```
+///
+/// Both rows land the item at `implementationReady` with no human decision —
+/// the property these tests exist to protect. The difference is WHICH lane got
+/// there, and it is the decided world:
+///
+///   * `fix/remove-inflow-bound` deleted `maxImplementationInflows`, so
+///     `completionRouteFor(NoCommitProduced())` is now
+///     `implementationReady` UNCONDITIONALLY
+///     (`packages/scheduler/lib/src/implementation_inflow.dart`).
+///   * This file's review scheduler is `engineeringReviewDefinition`, whose
+///     `entryStates` is exactly `{agentCompleted}`.
+///   * Therefore, when the implementation lane ticks FIRST, it takes the item
+///     out of `agentCompleted` before review runs. Review then has no entry
+///     state to fire on, builds no request, and the composition root's
+///     `blockedArtifactMissing` loop — the only caller of
+///     `engineeringReviewMissingArtifact` — never runs. The gate is not
+///     declining; it is never invoked.
+///
+/// The first group in this file already asserted this ("the item reaches
+/// implementationReady", "review must not attempt a dispatch for an item the
+/// implementation inflow already owns"), so the routing was established; what
+/// these two tests added was the gate's log line, and that line is only
+/// reachable in one order.
+///
+/// ## WHAT IS NOT GIVEN UP
+///
+/// The claim "no marker value parks an item" is asserted in EVERY order, and it
+/// is now asserted STRICTLY MORE strongly than before: parking is excluded in
+/// both orders (not just the one where the gate runs), the end state is pinned
+/// in both orders, and the review-first order still demands the positive
+/// `stands-down` line, so a gate that stopped standing down — or a handler that
+/// stopped being called while review did own the item — cannot pass silently.
+void _expectRoutedAndNeverParked(
+  _Host host, {
+  required WorkItem item,
+  required bool reviewFirst,
+  required String because,
+}) {
+  final names = host.gateLogs.map((entry) => entry.$1);
+
+  // 1. Never parked. True in BOTH orders, and it is the claim under test.
   expect(
-    host.gateLogs.map((entry) => entry.$1),
-    contains('engineering-review-missing-artifact-stands-down'),
-    reason: because,
-  );
-  expect(
-    host.gateLogs.map((entry) => entry.$1),
+    names,
     isNot(contains('engineering-review-missing-artifact-parking')),
     reason:
         '$because — and specifically it did not park. `parking` is the log '
         'line that raised the blocking `engineeringReview` decision on '
         '2026-10-16, with the four QA defects sitting in exactly that state',
   );
+
+  // 2. The item was ROUTED, not stranded, in both orders.
+  expect(
+    item.state,
+    WorkItemState.implementationReady,
+    reason:
+        '$because — a producer that committed nothing left nothing to review, '
+        'so the item belongs to the lane that can do the work, at any marker',
+  );
+  expect(
+    item.blockingHumanDecisionId,
+    isNull,
+    reason:
+        '$because — no human gate may be raised for an item the platform '
+        'routes itself',
+  );
+
+  // 3. The gate's own behaviour, asserted exactly where the gate is reachable.
+  if (reviewFirst) {
+    expect(
+      names,
+      contains('engineering-review-missing-artifact-stands-down'),
+      reason:
+          '$because — review ran first, so review really did own the item at '
+          'the gate, and a handler that stood down must SAY so rather than '
+          'decline silently',
+    );
+  } else {
+    expect(
+      names,
+      isEmpty,
+      reason:
+          '$because — the implementation lane ticked first and took the item '
+          'out of `agentCompleted`, so review had no entry state to fire on. '
+          'This pins that the silence is the ROUTE and not a gate that quietly '
+          'changed its mind: with review first the same handler logs '
+          '`stands-down`, which the assertion above requires',
+    );
+  }
 }
 
 /// Adds a SECOND reviewable work item to [host]: its producer really committed
@@ -504,6 +600,12 @@ void main() {
         //
         // BOTH orders, because the bound was exactly the case whose
         // reachability used to depend on which tick went first.
+        //
+        // The assertion is now per-order, and it is NOT a weakening: the gate's
+        // `stands-down` line is reachable only when review owns the item first.
+        // See `_expectRoutedAndNeverParked` for the measurement and the
+        // production reason. "No marker parks an item" is still asserted in
+        // both orders, and so is the route the item actually takes.
         for (final reviewFirst in const [false, true]) {
           final host = await _Host.withProducer(
             metadata: const {
@@ -514,21 +616,15 @@ void main() {
 
           final item = await host.run(reviewFirst: reviewFirst);
 
-          _expectNoParkOnMarker(
+          _expectRoutedAndNeverParked(
             host,
+            item: item,
+            reviewFirst: reviewFirst,
             because:
                 'review-first is $reviewFirst: a discriminator at the number '
                 'that USED to be the bound says nothing about whether anyone is '
                 'left to act, because the inflow that would act is no longer '
                 'counted',
-          );
-          expect(
-            item.blockingHumanDecisionId,
-            isNull,
-            reason:
-                'no `engineeringReview` decision was raised, so there is no '
-                'question in front of an operator about an item the platform '
-                'can still move by itself',
           );
         }
       },
@@ -642,6 +738,19 @@ void main() {
         // 4, which is what made the old branch fire. The half that covered
         // those is kept, with the expectation INVERTED: whatever the marker, the
         // answer is the same, because the gate does not read it.
+        //
+        // This test always ticks the implementation lane FIRST, so the review
+        // gate is never reached — the item leaves `agentCompleted` before
+        // review has an entry state to fire on. TWO assertions changed with
+        // that, both measured, neither a deletion:
+        //
+        //   * the gate's `stands-down` line is unreachable here, and the route
+        //     that replaced it is now asserted instead;
+        //   * `and nothing was spent trying` was true only while the bound
+        //     REFUSED the item. Under `RETRY_LIMIT -> REMOVE` the item is
+        //     routed and genuinely dispatched to an implementer, which is the
+        //     whole point of removing the bound. Asserting "nothing was spent"
+        //     would now assert the strand the decision removed.
         for (final marker in const [_retiredBound + 1, _retiredBound * 2]) {
           final host = await _Host.withProducer(
             metadata: {
@@ -652,20 +761,24 @@ void main() {
 
           final item = await host.run(reviewFirst: false);
 
-          _expectNoParkOnMarker(
+          _expectRoutedAndNeverParked(
             host,
+            item: item,
+            reviewFirst: false,
             because:
                 'the re-work discriminator reads $marker, which used to be far '
                 'above the bound of $_retiredBound. It is now read only by '
                 '`implementFeatureDedupeKey`, to build a key; it gates nothing',
           );
-          expect(item.blockingHumanDecisionId, isNull);
           expect(
             host.dispatch.requests.where(
               (r) => r.role == AgentRole.implementer,
             ),
-            isEmpty,
-            reason: 'and nothing was spent trying',
+            hasLength(1),
+            reason:
+                'the route is taken and the work is really handed to the lane '
+                'that can do it, at any marker. With no bound there is nothing '
+                'left to refuse it, which is what the removal decided',
           );
         }
       },
