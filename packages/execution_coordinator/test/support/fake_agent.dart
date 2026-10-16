@@ -17,6 +17,7 @@ class FakeAgentSession implements AgentSession {
     this.instructionGate,
     this.throwOnStart = false,
     this.throwTransportOnStart = false,
+    this.structuredResult = const {},
   });
 
   final String executionId;
@@ -41,6 +42,15 @@ class FakeAgentSession implements AgentSession {
   /// spends an attempt. Asserting them at the same value would let either
   /// regression hide behind the other.
   final bool throwTransportOnStart;
+
+  /// The JSON object this session's completed turn carries.
+  ///
+  /// Defaults to empty, which is what `OpenCodeSession.getResult` produces for a
+  /// turn with no JSON in it — and is the shape every one of the seven empty
+  /// IMPLEMENTER runs in QA recorded. Lanes whose artifact IS structured output
+  /// (triage's classification, review's verdict) set it here, so those tests
+  /// exercise the real `structuredResult` field rather than a stand-in.
+  final Map<String, dynamic> structuredResult;
 
   final _events = StreamController<AgentEvent>.broadcast(sync: true);
   AgentSessionStatus _status = AgentSessionStatus.starting;
@@ -233,7 +243,7 @@ class FakeAgentSession implements AgentSession {
               ],
         warnings: const [],
       ),
-      structuredResult: const {},
+      structuredResult: structuredResult,
       summary: complete
           ? 'implemented and verified the calculator'
           : 'did not complete',
