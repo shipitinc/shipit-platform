@@ -133,6 +133,76 @@ abstract final class SuccessArtifactArtifacts {
   /// same set of rows out of the event stream.
   static const String eventKind = 'missingSuccessArtifact';
 
+  /// The `WorkItem.metadata` key carrying the verdict for the completion that
+  /// LAST settled a work item. The wire contract between this package and the
+  /// scheduler's completion inflow.
+  ///
+  /// ## WHY THE WORK ITEM AND NOT `agent_event` — the channel, chosen
+  ///
+  /// `successArtifactUndetermined` was first written into `_Completion
+  /// .eventPayload` only, which reaches `ExecutionStore.appendEvent` and thence
+  /// the `agent_event` table. That row is real, durable evidence, and it is
+  /// **invisible to the platform**: the scheduler's production worker store
+  /// (`PostgresWorkerStore`) reads `worker_execution`, `worker_result` and
+  /// `worker_event`, and `packages/scheduler` does not depend on
+  /// `execution_coordinator` at all. The marker existed for a human to grep in
+  /// SQL and for nothing else — which is exactly why the unattended loop it
+  /// describes ran for ever.
+  ///
+  /// So the verdict also travels on `WorkItem.metadata`, and that is the channel
+  /// the brake uses. It is the right one, not merely the reachable one:
+  ///
+  ///  * **The counter is a property of the WORK ITEM, not of an execution.**
+  ///    "N consecutive undetermined returns" is a statement about one item's
+  ///    history, and *consecutive* is only definable against the item's own
+  ///    position in its cycle. An event stream would force the scheduler to
+  ///    reconstruct that ordering across executions — the exact reconstruction
+  ///    `producerActorId` exists to avoid (see `producedCommitFor`, "WHY THE
+  ///    ANCHOR AND NOT THE LATEST EXECUTION": recency would read a later triage
+  ///    run as the implementation).
+  ///  * **It is a channel this platform already writes and already reads for
+  ///    exactly this purpose.** `producerActorId` is written by this same
+  ///    coordinator, on this same `agentCompleted` transition, and read by this
+  ///    same scheduler, out of the same durable row. Same transaction, same
+  ///    durability, same failure modes — no new table, no migration, no new
+  ///    store dependency.
+  ///  * **The write is atomic with the state move.** The verdict is merged by
+  ///    the same `metadataMerge` that performs the transition, so a crash
+  ///    between "the run finished" and "the verdict was recorded" cannot leave
+  ///    a count that is off by one.
+  ///
+  /// ## WHY THE WORKER-RECORD CHANNELS ARE NOT USED
+  ///
+  /// They are the other two candidates and neither is reachable from the
+  /// writer. `WorkerExecution.reason` and `WorkerEventRecord.payload` are both
+  /// written by `LocalWorker`, which never sees this verdict at all:
+  /// `AgentExecution` carries a status and nothing else, and `LocalWorker`
+  /// reads nothing else. Reaching them would mean growing
+  /// `platform_contracts` to carry the flag across the boundary and editing
+  /// `worker_runtime` to write it — and `execution_coordinator` cannot take a
+  /// dependency on `worker_runtime` to do it itself, because `worker_runtime`
+  /// already depends on `execution_coordinator`.
+  ///
+  /// ## WRITTEN ON EVERY COMPLETION, INCLUDING `false`
+  ///
+  /// Absence is not "undetermined" and absence is not "determined" either: it
+  /// means this item has never been through a coordinator that writes the key
+  /// (an item that predates it). The flag therefore describes the LAST
+  /// completion and is overwritten every time, so a determined completion after
+  /// an undetermined one cannot leave a stale `true` behind and inflate a
+  /// streak for ever.
+  static const String undeterminedMetadataKey = 'successArtifactUndetermined';
+
+  /// The value written under [undeterminedMetadataKey] for [satisfaction].
+  ///
+  /// One function rather than a `== ArtifactSatisfaction.undetermined` written
+  /// at the call site, so "which satisfaction counts as undetermined" has
+  /// exactly one definition — the same reason
+  /// `DurableWorkflowEngine.triageAttemptMetadataKey` pairs with
+  /// `nextTriageAttempt`.
+  static bool undeterminedFlagFor(ArtifactSatisfaction satisfaction) =>
+      satisfaction == ArtifactSatisfaction.undetermined;
+
   /// `kind` for the ordinary artifact-missing path. Deliberately NOT one of the
   /// transient markers: a run that finished cleanly and produced nothing will
   /// produce nothing again on an automatic retry, so it must not be returned to

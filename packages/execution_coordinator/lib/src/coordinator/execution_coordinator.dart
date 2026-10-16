@@ -1077,7 +1077,33 @@ class ExecutionCoordinator {
         // guard has only a literal to fall back on — a check that can never
         // fail is not a check. `metadataMerge` is additive: it never replaces
         // the rest of the metadata (defect payload, retry attempt, …).
-        metadataMerge: {'producerActorId': stamped.executionId},
+        //
+        // ## THE ARTIFACT VERDICT TRAVELS WITH IT
+        //
+        // The event payload below also carries
+        // `successArtifactUndetermined`, and that is observability only. The
+        // scheduler — the component that spends a real implementer execution
+        // per pass of the completion cycle — reads `worker_execution`,
+        // `worker_result` and `worker_event`, and `agent_event` is none of them,
+        // so a verdict published only there is invisible to the thing that has
+        // to act on it. This is the same channel `producerActorId` uses, on the
+        // same transition, inside the same transaction: the flag and the state
+        // move together or not at all.
+        //
+        // WRITTEN ON EVERY PASS, `false` included. `artifact` is non-null on
+        // this branch by construction — `verificationFailed` short-circuits to
+        // `null` and routes to `agentFailed` above, and `artifactMissing` routes
+        // there too — so there is no "unknown" case to express here and an
+        // absent key would mean only "this item predates the flag". Leaving a
+        // stale `true` in place for a determined completion would let the
+        // scheduler's brake count a streak that never happened.
+        metadataMerge: {
+          'producerActorId': stamped.executionId,
+          SuccessArtifactArtifacts.undeterminedMetadataKey:
+              SuccessArtifactArtifacts.undeterminedFlagFor(
+                artifact!.satisfaction,
+              ),
+        },
       );
     }
 
