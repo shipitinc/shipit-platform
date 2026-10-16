@@ -1,4 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../core/plain_language.dart';
 import '../../data/control_plane_repository.dart';
 import 'runs_event.dart';
 
@@ -135,6 +136,8 @@ class RunItem {
   final String agent;
   final String category;
 
+  /// The description when there is one, shortened for a single line of list
+  /// title. Same rule as every other screen's headline.
   String get plainName =>
-      description != null && description!.isNotEmpty ? description! : name;
+      PlainLanguage.headline(title: name, description: description);
 }
