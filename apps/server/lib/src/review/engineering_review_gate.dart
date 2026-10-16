@@ -1339,30 +1339,384 @@ TickJobHandler engineeringReviewTickHandler({
       actorType: ActorType.engineeringReviewer,
     );
 
-    await workflowEngine.requestHumanDecision(
-      workItemId: workItemId,
-      decisionType: HumanDecisionType.engineeringReview,
-      question: question,
-      options: const [
-        HumanDecisionOption(optionId: 'approve', label: 'Approve'),
-        HumanDecisionOption(optionId: 'reject', label: 'Reject'),
-        HumanDecisionOption(optionId: 'rework', label: 'Rework'),
-      ],
-      recommendation: recommendation,
-      blocking: true,
-      metadata: {
-        'engineeringReviewResult': reviewResult.toJson(),
-        'reviewExecutionId': executionId,
+    // THE RAISE IS GUARDED, AND THE GUARD IS ABOUT VISIBILITY, NOT SAFETY.
+    //
+    // `DurableWorkflowEngine.requestHumanDecision` THROWS on a refused gate entry,
+    // after appending the refusal to the transition history — so an unguarded
+    // call here escapes into `drainTriageOutcomesFromTick`'s per-job guard,
+    // which logs `triage.tick.job_failed` and moves on. What that leaves on a
+    // live stack is exactly the shape this correction exists to end: a reviewer
+    // produced a verdict, the item stayed at `reviewInProgress`, and the only
+    // record was a job-level failure line naming neither the verdict nor the
+    // guard that refused it. The verdict-less raise three hundred lines above
+    // has its own guard for the same reason; this is its twin on the verdict
+    // path, and the two are kept adjacent so the next reader cannot add one
+    // without seeing the other.
+    //
+    // Nothing about the refusal is swallowed: the raw engine text goes into the
+    // log context, and the re-drive sweep below reaches the same settled review
+    // again exactly once.
+    try {
+      await workflowEngine.requestHumanDecision(
+        workItemId: workItemId,
+        decisionType: HumanDecisionType.engineeringReview,
+        question: question,
+        options: const [
+          HumanDecisionOption(optionId: 'approve', label: 'Approve'),
+          HumanDecisionOption(optionId: 'reject', label: 'Reject'),
+          HumanDecisionOption(optionId: 'rework', label: 'Rework'),
+        ],
+        recommendation: recommendation,
+        blocking: true,
+        metadata: {
+          'engineeringReviewResult': reviewResult.toJson(),
+          'reviewExecutionId': executionId,
+          'reviewVerdict': reviewResult.verdict.wire,
+        },
+        actor: actor,
+        extraContext: {
+          'producerActorId': producerActorId,
+          'reviewExecutionId': executionId,
+          'reviewVerdict': reviewResult.verdict.wire,
+        },
+      );
+    } on WorkflowTransitionRejectedException catch (e) {
+      logger?.call('engineering-review-gate-verdict-decision-refused', {
+        'jobId': job.jobId,
+        'workItemId': workItemId,
+        'executionId': executionId,
+        'state': item.state.wire,
+        // The reviewer's OWN verdict, verbatim, so the operator can read what
+        // was discarded without opening the execution store. It is not applied
+        // to anything: the item is left exactly where it was.
         'reviewVerdict': reviewResult.verdict.wire,
-      },
-      actor: actor,
-      extraContext: {
-        'producerActorId': producerActorId,
-        'reviewExecutionId': executionId,
-        'reviewVerdict': reviewResult.verdict.wire,
-      },
-    );
+        'error': e.toString(),
+        'carriesVerdict': false,
+        'decision':
+            'no decision was raised and no verdict was applied to this item. '
+            'The reviewer\'s verdict is on its own execution and in this line; '
+            'the item is still at review_in_progress and still needs a person',
+      });
+    }
   };
+}
+
+// ---------------------------------------------------------------------------
+// THE THIRD DOOR: A SETTLED REVIEW NOBODY CONSUMED
+// ---------------------------------------------------------------------------
+//
+// ## THE DEFECT THIS EXISTS TO END, IN THE ORDER IT ACTUALLY HAPPENS
+//
+// `engineeringReviewTickHandler` is reached from `drainTriageOutcomesFromTick`,
+// which consumes the tick's `dispatched ∪ terminal ∪ reconciled` set. A job in
+// that set is handed to its handler ONCE, ever: a terminal job is never reported
+// by a later tick, because step 1 of `Scheduler.tick` reconciles only
+// `claimed`/`running` rows and steps 5–9 attempt only runnable ones.
+//
+// So the line
+//
+// ```dart
+// final execution = await executionStore.readExecutionOrNull(executionId);
+// if (execution == null || !execution.isTerminal) { log(...); return; }
+// ```
+//
+// is not a guard that defers a decision. It is a guard that DISCARDS one, unless
+// something else reaches the same job again — and after that guard the job is
+// terminal, so nothing does.
+//
+// The ordering that makes it real is production machinery, not a hand-built
+// fixture, and it is short:
+//
+//  1. a reviewer's job is `running`, its claim lapses while the agent session is
+//     still open, and `Scheduler._reclaimZombie` settles the JOB terminal
+//     (`failed`, `kind: permanent`) — `_releaseWorkItem` leaves a reviewer at
+//     `reviewInProgress` untouched, so the item does not move;
+//  2. the same tick reports that job on `reconciled`, and the drain hands it to
+//     this handler;
+//  3. the reviewer is STILL RUNNING, so the guard above returns; and
+//  4. two minutes later the reviewer finishes and writes a real verdict into a
+//     job that will never be reported again.
+//
+// Measured on live QA at `defect-DEF-1791684804452198`: the review job succeeded,
+// the reviewer returned `{"verdict":"changes_required", …}` at 20:02:28, and the
+// item was still at `review_in_progress` with `blockingHumanDecisionId` NULL and
+// `updatedAt` unchanged since BEFORE that review started. So no transition and
+// no decision followed the verdict.
+//
+// WHAT WAS NOT ESTABLISHED, stated here rather than glossed: this lane could not
+// read the QA database, so it did not observe WHICH guard consumed the outcome —
+// whether the handler ran against a not-yet-settled execution, or did not run
+// for that job at all. Both produce byte-identical durable state, and both are
+// one-shot, so both are this defect. What IS established from the code is the
+// class: on this path a real verdict reaches a durable row that no component
+// reads again, which is what the correction below closes.
+//
+// ## WHAT THIS DOES, AND WHAT IT DELIBERATELY DOES NOT DO
+//
+// It re-drives [engineeringReviewTickHandler] itself — the SAME function, not a
+// second copy of the verdict logic — for a settled review whose item is still at
+// `reviewInProgress`. Re-using the handler is the whole safety argument: every
+// guard above is re-evaluated against fresh durable state, so the item's state,
+// the producer identity and the retry obligation are all re-read rather than
+// remembered.
+//
+// It NEVER touches a live reviewer. A candidate is admitted only when its
+// `AgentExecution` is terminal and its role is `engineeringReviewer`; a
+// `running` execution is skipped silently, every pass, so a reviewer executing
+// right now is not disturbed by a sweep that is looking at its own neighbours.
+//
+// ## THE BOUND, AND WHY IT IS NOT `maxAutomaticReviewReroutes`
+//
+// [maxAutomaticReviewReroutes] bounds a different loop: re-arming the review
+// LANE so a new reviewer runs. This loop mints no job, spends no attempt and
+// starts no agent — it re-enters a function that either moves the item or
+// writes nothing. Reusing that counter would have made the two budgets one
+// number, and raising one would silently raise the other.
+//
+// The bound used here is stricter than either: **at most one re-drive per
+// settled review execution, ever.** It is durable and it needs no new write
+// authority, because the reviewer's OWN execution timeline already accepts
+// appends from this file — the same authority [_recordNoVerdict] uses — and
+// `DurableWorkflowEngine` has no metadata-only write at all. After a re-drive
+// attempt the gate appends [reviewGateConsumedPayloadKey] to that execution, and
+// every later pass sees it and skips.
+//
+// Why "attempt", not "success": a re-drive that cannot act — a producer identity
+// nobody can read, a transition another writer has already taken — must not be
+// retried for ever either. Bounding on success would make an un-actionable
+// review re-read its verdict every thirty seconds, which is the same shape as an
+// unbounded loop with a slower clock. Bounding on the attempt means the worst
+// case is one extra look and then a durable, greppable statement that this gate
+// tried once, on the reviewer's own timeline, and a person is needed.
+//
+// ## AND WHY A SWEEP, RATHER THAN MAKING THE DRAIN RE-REPORT
+//
+// Re-reporting terminal jobs would put every finished review in this deployment
+// back on every tick, for ever, whether or not anything was wrong with it. The
+// sweep reads the same durable rows and considers only the narrow shape that is
+// actually broken: a settled reviewer, an item still claiming to be in review,
+// and no consumption marker.
+const String reviewGateConsumedPayloadKey = 'reviewGateConsumed';
+
+/// What one [redriveSettledReviews] pass did with the terminal review jobs it
+/// found.
+///
+/// Reported rather than logged only, because "a lane that looks idle with no
+/// item to explain it" is the failure this whole file exists to end — and an
+/// operator needs to be able to tell "there was nothing to do" from "there was
+/// something and it was refused".
+class SettledReviewRedrive {
+  const SettledReviewRedrive({
+    required this.consideredJobIds,
+    required this.redrivenJobIds,
+    required this.alreadyConsumedJobIds,
+    required this.failedJobIds,
+  });
+
+  /// Every terminal review job that named an execution at all. The candidate set
+  /// BEFORE the state and liveness filters, so a shrinking candidate set is
+  /// visible as a number rather than inferred from silence.
+  final List<String> consideredJobIds;
+
+  /// Jobs whose settled review this gate handed to [engineeringReviewTickHandler]
+  /// during this pass. Each is now marked consumed and will never be handed to
+  /// it again.
+  final List<String> redrivenJobIds;
+
+  /// Jobs skipped because their reviewer already carries
+  /// [reviewGateConsumedPayloadKey]. This is the bound, counted.
+  final List<String> alreadyConsumedJobIds;
+
+  /// Jobs the gate could not mark consumed. The ONLY unbounded shape this
+  /// function has, it is loud, and the next pass tries them again — which is
+  /// why it is reported rather than dropped.
+  final List<String> failedJobIds;
+
+  @override
+  String toString() =>
+      'SettledReviewRedrive(considered: ${consideredJobIds.length}, '
+      'redriven: ${redrivenJobIds.length}, '
+      'alreadyConsumed: ${alreadyConsumedJobIds.length}, '
+      'failed: ${failedJobIds.length})';
+}
+
+/// Whether this gate has already consumed the review on [events]' execution.
+bool _settledReviewAlreadyConsumed(List<AgentEventRecord> events) =>
+    events.any((e) => e.payload?[reviewGateConsumedPayloadKey] != null);
+
+/// Records on the reviewer's own timeline that this gate has taken its outcome.
+///
+/// One append per settled review execution, and the reason it is an event rather
+/// than a work-item metadata key is written on [_recordNoVerdict]: a metadata key
+/// would need a state move to write, the re-drive has no state move to make, and
+/// a metadata-only write would be a new authority this file does not have.
+///
+/// [AgentEventType.warning] for the same reason as there: this is bookkeeping
+/// about the review, not a claim that the review went wrong, and
+/// `executionFailed` would be the second fabrication in a file that exists to
+/// prevent the first.
+Future<void> _markSettledReviewConsumed({
+  required ExecutionStore executionStore,
+  required Job job,
+  required String executionId,
+  required List<AgentEventRecord> prior,
+}) async {
+  final sequence =
+      prior.fold<int>(0, (max, e) => e.sequence > max ? e.sequence : max) + 1;
+  final now = DateTime.now().toUtc();
+  await executionStore.appendEvent(
+    AgentEventRecord(
+      eventId:
+          'review-gate-consumed-$executionId-${now.microsecondsSinceEpoch}',
+      executionId: executionId,
+      workItemId: job.workItemId,
+      sequence: sequence,
+      type: AgentEventType.warning,
+      occurredAt: now,
+      payload: {
+        'reviewGate': 'settled_review_consumed',
+        // The BOUND, in the one form a later pass can read it from.
+        reviewGateConsumedPayloadKey: true,
+        'jobId': job.jobId,
+        'jobState': job.state.wire,
+      },
+    ),
+  );
+}
+
+/// Reaches a settled-but-unconsumed engineering review again. See the section
+/// header above for the ordering, the bound and why this is a sweep.
+///
+/// Runs AFTER the drain and the `blockedArtifactMissing` loop in the composition
+/// root, so the two doors that already existed run first, in the order
+/// `engineering_review_composition_order_test.dart` asserts. This one only ever
+/// acts on a settled review those two did not consume, so it cannot pre-empt
+/// either.
+Future<SettledReviewRedrive> redriveSettledReviews({
+  required DurableWorkflowEngine workflowEngine,
+  required ExecutionStore executionStore,
+  required WorkerStore workerStore,
+  required JobStore jobStore,
+  void Function(String message, Map<String, dynamic> context)? logger,
+}) async {
+  // ONE handler, constructed once and used for every candidate, so the sweep and
+  // the drain cannot describe different gates.
+  final handler = engineeringReviewTickHandler(
+    workflowEngine: workflowEngine,
+    executionStore: executionStore,
+    workerStore: workerStore,
+    logger: logger,
+  );
+
+  // Sorted, so a pass is deterministic and two passes over the same state do the
+  // same work in the same order. Job ids are the tie-break because two review
+  // jobs for one item are ordinary — the reviewer that ran and the one that was
+  // re-routed behind it — and which is consulted first must not be luck.
+  final candidates =
+      (await jobStore.listJobs())
+          .where(
+            (j) =>
+                j.jobType == JobType.engineeringReview &&
+                j.isTerminal &&
+                (j.executionReference?.agentExecutionId?.isNotEmpty ?? false),
+          )
+          .toList()
+        ..sort((a, b) {
+          final byItem = a.workItemId.compareTo(b.workItemId);
+          return byItem != 0 ? byItem : a.jobId.compareTo(b.jobId);
+        });
+
+  final considered = <String>[];
+  final redriven = <String>[];
+  final consumed = <String>[];
+  final failed = <String>[];
+
+  for (final job in candidates) {
+    considered.add(job.jobId);
+    final executionId = job.executionReference!.agentExecutionId!;
+
+    // THE ITEM FILTER, and it is the only state this sweep acts from.
+    // `waitingForHumanDecision` means somebody already decided, `agentCompleted`
+    // and below mean the review lane is not holding this item. Both are somebody
+    // else's to move.
+    final item = await workflowEngine.loadWorkItem(job.workItemId);
+    if (item.state != WorkItemState.reviewInProgress) continue;
+
+    // THE LIVENESS FILTER, and the reason a reviewer executing right now is not
+    // disturbed. A non-terminal execution is not "not ready yet" — it is a
+    // reviewer this sweep must not have an opinion about.
+    final execution = await executionStore.readExecutionOrNull(executionId);
+    if (execution == null ||
+        !execution.isTerminal ||
+        execution.role != AgentRole.engineeringReviewer) {
+      continue;
+    }
+
+    final events = await executionStore.readEvents(executionId);
+    if (_settledReviewAlreadyConsumed(events)) {
+      consumed.add(job.jobId);
+      continue;
+    }
+
+    Object? handlerError;
+    try {
+      await handler(job);
+    } on Object catch (error) {
+      // Per-job, and it does NOT stop the pass. The handler is already guarded
+      // on its own paths; this catches a store fault, and one item's fault must
+      // not hide every other stranded review in the same pass.
+      handlerError = error;
+    }
+
+    try {
+      await _markSettledReviewConsumed(
+        executionStore: executionStore,
+        job: job,
+        executionId: executionId,
+        prior: events,
+      );
+      redriven.add(job.jobId);
+    } on Object catch (error) {
+      failed.add(job.jobId);
+      logger?.call('engineering-review-settled-redrive-not-marked', {
+        'jobId': job.jobId,
+        'workItemId': job.workItemId,
+        'executionId': executionId,
+        'handlerError': handlerError == null ? null : '$handlerError',
+        'error': '$error',
+        'carriesVerdict': false,
+        'decision':
+            'the handler ran but this gate could not record that it did, so the '
+            'next pass will reach the same settled review again. That is the one '
+            'shape here that is not bounded, and it is a store fault rather than '
+            'a review outcome',
+      });
+    }
+  }
+
+  if (redriven.isNotEmpty || failed.isNotEmpty) {
+    logger?.call('engineering-review-settled-redrive', {
+      'considered': considered.length,
+      'redriven': redriven.length,
+      'alreadyConsumed': consumed.length,
+      'failed': failed.length,
+      'redrivenJobIds': redriven,
+      'failedJobIds': failed,
+      'carriesVerdict': false,
+      'decision':
+          'a settled review whose outcome no earlier door consumed was handed to '
+          'this gate again, once. Each is now marked on its own execution '
+          'timeline and will not be handed over again; nothing here asserted a '
+          'verdict, and nothing here started an agent',
+    });
+  }
+
+  return SettledReviewRedrive(
+    consideredJobIds: List.unmodifiable(considered),
+    redrivenJobIds: List.unmodifiable(redriven),
+    alreadyConsumedJobIds: List.unmodifiable(consumed),
+    failedJobIds: List.unmodifiable(failed),
+  );
 }
 
 /// Whether the implementation lane's completion inflow will move the item off

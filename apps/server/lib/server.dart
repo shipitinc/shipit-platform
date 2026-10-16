@@ -1295,6 +1295,7 @@ class ReviewLaneTickResult {
   const ReviewLaneTickResult({
     required this.drain,
     required this.missingArtifactJobIds,
+    required this.settledRedrive,
   });
 
   /// The terminal-job drain.
@@ -1303,6 +1304,15 @@ class ReviewLaneTickResult {
   /// Every `blockedArtifactMissing` job id this pass turned into a route or a
   /// decision, in the order the scheduler reported them.
   final List<String> missingArtifactJobIds;
+
+  /// What the third door did: every terminal review job whose settled outcome
+  /// neither of the two doors above consumed, handed to the SAME
+  /// `engineeringReviewTickHandler` exactly once each.
+  ///
+  /// Reported because "the review section found nothing to do" and "the review
+  /// section found a stranded review and acted on it" must be distinguishable to
+  /// whoever reads the tick, and only one of them is visible without this.
+  final SettledReviewRedrive settledRedrive;
 }
 
 /// The composition root's REVIEW section, in the one order production runs it.
@@ -1442,9 +1452,59 @@ Future<ReviewLaneTickResult> runReviewLaneTick({
     }
   }
 
+  // THIRD DOOR, and last, so the order the two doors above run in is unchanged
+  // and provably so.
+  //
+  // `drainTriageOutcomesFromTick` hands a terminal job to its handler exactly
+  // once, ever. So when `engineeringReviewTickHandler` runs a moment before the
+  // reviewer's execution settles — which `Scheduler._reclaimZombie` produces on
+  // its own, by settling a job whose claim lapsed while the agent session was
+  // still open — its `execution == null || !execution.isTerminal` guard returns,
+  // and the job it would have consumed is never reported again. A reviewer that
+  // finishes two minutes later writes its verdict into a row nobody reads: on
+  // `defect-DEF-1791684804452198` at `main@104d807` that was
+  // `{"verdict":"changes_required", …}` on an item left at `review_in_progress`
+  // with `blockingHumanDecisionId` NULL.
+  //
+  // This reach acts ONLY on a review whose execution is terminal, so a reviewer
+  // running right now is never disturbed, and it hands each such review to the
+  // SAME handler exactly once — the bound is a durable marker on the reviewer's
+  // own execution timeline, not a counter in this process. See
+  // `redriveSettledReviews` for the whole of it, including which of the
+  // one-shot guards this was observed through and which the lane could not
+  // distinguish from durable state alone.
+  SettledReviewRedrive settledRedrive;
+  try {
+    settledRedrive = await redriveSettledReviews(
+      workflowEngine: workflowEngine,
+      executionStore: executionStore,
+      workerStore: workerStore,
+      jobStore: jobStore,
+      logger: log,
+    );
+  } catch (e, st) {
+    // Fail closed and LOUD. A sweep that cannot list its own jobs is a store
+    // fault, and letting it escape would fail the whole review section — taking
+    // the two doors above down with it, and reporting nothing at all.
+    settledRedrive = const SettledReviewRedrive(
+      consideredJobIds: [],
+      redrivenJobIds: [],
+      alreadyConsumedJobIds: [],
+      failedJobIds: [],
+    );
+    log('review.settled-redrive.failed', {
+      'error': '$e',
+      'stack': st.toString(),
+      'action':
+          'no settled review was re-driven this pass. The other two review doors '
+          'ran before this and are unaffected; the next tick tries again',
+    });
+  }
+
   return ReviewLaneTickResult(
     drain: reviewDrain,
     missingArtifactJobIds: List.unmodifiable(handled),
+    settledRedrive: settledRedrive,
   );
 }
 
@@ -2763,13 +2823,23 @@ Future<void> _reportAdapterHealth(
 //    claimLease`, which is a multi-hour multiplier on the window in which a
 //    dead execution is allowed to keep its claim and its capacity slot.
 //
-// The last of those is a defect at these magnitudes, not a detail: a 3-hour
-// budget times four is a 12-hour staleness bound. Every scheduler below is
-// therefore given an EXPLICIT [AgentExecutionBudgets.zombieStalenessFor] via
+// The last of those is a defect at these magnitudes, not a detail: the default
+// multiplies this table by [AgentExecutionBudgets.rejectedStalenessMultiplier]
+// and then adds a claim lease. Every scheduler below is therefore given an
+// EXPLICIT [AgentExecutionBudgets.zombieStalenessFor] via
 // `Scheduler.zombieStalenessAfter`, so raising a budget here does not silently
-// multiply the reclaim window by four. That decoupling, and its cost, are
-// documented on [AgentExecutionBudgets.zombieStalenessFor] — read it before
-// treating the staleness bound as incidental.
+// multiply the reclaim window. That decoupling, and its cost, are documented on
+// [AgentExecutionBudgets.zombieStalenessFor] — read it before treating the
+// staleness bound as incidental.
+//
+// NO MAGNITUDE IS QUOTED HERE, deliberately. An earlier version said "a 3-hour
+// budget times four is a 12-hour staleness bound", which is true of the value
+// that was in force when it was written and false of any other value: lowering
+// the review budget to an hour would have left an operator reading a claim about
+// a window twice as wide as the real one. What the rejected formula WOULD
+// produce for the budget actually in force is published per role by
+// [AgentExecutionBudgets.describe] and computed from the table, so it cannot go
+// stale.
 //
 class AgentExecutionBudgets {
   const AgentExecutionBudgets._();
@@ -2818,18 +2888,26 @@ class AgentExecutionBudgets {
     // that it was different from the review lane's 300.
     'implement-feature': Duration(hours: 4),
 
-    // ENGINEERING REVIEW — 3 hours. PROVISIONAL.
+    // ENGINEERING REVIEW — 1 hour. PROVISIONAL.
     //
     // OPERATOR-STATED: a review run HERE, THROUGH OPENCODE, TAKES 15–30
-    // MINUTES. 3 hours is 6× the stated maximum, so ordinary variance, a
-    // larger diff, or a slow provider do not reach the ceiling — only a genuinely
-    // wedged run does.
+    // MINUTES. 1 hour is 2× the stated maximum, so ordinary variance and a
+    // larger diff do not reach the ceiling — only a genuinely wedged run does.
+    //
+    // MEASURED, and the reason this came down from 3 hours: on this deployment
+    // a review started at 17:00:12 was interrupted at 20:00:13 having emitted no
+    // terminal event at all, and so consumed the entire 3-hour execution budget
+    // to produce nothing; the very next review returned in 2 minutes with a
+    // real verdict. So 6× of the stated maximum was never a margin this lane
+    // had earned — it was an allowance no review here has needed, and one that
+    // let a single wedged run hold its claim and its capacity slot three times
+    // longer than the work it was meant to bound.
     //
     // It replaces 300s (5 minutes), which is LESS THAN THE STATED MINIMUM for
     // this role and had no justification anywhere in the repository. A ceiling
     // below the observed floor is not a ceiling; it is a coin toss that always
     // lands on killed.
-    'engineering-review': Duration(hours: 3),
+    'engineering-review': Duration(hours: 1),
   };
 
   /// Triage's budget, in the seconds every workload field wants.
@@ -2858,11 +2936,20 @@ class AgentExecutionBudgets {
   ///
   /// That is the formula `Scheduler.zombieStalenessBound` uses when a scheduler
   /// does not configure one, and it was written for budgets of five minutes. At
-  /// a 3-hour review budget it produces a 12.2-hour staleness bound: a dead
-  /// execution would hold its claim and its capacity slot for half a day before
-  /// anything reclaimed it. The multiplier is the problem — it was a proxy for
-  /// "the non-agent work around a run", and at these magnitudes it stops being
-  /// one.
+  /// the budgets in [byRole] it produces a staleness bound of
+  /// `budget * [rejectedStalenessMultiplier]` plus the Scheduler's claim lease —
+  /// so a dead review execution would hold its claim and its capacity slot for
+  /// most of a day before anything reclaimed it. The multiplier is the problem —
+  /// it was a proxy for "the non-agent work around a run", and at these
+  /// magnitudes it stops being one.
+  ///
+  /// The per-role arithmetic is published by [describe] under
+  /// `zombieStaleness.rejectedSchedulerDefault`, computed from this table, and
+  /// asserted against it in
+  /// `apps/server/test/engineering_review_composition_order_test.dart`. It is not
+  /// written out here: a magnitude quoted in prose is a magnitude that goes
+  /// stale when a budget moves, and the whole point of this method is that a
+  /// budget can move without anything else having to be remembered.
   ///
   /// ## WHAT REPLACES IT, AND WHAT IT COSTS
   ///
@@ -2898,11 +2985,31 @@ class AgentExecutionBudgets {
   static Duration zombieStalenessFor(Duration agentBudget) =>
       agentBudget + stallAllowance;
 
+  /// The multiplier `Scheduler.zombieStalenessBound` applies when a scheduler is
+  /// NOT given an explicit `zombieStalenessAfter`.
+  ///
+  /// Named HERE so the banner can print what the rejected formula WOULD have
+  /// produced for every budget in the table, computed from the table rather than
+  /// written out beside it. It used to be quoted as prose — *"which turns a 3h
+  /// review budget into a 12.2h reclaim window"* — which meant lowering a budget
+  /// silently left the operator reading a number about the old one. The
+  /// `+ claimLease` term is deliberately NOT reproduced here: the lease belongs
+  /// to `Scheduler`, is not in this table, and restating it would be a second
+  /// copy of a number this file does not own. It only makes the rejected window
+  /// LARGER, so the multiple printed below is a floor for it.
+  static const int rejectedStalenessMultiplier = 4;
+
   /// One line naming every budget in force, for the startup banner.
   ///
   /// Present so the values are visible to an operator at runtime rather than
   /// only to whoever opens this file. A provisional number that nothing prints
   /// is a provisional number nobody will remember to re-derive.
+  ///
+  /// EVERY figure in here is RENDERED FROM [byRole]. None is written out, in
+  /// prose or in the rejected-formula block, because a banner that quotes a
+  /// magnitude is a banner that goes stale the moment a budget moves — and the
+  /// number it goes stale about is the one an operator uses to judge whether a
+  /// dead execution is still holding a slot.
   static Map<String, Object> describe() => <String, Object>{
     'provisional':
         'every value here is a ceiling chosen from operator-stated ranges. NO '
@@ -2916,11 +3023,30 @@ class AgentExecutionBudgets {
     'zombieStaleness': {
       'rule':
           'agentBudget + ${stallAllowance.inMinutes}m '
-          '(NOT the Scheduler default of timeoutSeconds * 4 + claimLease, '
-          'which turns a 3h review budget into a 12.2h reclaim window)',
+          '(NOT the Scheduler default of timeoutSeconds * '
+          '$rejectedStalenessMultiplier + claimLease, which MULTIPLIES this '
+          'table by $rejectedStalenessMultiplier — see '
+          'rejectedSchedulerDefault.byRoleSeconds below for what that would '
+          'have produced for the budget actually in force, before the claim '
+          'lease is even added)',
       'byRoleSeconds': <String, int>{
         for (final entry in byRole.entries)
           entry.key: zombieStalenessFor(entry.value).inSeconds,
+      },
+      // What the rejected formula would produce, per role, from THIS table.
+      // Machine-readable on purpose: the sentence above is for a human and the
+      // comparison a reader has to make is arithmetic, so the arithmetic is
+      // published rather than left inside a sentence.
+      'rejectedSchedulerDefault': <String, Object>{
+        'rule': 'timeoutSeconds * $rejectedStalenessMultiplier + claimLease',
+        'multiplier': rejectedStalenessMultiplier,
+        'claimLeaseSecondsExcluded':
+            'the Scheduler\'s own claim lease is added on top of this and is '
+            'not restated here; this class does not own that number',
+        'byRoleSeconds': <String, int>{
+          for (final entry in byRole.entries)
+            entry.key: entry.value.inSeconds * rejectedStalenessMultiplier,
+        },
       },
     },
   };

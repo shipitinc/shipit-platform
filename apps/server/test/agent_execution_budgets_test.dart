@@ -3,6 +3,17 @@ import 'dart:io';
 import 'package:control_plane_server/server.dart';
 import 'package:test/test.dart';
 
+/// The range the operator stated for a review run, in minutes.
+///
+/// Named once HERE so the assertions below and the failure messages that quote
+/// them cannot disagree. The same range is also written in prose in the
+/// `byRole` header in `server.dart`, and that copy is NOT machine-checked
+/// against this one: if the operator ever restates the range, both have to
+/// move, and this test is the signal that the budget stopped matching the
+/// claim — not that the prose went stale.
+const int _statedReviewMinMinutes = 15;
+const int _statedReviewMaxMinutes = 30;
+
 /// The agent-execution budgets are guarded as LITERALS, on purpose.
 ///
 /// ## Why this file exists at all
@@ -41,16 +52,57 @@ void main() {
   });
 
   group('the values are what this lane claims they are', () {
-    test('engineering review gets 3 hours, from the stated 15-30 minutes', () {
-      expect(
-        AgentExecutionBudgets.engineeringReviewSeconds,
-        3 * 60 * 60,
-        reason:
-            'operator-stated: a review here, through opencode, takes 15-30 '
-            'minutes. 3h is 6x the stated maximum, so variance and a larger '
-            'diff do not reach the ceiling.',
-      );
-    });
+    test(
+      'engineering review gets 1 hour, 2x the stated 15-30 minute maximum',
+      () {
+        expect(
+          AgentExecutionBudgets.engineeringReviewSeconds,
+          1 * 60 * 60,
+          reason:
+              'operator-stated: a review here, through opencode, takes '
+              '$_statedReviewMinMinutes-$_statedReviewMaxMinutes minutes. 1h is '
+              '2x the stated maximum, so variance and a larger diff do not reach '
+              'the ceiling. It replaced 3h after a review burned that whole '
+              'budget to produce nothing, and the next one returned in 2 minutes '
+              'with a verdict.',
+        );
+        // `expect(x, 1 * 60 * 60)` on its own says nothing about WHY 1h, and
+        // this file's own thesis is that a number reads like a finding whether
+        // or not anything measured it. So the value is pinned as a literal AND
+        // restated as the relationship it is supposed to bear to the operator's
+        // stated range, computed from the TABLE against the named constants at
+        // the top of this file.
+        //
+        // Stated plainly, because it is easy to oversell: once the literal
+        // above holds, these two assertions are the SAME constraint written
+        // differently and add no discriminating power. What they buy is the
+        // shape of the edit — when the budget moves, what has to move with it
+        // is the CLAIM ("2x the stated maximum"), not just a number nobody can
+        // interpret. It is not decoration either: change `_statedReviewMaxMinutes`
+        // and this fails on the relationship while 3600 is still the budget.
+        final budgetMinutes =
+            AgentExecutionBudgets.byRole['engineering-review']!.inMinutes;
+        expect(
+          budgetMinutes,
+          greaterThan(_statedReviewMaxMinutes),
+          reason:
+              'a ceiling at or below the stated maximum kills runs that were '
+              'never slow. That is the 300s defect in its general form, and it '
+              'is the invariant — not any particular number.',
+        );
+        expect(
+          budgetMinutes - _statedReviewMaxMinutes,
+          _statedReviewMaxMinutes,
+          reason:
+              'the headroom over the stated maximum is pinned deliberately: 2x '
+              'absorbs ordinary variance and a larger diff, and pinning the '
+              'FACTOR means the next widening of this budget has to move this '
+              'test rather than slide past it. The 6x that preceded it satisfies '
+              '"at least 2x" and buys nothing this deployment can point to; 1x '
+              'is not headroom at all.',
+        );
+      },
+    );
 
     test(
       'implementation gets 4 hours, from the stated "routinely exceeds 30m"',
@@ -367,10 +419,10 @@ void main() {
       // `_dispatchOne` — and so the whole agent execution — SERIALLY for every
       // eligible job, with no per-tick cap. `TickSingleFlight` DROPS every
       // overlapping trigger for the whole of that window, so the window is
-      // N × budget, not one budget. That was true at 300s and is worse at 3h;
-      // it is not introduced here and it is not fixed here, so it has to be
-      // written down where the tick is built rather than discovered by an
-      // operator wondering why the console went quiet.
+      // N × budget, not one budget. That was true at 300s and grows with every
+      // budget raised since; it is not introduced here and it is not fixed
+      // here, so it has to be written down where the tick is built rather than
+      // discovered by an operator wondering why the console went quiet.
       expect(
         serverSource,
         contains('BUDGET-BLOCKED TICK'),
