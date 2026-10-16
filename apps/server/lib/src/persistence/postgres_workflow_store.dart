@@ -26,7 +26,7 @@ class PostgresWorkflowStore implements WorkflowStore {
   PostgresWorkflowStore(
     this._db, {
     JsonArrayDefectReporter? reportJsonArrayDefect,
-  }) : _reportJsonArrayDefect = reportJsonArrayDefect ?? _stderrJsonArrayDefect;
+  }) : _reportJsonArrayDefect = reportJsonArrayDefect ?? _stdoutJsonArrayDefect;
 
   final PersistenceDatabase _db;
   final JsonArrayDefectReporter _reportJsonArrayDefect;
@@ -39,18 +39,26 @@ class PostgresWorkflowStore implements WorkflowStore {
   /// reader can tell a shortened value from a short one.
   static const int _maxQuotedColumnChars = 2000;
 
-  /// The default defect sink: stderr.
+  /// The default defect sink: stdout.
   ///
-  /// stderr and NOT [StructuredLogger], because this store has no `Session` —
-  /// it is constructed from a `Database` alone at every composition site — and a
-  /// sink that needs a session this class cannot reach would mean no sink at
-  /// all. stderr reaches the process's own log in every deployment, including
-  /// the Serverpod container an operator reads with `docker logs`.
-  static void _stderrJsonArrayDefect(
+  /// Not [StructuredLogger], because this store has no `Session` — it is
+  /// constructed from a `Database` alone at every composition site — and a sink
+  /// that needs a session this class cannot reach would mean no sink at all.
+  ///
+  /// STDOUT, and not stderr, because stdout is where every other
+  /// composition-level operator line goes: `server.dart`'s `_log` writes
+  /// `[$event] $data` with `stdout.writeln`, and this sink exists to be
+  /// greppable beside those lines. stderr would be the more defensive-looking
+  /// choice and the wrong one: a supervisor or log shipper configured to
+  /// collect stdout only would drop every one of these reports silently, and
+  /// the whole point of this sink is that the degradation is never silent. A
+  /// process that dies is already logged; this is not that, it is a per-read
+  /// fault report that must reach the same stream an operator already reads.
+  static void _stdoutJsonArrayDefect(
     String event,
     Map<String, Object?> fields,
   ) {
-    stderr.writeln('[$event] $fields');
+    stdout.writeln('[$event] $fields');
   }
 
   @override
@@ -450,10 +458,28 @@ class PostgresWorkflowStore implements WorkflowStore {
   /// naming the row, the JSON type that was found and the offending text, so
   /// the degradation is visible rather than silent.
   ///
-  /// The bytes are NOT lost: the migration's repair metadata is the
-  /// RESTORE PAYLOAD of `20261014210000000`, which is exactly why migration
-  /// `20261015120000000` wraps it in an array rather than replacing or
-  /// deleting it.
+  /// The bytes are NOT lost, and nothing here rewrites them. The object in that
+  /// column is the RESTORE PAYLOAD of `20261014210000000` — the fields its own
+  /// `down` puts back verbatim — so a repair that replaced it, deleted it or
+  /// reshaped it would destroy the evidence of a human's voided approval. This
+  /// reader only READS the column and reports; the stored value is left exactly
+  /// as `20261014210000000` wrote it, which is also why the report quotes the
+  /// offending text rather than summarising it.
+  ///
+  /// ## A REPAIR MIGRATION FOR THIS COLUMN WAS PROPOSED AND WITHDRAWN
+  ///
+  /// Wrapping each non-array value in a one-element array was written, reviewed
+  /// and removed: it satisfies the `as List<dynamic>` cast above, so it makes
+  /// this report — the only thing standing between a malformed row and a silent
+  /// wrong answer — unreachable, and the element it wraps still fails
+  /// `guardName` one layer in, inside the generated record constructor at
+  /// `packages/platform_contracts/lib/src/types/workflow_transition_record.g.dart`.
+  /// The failure would have moved one layer down, not gone away. The negative
+  /// fact is an assertion rather than a comment:
+  /// `test/transition_row_malformed_guard_test.dart`, group "why the reader
+  /// degrades to ABSENT rather than wrapping in an array". Why the wrap was
+  /// tempting, and what it cost, is recorded in
+  /// `docs/engineering/learning/a-container-that-conforms-is-not-a-payload-that-does.md`.
   List<dynamic>? _guardEvaluationsFromRow(Map<String, dynamic> m) {
     final read = readJsonArrayColumn(m['guardEvaluationsJson'] as String?);
     if (!read.isDefective) return read.value;
@@ -473,7 +499,9 @@ class PostgresWorkflowStore implements WorkflowStore {
         'observedChars': raw.length,
         'observed': quoted,
         'effect': 'guardEvaluations read as absent; row returned',
-        'repairMigration': '20261015120000000',
+        'sourcePayload':
+            'restore payload of migration 20261014210000000; '
+            'left exactly as stored',
       },
     );
     return null;
