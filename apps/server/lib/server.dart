@@ -2888,18 +2888,26 @@ class AgentExecutionBudgets {
     // that it was different from the review lane's 300.
     'implement-feature': Duration(hours: 4),
 
-    // ENGINEERING REVIEW — 3 hours. PROVISIONAL.
+    // ENGINEERING REVIEW — 1 hour. PROVISIONAL.
     //
     // OPERATOR-STATED: a review run HERE, THROUGH OPENCODE, TAKES 15–30
-    // MINUTES. 3 hours is 6× the stated maximum, so ordinary variance, a
-    // larger diff, or a slow provider do not reach the ceiling — only a genuinely
-    // wedged run does.
+    // MINUTES. 1 hour is 2× the stated maximum, so ordinary variance and a
+    // larger diff do not reach the ceiling — only a genuinely wedged run does.
+    //
+    // MEASURED, and the reason this came down from 3 hours: on this deployment
+    // a review started at 17:00:12 was interrupted at 20:00:13 having emitted no
+    // terminal event at all, and so consumed the entire 3-hour execution budget
+    // to produce nothing; the very next review returned in 2 minutes with a
+    // real verdict. So 6× of the stated maximum was never a margin this lane
+    // had earned — it was an allowance no review here has needed, and one that
+    // let a single wedged run hold its claim and its capacity slot three times
+    // longer than the work it was meant to bound.
     //
     // It replaces 300s (5 minutes), which is LESS THAN THE STATED MINIMUM for
     // this role and had no justification anywhere in the repository. A ceiling
     // below the observed floor is not a ceiling; it is a coin toss that always
     // lands on killed.
-    'engineering-review': Duration(hours: 3),
+    'engineering-review': Duration(hours: 1),
   };
 
   /// Triage's budget, in the seconds every workload field wants.
