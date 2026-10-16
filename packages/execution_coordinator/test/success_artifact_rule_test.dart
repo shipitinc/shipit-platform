@@ -136,14 +136,20 @@ void main() {
         executionId: 'exec-ok',
         workItemId: 'wi-1',
       );
-      // The agent edits the product and leaves the worktree dirty. The platform
-      // observes it independently, with git, at settle time — so what matters is
+      // The agent edits the product and COMMITS it. The platform observes the
+      // workspace independently, with git, at settle time — so what matters is
       // the workspace's state when the coordinator asks, not the test's
       // narration of the agent's intentions.
+      //
+      // This test was named for the committed case and never made a commit. It
+      // wrote a file and left the tree dirty, so it re-ran the untracked-file
+      // test below and left the committed case — the one `ArtifactCommitter`
+      // names in its own comment — with no coverage at all.
       git.writeFile(
         'lib/calculator.dart',
         'int add(int a, int b) => a + b + 1;\n',
       );
+      git.commitAll('implement the defect filter');
 
       final execution = await coordinatorOf(session).execute(
         requestFor(
@@ -310,6 +316,206 @@ void main() {
 
       expect(execution.status, AgentSessionStatus.failed);
       expect(execution.reason, contains('CORRECTION_IMPLEMENTER'));
+    });
+  });
+
+  group('the committer\'s truth table, end to end', () {
+    // `ArtifactCommitter.commit` (worker_runtime) calls an implementation
+    // produced when EITHER half holds:
+    //
+    //     dirty := `git status --porcelain` is non-empty
+    //     moved := `git rev-parse HEAD`       != startingRevision
+    //
+    // and returns `ArtifactCommitOutcome.none()` only when BOTH are false. Its
+    // own comment then says: "If the change was already committed by the agent
+    // (HEAD moved, tree clean) there is nothing to commit and the agent's own
+    // commit is the produced revision."
+    //
+    // The probe once implemented only `dirty`. On a clean tree it returned
+    // `unchanged` WITHOUT comparing the two revisions, so an implementer that
+    // committed its own work was scored `missing` — the PERMANENT failure this
+    // whole rule exists to produce, handed to an agent that had in fact
+    // committed. Reproduced by the reviewer against a real repository: the
+    // committer said COMMITTED and the probe said missing, about the same
+    // worktree in the same instant.
+    //
+    // Each test below ASSERTS ITS OWN PREMISE first. A test named for a clean
+    // tree that never checks the tree is clean passes through the dirty branch
+    // and is evidence of nothing.
+
+    test('CLEAN tree with HEAD past the baseline is SATISFIED', () async {
+      final git = GitWorkspaceFixture.create(temp.path, tag: 'moved_ws');
+      addTearDown(git.dispose);
+      await readyItem();
+
+      git.writeFile(
+        'lib/defect_filter.dart',
+        'bool matches(String report) => true;\n',
+      );
+      git.commitAll('the agent commits its own work');
+
+      expect(
+        git.isCleanTree,
+        isTrue,
+        reason: 'premise: the tree really is clean after the commit',
+      );
+      expect(
+        git.head,
+        isNot(git.startingRevision),
+        reason: 'premise: HEAD really did move past the baseline',
+      );
+
+      final execution =
+          await coordinatorOf(
+            FakeAgentSession(executionId: 'exec-moved', workItemId: 'wi-1'),
+          ).execute(
+            requestFor(
+              executionId: 'exec-moved',
+              role: AgentRole.implementer,
+              workspace: git.toWorkspace(),
+            ),
+          );
+
+      expect(
+        execution.status,
+        AgentSessionStatus.completed,
+        reason:
+            'an implementer that commits its own work produced the artifact. '
+            'Scoring it `missing` is the permanent failure this rule exists to '
+            'produce, applied to an agent that had in fact committed — and '
+            'ArtifactCommitter, asked about this same worktree, would have '
+            'answered "committed".',
+      );
+      expect(
+        (await workflowEngine.loadWorkItem('wi-1')).state,
+        WorkItemState.agentCompleted,
+      );
+    });
+
+    test('CLEAN tree with HEAD still on the baseline is MISSING', () async {
+      final git = GitWorkspaceFixture.create(temp.path, tag: 'unmoved_ws');
+      addTearDown(git.dispose);
+      await readyItem();
+
+      expect(
+        git.isCleanTree,
+        isTrue,
+        reason: 'premise: nothing was written, so nothing could be dirty',
+      );
+      expect(
+        git.head,
+        git.startingRevision,
+        reason: 'premise: HEAD is exactly where the execution started',
+      );
+
+      final execution =
+          await coordinatorOf(
+            FakeAgentSession(executionId: 'exec-unmoved', workItemId: 'wi-1'),
+          ).execute(
+            requestFor(
+              executionId: 'exec-unmoved',
+              role: AgentRole.implementer,
+              workspace: git.toWorkspace(),
+            ),
+          );
+
+      expect(
+        execution.status,
+        AgentSessionStatus.failed,
+        reason:
+            'THIS is the measured QA defect and the only shape of it: a clean '
+            'tree AND an unmoved HEAD. Everything else in this group exists to '
+            'show it is distinguishable from the three neighbours.',
+      );
+      expect(execution.reason, startsWith(SuccessArtifactArtifacts.marker));
+      expect(execution.reason, contains('produced no commit'));
+      expect(
+        (await workflowEngine.loadWorkItem('wi-1')).state,
+        WorkItemState.agentFailed,
+      );
+    });
+
+    test('DIRTY tree is SATISFIED', () async {
+      final git = GitWorkspaceFixture.create(temp.path, tag: 'dirty_ws');
+      addTearDown(git.dispose);
+      await readyItem();
+
+      git.writeFile(
+        'lib/defect_filter.dart',
+        'bool matches(String report) => true;\n',
+      );
+
+      expect(
+        git.isCleanTree,
+        isFalse,
+        reason: 'premise: an unstaged edit is dirt git status reports',
+      );
+      expect(
+        git.head,
+        git.startingRevision,
+        reason:
+            'premise: HEAD is UNMOVED, so this passes on `dirty` alone — which '
+            'is what makes it a control on the test above rather than a repeat '
+            'of it',
+      );
+
+      final execution =
+          await coordinatorOf(
+            FakeAgentSession(executionId: 'exec-dirty', workItemId: 'wi-1'),
+          ).execute(
+            requestFor(
+              executionId: 'exec-dirty',
+              role: AgentRole.implementer,
+              workspace: git.toWorkspace(),
+            ),
+          );
+
+      expect(execution.status, AgentSessionStatus.completed);
+    });
+
+    test('STAGED but uncommitted is SATISFIED', () async {
+      // The state between "dirty" and "committed": `HEAD` unmoved, index
+      // non-empty, worktree file unchanged. `ArtifactCommitter` commits it, so a
+      // probe that read only the worktree's unstaged diff would miss it.
+      final git = GitWorkspaceFixture.create(temp.path, tag: 'staged_ws');
+      addTearDown(git.dispose);
+      await readyItem();
+
+      git.writeFile(
+        'lib/defect_filter.dart',
+        'bool matches(String report) => true;\n',
+      );
+      git.stageAll();
+
+      expect(
+        git.head,
+        git.startingRevision,
+        reason: 'premise: staging does not move HEAD',
+      );
+      expect(
+        git.porcelainLines.single.substring(0, 2).trim(),
+        'A',
+        reason: 'premise: the staged entry is an addition in the INDEX column',
+      );
+
+      final execution =
+          await coordinatorOf(
+            FakeAgentSession(executionId: 'exec-staged', workItemId: 'wi-1'),
+          ).execute(
+            requestFor(
+              executionId: 'exec-staged',
+              role: AgentRole.implementer,
+              workspace: git.toWorkspace(),
+            ),
+          );
+
+      expect(
+        execution.status,
+        AgentSessionStatus.completed,
+        reason:
+            'a staged-only change is the change, and it is the state '
+            'ArtifactCommitter re-reads for after it runs its own `add -A`',
+      );
     });
   });
 

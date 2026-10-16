@@ -91,6 +91,27 @@ class GitWorkspaceFixture {
   /// dirty.
   void stageAll() => _git(['add', '-A']);
 
+  /// `HEAD` right now, so a test can PROVE the state it set up rather than
+  /// assume it.
+  ///
+  /// Added with the committed-case coverage: a test asserting that a CLEAN tree
+  /// with a MOVED `HEAD` counts as produced is vacuous if it never checks that
+  /// the tree is clean and `HEAD` moved — it would pass identically through the
+  /// dirty branch, having proven nothing about the case it names.
+  String get head => _git(['rev-parse', 'HEAD']);
+
+  /// Whether `git status --porcelain` is empty — the same emptiness the probe
+  /// reads, read here so a test can assert its own premise.
+  bool get isCleanTree => _git(['status', '--porcelain']).isEmpty;
+
+  /// The `git status --porcelain` lines, for a test that needs to see WHICH
+  /// shape of dirt it produced.
+  List<String> get porcelainLines {
+    final out = _git(['status', '--porcelain']);
+    if (out.isEmpty) return const [];
+    return out.split('\n').where((l) => l.trim().isNotEmpty).toList();
+  }
+
   String _git(List<String> args) {
     final result = Process.runSync('git', [
       ..._identity,

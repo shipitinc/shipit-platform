@@ -14,19 +14,56 @@ import 'package:meta/meta.dart';
 class WorkspaceDelta {
   /// The worktree is clean and `HEAD` still equals the revision the execution
   /// started from. This is the only value that means "produced nothing".
+  ///
+  /// Both halves are decided here, so the name carries exactly one meaning:
+  /// [headMoved] is false by construction, and a caller cannot construct a value
+  /// that claims "unchanged" while also claiming HEAD moved.
   const WorkspaceDelta.unchanged({
     required this.startingRevision,
     required this.headRevision,
   }) : isReadable = true,
+       headMoved = false,
        changedPaths = const [],
        unreadableReason = null;
 
   /// The worktree carries changes relative to [startingRevision].
+  ///
+  /// [headRevision] is null and [headMoved] is null when the probe answered from
+  /// the worktree alone without reading `HEAD` — see [GitWorkspaceDeltaProbe]
+  /// for why it short-circuits. A dirty tree is already proof of production, so
+  /// the missing facts are never load-bearing; they are null rather than false
+  /// because "not established" and "established as no" are different claims.
   const WorkspaceDelta.changed({
     required this.startingRevision,
     required this.headRevision,
     required this.changedPaths,
+    this.headMoved,
   }) : isReadable = true,
+       unreadableReason = null;
+
+  /// The worktree is clean but `HEAD` is no longer [startingRevision]: the
+  /// execution committed its own work.
+  ///
+  /// ## WHY THIS IS A SEPARATE VALUE AND NOT A `changed` WITH A FAKE PATH
+  ///
+  /// `changedPaths` is documented as paths from `git status --porcelain`, and it
+  /// is read by the failure reason, which reports `changedPaths.length` as
+  /// `changedFileCount`. Putting a synthetic entry in it to make
+  /// `hasChanges` come out true would make the type lie about where a fact came
+  /// from, and would report a file count for a run whose files git listed none
+  /// of. So the moved case says what it is instead.
+  ///
+  /// This is `ArtifactCommitter`'s `moved` half. An implementer that commits
+  /// its own work has produced the artifact, and that component's own comment
+  /// says so: "If the change was already committed by the agent (HEAD moved,
+  /// tree clean) there is nothing to commit and the agent's own commit is the
+  /// produced revision."
+  const WorkspaceDelta.committed({
+    required this.startingRevision,
+    required this.headRevision,
+  }) : isReadable = true,
+       headMoved = true,
+       changedPaths = const [],
        unreadableReason = null;
 
   /// The delta could not be established — no baseline revision, no git, a path
@@ -35,6 +72,7 @@ class WorkspaceDelta {
     : isReadable = false,
       startingRevision = null,
       headRevision = null,
+      headMoved = null,
       changedPaths = const <String>[];
 
   /// Whether the probe produced a usable answer at all.
@@ -46,6 +84,17 @@ class WorkspaceDelta {
   /// `HEAD` at settle time, when known.
   final String? headRevision;
 
+  /// Whether `HEAD` differs from [startingRevision].
+  ///
+  /// `true` when it does, `false` when it was read and did not, and `null` when
+  /// it was never read — the probe stops at a dirty tree, and an unreadable
+  /// delta read nothing either.
+  ///
+  /// Three-valued for the reason [isReadable] is: reporting "HEAD did not move"
+  /// for a commit nobody made is the same laundering as reporting a clean tree
+  /// for a tree nobody looked at.
+  final bool? headMoved;
+
   /// Paths carrying a change, from `git status --porcelain`. May be a prefix of
   /// the full set; it exists to make a failure reason name something concrete.
   final List<String> changedPaths;
@@ -55,10 +104,14 @@ class WorkspaceDelta {
 
   /// Whether the workspace shows any change at all.
   ///
-  /// Only meaningful when [isReadable]; an unreadable delta never reports true,
+  /// This is the committer's predicate, verbatim: `dirty || moved`. Only
+  /// meaningful when [isReadable]; an unreadable delta never reports true,
   /// because "I could not look" must not be laundered into "I looked and saw
-  /// nothing".
-  bool get hasChanges => isReadable && changedPaths.isNotEmpty;
+  /// nothing". [headMoved] is tested as "known to have moved" rather than as a
+  /// boolean, so a null cannot be read as a false that would turn a dirty tree
+  /// into a failure.
+  bool get hasChanges =>
+      isReadable && (changedPaths.isNotEmpty || (headMoved ?? false));
 }
 
 /// Establishes whether an execution changed anything in its workspace.
@@ -178,6 +231,23 @@ class GitWorkspaceDeltaProbe implements WorkspaceDeltaProbe {
     }
 
     final headRevision = head.trim();
+
+    // A clean tree is NOT "produced nothing" — it is only that when `HEAD` is
+    // still where the execution started. This comparison is the whole of the
+    // committer's `moved` half, and omitting it is not a subtle narrowing: an
+    // implementer that commits its own work leaves a clean tree, so a probe that
+    // stops here scores a run that produced a real commit as having produced
+    // nothing, and this rule turns that into a PERMANENT failure handed to a
+    // human. `ArtifactCommitter`, asked about this same worktree in this same
+    // instant, answers "committed" — and a reviewer would then be dispatched to
+    // check an artifact this rule had just declared absent.
+    if (headRevision != baseline) {
+      return WorkspaceDelta.committed(
+        startingRevision: baseline,
+        headRevision: headRevision,
+      );
+    }
+
     return WorkspaceDelta.unchanged(
       startingRevision: baseline,
       headRevision: headRevision,
