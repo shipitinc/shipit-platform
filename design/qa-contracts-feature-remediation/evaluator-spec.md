@@ -45,6 +45,25 @@ site for a human decision's presentation, and this evaluator spec does not read 
 this document's subject (`gateRegistry`) is not a human decision, so the finding does not touch it.
 **The finding is recorded in `design-revision-metadata.yaml` `durable_discoveries` rather than here,
 because `durable_discoveries` is where a finding is meant to outlive the pass that made it.**
+**Correction pass 6:** see `design-revision-metadata.yaml` `correction_pass_6_base_sha` (lane
+`design-QA-CONTRACTS-CORRECTION-6`). **PROVENANCE ONLY — NO FINDING, NO GATE, NO GATE-RESULT
+VOCABULARY AND NO ORDERING CONSTRAINT IN THIS DOCUMENT CHANGED, AND THE NON-CHANGE WAS ESTABLISHED BY
+READING ALL 546 LINES.** Pass 6's substantive change is elsewhere and is an **assertion**: `G18` in
+`design-review-gate.md` §6 now pins each arm's `targetFor` **target**, because `design-revision.md` §8
+said *"two `targetFor` arms"* in the present tense while three exist and nothing failed when the third
+was absent. **That is a property of the design-review park's decision type and its routing table, and
+this document reads neither** — it is about `qaInProgress -> qaPassed`, the `gateRegistry` evaluators,
+and the `gateResults` / `qaContract` context contract.
+**Three pass-6 findings were confirmed to have no bearing here, and the confirmation is recorded rather
+than left inferable from silence, because pass 4 established that convention for exactly this reason:**
+(i) pass 6 corrected two of `control_plane_service.dart`'s production option ids, which are not
+`HumanDecisionChoice` wires — **that file is `apps/server/lib`, and this document does not read it**;
+(ii) pass 6 corrected `decision_detail_bloc.dart` citations — **an operator-surface path this document
+does not read**; and (iii) pass 6 extended the correction-register **generator**, whose output this
+document does not cite. **The one thing pass 6 changed that a reader of this document might otherwise
+assume is untouched: §4.3's V1–V6 non-vacuity assertions, §5's ordering constraint and §6's state
+vocabulary are all unaltered, and V3 and V4 remain the two that do not exist in any form today and
+that a naive wiring would pass.**
 **Status of this document:** a specification. This lane implements no production code.
 
 > The mandate: *"Who populates `context['gateResults']`, from what, at which point in the

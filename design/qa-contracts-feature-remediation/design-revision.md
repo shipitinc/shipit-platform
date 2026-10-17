@@ -18,6 +18,24 @@
   **its own `HumanDecisionType`** and may **not** re-use `escalation` or `designApproval`. **This
   decision closes the fork that three review rounds could not settle**, and §8's slice 1 is
   rewritten against it.
+**Correction pass 6 at:** see `design-revision-metadata.yaml` `correction_pass_6_base_sha` (lane
+`design-QA-CONTRACTS-CORRECTION-6`) — **the review of pass 5 returned NO blockers, 4 HIGH, 3 MEDIUM,
+2 LOW and `HUMAN_DECISION_REQUIRED: NO`; every finding is mechanical.** Its substantive change is an
+**assertion**, not a sentence: **G18 now pins each arm's `targetFor` TARGET**, because §8 stated two
+`targetFor` arms in the present tense while three exist and **nothing failed when the third was absent**
+— an implementer omitting `reTriage → designNotRequired` would have had `targetFor` return `null` and
+`resolveHumanDecision` save the decision resolved without moving the item (§12.4, PASS6-1). **Pass 6
+also corrects a false premise that made G16 stronger rather than weaker** — two of the three option ids
+at `control_plane_service.dart:1831/1837/1842` are **not** `HumanDecisionChoice` wires, so
+`_resolvedOptionId`'s fallback is **live in production today**, and the "no shipped precedent" argument
+pass 5 used for G16 is replaced by a shipped precedent that **violates** the convention (§12.4,
+PASS6-3); **corrects HIGH-2's false reason in seven places** including four in the metadata register the
+spec did not name (§12.4, PASS6-4); **supersedes three live stale claims in the register** (§12.4,
+PASS6-5); and finds that **the count generator rots exactly the way the prose did**, because its own
+register boundaries are hand-typed (§12.4, PASS6-6). **The normative slice-1 specification at
+`design-review-gate.md` §6 1a was verified correct citation-by-citation by the review and is not
+rebuilt; the four scope facts underlying the no-escalation decision were verified TRUE and are neither
+re-derived nor weakened.**
 **Authoring HEAD:** `e3634a0cbbdf656267b22908284dd1ae8b655085` (revision 1)
 **Revision 2 at:** `c8fd361906f0d831bbcfd431b75d1eb21ae9db5d`
 **Corrected at:** `90b6f5f` (correction pass 1, lane `design-QA-CONTRACTS-CORRECTION-2`)
@@ -44,7 +62,8 @@ corrected or superseded in place below.**
 `design-agent` / lane `design-QA-CONTRACTS-CORRECTION-2`, then corrected again by
 `design-agent` / lane `design-QA-CONTRACTS-CORRECTION-3`, then again by `design-agent` / lane
 `design-QA-CONTRACTS-CORRECTION-4`, then again by `design-agent` / lane
-`design-QA-CONTRACTS-CORRECTION-5`
+`design-QA-CONTRACTS-CORRECTION-5`, then again by `design-agent` / lane
+`design-QA-CONTRACTS-CORRECTION-6`
 **Disposition:** `DESIGN_REVISION_COMPLETE` — Revision 1's central defect (the deliverable-2 gate's
 refusal sink did not exist) is corrected with a specified park; deliverable 3 remains **declined on
 evidence**, now split **per path** rather than asserted for both; and **the reading of HD-1 is now a
@@ -844,22 +863,47 @@ and `designApproval` both ruled out** (`NEW_HUMAN_DECISION_TYPE`, operator, 2026
 Sub-slices:
 
 - **1a — the type, every arm, every registration site.** `HumanDecisionType.designReviewRequest('design_review_request')`
-  in `packages/platform_contracts/lib/src/enums/human_decision.dart:1-20`; **two `targetFor` arms** in
+  in `packages/platform_contracts/lib/src/enums/human_decision.dart:1-20`; **~~two `targetFor` arms** in
   `human_decision_routing.dart:88-138` — `approve → designApproved` and `rework → planning`; **and
   TWO `blockingHumanDecisionResolved` whitelist admissions in `work_item_transitions.dart:75-80` and
-  `:643-648`**, which the previous pass listed conditionally and wrongly said were not needed.
+  `:643-648`**, which the previous pass listed conditionally and wrongly said were not needed.~~
   **AND, PASS 5, A NEW `HumanDecisionChoice('re_triage')` for the restored fourth answer, a THIRD
-  whitelist admission at `:528-546` (`designNotRequired`, which is the only one of the park's three
+  whitelist admission at `:530-549` (`designNotRequired`, which is the only one of the park's three
   edges carrying an escalation-index bound), and a FOURTH file — `decision_choice.dart` — because a
   CHOICE has a presentation registration that a type does not.**
+
+  > **CORRECTED IN PASS 6 — THE ARM COUNT WAS NEVER CORRECTED, AND IT IS THE MOST LOAD-BEARING
+  > NUMBER IN THIS ROW. The struck text above says "two `targetFor` arms" in the PRESENT TENSE while
+  > naming two, and pass 5 appended a third — `reTriage → designNotRequired` — in the same paragraph
+  > that corrected the WHITELIST count from two to three.** The whitelist count was fixed and the arm
+  > count was not, so a reader who trusted the first sentence would build two arms.
+  >
+  > **THREE arms exist, and all three must be listed:** `approve → designApproved` (`:93-94`'s
+  > `designApproval` pattern, but on the new type), `rework → planning` (`:134-135`'s pattern), and
+  > **`reTriage → designNotRequired`** — all in `human_decision_routing.dart`'s `targetFor`
+  > (`:88-138`), none of which exists today because the type does not.
+  >
+  > **What an implementer who omits the third builds, stated so the consequence is not hypothetical.**
+  > `targetFor` falls through to `_ => null` (`:136`), so `reTriage` would resolve to a `null`
+  > target, and `resolveHumanDecision` **saves the decision resolved and does not move the item**
+  > (`durable_workflow_engine.dart:762-769`) — §5.1.1b's unrecoverable position, reached by a new
+  > route. This is exactly the failure G17(a)'s second clause was written to catch, on the arm set
+  > rather than on a single arm.
+  >
+  > **AND THE CITATION IS CORRECTED WHILE HERE:** the whitelist is **`:530-549`**, not `:530-549`.
+  > `:528` is the edge header `(WorkItemState.waitingForHumanDecision, WorkItemState.designNotRequired): [`
+  > and `:546` is three lines short of the closing `}),`. §12.4, PASS6-2.
   **`escalationTargetFor` gets NO arm for any of the four answers, and MUST NOT get one for the
   `rework` answer** — `:196-199` protects `approve`, `cancel` **and `reTriage`**; `rework` is protected
   only by `_ => null` at `:214`, and completing the "lockstep" would start escalation accounting
   silently on a re-plan. G17b pins all four. Full arm table, the short-circuit table showing which of
   the four are protected and which are not, the scope derivation that keeps the new value off every
   other decision's menu, and the forcing argument for why the park's whole menu must live on the new
-  type: `design-review-gate.md` §6 1a. G16 is pinned to the four `(optionId, label, choice)` triples and
-  **G18** asserts the count itself.
+  type: `design-review-gate.md` §6 1a. G16 is pinned to the four `(optionId, label, choice)` triples
+  and **G18** asserts the count itself **— and, PASS 6, G18 ALSO PINS EACH ARM'S `targetFor` TARGET.**
+  That last clause is the assertion this row's first sentence needed and did not have: until it
+  existed, **nothing failed when the `reTriage → designNotRequired` arm was absent**, which is the
+  exact hole this row's own correction above exposes. §12.4, PASS6-1.
 - **1b — FOLDED INTO 2b (H-2).** The park's option list is a property of the **raising call site**,
   and 2b creates it. Specified inside sub-slice 2b.
 - **1c — the assertions: G17(a), G17(b), G17(c) and G17b.** **G17 was rewritten against the real data
@@ -964,7 +1008,7 @@ gate's type has an evaluator.
 | **4. What must exist before B1 is solvable** — result type, parser, instruction, `AgentRole` variants, and one `JobDefinition` per path; name each and where | §6, **M5–M12**, each with location and the gate it would justify. M12 restored (MEDIUM finding M1) |
 | **5. Traceability, risks, non-goals, implementation sequence in reviewable slices** | §7, §9, §10, §11, §8 |
 | **Use the word `DECLARED`, not `PASSING`** | §7, stated three ways; `evaluator-spec.md` §6 |
-| **Every `file:line` verified against the tree** | Verified individually at `e3634a0` by Revision 1. **Its** corrections of the inherited inputs were three of the resume spec (`:942`, `:943`, `:946`) and two of the predecessor brief (`:944`, `:945`) — **the previous pass's §9.1 stated these counts swapped; corrected at §12.1 PASS3-5, where the full ledger is **GENERATED — see §16(11) for the derivation command; do not restate it here.** As of this pass it is thirteen pass-2 rows, eight pass-3 rows, nine pass-4 rows and seven pass-5 rows. **PASS 5 CORRECTS THE LEDGER COUNT ITSELF, and this is the same count rot §12.3's PASS5-2 records: PASS3-5 wrote "eleven pass-2 rows plus six pass-3 rows" into this cell, and both numbers were correct WHEN WRITTEN and were invalidated by later passes appending rows to those registers.** A traceability cell that counts the register it points at is a count like any other, and it rots the same way.** |
+| **Every `file:line` verified against the tree** | Verified individually at `e3634a0` by Revision 1. **Its** corrections of the inherited inputs were three of the resume spec (`:942`, `:943`, `:946`) and two of the predecessor brief (`:944`, `:945`) — **the previous pass's §9.1 stated these counts swapped; corrected at §12.1 PASS3-5, where the full ledger is **GENERATED — see §16(11) for the derivation command; do not restate it here.** ~~As of this pass it is thirteen pass-2 rows, eight pass-3 rows, nine pass-4 rows and seven pass-5 rows.~~ **PASS 6 REMOVES THE RESTATED COUNT ENTIRELY, which is the durable form and the fourth pass to reach this cell to correct it.** The command is at §16(11); it yields `13 8 9 7 6` against this revision and §14.6 records the run. **A traceability cell that counts the register it points at is a count like any other, and it rots the same way** — but a cell that *runs* the generator does not, and this one now says where the command is instead of repeating a number that a later pass appending a row would invalidate. |
 
 ### 9.2 Requirements gaps
 
@@ -1010,7 +1054,7 @@ gate's type has an evaluator.
 | **R11** | A future caller appears for `agentFailed -> implementationReady` and the guard is absent there | MEDIUM | **HIGH** | §2.1a. The edge is callerless today, so a guard there would be inert; adding one now would look like coverage and be nothing. Pinned by **G11**, which fails if the guard is absent from `:265-267` **while** a production caller of that edge exists — so the rule fires when the risk becomes real, and not before. |
 | **R12** | Slice 2's route-1 and route-3 guards land in separate commits | MEDIUM | **HIGH** | `design-review-gate.md` §5.3. Between them, the park exists and the human route is unguarded — and slices 3c and 5 both make that window worth exploiting. Stated as an in-slice ordering constraint: **2a adds both in one commit**, and a reviewer seeing them split should treat it as a finding. |
 | **R13** | Slice 1's human surface lands **without** an assertion tying it to the park, and the ordering the operator decided is preserved only in prose | MEDIUM | **HIGH** | **NEW in correction pass 3, and it is the risk the reversal creates.** `.decisions/b81f40c7…` orders the human surface first and states an `invariant` that "must be asserted, not assumed". **Asserted: G17** — **REWRITTEN IN PASS 4 as G17(a)/(b)/(c)**, because the original form asserted an iff over a parsed option list that carries no `decisionType` (`human_decision.dart:156-159`) and said nothing about `blockingHumanDecisionResolved`, which is the guard that decides whether the arm moves the item (`guard_conditions.dart:425-428`). G17(a) = the arm exists **and** the target edge admits the pair; G17(b) = the park may not acquire an in-edge while G17(a) is red (**this is the checkable ordering**); G17(c) = the raising call site actually offers it. **Without them the reversal would be exactly the defect this design has produced twice**: a property asserted in a decision and in three artifacts, with nothing that fails when it is absent. **The cost the reversal does carry** — a decision type, two routing arms, two edge-whitelist admissions and one offered option that **no guard consumes**, for the slice-1→slice-2 window — is stated in `design-review-gate.md` §0.2 and §5.2.2 rather than argued away. **Pass 4 notes that the cost GREW**: the previous pass's residue was "a type and an arm"; the decided shape adds two registrations, so the unconsumed surface is larger and more capable of being mistaken for working coverage. |
-| **R14** | **The operator's re-triage answer routes to a visible non-terminating cycle, and nothing bounds how many times they may choose it** | **MEDIUM** | **MEDIUM** | **NEW in correction pass 5, and it is a judgement this lane made and flagged rather than escalated.** `.decisions/5a90c1d3…` restores `re-triage`; `design-review-gate.md` §6 1a routes it to `designNotRequired`, which §5.2.1 itself calls *"a cycle — visible, durable, and dispatching nothing."* `(waitingForHumanDecision, designNotRequired)` carries `escalationIndexWithinLimitForDecisionTypes({engineeringReview, humanQaApproval})` (`work_item_transitions.dart:559-563`) and **`designReviewRequest` is deliberately NOT added** — four other types already are not, and `:553-558` states the rule: *"inventing a bound here would be new policy rather than a lockstep move."* **Why that is defensible:** every traversal requires a human-resolved decision (`:517-522`), so nothing is unattended and nothing dead-ends silently; and the operator now gets that loop **under a name that says so**, which is what the decision bought. **Why it is still flagged:** `reTriage` is an **operator-invoked** loop by construction, unlike `escalation` (a one-off provider failure), so the precedent is weaker than the rule-of-three makes it look. **A ceiling on re-triage — "how many times may an operator re-triage an item?" — is product policy and is not this lane's to set.** Mitigated by G18 (the answer cannot be dropped without a decision), by G16 (its target is checked against the no-`implementationReady` property, which it passes), and by §6 2b requiring the option to carry a `description`. **Not mitigated: repetition count.** Recorded for the operator; §16(2)(c) asks a reviewer to overturn it if they disagree. |
+| **R14** | **The operator's re-triage answer routes to a visible non-terminating cycle, and nothing bounds how many times they may choose it** | **MEDIUM** | **MEDIUM** | **NEW in correction pass 5, and it is a judgement this lane made and flagged rather than escalated.** `.decisions/5a90c1d3…` restores `re-triage`; `design-review-gate.md` §6 1a routes it to `designNotRequired`, which §5.2.1 itself calls *"a cycle — visible, durable, and dispatching nothing."* `(waitingForHumanDecision, designNotRequired)` carries `escalationIndexWithinLimitForDecisionTypes({engineeringReview, humanQaApproval})` (`work_item_transitions.dart:559-563`) and **`designReviewRequest` is deliberately NOT added** — four other types already are not, and `:553-558` states the rule: *"inventing a bound here would be new policy rather than a lockstep move."* **Why that is defensible:** every traversal requires a human-resolved decision (`:517-522`), so nothing is unattended and nothing dead-ends silently; and the operator now gets that loop **under a name that says so**, which is what the decision bought. **Why it is still flagged:** ~~`reTriage` is an **operator-invoked** loop by construction, unlike `escalation` (a one-off provider failure), so the precedent is weaker than the rule-of-three makes it look.~~ **PASS 6 CORRECTS THIS REASON; THE CONCLUSION STANDS.** The contrast with `escalation` is **false and was the only thing distinguishing this loop from a bounded one**: `(escalation, approve) → designNotRequired` (`human_decision_routing.dart:132-133`) is the **identical operator-invoked loop, to the identical target, on the identical edge**, and `escalation` is **equally absent from the bound's set** (`:559-563` holds only `engineeringReview` and `humanQaApproval`). The loop fires only when a human approves. **So the flag now rests on the edge's own rule at `:553-558` — four types already reach this edge unbounded and "inventing a bound here would be new policy rather than a lockstep move" — and not on a distinction from `escalation` that does not exist.** **A ceiling on re-triage — "how many times may an operator re-triage an item?" — is product policy and is not this lane's to set.** Mitigated by G18 (the answer cannot be dropped without a decision, **and — PASS 6 — each arm's `targetFor` target is now pinned, which pass 5 did not assert**), by G16 (its target is checked against the no-`implementationReady` property, which it passes), and by §6 2b requiring the option to carry a `description`. **Not mitigated: repetition count.** Recorded for the operator; §16(2)(c) asks a reviewer to overturn it if they disagree. §12.4, PASS6-4. |
 
 ---
 
@@ -1344,12 +1388,44 @@ substantive change is the operator's ruling; the other four rows are findings fr
 | Source | Claimed | Actual at `b63c771` |
 |---|---|---|
 | **P5-1** `design-review-gate.md` §6 1a, §6 2b, §7, §7.1; `design-revision.md` §13.7, §13.14, §16(2) | pass 4: *"the park's menu is **three** answers"* — the operator is offered one fewer, and *"the correct next step is a second human decision on `HumanDecisionChoice` — named here rather than taken"* | **THE OPERATOR TOOK IT, AND RULED THE OTHER WAY.** `.decisions/5a90c1d3-8e47-4b26-9f0c-3d7a5b2e6c19.yaml` (RESOLVED, `FOURTH_CHOICE_VALUE`, operator, 2026-10-17T15:10:00Z): *"Nine **existing** `HumanDecisionChoice` values cannot express four coherent answers, and the design lane merged 're-triage' into 'put it back in the lane', leaving three … **HD-1 delegates the park's handling to the design lane, but a product-facing menu reduction is not that delegation.**"* **The merge is undone in place; the menu is four** (`approve` / `rework` / **`re_triage`** / `cancel`). **Two errors in the withdrawn text, isolated:** HD-1's delegation covers *what happens to an item that never gets a review*, not **what the item's menu offers**; and *"the number of coherent answers is bounded by how many of the NINE values carry park meanings"* treats the current size of a shared enum as a fixed term in a product decision — **it is a function of how many values exist, and a design lane may propose a tenth.** Specified at `design-review-gate.md` §6 1a and §6 2b; asserted by **G16** (re-pinned to four) and **G18** (new). §13.14 and §16(2) superseded in place, stale text preserved. |
-| **P5-2** **THE SCOPE WARNING — AND THE ANSWER IS THAT IT IS EXPRESSIBLE, SO THIS IS NOT THE ESCALATION THE DECISION CONTEMPLATES.** `5a90c1d3…`'s `scope_warning`; pass 4's §13.14 and §16(2), which recorded the reduction and invited reversal | **pass 4: no claim either way.** The new value is a **shared** `HumanDecisionChoice`, and the decision requires it *"be offered only by the design-review park's decision type … If the enum cannot carry a per-type option set, that is itself a finding to escalate rather than work around"* | **A PER-TYPE OPTION SET IS EXPRESSIBLE — more strongly, the option set is PER-DECISION-INSTANCE, so per-type is the weaker specialisation.** Four verified facts: **(1)** `HumanDecision.options` (`human_decision.dart:55`) and `DecisionContext.availableOptions` (`:204`) are fields of **the decision**, and the engine documents `availableOptions` as *"the caller's own option ids, in the caller's order"* (`durable_workflow_engine.dart:531-535`); **(2)** the operator UI builds its menu **only** from them (`decision_detail_bloc.dart:30-37`) — there is no enum filter anywhere in that path; **(3)** **`HumanDecisionChoice.values` is enumerated nowhere in `lib/`** — all nine sites are in `test/`; **(4)** a per-type presentation layer already exists in production: `decisionChoiceLabel(…, decisionType:)` (`decision_choice.dart:32-57`), with a live `escalation` arm at `:37-46`. **So `re_triage` is visible exactly where some decision's own option list names it — the park's raising call site and nowhere else — by construction, not by filtering.** Specified at `design-review-gate.md` §6 1a; **the four facts are the reviewable claim and §16(2)(d) asks a reviewer to check them, because the no-escalation decision rests on all four.** |
-| **PASS5-3** `design-review-gate.md` §6 1a, §6 2b, G17b, §5.3, §2d | pass 4: **three** arms, **two** `blockingHumanDecisionResolved` admissions, **three** files | **A THIRD EDGE AND A FOURTH FILE.** `re_triage` routes to `designNotRequired`, so `(waitingForHumanDecision, designNotRequired)` (`work_item_transitions.dart:528-546`) is a **third** whitelist. **And it is the only one of the park's three edges that carries an escalation-index bound** (`escalationIndexWithinLimitForDecisionTypes({engineeringReview, humanQaApproval})` at `:559-563`). **The fourth file is `apps/control_plane/lib/shared/decision_choice.dart`, which a TYPE never needed and a CHOICE does**: its `knownDecisionChoices` (`:12-19`) is a hardcoded **six**-value set against a **ten**-value enum, and the file's own doc comment (`:3-5`) enumerates the six as though they were the enum's. Without a `re_triage` entry the operator sees caller prose instead of a mapped label on **both** surfaces (`decision_detail_bloc.dart:38`, `needs_you_bloc`). **Recorded, not corrected — `apps/**` is `PROHIBITED_PATHS`.** |
+| **P5-2** **THE SCOPE WARNING — AND THE ANSWER IS THAT IT IS EXPRESSIBLE, SO THIS IS NOT THE ESCALATION THE DECISION CONTEMPLATES.** `5a90c1d3…`'s `scope_warning`; pass 4's §13.14 and §16(2), which recorded the reduction and invited reversal | **pass 4: no claim either way.** The new value is a **shared** `HumanDecisionChoice`, and the decision requires it *"be offered only by the design-review park's decision type … If the enum cannot carry a per-type option set, that is itself a finding to escalate rather than work around"* | **A PER-TYPE OPTION SET IS EXPRESSIBLE — more strongly, the option set is PER-DECISION-INSTANCE, so per-type is the weaker specialisation.** Four verified facts: **(1)** `HumanDecision.options` (`human_decision.dart:55`) and `DecisionContext.availableOptions` (`:204`) are fields of **the decision**, and the engine documents `availableOptions` as *"the caller's own option ids, in the caller's order"* (`durable_workflow_engine.dart:531-535`); **(2)** the operator UI builds its menu **only** from them (`decision_detail_bloc.dart:31-38`) — there is no enum filter anywhere in that path; **(3)** **`HumanDecisionChoice.values` is enumerated nowhere in `lib/`** — all nine sites are in `test/`; **(4)** a per-type presentation layer already exists in production: `decisionChoiceLabel(…, decisionType:)` (`decision_choice.dart:32-57`), with a live `escalation` arm at `:37-46`. **So `re_triage` is visible exactly where some decision's own option list names it — the park's raising call site and nowhere else — by construction, not by filtering.** Specified at `design-review-gate.md` §6 1a; **the four facts are the reviewable claim and §16(2)(d) asks a reviewer to check them, because the no-escalation decision rests on all four.** |
+| **PASS5-3** `design-review-gate.md` §6 1a, §6 2b, G17b, §5.3, §2d | pass 4: **three** arms, **two** `blockingHumanDecisionResolved` admissions, **three** files | **A THIRD EDGE AND A FOURTH FILE.** `re_triage` routes to `designNotRequired`, so `(waitingForHumanDecision, designNotRequired)` (`work_item_transitions.dart:530-549`) is a **third** whitelist. **And it is the only one of the park's three edges that carries an escalation-index bound** (`escalationIndexWithinLimitForDecisionTypes({engineeringReview, humanQaApproval})` at `:559-563`). **The fourth file is `apps/control_plane/lib/shared/decision_choice.dart`, which a TYPE never needed and a CHOICE does**: its `knownDecisionChoices` (`:12-19`) is a hardcoded **six**-value set against a **ten**-value enum, and the file's own doc comment (`:3-5`) enumerates the six as though they were the enum's. Without a `re_triage` entry the operator sees caller prose instead of a mapped label on **both** surfaces (`decision_detail_bloc.dart:40 and :42`, `needs_you_bloc`). **Recorded, not corrected — `apps/**` is `PROHIBITED_PATHS`.** |
 | **PASS5-4** `design-review-gate.md` §6 1a, the `rework` disposition — **pass 4's own text** | *"`rework` → … **the behaviour `(escalation, rework) → planning` already has today** (`escalationTargetFor`'s own comment calls it out at `:188-191`)"* | **THE BEHAVIOUR CLAIM IS CORRECT AND RE-DERIVED; THE CITATION IS NOT.** **`:188-191` is `## THE TWO LOCKSTEP ARMS MOVED WITH OD-3` and it does not mention `(escalation, rework)` or `planning` at all** — it is about `(engineeringReview, rework)` and `(humanQaApproval, reject)` moving to `implementationReady`. **This is the sixth instance of the L3 pattern and the second pass 4 introduced — in the very clause written to make `rework` the risky arm.** The property holds for a reason stated at `:196-199` and `:214`, not at `:188-191`; the citation is removed and the property is now carried by **G17b**. **Recorded because a true conclusion resting on a citation that does not state it is the same defect as a false one: the next edit to the range would have made it false silently.** |
-| **PASS5-7** `design-revision.md` §16(11), §9.1 and `design-revision-metadata.yaml` `verification_commands` — **THIS PASS REPEATED THE DEFECT IT WAS NAMING, AND CAUGHT ITSELF** | pass 5 set out to correct the count rot and, in doing so, **wrote "§12.3 adds eleven pass-5 rows" into three sites when §12.3 has SIX rows** | **THE EIGHTH INSTANCE, AND THE ONLY ONE MADE BY A PASS THAT KNEW ABOUT THE PATTERN.** The cause is exactly the one §12.3 names: **pass 5 appended rows to a register and stated the new total in prose, having estimated it rather than counted it** — it wrote "eleven" from an intention of how many findings it planned, not from `rg -c` over the table it had just built. **Caught by re-counting the four registers before committing, after the same discipline had already been written up three paragraphs earlier.** All three sites corrected to six; §12 thirteen, §12.1 eight, §12.2 nine, §12.3 six — counted. **Recorded rather than quietly fixed, because the evidence that a stated process does not survive being written down is itself the finding, and because a register that hides its own lapse teaches a reader that the named lapse was rare.** The only durable mitigation is executable: **the counts must be generated, not typed** — and until that exists, every pass that appends a row must re-count rather than re-state. |
-| **PASS5-6** `docs/engineering/FOLLOW_UPS.md` §18 `F-60` — **read, never written**; recorded here because `docs/**` is `PROHIBITED_PATHS` | F-60: *"`3e5a7c26` said the new type's arms must be registered, naming **two** sites. There are **three.**"* — naming the two edge whitelists at `:75-80` and `:641-650` | **VERIFIED, AND NOW ONE SHORT.** Both sites are correct and both are required, and pass 4's G17(a) names them. **But with the fourth answer there are FOUR registration sites, not three**: `re_triage` routes to `designNotRequired`, so `(waitingForHumanDecision, designNotRequired)` (`work_item_transitions.dart:528-546`) is a **third** edge whitelist — and the presentation registration in `apps/control_plane/lib/shared/decision_choice.dart` is a **fourth file** that a new TYPE never needed and a new CHOICE does. **So `F-60`'s finding — that the decision's own `consequence` enumerates incompletely — is correct in kind and has itself gone stale in magnitude, which is the pattern this artifact set exists to catch and the reason it is recorded rather than assumed.** **The Manager owns `FOLLOW_UPS.md` and this lane wrote nothing there**; F-60's *magnitude* needs updating to four, and §18's F-61 needs no change — pass 5's short-circuit table **confirms** it and adds that `reTriage` is on the protected side. |
+| **PASS5-7** `design-revision.md` §16(11), §9.1 and `design-revision-metadata.yaml` `verification_commands` — **THIS PASS REPEATED THE DEFECT IT WAS NAMING, AND CAUGHT ITSELF** | pass 5 set out to correct the count rot and, in doing so, **wrote "§12.3 adds eleven pass-5 rows" into three sites when §12.3 has SIX rows** | **THE EIGHTH INSTANCE, AND THE ONLY ONE MADE BY A PASS THAT KNEW ABOUT THE PATTERN.** The cause is exactly the one §12.3 names: **pass 5 appended rows to a register and stated the new total in prose, having estimated it rather than counted it** — it wrote "eleven" from an intention of how many findings it planned, not from `rg -c` over the table it had just built. **Caught by re-counting the four registers before committing, after the same discipline had already been written up three paragraphs earlier.** All three sites corrected to six; §12 thirteen, §12.1 eight, §12.2 nine, ~~§12.3 six~~ **— SEVEN, AND THIS ROW MISCOUNTED ITS OWN REGISTER.** **Count rot in the very row written to cure it, and the second time one has sat inside the row that corrected the previous** (§12.2's `PASS4-2` was the first). **Recorded rather than quietly fixed, because the evidence that a stated process does not survive being written down is itself the finding, and because a register that hides its own lapse teaches a reader that the named lapse was rare.** The only durable mitigation is executable: **the counts must be generated, not typed** — and pass 5 recorded that command at §16(11) and in the metadata's `verification_commands`, which is the right move and is not sufficient on its own: **the mechanism was written down and the number beside it was still typed from memory.** §12.4, PASS6-6. |
+| **PASS5-6** `docs/engineering/FOLLOW_UPS.md` §18 `F-60` — **read, never written**; recorded here because `docs/**` is `PROHIBITED_PATHS` | F-60: *"`3e5a7c26` said the new type's arms must be registered, naming **two** sites. There are **three.**"* — naming the two edge whitelists at `:75-80` and `:643-648` | **VERIFIED, AND NOW ONE SHORT.** Both sites are correct and both are required, and pass 4's G17(a) names them. **But with the fourth answer there are FOUR registration sites, not three**: `re_triage` routes to `designNotRequired`, so `(waitingForHumanDecision, designNotRequired)` (`work_item_transitions.dart:530-549`) is a **third** edge whitelist — and the presentation registration in `apps/control_plane/lib/shared/decision_choice.dart` is a **fourth file** that a new TYPE never needed and a new CHOICE does. **So `F-60`'s finding — that the decision's own `consequence` enumerates incompletely — is correct in kind and has itself gone stale in magnitude, which is the pattern this artifact set exists to catch and the reason it is recorded rather than assumed.** **The Manager owns `FOLLOW_UPS.md` and this lane wrote nothing there**; F-60's *magnitude* needs updating to four, and §18's F-61 needs no change — pass 5's short-circuit table **confirms** it and adds that `reTriage` is on the protected side. |
 | **PASS5-5** `design-revision.md` §12 (twice), §9.1, §16(11); `design-revision-metadata.yaml` `verification_commands` | pass 4's `PASS4-2` corrected **two** numbers in §16(11) and reported the count rot closed: *"§12 lists **eleven** pass-2 corrections … §12.1 adds **six** pass-3 corrections … §12.2 adds **nine** pass-4 rows"* | **THE ROT CONTINUED, AND THE FOURTH INSTANCE IS INSIDE THE ROW THAT CORRECTED THE THIRD.** Actual counts at `b63c771`: **§12 thirteen rows** (three correct Revision 1, ten Revision 2 — **every one marked `(this lane's own)`**, matching §12's own untouched classification at its "Thirteen of the rows above" sentence); **§12.1 eight**; **§12.2 nine**; **§12.3 eleven**. **Four prose sites were stale: §12's own "eleven new rows" summary (which also attributes an eleventh `Correction spec` row that is not in the table), §9.1's ledger count, §16(11), and the metadata's `verification_commands`.** §12.2's `PASS4-2` fixed *"nine → ten"* and *"six → eight of thirteen"* and left **two other numbers in the same sentence** uncorrected — **because they were correct when pass 3 wrote them, and pass 4 then appended a row to §12 and a row to §12.1.** **The generalisable finding, and it is not "count carefully": a count stated in prose is invalidated by the act of appending a row to the register it counts, and correcting one number in such a sentence is not the same as checking the others.** All four corrected here, and each is recorded at the site it was wrong rather than centrally, because a register that fixes its own counts in one place reproduces the defect. |
+
+### 12.4 Correction pass 6 — four findings, none of them about content, all of them about why a summary artifact stops matching its source
+
+**The review of pass 5 returned no blockers, 4 HIGH, 3 MEDIUM, 2 LOW, `HUMAN_DECISION_REQUIRED: NO`, and
+verified all four scope facts underlying the no-escalation decision as TRUE. Nothing in pass 5's
+substantive work is rebuilt here.** Two of the four facts the review confirmed are load-bearing and are
+stated so they are not re-litigated: **the normative slice-1 specification at `design-review-gate.md` §6
+1a was checked citation-by-citation and is correct and is left alone** — pass 6 changed nothing in it
+except the two corrections recorded at PASS6-3 and PASS6-5 below, both of which are about citations and
+about a claim in the surrounding prose rather than about the specification. **And the four scope facts
+(the offered set is a property of the decision instance; the operator UI builds its menu only from it;
+`HumanDecisionChoice.values` is enumerated nowhere in `lib/`; a per-type label layer already ships)
+are re-confirmed and are not re-derived here.**
+
+| Source | Claimed | Actual |
+|---|---|---|
+| **PASS6-1** `design-revision.md` §8 sub-slice 1a; `design-review-gate.md` §6 assertion table (G18); `design-revision.md` §5.2.1's callout | §8 stated, **in the present tense**, *"**two `targetFor` arms** … `approve → designApproved` and `rework → planning`"* — while `design-review-gate.md:1474` (the normative spec) correctly says **THREE**. Pass 5 append-corrected the *whitelist* count in the same paragraph and **never corrected the arm count**. | **AN IMPLEMENTER WORKING FROM §8 BUILDS TWO ARMS, AND THE PARK'S FOURTH ANSWER THEN RESOLVES TO A `NULL` TARGET.** `targetFor` falls through to `_ => null` (`human_decision_routing.dart:136`), and `resolveHumanDecision` **saves the decision RESOLVED and does not move the item** (`durable_workflow_engine.dart:762-769`) — §5.1.1b's unrecoverable position, reached by a new route. **No assertion caught it**: G17(a) checks only the `designApproved` arm; G16 pinned `(optionId, label, choice)` triples and **not targets**; G18 pinned **count and membership** and not targets; G17b(iii) asserts a negative about escalation accounting, which a missing arm satisfies trivially. **The artifact's own rule — "*every load-bearing property gets an assertion that fails when the property is absent*" — was unmet for the operator's own ruling.** §8 corrected in place with the stale text struck; **and G18 EXTENDED TO PIN EACH ARM'S `targetFor` TARGET** (`approve → designApproved`, `rework → planning`, `reTriage → designNotRequired`, `cancel → cancelled`), so an absent or mis-pointed arm is now a red assertion. This is the substantive change of pass 6 and it is an assertion, not a sentence. |
+| **PASS6-2** 15 citation errors across all four artifacts, on the four facts the no-escalation decision rests on; plus 4 instances of one whitelist range | `decision_detail_bloc.sourceOptions` cited `:30-37` (×9; correct **`:31-38`**); `isKnownDecisionChoice` cited `:38` (×4; correct **`:40`** and **`:42`**) and `:38-41` (×1; correct **`:40-42`**); the `decisionChoiceLabel` lookup cited `:44-48` (correct **`:45-49`**). `work_item_transitions.dart:528-546` cited ×4 for a whitelist at **`:530-549`** — `:528` is the edge header and `:546` is three lines short of the closing `}),`. | **ALL FIFTEEN CORRECTED, AND THE FOUR, PLUS ONE FOUND BY READING.** `design-revision.md` §14.6 records the transcript. **The extra instance, which no check named, is `:531-546` in the metadata's `durable_discoveries`, where the six pairs are claimed to end — the sixth pair (`escalation`, `approve`) is at `:545-548`, so `:546` truncates it; correct `:531-548`.** **One `:641-650` was deliberately NOT changed** (§14.5's verification transcript at `design-revision.md:1836`): it records a command that was actually run, and `:641-650` is the correct range *for the whole edge*, which is what that line is about. **Rewriting a command transcript to make it read better would be fabricating a transcript.** |
+| **PASS6-3** `design-review-gate.md` §5.2.2, §6 1a, §6 2b, §6 assertion table (G16); `design-revision.md` §14.5; `design-revision-metadata.yaml` `governing_decision_menu` and `durable_discoveries` | the three option ids at `control_plane_service.dart:1831, 1837, 1842` are *"**all of them are `HumanDecisionChoice` wires** (`enums/human_decision.dart:33-41`)"*, and `re_triage` *"is the first option id in this design that is **not** covered by an existing shipped precedent to copy"* | **TWO OF THE THREE ARE NOT WIRES, SO `_resolvedOptionId`'s FALLBACK IS LIVE IN PRODUCTION TODAY — NOT HYPOTHETICAL.** The ids are `fixed`, **`stillBroken`**, **`partiallyFixed`**; the wires are `fixed` (`:39`), **`still_broken` (`:40`)**, **`partially_fixed` (`:41`)** — camelCase Dart names where snake_case wires are required. `_resolvedOptionId` matches `o.optionId == choice.wire` and **falls back to `choice.wire`** (`:1113`), so for those two ids no option matches and the decision is persisted with a `resolvedOptionId` **the operator was never shown**. **And the "no precedent" claim is false in the strongest way available: a shipped precedent exists and it VIOLATES the convention** — so the absence pass 5 argued from is itself a live counter-example. **This is the strongest available motivation for G16/G17(c) and it is now stated as such, replacing pass 5's weakest form** (an argument about the future rather than about the repository). The other cited raisers do follow the convention (`stalled_work_item_gate.dart:201, 207`; `engineering_review_gate.dart:1647-1649`; `control_plane_service.dart:1831`). |
+| **PASS6-4** `design-revision.md` R14, §16(2)(c); `design-review-gate.md` §6 1a; `design-revision-metadata.yaml` at four sites the correction spec did not name | *"**operator-invoked by construction, unlike `escalation`**"* as the reason the re-triage ceiling is flagged | **FALSE, IN THREE IN-ARTIFACT PLACES AND FOUR IN THE METADATA REGISTER — and the metadata instances are the reason the count went from three to seven.** `(escalation, approve) → designNotRequired` (`human_decision_routing.dart:132-133`) is the **identical operator-invoked loop, to the identical target, on the identical edge**; `escalation` is **equally absent from the bound's set** (`:559-563` holds only `engineeringReview` and `humanQaApproval`); and the loop fires only when a human approves. **The conclusion — no ceiling — survives, on the edge's own rule at `:553-558`, which the review verified verbatim.** All seven in-artifact sites corrected, with the struck text preserved. **`docs/engineering/FOLLOW_UPS.md` F-65's identical sentence is Manager-owned: the Manager has ALREADY corrected it (`4a7c1a3`), and this lane wrote nothing there.** §16(2)(c) now directs a reviewer to press the question on `:553-558` rather than on a comparison this design no longer makes. |
+| **PASS6-5** `design-revision-metadata.yaml` `ux_accessibility_score`, `traceability.requirements_gaps` (×2); `design-review-gate.md` §6 1a's fourth-file note | three live claims in the metadata register, none superseded | **`ux_accessibility_score` said *"three explicit answers"*, *"Three answers, none of them the one the item needs"* and that the park *"raises a real blocking **escalation** decision"* — a pass-3-era type claim ruled out by `3e5a7c26…`. `requirements_gaps` said reversing the menu *"needs a NEW `HumanDecisionChoice`, which **no decision has authorised**"* — false twice over, since `5a90c1d3…` authorised exactly that. All superseded in place, stale text preserved verbatim. **The sibling `design_system_compliance` field WAS correctly updated for pass 5, so this is an inconsistent omission, not a missing convention.** The `requirements_gaps` entry is REMOVED rather than relabelled, for the reason its two neighbours give: *a decided question left in a gaps list tells a reader the design is still waiting on it.* **Two further instances were found by reading that no check named** — the same gap entry understating the registration sites as "two EDGE whitelists" where pass 5 requires three plus a fourth file, and the unmarked nine-vs-ten enum discrepancy (`design-review-gate.md` §6 1a said "an enum that has nine" while three places said "ten-value enum"; **both are correct on their own reading and neither said which it meant** — now marked at the normative site). |
+| **PASS6-6** `design-revision.md` §12.3 `PASS5-7`, §16(11) and the metadata's `verification_commands` | that row stated *"§12 thirteen, §12.1 eight, §12.2 nine, **§12.3 six** — counted"*, while §9.1 ("seven pass-5 rows") and §16(11) ("THIRTEEN, EIGHT, NINE and SEVEN") are both correct | **THE NINTH INSTANCE, AND THE SECOND TIME ONE HAS SAT INSIDE THE ROW THAT CORRECTED THE PREVIOUS.** **The generator was re-run rather than the number restated: it yields 13, 8, 9, 7** (§14.6) — so §12.3's own count is **seven**, not six, and the row whose entire subject is a count invalidated by appending a row **miscounted its own register** while asserting it was *"caught by re-counting the four registers before committing."* **AND THE MECHANISM IS A WEAKER MITIGATION THAN IT LOOKS, WHICH IS THE PART NOBODY HAD LOOKED AT.** Pass 5 committed to *generated, not restated* counts and recorded a runnable command — **and pass 6 discovered that the command is itself hand-maintained and rots identically: adding this pass's `§12.4` register without updating the command makes the unchanged four-register generator return `13, 8, 9, 13` instead of `13, 8, 9, 7`, silently absorbing §12.4's rows into §12.3's count.** §16(11) now carries the five-register form and states the durable rule — *a pass that adds a register must re-derive the generator's own boundaries, and no pass may state a count at all* — rather than another corrected number. §14.6 records both runs side by side. |
+
+**The sweep's own result, and it is the ninth time this pattern has to be recorded.** Reading all four
+artifacts end to end found **five** live stale claims and **five** citation defects in this pass; the
+Manager's review, working from the same artifacts, found four and three. **Every instance the read found
+that the review did not was in the metadata register** — H3's two, H2's four, PASS6-5's two. **A grep for
+the phrases this pass cared about would have found none of the count rot and none of the citation
+defects**, because a stale claim is a proposition about the current state of the world and a grep for its
+words says nothing about whether it is still true. **The register has now been the blind spot three times
+and has been corrected three times, and the honest reading is that the convention is not the problem.**
+§12.4, PASS6-6.
 
 ---
 
@@ -1389,7 +1465,7 @@ Per the lane's own no-placeholder rule, the items below are **not** done and are
 `.decisions/3e5a7c26…` — **its arms, and its registration sites: at pass 4's count THREE (the enum,
       `targetFor`, and two `blockingHumanDecisionResolved` whitelists), and at pass 5's count FOUR
       FILES — THREE whitelists plus a presentation registration**), because `.decisions/5a90c1d3…`
-      restores `re-triage`, whose target `designNotRequired` is a third admitted edge (`:528-546`)
+      restores `re-triage`, whose target `designNotRequired` is a third admitted edge (`:530-549`)
       **and because the new value is a CHOICE, which adds a presentation registration in
       `apps/control_plane/lib/shared/decision_choice.dart`** that a type does not), 1c (**G17(a)/(b)/(c)**), and **1b
       folded into 2b** because the option list belongs to the raising call site (H-2). **G16 is
@@ -1844,6 +1920,147 @@ shared-Docker-state rule — no Docker or Compose command of any kind, not even 
 stack was not touched.**
 
 
+### 14.6 Executed by correction pass 6 — the count generator, the citations it corrects, and the generator's own limit
+
+**The precondition, verified rather than assumed.** The dispatch specified `c2251ae` as the expected
+HEAD and instructed that any tracked modification means BLOCKED. **HEAD is `4a7c1a3`, a direct child of
+`c2251ae`, and the tracked tree is clean** — `git diff --stat HEAD` and `git diff --quiet HEAD` both
+empty; every porcelain entry is UNTRACKED and none is inside `design/qa-contracts-feature-remediation/`.
+**`4a7c1a3` is the Manager's own commit correcting `docs/engineering/FOLLOW_UPS.md` F-65's false
+justification** — the exact fourth occurrence of HIGH-2 — **so the divergence from the stated
+precondition is the one the correction spec told this lane to expect, in a path this lane does not own.
+It touches no owned path, so this lane proceeded and reports the real base.**
+
+```
+$ git rev-parse --short HEAD && git rev-parse --abbrev-ref HEAD
+4a7c1a3
+main
+
+$ git show --name-only --format="" 4a7c1a3
+docs/engineering/FOLLOW_UPS.md            # Manager-owned; NOT an owned path; H2's 4th site, already fixed
+
+$ git diff --stat HEAD ; git diff --quiet HEAD ; echo $?
+(empty)
+0                                          # TRACKED TREE CLEAN
+
+$ git log --oneline -2
+4a7c1a3 docs(ledger): F-65's justification was false; the conclusion survives
+c2251ae docs(ledger): pass 5, scope answer, F-60 corrected to four sites, F-63..F-65
+```
+
+**PASS6-6 — THE GENERATOR, RUN TWICE, AGAINST THE SAME FILE.** This is the finding the dispatch asked
+to be *verified rather than described*, and it is the ninth count-rot instance.
+
+```
+$ for r in '## 12. Corrections:### 12.1 ' '### 12.1 :### 12.2 ' '### 12.2 :### 12.3 ' \
+           '### 12.3 :### 12.4 ' '### 12.4 :## 13.'; do
+    awk -v a="${r%%:*}" -v b="${r##*:}" '$0 ~ a,index($0,b)>0' design-revision.md | rg -c '^\| \*\*'; done
+13
+8
+9
+7
+6                                    # THE FIVE-REGISTER FORM. §12.3 = SEVEN, confirming PASS5-7 was wrong.
+
+$ for r in '## 12. Corrections:### 12.1 ' '### 12.1 :### 12.2 ' '### 12.2 :### 12.3 ' \
+           '### 12.3 :## 13.'; do
+    awk -v a="${r%%:*}" -v b="${r##*:}" '$0 ~ a,index($0,b)>0' design-revision.md | rg -c '^\| \*\*'; done
+13
+8
+9
+13                                   # PASS 5's FOUR-REGISTER FORM, UNCHANGED, AGAINST THE SAME FILE.
+                                    # IT SILENTLY ABSORBS §12.4's SIX ROWS INTO §12.3 AND REPORTS 13.
+                                    # THE GENERATOR ROTS THE WAY THE PROSE DID: ITS OWN BOUNDARIES ARE HAND-TYPED.
+```
+
+```
+$ awk 'NR>=528 && NR<=530; NR>=545 && NR<=549' \
+    packages/workflow_engine/lib/src/transitions/work_item_transitions.dart
+  528  (WorkItemState.waitingForHumanDecision, WorkItemState.designNotRequired): [
+  529    GuardConditions.actorAllowed([ActorType.orchestrator]),
+  545        (
+  546          type: HumanDecisionType.escalation,
+  547          choice: HumanDecisionChoice.approve,
+  548        ),
+  549      }),
+  # PASS6-2: the WHITELIST is :530-549. :528 is the EDGE HEADER and :546 is three lines short of the
+  # closing '}),' — which is exactly what the artifacts cited. The SIX PAIRS are :531-548.
+
+$ awk 'NR>=31 && NR<=38' apps/control_plane/lib/features/decision_detail/decision_detail_bloc.dart
+  31  final sourceOptions = detail.options != null && detail.options!.isNotEmpty
+  …     … :38 .toList();                                  # PASS6-2: cited :30-37. Correct: :31-38.
+
+$ awk 'NR>=40 && NR<=42' that same file
+  40        final value = isKnownDecisionChoice(o.optionId)
+  41            ? o.optionId
+  42            : (isKnownDecisionChoice(o.label) ? o.label : o.optionId);
+  # PASS6-2: the two isKnownDecisionChoice calls are at :40 and :42. Cited: :38, and :38-41.
+  # PASS6-3 NOTE: 'o.optionId' is NOT the wire here — o.label is tried too. Worth knowing when
+  # reading the G16 rationale.
+
+$ awk 'NR>=45 && NR<=49' that same file
+  45          label: decisionChoiceLabel(
+  46            value, 47 fallback: o.label, 48 decisionType: detail.decisionType,
+  49          ),
+  # PASS6-2: the label lookup is :45-49. Cited: :44-48.
+```
+
+**PASS6-3 — THE TWO OPTION IDS THAT ARE NOT WIRES, AND THE FALLBACK THEY ACTIVATE.**
+
+```
+$ awk 'NR>=39 && NR<=45' packages/platform_contracts/lib/src/enums/human_decision.dart
+  39    fixed('fixed'),
+  40    stillBroken('still_broken'),          # ← the WIRE is still_broken
+  41    partiallyFixed('partially_fixed');    # ← the WIRE is partially_fixed
+  43    const HumanDecisionChoice(this.wire);
+  45    final String wire;
+
+$ awk 'NR>=1829 && NR<=1846' apps/server/lib/src/services/control_plane_service.dart
+  1830  HumanDecisionOption(
+  1831    optionId: 'fixed',                  # MATCHES the wire
+  1836  HumanDecisionOption(
+  1837    optionId: 'stillBroken',            # ← NOT A WIRE. camelCase Dart name.
+  1841  HumanDecisionOption(
+  1842    optionId: 'partiallyFixed',         # ← NOT A WIRE. camelCase Dart name.
+  # TWO OF THE THREE ARE NOT HumanDecisionChoice wires. The artifacts claimed all three were.
+
+$ awk 'NR>=1106 && NR<=1114' packages/workflow_store/lib/src/durable_workflow_engine.dart
+  1110    final option = decision.options
+  1111        ?.where((o) => o.optionId == choice.wire)
+  1112        .firstOrNull;
+  1113    return option?.optionId ?? choice.wire;     # ← THE FALLBACK. LIVE for those two ids TODAY.
+
+$ awk 'NR>=201 && NR<=207' apps/server/lib/src/triage/stalled_work_item_gate.dart   # DOES follow
+$ awk 'NR>=1647 && NR<=1649' apps/server/lib/src/review/engineering_review_gate.dart # DOES follow
+  # So 3 of the 4 cited raisers follow the convention and ONE DOES NOT. The convention is intended,
+  # mostly kept, and already broken in exactly the way G16/G17(c) exist to prevent.
+```
+
+**PASS6-4 — THE TWO CLAIMS THE H2 CORRECTION RESTS ON.**
+
+```
+$ awk 'NR>=132 && NR<=135' packages/workflow_engine/lib/src/transitions/human_decision_routing.dart
+  132  (HumanDecisionType.escalation, HumanDecisionChoice.approve) =>
+  133    WorkItemState.designNotRequired,
+  134  (HumanDecisionType.escalation, HumanDecisionChoice.rework) =>
+  135    WorkItemState.planning,
+  # (escalation, approve) -> designNotRequired. SAME TARGET, SAME EDGE, SAME operator-invoked loop
+  # as reTriage -> designNotRequired. The "unlike escalation" contrast is FALSE.
+
+$ awk 'NR>=559 && NR<=563' packages/workflow_engine/lib/src/transitions/work_item_transitions.dart
+  559      GuardConditions.escalationIndexWithinLimitForDecisionTypes(
+  560        escalationDecisionTypes: {
+  561          HumanDecisionType.engineeringReview,
+  562          HumanDecisionType.humanQaApproval,
+  563        },
+  # escalation IS ABSENT from the bound's set — exactly as designReviewRequest would be.
+  # The conclusion (no ceiling) stands on :553-558, verified verbatim by the review. The REASON did not.
+```
+
+**No command in this pass mutated state. No docker, no compose, no `psql`, and — per `AGENTS.md`'s
+shared-Docker-state rule — no Docker or Compose command of any kind, not even a read-only one. The QA
+stack was not touched.**
+
+
 ---
 
 ## 15. Disposition
@@ -1933,7 +2150,7 @@ spending a review on it would be the reviewer's time spent in the wrong place.
    `designApproval`?". **It is now: is `HumanDecisionType.designReviewRequest` with four answers
    (`approve → designApproved`, `rework → planning`, `reTriage → designNotRequired`,
    `cancel → cancelled`) the right design, and are the three `blockingHumanDecisionResolved` whitelist
-   admissions (`work_item_transitions.dart:75-80`, `:643-648`, `:528-546`) plus the
+   admissions (`work_item_transitions.dart:75-80`, `:643-648`, `:530-549`) plus the
    `decision_choice.dart` presentation registration sufficient?**
    **Three things a reviewer should press hardest — and the first is now a different question than it
    was:**
@@ -1956,10 +2173,19 @@ spending a review on it would be the reviewer's time spent in the wrong place.
    bound (`:559-563`) that does not include `designReviewRequest`.
    (c) whether `reTriage` should be bounded by that escalation guard at all.** **This pass says NO,
    on the edge's own stated rule** (`:553-558`: *"inventing a bound here would be new policy rather than
-   a lockstep move"*, with four other types already unbounded there) — **but `reTriage` is an
+   a lockstep move"*, with four other types already unbounded there). ~~**but `reTriage` is an
    operator-invoked loop by construction, unlike `escalation`, so the precedent is weaker than it
-   looks. A ceiling on re-triage is a product decision this lane has flagged rather than taken
-   (R14), and it is the first thing a reviewer or the operator should overturn.**
+   looks.**~~ **PASS 6 STRIKES THAT CLAUSE: it is false, and it was the only support the flag had
+   beyond the edge's own rule.** `(escalation, approve) → designNotRequired`
+   (`human_decision_routing.dart:132-133`) is the **identical operator-invoked loop, to the identical
+   target, on the identical edge**, and `escalation` is **equally absent from the bound's set**
+   (`:559-563` contains only `engineeringReview` and `humanQaApproval`); the loop fires only when a
+   human approves. **So the flag now stands on `:553-558` alone — which is a stronger ground than the
+   one pass 5 gave, because it is the edge's own stated rule rather than a comparison to a precedent
+   that turns out to be identical. A ceiling on re-triage is a product decision this lane has flagged
+   rather than taken (R14), and it is the first thing a reviewer or the operator should overturn** —
+   **and a reviewer should now press it on `:553-558`, not on the `escalation` comparison this item
+   no longer makes.** §12.4, PASS6-4.
    **(d) THE SCOPE DERIVATION — this is the claim on which "the other decisions are unaffected" rests,
    and it should be checked before the arm set, because if it is wrong the design must escalate
    instead.** `.decisions/5a90c1d3…`'s `scope_warning` requires that the new value *"must be offered
@@ -1967,7 +2193,7 @@ spending a review on it would be the reviewer's time spent in the wrong place.
    option set *"that is itself a finding to escalate rather than work around."* **This pass concluded
    it CAN, from four verified facts** (`design-review-gate.md` §6 1a): the offered set is a property
    of the **decision instance** (`HumanDecision.options`, `DecisionContext.availableOptions`); the
-   operator UI builds its menu **only** from that set (`decision_detail_bloc.dart:30-37`); and
+   operator UI builds its menu **only** from that set (`decision_detail_bloc.dart:31-38`); and
    **`HumanDecisionChoice.values` is enumerated nowhere in `lib/`** — all nine sites are in `test/` —
    so nothing renders a value a decision did not list; and a per-type label layer already exists in
    production (`decisionChoiceLabel(…, decisionType:)`, `decision_choice.dart:32-57`).
@@ -1975,7 +2201,7 @@ spending a review on it would be the reviewer's time spent in the wrong place.
    no-escalation decision rests on them.** **The residual this pass flagged rather than solved is the
    fourth registration site** — `decision_choice.dart:12-19`'s `knownDecisionChoices` is a hardcoded
    six-value set against a ten-value enum, so without adding `re_triage` there the operator sees caller
-   prose instead of a mapped label on both surfaces (`decision_detail_bloc.dart:38`,
+   prose instead of a mapped label on both surfaces (`decision_detail_bloc.dart:40 and :42`,
    `needs_you_bloc`). Routing is unaffected; presentation is. **`apps/**` is `PROHIBITED_PATHS`, so it
    is specified here and recorded for the Manager, not corrected.**
 3. **`design-review-gate.md` §5.1.1a — is the "the order is load-bearing" argument right?** This
@@ -2016,18 +2242,25 @@ spending a review on it would be the reviewer's time spent in the wrong place.
 10. **§3.3's per-path split**, and **§6's M12.** Whether declining design remediation on M10 is still
     the right call now that the reasoning is stated rather than inferred; and whether restoring the
     brief's M2 is complete or a partial repair.
-11. **THE DISCIPLINE, not the content — and by pass 5 this is the SEVENTH instance, not the third,
-    and two of the seven are in the mechanism that exists to prevent them.**
+11. **THE DISCIPLINE, not the content — and by pass 6 this is the **NINTH** instance, not the third,
+    and three of the nine are in the mechanism that exists to prevent them.**
     §12 lists **thirteen pass-2 corrections (all thirteen of them this lane's own errors)**, §12.1 adds
-    **eight pass-3 corrections**, **§12.2 adds nine pass-4 rows** and **§12.3** pass-5 rows.
-    **THE COUNTS ON THIS LINE ARE GENERATED, NOT RESTATED — and that is the fix for the defect this
-    line records, applied to itself.** Derive them with
-    `for r in '## 12. Corrections:### 12.1 ' '### 12.1 :### 12.2 ' '### 12.2 :### 12.3 ' '### 12.3 :## 13.'; do
+    **eight pass-3 corrections**, **§12.2 adds nine pass-4 rows**, **§12.3 seven pass-5 rows** and
+    **§12.4 six pass-6 rows**.
+    **THE COUNTS ON THIS LINE ARE GENERATED, NOT RESTATED — and pass 6 found that this is necessary
+    and NOT sufficient, which is the new part.** Derive them with
+    `for r in '## 12. Corrections:### 12.1 ' '### 12.1 :### 12.2 ' '### 12.2 :### 12.3 ' '### 12.3 :### 12.4 ' '### 12.4 :## 13.'; do
     awk -v a="${r%%:*}" -v b="${r##*:}" '$0 ~ a,index($0,b)>0' design-revision.md | rg -c '^\| \*\*'; done`
-    **As of `b63c771`+this pass they are THIRTEEN, EIGHT, NINE and SEVEN.** A pass that appends a row
-    must re-run that, not edit this sentence — which is precisely what pass 5 got wrong four times
-    (§12.3, PASS5-5) and then got wrong a fifth time while writing the cure (PASS5-7). **THE COUNTS ON THIS LINE HAVE NOW BEEN WRONG FOUR TIMES, AND PASS 5 FOUND THE FOURTH
-    INSIDE THE ROW THAT CORRECTED THE THIRD (PASS4-2).** It previously read *"nine of them this lane's
+    **Run against this revision it yields `13 8 9 7 6`** (§14.6). **Pass 5's four-register form, run
+    UNCHANGED against the same file, yields `13 8 9 13`** — **it silently absorbs §12.4's rows into
+    §12.3's count.** **So the generator rots exactly the way the prose did, because its register
+    BOUNDARIES are themselves hand-typed**, and a generator that silently mis-counts is worse than a
+    restated number, because it looks machine-checked. **The durable rule, and it is stronger than
+    "generate it": a pass that ADDS A REGISTER must re-derive the generator's boundaries, and no pass
+    may state a count at all — it pastes the generator's output and names the run.**
+    **THE COUNTS ON THIS LINE HAVE NOW BEEN WRONG FOUR TIMES, AND PASS 5 FOUND THE FOURTH
+    INSIDE THE ROW THAT CORRECTED THE THIRD (PASS4-2); PASS 6 FOUND THE NINTH INSIDE `PASS5-7`,
+    THE ROW THAT CORRECTED THE EIGHTH (§12.4, PASS6-6).** It previously read *"nine of them this lane's
     own errors, six of one kind"*, which §12.1's PASS3-5 and §12's own classification had **already**
     corrected to ten and eight — a sibling row quoting pre-correction figures out of the register that
     had fixed them. **Pass 4 then corrected two numbers in that row and left the row-counts stale:
