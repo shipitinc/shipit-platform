@@ -13,6 +13,18 @@ citation of `implementation_inflow.dart:1543-1578` is corrected** — that file 
 the range pointed 1103 lines past its end; the property is stated at **`:124-126`** and demonstrated
 at `scheduler.dart:1582-1599`. **No finding, no gate, no gate-result vocabulary and no ordering
 constraint in this document changed.**
+**Correction pass 4:** see `design-revision-metadata.yaml` `correction_pass_4_base_sha` (lane
+`design-QA-CONTRACTS-CORRECTION-4`). **PROVENANCE ONLY — NO FINDING, NO GATE, NO GATE-RESULT
+VOCABULARY AND NO ORDERING CONSTRAINT IN THIS DOCUMENT CHANGED.** The round-4 review confirmed the
+pass-3 work in this file as exact: the 2a/2b/2c → 3a/3b/3c renumbering and the disposal of the phantom
+"slice 2.3" both stand, and V6's corrected citation (`implementation_inflow.dart:124-126`) stands.
+**The pass-4 fork — a new `HumanDecisionType` for the design-review park
+(`.decisions/3e5a7c26-4b19-4f83-a0d7-6c29b8f1e540.yaml`) — does not touch this document**, because
+the fork is entirely about the *human decision* routing tables and the park's call site, and nothing
+here reads either. **Stated explicitly because "this document was in scope and I did not change it"
+is exactly the claim a later reader cannot verify, and because the round-4 dispatch's own orphan sweep
+had a demonstrated blind spot in a different artifact — so the non-change is recorded here rather
+than left inferable from silence.**
 **Status of this document:** a specification. This lane implements no production code.
 
 > The mandate: *"Who populates `context['gateResults']`, from what, at which point in the
