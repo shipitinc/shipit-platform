@@ -1,0 +1,32 @@
+# human-decision.yaml
+decision_id: b81f40c7-2a96-4e38-bd51-6c07e9f3a824
+type: ARCHITECTURE
+status: RESOLVED
+title: The park's human surface is built BEFORE the gate, not after it — 7f3e2a95's "must be solved FIRST" governs
+resolution:
+  selected: HUMAN_SURFACE_FIRST
+  label: Build the design-review route into the park's decision before the gate ships; slice ordering reverses
+  decided_by: operator
+  decided_at: 2026-10-17T14:10:00Z
+  rationale_given: >-
+    Decision 7f3e2a95 (Reading B) said in its `consequence` that the dead end it creates "must be
+    solved FIRST ... This decision does not make the dead end acceptable; it makes it the next thing to
+    build." The design lane routed it as slice 1.5, after slice 1. The independent review agreed the
+    lane had the better argument on MERITS — while the gate is absent, intake items sit at
+    `agentCompleted` in a silent position, which is worse than parking — but held that deferring a
+    Level 3 operator instruction is the operator's call, not the lane's: "a flagged judgement is not a
+    discharged obligation."
+  authority_note: >-
+    The lane's merits argument is recorded and is not dismissed. It is overridden on AUTHORITY, not on
+    reasoning. If slice 1 later proves to be genuinely urgent, this decision may be revisited with that
+    argument in hand.
+  consequence: >-
+    Slice ordering REVERSES: the human surface becomes the FIRST slice, the gate follows. This costs a
+    new HumanDecisionType plus a routing arm, and human_decision_routing.dart:151-162 records why that
+    is not small — "a value here that disagrees with targetFor does not error, it silently stops the
+    escalation index advancing." The two routing tables must move in lockstep.
+  invariant: >-
+    NO item may be parked at `designReviewRequired` before the decision raised there offers a
+    "do the design review" answer. A park without a way to produce what the item waits for is the
+    dead-end class (F-42, F-50, F-54) this area has produced repeatedly. This invariant is the whole
+    point of the reversal and must be asserted, not assumed.
