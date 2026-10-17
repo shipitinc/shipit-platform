@@ -124,26 +124,50 @@ retry edge bypasses it.
 `designNotRequired` when unknown. This changes where EVERY retried item resumes, which is
 why it needs human authorisation rather than a correction lane.
 
-### F-30 57 Human Decisions are pending and unowned
-**Status** BLOCKING · **Owner** human
+### F-30 RETRACTED — the decision queue exists; my premise was wrong
+**Status** RETRACTED 2026-10-16 · superseded by F-38
 
-    status     | count
-    -----------+-------
-    pending    | 57
-    resolved   | 6
-    cancelled  | 5
+This entry claimed *"57 Human Decisions are pending and unowned… There is no queue, no ageing report
+and no owner. An operator has no way to see 57 pending decisions except by querying Postgres."*
 
-The verdict-consumption fix moved 8 items into `waiting_for_human_decision` in a single tick
-(3 decisions minted at 21:46:14 alone). These are real review verdicts awaiting a person,
-including two `major` findings against `apps/control_plane`.
+**Every clause of that is false.** The operator surface is the **Needs You** page,
+`apps/control_plane/lib/features/needs_you/needs_you_page.dart`, routed at `/needs-you` with
+`/needs-you/:decisionId` for the decision itself. Verified live against QA on 2026-10-16:
 
-There is no queue, no ageing report and no owner. An operator has no way to see 57 pending
-decisions except by querying Postgres. This is now the system's primary bottleneck and it is
-an interface and routing problem, not a correctness one.
+    Needs you — 7 WAITING — 7 decisions are waiting on you.
+    ref dec-hn9zf6jxb9-jdpz6e · Engineering review · defect-DEF-1791686704991884 · waiting 11h 57m
+    "Engineering review requires changes. Approve, reject, or request rework?"
+    STATUS: Needs your approval · ASKED: yesterday at 21:46 · WHAT WE SUGGEST: CHANGES_REQUIRED
+    [Reject] [Request changes] [See full details]
 
----
+It renders **ageing** (`waiting 66h 30m`), the suggestion, the work-item reference, the original
+reported defect text, and the resolve actions drawn from the decision's own options — plus a
+"WHAT CARRIED ON" history of already-resolved decisions with who resolved them and when.
 
-## 2. OPEN — real, unfixed, not blocking
+**The error was mine and the mechanism was simple: I queried Postgres instead of looking at the
+product.** A raw `SELECT count(*)` gave me a number the product never shows, and I reported the
+number as a missing capability. The operator was asked to approve building a queue that already
+shipped. **Check the product before reporting a gap in it.**
+
+### F-38 49 pending decisions reference work items that no longer exist
+**Status** OPEN · discovered while correcting F-30 · **not blocking**
+
+Splitting the 57 by whether their work item still exists:
+
+| bucket | count |
+|---|---|
+| `item_gone` — the `work_item` row no longer exists | **49** |
+| blocking an item at `waiting_for_human_decision` | **8** |
+
+So F-30's alarming figure was **49 orphaned records plus 8 real ones.** The 8 are all rendered in
+Needs You, correctly. The page showing **7** against 8 blocking items is one further discrepancy:
+`defect-DEF-1791685024220546` is blocked by `dec-hn9zf6jdjm-t0xhgb`, while Needs You renders the
+older `dec-hn7h7dagw5-l4o193` for that same defect — i.e. the page appears to surface *a* pending
+decision per work item rather than *the* blocking one. **Worth a check; it is a display question, not
+a flow blocker**, and resolving it by inspection of the query is cheap.
+
+Neither orphaned nor mis-picked decisions stop the flow: `waiting_for_human_decision` is the
+terminal state and an operator sees every decision that actually blocks. Filed for later, as asked.
 
 ### F-06 `home-machine-label` correction is unreviewed
 `fix/home-machine-label-corrected` @ `a62d532` (correction `bfcd105` on reviewed
