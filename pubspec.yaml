@@ -90,8 +90,20 @@ melos:
     # someone remembered to `cd apps/control_plane && flutter test`.
     #
     # Uses the FVM-pinned SDK (`.fvmrc`), not whatever `flutter` resolves to on
-    # PATH, so a contributor's global default cannot change the golden pixels.
+    # PATH, so a contributor's global default cannot change WHAT IS GRADED.
     # Requires the Flutter SDK: `fvm install && fvm flutter pub get`.
+    #
+    # It does NOT run the golden suite on the pinned SDK, and is not expected
+    # to. The goldens belong to a different, deliberately separate rendering
+    # environment (Flutter 3.44.7, pinned in
+    # `apps/control_plane/test/tools/golden_render_environment.json`, rendered on
+    # macOS 26 arm64). Running them here under 3.44.0 makes
+    # `check_golden_domination.dart` REFUSE TO GRADE -- which is the designed
+    # outcome, not a failure. The divergence between this pin and the render
+    # environment is deliberate and governed by Human Decision
+    # 3e9dfb75-7bdf-4a8c-89dd-c76779a65371 (OPTION_C). Do not "fix" it by
+    # re-rendering the goldens at 3.44.0; that would overturn a resolved
+    # decision and change the exact rendering environment.
     #
     # Must `cd` first: the golden fonts and `goldens/` paths are resolved
     # relative to the app root, so invoking it from the repo root fails every

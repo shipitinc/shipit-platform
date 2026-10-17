@@ -1,0 +1,24 @@
+# human-decision.yaml
+decision_id: b58d0e17-9c46-4f8a-a2d5-3e91b7c40a58
+type: ARCHITECTURE
+status: RESOLVED
+title: Flutter versions are pinned EXACTLY per surface; the range-satisfies proposal is withdrawn
+resolution:
+  selected: EXACT_PER_SURFACE
+  label: validation surface requires .fvmrc exactly (3.44.0); render surface requires the golden contract exactly (3.44.7); drift is FATAL on both
+  decided_by: operator
+  decided_at: 2026-10-16T23:10:00Z
+  rationale_given: >-
+    The design brief recommended range-satisfies for build/validation with .fvmrc demoted to a
+    preferredVersion, on the argument that nothing makes 3.44.0 special. That argument does not survive
+    contact with the tree. `.fvmrc` IS the repository-wide developer pin, `melos run test:flutter` resolves
+    through it (pubspec.yaml:100), and the divergence from the golden render environment is DELIBERATE,
+    documented in `_runner_note`, and governed by resolved Human Decision
+    3e9dfb75-7bdf-4a8c-89dd-c76779a65371 (OPTION_C, 2026-10-08). Each surface therefore has its own exact
+    pin, and both are enforced exactly.
+  delegated: >-
+    A version mismatch is FATAL, not warned. This supersedes the brief's HD-2 recommendation, which
+    proposed "absence is fatal, version drift is warned". Absence AND drift are both fatal. The operator
+    was shown that range-satisfies was available and declined it after the deliberate-divergence evidence
+    was surfaced. Consequence for the checker: a capability whose required version cannot be matched must
+    exit UNKNOWN, never SATISFIED, and never degrade to a warning.

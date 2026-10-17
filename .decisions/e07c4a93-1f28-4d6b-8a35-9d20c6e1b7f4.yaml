@@ -1,0 +1,20 @@
+# human-decision.yaml
+decision_id: e07c4a93-1f28-4d6b-8a35-9d20c6e1b7f4
+type: ARCHITECTURE
+status: RESOLVED
+title: An UNDECLARED workspace member is fatal in CI from the first day of slice 2
+resolution:
+  selected: FATAL_FROM_DAY_ONE
+  label: Exit code 4 (UNDECLARED) fails CI from day 1 of slice 2
+  decided_by: operator
+  decided_at: 2026-10-16T23:10:00Z
+  rationale_given: >-
+    Advisory was rejected: the current undeclared surfaces went unnoticed precisely because nothing policed
+    them, and an advisory that never blocks is the same class as the warning that was softened into
+ "could not be run" in the incident this mechanism exists to prevent. The accepted cost is explicit —
+    adding any new package turns CI red until its capability entry is merged — and that is the correct
+    trade for a declaration whose whole value is being exhaustive.
+  delegated: >-
+    The ruling applies FROM SLICE 2, not slice 1: slice 1 declares 1 of 16 workspace members, so making
+    UNDECLARED fatal before the manifest is populated would gate CI on an incomplete contract. Slice 1
+    ships without code 4; slice 2 introduces it already fatal. No intermediate advisory phase.

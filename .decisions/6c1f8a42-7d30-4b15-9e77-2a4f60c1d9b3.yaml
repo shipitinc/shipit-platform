@@ -1,0 +1,22 @@
+# human-decision.yaml
+decision_id: 6c1f8a42-7d30-4b15-9e77-2a4f60c1d9b3
+type: ARCHITECTURE
+status: RESOLVED
+title: A capability that cannot be verified is reported UNVERIFIED; it never authorises APPROVE_FOR_MERGE
+resolution:
+  selected: PROCEED_AND_REPORT_UNVERIFIED
+  label: Proceed, report UNVERIFIED, never emit APPROVE_FOR_MERGE
+  decided_by: operator
+  decided_at: 2026-10-16T23:10:00Z
+  rationale_given: >-
+    The session this decision comes from produced repeated FALSE claims: `apps/control_plane` gates were
+    reported "clean" several times while nothing in that app was compiled or tested, because a reviewer had
+    recorded "flutter not found" and continued. Fail-closed absolutely was rejected: a missing tool would
+    then block all work on that component with no in-lane remedy, which recreates the stall as a deadlock.
+    Proceeding is allowed; concluding is not. The lane may finish and report, but a verdict of APPROVE_*
+    requires a capability precheck exit of 0. This mirrors the standing rule already in the ledger.
+  delegated: >-
+    HOW a lane records the precheck is a design detail, not a human one, EXCEPT that the recorded field must
+    be unambiguous: the capability-parity design review found the proposed `CAPABILITY_PRECHECK: <exit>` a
+    bare integer that cannot distinguish "could not measure" from "measured and absent", and cannot carry
+    the surface. Both dimensions are load-bearing and neither may be dropped.
