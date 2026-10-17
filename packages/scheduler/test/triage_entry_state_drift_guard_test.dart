@@ -215,12 +215,49 @@ void main() {
     // and still not build.
     //
     // This file is the second copy of the classification, written out literally
-    // precisely so it CANNOT be derived from the thing under test. A second
-    // copy is only worth having if the copies are pinned to each other, and the
-    // only thing that pins them is totality: the two lists below must partition
-    // the enum exactly, so a value that is classified in one place and not the
-    // other fails HERE rather than being silently classified by whichever file
-    // happens to read first.
+    // precisely so it CANNOT be derived from the thing under test.
+    //
+    // ## WHAT TOTALITY DOES AND DOES NOT PIN — CORRECTED (F-74)
+    //
+    // This comment used to claim:
+    //
+    //   "A second copy is only worth having if the copies are pinned to each
+    //    other, and the only thing that pins them is totality."
+    //
+    // That was FALSE, and an independent review of slice 1 (`7029424`) caught
+    // it by mutation. Totality pins EACH COPY TO THE ENUM — not to the other
+    // copy. The partition below proves that every `HumanDecisionChoice` value
+    // is classified, exactly once, *in this file*. A value that the production
+    // predicate classifies on the OPPOSITE side satisfies every assertion in
+    // this test: it is still classified exactly once here, and the group does
+    // not read production.
+    //
+    // The mutation that proved it: flipping
+    // `DurableWorkflowEngine._isReWorkDecision`'s `reTriage` arm from
+    // `=> true` to `=> false` (durable_workflow_engine.dart:1015) left this
+    // whole file 15/15 GREEN, along with every other test in the repository
+    // that could see it. Nothing here notices a predicate that disagrees with
+    // it, because nothing here compares the two.
+    //
+    // SO: this file is the guard against a NEW enum value going unclassified
+    // in the second copy. It is NOT a guard against the second copy being
+    // WRONG. Those are different properties and only one of them is here.
+    //
+    // What would pin the two copies to each other: an assertion that reads
+    // BOTH and compares them — i.e. driving `resolveHumanDecision` for every
+    // (type, choice) pair and checking the marker against `_isReWork`. That is
+    // not possible here, for the reason in the file header: this package
+    // depends on `workflow_store`, so its tests may not import the engine.
+    //
+    // It IS possible on the other side of that boundary, where the real
+    // predicate and the real write path are both reachable, and that is where
+    // it now lives:
+    // `packages/workflow_store/test/triage_discriminator_test.dart`, group
+    // "the park's classification, asserted against PRODUCTION and not a list".
+    // Those cases drive `resolveHumanDecision` and read the marker off the
+    // durable row, so no list can satisfy them. The dependency fact that makes
+    // this file necessary is the same fact that puts the cross-copy check over
+    // there — the two files are complementary, not redundant.
     test('every HumanDecisionChoice is classified exactly once, by name', () {
       final recognised = _recognisedReWorkChoices.toSet();
       final notRecognised = _notRecognisedReWorkChoices.toSet();
@@ -290,6 +327,26 @@ void main() {
       // keyed on `escalation`, and `reTriage` is a recognised choice for EVERY
       // type, which is the whole of why the park's own re-triage answer stamps
       // a fresh dedupe key instead of reusing a consumed one.
+      //
+      // ## WHAT THIS DOES AND DOES NOT PROVE (F-74)
+      //
+      // It proves the SPELLING in this file. It does NOT prove the production
+      // predicate, and it cannot: `_isReWork` above is built from
+      // `_recognisedReWorkChoices`, a literal list in this same file, so this
+      // assertion checks a list against itself.
+      //
+      // An independent review of slice 1 (`7029424`) proved the gap by
+      // mutation: flipping the `reTriage` arm of
+      // `DurableWorkflowEngine._isReWorkDecision` to `=> false` left this file
+      // 15/15 GREEN. The ruling itself is now pinned where production is
+      // reachable —
+      // `packages/workflow_store/test/triage_discriminator_test.dart`, group
+      // "the park's classification, asserted against PRODUCTION and not a
+      // list" — which drives `resolveHumanDecision` and reads the marker back
+      // off the durable row. This test stays because it covers a different
+      // property: that the spelling here is TOTAL over every type. Read the
+      // "WHAT TOTALITY DOES AND DOES NOT PIN" comment above before trusting it
+      // for anything more than that.
       for (final type in HumanDecisionType.values) {
         expect(
           _isReWork(type, HumanDecisionChoice.reTriage),

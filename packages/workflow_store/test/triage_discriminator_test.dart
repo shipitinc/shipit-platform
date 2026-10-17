@@ -252,6 +252,77 @@ Future<HumanDecision> _pendingEngineeringReview(
   _id,
 )).firstWhere((d) => d.decisionType == HumanDecisionType.engineeringReview);
 
+/// A work item parked at the DESIGN-REVIEW PARK on a blocking
+/// `designReviewRequest` — the gate the park exists to serve, and the ONLY type
+/// the park's own menu is ever offered at.
+///
+/// The walk is the park's whole life: `draft -> planning -> planned ->
+/// featureIntakeParked -> waitingForHumanDecision`. The last step is the edge an
+/// independent review of slice 1 found had lost every guard (F-75) — see
+/// `packages/workflow_engine/test/feature_park_way_out_test.dart`. Driving the
+/// real walk here rather than seeding the state is deliberate: a test that
+/// fabricates `waitingForHumanDecision` would pass even if the park had no way
+/// out of it at all.
+Future<DurableWorkflowEngine> _atDesignReviewPark({int? marker}) async {
+  final engine = await _engine();
+  if (marker != null) {
+    final store = _storeOf(engine);
+    final item = await store.readWorkItem(_id);
+    await store.saveWorkItem(
+      item.copyWith(metadata: {...?item.metadata, 'triageAttempt': marker}),
+    );
+    expect(
+      (await store.readWorkItem(_id)).metadata?['triageAttempt'],
+      marker,
+      reason:
+          'the seed must have landed, or the expectation below proves '
+          'nothing about the predicate',
+    );
+  }
+  await engine.transition(
+    workItemId: _id,
+    to: WorkItemState.planning,
+    trigger: TransitionTrigger.systemEvent,
+    actor: _orch,
+  );
+  await engine.transition(
+    workItemId: _id,
+    to: WorkItemState.planned,
+    trigger: TransitionTrigger.systemEvent,
+    actor: _orch,
+    context: const {'featureRef': 'FEAT-001'},
+  );
+  // THE PARK. `featureIntakeParked` is in the `entryStates` of NO wired
+  // JobDefinition, so nothing dispatches from it — that is the point of the
+  // state, and it is also why a human gate is the only way out of it.
+  await engine.transition(
+    workItemId: _id,
+    to: WorkItemState.featureIntakeParked,
+    trigger: TransitionTrigger.systemEvent,
+    actor: _orch,
+  );
+  await engine.requestHumanDecision(
+    workItemId: _id,
+    decisionType: HumanDecisionType.designReviewRequest,
+    question: 'What should happen to this feature?',
+    actor: _orch,
+  );
+  expect(
+    (await engine.loadWorkItem(_id)).state,
+    WorkItemState.waitingForHumanDecision,
+    reason:
+        'the park must actually be reached, or the resolutions below are '
+        'resolving a gate that production never parks on',
+  );
+  return engine;
+}
+
+Future<HumanDecision> _pendingDesignReviewRequest(
+  DurableWorkflowEngine engine,
+) async => (await _storeOf(engine).readHumanDecisionsForWorkItem(
+  _id,
+)).firstWhere((d) => d.decisionType == HumanDecisionType.designReviewRequest);
+
 /// THE DRIFT GUARD between the routing table and the re-triage rule — **MOVED**.
 ///
 /// It used to live here, and it used to filter on
@@ -304,6 +375,129 @@ void main() {
       },
     );
   });
+
+  group(
+    "the park's classification, asserted against PRODUCTION and not a list",
+    () {
+      // F-74, HIGH, from the independent review of slice 1. Read this comment
+      // before changing anything in this group — it explains why the group
+      // exists at all, because the guard that used to justify its absence is
+      // the thing that lost the coverage.
+      //
+      // ## WHAT WAS WRONG
+      //
+      // `DurableWorkflowEngine._isReWorkDecision` (durable_workflow_engine.dart
+      // :1007) is the production predicate. The independent review flipped its
+      // `reTriage` arm from `=> true` to `=> false` and EVERY test stayed green:
+      // this file 16/16, `scheduler`'s drift guard 15/15, all 38 scheduler
+      // files, all 9 workflow_engine files, all 4 files in this package.
+      //
+      // The reviewer's diagnosis, which this group exists to close:
+      //
+      //  * `scheduler/test/triage_entry_state_drift_guard_test.dart:286` —
+      //    "reTriage IS re-work" — derives its own expectation from
+      //    `_recognisedReWorkChoices`, so it asserts a literal list against
+      //    itself and cannot see production at all.
+      //  * THIS file, which is the one that drives the real predicate, had NO
+      //    `reTriage` case. Its group header at :283 records that the drift
+      //    guard moved out to the scheduler package, and that move is how the
+      //    production coverage was lost: the file that left kept the writer's
+      //    other assertions and dropped the one that needed the routing table.
+      //
+      // The source comment at durable_workflow_engine.dart:970 calls this arm
+      // "the arm that must NOT be omitted" and names the consequence — an
+      // item the operator sends back to triage re-requests the key a terminal
+      // triage job holds, and is inert for ever.
+      //
+      // ## WHY THESE TWO CASES, AND WHY THEY ARE NOT VACUOUS
+      //
+      // Both drive `resolveHumanDecision` — the production write path — and
+      // read the marker back off the durable row. Neither derives an
+      // expectation from a list, so neither can be satisfied by editing a list.
+      //
+      // They differ ONLY in the choice, which makes the pair two-sided: the
+      // first goes red if `reTriage` stops being re-work (the exact F-74
+      // mutation), and the second goes red if `approve` BECOMES re-work at this
+      // type. Either predicate error in either direction is now a named
+      // failure. `nextTriageAttempt` is asserted through the engine's own
+      // stamp, so the arithmetic stays in `durable_workflow_engine.dart` where
+      // it is defined and this file cannot drift from it.
+      //
+      // NON-VACUITY IS BY MUTATION, NOT BY COMMENT. Verified on this exact
+      // code: flipping durable_workflow_engine.dart:1015 to `=> false` turns
+      // the first case below RED while every other test in this file stays
+      // green — which is precisely the evidence that this case, and not the
+      // group it sits in, is what carries the ruling.
+
+      test("the park's reTriage answer ADVANCES the discriminator", () async {
+        // Seeded at 2, so the assertion is `3` and not merely "some number went
+        // up": the marker must clear `:a1` and `:a2`, both of which a terminal
+        // triage job holds on the real item.
+        final engine = await _atDesignReviewPark(marker: 2);
+
+        final reTriaged = await engine.resolveHumanDecision(
+          decisionId: (await _pendingDesignReviewRequest(engine)).decisionId,
+          choice: HumanDecisionChoice.reTriage,
+          decider: 'dana@example.com',
+          rationale: 'Send it back to triage',
+          signature: _sig(),
+        );
+
+        expect(
+          reTriaged.state,
+          WorkItemState.designNotRequired,
+          reason:
+              '`HumanDecisionRouting.targetFor(designReviewRequest, reTriage)` '
+              'is `designNotRequired` — the state triage dispatches from, and '
+              'byte-identically to `(escalation, approve)`. Reaching any other '
+              'state means this walk is no longer the park\'s real route, and '
+              'the marker below would then be stamped on the wrong edge.',
+        );
+        expect(
+          reTriaged.metadata?['triageAttempt'],
+          3,
+          reason:
+              'THE RULING. "Send this back to triage" IS a re-triage, so the '
+              'operator\'s own answer must buy a fresh dedupe key. Under-'
+              'stamping leaves the item on `:a2`, which a terminal job holds, '
+              'and it is inert for ever — the defect this whole marker exists '
+              'to close, reached through the park instead of the retry.',
+        );
+      });
+
+      test("the park's approve answer does NOT advance it", () async {
+        final engine = await _atDesignReviewPark();
+
+        final approved = await engine.resolveHumanDecision(
+          decisionId: (await _pendingDesignReviewRequest(engine)).decisionId,
+          choice: HumanDecisionChoice.approve,
+          decider: 'dana@example.com',
+          rationale: 'Go and do the design review',
+          signature: _sig(),
+        );
+
+        expect(
+          approved.state,
+          WorkItemState.designApproved,
+          reason:
+              '`approve` at the park means "do the review" — forward progress, '
+              'not "do the work again". It lands on the same `designApproved` '
+              'as `(designApproval, approve)` and is still not a re-triage.',
+        );
+        expect(
+          approved.metadata?.containsKey(
+            DurableWorkflowEngine.triageAttemptMetadataKey,
+          ),
+          isFalse,
+          reason:
+              'the other half of the pair, and the reason this is a pair and '
+              'not a single case: the discriminator must not advance on '
+              'acceptance. A marker here burns a key suffix on every design '
+              'review the operator asks for.',
+        );
+      });
+    },
+  );
 
   group('the defect: a re-triage that arrives by DECISION gets a fresh key', () {
     test('an engineering-review REWORK re-entering triage advances the marker '
