@@ -1,0 +1,327 @@
+# Design Brief metadata — design-QA-CONTRACTS-FEATURE-REMEDIATION
+# Required fields per docs/engineering/DESIGN_GOVERNANCE.md ("Artifacts" ->
+# "Design Brief" -> "Required Fields"). This is a BRIEF, not a Revision: it is
+# pre-exploration, so `risk_assessment` is the initial risk level per Gate D1, and
+# no reviewer or approver is recorded.
+#
+# DISPOSITION: DESIGN_REVISION_BLOCKED. No gate set is proposed. See design-brief.md
+# §6 (what is missing, named), §7 (no evaluator exists for any gate), §8/§12 (HD-1,
+# a Level 3 human decision that must not be made by a design lane).
+
+brief_id: 7C4E1A6B-2F30-4D18-9E77-0B5A9C31D4E2
+revision_id: 2A9D5F13-6C84-4B7E-8A20-51D7C6E93B84
+version: 0.1.0
+status: DRAFT
+
+requirements_refs:
+  - "Manager mandate design-QA-CONTRACTS-FEATURE-REMEDIATION — author two QA contracts (feature intake, design remediation), gates derived from the structured results those agents actually emit"
+  - "docs/engineering/FOLLOW_UPS.md §11 — per-product QA spec provisioning at 8b38a95 and what still blocks"
+  - "docs/engineering/FOLLOW_UPS.md §11 F-42 — three stranded items, operator-recovered only"
+  - "docs/engineering/FOLLOW_UPS.md §11 F-43 — WI-feature-* has no replay hook"
+  - "docs/engineering/FOLLOW_UPS.md §11 F-44 — a spec-less product's items are created and remain un-completable, by decision c4d70b18"
+  - "docs/engineering/FOLLOW_UPS.md §11 F-45 — the blocker was visible as a red test at HEAD"
+  - "docs/engineering/FOLLOW_UPS.md §11 F-46 — repo-wide name gate refuses any method called `provision`"
+  - "GuardConditions.qaContractExists() null-checks qaContractId (guard_conditions.dart:247)"
+  - "agentExecuting -> agentCompleted is the only edge out of agentExecuting carrying qaContractExists (work_item_transitions.dart:120-124)"
+
+architecture_refs:
+  - "packages/qa_orchestration/lib/src/lane_g_triage_qa_contract.dart — the ONLY existing contract builder; the precedent this brief declines to copy (§9)"
+  - "packages/qa_orchestration/lib/src/product_qa_contract.dart — ProductQAContractProvisioner, buildProductQAContract, productQAContractIdForWorkItem (:50), derived pass criteria (:128-141), declaredGateEvidenceTypesConfigKey (:73), _declaredEvidenceTypes throws (:168-192)"
+  - "packages/qa_orchestration/lib/src/product_qa_contract_spec_store.dart — the declaration vs contract split; the 14-item measurement (:14-20)"
+  - "packages/platform_contracts/lib/src/types/qa_contract.dart:66-102 — QAGateDefinition (evidenceTypes is required and non-null)"
+  - "packages/platform_contracts/lib/src/types/product_manifest.dart:129-165 — QAContractSpec (gates only) and QAGateSpec (gateId/type/required/config; NO evidenceTypes field)"
+  - "packages/platform_contracts/lib/src/enums/agent_role.dart:1-13 — twelve roles; none for feature intake or design remediation"
+  - "packages/scheduler/lib/src/triage_defect.dart:122-138 — triageDefectDefinition; planned IS an entry state (:130) with entryProbeTargets[planned]=designNotRequired (:134), added by 863831a"
+  - "packages/scheduler/lib/src/triage_defect.dart:222-276 — triageDefectInstruction; the requested result shape (:249-264) and the empty-EVIDENCE fallback (:231)"
+  - "packages/scheduler/lib/src/implement_feature.dart:110-118 — implementFeatureDefinition.entryStates = {implementationReady}"
+  - "packages/qa_orchestration/lib/src/gates/gate_registry.dart:19-23 — four evaluators, all implementation gates"
+  - "packages/qa_orchestration/lib/src/qa_orchestration.dart:11-120 — evaluate/isGateSatisfied/requiresFormalDetermination/isOverallPass; unknown type => notExecuted"
+  - "packages/workflow_engine/lib/src/validation/guard_conditions.dart:218-235, 257-305 — agentResultValid and allRequiredGatesPassed (reads context['gateResults'] at :267)"
+  - "packages/workflow_engine/lib/src/transitions/work_item_transitions.dart:112-124, 306-308, 617-620, 661 — the four edges the walk traverses"
+  - "apps/server/lib/src/triage/work_entry.dart:380-391, 501-582 — the category-blind routing rule and the feature park the planned entry state bypasses"
+  - "apps/server/lib/src/triage/lane_e_design_remediation_work_item.dart:145-207, 449-492 — lane E's QA contract provisioning and its stop at planned"
+  - "apps/server/lib/src/triage/triage_processor.dart:48-132, 184-276 — processCompletedTriageJob, _parseTriageResult, _extractDefectId, and the defect-missing early return"
+  - "apps/server/lib/src/services/control_plane_service.dart:873-950 — createFeatureWorkItem's provisioning, in-transaction, at creation"
+  - "apps/server/lib/src/endpoints/product_registry_endpoints.dart:470-510 — manifestJson is how a product declares gates; null means undeclared"
+  - "packages/store_contract_tests/lib/src/fixtures.dart:409 — the only committed structuredResult literal, an implementer store round-trip"
+  - "docs/adr/0021 — triage is advisory; the design governance runtime does not exist in shipit-platform"
+
+problem_statement: >
+  `GuardConditions.qaContractExists()` refuses `agentExecuting -> agentCompleted` unless the work item
+  carries a `qaContractId`, and it refuses on a NULL CHECK, so a work item with no contract can
+  dispatch, can run a real agent, and can never be recorded. `8b38a95` made the per-product spec
+  reachable and provisions from it with work-item-scoped ids, three named fail-closed refusals, and
+  the guard untouched — so what is missing is the contract CONTENT itself: there is nothing for a
+  feature-intake or design-remediation product to declare. This brief was asked to author that content
+  from what those agents actually emit. It cannot, and the reason is not ambiguity: at `5afc230` the
+  ONLY run either path can perform is a `triage_defect` execution whose structured result is parsed,
+  persisted and then explicitly abandoned by its sole consumer, because `planned` is an entry state of
+  the category-blind triage lane and `_extractDefectId` yields the work-item id, so `readDefect`
+  raises. Independently, no gate in this repository is evaluated by any production code at all.
+  Authoring a gate set today would therefore be an unenforceable declaration about an abandoned
+  record — and would complete a walk to `implementationReady`, dispatching `AgentRole.implementer`
+  on a human's raw, undesigned feature request. That last consequence is a Level 3 governance decision
+  and is escalated as HD-1 rather than decided here.
+
+user_flows: >
+  FLOW A — feature intake (observed, executable). A human files a feature request; a governed product
+  means `_requireRegisteredProduct` passes; `WI-feature-<micros>` is minted (control_plane_service.dart:916)
+  and a QA contract is provisioned from the product's declaration inside the creation transaction
+  (:918-950). `WorkEntryTrigger.ensureWorkEntry(kind: featureIntake)` takes the first unconditional
+  branch (work_entry.dart:389-391) and parks the item at `planned`, recording
+  `EXTERNAL_WORK_ENTRY_CONSUMER_DEPENDENCY` (:64). EXIT: the item sits at `planned`. There is no
+  consumer runtime and none is expected (M1, M4).
+
+  FLOW B — design remediation (observed, executable). Triage classifies a defect `design_defect`;
+  `DesignRemediationWorkItemProvisioner.ensurePersisted` creates `design-remediation-<defectId>`,
+  provisions its QA contract, and `_advanceToPlanned` walks it to `planned` and stops, recording
+  `EXTERNAL_DESIGN_GOVERNANCE_DEPENDENCY` (lane_e_design_remediation_work_item.dart:557). EXIT: the
+  item sits at `planned` (M2, M4).
+
+  FLOW C — what actually happens to both (observed, executable, and the finding). `planned` is in
+  `triageDefectDefinition.entryStates` with `entryProbeTargets[planned] = designNotRequired`
+  (triage_defect.dart:130, :134), added by `863831a`. `RunnableWorkEvaluator` reads neither
+  `category` nor `productId`. So the category-blind scheduler dispatches BOTH, hops them to
+  `designNotRequired`, then `designNotRequired -> agentExecuting` (work_item_transitions.dart:116-119),
+  and a real `AgentRole.triageDefect` worker runs under `triageDefectInstruction` — whose DEFECT
+  DETAILS block degrades to the feature's own title/description, `Severity: medium`, and an EMPTY
+  `EVIDENCE: []` list (triage_defect.dart:223-241), while :274 instructs the agent to cite evidence ids
+  from that empty list. EXIT: `agentExecuting -> agentCompleted` is refused by `qaContractExists()` for
+  an item with no contract; and even when it succeeds, `TriageProcessor._parseTriageResult` parses the
+  output, `_extractDefectId` (:272-276) returns the WORK-ITEM id, `readDefect` raises
+  `DefectNotFoundException`, and :125-132 returns with the outcome discarded. The job sits `succeeded`.
+  The prediction at work_entry.dart:385-388 — "a healthy looking job and no work done" — is realised.
+
+  FLOW D — the walk that completes if a contract exists (observed, executable, and escalated). With
+  any non-empty product declaration, `planned -> designNotRequired -> agentExecuting ->
+  agentCompleted -> implementationReady`, and `implementationReady` is
+  `implementFeatureDefinition.entryStates` (implement_feature.dart:114,
+  `requiredRole: AgentRole.implementer`). No design review and no engineering review lie on that path.
+  EXIT: an implementer is dispatched on a human's raw feature request. This is HD-1 (§12).
+
+success_criteria: >
+  A design reviewer can re-derive every factual claim in this brief from the cited `file:line` and from
+  the two commands recorded in §3.3 and §18, without running the platform and without touching the QA
+  stack. A reader can reach HD-1 without reading any Dart. No gate in this brief is asserted to be
+  enforced; the brief says plainly which are not enforced by anything.
+
+constraints: >
+  DESIGN ONLY. No docker, no compose, no psql; the QA stack is untouched. No bare `git stash`, no
+  `git checkout .`, no `git add -A`; explicit paths only. `apps/**`, `packages/**`, `docs/**`,
+  `docker/**`, `.github/**`, `Makefile`, `tooling/**` are read-only and were not written.
+  `docs/engineering/FOLLOW_UPS.md` is the Manager's and was not modified. Two commits must not be
+  amended, rebased or reset; this brief is a NEW commit atop `5afc230`. No gate may be proposed whose
+  justification is a role name or a lane name rather than a cited consumer that reads the result.
+
+acceptance_criteria: >
+  AC-1 Every factual claim about a result shape carries a `file:line` or a named fixture, or the
+  brief says the claim cannot be established from the repository. SATISFIED: §4.1-§4.3 request and
+  acceptance shapes cited line-by-line; §4.4 records the negative evidence for every shape that
+  could NOT be established, including the absence of any non-triage `agent_result` fixture.
+  AC-2 The brief states which triage gate, if any, is genuinely reusable, and why.
+  SATISFIED: §9 — none of the three, with per-gate reasoning and the repository's own two
+  already-green reuse-refusal suites cited.
+  AC-3 Pass criteria per contract, and whether any gate is optional. SATISFIED AS FAR AS POSSIBLE:
+  §11 records that pass criteria are DERIVED from the gate set (product_qa_contract.dart:128-141),
+  that the triage numeral `1` is correct only because the triage contract has exactly one optional
+  gate, and — applying the triage contract's own criterion at :91-94 — that a contract governing this
+  run would need no optional gates at all and therefore should not exist. Concrete numbers are
+  deferred to the gate count, which does not exist.
+  AC-4 Name the code that evaluates a gate, or state that the evaluator does not exist and would need
+  building. Do not assume an evaluator exists. Check whether the triage gates are enforced anywhere.
+  SATISFIED: §7 — no evaluator exists for ANY gate; `QAOrchestration` is called only from its own
+  test; `context['gateResults']` is written by no production code. Both existing builders already
+  record `evaluatorRuntime: absent`.
+  AC-5 State whether work-item-scoped ids and the `qa-product-` prefix are sufficient for these two
+  paths. SATISFIED: §10 — sufficient and proven for IDENTITY (disjoint prefix, no parent-repointing,
+  idempotent, one row per item), and explicitly not sufficient for CONTENT.
+  AC-6 Risks, explicit non-goals, implementation sequence. SATISFIED: §13, §14, §15.
+  AC-7 Never approve your own work. SATISFIED: §18 hands the brief to an independent design-reviewer.
+  AC-8 Prefer a blocked result to an invented one. SATISFIED: the brief proposes no gate at all,
+  names the four missing artifacts (M1-M4) that would be required first, and records the one
+  transcription that was available and why it is false (§6.1).
+
+risk_assessment:
+  level: 3
+  rationale: >
+    Level 3 (Major Workflow / IA change) is assigned to the change this brief was asked to design:
+    authoring a QA contract for feature-intake and design-remediation work items. The level is not
+    about a screen or a navigation structure — it is because the change completes a WORKFLOW WALK that
+    does not currently complete. At `5afc230`, `planned` is dispatched on the category-blind triage
+    lane (triage_defect.dart:130) and completion is refused by `qaContractExists()`; a QA contract is
+    exactly what makes that refusal stop (product_qa_contract.dart:117-127, guard_conditions.dart:247).
+    Once it stops, the item walks `planned -> designNotRequired -> agentExecuting -> agentCompleted ->
+    implementationReady` (work_item_transitions.dart:112-124, :306-308) and `AgentRole.implementer`
+    is dispatched on a human's raw, undesigned feature request, with no design review and no
+    engineering review on the path. That is a change to what the platform is permitted to do with a
+    human's request, and it affects the operator's mental model of what intake means. It is not a
+    Level 2: Level 2 is a feature-level UX change affecting user behaviour, whereas this governs
+    whether production code may begin being written from an unapproved request.
+    Level 3 is therefore HUMAN_DECISION_REQUIRED and is raised as HD-1 in §12 with three named
+    options and no recommendation applied as a decision. Per aef-design-workflow §6 this lane stops
+    and escalates rather than choosing.
+    Risk is assessed for the change AS SCOPED BY THIS BRIEF, which is: author nothing, escalate HD-1,
+    and leave `8b38a95` intact. That residual scope carries no product-facing behaviour change at
+    all — it is documentation and a human gate — which is why the brief is DRAFT rather than a
+    blocked implementation attempt.
+  risks:
+    - "R1 the red test at work_entry_test.dart:877 is unnoticed because nothing runs that suite in CI (F-15) — CERTAIN likelihood, HIGH severity; it is the brief's own proof of §3.3 and stays red until HD-1 is answered"
+    - "R2 a gate set is authored anyway to close the ticket, against the triage shape — MEDIUM/HIGH; the brief is the obstacle, §6.1 explains why the faithful transcription is false, and product_qa_contract_test.dart:588-616 will fail on the reuse itself"
+    - "R3 authoring the contracts completes the walk and dispatches an implementer on a raw feature request — HIGH likelihood if authored, CRITICAL severity; HD-1 is the mitigation and the reason authoring must not precede deciding"
+    - "R4 a triage_result row naming a non-defect work-item id is read as a triage outcome — MEDIUM/MEDIUM; pre-existing, made visible by §5, and no test asserts such a row cannot exist"
+    - "R5 gates treated as enforced because a qa_contract row exists — HIGH/MEDIUM; §7, and any new contract must carry evaluatorRuntime: absent"
+    - "R6 the qa-product- prefix over-read as meaning the content is right — MEDIUM/LOW; §10 separates the id namespace from the content claim"
+    - "R7 a malformed config['evidenceTypes'] aborts the whole provision — LOW/MEDIUM; already fail-closed by design (product_qa_contract.dart:172-191), recorded because any future gate must respect it"
+
+changelog:
+  - "revision 1 (initial brief). BLOCKED. Proposes no QA contract and no gate set for either path, on three independently established grounds: (1) the only run either path performs is a triage_defect execution whose structured result is discarded by its sole consumer (TriageProcessor :272-276 then :120-132); (2) no gate in this repository is evaluated by any production code (GateRegistry holds four implementation evaluators; QAOrchestration is called only from its own test; allRequiredGatesPassed reads a context key nothing writes); (3) the transition a contract unblocks reaches AgentRole.implementer on an undesigned human request, which is a Level 3 human decision (HD-1)."
+  - "Establishes the observed result shape to the full standard the mandate demanded, and then records that the shape is real but ungovernable: §4 cites the instruction that requests it (triage_defect.ts:249-264) and the parser that accepts it (triage_processor.ts:200-260), line by line; §5 cites the code that abandons it; §4.4 records the negative evidence — no non-triage agent_result fixture exists anywhere in the repository."
+  - "Proves the dispatch executably rather than by assertion: `dart test lib/src/triage/work_entry_test.dart -n 'category-blind scheduler'` at 5afc230 returns Expected noAction / Actual runnable. This both confirms the mandate's premise and contradicts FOLLOW_UPS.md §11 F-45, which records the behaviour as restored. Raised as CONTRADICTION, not reconciled here (docs/** is prohibited to this lane and the Manager owns FOLLOW_UPS.md)."
+  - "§9 answers the mandate's direct question plainly: NONE of the three triage gates is reusable, and the reason is stronger than the mandate's own — structuredClassificationAdmitted is justified by a parser that, on these paths, runs and then gives up."
+  - "§11 records that pass criteria are DERIVED (product_qa_contract.dart:128-141), so neither contract declares its own; that the triage numeral `1` is correct only because that contract has exactly one optional gate; and — applying the triage contract's own criterion at :91-94 — that a contract governing THIS run would need no optional gates and therefore should not exist."
+  - "§10 answers the id question: work-item-scoped ids and the qa-product- prefix are sufficient and already proven for identity, and explicitly not sufficient for content."
+  - "Records M1-M4 — a JobDefinition per path, an AgentRole per path, and a result type + parser + instruction + consumer per path — as the specific artifacts whose absence blocks authoring, rather than reporting a bare block."
+
+created_by: design-agent / design-QA-CONTRACTS-FEATURE-REMEDIATION
+created_at: "2026-10-17"
+approved_by: null
+approved_at: null
+
+design_system_compliance: "NOT APPLICABLE — this artifact introduces no user-facing UI. It declares no
+  gate set, changes no component, no token and no pattern, so there is nothing to be compliant or
+  non-compliant with. It is recorded rather than left blank so a reviewer does not read the omission
+  as an unassessed dimension."
+
+ux_accessibility_score: "NOT APPLICABLE — no user interface, no visual or interaction surface, no
+  navigation and no content is changed by this artifact. The underlying walk it declines to
+  unblocking DOES have an operator-facing consequence (a work item silently advancing from `planned`
+  to `implementationReady` on an operator's Reports screen), which is recorded in §8 as HD-1 rather
+  than scored here, because it is a consequence of a decision this brief does not make."
+
+implementation_feasibility: >
+  LOW, and deliberately so. The artifact itself is trivially implementable — it changes nothing. What
+  is being declined is LOW-feasibility BY DESIGN: every one of the four missing artifacts in §6 is
+  absent from the repository, M4 (result type + parser + instruction + consumer) being the one that
+  gates all of the others, because a gate's `config.requiredFields` is justified only by a consumer
+  that reads them. Nothing in §15 requires a technology this platform does not already use; the
+  obstacle is that the subject does not exist yet, not that it is hard to build. RATED MEDIUM for the
+  §15 sequencing itself, which is ordinary workflow-engine and scheduler work following
+  `863831a`'s established pattern.
+
+traceability:
+  requirements_covered:
+    - "Observed result shape per role with file:line or fixture evidence for every claim → §4, §5, §4.4 (incl. negative evidence)"
+    - "Say plainly which triage gate is genuinely reusable and why → §9 (none; per-gate reasoning; both reuse-refusal suites green)"
+    - "Pass criteria per contract, and whether any gate is optional → §11 (derivation recorded; optionality argued from the triage contract's own criterion)"
+    - "How a gate is evaluated; name the code or state the evaluator does not exist; do not assume one → §7 (none exists, for any gate)"
+    - "Whether work-item-scoped ids and the qa-product- prefix are sufficient → §10 (yes for identity, no for content, with proofs)"
+    - "Risks → §13"
+    - "Explicit non-goals → §14"
+    - "Implementation sequence → §15"
+    - "Gates must be expressible given QAContractSpec has no evidenceTypes and a malformed config value throws → §2.1"
+    - "Prefer a blocked result to an invented one → §1, §6.1, §18"
+  requirements_gaps:
+    - "Proposed gates per contract (gateId, type, required, evidenceTypes, config keys justified by the observed shape) — NO CONSUMER of either path's result exists (M4) and the only run that happens has its output discarded, so any config.requiredFields would be justified by nothing. This is the authorised DESIGN_BLOCKED outcome."
+    - "Pass criteria as concrete numbers — derived from the gate count, which does not exist. §11 records the derivation so the numbers follow once the gates do."
+    - "An evaluator for the gates — does not exist for any gate (§7). Building it is a separate, large, independently-reviewable change, deliberately not bundled."
+
+next_actions: >
+  1. "BLOCKING — HD-1 needs an answer. Three named options, §12. Which contract is correct depends
+     entirely on the answer, and option (c) is not a state this platform should reach by accident."
+  2. "Independent design review of THIS brief. It is a blocked result and the reviewer should judge
+     whether the block is real — in particular whether §5 (discarded result) and §7 (no evaluator)
+     are correct. If either is wrong, the brief's conclusion is wrong and must be corrected, not
+     accommodated."
+  3. "Manager-owned: record the F-45 CONTRADICTION in docs/engineering/FOLLOW_UPS.md §11. This lane
+     is PROHIBITED from writing docs/** and did not."
+  4. "If HD-1 resolves to (a) or (b): implement §15 in order. Gates come last, after a consumer
+     exists."
+  5. "Separate work item for the evaluator runtime (§7), independent of HD-1 and of this brief."
+
+user_flows_summary: >
+  All four flows are in design-brief.md §1 (Flows A-D). No flow in this brief is designed or changed;
+  A, B, C and D are all OBSERVED and all four are cited to `file:line`. Flow C is the finding, Flow D
+  is the escalation.
+
+constraints_summary: "In full at design-brief.md §14 (non-goals) and metadata `constraints` above."
+
+owned_paths:
+  - "design/qa-contracts-feature-remediation/**"
+
+read_only_paths:
+  - "apps/**"
+  - "packages/**"
+  - "docs/**"
+  - "docker/**"
+  - ".github/**"
+  - "Makefile"
+  - "tooling/**"
+
+prohibited_paths: []
+  # Nothing is written outside owned_paths; every path above is read-only.
+  # docs/engineering/FOLLOW_UPS.md is the Manager's and was NOT modified, per the mandate.
+
+human_decisions_required:
+  - id: HD-1
+    level: 3
+    title: "Should a feature-intake or design-remediation work item be permitted to complete an agent execution at all?"
+    summary: >
+      At HEAD, `planned` is in `triageDefectDefinition.entryStates`, so both producers' items are
+      dispatched, hopped to `designNotRequired`, executed by `AgentRole.triageDefect` under
+      `triageDefectInstruction` with an empty EVIDENCE list, and their output is discarded at
+      `triage_processor.dart:120-132`. Once a QA contract exists (8b38a95) the completion transition
+      SUCCEEDS and the item walks to `implementationReady`, where `AgentRole.implementer` is
+      dispatched on a human's raw feature request with no design review and no engineering review.
+    options:
+      - "(a) Narrow triageDefectDefinition.entryStates so `planned` dispatches only items carrying a defect. Restores the invariant at work_entry.dart:380-382 and deliberately re-strands the three items 863831a rescued."
+      - "(b) Build the missing runtimes (M1-M4) so each path has its own JobDefinition, AgentRole, instruction, result type and consumer, making the dispatch deliberate rather than accidental."
+      - "(c) Accept the walk and govern it — which is what the original mandate assumed was happening, and which needs both the gates this brief declines to invent and a named owner for the implementer dispatch."
+    recommendation: >
+      NONE APPLIED. This lane records no preference, because the choice turns on whether an
+      undesigned human feature request may reach an implementer, which is a product decision reserved
+      to the human. If forced to state the engineering constraint rather than the product answer: all
+      three options are implementable with what is in the repository today, and (b) is the only one
+      after which a QA contract for these paths has anything real to govern.
+    owner: orchestrator-main → HUMAN_DECISION object
+
+review_disposition: >
+  NOT SELF-APPROVED. This brief is handed to an independent design-reviewer. `READY_FOR_INDEPENDENT_
+  DESIGN_REVIEW: YES` is set in the structured result for the BLOCKED artifact itself — the reviewer
+  is being asked to judge whether the block is real and correctly evidenced, which is a real review
+  task and not an approval of a design. The brief asserts no approval of its own conclusions and
+  records `approved_by: null`.
+
+durable_discoveries:
+  - category: CONTRADICTION
+    authority: "HUMAN — touches governance documentation; escalated, not reconciled"
+    finding: "docs/engineering/FOLLOW_UPS.md §11 F-45 records the red test at work_entry_test.dart:854 as restored by this session's work. It is RED at 5afc230 with `Expected: noAction / Actual: runnable`, executed. 8b38a95 touched no file that test reads."
+  - category: PROJECT_FACT
+    authority: "AUTO"
+    finding: "triageDefectDefinition.entryStates contains `planned` (triage_defect.dart:130) with entryProbeTargets[planned]=designNotRequired (:134), added by 863831a. Every work item at `planned` is therefore dispatched on the triage lane regardless of producer, because RunnableWorkEvaluator reads neither category nor productId. This defeats the protection at work_entry.dart:389-391 without changing it."
+  - category: PROJECT_FACT
+    authority: "AUTO"
+    finding: "For a WI-feature-* or design-remediation-* item, the triage run's output is persisted to triage_result keyed on the WORK-ITEM id and then abandoned (triage_processor.dart:272-276 then :120-132), while the job sits succeeded. The prediction at work_entry.dart:385-388 is realised."
+  - category: PROJECT_FACT
+    authority: "AUTO"
+    finding: "No QA gate in this repository is evaluated by any production code. GateRegistry holds four implementation evaluators (gate_registry.dart:19-23); QAOrchestration is called only from its own test file; GuardConditions.allRequiredGatesPassed reads context['gateResults'] (guard_conditions.dart:267) which no production code writes. A QAContract is a durable declaration, not an enforced one."
+  - category: PROJECT_FACT
+    authority: "AUTO"
+    finding: "agent_result.structuredResultJson has no committed fixture for any lane other than a store round-trip (packages/store_contract_tests/lib/src/fixtures.dart:409, {'route': '/landing'}, AgentRole.implementer). No .sql file carries a value. Any claim about a lane's structured-result shape must cite the instruction that requests it and the parser that consumes it; there is nothing else in the repository to cite."
+  - category: DESIGN_DISCOVERY
+    authority: "HUMAN — escalated as HD-1"
+    finding: "Authoring a QA contract for feature intake does not merely unblock a recorded result; it completes a walk to implementationReady and dispatches AgentRole.implementer on an undesigned human request. Level 3; gates all gate-authoring work."
+  - category: WORKFLOW_IMPROVEMENT
+    authority: "INDEPENDENT REVIEW — reported, not persisted"
+    finding: "F-45's lesson generalises: a red test naming a blocker is protection only if something runs it, and F-15 records that nothing does. The executable-capability-declaration mechanism proposed in design/capability-parity/ is what would have caught this; it is unbuilt."
+
+head_sha_at_authoring: 5afc23051216f521a5404fa1e2ef2f20cf4b7889
+base_sha: 5afc23051216f521a5404fa1e2ef2f20cf4b7889
+head_sha_delta: >
+  This brief is authored in ONE new commit on top of base 5afc230. The exact post-commit HEAD is
+  reported in the lane's structured result as HEAD_SHA and is verifiable by
+  `git rev-parse HEAD`. No commit was amended, rebased or reset.
+
+verification_commands:
+  - "cd apps/server && dart test lib/src/triage/work_entry_test.dart -n 'category-blind scheduler' -r expanded   # RED: Expected noAction / Actual runnable — §3.3"
+  - "cd packages/qa_orchestration && dart test test/product_qa_contract_test.dart -r compact   # 18 passed — 8b38a95 sound, §9"
+  - "cd apps/server && dart test lib/src/triage/lane_e_design_remediation_work_item_test.dart -r compact   # 11 passed — 8b38a95 sound, §9"
