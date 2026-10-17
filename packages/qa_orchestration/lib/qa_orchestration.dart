@@ -3,8 +3,10 @@ library qa_orchestration;
 export 'package:platform_contracts/platform_contracts.dart'
     show
         QAContract,
+        QAContractSpec,
         QAGateDefinition,
         QAGateResult,
+        QAGateSpec,
         QAGateStatus,
         QAEvidence,
         QAEvidenceDetermination,
@@ -24,4 +26,6 @@ export 'src/gates/predefined/performance_gate.dart';
 export 'src/evidence/evidence_collector.dart';
 export 'src/lane_g_qa_contract_store.dart';
 export 'src/lane_g_triage_qa_contract.dart';
+export 'src/product_qa_contract_spec_store.dart';
+export 'src/product_qa_contract.dart';
 export 'src/qa_orchestration.dart';

@@ -9,10 +9,6 @@ import 'package:platform_contracts/platform_contracts.dart'
         DecisionSignature,
         PolicyAction,
         ProductManifest,
-        ProductContracts,
-        DesignContractSpec,
-        QAContractSpec,
-        DeploymentContractSpec,
         RepositoryKind,
         RepositoryProvider;
 import 'package:product_registry/product_registry.dart'
@@ -479,36 +475,38 @@ class ProductRegistryEndpoints extends Endpoint {
   }) async {
     final service = ControlPlaneService(session);
     try {
-      ProductManifest manifest;
-      if (manifestJson == null ||
-          manifestJson.trim().isEmpty ||
-          manifestJson.trim() == '{}') {
-        // Create a minimal default manifest for product registration
-        final now = DateTime.now().toUtc();
-        manifest = ProductManifest(
-          productId: productId,
-          name: name,
-          version: '1.0.0',
-          description: description,
-          capabilities: const [],
-          environments: const [],
-          contracts: ProductContracts(
-            workItemCategories: const [],
-            designContract: DesignContractSpec(
-              requiredArtifacts: const [],
-              reviewers: const [],
-              approvalThreshold: 1,
-            ),
-            qaContract: QAContractSpec(gates: const []),
-            deploymentContract: DeploymentContractSpec(
-              promotionPath: const [],
-              approvalGates: const [],
-            ),
-          ),
-          createdAt: now,
-          updatedAt: now,
-        );
-      } else {
+      // NO MANIFEST SUPPLIED MEANS THIS PRODUCT HAS DECLARED NO QA CONTRACT,
+      // and this endpoint now says exactly that by passing `null` instead of
+      // manufacturing a manifest to fill the type in.
+      //
+      // It used to build a default `ProductManifest` whose
+      // `contracts.qaContract` was `QAContractSpec(gates: const [])` — an
+      // empty gate list written where a DECLARATION belongs, which is a
+      // statement that this product has decided what quality means and decided
+      // it is nothing. `registerProductWithManifest` then discarded the whole
+      // manifest, so the fiction was both invented here and thrown away here,
+      // and the consequence was that no product in the system could ever
+      // produce a QA contract: every work item the defect-triage lane did not
+      // create reached `agentExecuting` and was refused at
+      // `agentCompleted` by `GuardConditions.qaContractExists()`.
+      //
+      // `ProductManifest.contracts.qaContract` is non-nullable, so the TYPE
+      // cannot express "undeclared". Rather than widen a type in
+      // `platform_contracts` — which this change has no authority over, and
+      // which would make every manifest consumer handle a fourth state — the
+      // absence is carried by the nullable `manifest` parameter and named at
+      // the point it is recorded: `registerProductWithManifest` logs
+      // `product_registry.qa_contract_spec.not_declared`, and a product with no
+      // row fails closed with `ProductQAContractSpecRefusal.notDeclared` the
+      // first time anything tries to provision a contract for it.
+      //
+      // A product that WANTS a QA contract supplies a manifest whose
+      // `contracts.qaContract.gates` is non-empty, and that declaration is now
+      // persisted and readable — which is the whole point.
+      ProductManifest? manifest;
+      if (manifestJson != null &&
+          manifestJson.trim().isNotEmpty &&
+          manifestJson.trim() != '{}') {
         manifest = ProductManifest.fromJson(
           jsonDecode(manifestJson) as Map<String, dynamic>,
         );

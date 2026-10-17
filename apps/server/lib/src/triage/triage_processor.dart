@@ -3,11 +3,15 @@ import 'dart:convert';
 
 import 'package:execution_coordinator/execution_coordinator.dart';
 import 'package:platform_contracts/platform_contracts.dart';
+import 'package:qa_orchestration/qa_orchestration.dart'
+    show ProductQAContractProvisioner;
 import 'package:workflow_store/workflow_store.dart';
 
 import '../persistence/persistence_database.dart';
 import '../persistence/postgres_defect_store.dart'
     show DefectNotFoundException, PostgresDefectStore;
+import '../persistence/postgres_product_qa_contract_spec_store.dart';
+import '../persistence/postgres_qa_contract_store.dart';
 import '../persistence/postgres_triage_store.dart' show PostgresTriageStore;
 import 'lane_e_design_remediation_work_item.dart'
     show DesignRemediationWorkItemProvisioner, designRemediationWorkItemId;
@@ -318,12 +322,14 @@ class TriageProcessor {
   /// classified as `DESIGN_DEFECT`.
   ///
   /// The [DesignRemediationWorkItemProvisioner] owns the product resolution,
-  /// the `designRemediation-{defectId}` identity, the `draft -> planning ->
-  /// planned` walk-up and the honest
-  /// `EXTERNAL_DESIGN_GOVERNANCE_DEPENDENCY` metadata; see that class for why
-  /// the walk deliberately stops at `planned` instead of entering
-  /// `designRequired` on a fabricated `designContractId`. [defect] is the copy
-  /// already loaded by [processCompletedTriageJob] and is not re-read here.
+  /// the `design-remediation-{defectId}` identity, the `draft -> planning ->
+  /// planned` walk-up, the QA contract provisioned from the product's declared
+  /// spec, and the honest `EXTERNAL_DESIGN_GOVERNANCE_DEPENDENCY` metadata; see
+  /// that class for why the walk deliberately stops at `planned` instead of
+  /// entering `designRequired` on a fabricated `designContractId`, and for why
+  /// the QA contract id is work-item-scoped rather than defect-scoped.
+  /// [defect] is the copy already loaded by [processCompletedTriageJob] and is
+  /// not re-read here.
   Future<void> _createDesignRemediationRequest(
     TriageResult triageResult,
     Defect defect,
@@ -331,7 +337,25 @@ class TriageProcessor {
     await DesignRemediationWorkItemProvisioner(
       workflowStore: workflowStore,
       workflowEngine: workflowEngine,
+      qaContractProvisioner: _qaContractProvisioner,
       log: logger,
     ).ensurePersisted(triageResult: triageResult, defect: defect);
   }
+
+  /// The QA-contract provisioner for design remediation, over the same
+  /// [db] every other store in this class is built from.
+  ///
+  /// Constructed HERE rather than injected, and that is deliberate. Lane A's
+  /// `DefectTriageWorkItemProvisioner` takes a nullable `QAContractStore`
+  /// because it is built in more than one place; this one is built in exactly
+  /// one, and an injected dependency would be a nullable one that a future
+  /// caller could quietly leave unset — reproducing exactly the defect this
+  /// lane exists to fix, on a lane that has no excuse for it. Deriving it from
+  /// [db] makes "lane E items get no QA contract" unreachable without editing
+  /// this class.
+  ProductQAContractProvisioner get _qaContractProvisioner =>
+      ProductQAContractProvisioner(
+        contractStore: PostgresQAContractStore(db),
+        specStore: PostgresProductQAContractSpecStore(db),
+      );
 }

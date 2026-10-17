@@ -1,4 +1,5 @@
 import 'package:platform_contracts/platform_contracts.dart';
+import 'package:qa_orchestration/qa_orchestration.dart';
 import 'package:workflow_store/workflow_store.dart';
 
 import 'lane_a_defect_triage_work_item.dart' show defectTriageBucketProductId;
@@ -23,6 +24,35 @@ const String externalDesignGovernanceDependency =
 
 /// Value recorded under [designGovernanceRuntimeKey].
 const String designGovernanceRuntimeUnavailable = 'unavailable';
+
+/// Metadata key under which this work item records WHY it has no QA contract.
+///
+/// Two independent reasons park a remediation item now, and they are not the
+/// same one: the design governance runtime does not exist (recorded under
+/// [blockedByKey] as [externalDesignGovernanceDependency]), and the product has
+/// no QA contract to provision from. Recording only the first would leave an
+/// operator reading `EXTERNAL_DESIGN_GOVERNANCE_DEPENDENCY` and concluding the
+/// QA contract was handled, when it is precisely what will refuse the
+/// completion transition. So the second reason gets its own key rather than
+/// overloading [blockedByKey], which means the two can both be read off one row.
+///
+/// The VALUE is one of the three names below. Never a free-text "it failed",
+/// because this value is now a durable record on a work item.
+const String productQAContractSpecUnavailableKey =
+    'productQAContractSpecUnavailable';
+
+/// No `product_qa_contract_spec` row exists for this item's product.
+const String productQAContractSpecUndeclared = 'notDeclared';
+
+/// A row exists but declares no gates, so it cannot constrain anything.
+const String productQAContractSpecDeclaresNoGates = 'declaresNoGates';
+
+/// No provisioner was supplied to this provisioner at all.
+///
+/// A third condition, deliberately not folded into either of the other two:
+/// it is a missing dependency rather than a missing declaration, and the fix is
+/// to pass the provisioner rather than to register a manifest.
+const String productQAContractProvisionerUnavailable = 'provisionerUnavailable';
 
 /// Idempotency keys for the `draft -> planning -> planned` walk-up. A crash
 /// between any two hops leaves the durable record consistent: the replay
@@ -114,6 +144,41 @@ Future<String?> resolveDesignRemediationProductId({
 /// `designNotRequired` is not a substitute: it asserts the opposite of the
 /// truth, that no design work is needed.
 ///
+/// ## Why the QA contract is provisioned here, too
+///
+/// The stop above is not the only thing that can strand this item, and the
+/// second reason is the one this change is about. `WorkEntryTrigger` walks
+/// `planned -> designNotRequired`, that state is an entry state of
+/// `triageDefectDefinition`, and `agentExecuting -> agentCompleted` carries
+/// `GuardConditions.qaContractExists()`. An item with no `qaContractId` runs a
+/// real agent and is then refused, which is what stranded every
+/// `design-remediation-*` work item measured on 2026-10-17 (0 of 4 carried one,
+/// against 10 of 10 for the triage lane).
+///
+/// So the contract comes from the PRODUCT's declared QA spec, at the item's
+/// creation, exactly as lane A's comes from the triage contract builder. The id
+/// stamped is `productQAContractIdForWorkItem(design-remediation-$defectId)` —
+/// work-item-scoped, so it cannot collide with, overwrite or re-point the triage
+/// contract that the same defect already owns under
+/// `triageQAContractIdForDefect($defectId)`. That collision is not hypothetical:
+/// `design-remediation-DEF-X` and `defect-DEF-X` name the same defect, and
+/// `saveQAContract` is `ON CONFLICT ("contractId") DO UPDATE`, so a
+/// defect-scoped id here would have silently repointed the triage parent's
+/// `metadata.workItemId` at this item.
+///
+/// ## Why a missing declaration does not refuse the work item
+///
+/// [ProductQAContractProvisioner] fails CLOSED with a named reason
+/// ([productQAContractSpecUndeclared] or
+/// [productQAContractSpecDeclaresNoGates]) and writes no contract. This class
+/// does not then refuse to create the item: a design defect is a fact that was
+/// reported and classified, and refusing to record it because the platform has
+/// no QA contract configured would lose the report — the same reasoning that
+/// keeps this item at `planned` rather than at a state asserting design work is
+/// routed. The item is created and the reason is on it, so the two things that
+/// park it are both visible on the row instead of one being inferred from the
+/// other.
+///
 /// Nothing here decides workflow policy. Every state change goes through
 /// [DurableWorkflowEngine.transition], so the transition graph in
 /// `workflow_engine` remains the only authority (AGENTS.md §1).
@@ -121,11 +186,25 @@ class DesignRemediationWorkItemProvisioner {
   DesignRemediationWorkItemProvisioner({
     required this.workflowStore,
     required this.workflowEngine,
+    this.qaContractProvisioner,
     this.log,
   });
 
   final WorkflowStore workflowStore;
   final DurableWorkflowEngine workflowEngine;
+
+  /// Where the QA contract is built from the product's declared spec and
+  /// persisted.
+  ///
+  /// Nullable for the same reason lane A's [QAContractStore] is nullable: this
+  /// class is constructed in more than one place and not all of them can supply
+  /// a store. When it is absent, this class does NOT invent a `qaContractId` and
+  /// does NOT skip the work item — it creates the item exactly as it did before
+  /// this change, without a contract, and records
+  /// [productQAContractProvisionerUnavailable] under
+  /// [productQAContractSpecUnavailableKey] on it, so the gap is greppable on the
+  /// row rather than only in a log.
+  final ProductQAContractProvisioner? qaContractProvisioner;
   final void Function(String event, Map<String, dynamic> data)? log;
 
   /// Routing a human-reported design flaw to the design lane is an orchestrator
@@ -179,7 +258,7 @@ class DesignRemediationWorkItemProvisioner {
         'version': existing.version,
       });
       return _advanceToPlanned(
-        existing,
+        await _attachQAContract(existing, productId),
         defectId: defect.defectId,
         featureRef: defect.defectId,
       );
@@ -201,16 +280,22 @@ class DesignRemediationWorkItemProvisioner {
       createdAt: now,
     );
 
+    final qaContract = await _provisionQAContract(productId, workItemId, now);
+
     final created = await workflowEngine.createWorkItem(
       workItemId: workItemId,
       productId: productId,
       category: WorkItemCategory.feature,
       title: 'Design remediation: ${defect.title}',
       description: _description(request, defect),
+      // The id of a QA contract that was persisted and read back, or null when
+      // the product has declared none — in which case the metadata below names
+      // which of the two reasons applies. Never a placeholder.
+      qaContractId: qaContract.contractId,
       // Traceability for the `planning_evidence_provided` guard on
       // planning -> planned. The defect IS the requirement reference.
       featureRef: defect.defectId,
-      metadata: _metadata(request),
+      metadata: _metadata(request, qaContract.refusal),
       createdAt: now,
     );
 
@@ -219,6 +304,8 @@ class DesignRemediationWorkItemProvisioner {
       'defectId': request.defectId,
       'productId': productId,
       'triageResultId': request.triageResultId,
+      'qaContractId': created.qaContractId,
+      'productQAContractSpecUnavailable': qaContract.refusal,
     });
 
     return _advanceToPlanned(
@@ -226,6 +313,135 @@ class DesignRemediationWorkItemProvisioner {
       defectId: defect.defectId,
       featureRef: defect.defectId,
     );
+  }
+
+  /// Builds and persists the QA contract for [workItemId] from [productId]'s
+  /// declared spec, and returns it read back.
+  ///
+  /// The two refusal cases are collapsed into ONE result carrying a name, never
+  /// into a bare `null`. A bare `null` on this path is indistinguishable from
+  /// "the store was not wired", from "the product declared nothing" and from
+  /// "the product declared something empty", and all three leave the work item
+  /// exactly as stranded as it was before this change while saying nothing about
+  /// why. The name is written onto the work item's own metadata, so the row an
+  /// operator meets names the reason it cannot complete.
+  Future<_RemediationQAContract> _provisionQAContract(
+    String productId,
+    String workItemId,
+    DateTime now,
+  ) async {
+    final provisioner = qaContractProvisioner;
+    if (provisioner == null) {
+      log?.call('design_remediation.qa_contract.provisioner_unavailable', {
+        'workItemId': workItemId,
+        'productId': productId,
+        'reason':
+            'no ProductQAContractProvisioner was supplied, so the '
+            'agentExecuting -> agentCompleted guard cannot pass for this work '
+            'item',
+      });
+      return const _RemediationQAContract.refused(
+        productQAContractProvisionerUnavailable,
+      );
+    }
+    try {
+      final contract = await provisioner.provisionForWorkItem(
+        productId: productId,
+        workItemCategory: WorkItemCategory.feature,
+        workItemId: workItemId,
+        // The remediation item's own creation instant, so a replay that
+        // re-provisions writes the same bytes rather than churning the row.
+        now: now,
+      );
+      log?.call('design_remediation.qa_contract.provisioned', {
+        'workItemId': workItemId,
+        'productId': productId,
+        'contractId': contract.contractId,
+        'version': contract.version,
+        'gateCount': contract.gates.length,
+        'readBack': true,
+      });
+      return _RemediationQAContract.provisioned(contract.contractId);
+    } on ProductQAContractSpecUnavailable catch (refusal) {
+      log?.call('design_remediation.qa_contract.not_provisioned', {
+        'workItemId': workItemId,
+        'productId': productId,
+        'refusal': refusal.refusal.name,
+        'reason': refusal.toString(),
+      });
+      return _RemediationQAContract.refused(
+        _refusalName(refusal.refusal),
+      );
+    }
+  }
+
+  /// The one place a `ProductQAContractSpecRefusal` becomes a stored value.
+  ///
+  /// `enum.name` alone would have been shorter and is deliberately not used:
+  /// the two names are now part of a durable record on a work item, and a
+  /// stored value is not something to take from a rename away in `platform_contracts`
+  /// or `qa_orchestration`. They are named here, once, and asserted against.
+  static String _refusalName(ProductQAContractSpecRefusal refusal) =>
+      switch (refusal) {
+        ProductQAContractSpecRefusal.notDeclared =>
+          productQAContractSpecUndeclared,
+        ProductQAContractSpecRefusal.declaresNoGates =>
+          productQAContractSpecDeclaresNoGates,
+      };
+
+  /// Backfills `qaContractId` on an already-provisioned remediation item that
+  /// has none.
+  ///
+  /// THIS IS THE ONLY RECOVERY HOOK ON THIS LANE, and it is why the three items
+  /// stranded in `agentExecuting` on 2026-10-17 can be repaired at all.
+  /// `ensurePersisted` reads the row first, so re-running it for a defect whose
+  /// remediation item already exists takes this branch instead of re-creating
+  /// anything, and this branch attaches a contract to the row that exists.
+  /// (`createFeatureWorkItem` has no equivalent: it mints a fresh
+  /// `WI-feature-${now.microsecondsSinceEpoch}` every call and never reads an
+  /// existing row, so a stranded feature item cannot be reached this way at all.)
+  ///
+  /// The write goes through the store's CAS path rather than mutating state, and
+  /// only runs when the column is actually null, so a replay of an already-stamped
+  /// item is a read and two concurrent repairs cannot both win.
+  ///
+  /// It attaches the contract and NOT the refusal: a refusal writes nothing, so
+  /// there is nothing to backfill and the item simply stays as it was. What it
+  /// does not do is overwrite a contract that is already there — see the first
+  /// line of the body.
+  Future<WorkItem> _attachQAContract(WorkItem item, String productId) async {
+    if (item.qaContractId != null) return item;
+    final provisioned = await _provisionQAContract(
+      productId,
+      item.workItemId,
+      // Read out of the row rather than taken from the clock, so a backfill
+      // writes the same bytes no matter how many times it is attempted.
+      item.createdAt.toUtc(),
+    );
+    final contractId = provisioned.contractId;
+    if (contractId == null) return item;
+
+    log?.call('design_remediation.qa_contract.backfilled', {
+      'workItemId': item.workItemId,
+      'defectId': item.metadata?['defectId'],
+      'contractId': contractId,
+      'fromVersion': item.version,
+    });
+    // `saveWorkItem` returns nothing and its CAS path raises
+    // `ConcurrentModificationException` rather than silently skipping, so the
+    // only thing left to confirm is that the id really landed on the row.
+    await workflowStore.saveWorkItem(
+      item.copyWith(qaContractId: contractId),
+      expectedVersion: item.version,
+    );
+    final updated = await workflowStore.readWorkItem(item.workItemId);
+    if (updated.qaContractId != contractId) {
+      throw StateError(
+        'work item ${item.workItemId} did not retain the QA contract id '
+        '$contractId after the CAS write',
+      );
+    }
+    return updated;
   }
 
   /// Walks the item as far as the workflow graph legally allows without a
@@ -319,9 +535,19 @@ class DesignRemediationWorkItemProvisioner {
     return buffer.toString();
   }
 
-  /// The durable provenance of the item: what it was opened from, plus the
-  /// external-runtime dependency that currently stops it.
-  Map<String, dynamic> _metadata(DesignRemediationRequest request) {
+  /// The durable provenance of the item: what it was opened from, the
+  /// external-runtime dependency that currently stops it, and — when the
+  /// product has no QA contract to provision — WHICH named reason that is.
+  ///
+  /// [qaContractRefusal] is null on every item that DID get a contract, so the
+  /// key is absent rather than present-and-null: absent is what
+  /// `item.metadata?[productQAContractSpecUnavailableKey]` reads as, and a key
+  /// set to null would read as "known to be unknown", which is a different
+  /// claim and an unanswerable one.
+  Map<String, dynamic> _metadata(
+    DesignRemediationRequest request,
+    String? qaContractRefusal,
+  ) {
     return <String, dynamic>{
       'designRemediationRequest': request.toJson(),
       'defectId': request.defectId,
@@ -329,6 +555,33 @@ class DesignRemediationWorkItemProvisioner {
       designRemediationRequiredKey: true,
       designGovernanceRuntimeKey: designGovernanceRuntimeUnavailable,
       blockedByKey: externalDesignGovernanceDependency,
+      if (qaContractRefusal != null)
+        productQAContractSpecUnavailableKey: qaContractRefusal,
     };
   }
+}
+
+/// What [_DesignRemediationWorkItemProvisioner._provisionQAContract] got.
+///
+/// A two-armed value rather than a `String?`, so the contract id and the reason
+/// it is absent cannot be confused by a caller that drops a null: the only way
+/// to build the refused arm is to say why.
+class _RemediationQAContract {
+  const _RemediationQAContract._(this.contractId, this.refusal);
+
+  const _RemediationQAContract.provisioned(String contractId)
+    : this._(contractId, null);
+
+  const _RemediationQAContract.refused(String refusal) : this._(null, refusal);
+
+  /// The id of a row that was persisted and read back, or null. Never a
+  /// placeholder.
+  final String? contractId;
+
+  /// One of [productQAContractSpecUndeclared],
+  /// [productQAContractSpecDeclaresNoGates] or
+  /// [productQAContractProvisionerUnavailable] — recorded as the value of
+  /// [productQAContractSpecUnavailableKey] — or null when a contract WAS
+  /// provisioned.
+  final String? refusal;
 }

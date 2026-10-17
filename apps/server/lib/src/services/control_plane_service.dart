@@ -11,7 +11,14 @@ import 'package:product_registry/product_registry.dart'
         // two that would otherwise make it ambiguous.
         hide
         ConcurrentModificationException;
-import 'package:qa_orchestration/qa_orchestration.dart' show QAContractStore;
+import 'package:qa_orchestration/qa_orchestration.dart'
+    show
+        QAContractStore,
+        ProductQAContractDeclaration,
+        ProductQAContractProvisioner,
+        ProductQAContractSpecRefusal,
+        ProductQAContractSpecStore,
+        ProductQAContractSpecUnavailable;
 import 'package:workflow_engine/workflow_engine.dart' show ProductGuard;
 import 'package:scheduler/scheduler.dart'
     show JobStore, JobQueue, onboardingJob, onboardingWorkItemId;
@@ -38,6 +45,7 @@ import '../persistence/postgres_job_store.dart';
 import '../persistence/postgres_model_execution_record_store.dart';
 import '../persistence/postgres_model_policy_store.dart';
 import '../persistence/postgres_product_registry_store.dart';
+import '../persistence/postgres_product_qa_contract_spec_store.dart';
 import '../persistence/postgres_qa_contract_store.dart';
 import '../persistence/postgres_worker_registration_store.dart';
 import '../persistence/postgres_worker_store.dart';
@@ -160,6 +168,30 @@ class ControlPlaneService {
   /// `GuardConditions.qaContractExists()` then refuses the
   /// `agentExecuting -> agentCompleted` transition of the triage job for good.
   QAContractStore get qaContractStore => PostgresQAContractStore(_db);
+
+  /// Durable home of the QA contract each PRODUCT declares.
+  ///
+  /// The other half of [qaContractStore]: that one holds the contracts that
+  /// govern individual work items, this one holds the per-product declarations
+  /// they are built from. Both were needed — the declaration table did not exist
+  /// at all, and the declaration it would hold was being discarded on write by
+  /// `registerProductWithManifest`, so no product could ever produce a
+  /// contract for a non-triage work item to be governed by.
+  ProductQAContractSpecStore get productQAContractSpecStore =>
+      PostgresProductQAContractSpecStore(_db);
+
+  /// Builds the contracts for work items on the paths that never had one.
+  ///
+  /// Over the same two stores the rest of this service uses, so a contract
+  /// provisioned from a product's declaration resolves identically in whichever
+  /// process provisions it. A getter for the same reason
+  /// [_triageWorkItemProvisioner] is one: the stores are views over the single
+  /// [PersistenceDatabase] this service owns.
+  ProductQAContractProvisioner get _productQAContractProvisioner =>
+      ProductQAContractProvisioner(
+        contractStore: qaContractStore,
+        specStore: productQAContractSpecStore,
+      );
 
   HumanDecisionStore get humanDecisionStore =>
       PostgresHumanDecisionStore(workflowStore);
@@ -798,6 +830,24 @@ class ControlPlaneService {
   // Unified Intake (Feature Requests)
   // ---------------------------------------------------------------------
 
+  /// Metadata key on a feature work item whose QA contract could NOT be
+  /// provisioned, carrying the named refusal reason.
+  ///
+  /// It is on the work item's own row and not only in a log line because the log
+  /// is gone the next time the process restarts, while the row is what an
+  /// operator meets when the item is refused at `agentExecuting -> agentCompleted`
+  /// by `GuardConditions.qaContractExists()`. This is the same shape as lane E's
+  /// `blockedBy` (`lane_e_design_remediation_work_item.dart`): a work item that
+  /// cannot progress says WHY on itself, rather than leaving the reason to be
+  /// inferred from the guard error alone.
+  static const String featureQAContractBlockedByKey =
+      'qaContractNotProvisioned';
+
+  /// Metadata key carrying the full refusal message, including the product and
+  /// the remedy.
+  static const String featureQAContractBlockedByReasonKey =
+      'qaContractNotProvisionedReason';
+
   /// Files a human Feature Request, raises the intake direction that surfaces
   /// it, and hands the new work item to the work-entry trigger.
   ///
@@ -819,6 +869,42 @@ class ControlPlaneService {
   /// `governed` is ACCEPTED and PARKED, never refused. The intake direction is
   /// the human gate; a platform-lifecycle condition is not a reason to reject a
   /// request about it.
+  ///
+  /// ## WHY THE QA CONTRACT IS PROVISIONED HERE
+  ///
+  /// `WorkEntryTrigger` walks this item `planned -> designNotRequired`, and
+  /// `designNotRequired` is an entry state of `triageDefectDefinition`, so the
+  /// scheduler dispatches the item and an agent really runs. Completion is then
+  /// refused by `GuardConditions.qaContractExists()`, which null-checks
+  /// `context['qaContractId']` — and nothing on this path ever set one. That is
+  /// the measured defect: 0 of the 4 non-triage work items carried a
+  /// `qaContractId` where 10 of 10 triage items did.
+  ///
+  /// So the contract is provisioned from the PRODUCT's declared spec, inside
+  /// this same transaction, and stamped on the item at creation. It goes here
+  /// rather than downstream because that is where the contract becomes true, and
+  /// the id handed to `createWorkItem` is the id of a row
+  /// `provisionQAContract` read back — never a string invented to satisfy the
+  /// guard.
+  ///
+  /// ## WHAT HAPPENS WHEN THE PRODUCT HAS DECLARED NOTHING
+  ///
+  /// Per [ProductQAContractSpecUnavailable], provisioning FAILS CLOSED with a
+  /// named reason and no contract row is written. That refusal does NOT refuse
+  /// the human's request: the same human decision `58bad3d1` that governs the
+  /// lifecycle gate above governs this, and a missing QA declaration is a
+  /// platform-side condition, not a reason to reject a request ABOUT the
+  /// product. So the item is created, the named reason is recorded on it in
+  /// [featureQAContractBlockedByKey] together with
+  /// [featureQAContractBlockedByReasonKey], and it is logged. The consequence
+  /// is unchanged from before this change and is now stated rather than
+  /// discovered: such an item is refused at completion, and the reason it can
+  /// name is the one on its own row.
+  ///
+  /// Refusing to CREATE the item instead is the other available choice and is
+  /// deliberately not taken here: it would make the platform's missing
+  /// configuration a veto over a human's request, which is the thing
+  /// `58bad3d1` forbids. It is a governance call and is flagged as one.
   Future<WorkItem> createFeatureWorkItem({
     required String title,
     required String description,
@@ -830,12 +916,28 @@ class ControlPlaneService {
     final workItemId = 'WI-feature-${now.microsecondsSinceEpoch}';
 
     await _db.inTransaction(() async {
+      // Inside the transaction, and BEFORE the item exists, so a contract that
+      // cannot be provisioned leaves no half-created work item behind. The
+      // provisioner opens no transaction of its own — it calls `saveWorkItem`/
+      // `saveQAContract`/`readQAContract` directly — so this nests no worse
+      // than `createWorkItem` below already does.
+      final provisioned = await _provisionFeatureQAContract(
+        productId: productId,
+        workItemId: workItemId,
+        now: now,
+      );
+
       await workflowEngine.createWorkItem(
         workItemId: workItemId,
         productId: productId,
         category: WorkItemCategory.feature,
         title: title,
         description: description,
+        // The id of a QA contract that was persisted AND read back, or null when
+        // the product has declared none — in which case
+        // [featureQAContractBlockedByKey] on this item's metadata says so by
+        // name. Never a placeholder string.
+        qaContractId: provisioned.contractId,
         // The `planning -> planned` hop is guarded by `planningEvidenceProvided`
         // (work_item_transitions.dart), which accepts `featureRef` OR
         // `requirementRef`. A feature request is its own requirement reference
@@ -844,6 +946,7 @@ class ControlPlaneService {
         // `NO_PLANNING_EVIDENCE` — the request would be accepted and then sit
         // at `planning` with no recorded reason for having stopped.
         featureRef: workItemId,
+        metadata: provisioned.metadata,
       );
 
       await humanDirectionStore.createDirection(
@@ -886,6 +989,55 @@ class ControlPlaneService {
     // reason — the reporting dishonesty this lane exists to close, in the one
     // place a human is about to read it.
     return parked.item;
+  }
+
+  /// Provisions the QA contract a feature work item is governed by, from the
+  /// product's own declaration.
+  ///
+  /// Returns the contract on success. On failure it does NOT return null and it
+  /// does NOT swallow the refusal: [ProductQAContractSpecUnavailable] is caught
+  /// here, the ONLY place it is caught on this path, and what comes back instead
+  /// is a null id plus the named reason written into the work item's metadata —
+  /// so the "silent null" this method could be accused of is replaced by a
+  /// recorded one, and the item cannot be mistaken for one that simply has no
+  /// contract yet.
+  ///
+  /// A refusal is caught rather than propagated for the reason given on
+  /// [createFeatureWorkItem]: refusing the work item would make a missing QA
+  /// declaration a veto over a human's request, which human decision `58bad3d1`
+  /// forbids for the lifecycle condition and which this lane does not extend to
+  /// a second platform condition on its own authority.
+  ///
+  /// Anything that is NOT a [ProductQAContractSpecUnavailable] propagates
+  /// untouched. A database failure, a malformed `gatesJson`, a store that
+  /// returned the wrong id: none of those is "this product declared nothing",
+  /// and collapsing them into the same recorded reason would hide a real fault
+  /// behind a plausible-looking explanation.
+  Future<FeatureQAContractProvisioning> _provisionFeatureQAContract({
+    required String productId,
+    required String workItemId,
+    required DateTime now,
+  }) async {
+    try {
+      final contract = await _productQAContractProvisioner.provisionForWorkItem(
+        productId: productId,
+        workItemCategory: WorkItemCategory.feature,
+        workItemId: workItemId,
+        now: now,
+      );
+      return FeatureQAContractProvisioning.provisioned(contract.contractId);
+    } on ProductQAContractSpecUnavailable catch (refusal) {
+      logger.info('feature_intake.qa_contract.not_provisioned', {
+        'workItemId': workItemId,
+        'productId': productId,
+        'refusal': refusal.refusal.name,
+        'reason': refusal.toString(),
+      });
+      return FeatureQAContractProvisioning.refused(
+        refusal.refusal.name,
+        refusal.toString(),
+      );
+    }
   }
 
   /// How many times an intake re-reads and retries when another writer wins the
@@ -2058,15 +2210,54 @@ class ControlPlaneService {
   // S-1 Bootstrap (onboarding)
   // ---------------------------------------------------------------------
 
-  /// Registers a new Product with its [ProductManifest].
+  /// Registers a new Product with its [manifest].
   ///
-  /// Creates the Product registry row, stores the manifest (referenced by
-  /// [manifestVersion]), and initializes an onboarding record.
+  /// Creates the Product registry row, stores the manifest's DECLARED QA
+  /// contract (referenced by [manifestVersion]), and initializes an onboarding
+  /// record.
+  ///
+  /// ## [manifest] is nullable, AND THAT IS THE POINT
+  ///
+  /// It used to be a required non-null parameter that was never read: this
+  /// method recorded [manifestVersion] and discarded the rest of the manifest,
+  /// so `ProductManifest.contracts.qaContract` — a declaration that had existed
+  /// as a type since the beginning and whose only production construction site
+  /// wrote it EMPTY — was unreachable. No product could declare a QA contract,
+  /// and therefore every work item not created by the defect-triage lane was
+  /// refused for ever at `agentExecuting -> agentCompleted` by
+  /// `GuardConditions.qaContractExists()`.
+  ///
+  /// Making it nullable means the CALLER states whether a manifest was supplied
+  /// at all, instead of this method inferring that from a default object the
+  /// caller had to manufacture to satisfy the type. `manifest: null` is a claim
+  /// ("this product declared nothing"); a default manifest carrying
+  /// `QAContractSpec(gates: const [])` was a fabricated one.
+  ///
+  /// ## WHAT IS PERSISTED FROM A SUPPLIED MANIFEST
+  ///
+  /// `contracts.qaContract` and its [manifestVersion], and nothing else. The
+  /// rest of `ProductManifest` — capabilities, environments, the design and
+  /// deployment contract specs — is still NOT persisted, and this method does
+  /// not pretend otherwise: persisting the QA declaration was necessary to make
+  /// the completion guard satisfiable, and widening this into "the whole
+  /// manifest is durable now" would be a claim about code that does not exist.
+  ///
+  /// ## A DECLARATION WITH NO GATES IS NOT PERSISTED
+  ///
+  /// An empty gate list is the absence of a declaration, not a declaration of
+  /// nothing: a contract built from it would satisfy
+  /// `context['qaContractId'] != null` while constraining nothing, which is
+  /// precisely the fiction the QA-contract route exists to remove. Such a
+  /// manifest is still registered — the product IS created, and a human who
+  /// filed a request about this product is not refused for the platform's sake
+  /// — but no declaration row is written, the omission is logged by name, and
+  /// the first attempt to provision a contract for that product fails closed
+  /// with [ProductQAContractSpecRefusal.declaresNoGates].
   Future<Product> registerProductWithManifest({
     required String productId,
     required String name,
     String? description,
-    required ProductManifest manifest,
+    required ProductManifest? manifest,
     String? manifestVersion,
   }) async {
     final t = DateTime.now().toUtc();
@@ -2087,12 +2278,83 @@ class ControlPlaneService {
       now: t,
     );
 
+    await _persistDeclaredQAContract(
+      productId: productId,
+      manifest: manifest,
+      manifestVersion: version,
+      now: t,
+    );
+
     logger.info('product_registry.registered_with_manifest', {
       'productId': productId,
       'name': name,
       'manifestVersion': version,
+      'manifestSupplied': manifest != null,
     });
     return updatedProduct;
+  }
+
+  /// Records what [manifest] DECLARED about QA, or names why it declared
+  /// nothing.
+  ///
+  /// Separate from [registerProductWithManifest] so that "is this a declaration
+  /// or the absence of one" has one implementation called from one place,
+  /// rather than three restatements of `gates.isEmpty` that can drift apart.
+  Future<void> _persistDeclaredQAContract({
+    required String productId,
+    required ProductManifest? manifest,
+    required String manifestVersion,
+    required DateTime now,
+  }) async {
+    if (manifest == null) {
+      logger.info('product_registry.qa_contract_spec.not_declared', {
+        'productId': productId,
+        'reason':
+            'no manifest was supplied, so this product has declared no '
+            'QA contract; work items filed under it cannot be provisioned and '
+            'fail closed with ProductQAContractSpecRefusal.notDeclared',
+      });
+      return;
+    }
+
+    final spec = manifest.contracts.qaContract;
+    // `QAContractSpec.gates.isEmpty` IS the definition of "this product
+    // declared no QA contract" (`ProductQAContractDeclaration.declaresQAContract`
+    // is the same test on the stored side), written out here because the
+    // declaration type's helper lives on a class in `qa_orchestration` and this
+    // is a `platform_contracts` type. Both sides answer from one meaning.
+    if (spec.gates.isEmpty) {
+      // Stated rather than swallowed: a manifest WAS supplied, and it is
+      // specifically the QA contract inside it that is empty. A log that only
+      // said "no manifest" would send an operator to look in the wrong place.
+      logger.info('product_registry.qa_contract_spec.not_declared', {
+        'productId': productId,
+        'reason':
+            'the supplied manifest declares contracts.qaContract with no '
+            'gates, which is the absence of a declaration rather than one; work '
+            'items filed under this product fail closed with '
+            'ProductQAContractSpecRefusal.declaresNoGates',
+        'manifestVersion': manifestVersion,
+      });
+      return;
+    }
+
+    await productQAContractSpecStore.saveQAContractSpec(
+      ProductQAContractDeclaration(
+        productId: productId,
+        gates: spec.gates,
+        manifestVersion: manifestVersion,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    logger.info('product_registry.qa_contract_spec.declared', {
+      'productId': productId,
+      'manifestVersion': manifestVersion,
+      'gateCount': spec.gates.length,
+      'gateIds': spec.gates.map((gate) => gate.gateId).toList(),
+    });
   }
 
   /// Adds a repository reference to a product.
@@ -2914,4 +3176,46 @@ class OnboardingStatus {
   /// there is no accessor that hands back a descriptor without the caller
   /// having discriminated for it.
   final OnboardingWorkspace? workspaceDescriptor;
+}
+
+/// Outcome of trying to provision the QA contract for a feature work item.
+///
+/// A two-armed result rather than a nullable id, so the "provisioned" and "we
+/// could not, and here is which of the two named reasons" cases are different
+/// values and a caller cannot pass the second off as the first by dropping a
+/// null.
+///
+/// [metadata] is what goes on the work item: null when a contract WAS
+/// provisioned — the item's `qaContractId` already says so, and a parallel
+/// marker would be a second thing to keep in step with it — and the named
+/// refusal otherwise. So the only `null` [contractId] can carry is one with a
+/// reason attached to it, which is what makes the absent-contract case
+/// greppable instead of invisible.
+class FeatureQAContractProvisioning {
+  const FeatureQAContractProvisioning._({
+    required this.contractId,
+    required this.metadata,
+  });
+
+  /// A contract was persisted and read back.
+  const FeatureQAContractProvisioning.provisioned(String contractId)
+    : this._(contractId: contractId, metadata: null);
+
+  /// No contract could be provisioned, for one of the named reasons.
+  factory FeatureQAContractProvisioning.refused(
+    String refusal,
+    String reason,
+  ) => FeatureQAContractProvisioning._(
+    contractId: null,
+    metadata: <String, dynamic>{
+      ControlPlaneService.featureQAContractBlockedByKey: refusal,
+      ControlPlaneService.featureQAContractBlockedByReasonKey: reason,
+    },
+  );
+
+  /// The id of a row that was persisted and read back, or null when no contract
+  /// could be provisioned. Never a placeholder string.
+  final String? contractId;
+
+  final Map<String, dynamic>? metadata;
 }
