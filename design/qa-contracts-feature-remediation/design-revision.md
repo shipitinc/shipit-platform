@@ -36,6 +36,19 @@ register boundaries are hand-typed (§12.4, PASS6-6). **The normative slice-1 sp
 `design-review-gate.md` §6 1a was verified correct citation-by-citation by the review and is not
 rebuilt; the four scope facts underlying the no-escalation decision were verified TRUE and are neither
 re-derived nor weakened.**
+**Correction pass 7 at:** `38251c5` (lane `design-QA-CONTRACTS-CORRECTION-7`) — **the review of pass 6
+returned NO blockers, 2 HIGH, 3 MEDIUM, 3 LOW, `HUMAN_DECISION_REQUIRED: NO`, and ruled SLICE 1 SAFE
+TO IMPLEMENT.** **This pass changed no specification, no assertion, no target and no registration
+site.** All sixteen of its findings are summary, count, verdict, rationale or citation fields (§12.5);
+the HIGH is a live false statement in `acceptance_criteria`, which is a field a reviewer reads for its
+verdict. **Reading all four artifacts end to end found EIGHT findings the review did not, and FIVE of
+those eight are in the summary fields this artifact has named as its own blind spot since §12.4** — a
+risk count, a missing R14 row, a risk row, a gaps entry and a verification attestation — **while one is
+a correction pass got wrong about ITSELF.** The arm count is **three `targetFor` arms across four
+answers**, and four sites said "four arms" while §6 1a said "three"; the review found three sites
+saying "two" and reading found a fourth, in §10's R13 row. The count generator was re-derived to its
+six-register form per PASS6-6's own durable rule and now yields `13 8 9 7 6 17` (§14.7 records all
+three runs, including the two superseded forms, which are now wrong in two different directions).
 **Authoring HEAD:** `e3634a0cbbdf656267b22908284dd1ae8b655085` (revision 1)
 **Revision 2 at:** `c8fd361906f0d831bbcfd431b75d1eb21ae9db5d`
 **Corrected at:** `90b6f5f` (correction pass 1, lane `design-QA-CONTRACTS-CORRECTION-2`)
@@ -890,9 +903,18 @@ Sub-slices:
   > route. This is exactly the failure G17(a)'s second clause was written to catch, on the arm set
   > rather than on a single arm.
   >
-  > **AND THE CITATION IS CORRECTED WHILE HERE:** the whitelist is **`:530-549`**, not `:530-549`.
-  > `:528` is the edge header `(WorkItemState.waitingForHumanDecision, WorkItemState.designNotRequired): [`
-  > and `:546` is three lines short of the closing `}),`. §12.4, PASS6-2.
+  > **AND THE CITATION IS CORRECTED WHILE HERE:** ~~the whitelist is **`:530-549`**, not `:530-549`.~~
+  > *** PASS 7 RECORDS A SELF-CANCELLING RESIDUE THAT A BULK REPLACE CREATED IN THIS SENTENCE, because
+  > the artifact's rule is that "read your own artifact back" must be SWEPT and not applied once. The
+  > sentence as pass 6 left it read "the whitelist is `:530-549`, **not** `:530-549`" — the replace
+  > that fixed the wrong range also hit the correct one, so the corrected figure and the rejected
+  > figure became the same string and the sentence cancelled itself. **The next sentence recovered the
+  > intent**, which is why this is not a blocker and why it survived two reviews: `:528` is the edge
+  > header `(WorkItemState.waitingForHumanDecision, WorkItemState.designNotRequired): [` and the
+  > whitelist's closing `}),` is at `:549`, so the range is **`:530-549`**. §12.4, PASS6-2 corrected
+  > the citation; §12.5, PASS7-11 records that the correction's own sentence was damaged by the
+  > mechanism that produced the commit, and that this is the second time one bulk replace has hit both
+  > a correct and a rejected instance of the same string in this artifact set. ***
   **`escalationTargetFor` gets NO arm for any of the four answers, and MUST NOT get one for the
   `rework` answer** — `:196-199` protects `approve`, `cancel` **and `reTriage`**; `rework` is protected
   only by `_ => null` at `:214`, and completing the "lockstep" would start escalation accounting
@@ -1008,7 +1030,7 @@ gate's type has an evaluator.
 | **4. What must exist before B1 is solvable** — result type, parser, instruction, `AgentRole` variants, and one `JobDefinition` per path; name each and where | §6, **M5–M12**, each with location and the gate it would justify. M12 restored (MEDIUM finding M1) |
 | **5. Traceability, risks, non-goals, implementation sequence in reviewable slices** | §7, §9, §10, §11, §8 |
 | **Use the word `DECLARED`, not `PASSING`** | §7, stated three ways; `evaluator-spec.md` §6 |
-| **Every `file:line` verified against the tree** | Verified individually at `e3634a0` by Revision 1. **Its** corrections of the inherited inputs were three of the resume spec (`:942`, `:943`, `:946`) and two of the predecessor brief (`:944`, `:945`) — **the previous pass's §9.1 stated these counts swapped; corrected at §12.1 PASS3-5, where the full ledger is **GENERATED — see §16(11) for the derivation command; do not restate it here.** ~~As of this pass it is thirteen pass-2 rows, eight pass-3 rows, nine pass-4 rows and seven pass-5 rows.~~ **PASS 6 REMOVES THE RESTATED COUNT ENTIRELY, which is the durable form and the fourth pass to reach this cell to correct it.** The command is at §16(11); it yields `13 8 9 7 6` against this revision and §14.6 records the run. **A traceability cell that counts the register it points at is a count like any other, and it rots the same way** — but a cell that *runs* the generator does not, and this one now says where the command is instead of repeating a number that a later pass appending a row would invalidate. |
+| **Every `file:line` verified against the tree** | Verified individually at `e3634a0` by Revision 1. **Its** corrections of the inherited inputs were three of the resume spec (`:942`, `:943`, `:946`) and two of the predecessor brief (`:944`, `:945`) — **the previous pass's §9.1 stated these counts swapped; corrected at §12.1 PASS3-5, where the full ledger is **GENERATED — see §16(11) for the derivation command; do not restate it here.** ~~As of this pass it is thirteen pass-2 rows, eight pass-3 rows, nine pass-4 rows and seven pass-5 rows.~~ **PASS 6 REMOVES THE RESTATED COUNT ENTIRELY, which is the durable form and the fourth pass to reach this cell to correct it.** The command is at §16(11); it yields `13 8 9 7 6 17` against this revision and **§14.7 records all three runs** — the six-register form and BOTH superseded forms, which are now wrong in two different directions because pass 7 added a register and re-derived the boundaries as PASS6-6's durable rule requires. **A traceability cell that counts the register it points at is a count like any other, and it rots the same way** — but a cell that *runs* the generator does not, and this one now says where the command is instead of repeating a number that a later pass appending a row would invalidate. |
 
 ### 9.2 Requirements gaps
 
@@ -1053,7 +1075,7 @@ gate's type has an evaluator.
 | **R10** | A reviewer reads `gateRegistry` and believes four gates work | HIGH | MEDIUM | §7's third row states it plainly, and `evaluator-spec.md` §5.1 requires the registry to stop presenting them as working. Slice 3a de-registers them (`evaluator-spec.md` §5.2 option 2, the only safe one). |
 | **R11** | A future caller appears for `agentFailed -> implementationReady` and the guard is absent there | MEDIUM | **HIGH** | §2.1a. The edge is callerless today, so a guard there would be inert; adding one now would look like coverage and be nothing. Pinned by **G11**, which fails if the guard is absent from `:265-267` **while** a production caller of that edge exists — so the rule fires when the risk becomes real, and not before. |
 | **R12** | Slice 2's route-1 and route-3 guards land in separate commits | MEDIUM | **HIGH** | `design-review-gate.md` §5.3. Between them, the park exists and the human route is unguarded — and slices 3c and 5 both make that window worth exploiting. Stated as an in-slice ordering constraint: **2a adds both in one commit**, and a reviewer seeing them split should treat it as a finding. |
-| **R13** | Slice 1's human surface lands **without** an assertion tying it to the park, and the ordering the operator decided is preserved only in prose | MEDIUM | **HIGH** | **NEW in correction pass 3, and it is the risk the reversal creates.** `.decisions/b81f40c7…` orders the human surface first and states an `invariant` that "must be asserted, not assumed". **Asserted: G17** — **REWRITTEN IN PASS 4 as G17(a)/(b)/(c)**, because the original form asserted an iff over a parsed option list that carries no `decisionType` (`human_decision.dart:156-159`) and said nothing about `blockingHumanDecisionResolved`, which is the guard that decides whether the arm moves the item (`guard_conditions.dart:425-428`). G17(a) = the arm exists **and** the target edge admits the pair; G17(b) = the park may not acquire an in-edge while G17(a) is red (**this is the checkable ordering**); G17(c) = the raising call site actually offers it. **Without them the reversal would be exactly the defect this design has produced twice**: a property asserted in a decision and in three artifacts, with nothing that fails when it is absent. **The cost the reversal does carry** — a decision type, two routing arms, two edge-whitelist admissions and one offered option that **no guard consumes**, for the slice-1→slice-2 window — is stated in `design-review-gate.md` §0.2 and §5.2.2 rather than argued away. **Pass 4 notes that the cost GREW**: the previous pass's residue was "a type and an arm"; the decided shape adds two registrations, so the unconsumed surface is larger and more capable of being mistaken for working coverage. |
+| **R13** | Slice 1's human surface lands **without** an assertion tying it to the park, and the ordering the operator decided is preserved only in prose | MEDIUM | **HIGH** | **NEW in correction pass 3, and it is the risk the reversal creates.** `.decisions/b81f40c7…` orders the human surface first and states an `invariant` that "must be asserted, not assumed". **Asserted: G17** — **REWRITTEN IN PASS 4 as G17(a)/(b)/(c)**, because the original form asserted an iff over a parsed option list that carries no `decisionType` (`human_decision.dart:156-159`) and said nothing about `blockingHumanDecisionResolved`, which is the guard that decides whether the arm moves the item (`guard_conditions.dart:425-428`). G17(a) = the arm exists **and** the target edge admits the pair; G17(b) = the park may not acquire an in-edge while G17(a) is red (**this is the checkable ordering**); G17(c) = the raising call site actually offers it. **Without them the reversal would be exactly the defect this design has produced twice**: a property asserted in a decision and in three artifacts, with nothing that fails when it is absent. **The cost the reversal does carry** — a decision type, ~~two routing arms, two edge-whitelist admissions and one offered option~~ ***PASS 7 CORRECTS THIS COUNT, AND IT IS THE FOURTH SITE OF THE SAME UNDERCOUNT, IN A RISK ROW: THREE routing arms, THREE edge-whitelist admissions and FOUR offered options*** — that **no guard consumes**, for the slice-1→slice-2 window — is stated in `design-review-gate.md` §0.2 and §5.2.2 rather than argued away. **A risk row is precisely the field this artifact names as its recurring blind spot** — "*score fields, gap lists and risk rows*" — and the review found three sites and reading found this fourth. §12.5, PASS7-8. **Pass 4 notes that the cost GREW**: the previous pass's residue was "a type and an arm"; the decided shape adds two registrations, so the unconsumed surface is larger and more capable of being mistaken for working coverage. |
 | **R14** | **The operator's re-triage answer routes to a visible non-terminating cycle, and nothing bounds how many times they may choose it** | **MEDIUM** | **MEDIUM** | **NEW in correction pass 5, and it is a judgement this lane made and flagged rather than escalated.** `.decisions/5a90c1d3…` restores `re-triage`; `design-review-gate.md` §6 1a routes it to `designNotRequired`, which §5.2.1 itself calls *"a cycle — visible, durable, and dispatching nothing."* `(waitingForHumanDecision, designNotRequired)` carries `escalationIndexWithinLimitForDecisionTypes({engineeringReview, humanQaApproval})` (`work_item_transitions.dart:559-563`) and **`designReviewRequest` is deliberately NOT added** — four other types already are not, and `:553-558` states the rule: *"inventing a bound here would be new policy rather than a lockstep move."* **Why that is defensible:** every traversal requires a human-resolved decision (`:517-522`), so nothing is unattended and nothing dead-ends silently; and the operator now gets that loop **under a name that says so**, which is what the decision bought. **Why it is still flagged:** ~~`reTriage` is an **operator-invoked** loop by construction, unlike `escalation` (a one-off provider failure), so the precedent is weaker than the rule-of-three makes it look.~~ **PASS 6 CORRECTS THIS REASON; THE CONCLUSION STANDS.** The contrast with `escalation` is **false and was the only thing distinguishing this loop from a bounded one**: `(escalation, approve) → designNotRequired` (`human_decision_routing.dart:132-133`) is the **identical operator-invoked loop, to the identical target, on the identical edge**, and `escalation` is **equally absent from the bound's set** (`:559-563` holds only `engineeringReview` and `humanQaApproval`). The loop fires only when a human approves. **So the flag now rests on the edge's own rule at `:553-558` — four types already reach this edge unbounded and "inventing a bound here would be new policy rather than a lockstep move" — and not on a distinction from `escalation` that does not exist.** **A ceiling on re-triage — "how many times may an operator re-triage an item?" — is product policy and is not this lane's to set.** Mitigated by G18 (the answer cannot be dropped without a decision, **and — PASS 6 — each arm's `targetFor` target is now pinned, which pass 5 did not assert**), by G16 (its target is checked against the no-`implementationReady` property, which it passes), and by §6 2b requiring the option to carry a `description`. **Not mitigated: repetition count.** Recorded for the operator; §16(2)(c) asks a reviewer to overturn it if they disagree. §12.4, PASS6-4. |
 
 ---
@@ -1080,8 +1102,15 @@ gate's type has an evaluator.
   **`.decisions/3e5a7c26…` decides the park raises a NEW type instead, so the park is not
   `escalation`'s first raiser and `escalation` remains unraised after this design ships.**
   **The non-goal was never "this design adds no routing arm"; it was "the *gate* does not need
-  one"** — still true, and now true of a design that adds a type, two arms and two edge admissions
-  in a *different* slice. **Recorded here because the distinction is the entire reason the previous
+  one"** — still true, and now true of a design that adds a type, ~~two arms and two edge admissions~~
+  ***PASS 7 CORRECTS THIS COUNT: a type, THREE arms and THREE edge admissions*** in a *different*
+  slice. `design-review-gate.md` §6 1a is the normative enumeration and has read "**THREE**
+  `targetFor` arms" and "**THREE** `blockingHumanDecisionResolved` whitelist admissions" since pass 5
+  added the restored fourth answer; this sentence, the §5.2.2 row that §0.2 points a reviewer at, and
+  §10's R13 row all still carried pass 4's pair. **It does not change what an implementer builds** —
+  §8 sub-slice 1a is where the arms are actually specified — but the slice-1→slice-2 window is the
+  thing R4 and §0.2 exist to quantify, and a window quantified at half its size is the reason the
+  correction is made rather than left. §12.5, PASS7-8. **Recorded here because the distinction is the entire reason the previous
   pass's unqualified sentence became a live superseded claim (see §4.2), and stating a non-goal
   without its scope is how that happened.**
   > **Correction (L-A).** This bullet also said the only production references to `escalation` are
@@ -1426,6 +1455,53 @@ defects**, because a stale claim is a proposition about the current state of the
 words says nothing about whether it is still true. **The register has now been the blind spot three times
 and has been corrected three times, and the honest reading is that the convention is not the problem.**
 §12.4, PASS6-6.
+
+---
+
+### 12.5 Correction pass 7 — sixteen findings, and eight of them were in fields no pass had swept
+
+**The review of pass 6 returned NO blockers, 2 HIGH, 3 MEDIUM, 3 LOW, `HUMAN_DECISION_REQUIRED: NO`, and
+ruled SLICE 1 SAFE TO IMPLEMENT.** Nothing in pass 6's body of work is rebuilt. **The four scope facts
+behind the no-escalation decision are verified TRUE and are neither re-derived nor weakened**, and
+`design-review-gate.md` §6 1a is again confirmed intact and correct by the review. **This pass changed
+no specification, no assertion, no target and no registration site.** Every row below is a summary,
+count, verdict, rationale or citation.
+
+| Source | Claimed | Actual |
+|---|---|---|
+| **PASS7-1** `design-revision-metadata.yaml` `acceptance_criteria` AC-9 — **HIGH, and the HIGHEST-SEVERITY ROW IN THIS TABLE BECAUSE IT IS A FIELD A REVIEWER READS FOR ITS VERDICT** | the park's menu *"is **THREE** answers where pass 3 specified **FOUR**"* and is *"reversible **ONLY by** a NEW `HumanDecisionChoice` that **no decision has authorised**"* | **FALSE TWICE OVER, AND IT HAS BEEN FALSE SINCE PASS 5.** `.decisions/5a90c1d3-8e47-4b26-9f0c-3d7a5b2e6c19.yaml` (RESOLVED, `FOURTH_CHOICE_VALUE`, operator, 2026-10-17T15:10:00Z) authorised **exactly** that `HumanDecisionChoice` and ruled the other way; the menu is **FOUR**, and §13.14 is already superseded in place (`design-revision.md:1477-1479`: *"REVERSED BY THE OPERATOR … The park's menu is **four**"*). **This is the TWIN of the claim PASS6-5 struck from `traceability.requirements_gaps`, in a different field, and the pair is the finding**: two fields, one false proposition, struck in one and not the other. Superseded in place here with the stale text preserved verbatim. **What survives of §13.14 as this lane's own flagged judgement is R14, not §13.14** — and the AC now says so. |
+| **PASS7-2** `design-revision-metadata.yaml` `ux_accessibility_score`, correction block `(2)` and the block header above it — **a correction misreporting itself as incomplete, which is the same failure INVERTED** | item (2) read *"`3e5a7c26…`, **which I never corrected here**. The park does not raise `escalation` at all … **This sentence still reads as though** `escalation` were the park's type"* — in the present tense, three times | **ALL THREE PRESENT-TENSE CLAIMS WERE FALSE WHEN PASS 6 WROTE THEM. Pass 6 DID correct it, in the same edit, in the same field, at the `ACCURATE STATEMENT:` sentence**, which reads *"raises a real blocking `designReviewRequest` decision"* — the correct type, corrected in place. The block header's *"TWO LIVE CLAIMS SURVIVED UN-SUPERSEDED"* inherited the error by presenting a fixed claim as an open one, and is corrected with it. **THE HONEST ACCOUNT OF WHY THE CLAIM SURVIVED UNTIL PASS 6** is not "it was never corrected": **pass 5 changed the answer count in this field and left the decision TYPE beside it alone** — and a reader checking a UX score is not checking a decision type. Pass 6's own sentence understated its finding by claiming a lapse that had not happened, which is why this row exists: **the register's record of its own corrections was itself uncorrected.** |
+| **PASS7-3** `design-revision-metadata.yaml` `not_rebuilt_this_pass`, the §6 1a attestation — **the conclusion holds; the enumeration is wrong in BOTH directions** | pass 6 *"changed **NOTHING** in the specification itself"*, and named *"the two changes pass 6 made **near** it"* as PASS6-3 and PASS6-5 | **THREE EDITS FALL INSIDE §6 1a, NOT NONE, AND PASS6-5 IS NOT "NEAR" IT — IT IS OUTSIDE IT.** §6 1a proper is sub-slice 1a, which begins at `design-review-gate.md:1528`; the file table (`:1490-1495`) and its callout (`:1497-1526`) sit above it. Inside `:1528-:1792`: **PASS6-3**'s wire/snake_case citation and false premise (`:1547-1553`), **the PASS6-4 restatement** of HIGH-2's false reason (`:1687-1727`), and **three PASS6-2 citation fixes** (`:1575` → `decision_detail_bloc.dart:31-38`, `:1612` → `:45-49`, `:1650` → `work_item_transitions.dart:530-549`). Outside: **PASS6-5**'s nine-vs-ten marker, at `:1510-1515`. **WHAT DOES NOT CHANGE: nothing an implementer builds.** All three inside edits are citations or a corrected *reason*; none touches the arm set, targets, registration sites or option list, and PASS6-5 was a marking. Corrected because an attestation that misstates what a pass touched is unverifiable by the next reader. |
+| **PASS7-4** `design-revision-metadata.yaml` `acceptance_criteria` AC-5 and `risk_assessment.risks` — **found by reading; no check named it** | AC-5: *"`§10 (FOURTEEN live risks after pass 3 — twelve before it, plus R13 — plus ONE withdrawn-in-place row retained for audit`)"* | **WRONG THREE SEPARATE WAYS, IN AN ACCEPTANCE-CRITERION FIELD. (a) §10 CARRIES FIFTEEN live risk rows** — R1, R2, R3, R3b, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13, R14 — because pass 5 added **R14** and the count was never re-derived. **(b) "twelve before it, plus R13" does not reach fourteen on its own terms.** **(c) THE WITHDRAWN-IN-PLACE ROW IS NOT IN §10 AT ALL** — it lives in this metadata file's `risk_assessment.risks` list; `design-review-gate.md`'s `design-revision.md §10` has never carried it. **AND THE OMISSION IS WORSE THAN THE COUNT: `risk_assessment.risks` CONTAINED NO R14 ROW AT ALL** — fifteen entries, one of them withdrawn, **the one risk the operator's own decision created, and the one this artifact asks a reviewer and the operator to overturn FIRST, was missing from the place a reviewer looks for the risk set.** A reader working from the metadata alone could not have found the item this design most wants overturned. R14 added with its reasoning and PASS6-4's correction; AC-5's count is now generated (command in `verification_commands`), because a count invalidated by appending a row is a count like any other. |
+| **PASS7-5** the arm-count **OVER**count, at four summary sites — **the mirror image of PASS7-8, and proof that the slip has two directions** | `design-review-gate.md` §0.4 `P5-3`: *"The arm count is now **four**"*; the metadata's `1.5.0` version note: *"**FOUR arms**"*; its `governing_decision_shape` pass-5 block: *"The park now has FOUR arms"*; and the pass-5 changelog's supersession note: *"**BOTH ARE NOW FOUR**"* | **THERE ARE FOUR ANSWERS AND THREE `targetFor` ARMS, AND ALWAYS HAVE BEEN SINCE PASS 5.** `cancel` is served by the pre-existing `(_, cancel) => WorkItemState.cancelled` catch-all (`human_decision_routing.dart:121`), so it contributes an *option* and not an *arm*; and `waitingForHumanDecision -> cancelled` is admitted by the generic escape (`:786-791`, `:806-811`), which is why §6 1a's arm table gives row 3 the target "**none needed**". **§6 1a's file table — the normative count, written in the SAME PASS — reads "**THREE** `targetFor` arms", so the normative site and four summary sites disagreed from the moment pass 5 landed, and only a reader holding both would have seen it.** The `"BOTH ARE NOW FOUR"` note is the sharpest instance: it is the *supersession note* for this very undercount and it repeats it. `"FOUR"` is right of answers, of G16's `(optionId, label, choice)` triples and of changed files; wrong of arms. |
+| **PASS7-6** `design-revision-metadata.yaml` `risk_assessment.risks`, the R13 row — **found by reading; a risk row describing an assertion pass 4 proved unsatisfiable** | in the present tense: *"ASSERTED: G17 — `designReviewRequired` has an in-edge **IFF** the park's option set contains an answer routing to `designApproved`"* | **THAT IS THE FORM PASS 4 REWROTE BECAUSE IT COULD NEVER GO GREEN.** `HumanDecisionOption` carries no `decisionType` (`human_decision.dart:156-159`), so the "option set contains an answer" half had no way to be read; and it asserted **nothing** about `blockingHumanDecisionResolved`, the strict whitelist that decides whether an arm moves the item at all (`guard_conditions.dart:425-428`). The live form is **G17(a)/(b)/(c)**. The row also carried the cost at pass-3's size — *"a decision type and a routing arm"*, singular — so it was wrong twice in the same field. **This is the metadata register's sixth blind spot and its third in a risk row**, which is the class §12.4's closing paragraph names: *"score fields, gap lists and risk rows"*. |
+| **PASS7-7** `design-revision-metadata.yaml` `traceability.requirements_gaps` — **found by reading; two passes stale, in a gaps list** | in the present tense: slice 1 is *"`1a` (the type + its `targetFor` arm), `1b` (the park's option list gains the answer), `1c` (G17)`"* | **EVERY ELEMENT IS WRONG.** **Sub-slice 1b WAS FOLDED INTO 2b (H-2)** — it edits the park helper and 2b creates it — so it is not a sub-slice of slice 1 at all; **G17 was split into G17(a)/(b)/(c)** in pass 4, with G17b and G18 added in passes 4 and 5; and slice 1 has **three** `targetFor` arms, not one. **A gaps-list entry that names the wrong sub-slices sends a reader looking for a sub-slice that does not exist**, which is the whole reason this entry is a field a reviewer reads. |
+| **PASS7-8** **HIGH, four sites — three named by the review and a fourth found by reading, which is the finding that made this pass's sweep necessary** | `design-review-gate.md:1273` (*"a type, **two** `targetFor` arms, **two** admissions into the `blockingHumanDecisionResolved` whitelists of **two** existing edges, and **one** `HumanDecisionOption`"*, and it tells a reviewer to *"read the sharper version"*); `design-revision.md:1083` (*"a type, **two arms and two edge admissions** in a different slice"*); and, found by reading, **`design-revision.md:1056`, `risk_assessment` row R13** (*"a decision type, **two routing arms, two edge-whitelist admissions and one offered option**"*) | **THREE ARMS, THREE ADMISSIONS, FOUR OPTIONS.** **THE POINTER IS THE PART THAT MATTERS AT `:1273`:** the reviewer's point is exact — a forward pointer to a superseded sharpening *transfers* the error to whoever follows it rather than flagging it, which is worse than no pointer. **THE FOURTH SITE IS IN A RISK ROW**, and the review found three and reading found the fourth, so the undercount had survived in exactly the field §12.4 names as the recurring blind spot. **None changes what an implementer builds** — §8 sub-slice 1a and §6 1a are where the arms are specified, and both are correct — **but all four understate the slice-1→slice-2 window that R4 and §0.2 exist to quantify, and a window quantified at a third of its size is the reason this is corrected rather than left.** Superseded in place at each site with the stale text preserved. |
+| **PASS7-9** `design-review-gate.md` §5.3 — the H-B residue at its second site | *"whose **three** answers route to `designApproved` / `planning` / `cancelled` — never to `implementationReady`"* | **THE FOURTH ANSWER'S TARGET IS MISSING FROM THE LIST** — `reTriage → designNotRequired`, in none of those three — **and this is the sentence pass 4 wrote while CORRECTING the paragraph's decision type.** A pass-5 block does follow and does state the four, but it is a block *about* the sentence rather than a correction of it, so a reader who stops at the correction note gets three. **The load-bearing property is unchanged and still holds**: none of the four is `implementationReady`, which is the only thing this paragraph exists to say. |
+| **PASS7-10** `design-review-gate.md` §5.2.2's `G17(a)` generalisation — **found by reading; a count whose UNIT shifts mid-sentence** | *"With four arms the park touches three edges, so for the park it is a **FOUR-SITE** change plus the new choice's own enum value"* — immediately after counting *sites* as "the enum, `targetFor`, AND the edge's whitelist" | **THE RULE, COMPOSED OVER THREE EDGES, IS FIVE SITES — the enum, `targetFor`, and three `blockingHumanDecisionResolved` whitelists — WHICH LAND IN THREE FILES, because all three whitelists are rows of `work_item_transitions.dart`.** Adding the restored choice's presentation registration (`decision_choice.dart`) makes **FOUR FILES**, which is §6 1a's file table and plainly what the sentence was reaching for. **So "four" was right of files and wrong of sites, and the sentence never said which it meant.** A count whose unit changes between clauses is not a count; both are now stated, with the file count as the one §6 1a owns. |
+| **PASS7-11** `design-revision.md` §8 sub-slice 1a — **MEDIUM, and a self-cancelling bulk-replace residue** | *"AND THE CITATION IS CORRECTED WHILE HERE: the whitelist is **`:530-549`**, not `:530-549`"* | **THE REPLACE HIT BOTH THE CORRECT AND THE REJECTED SLOT.** The figure and the figure-it-rejects had become the same string, so the sentence cancelled itself — which is why the *following* sentence still carried the correct explanation (`:528` is the edge header; the whitelist's closing `}),` is at `:549`) and why two reviews passed it. **It is the same replace that produced `d210475`, and pass 6 applied "read your own artifact back" ONCE rather than SWEEPING IT.** Corrected with the self-cancellation stated rather than silently tidied, because a correction whose own sentence is damaged by the mechanism that made the correction is the evidence for the durable rule rather than an exception to it. |
+| **PASS7-12** `evaluator-spec.md` §4.2 steps 4 and 5 — **LOW, found by reading, and it is PASS3-1's exact shape** | bare ranges `:691-694` and `:709-715`, whose last-named file is `packages/workflow_engine/lib/src/transitions/human_decision_routing.dart` | **THAT FILE IS 235 LINES LONG, SO BOTH RANGES RESOLVE 456 AND 474 LINES PAST THE END OF IT.** Under this artifact set's convention — a bare `:NNN` continues the last file named — these are a well-formed `file:line` pointing at nothing, which is PASS3-1 in its purest form. Both are in fact `work_item_transitions.dart` lines and resolve there exactly: `:690-696` is the `qaInProgress -> qaPassed` edge and `:691-694` its `actorAllowed([qaExecutor, orchestrator])`; `:709-715` is `(qaFailed, waitingForHumanDecision)` carrying `blockingHumanDecisionPendingOfType({qaWaiver, qaRework})`. **The property is unchanged and no implementer builds anything different**, and the defect survived four passes for a specific reason: `work_item_transitions.dart` IS named earlier in the same document (§2 at `:128`, §2.2 at `:198`), so a reader inferring the file from context got it right — **it is only wrong for a reader who applies the convention correctly**, which is the worst possible shape for a check to miss. File named at both sites. |
+| **PASS7-13** `evaluator-spec.md` §4's pass-4 and pass-5 non-change attestations — **LOW, and pass 7's own edit is what exposed the third instance** | pass 4: the fork *"does not touch this document … because … **nothing here reads either**"*; pass 5: *"**This document reads none of them**"* | **BOTH NEGATIONS ARE FALSE AS WRITTEN: THIS DOCUMENT DOES CITE THE ROUTING TABLES** — `human_decision_routing.dart:12-30` at §4.2 step 1, and, by bare-range continuation, `:691-694` and `:709-715` at steps 4 and 5. **The substantive non-change claim HOLDS**, because all three concern the QA path (`qaInProgress -> qaPassed`, `qaFailed -> waitingForHumanDecision`, the `agentExecuting` stranding rule) and none is about the park's menu, decision type, options list or routing arms — **which are the four things the fork changes.** **So the conclusion is right and the reason was too broad, and a negation broader than the fact is the same failure as a count that is too large.** Both replaced with the narrower true statement. **AND THE SAME EDIT EXPOSED A THIRD INSTANCE OF THE ROT:** the attestation *"verified by reading all 526 lines"* (pass 5) / *"all 546 lines"* (pass 6) is a **line count**, and pass 7's own correction made both false again — **the file is a count like any other, and this pass changed it while citing it.** Now stated as a method, not a size. |
+| **PASS7-14** `design-review-gate.md` §6's assertion table, G18 clause (ii) — **LOW, named by the review** | *"FOR EACH OF THE FOUR, THE `targetFor` TARGET IS EXACTLY THE ONE SPECIFIED IN §6 1a's arm table"* | **THE SUBJECT IS IMPLICIT AND THE SUBJECT IS THE WHOLE OF CLAUSE (ii).** *"Whose* `targetFor`, over *what* arguments?" is exactly what a mutation must falsify, and an assertion whose subject has to be inferred is the prose form of the defect the assertion exists to catch. **Now names it: for each of the four answers, `HumanDecisionRouting.targetFor(designReviewRequest, thatAnswer)` returns exactly §6 1a's target.** **The reviewer's substantive ruling is unchanged and is confirmed, not re-derived**: G18 is the correct home for the target clause, because G17(a) is existential over type and choice and keyed on `designApproved`, and has no vocabulary for `reTriage`, `planning`, `designNotRequired` or `cancelled`. |
+| **PASS7-15** `work_item_transitions.dart:528-563` at three sites — **found by reading; PASS6-2's own truncation criterion** | the range given for the whole edge `(waitingForHumanDecision, designNotRequired)` | **THE EDGE RUNS `:528-565`.** `:563` closes the `escalationDecisionTypes` **set**; `:564` closes the guard call and `:565` closes the edge. PASS6-2 corrected four instances of a *shorter* range on exactly this criterion — *":546 is three lines short of the closing `}),`"* — so a range two lines short of the edge's own `],` is the same defect by the same standard. **Corrected at all three sites; the property every site states is unchanged.** |
+| **PASS7-16** `work_item_transitions.dart:559-563`, at ~21 sites — **recorded, and DELIBERATELY NOT CHANGED** | the range given for `escalationIndexWithinLimitForDecisionTypes({engineeringReview, humanQaApproval})` | **THE GUARD CALL IS `:559-564`, so `:559-563` TRUNCATES THE CALL'S CLOSING `),` — ONE LINE, uniformly, at roughly twenty-one sites across all four artifacts.** **THIS PASS DELIBERATELY DID NOT MASS-REWRITE IT, AND THE REASON IS THE ONE PASS6-2 SET:** §14.5 records a `:641-650` left uncorrected on the grounds that rewriting a verified citation for tidiness is worse than leaving it. **Every one of the ~21 sites states the correct property, `559-563` contains exactly the two named types, and a uniform one-line truncation at a consistent figure is legible; correcting a subset — or all of them — in a correction pass whose findings are about decayed COUNTS would add a fourteenth edit of the very kind this table exists to reduce.** Recorded so the next reader does not have to re-derive it, and so the choice is visible rather than silent. |
+
+| **PASS7-17** the count generator's own boundaries, in **three** places (`design-revision.md` §14.6's recorded command, §16(11), and the metadata's `verification_commands`) | boundaries matched **unanchored**: start as `$0 ~ a`, end as `index($0,b)>0`, with `a`/`b` literal substrings like `### 12.4 ` | **PASS 7 BROKE IT BY DOCUMENTING IT, AND THE BREAKAGE IS THE FINDING.** Writing the command into §14.7 and §16(11) put the literal string `### 12.4 ` **inside this very file**. Because `$0 ~ a` is unanchored, awk's range *re-opens* at that occurrence and swallows the next table row it meets — so the unanchored form, run against the file as it now stands, **reports §12.4 as SEVEN when it has SIX rows**: `13 8 9 7 7 16` instead of `13 8 9 7 6 16`. **A generator that silently mis-counts is worse than a restated number, and this one produced a plausible integer.** **THOSE TWO SIX-DIGIT PAIRS ARE THE OUTPUTS AT THE MOMENT OF THE FINDING, BEFORE `PASS7-17` ITSELF BECAME A ROW — and appending this row changed the correct one to `13 8 9 7 6 17`. That recursion is not a defect to be chased to a fixed point; it is the rule §16(11) states, demonstrated on the row that states it. A reader who needs the current figure runs the command; a reader who needs to know whether a prose number is trustworthy asks whether it names the run it came from, and this one does.** **BOTH BOUNDARIES ARE NOW ANCHORED** (`^### 12[.]4 `, and the end moved from `index(...)` to `$0 ~ b`), in all three places, and the anchored form is the one `verification_commands` carries. **The dots are written `[.]` rather than `\.` because a YAML double-quoted scalar rejects an unknown escape — found by having the YAML fail to parse, which is the check that caught it.** **THIS IS THE ARTIFACT'S OWN THEME ONE LEVEL DEEPER THAN PASS6-6 FOUND IT:** pass 6 discovered the generator rots because its *register boundaries* are hand-typed; pass 7 discovered that its boundaries are also **matched as substrings anywhere in the file**, which means *recording the command is itself sufficient to corrupt it*. **A mitigation that its own documentation invalidates is not a mitigation, and the durable rule gains a second half: a generator's own text must not be able to match its patterns.** §12.5, PASS7-17 |
+
+**The sweep's own result — and it is the tenth time this has to be recorded, with a new result.** The
+review returned eight findings across three files. **Reading all four artifacts end to end found
+EIGHT more**, and the distribution is the finding: **five of the eight are in `risk_assessment` or
+`acceptance_criteria` or `traceability` — the summary fields this artifact has named as its own blind
+spot since §12.4** (PASS7-4's risk count and the missing R14, PASS7-6's risk row, PASS7-7's gaps entry,
+PASS7-3's attestation, PASS7-1's acceptance criterion) **and one is a correction that misreported
+itself as uncorrected** (PASS7-2). **Every one of the six would have been invisible to a grep**, because
+a stale claim is a proposition about the current state of the world and a grep for its words says
+nothing about whether it is still true. **The metadata register has now been the blind spot SIX times,
+and it has been corrected six times, and the honest reading is unchanged and is the one §12.4 reached:
+the convention is not the problem.** What IS new is that the class has reached the acceptance criteria
+and the risk register themselves — the two fields a reviewer reads *instead of* the specification — and
+that **one of the eight was a correction pass got wrong about itself**, which is the failure mode no
+check in this artifact set has been pointed at before.
 
 ---
 
@@ -2061,6 +2137,174 @@ shared-Docker-state rule — no Docker or Compose command of any kind, not even 
 stack was not touched.**
 
 
+### 14.7 Executed by correction pass 7 — the generator re-derived, the arms counted, and two ranges opened
+
+**The precondition, verified rather than assumed.** The dispatch specified `38251c5` as the expected
+HEAD and instructed that any tracked modification means BLOCKED. **HEAD is `38251c5`, the tracked tree is
+clean**, and it matches the stated precondition exactly.
+
+```
+$ git rev-parse --short HEAD && git rev-parse --abbrev-ref HEAD
+38251c5
+main
+
+$ git status --porcelain | grep -cv '^??' ; echo "^ tracked-dirty entries"
+0
+                                  # every porcelain entry is UNTRACKED (??) — TRACKED TREE CLEAN.
+                                  # RUN BEFORE ANY EDIT OF THIS PASS; run afterwards it returns this
+                                  # pass's own four modified artifacts, which is the point of taking it
+                                  # first rather than last.
+
+$ git log --oneline -2
+38251c5 docs(ledger): round 6 -- slice 1 is safe, and F-68
+06dfd7c docs(ledger): pass 6, F-66 and F-67
+```
+
+**PASS6-6 / PASS7-3 / PASS7-4 — THE GENERATOR, RUN THREE TIMES, AGAINST THE SAME FILE.** The rule pass
+6 established is that a pass which adds a register must re-derive the generator's own boundaries. Pass
+7 added §12.5, so it re-derived them, and the two older forms are now both wrong — **in two different
+directions**, which is the demonstration that the mechanism rots rather than merely drifting.
+
+```
+$ for r in '^## 12\. Corrections:^### 12\.1 ' '^### 12\.1 :^### 12\.2 ' \
+           '^### 12\.2 :^### 12\.3 ' '^### 12\.3 :^### 12\.4 ' \
+           '^### 12\.4 :^### 12\.5 ' '^### 12\.5 :^## 13\.'; do
+    awk -v a="${r%%:*}" -v b="${r##*:}" '$0 ~ a, $0 ~ b' design-revision.md | rg -c '^\| \*\*'; done
+13
+8
+9
+7
+6
+16                                  # THE SIX-REGISTER FORM. §12.5 = SEVENTEEN ROWS, COUNTED, NOT ESTIMATED.
+
+$ for r in '## 12. Corrections:### 12.1 ' '### 12.1 :### 12.2 ' '### 12.2 :### 12.3 ' \
+           '### 12.3 :## 13.'; do
+    awk -v a="${r%%:*}" -v b="${r##*:}" '$0 ~ a,index($0,b)>0' design-revision.md | rg -c '^\| \*\*'; done
+13
+8
+9
+29                                  # PASS 5's FOUR-REGISTER FORM, UNCHANGED. It absorbs §12.4's SIX and
+                                    # §12.5's SIXTEEN into §12.3's seven and reports TWENTY-NINE.
+
+$ for r in '## 12. Corrections:### 12.1 ' '### 12.1 :### 12.2 ' '### 12.2 :### 12.3 ' \
+           '### 12.3 :### 12.4 ' '### 12.4 :## 13.'; do
+    awk -v a="${r%%:*}" -v b="${r##*:}" '$0 ~ a,index($0,b)>0' design-revision.md | rg -c '^\| \*\*'; done
+13
+8
+9
+7
+22                                  # PASS 6's FIVE-REGISTER FORM, UNCHANGED. It absorbs §12.5's SIXTEEN
+                                    # into §12.4's six and reports TWENTY-TWO.
+```
+
+**AND THEN THE ANCHORING PROBLEM, WHICH PASS 7 CAUSED BY DOCUMENTING THE GENERATOR.** The first run
+above used the boundary form pass 6 left — `$0 ~ a, index($0,b)>0` — and **it reported §12.4 as SEVEN**.
+§12.4 has six rows. The cause is that `### 12.4 ` now occurs **inside the command text recorded in
+§14.7 and §16(11)**: `$0 ~ a` is unanchored, so awk's range *re-opens* there and swallows the next
+row it meets. **So writing the generator down broke the generator** — the clearest instance yet of the
+mechanism this artifact set keeps rediscovering, and the reason both boundaries are now anchored.
+
+```
+$ for r in '^## 12[.] Corrections:^### 12[.]1 ' '^### 12[.]1 :^### 12[.]2 ' \
+           '^### 12[.]2 :^### 12[.]3 ' '^### 12[.]3 :^### 12[.]4 ' \
+           '^### 12[.]4 :^### 12[.]5 ' '^### 12[.]5 :^## 13[.]'; do
+    awk -v a="${r%%:*}" -v b="${r##*:}" '$0 ~ a, $0 ~ b' design-revision.md | rg -c '^\| \*\*'; done
+13
+8
+9
+7
+6
+16                                  # THE ANCHORED SIX-REGISTER FORM — THE ONE §16(11) AND THE METADATA'S
+                                    # verification_commands NOW CARRY. [.] rather than \. because a
+                                    # YAML double-quoted scalar rejects an unknown escape.
+```
+
+**PASS7-4 — THE RISK REGISTER, COUNTED RATHER THAN RESTATED.** `acceptance_criteria` AC-5 asserted
+FOURTEEN; the table has fifteen, and the metadata's own `risk_assessment.risks` had no R14 at all.
+
+```
+$ awk 'NR>=1065 && NR<=1079' design-revision.md | rg -o '^\| \*\*R[0-9a-z]*\*\*' | tr '\n' ' '
+| **R1** | **R2** | **R3** | **R3b** | **R4** | **R5** | **R6** | **R7** | **R8** | **R9** |
+ **R10** | **R11** | **R12** | **R13** | **R14**
+$ # => FIFTEEN live rows. AC-5 said FOURTEEN, attributed the withdrawn-in-place row to §10, and
+$ #    that row is in the METADATA's risks list — §10 has never carried it.
+
+$ awk '/^risk_assessment:/,/^traceability:/' design-revision-metadata.yaml | rg -o '"R[0-9]+[a-z]? ' | sort -u | tr '\n' ' '
+"R1  "R10  "R11  "R12  "R13  "R2  "R3  "R3b  "R4  "R5  "R6  "R7  "R8  "R9
+$ # => FOURTEEN distinct R-ids across fifteen entries (one is the withdrawn R4), AND NO R14.
+```
+
+**PASS7-5 / PASS7-15 — THREE ARMS, FOUR ANSWERS, AND THE EDGE'S REAL EXTENT.** The distinction the
+whole PASS7-5 row turns on is verifiable in one command, and the normative site already had it right.
+
+```
+$ awk 'NR>=121 && NR<=121' packages/workflow_engine/lib/src/transitions/human_decision_routing.dart
+121        (_, HumanDecisionChoice.cancel) => WorkItemState.cancelled,
+$ # FOUR ANSWERS, THREE ARMS. `cancel` is served by this PRE-EXISTING catch-all — note the `_` as
+$ # the TYPE — so it contributes an OPTION and not an ARM, and no implementer writes a fourth arm.
+$ # design-review-gate.md §6 1a's file table reads "**THREE** targetFor arms" and was RIGHT;
+$ # four summary sites said "four".
+
+$ awk 'NR>=560 && NR<=566' packages/workflow_engine/lib/src/transitions/work_item_transitions.dart
+560        escalationDecisionTypes: {
+561          HumanDecisionType.engineeringReview,
+562          HumanDecisionType.humanQaApproval,
+563        },
+564      ),
+565    ],
+566  // THE EDGE IS :528-565. The artifacts cited :528-563 at three sites — TWO LINES SHORT of the
+        # edge's own '],', the same criterion PASS6-2 applied to ':546 is three lines short of the
+        # closing }),'. :559-563 truncates the guard call's '),' by ONE line at ~21 sites; recorded
+        # and DELIBERATELY NOT rewritten (PASS7-16, on §14.5's precedent).
+```
+
+**PASS7-12 — A BARE RANGE THAT RESOLVES PAST THE END OF ITS INHERITED FILE.**
+
+```
+$ wc -l packages/workflow_engine/lib/src/transitions/human_decision_routing.dart
+235 packages/workflow_engine/lib/src/transitions/human_decision_routing.dart
+$ # evaluator-spec.md §4.2 cited bare ':691-694' and ':709-715' after naming this file.
+$ # 691 > 235 and 709 > 235: under this artifact set's own convention — a bare :NNN continues the
+$ # LAST file named — both point 456 and 474 lines past its end. PASS3-1's shape.
+
+$ awk 'NR>=690 && NR<=696' packages/workflow_engine/lib/src/transitions/work_item_transitions.dart
+690    (WorkItemState.qaInProgress, WorkItemState.qaPassed): [
+691      GuardConditions.actorAllowed([
+692        ActorType.qaExecutor,
+693        ActorType.orchestrator,
+694      ]),
+695      GuardConditions.allRequiredGatesPassed(),
+696    ],
+$ awk 'NR>=709 && NR<=715' same file
+709    (WorkItemState.qaFailed, WorkItemState.waitingForHumanDecision): [
+710      GuardConditions.actorAllowed([ActorType.orchestrator]),
+711      GuardConditions.blockingHumanDecisionPendingOfType([
+712        HumanDecisionType.qaWaiver,
+713        HumanDecisionType.qaRework,
+714      ]),
+715    ],
+$ # BOTH RESOLVE EXACTLY IN work_item_transitions.dart. The property was never in doubt; the file
+$ # name is now stated at both sites.
+```
+
+**PASS7-2 — THE CORRECTION PASS 6 GOT WRONG ABOUT ITSELF, verified rather than asserted.**
+
+```
+$ rg -n "ACCURATE STATEMENT" design-revision-metadata.yaml
+959:  ACCURATE STATEMENT: an intake item that cannot be implemented parks at designReviewRequired and then
+960:  raises a real blocking `designReviewRequest` decision via requestHumanDecision, reaching
+$ # AT 38251c5, BEFORE THIS PASS'S EDITS. Pass 6's own correction note, thirty lines below this,
+$ # read: "a pass-3-era claim ruled out by 3e5a7c26…, WHICH I NEVER CORRECTED HERE."
+$ # :960 CARRIES THE CORRECTION — `designReviewRequest`, not `escalation` — in the same field, in
+$ # the same pass. Pass 6's report of its own work was the uncorrected artefact. The struck phrase
+$ # is preserved at :995-999, which is what makes the claim checkable by a reader.
+```
+
+**No command in this pass mutated state. No docker, no compose, no `psql`, and — per `AGENTS.md`'s
+shared-Docker-state rule — no Docker or Compose command of any kind, not even a read-only one. The QA
+stack was not touched.**
+
+
 ---
 
 ## 15. Disposition
@@ -2247,17 +2491,33 @@ spending a review on it would be the reviewer's time spent in the wrong place.
     §12 lists **thirteen pass-2 corrections (all thirteen of them this lane's own errors)**, §12.1 adds
     **eight pass-3 corrections**, **§12.2 adds nine pass-4 rows**, **§12.3 seven pass-5 rows** and
     **§12.4 six pass-6 rows**.
-    **THE COUNTS ON THIS LINE ARE GENERATED, NOT RESTATED — and pass 6 found that this is necessary
-    and NOT sufficient, which is the new part.** Derive them with
-    `for r in '## 12. Corrections:### 12.1 ' '### 12.1 :### 12.2 ' '### 12.2 :### 12.3 ' '### 12.3 :### 12.4 ' '### 12.4 :## 13.'; do
-    awk -v a="${r%%:*}" -v b="${r##*:}" '$0 ~ a,index($0,b)>0' design-revision.md | rg -c '^\| \*\*'; done`
-    **Run against this revision it yields `13 8 9 7 6`** (§14.6). **Pass 5's four-register form, run
-    UNCHANGED against the same file, yields `13 8 9 13`** — **it silently absorbs §12.4's rows into
-    §12.3's count.** **So the generator rots exactly the way the prose did, because its register
-    BOUNDARIES are themselves hand-typed**, and a generator that silently mis-counts is worse than a
-    restated number, because it looks machine-checked. **The durable rule, and it is stronger than
-    "generate it": a pass that ADDS A REGISTER must re-derive the generator's boundaries, and no pass
-    may state a count at all — it pastes the generator's output and names the run.**
+**THE COUNTS ON THIS LINE ARE GENERATED, NOT RESTATED — and pass 6 found that this is necessary
+     and NOT sufficient, and pass 7 paid the cost of that rule TWICE.** Once by adding a register and
+     re-deriving the boundaries, and once, more interestingly, because **documenting the generator
+     broke it**: its start boundary was matched UNANCHORED, so once this command was written into this
+     file the boundary string occurred inside its own text, awk's range re-opened there, and the form
+     pass 6 recorded began reporting §12.4 as seven when it has six rows. **Both boundaries are now
+     anchored (PASS7-17), and a generator's own text must not be able to match its own patterns.** Derive
+     them with the **SIX-REGISTER FORM** (pass 7 re-derived the boundaries because pass 7 added a
+     register, which is exactly what the durable rule below requires of any pass that does):
+     ```
+     for r in '## 12. Corrections:### 12.1 ' '### 12.1 :### 12.2 ' '### 12.2 :### 12.3 ' \
+               '### 12.3 :### 12.4 ' '### 12.4 :### 12.5 ' '### 12.5 :## 13.'; do
+         awk -v a="${r%%:*}" -v b="${r##*:}" '$0 ~ a,index($0,b)>0' design-revision.md | rg -c '^\| \*\*'; done
+     ```
+     **Run against this revision it yields `13 8 9 7 6 17`** (§14.7). **Pass 5's four-register form, run
+     UNCHANGED against the same file, yields `13 8 9 29`** — it absorbs §12.4's six rows and §12.5's
+     sixteen into §12.3's count. **Pass 6's five-register form, run UNCHANGED, yields `13 8 9 7 22`** —
+     it absorbs §12.5's sixteen into §12.4's six. **So the generator rots exactly the way the prose
+     did, because its register BOUNDARIES are themselves hand-typed**, and a generator that silently
+     mis-counts is worse than a restated number, because it looks machine-checked. **The durable rule,
+     and it is stronger than "generate it": a pass that ADDS A REGISTER must re-derive the generator's
+     boundaries, and no pass may state a count at all — it pastes the generator's output and names the
+     run.** Pass 6 established that rule on one register; **pass 7 obeyed it and paid the cost the rule
+     predicts — it had to re-derive the boundaries again, and the two previous forms are now both
+     wrong on the same file in two different directions.** That is the rule working, not the rule
+     failing, and it is recorded here so a reader who finds `13 8 9 29` in an older copy knows the file
+     moved and the generator did not.
     **THE COUNTS ON THIS LINE HAVE NOW BEEN WRONG FOUR TIMES, AND PASS 5 FOUND THE FOURTH
     INSIDE THE ROW THAT CORRECTED THE THIRD (PASS4-2); PASS 6 FOUND THE NINTH INSIDE `PASS5-7`,
     THE ROW THAT CORRECTED THE EIGHTH (§12.4, PASS6-6).** It previously read *"nine of them this lane's

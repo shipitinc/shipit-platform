@@ -19,12 +19,20 @@ VOCABULARY AND NO ORDERING CONSTRAINT IN THIS DOCUMENT CHANGED.** The round-4 re
 pass-3 work in this file as exact: the 2a/2b/2c → 3a/3b/3c renumbering and the disposal of the phantom
 "slice 2.3" both stand, and V6's corrected citation (`implementation_inflow.dart:124-126`) stands.
 **The pass-4 fork — a new `HumanDecisionType` for the design-review park
-(`.decisions/3e5a7c26-4b19-4f83-a0d7-6c29b8f1e540.yaml`) — does not touch this document**, because
-the fork is entirely about the *human decision* routing tables and the park's call site, and nothing
-here reads either. **Stated explicitly because "this document was in scope and I did not change it"
-is exactly the claim a later reader cannot verify, and because the round-4 dispatch's own orphan sweep
-had a demonstrated blind spot in a different artifact — so the non-change is recorded here rather
-than left inferable from silence.**
+(`.decisions/3e5a7c26-4b19-4f83-a0d7-6c29b8f1e540.yaml`) — does not change this document's
+specification**, because the fork is entirely about the *human decision* routing tables and the park's
+call site, and nothing here changes what this document specifies. ***PASS 7 TIGHTENS THE WORDING,
+BECAUSE "NOTHING HERE READS EITHER" WAS LOOSER THAN THE FACT AND A LOOSE NEGATION IN A PROVENANCE
+NOTE IS THE SAME FAILURE AS A LOOSE COUNT: this document DOES cite `human_decision_routing.dart`
+(:12-30 at §4.2 step 1, and — by bare-range continuation — :691-694 and :709-715 at §4.2 steps 4 and
+5). What is true, and what pass 7 states in place of the negation, is narrower and checkable: **those
+citations concern the QA path** — `qaInProgress -> qaPassed`, `qaFailed -> waitingForHumanDecision`,
+and the `agentExecuting` stranding rule — **and none of them is about the park's menu, its decision
+type, its options list or its routing arms, which are the four things the fork changes.** Stated
+explicitly because "this document was in scope and I did not change it" is exactly the claim a later
+reader cannot verify, and because the round-4 dispatch's own orphan sweep had a demonstrated blind
+spot in a different artifact — so the non-change is recorded here rather than left inferable from
+silence.**
 **Correction pass 5:** see `design-revision-metadata.yaml` `correction_pass_5_base_sha` (lane
 `design-QA-CONTRACTS-CORRECTION-5`). **PROVENANCE ONLY — NO FINDING, NO GATE, NO GATE-RESULT
 VOCABULARY AND NO ORDERING CONSTRAINT IN THIS DOCUMENT CHANGED, AND THE NON-CHANGE WAS ESTABLISHED BY
@@ -32,11 +40,36 @@ READING, NOT INFERRED FROM SILENCE.** Pass 5's substantive change is the operato
 `.decisions/5a90c1d3-8e47-4b26-9f0c-3d7a5b2e6c19.yaml`, which restores the design-review park's fourth
 answer and so adds a `HumanDecisionChoice`, an arm in `targetFor`, a third
 `blockingHumanDecisionResolved` whitelist admission, and a presentation registration in
-`apps/control_plane`. **This document reads none of them**: it is about `qaInProgress -> qaPassed`, the
-`gateRegistry` evaluators, and the `gateResults` / `qaContract` context contract, and it contains no
-claim about the park's menu, its decision type, its options list, or its routing arms — **verified by
-reading all 526 lines, because this document established that convention on pass 4 and a non-change
-that is merely asserted is the claim a later reader cannot check.**
+`apps/control_plane`. **This document specifies nothing in any of those four places**: it is about
+`qaInProgress -> qaPassed`, the `gateRegistry` evaluators, and the `gateResults` / `qaContract` context
+contract, and it contains no claim about the park's menu, its decision type, its options list, or its
+routing arms — **verified by reading the whole file end to end, because this document established that
+convention on pass 4 and a non-change that is merely asserted is the claim a later reader cannot
+check. The LINE COUNT IS DELIBERATELY NOT STATED: this sentence carried “all 526 lines” in pass 5
+and “all 546 lines” after pass 6, and pass 7's own edit — which touched §4.2's citations — made
+both of those false again. A line count is a count, and §12.5, PASS7-11 records the same defect in
+a sibling correction in the same pass: the method is the claim, not the size of the file. §12.5,
+PASS7-13.**
+*** PASS 7 TIGHTENS THE WORDING HERE TOO, and records what it found while doing it. Pass 5 wrote
+"**This document reads none of them**", which is FALSE as written: §4.2 cites
+`human_decision_routing.dart:12-30`, and — by this artifact set's own convention that a bare `:NNN`
+continues the last-named file — `:691-694` and `:709-715` as well. The substantive non-change claim
+still HOLDS, because those three citations are about the QA path and are untouched by passes 5 and 6;
+but "reads none" was an assertion about the whole file resting on a read of the parts that matter,
+and the correction is to state the narrower true thing: it specifies nothing in those four places.
+*** **AND PASS 7 RECORDS A CITATION DEFECT IN THE SAME PARAGRAPH, WHICH NO CHECK NAMED AND WHICH A
+GREP FOR THE PASS-5 TOPIC WOULD NEVER HAVE REACHED.** §4.2's steps 4 and 5 cite `:691-694` and
+`:709-715` as bare ranges. The last file named before them is
+`packages/workflow_engine/lib/src/transitions/human_decision_routing.dart`, **which is 235 lines
+long — so under the convention those two ranges resolve 456 and 474 lines PAST THE END OF IT.**
+They are in fact `work_item_transitions.dart` lines, and they resolve there exactly: `:690-696` is the
+`qaInProgress -> qaPassed` edge whose `actorAllowed([qaExecutor, orchestrator])` is `:691-694`, and
+`:709-715` is the `(qaFailed, waitingForHumanDecision)` edge carrying
+`blockingHumanDecisionPendingOfType({qaWaiver, qaRework})`. **This is PASS3-1's exact shape — a
+well-formed `file:line` pointing at nothing — in the one place an implementer of slice 3c would look,
+and `work_item_transitions.dart` IS named earlier in this document (`:128`, `:198`), so a reader who
+guessed the file from context would get it right and a reader who applied the convention would not.
+Corrected below by naming the file. §12.5, PASS7-12.**
 **One finding pass 5 made in an adjacent file and did NOT propagate here, recorded so its absence is
 deliberate:** pass 5 found `apps/control_plane/lib/shared/decision_choice.dart:12-19`'s
 `knownDecisionChoices` to be a hardcoded six-value set against a ten-value enum, with the file's own
@@ -48,7 +81,7 @@ because `durable_discoveries` is where a finding is meant to outlive the pass th
 **Correction pass 6:** see `design-revision-metadata.yaml` `correction_pass_6_base_sha` (lane
 `design-QA-CONTRACTS-CORRECTION-6`). **PROVENANCE ONLY — NO FINDING, NO GATE, NO GATE-RESULT
 VOCABULARY AND NO ORDERING CONSTRAINT IN THIS DOCUMENT CHANGED, AND THE NON-CHANGE WAS ESTABLISHED BY
-READING ALL 546 LINES.** Pass 6's substantive change is elsewhere and is an **assertion**: `G18` in
+READING THE WHOLE FILE.** Pass 6's substantive change is elsewhere and is an **assertion**: `G18` in
 `design-review-gate.md` §6 now pins each arm's `targetFor` **target**, because `design-revision.md` §8
 said *"two `targetFor` arms"* in the present tense while three exist and nothing failed when the third
 was absent. **That is a property of the design-review park's decision type and its routing table, and
@@ -65,6 +98,18 @@ assume is untouched: §4.3's V1–V6 non-vacuity assertions, §5's ordering cons
 vocabulary are all unaltered, and V3 and V4 remain the two that do not exist in any form today and
 that a naive wiring would pass.**
 **Status of this document:** a specification. This lane implements no production code.
+**Correction pass 7 at:** see `design-revision-metadata.yaml` `correction_pass_7_base_sha` (lane
+`design-QA-CONTRACTS-CORRECTION-7`). **NO FINDING, NO GATE, NO GATE-RESULT VOCABULARY AND NO ORDERING
+CONSTRAINT IN THIS DOCUMENT CHANGED, AND PASS 7 DID NOT WEAKEN THE PASS-4/5/6 NON-CHANGE CLAIMS — it
+tightened two of their WORDINGS, because a negation broader than the fact is the same failure as a
+count.** (i) The pass-4 and pass-5 blocks said the fork's routing tables were untouched *because*
+"nothing here reads either" / "this document reads none of them". **This document does cite
+`human_decision_routing.dart:12-30` and, by bare-range continuation, `:691-694` and `:709-715` — all
+three about the QA path.** The non-change holds; the negation did not, and both now say the narrower
+true thing. (ii) Two bare ranges in §4.2 resolved past the end of the file they inherited, and now
+name their file. (iii) The "verified by reading all N lines" attestation is stated as a method rather
+than a line count, because pass 7's own edit made both prior counts false — §12.5, PASS7-12,
+PASS7-13.
 
 > The mandate: *"Who populates `context['gateResults']`, from what, at which point in the
 > transition, and how a gate's `config` is actually read. Name the code that does it, or state it
@@ -346,10 +391,24 @@ Nobody today (§2). The wiring must add a drain that:
 2. reads items at `qaInProgress`;
 3. calls `QAGateEvaluationService.evaluateForWorkItem(...)`;
 4. takes the transition with `ActorType.qaExecutor` when `isOverallPass`, and with
-   `ActorType.orchestrator` when it is not — the edge permits both (`:691-694`), and the
-   distinction is what lets a *failed* QA be recorded rather than silently left in place;
+   `ActorType.orchestrator` when it is not — the edge permits both
+   (`work_item_transitions.dart:691-694`), and the distinction is what lets a *failed* QA be recorded
+   rather than silently left in place;
 5. on `qaFailed`, raises the blocking `qaRework`/`qaWaiver` decision that
-   `qaFailed -> waitingForHumanDecision` expects (`:709-715`).
+   `qaFailed -> waitingForHumanDecision` expects (`work_item_transitions.dart:709-715`).
+
+> **PASS 7 NAMES THE FILE ON STEPS 4 AND 5, AND THE REASON IS A CITATION THAT RESOLVED NOWHERE.** Both
+> were written as bare `:691-694` and `:709-715`, which under this artifact set's convention — a bare
+> `:NNN` continues the last file named — resolve inside **`human_decision_routing.dart`, a 235-line
+> file**, and therefore point 456 and 474 lines past its end. **That is PASS3-1's shape exactly: a
+> well-formed `file:line` that opens onto nothing.** Both ranges are `work_item_transitions.dart`
+> lines and are correct there: `:690-696` is the `qaInProgress -> qaPassed` edge and `:691-694` is its
+> `actorAllowed([qaExecutor, orchestrator])`; `:709-715` is the `(qaFailed, waitingForHumanDecision)`
+> edge carrying `blockingHumanDecisionPendingOfType({qaWaiver, qaRework})`. **The property is
+> unchanged and no implementer builds anything different** — `work_item_transitions.dart` is named
+> earlier in this document (§2 at `:128`, §2.2 at `:198`), so a reader inferring the file from context
+> got it right, and that is exactly why the defect survived four passes: it is only wrong for a reader
+> who applies the convention correctly. §12.5, PASS7-12.
 
 The closest existing precedent for "a lane that cannot dispatch raises a blocking human decision
 instead" is the engineering-review missing-artifact drain (`apps/server/lib/server.dart:540-543`).
