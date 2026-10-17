@@ -1436,3 +1436,59 @@ not a reason to show it everywhere.
 **The invariant, recorded because it is the pattern, not the instance:** the operator's menu for a
 parked item must remain four coherent answers. A design that cannot express them **escalates**, as
 this one did — it did not merge two into one and report the reduction as resolved.
+
+---
+
+## 19. Pass 5 (`fd6b9ff`) — the scope question answered, and F-60's magnitude corrected
+
+### The scope worry was unfounded, and the proof is four facts
+`.decisions/5a90c1d3…`'s `scope_warning` required establishing whether a per-type option set is
+expressible before adding a shared `HumanDecisionChoice`. **It is**, from four verified properties:
+
+1. the offered set is a property of the **decision instance** — `HumanDecision.options`,
+   `DecisionContext.availableOptions`;
+2. the operator UI builds its menu **only** from that set (`decision_detail_bloc.dart:30-37`);
+3. `HumanDecisionChoice.values` is enumerated **nowhere in `lib/`** — all nine sites are in `test/`;
+4. a **per-type label layer already ships**: `decisionChoiceLabel(…, decisionType:)`.
+
+So `re_triage` is scoped to the park **by construction, not by filtering** — the opposite of the
+workaround the decision forbade. A per-instance set is *more* expressive than per-type, so per-type is
+derivable rather than absent.
+
+### F-60 corrected — there are FOUR registration sites, not three
+**Status** OPEN · magnitude revised 2026-10-17
+
+Pass 5 found a fourth site the authorised decision and pass 4 both missed. `FOLLOW_UPS §18` recorded
+three; **the correct count is four.** This is the second time this item's own magnitude was wrong
+(the decision said two).
+
+### F-63 The short-circuit protects 3 of the park's 4 arms — table, from the code
+**Status** OPEN · **read this before adding any arm**
+
+| arm | protected by a short-circuit? | mechanism |
+|---|---|---|
+| `approve` | **yes** | `human_decision_routing.dart:196-199` fires on both `escalationTargetFor` and `_isEscalationTransition` |
+| `cancel` | **yes** | same short-circuits; `(_, cancel)` arm at `:121` |
+| `reTriage` | **yes** | same short-circuits |
+| `rework` | **NO** | inert **only** via `_ => null` at `:214` |
+
+**There are two short-circuits, not one** — pass 3's G17b reasoned about one and reached a conclusion
+that happened to be right for `approve` and wrong for `rework` (F-61). The new fourth choice does
+**not** create a fourth unprotected arm.
+
+### F-64 `decision_choice.dart` will silently degrade on both surfaces
+**Status** OPEN · `apps/**` is PROHIBITED to design lanes — specified, not corrected
+
+`knownDecisionChoices` is a **hardcoded six-value set** against a **ten-value enum**, with its own doc
+comment enumerating the six as though they were the enum's. Adding `re_triage` as a tenth value
+without adding it here means its label degrades **everywhere** — including on the park. Presentation
+only; routing is unaffected. Recorded for the owning lane.
+
+### F-65 The re-triage ceiling is product policy nobody has set — R14
+**Status** OPEN · **not blocking** · flagged rather than decided
+
+`re_triage → designNotRequired` is the park's **only** arm carrying an escalation-index bound, and
+pass 5 specified **not** adding one, on that edge's own rule (`:553-558` — four types are already
+unbounded there). But re-triage is an **operator-invoked loop by construction**, unlike `escalation`.
+A ceiling is a product decision. It does not block slice 1; it blocks nothing, and is recorded so it
+is chosen rather than inherited.
