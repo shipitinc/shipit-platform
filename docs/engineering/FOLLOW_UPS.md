@@ -916,3 +916,83 @@ planning → planned`. The correct bound is that the single edge back carries
 `blocking_human_decision_resolved` **and** `decision_actor_is_human`, so **no unattended actor can
 take it**. Verified by 25 ticks producing exactly 3 hops and 3 dispatches. **The bound holds for a
 better reason than the one I asked for.**
+
+---
+
+## 11. QA contract provisioning on every entry path (`8b38a95`) — and what still blocks
+
+The operator chose the **per-product route**: make `ProductManifest.contracts.qaContract`
+reachable, and provision from it. The guard `qaContractExists()` is **unchanged** — the lane proved
+`git diff` against `guard_conditions.dart` and `work_item_transitions.dart` is **0 lines**.
+
+### What was blocking, established rather than assumed
+- The only QA contract builder in the repo was `buildAdvisoryTriageQAContract` — triage-specific
+  gates and `requiredRole: triageDefect`. Stamping it on a feature item would declare
+  `defect_evidence_reference` gates against an item with no defect.
+- `ProductManifest.contracts.qaContract` already existed as a type, but its single production site
+  wrote it **empty** (`product_registry_endpoints.dart:502`, `gates: const []`) and **`saveProduct`
+  never persisted it** — the spec was discarded on write and had no read path. The template mechanism
+  was inert platform-wide, not merely unconfigured for two products.
+- Reusing the triage contract id would have been actively unsafe: `triageQAContractIdForDefect` is
+  defect-scoped and `saveQAContract` is `ON CONFLICT DO UPDATE`, so lane E would have **overwritten
+  the triage parent's contract row and repointed its `metadata.workItemId`**. New ids are
+  work-item-scoped, and a test asserts lane E cannot touch a triage contract.
+
+### F-42 The three stranded items will not complete unattended — a human must move them
+**Status** OPEN · **needs an operator action**
+
+`agentExecuting` has exactly **two** outgoing edges (`work_item_transitions.dart:120,125`):
+`agentCompleted` (the refused write) and `agentFailed`. **There is no
+`agentExecuting → designNotRequired`**, so `operatorRetry` is refused and nothing replays a refused
+completion. Stated in-repo at `triage_defect.dart:85-87`.
+
+Recovery is a **human operator transition** `agentExecuting → agentFailed → designNotRequired`
+*after* the contracts exist. The code change makes that possible; it does not perform it. A
+`work_item_transition` row with `outcome='refused'` and reason `qa_contract_exists` on these three is
+**correct behaviour**, not a regression — the guard doing its job.
+
+### F-43 Feature intake has no replay hook, so one item cannot be backfilled
+**Status** OPEN · asymmetry, reported not papered over
+
+The two `design-remediation-DEF-*` items **can** be backfilled on replay — lane E's `ensurePersisted`
+reads the row and `_attachQAContract` CAS-writes the id, with a test proving it.
+`WI-feature-1791823723502264` **cannot**: `createFeatureWorkItem` always mints a fresh
+`WI-feature-${now.microsecondsSinceEpoch}` (`control_plane_service.dart:830`) and never re-reads an
+existing row. Reaching it needs either an operator transition with the id supplied directly or a
+replay hook that does not exist. **A different change, deliberately not bundled.**
+
+### F-44 An undeclared product now creates items that cannot complete — by decision
+**Status** OPEN · **RESOLVED by decision `c4d70b18…`**, consequence recorded
+
+The operator chose **create-and-record-the-reason** over refusing creation, extending `58bad3d1`'s
+rule that a platform-lifecycle condition is not a reason to reject a request about it. Three named
+refusals are recorded, never a null: `notDeclared`, `declaresNoGates`, `provisionerUnavailable`.
+
+**The consequence is deliberate and should not be forgotten:** a spec-less product's work items are
+created and remain **un-completable**, because the guard still requires a QA contract. The difference
+is that the reason is now **on the row** (`qaContractNotProvisioned`,
+`productQAContractSpecUnavailable`) instead of only in a guard error — the condition is visible.
+
+### F-45 The blocker was visible as a red test at HEAD, before this session's fix
+**Status** OPEN · reusable
+
+`apps/server/lib/src/triage/work_entry_test.dart` — *"the parked feature is invisible to the
+category-blind scheduler"* — **fails at `09f949d`** with `Expected: noAction / Actual: runnable`.
+Proven executably in a throwaway detached worktree, which was removed afterwards.
+
+A lane had already written a test pinning the behaviour this work restored, and it was red on
+`main`. **Nothing runs that suite in CI** (F-15), so a red test naming the exact blocker sat on
+`main` unnoticed while the blocker was being diagnosed from live behaviour by hand.
+
+### F-46 A repo-wide name gate trips on any new method called `provision`
+**Status** OPEN · WORKFLOW_IMPROVEMENT
+
+`test/durable_workspace_provision_trigger_test.dart` holds a repo-wide, call-shaped gate refusing
+`.provision(` on any receiver but `trigger` — it protects the destructive
+`DurableWorkspaceRuntime.provision`. The new API had to be renamed
+`ProductQAContractProvisioner.provisionForWorkItem` to satisfy it. The lane followed the gate's own
+prescribed remedy rather than weakening it, which was correct.
+
+Recorded because **any new method named `provision` in `apps/server/lib/**` will trip this gate**,
+and the failure message's advice — "if this receiver is some unrelated API, rename it" — is right
+more often than a reviewer will assume.

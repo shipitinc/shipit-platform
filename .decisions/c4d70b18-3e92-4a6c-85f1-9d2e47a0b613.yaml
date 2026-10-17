@@ -1,0 +1,25 @@
+# human-decision.yaml
+decision_id: c4d70b18-3e92-4a6c-85f1-9d2e47a0b613
+type: ARCHITECTURE
+status: RESOLVED
+title: A product with no declared QA contract has its work item CREATED and the reason RECORDED, never refused
+resolution:
+  selected: CREATE_AND_RECORD_REASON
+  label: Create the work item, record the named refusal reason on its row; do not refuse creation
+  decided_by: operator
+  decided_at: 2026-10-17T11:05:00Z
+  rationale_given: >-
+    Extends Human Decision 58bad3d1, which holds that a feature against a product that is not
+    `governed` is ACCEPTED and PARKED, never refused, because "a platform-lifecycle condition is not
+    a reason to reject a request about it." A missing QA contract declaration is exactly such a
+    condition: the request is legitimate and the product's configuration is what is incomplete.
+    Refusing creation would make the operator's request fail for a reason they cannot act on from
+    the work item itself, and would discard the request entirely rather than surface it.
+  delegated: >-
+    The consequence is stated rather than hidden: a spec-less product's items are created but
+    remain un-completable, because `agentExecuting -> agentCompleted` is guarded by
+    `qaContractExists()`. The reason is now ON THE ROW (`qaContractNotProvisioned` on feature
+    intake, `productQAContractSpecUnavailable` on design remediation) rather than only in a guard
+    error, so the condition is visible to an operator instead of silent. Three distinct named
+    refusals are recorded rather than a null: `notDeclared`, `declaresNoGates`,
+    `provisionerUnavailable`.
