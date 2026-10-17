@@ -1,0 +1,32 @@
+# human-decision.yaml
+decision_id: d41a6e85-7c02-4b39-9f18-3e6b5a20d7f4
+type: ARCHITECTURE
+status: RESOLVED
+title: reTriage stamps the triage dedupe discriminator; the park's approve does not
+resolution:
+  selected: RETRIAGE_IS_REWORK_APPROVE_IS_NOT
+  label: _isReWorkDecision(reTriage) = true; (designReviewRequest, approve) is declared NOT re-work
+  decided_by: operator
+  decided_at: 2026-10-17T17:05:00Z
+  rationale_given: >-
+    `_isReWorkDecision` (`durable_workflow_engine.dart:987-1004`) decides whether the triage dedupe
+    discriminator `nextTriageAttempt` is stamped. It classifies `rework` and `reject` as true, and
+    `approve` as true ONLY for `escalation` -- "the one approve that means 'again'". The new choice
+    `reTriage` means "put it back in triage", so it is a re-triage by any reading. The park's `approve`
+    means the design review is satisfied and the item moves forward, which is exactly the case the
+    existing rule already excludes.
+  consequence: >-
+    `reTriage` is added to the exhaustive switch at :991-1003, which has NO wildcard arm -- so without
+    this value the repository does not compile. That is a compile-time coupling in `workflow_store` to
+    every future `HumanDecisionChoice` value, discovered only by running `dart analyze`.
+  drift_guard: >-
+    Two pairs reach a `triageDefectDefinition.entryStates` member and each needs a reasoned
+    `_declaredNotReWork` entry, per that guard's own rule at
+    `triage_entry_state_drift_guard_test.dart:70-103` ("declared here, named in the reason, and
+    escalated"):
+      (designReviewRequest, approve) -> design_approved   : NOT re-work -- forward progress
+      (designReviewRequest, reTriage) -> design_not_required : IS re-work -- it is literally that
+  relationship_to_R14: >-
+    This is distinct from R14, which asks whether an unbounded CEILING should apply to the
+    re-triage arm's escalation index. Counting the discriminator is not the same as bounding a loop,
+    and answering this does not answer R14.

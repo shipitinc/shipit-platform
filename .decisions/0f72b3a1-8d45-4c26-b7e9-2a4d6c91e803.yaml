@@ -1,0 +1,26 @@
+# human-decision.yaml
+decision_id: 0f72b3a1-8d45-4c26-b7e9-2a4d6c91e803
+type: ARCHITECTURE
+status: RESOLVED
+title: Slice 1's file table is extended to the two files the implementation proved it needs
+resolution:
+  selected: EXTEND_FILE_TABLE
+  label: Grant OWNED_PATHS on workflow_store/durable_workflow_engine.dart and scheduler's triage drift guard
+  decided_by: operator
+  decided_at: 2026-10-17T17:05:00Z
+  rationale_given: >-
+    The Gate-D4-approved file table in design-review-gate.md section 6 1a names four files. The
+    implementation lane proved by measurement that two more are required: adding `reTriage` breaks
+    `durable_workflow_engine.dart:991-1003` (an exhaustive switch with no wildcard), and
+    `triage_entry_state_drift_guard_test.dart` goes red with two new pairs.
+  lesson_recorded: >-
+    The file table survived SEVEN rounds of independent review, verified citation-by-citation, and was
+    still wrong -- because every check was a CITATION check and none was a COMPILE check. Adding one
+    enum value and running `dart analyze` would have caught it. The artifact set contains zero
+    occurrences of "exhaustiv"; this coupling was never considered.
+    Consequence for the framework: a spec verified by citation is not a spec verified by compilation.
+  scope_discipline: >-
+    Granted on PROOF, not on request: the lane identified both files by measurement (1 analyzer error;
+    a guard measured green at base and red with 1a), not by inspection. Widening to a file a lane has
+    shown it needs, by measurement, is not the failure mode that caused the earlier regression -- that
+    was a lane inventing scope nobody had measured.
