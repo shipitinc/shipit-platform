@@ -1111,3 +1111,86 @@ demanded "do not edit the test" when three assertions provably had to move. Both
 of mine, not judgement calls the lane could have resolved. **A correction lane cannot grant itself
 authority, so a wrong `PROHIBITED_PATHS` or an unsatisfiable acceptance criterion costs a full
 cycle.**
+
+---
+
+## 14. QA contracts Design Revision (`ad4fada`) — and two more real defects it found
+
+HD-1 resolved the Level 3 question; the revision delivers the evaluator spec, the design-review gate,
+and the missing-artifact backlog. It **declined to author the two contracts**, with evidence: at
+`e3634a0` a feature-intake item produces **no agent execution at all** (F-48 gave the park its own
+state), and design remediation's only run has its result abandoned by `triage_processor.dart:124-132`.
+`config.requiredFields` would be justified by nothing. That is the third consecutive accurate block on
+the same evidence.
+
+### F-49 `allRequiredGatesPassed` passes VACUOUSLY when `qaContract` is absent — verified
+**Status** OPEN · **BLOCKING** · Manager-verified
+
+The guard reads **two** context keys, not one (`guard_conditions.dart:272-280`):
+
+```dart
+final requiredGates = gateResults.where(
+  (g) => context?['qaContract']?.gates.any((gc) => gc.gateId == g.gateId && gc.required) ?? false,
+);
+final allSatisfied = requiredGates.every(_isGateSatisfied);   // .every() on EMPTY is TRUE
+return allSatisfied ? GuardResult.pass(name) : GuardResult.fail(...);
+```
+
+Populate `gateResults` without also supplying `qaContract` and the filter yields an **empty** list, so
+`.every()` is vacuously true and `qaInProgress → qaPassed` **passes with nothing judged**.
+
+This is the specific shape of failure this session has hit repeatedly: a partially-wired mechanism
+that **looks enforced and enforces nothing**. Anyone wiring the evaluator must supply both keys, and
+the guard should arguably fail closed when either is absent. Note the current state is the *safe*
+direction — no producer at all means `gateResults` is null and the guard fails — so this is a trap for
+the **next** implementer, not a live hole today.
+
+### F-50 `qaInProgress` is a live dead end on the MAIN implementation lane — unrecorded anywhere
+**Status** OPEN · **BLOCKING end-to-end flow** · found by the design revision
+
+`qaInProgress` is entered only from `reviewApproved`. From there:
+
+- `qaPassed` (`:690`) needs `allRequiredGatesPassed()`, which **always fails** (F-47);
+- `qaFailed` needs a `qaExecutor` actor, and **no scheduler dispatches the design lane**;
+- **no `JobDefinition` lists `qaInProgress` in `entryStates`**, so nothing can move it.
+
+**Every work item that commits and passes engineering review is stranded there.** This is the main
+implementation path — the one this whole session has been driving — and it was not in the ledger
+before. It is why the last lane's verification stopped at `agent_completed`: the QA hop behind it has
+never worked.
+
+### F-51 The registered gate evaluators would fabricate a PASSING if wired
+**Status** OPEN · **BLOCKING the evaluator slice**
+
+The four registered evaluators are **not implemented**: `_validateEvidence` returns
+`evidence.isNotEmpty` and all four collectors return **hardcoded empty findings**. Wiring them as
+they stand would emit a PASSING with a full audit trail and nothing checked — the exact green lie this
+ledger keeps recording.
+
+**Hard ordering constraint, and it is why the evaluator cannot be a one-slice fix:** the collector
+implementations must land and be proven before the guard is relied on. This is the same lesson as the
+capability-parity disposition block that claimed 21 corrections and delivered ~8.
+
+### F-52 The design-review gate needs a PRODUCER, not a model — the brief's premise was understated
+**Status** OPEN · reduces the size of HD-1's gate substantially
+
+The blocked brief assumed the design-review artifact would have to be invented. It exists:
+`packages/design_governance` with `PostgresDesignGovernanceStore`, real migrations, and
+`readApprovedDesignRevisionForWorkItem` (`design_revision_store.dart:17`). So HD-1's gate requires
+**no new schema, no new `HumanDecisionType`, no new routing arm and no new state** — only something
+that writes an approved `design_revision` row.
+
+Consequence: the design lane and the implementation lane are **disconnected** —
+`designApproved`'s only out-edge is `→ agentExecuting`, and `designApproved` is in
+`triageDefectDefinition.entryStates`. Nothing produces an approved revision for a feature.
+
+### Citations the design revision corrected in MY dispatch brief
+Recorded because a spec that points at the wrong line sends a lane hunting:
+
+- `qaInProgress → qaPassed` is `work_item_transitions.dart` **`:690`**, not `:657-662` (which is a
+  comment about `reviewRejected`). My spec was wrong.
+- `_extractDefectId` is at `triage_processor.dart:279-285`; my spec cited `:272-276`. Code as
+  described.
+
+The lane flagged both rather than complying silently. **That is the behaviour the correction-loop
+brief asks for, and it is the reason the errors cost nothing but a paragraph.**
