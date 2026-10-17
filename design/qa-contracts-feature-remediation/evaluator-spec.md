@@ -1,7 +1,9 @@
 # Evaluator Spec — the QA gate evaluator
 
 **Parent:** [`design-revision.md`](./design-revision.md) §5 — deliverable 1
-**Authoring HEAD:** `e3634a0cbbdf656267b22908284dd1ae8b655085`
+**Authoring HEAD:** `e3634a0cbbdf656267b22908284dd1ae8b655085` (revision 1)
+**Corrected at:** `c8fd361906f0d831bbcfd431b75d1eb21ae9db5d` (revision 2, correction lane
+`design-QA-CONTRACTS-CORRECTION`)
 **Status of this document:** a specification. This lane implements no production code.
 
 > The mandate: *"Who populates `context['gateResults']`, from what, at which point in the
@@ -74,23 +76,80 @@ why §5's ordering constraint is the thing standing between "honest" and "falsel
 (`:651-654`) — and has exactly two out-edges: this one and `qaInProgress -> qaFailed`
 (`:697-702`).
 
-**There is no caller.** `qaInProgress` is in no `JobDefinition.entryStates`, so no scheduler
-dispatches from it; and `QAOrchestration` — the class an `ActorType.qaExecutor` would be embodied
-by — is constructed in exactly one place in the repository: its own test file
-(`packages/qa_orchestration/test/qa_orchestration_test.dart`).
+### 2.1 Nothing takes `reviewApproved -> qaInProgress` either — revision 1 got the chain wrong
 
-So the walk today is:
+Revision 1 wrote the walk as:
 
 ```
 agentCompleted -> reviewInProgress -> reviewApproved -> qaInProgress -> STUCK
-                                                                       ^
-                              qaPassed  requires allRequiredGatesPassed, which always fails
-                              qaFailed  requires a qaExecutor that nothing dispatches
 ```
 
-**This is a live dead end on the main implementation lane**, reported here because the evaluator
-is what unblocks it, and recorded in `design-revision.md` §2.1 for the Manager. It is not designed
-in this brief — `FOLLOW_UPS.md` is the Manager's and `qaInProgress` is not this brief's subject.
+**That is wrong by one hop, and the error mattered:** it put a QA drain in slice 2c that would have
+had nothing to drain. Verified:
+
+- `reviewApproved` is in **no** `JobDefinition.entryStates`. Every `entryStates` set in the
+  repository is `baseline_product.dart:42`, `triage_defect.dart:126`,
+  `scheduler.dart:3200, 3262, 3276, 3361`, `implement_feature.dart:114` — `reviewApproved` is in
+  none of them.
+- Its **only** in-edge is the human one, `waitingForHumanDecision -> reviewApproved`
+  (`:425-434`), guarded by `blockingHumanDecisionResolved({(engineeringReview, approve)})`.
+- Its **only** out-edge is `reviewApproved -> qaInProgress` (`:651-654`).
+- **No production code calls `transition(to: WorkItemState.reviewApproved)` or
+  `to: WorkItemState.qaInProgress`.** Every such call site in the tree is in a `*_test.dart`.
+
+**So the real chain is two dead ends, not one:**
+
+```
+agentCompleted -> reviewInProgress -> reviewApproved -> STUCK          ← (no caller of the out-edge)
+                                                                  \
+                                                                   -> qaInProgress is UNREACHABLE
+```
+
+**Consequences, both required:**
+
+1. `design-revision.md` §2.1's claim that *"every reviewable work item … walks to `qaInProgress` and
+   stops there permanently"* is **corrected**: it stops one hop earlier, at `reviewApproved`, and
+   `qaInProgress` is unreachable. The finding is not retired — it moves one state left and grows a
+   second one.
+2. **Slice 2c must be widened.** It is not "the drain"; it is *the drain **and** whatever walks
+   `reviewApproved -> qaInProgress`*. The engine may not be reimplemented here, so slice 2c's
+   specification is: **name the caller**, and its obligations are the existing
+   `actorAllowed([orchestrator])` + `qaContractExists()` on that edge. The *reason* no caller exists
+   is the design-governance-adjacent gap `server.dart:1327-1330` generalises: a transition declared
+   with a guard nobody can satisfy is a wall, and the guard here — `qaContractExists()` — requires a
+   product-declared contract, which not every product has. **Whoever designs that caller must decide
+   what happens for a product that declared no contract, and this document does not decide it.**
+
+### 2.2 The rest of the walk, and who can take `qaFailed`
+
+`qaInProgress` is in **no** `JobDefinition.entryStates`, so nothing dispatches from it either.
+`AgentRole.qaExecutor` exists (`agent_role.dart:6`) but `QAOrchestration` — the class that would be
+that executor's brain — is constructed in exactly one place in the repository: its own test file
+(`packages/qa_orchestration/test/qa_orchestration_test.dart`).
+
+```
+agentCompleted -> reviewInProgress -> reviewApproved -> STUCK
+                                qaPassed requires allRequiredGatesPassed, which can only fail
+                                qaFailed admits [qaExecutor, orchestrator] — and nobody dispatches either
+```
+
+**Correction to revision 1** (LOW finding): revision 1 wrote *"`qaFailed` requires a `qaExecutor`
+that nothing dispatches"*. That is incomplete. The edge admits **both**
+(`work_item_transitions.dart:697-702`):
+
+```dart
+(WorkItemState.qaInProgress, WorkItemState.qaFailed): [
+  GuardConditions.actorAllowed([
+    ActorType.qaExecutor,
+    ActorType.orchestrator,      // ← revision 1 omitted this
+  ]),
+],
+```
+
+`design-revision.md:153-154` had it right; this document did not. **The distinction is load-bearing
+for slice 2c:** the failure arm is reachable by `ActorType.orchestrator` today, which is what makes
+§4.2 step 4's "record a failed QA rather than silently leave it in place" a wiring change rather
+than a new-actor change.
 
 ---
 
@@ -162,7 +221,10 @@ other is not, so the two must be produced together by one call that cannot retur
 ### 3.4 `sourceColumn` is a label, never a query
 
 The only `config` key vocabulary declared anywhere in this repository is
-`structuredClassificationAdmitted`'s (`lane_g_triage_qa_contract.dart:177-187`):
+`structuredClassificationAdmitted`'s
+(`packages/qa_orchestration/lib/src/lane_g_triage_qa_contract.dart:172-188` — **note the package
+path: this file lives under `packages/qa_orchestration/lib/src/`, not
+`apps/server/lib/src/triage/`.** Revision 1 cited it without one; see `design-revision.md` §12):
 
 ```dart
 config: <String, dynamic>{
@@ -287,17 +349,56 @@ The content is fabricated:
 
 ### 5.2 What slice 2a must do, before any wiring
 
-1. **Replace `_validateEvidence`** with validation that reads `QAEvidence.content` against the
-   gate's declared `config` thresholds. `issues` non-empty, `vulnerabilities` empty,
-   `threshold` actually compared against a real coverage value. Whether each of those is *achievable*
-   is a `qa_architect` question — what is **not** negotiable here is that the predicate stops
-   being a constant.
-2. **Or** de-register all four until they are real. This is the cheaper and more honest option and
-   it is **recommended**: a registry that lists four evaluators which pass unconditionally
-   (`design-revision.md` R10) teaches every future reader that `gateRegistry` means something it
-   does not.
-3. Either way, add a non-vacuity test that **fails** when the predicate is the constant — the same
-   shape as V1-V6, so a future refactor cannot quietly restore it.
+Independent review found that revision 1's option 1 **cannot achieve what it was offered for**, and
+the review is right. Stated as corrected:
+
+**Option 1 — replace `_validateEvidence` with content-reading validation — is INSUFFICIENT on its
+own, and this document no longer offers it as an alternative to option 2.**
+
+The reason is the four collectors, not the predicate. Verified at
+`packages/qa_orchestration/lib/src/gates/predefined/`:
+
+| Collector | Line | `QAEvidence.content` it returns |
+|---|---|---|
+| `static_analysis_gate.dart` | `:24` | `{'tool': config['tool'] ?? 'dart analyze', 'issues': []}` |
+| `test_coverage_gate.dart` | `:24` | `{'format': 'lcov', 'threshold': config['threshold'] ?? 0.8}` — **no coverage value at all** |
+| `security_scan_gate.dart` | `:24` | `{'tool': config['tool'] ?? 'trivy', 'vulnerabilities': []}` |
+| `performance_gate.dart` | `:24-27` | `{'benchmarks': config['benchmarks'] ?? [], 'thresholds': config['thresholds'] ?? {}}` |
+
+`evidence` is exactly what those collectors return (`gate_evaluator.dart:31-39`). **So a predicate
+reading `QAEvidence.content` reads hardcoded collector output.** `issues` is `[]` for every work
+item; `vulnerabilities` is `[]` for every work item; there is no coverage number to compare a
+threshold against, and `performance` echoes the config back. **Every predicate expressible over that
+content is a constant, and the predicate is a constant with more steps.**
+
+Two specific failures of the predicates revision 1 listed, stated so no implementer re-derives them:
+
+- **"`issues` non-empty" is unsatisfiable** with the current collector. The predicate would be
+  `false` for every work item, turning the fabricated pass into a fabricated *fail* — still constant,
+  still not a gate, and now it fails work that has not been assessed.
+- **"`issues` non-empty, `vulnerabilities` empty" is not a predicate.** It is two independent clauses
+  written as one with a comma, and no coherent reading of it is satisfiable at the same time: with
+  the real collectors `issues` is empty, so the first conjunct is false for every input.
+
+**So there are two options, and only one of them is safe:**
+
+1. ~~Replace `_validateEvidence`~~ — **INSUFFICIENT.** It cannot be non-vacuous while the collectors
+   are hardcoded. It would also *replace* code that is currently unreachable, changing nothing
+   observable, and risk reading as remediation.
+2. **De-register all four until they are real. This is the only safe option, and it is
+   RECOMMENDED.** A registry that lists four evaluators which pass unconditionally
+   (`design-revision.md` R10) teaches every future reader that `gateRegistry` means something it does
+   not — and §5.1 shows the pass is fabricated, so it is teaching something *false*.
+   Un-registering converts `passed` into `notExecuted` (`qa_orchestration.dart:21-29`), which
+   `isGateSatisfied` already treats as unsatisfied (`guard_conditions.dart:299-303`) — the **honest**
+   state, and the one the current guards handle correctly.
+3. **Either way**, add a non-vacuity test that **fails** when the registry presents an evaluator
+   whose evidence content is not a function of the work item — the same shape as V1–V6. Concretely:
+   *for each registered type, two `AgentResult`s that differ must produce different evidence
+   content.* The current four fail this trivially (identical output for identical config).
+
+**What a real `static-analysis` gate should assert is a `qa_architect` call**, not a design call —
+recorded in `design-revision.md` §9.3 and not decided here.
 
 ### 5.3 `triage-classification-structure` — the one evaluator that is honestly specifiable now
 
@@ -320,9 +421,9 @@ Implemented against `GateEvaluator` **directly** (`gate_evaluator.dart:5-13`), *
 (`apps/server/lib/src/triage/triage_processor.dart:199-222`) throws `FormatException` unless
 `classification`, `status`, `confidence` and `suspectedCategory` are all present, and returns
 `null` on `FormatException` (`:270-276`). **The four `requiredFields` at
-`lane_g_triage_qa_contract.dart:179-184` are exactly those four keys.** The gate records as an
-obligation what is currently an accident of a `catch` block — which is what
-`lane_g_triage_qa_contract.dart:78-83` says it is for.
+`{L}:179-184` are exactly those four keys.** The gate records as an obligation
+what is currently an accident of a `catch` block — which is what `{L}:78-83` says
+it is for.
 
 Two **non-negotiable** properties:
 
@@ -334,11 +435,12 @@ Two **non-negotiable** properties:
 - **It must be honest about the two triage gates that have no evaluator.** After slice 2, the
   triage contract's *first* gate is `PASSING` when the shape is right and the other two remain
   `notExecuted`. Because `allRequiredGatesMustPass: true` and both are `required: true`
-  (`:175`, `:201`), `allRequiredGatesPassed` **still fails** — which is correct. Recording this
-  matters: a reader who sees one triage gate enforced must not infer the contract is satisfied.
-  `lane_g_triage_qa_contract.dart:107-118` already states the honest position; keep
-  `'evaluatorRuntime': 'absent'` (`:156`) until *all three* have evaluators, and record the
-  partial state in a way that cannot be read as full enforcement.
+  (`{L}:175`, `:201`), `allRequiredGatesPassed` **still fails** — which is
+  correct. Recording this matters: a reader who sees one triage gate enforced must
+  not infer the contract is satisfied. `{L}:107-118` already states the honest
+  position; keep `'evaluatorRuntime': 'absent'` (`:156`) until *all three* have
+  evaluators, and record the partial state in a way that cannot be read as full
+  enforcement.
 
 ---
 
@@ -348,11 +450,29 @@ Two **non-negotiable** properties:
 |---|---|---|
 | `ABSENT` | no declaration exists | the two contracts this revision declines (`design-revision.md` §3) |
 | `DECLARED` | a `QAContract` row exists; its gates are readable and auditable; **nothing evaluates them** | `qa-triage-*`; every `qa-product-*` |
-| `PARTIALLY ENFORCED` | some gate types have evaluators and pass/fail honestly; the contract's `allRequiredGatesMustPass` still cannot be satisfied because other required gates are `notExecuted` | reachable only after slice 2.3 |
+| `PARTIALLY ENFORCED` | some gate types have evaluators and pass/fail honestly; the contract's `allRequiredGatesMustPass` still cannot be satisfied because other required gates are `notExecuted` | reachable only after **slice 2b** (`triage-classification-structure` has an evaluator) *and* slice 2c (the drain that calls it) — **and only for a product whose every other required gate type also has an evaluator** |
 | `PASSING` | every required gate evaluated and satisfied by a real evaluator | **nothing in this repository, at any slice of this spec** |
 
 The single sentence this spec exists to make true: **`DECLARED` is not `PASSING`, and the word on
 the row must never imply otherwise.** Both existing builders already write
-`'evaluatorRuntime': 'absent'` (`lane_g_triage_qa_contract.dart:156`,
-`product_qa_contract.dart:156`); that key must survive every slice, and must be **removed only**
-when the contract's every required gate type has a real evaluator.
+`'evaluatorRuntime': 'absent'` (`packages/qa_orchestration/lib/src/lane_g_triage_qa_contract.dart:156`,
+`packages/qa_orchestration/lib/src/product_qa_contract.dart:156`); that key must
+survive every slice, and must be **removed only** when the contract's every required
+gate type has a real evaluator.
+
+**Correction to revision 1 (MEDIUM finding).** This table said `PARTIALLY ENFORCED` was "reachable
+only after slice **2.3**". **No slice 2.3 exists** — `design-revision.md` §8 defines **2a**
+(replace the content-blind validation), **2b** (implement `triage-classification-structure`) and
+**2c** (the `qaInProgress` drain, now widened per §2.1 to include the `reviewApproved -> qaInProgress`
+caller). The reference was a phantom and it is corrected rather than resolved to whichever slice
+seemed nearest, because guessing would have been the same defect one level down.
+
+**And one thing this table should have said and did not:** `PARTIALLY ENFORCED` is **not reachable
+at all** under §5.2 as corrected. Reaching it requires a contract's required gates to be evaluated
+honestly, and the only contract with an evaluator after 2b is the triage contract — whose other two
+required gates (`triage-evidence-grounding`, `triage-clarification-routing`) have none
+(`lane_g_triage_qa_contract.dart:199, 221` — package path given at §3.4). So the honest cell reads
+**"not reachable at any slice of this spec"**, exactly like `PASSING`.
+
+`PARTIALLY ENFORCED` is a real state of the world. It is simply not one this repository can reach by
+building only what this spec builds — which is itself the §5.2 finding, one vocabulary level up.
