@@ -662,3 +662,62 @@ warned.**
   rather than the editable form.
 - `.fvmrc` 3.44.0 against the 3.44.7 toolchain actually gating this repo (see F-33), plus
   `Dockerfile.client`'s stale "pinned to `.fvmrc`" comment from F-19.
+
+---
+
+## 8. Capability-parity corrections applied — `0033484`
+
+`design/capability-parity/` corrected against `DESIGN_REVIEW_CHANGES_REQUIRED`
+(1 BLOCKING, 7 HIGH, 5 MEDIUM, 8 LOW) plus three resolved human decisions. Awaiting
+independent `design-reviewer`; **slice 1 implementation remains blocked until it clears.**
+
+### Human decisions recorded
+| id | ruling |
+|---|---|
+| HD-1 `6c1f8a42…` | A capability that cannot be verified is reported **UNVERIFIED**; the lane **may proceed** but **may never emit `APPROVE_FOR_MERGE`**. Hard-stop rejected — it converts the stall into a deadlock. |
+| HD-2 `b58d0e17…` | **Both surfaces pin EXACTLY.** `validation` at `.fvmrc` 3.44.0, `render` at the golden contract 3.44.7. **Version drift is FATAL, not warned.** Supersedes the brief's own `range-satisfies` recommendation. |
+| HD-3 `e07c4a93…` | Exit `UNDECLARED` is **fatal in CI from day 1 of slice 2**. No advisory phase. |
+
+### DEVIATION — applied by the Manager, not a lane
+Three consecutive dispatches of a correction subagent failed with transport-level **connection
+resets**, across two different agent types (`design-agent`, `general`). The corrections were
+therefore applied directly. They are **design documentation, not production source**, and the result
+is routed to independent review before anything is implemented. Recorded rather than smoothed over,
+because "the lane did it" and "the orchestrator did it" are different provenance claims.
+
+### The three corrections that change behaviour
+- **Exit codes renumbered.** `UNKNOWN=4`, `UNDECLARED=5`; the imported contract's
+  `exitRefusedToGrade=3` is left intact and `3` is held vacant, so a combined report cannot
+  collapse *"could not measure"* with *"measured and mismatched"* — the exact collision the design
+  exists to prevent.
+- **Requirement 4 was inert at runtime.** The lane obligation named only `.agents/skills/**`.
+  `AGENTS.md:47-52` confirms no generator or drift test is instantiated in this product repo, so
+  editing only the canonical path **changes nothing and fails nothing**. Both `.agents/skills/` and
+  `.opencode/skill/` are now named per skill.
+- **A circular design, closed.** The golden contract is enforced by **Dart**
+  (`check_render_environment.dart`, reached at `ci.yaml:148-155` via `flutter pub get`), so
+  evaluating it "exactly" required the very SDK the contract is about, while AC#4 requires the
+  checker to run **with no Dart and no Flutter**. New §3.6: `sh` decides the machine axes;
+  **`maxNoiseFloorRatio` is a property of the goldens** and is delegated, never re-implemented.
+
+### F-35 The design brief's metadata did not parse, and no review caught it
+**Status** OPEN · discovered while applying corrections
+
+`design-brief-metadata.yaml` carried `implementation_feasibility: HIGH` immediately followed by an
+indented `rationale:` mapping — invalid YAML. **The file did not load at all.**
+
+It shipped from the design lane, survived the designer's own self-check (which claimed "both JSON
+blocks parse; fences balanced"), and survived an independent review that spot-checked 14 `file:line`
+citations. Both checked *structure* and neither checked *parseability* of the metadata itself.
+
+Now fixed. **Recorded because the class is larger than this file**: a governance artifact that does
+not load cannot be reviewed by a human or a tool, and every reviewer who reads it as text rather
+than parsing it will report it as fine. Nothing in the design-review checklist exercises YAML
+validity.
+
+### Known-incomplete in `0033484`
+**L3 is PARTIAL and left visible.** Q5 still infers "exit 0" from "probeable" — probeable is not
+satisfied. HD-2 withdrew the recommendation that inference supported, so it no longer carries a
+decision; removing it is cleanup rather than correction. Recorded in the metadata's
+`not_fully_addressed` block rather than silently deleted, so a reviewer can check the judgement.
+
