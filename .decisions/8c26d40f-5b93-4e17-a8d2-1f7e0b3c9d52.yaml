@@ -1,0 +1,36 @@
+# human-decision.yaml
+decision_id: 8c26d40f-5b93-4e17-a8d2-1f7e0b3c9d52
+type: ARCHITECTURE
+status: RESOLVED
+title: GATE D4 APPROVED — the design-review gate and QA evaluator design may be implemented
+resolution:
+  selected: GATE_D4_APPROVED
+  label: Level-3 design approved for implementation; slice 1 proceeds
+  decided_by: operator
+  decided_at: 2026-10-17T16:30:00Z
+  rationale_given: >-
+    Seven independent review rounds cleared the design technically. Round 7 returned one BLOCKING, no
+    HIGHs, 3 MEDIUM and 2 LOW, and found that **every remaining finding is documentation, count,
+    rationale or citation — none alters what an implementer builds**. The normative slice-1 spec
+    (`design-review-gate.md` section 6 1a) and its summary (section 8 1a) were both verified intact:
+    three targetFor arms, four answers, cancel served by the pre-existing catch-all, three whitelist
+    admissions, four files.
+  gate_discharge: >-
+    This decision is the Gate D4 human approval that Risk Level 3 requires. **No review round could
+    discharge it** — rounds 5, 6 and 7 each returned HUMAN_DECISION_REQUIRED: NO on the grounds that
+    *their own* findings were mechanical, which is correct about their findings and is NOT approval.
+    Those returns did not approve the design; this record does.
+  known_defect_at_approval: >-
+    Approved WITH one known documentation defect: `design-revision.md` section 16(11) still carries the
+    unanchored count-generator form and yields `13 8 9 7 8 17`, reporting section 12.4 as eight rows
+    against six actual. The anchored, stable form already exists at :2208-2211 and
+    `design-revision-metadata.yaml:1952` — it was never pasted into the normative location a reader is
+    directed to at :1033. **It is documentation only and does not affect what slice 1 builds.** Recorded
+    so approval is not mistaken for a claim that the artifact is defect-free.
+  scope_of_this_approval: >-
+    Approves the DESIGN for implementation. Sub-slices 1a and 1c proceed. Slice 2 remains blocked on 2d.
+    Sub-slice 1b was folded into 2b by H-2 and does not land here.
+  still_open_not_blocking: >-
+    R14 — whether a re-triage ceiling is product policy — remains an open operator decision, recorded
+    as a risk rather than escalated. The reviewer confirmed it does not block slice 1. The re-triage arm
+    is human-invoked, so the loop is human-gated rather than automatic.
