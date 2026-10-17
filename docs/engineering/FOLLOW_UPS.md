@@ -1673,3 +1673,58 @@ partial fix, because that would have created a **3-vs-21-site inconsistency insi
 
 **Recorded rather than resolved.** It is a judgement a reviewer can overturn, and the reasoning is
 stated.
+
+---
+
+## 23. Round 7 — slice 1 is SAFE, and Gate D4 approval is outstanding
+
+Round 7: **1 BLOCKING, no HIGHs**, 3 MEDIUM, 2 LOW. All of it documentation, count, rationale or
+citation — **none alters what an implementer builds.** The reviewer verified `§6 1a` and `§8 1a` intact:
+three arms, four answers, `cancel` served by `(_, cancel)` at `human_decision_routing.dart:121` with row
+3 marked *"none needed"*, three whitelist admissions, four files.
+
+### The blocker is F-69/F-70 recurring at the one place a reader is directed to
+**§16(11)** still carries the **unanchored** generator form. Run by the reviewer it yields
+`13 8 9 7 8 17` — §12.4 reported as **eight** against six actual rows — making four claims false
+including the one that *"both boundaries are now anchored"*. **The anchored form is correct and stable
+across two runs (`13 8 9 7 6 17`) and already exists at `:2208-2211` and `metadata:1952`.** It was
+simply never pasted into `§16(11)` — the normative location, which `design-revision.md:1033` points a
+reader at with *"GENERATED — see §16(11)"*.
+
+**This is now the fourth iteration of one object**, and the sharpest possible statement of the lesson:
+a mitigation that is *known, written, verified stable, and not pasted where it is read* is not
+mitigated. The fix existed. Its location was the defect.
+
+### F-71 PASS7-16's rationale was wrong, and its count undercounted by half
+**Status** OPEN · corrected by the review's ruling 1
+
+Leaving the 21 `work_item_transitions.dart:559-563` truncations was **right**; the recorded reason was
+not. `§14.5`'s precedent (`:641-650`) is a range **inside a command transcript** — rewriting it would
+falsify a record of output actually produced. `:559-563` is **hand-written prose**, so the precedent
+does not reach it.
+
+The correct and stronger ground: **`:559-563` contains the entirety of the quoted material.** Every site
+states *"contains exactly `engineeringReview` and `humanQaApproval`"*, and `:559-563` establishes that
+completely — the truncated `:564` is a closing `),` contributing nothing.
+
+**Why that distinction matters:** as written, PASS7-16's reasoning would license leaving the *next*
+truncation that actually **drops quoted content** — which PASS6-2's `:528-546` did, including the edge
+header and two of six pairs. Categorically different defects, treated as one.
+
+Also: **32 raw occurrences across the four artifacts, not "≈21"** or the commit's "sixteen".
+
+### Ruling on the count recursion
+The lane's account **stands** — the claim names the run, names the moment, and the moment is in the
+transcript, so it is not *"a stale count with a rationalisation attached"*. But two residues are real:
+`§12.5`'s heading still reads *"sixteen findings"* over **seventeen** rows, and `§16(11)` restates five
+counts on a line declaring itself *"GENERATED, NOT RESTATED"* while omitting `§12.5` — PASS5-7/PASS6-6
+recurring **inside the rule against them**.
+
+### Gate D4 is outstanding and this review does not discharge it
+Risk level **3**. Round 7 returned `HUMAN_DECISION_REQUIRED: NO` because none of *its* findings is a
+product or architecture decision — they are all mechanical, consistent with rounds 5 and 6. **That is
+not the same as the design being approved.** The Level-3 gate requires human product/design/architecture
+approval and **no review round has discharged it.**
+
+R14 — whether a re-triage ceiling is product policy — also remains an **open operator decision**,
+recorded as a risk rather than escalated. It does not block slice 1.
