@@ -1,0 +1,322 @@
+# Design Brief metadata — design-CAPABILITY-PARITY
+# Required fields per docs/engineering/DESIGN_GOVERNANCE.md ("Artifacts" ->
+# "Design Brief" -> "Required Fields"). This is a BRIEF, not a Revision: it is
+# pre-exploration, so `risk_assessment` is the initial risk level per Gate D1, and
+# no reviewer or approver is recorded.
+
+brief_id: BBA3F4B9-1CF1-462D-9B3B-5F56F04374D5
+revision_id: B30166CC-116C-4CAA-B379-782B059255B6
+version: 0.1.0
+status: UNDER_REVIEW
+
+requirements_refs:
+  - "docs/engineering/FOLLOW_UPS.md §6 req 1 — declared capability set per component"
+  - "docs/engineering/FOLLOW_UPS.md §6 req 2 — fail-closed environment check"
+  - "docs/engineering/FOLLOW_UPS.md §6 req 3 — the same set consumed by CI"
+  - "docs/engineering/FOLLOW_UPS.md §6 req 4 — lane gate refusing an unmeasured 'clean'"
+  - "docs/engineering/FOLLOW_UPS.md §5 F-27 — silent harness truncation; 'green' may mean 'truncated'"
+  - "docs/engineering/FOLLOW_UPS.md §5 F-15(1) — CI installs Dart only; melos bootstrap crashes"
+  - "docs/engineering/FOLLOW_UPS.md §5 F-15(5) — golden test asserts an FLUTTER_ROOT path shape"
+
+architecture_refs:
+  - "apps/control_plane/test/tools/golden_render_environment.json (existing declared-environment contract; imported, not re-authored)"
+  - "apps/control_plane/test/tools/check_render_environment.dart (existing refuse-to-grade tool; the precedent this design generalises)"
+  - "docker/build-client.sh (host-side Flutter build; establishes the egress constraint)"
+  - "AGENTS.md § Test resource hygiene (why capability-check must be free of Docker)"
+  - "Human Decision 3e9dfb75-7bdf-4a8c-89dd-c76779a65371 (RESOLVED / OPTION_C — exact render pin, deliberately diverging from .fvmrc)"
+
+problem_statement: >
+  Nothing in this repository compares what a product component needs in order to be built,
+  validated and run against what an environment actually provides. A capability requirement that
+  was never measured is therefore indistinguishable from one that was measured and satisfied, so a
+  validation claim can be recorded as "clean" when the tool that would have produced the evidence
+  was absent. The failure is at two locations — the review host and .github/workflows/ci.yaml —
+  and the mechanism must be at neither of them: one committed declaration that both consume.
+
+risk_assessment:
+  level: 2
+  rationale: >
+    Level 2 (Feature UX Change) is chosen for the affected party, who is an agent or an operator
+    rather than an end user: this design adds a hard gate, introduces a new failure mode and a new
+    claim vocabulary ("clean" becomes conditional on a recorded exit code), and can block a lane
+    with no remedy path inside the lane itself. That is a change to when work may be declared done.
+
+    Level 3 rejected: no navigation, information architecture or core user workflow is touched, and
+    nothing in the product's UI changes.
+
+    Level 1/0 rejected in the other direction: it adds a new required gate with no natural owner
+    and a fail-closed path that can block `make qa-up`. Optimising it away — softening an UNKNOWN
+    into a warning — is how the current defect started, so it must not be routed AUTO.
+
+    Gate D4 is therefore HUMAN_DECISION_REQUIRED. Three decisions are escalated rather than made:
+    HD-1 whether a lane may proceed and report UNVERIFIED, or must stop; HD-2 whether .fvmrc stays
+    a preferredVersion (recommended, with a falsifiable test) or becomes exact; HD-3 whether exit
+    code 4 (UNDECLARED) is fatal in CI or advisory. All three are recorded in the brief §9.
+  risks:
+    - "R1 the gate becomes a checkbox a lane learns to satisfy superficially — HIGH likelihood, mitigated by code 4 in slice 2 and CI consumption in slice 3"
+    - "R2 grep/awk parsing of pubspec.yaml is brittle and a wrong derivation is a false SATISFIED — MEDIUM, mitigated by UNKNOWN-on-unreadable-key and --verify"
+    - "R3 scope explosion into every tool in the environment — HIGH, mitigated by a three-capability slice-1 cap and a named consumer per entry"
+    - "R4 exit code 4 blocks all work until the manifest is complete — MEDIUM, deliberately deferred to slice 2"
+    - "R5 range-satisfies is misread as 'pins are decorative' — MEDIUM, mitigated by importing the golden pin exactly and stating the absence-fatal/version-warned asymmetry"
+    - "R6 a lane reviews an undeclared component — MEDIUM, the exact loophole code 4 exists to close; recorded as slice 1's honest limitation"
+    - "R7 the tool cannot run in some lane sandbox — LOW, degrades to UNKNOWN which is the safe direction"
+    - "R8 build/ is gitignored so host.build_web cannot be derived — CERTAIN, designed around as a runtime probe"
+    - "R9 'unverified' becomes the cheap answer and review throughput recovers without coverage — MEDIUM, mitigated by making UNKNOWN countable in the structured result"
+
+changelog:
+  - "revision 1 (initial brief). Four ledger requirements designed as one committed declaration
+     (tool/capabilities.json) plus one dependency-free checker (tool/capability-check), with three
+     consumers: make qa-up, CI, and the lane gate."
+  - "ANSWERED Q1 hybrid declaration (derive what is derivable, declare what is not) at
+     tool/capabilities.json, with --verify re-derivation as the teeth. Derive-only rejected
+     (cannot express service.postgres_test or the render environment); declare-only rejected
+     (duplicates pubspec.yaml and adds a third place to forget)."
+  - "ANSWERED Q2 component = a repository path owning a validation surface; identity IS the path, so
+     the lane gate is a three-field string comparison (component, surface, HEAD). apps/control_plane
+     carries TWO surfaces, validation (loose, satisfiable by pubspec range) and golden (imported,
+     enforced exactly), so 'analyze clean, goldens unverified' is expressible and 'gates clean' is
+     not available when neither was measured."
+  - "ANSWERED Q3 derive-vs-declare with an explicit table. host.build_web is PROBED not derived
+     because build/ is gitignored (.gitignore:3); host.render_environment is IMPORTED not re-derived;
+     service.postgres_test is declared; egress.googleapis is declared because it exists today only
+     as a comment in build-client.sh:19-23 and a comment is not a requirement."
+  - "ANSWERED Q4 the crux: UNKNOWN fails closed with its own verdict and exit code 3, distinct from
+     VIOLATED (1) and from UNUSABLE (2). Exit code 0 is never returned when nothing was probed —
+     F-27's lesson applied to capability checking. Code 4 (UNDECLARED) closes the loophole where a
+     new component is simply omitted from the manifest."
+  - "ANSWERED Q5 the pin-drift question: range-satisfies for build and validation, exact only where
+     a contract already demands it. .fvmrc's 3.44.0 becomes a non-fatal preferredVersion; the golden
+     contract's 3.44.7 stays exact because it is a different fact about a different thing under a
+     different Human Decision. Absence is fatal; version drift is reported on every run. Recorded
+     as HD-2 with the recommendation attached, not applied unilaterally."
+  - "ANSWERED Q6 migration in four slices. Slice 1 is the smallest CORRECT version: one component,
+     one surface, three capabilities, codes 0-3 only, plus the lane obligation — and its acceptance
+     proof is that the check exits 3 on a host with Flutter off PATH."
+  - "CONSTRAINT DISCOVERED AND BINDING: the checker must not be a Dart script. The root
+     pubspec.yaml workspace: list includes apps/control_plane, so resolving the workspace requires
+     Flutter (F-15(1)). The tool that detects a missing Flutter cannot itself require Flutter."
+  - "REFUSED a --force/--allow-missing/--skip flag, on the precedent already set by
+     check_render_environment.dart: no argument may make a mismatch look like a match."
+  - "STATED that make qa-up is the natural but WEAKEST gate, because the incident happened at review
+     time. qa-up gets the check as a left-to-right prerequisite before any docker line; the lane
+     gate and CI carry the weight."
+  - "RECORDED slice 1's honest limitation (R6): a lane reviewing a component the manifest does not
+     cover is not caught until exit code 4 lands in slice 2."
+
+created_by: design-agent / design-CAPABILITY-PARITY
+created_at: "2026-10-16"
+approved_by: null
+approved_at: null
+
+# --- Not applicable at brief stage -------------------------------------------------
+# Recorded explicitly rather than omitted, so a reviewer can tell "deliberately absent"
+# from "forgotten".
+
+design_system_compliance: "UNKNOWN — this artifact introduces no user-facing UI. It defines a
+  build/validation-time contract for agents and operators. Not assessable and not applicable."
+ux_accessibility_score: "UNKNOWN — no user interface, no visual or interaction surface is changed
+  or proposed. The nearest analogue (the refusal message a human reads) inherits the established
+  pattern in check_render_environment.dart: names every mismatched axis with expected and observed,
+  states the remedy, and names the authority."
+implementation_feasibility:
+  rating: HIGH
+  rationale: >
+    No new runtime dependency and no network access at check time. The checker is a POSIX sh
+    script using only command -v, grep and awk, modelled directly on the image-ownership guard
+    already shipping in docker/build-client.sh, which does the same class of pure-text reading and
+    is already gated into every client build. The declaration is FLAT key=value, and the one file of
+    this kind the repository already trusts (golden_render_environment.json) is flat for the same
+    reason -- see the review correction recorded in review_disposition.H2 -- with the same
+    _-prefixed-documentation convention and the same refuse-with-a-distinct-exit-code behaviour. The
+    only genuinely new engineering is the exit-code table and the sh-level JSON key extraction
+    (risk R2), which is bounded to a fixed, named key list.
+
+    Reduced from HIGH-confidence by one dependency: writing the checker as a Dart script would be
+    easier, and is impossible here (see the constraint recorded in changelog). That impossibility
+    is a discovered property of the workspace, not a schedule risk.
+
+traceability:
+  requirements_covered:
+    - "REQ-1 — §3.1 (tool/capabilities.json), §4 Q1/Q2/Q3"
+    - "REQ-2 — §3.2 (checker), §3.3 (codes 1/2/3), §3.5 (qa-up prerequisite, before any docker line)"
+    - "REQ-4 — §3.3 (code 3), §3.4 (three lane surfaces, exit-0-only-permits-clean)"
+    - "F-27 — §3.3 ('0 is never returned when nothing was probed')"
+  requirements_gaps:
+    - "REQ-3 (CI consumption) — designed in §6 slice 3 but NOT in slice 1. Deliberate: making CI
+       consume a declaration before it exists would gate CI on a contract that is still being
+       written. Slice 1 ships the mechanism; slice 3 makes F-15(1)/F-15(5) unable to recur
+       independently of QA."
+    - "REQ-4 partial — the executable half (code 3) is fully designed; the prose half (what an agent
+       writes into a report) is an instruction to the lane skills and cannot be enforced by any
+       tool. Stated rather than glossed."
+    - "REQ-1 partial — UNDECLARED enforcement (code 4) is slice 2, and production/staging
+       environments are an explicit non-goal (NG-7) until their requirement set is known."
+
+  architecture_gaps:
+    - "No ADRs are cited as governing; the closest existing artifact
+       (golden_render_environment.json) is a PRODUCT-REPO contract, not a framework ADR. If this
+       design is judged to change repository-wide meaning — specifically the .fvmrc question (HD-2)
+       — it should produce an ADR, and this lane is not authorised to write one."
+
+next_actions:
+  - INDEPENDENT_DESIGN_REVIEW
+  - "Resolve HD-1, HD-2, HD-3 at Gate D4 (human) before any implementation slice is authorised."
+
+# ---------------------------------------------------------------------------
+# Required Design Brief fields (DESIGN_GOVERNANCE.md:46-60).
+# ABSENT in the first revision of this file, which recorded three
+# Design-REVISION-only fields instead (design_system_compliance,
+# ux_accessibility_score, implementation_feasibility above) and so failed the
+# standard the file itself set at :111-113 -- "recorded explicitly rather than
+# omitted, so a reviewer can tell 'deliberately absent' from 'forgotten'".
+# ---------------------------------------------------------------------------
+
+user_flows: >
+  N/A — deliberately absent, not forgotten. This artifact introduces no user interface and no user
+  workflow. The nearest analogue is the operator-facing refusal message the checker prints, which
+  inherits the established pattern: names every mismatched axis with expected and observed values,
+  states the remedy, and names the authority. Recorded as absent per the convention above.
+
+success_criteria: >
+  1. A lane reviewing a component whose capability cannot be measured CANNOT write "clean": the word
+     is unavailable without CAPABILITY_PRECHECK: <component> <surface> 0 <HEAD_SHA> (section 3.4).
+  2. A checker that probed nothing never exits 0 — including a zero-requirement selection, which
+     exits 2 UNUSABLE (section 3.3).
+  3. "Could not measure" and "measured and absent" never produce the same exit code as each other,
+     nor collide with the imported contract's exitRefusedToGrade = 3 (section 3.3).
+  4. A version that does not match its surface's exact pin exits 1, never a warning (HD-2).
+  5. The checker runs with no Dart and no Flutter installed, and touches no Docker daemon.
+  6. No argument exists that turns a mismatch into a match.
+
+constraints: >
+  - POSIX sh only. The root pubspec.yaml workspace includes apps/control_plane, so RESOLVING the
+    workspace requires the Flutter SDK; a tool whose job is detecting missing Flutter must not
+    require Flutter. Therefore no Dart, and no assumption that python/jq exist.
+  - The declaration must stay FLAT (section 3.1). Nested JSON puts the same token in a value and a
+    key, which a POSIX reader cannot disambiguate, and the expensive error direction is a false
+    SATISFIED.
+  - Flutter must NEVER be installed into the QA containers. Dockerfile.client:12 is nginx:alpine
+    serving prebuilt artifacts, and docker/build-client.sh builds on the host because Cloudflare
+    WARP / corporate VPNs block storage.googleapis.com. Enforced as an `assert` capability.
+  - No network access at check time.
+  - The checker must not start the stack and then judge it: no Docker, no Compose, no daemon call.
+  - Scope of the version ruling (HD-2) is EXACT per surface. This mechanism does not change what a
+    pin means repository-wide; the golden pin's exactness is governed by HD 3e9dfb75, not by this.
+  - No flag may make a mismatch look like a match (precedent: check_render_environment.dart:24-26,
+    which rejects ANY argument).
+
+acceptance_criteria: >
+  Section 12 of design-brief.md is the SLICE-1 acceptance set and is labelled as such. Slice 3
+  modifies .github/workflows/ci.yaml (adds a job, changes a Flutter install), so an earlier
+  acceptance criterion claiming this design modifies no workflow file was FALSE AS WRITTEN and is
+  corrected rather than quietly dropped.
+
+# ---------------------------------------------------------------------------
+# Path ownership (DESIGN_GOVERNANCE.md:22,34). Previously recorded in prose only.
+# ---------------------------------------------------------------------------
+
+owned_paths:
+  - design/capability-parity/**
+read_only_paths:
+  - apps/**
+  - packages/**
+  - docker/**
+  - .github/**
+  - Makefile
+  - pubspec.yaml
+  - docs/**
+  - tooling/**
+prohibited_paths: []   # nothing is written outside owned_paths; all of the above are read-only
+
+# ---------------------------------------------------------------------------
+# Review corrections folded in (DESIGN_REVIEW_CHANGES_REQUIRED: 1 BLOCKING, 7 HIGH, 5 MED, 8 LOW)
+# ---------------------------------------------------------------------------
+
+review_disposition:
+  blocking:
+    B1: "CORRECTED — exit codes renumbered so UNKNOWN=4 and UNDECLARED=5 cannot collide with the
+         imported contract's exitRefusedToGrade=3; the lane obligation now carries
+         CAPABILITY_PRECHECK: <component> <surface> <exit> <HEAD_SHA>."
+  high:
+    H1: "CORRECTED — surface carried in the recorded obligation (see section 3.4.2)."
+    H2: "CORRECTED — declaration flattened to key=value lines (see section 3.1)."
+    H3: "CORRECTED — `ci` added to apps/control_plane environments so --env ci selects flutter.sdk;
+         probe variable changed SERVERPOD_TEST_DATABASE_PASSWORD -> SERVERPOD_DATABASE_PASSWORD."
+    H4: "CORRECTED — flutter.sdk probe is `fvm flutter --version --machine`, not PATH flutter."
+    H5: "CORRECTED — both .agents/skills/ and .opencode/skill/ named per skill, because no
+         generator or drift test is instantiated in this product repo (AGENTS.md:47-52), so editing
+         only the canonical path would change nothing AND fail nothing."
+    H6: "CORRECTED — new section 3.6 defines the sh/Dart delegation boundary. maxNoiseFloorRatio is
+         a property of the goldens and is delegated, never re-implemented in sh."
+    H7: "CORRECTED — E2's 'enforced nowhere' retracted (it IS enforced at pubspec.yaml:112); the
+         FVM/golden divergence is DELIBERATE per HD 3e9dfb75 and is not a conflict. Q5's
+         range-satisfies recommendation withdrawn per HD-2."
+  medium:
+    M1: "CORRECTED — order-only prerequisite `qa-build: | capability-check`; 'Make evaluates
+         prerequisites left to right' is false under `make -j`."
+    M2: "CORRECTED — a zero-requirement selection exits 2 UNUSABLE (see section 3.3)."
+    M3: "CORRECTED — these four fields added."
+    M4: "CORRECTED — section 12 labelled the slice-1 acceptance set."
+    M5: "CORRECTED — interim prose rule: a component with no manifest entry is UNDECLARED (3.4.3)."
+  low:
+    L1: "CORRECTED — integration.yaml:36-45,93 replaces :131."
+    L2: "CORRECTED — F-15 cited as FOLLOW_UPS.md section 3, not section 5."
+    L3: "NOT FULLY ADDRESSED — see note below."
+    L4: "CORRECTED — path ownership declared above."
+    L5: "CORRECTED — HEAD_SHA delta recorded below."
+    L6: "CORRECTED — durable discoveries classified below."
+    L7: "CORRECTED — _authority cites the upstream requirements, not the downstream summary."
+    L8: "CORRECTED — `assert` declared as a third capability kind in section 3.1."
+
+not_fully_addressed:
+  - id: L3
+    finding: "section 4 Q5 infers exit 0 from 'probeable'. Probeable is not the same as satisfied."
+    status: PARTIAL
+    why: >
+      The inference is still present in Q5's prose, but Q5's recommendation it supported has been
+      withdrawn by HD-2, so the inference no longer carries any decision. Removing it is cleanup,
+      not a correction, and the reviewer's own note records that the outcome happens to hold on this
+      host. Left visible rather than silently deleted so a reader can check it.
+
+corrections_by: "Manager/orchestrator-main, applied directly"
+corrections_at: "2026-10-16"
+corrections_reason: >
+  Three consecutive dispatches of a correction subagent failed with transport-level connection
+  resets, across two different agent types. These edits were applied by the Manager directly rather
+  than abandoning the corrections. The artifact is DESIGN-DOCUMENTATION, not production source, and
+  it is routed to an independent design-reviewer before any slice is implemented.
+
+head_sha_at_authoring: 64e92a0cfc86f9c0bf3b77294dce7c77f077bda4
+head_sha_delta: >
+  The tree advanced 64e92a0 -> dcaf538 -> 2a732f6 -> 1c97cee while this brief was under review.
+  Verified: none of the files this brief cites were touched by those three commits (they touch only
+  apps/control_plane/lib/features/defect_report/** and its tests, plus pubspec.yaml:92-93 -- the
+  latter being the F-33 stale comment, corrected, and re-verified here).
+
+durable_discoveries:
+  - category: QA_DISCOVERY
+    finding: >
+      POSIX sh cannot disambiguate a JSON token that appears as both a key and a value without a
+      real parser, and the mis-binding direction is a false SATISFIED. Flatness is a correctness
+      property for a fail-closed tool, not a convenience.
+  - category: PROJECT_FACT
+    finding: >
+      The root pubspec.yaml workspace includes apps/control_plane, so resolving the workspace
+      requires the Flutter SDK. Any tool detecting missing Flutter must live outside the Dart
+      workspace.
+  - category: PROJECT_FACT
+    finding: >
+      AGENTS.md:47-52 confirms the platform-adapter generator and its --check drift test are NOT
+      instantiated in this product repo. Editing only .agents/skills/ changes nothing and fails
+      nothing; the .opencode/skill/ mirrors are what opencode loads.
+  - category: PROJECT_FACT
+    finding: >
+      SERVERPOD_TEST_DATABASE_PASSWORD is a GitHub SECRET name, never an environment variable. The
+      variable Serverpod reads is SERVERPOD_DATABASE_PASSWORD (Makefile:241,
+      apps/server/config/test.yaml:47). A probe for the former can never match anywhere.
+  - category: DESIGN_DISCOVERY
+    finding: >
+      A design finding, a review finding and a ledger entry all repeated the same false claim about
+      the FVM/golden divergence before anyone read golden_render_environment.json._authority. The
+      artifact would have been overturned. Each hop looked reasonable; only reading the artifact
+      caught it. Recorded so the failure is reproducible in review rather than repeated.
