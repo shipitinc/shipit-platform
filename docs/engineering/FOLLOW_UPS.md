@@ -1962,3 +1962,66 @@ this ledger keeps documenting: **a correct conclusion reached by a false reason 
   unreproducible in 18 including 4 concurrent, in a package this change does not touch.
 - **The 50-line citation drift at `human_decision_routing.dart:170`** — NOT blocking, LOW. Cites
   `durable_workflow_engine.dart:979`; `_isEscalationTransition` is at **`:1029`**.
+
+---
+
+## 28. The silent scheduler crash — fixed (`96db89c`), and a HIGHER-cadence twin remains
+
+`APPROVE_CORRECTIONS`, no blockers, no regression. The review **reproduced the mutation proof
+independently** in a temp copy outside the workspace: `+21 −6` against base, with `start()` failing as
+an **unhandled** `Bad state: StreamSink is closed` on the production stack shape
+(`_createProviderTicket` ← async gap ← `checkAll`, no `catchError` frame).
+
+### The crash, and why it was invisible
+An unhandled Postgres `StreamSink is closed` killed the QA server's **isolate**, taking the scheduler
+with it. **A dead scheduler still logs `scheduler.tick.completed {ran: false}`** — so the outage looked
+like a healthy idle system for hours. Found only by `ps`, not by the operator surface.
+
+**Root cause, and the obvious suspect was wrong.** `ProviderHealthMonitor.start()` discarded the
+`checkAll()` future on a self-rearming `Timer.periodic` and an immediate `unawaited`. `checkAll` is
+**not observation-only** — it reads `model_policy`, reads `human_decision`, and **writes**
+`human_decision` via `_createProviderTicket` / `_raiseAllProvidersDown`. Both call sites threw the
+future away, so a mid-write socket close left `checkAll` with **no listener** ⇒ unhandled ⇒ terminate
+isolate. There is **no `runZonedGuarded` anywhere in the repo.**
+
+The lane **rejected the first suspect by inspection**: `local_worker.dart:192-194` uses `.timeout(...)`,
+which *looks* like it abandons a late error but does not — SDK `future_impl.dart:1060-1073` keeps
+`onError` attached permanently and the SDK doc says `StateError` is ignored. That path is already
+correct; the fix did not touch it, and says so in the commit so the next lane doesn't re-chase it.
+
+Fixed by routing both call sites through a guarded `_fire()` and containing each store-backed step
+individually, so a dead connection costs **one** operation and the cycle still probes every remaining
+provider. A throwing probe maps to `unknown`, **never** `down` — absence of evidence must not mark a
+provider down on the strength of the observer failing.
+
+### F-77 An equivalent unguarded path remains, at HIGHER cadence — not the lane's to fix
+**Status** OPEN · **HIGH** · `apps/server/lib/server.dart:1233`, read-only to the correction
+
+The focused reviewer **dismissed the lane's "unawaited(tick.trigger()) is safe" note.** It verified
+empirically on SDK 3.12.2 that `TickSingleFlight._runGuarded` **rethrows** (`server.dart:1922`), so
+**any** escape from `runTick()` kills the isolate. The tick loop is safe only by per-section
+discipline — and each section's `catch` calls `_log`, the **same closed-sink class**. This path ticks
+**every 30 seconds**, higher cadence than the path just corrected.
+
+Read-only and pre-existing, so out of scope for that correction — but the follow-up must say *an
+equivalent unguarded path remains*, not imply the class is closed.
+
+### F-78 No process-wide containment — escalated, correctly, as architecture
+**Status** OPEN · **HUMAN gate** · the reviewer agrees it is not a code fix
+
+There is no `runZonedGuarded` in production code anywhere. Process-wide containment would change
+**every** lane's failure semantics and interacts with the documented exit-signal contract
+(`server.dart:1260-1266`). Both the lane and the reviewer independently judged this a human/architecture
+decision, correctly — it is a **follow-up, not a blocker**.
+
+### Follow-ups the reviewer confirmed non-blocking
+- The per-role containment test comment claims all roles are reached; **measured false** (2 write attempts
+  for 12 roles — `_step` wraps the whole loop). Fail-open and self-healing; the comment overstates.
+- `_findPendingTicket`'s `on StateError` **swallows the crash's own error type**: a read-only fault
+  mints 12 duplicate tickets silently. Identical at `CORRECTED_FROM` — pre-existing, masked by the new
+  test faulting read+write together.
+- The deferred residual at `provider_health_monitor.dart:149` is **larger than reported**: `stderrDetail`
+  is created every probe but awaited only on the non-zero-exit path, so **both** stdio drains can escape
+  on the healthy path.
+- `onboarding_test.dart` is an integration test misfiled under `test/` (needs a DB); it will read as a
+  regression in any local run.
