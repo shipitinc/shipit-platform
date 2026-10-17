@@ -17,7 +17,21 @@ enum HumanDecisionType {
   infrastructureDecision('infrastructure_decision'),
   otherConsequential('other_consequential'),
   defectClarification('defect_clarification'),
-  defectFixVerification('defect_fix_verification');
+  defectFixVerification('defect_fix_verification'),
+  // The design-review park's own question: "do the design review".
+  //
+  // APPENDED, not inserted next to `designApproval`, because the value's
+  // ordinal position is part of nothing and `values` order is the only thing
+  // an append cannot silently change. Named `designReviewRequest` rather than
+  // `designReviewRequired` deliberately: the park's STATE is
+  // `designReviewRequired`, and two enums carrying one name in one transition
+  // table is a class of confusion this file has no reason to add to. This type
+  // names the QUESTION asked; the state names the CONDITION.
+  //
+  // `designApproval` may NOT be re-used for the park: re-pointing that type
+  // would silently move the park's other answers (`reject` -> designRejected,
+  // `rework` -> designInReview), a state no JobDefinition dispatches.
+  designReviewRequest('design_review_request');
 
   const HumanDecisionType(this.wire);
 
@@ -38,7 +52,17 @@ enum HumanDecisionChoice {
   defer('defer'),
   fixed('fixed'),
   stillBroken('still_broken'),
-  partiallyFixed('partially_fixed');
+  partiallyFixed('partially_fixed'),
+  // "Send this back to triage", as its own answer.
+  //
+  // The park already had a way to re-triage — `cancel` and refile — and it
+  // threw the item's history and the durable reason it was parked away to do
+  // it. This value is the answer that does not. `wire` is `snake_case` because
+  // `DurableWorkflowEngine._resolvedOptionId` matches an option's `optionId`
+  // against `choice.wire` and falls back to `choice.wire` when none matches;
+  // a camelCase option id records a `resolvedOptionId` the operator was never
+  // shown, and nothing else in the tree fails.
+  reTriage('re_triage');
 
   const HumanDecisionChoice(this.wire);
 

@@ -133,6 +133,22 @@ class HumanDecisionRouting {
         WorkItemState.designNotRequired,
       (HumanDecisionType.escalation, HumanDecisionChoice.rework) =>
         WorkItemState.planning,
+      // THE DESIGN-REVIEW PARK — three arms, four answers.
+      //
+      // `cancel` gets NO arm: the `(_, cancel)` catch-all above already sends
+      // every type to `cancelled`, and writing a fourth arm for it would be a
+      // duplicate of a route that exists.
+      //
+      // The whole menu lives on ONE type because a decision carries ONE type:
+      // `HumanDecisionOption` has no `decisionType`, and `targetFor` is called
+      // once per resolution with the choice, so every answer an operator is
+      // offered at the park resolves through `designReviewRequest`.
+      (HumanDecisionType.designReviewRequest, HumanDecisionChoice.approve) =>
+        WorkItemState.designApproved,
+      (HumanDecisionType.designReviewRequest, HumanDecisionChoice.rework) =>
+        WorkItemState.planning,
+      (HumanDecisionType.designReviewRequest, HumanDecisionChoice.reTriage) =>
+        WorkItemState.designNotRequired,
       _ => null,
     };
   }
@@ -211,6 +227,21 @@ class HumanDecisionRouting {
       (HumanDecisionType.humanQaApproval, HumanDecisionChoice.rework) =>
         WorkItemState.agentExecuting,
       (HumanDecisionType.designApproval, _) => WorkItemState.designInReview,
+      // `designReviewRequest` is DELIBERATELY absent, and this is the arm an
+      // implementer is most likely to "complete". Three of the park's four
+      // answers are unreachable above: the short-circuit at the top of this
+      // method fires for `approve`, `cancel` and `reTriage`, so an arm for any
+      // of them would be dead code. The fourth, `rework`, is the risk, because
+      // it IS admitted by that short-circuit and is kept inert only by THIS
+      // `_ => null` — a weaker guarantee, and one that no compiler enforces.
+      // Adding `(designReviewRequest, rework) => planning` would make
+      // `routesToEscalation(...)` true and would start escalation accounting
+      // and an `EscalationTriggered` record on a re-plan, silently.
+      //
+      // So the correct completion of this table is: nothing. Asserted by
+      // `test/design_review_park_surface_test.dart` over all four answers,
+      // behaviourally AND by counting the arms in this file — a redundant arm
+      // is invisible to behaviour, which is why both are checked.
       _ => null,
     };
   }

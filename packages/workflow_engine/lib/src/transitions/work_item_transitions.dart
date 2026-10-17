@@ -48,7 +48,10 @@ class WorkItemTransitions {
     // from here to `planned` would give it a second predecessor and re-open
     // exactly the loop that invariant exists to close. Recovery is via the
     // human gate, which is slower and deliberately so.
-    (WorkItemState.featureIntakeParked, WorkItemState.waitingForHumanDecision): [
+    (
+      WorkItemState.featureIntakeParked,
+      WorkItemState.waitingForHumanDecision,
+    ): [
       GuardConditions.actorAllowed([ActorType.human, ActorType.orchestrator]),
     ],
     /*** Design ***/
@@ -75,6 +78,15 @@ class WorkItemTransitions {
       GuardConditions.blockingHumanDecisionResolved({
         (
           type: HumanDecisionType.designApproval,
+          choice: HumanDecisionChoice.approve,
+        ),
+        // The design-review park's "do the design review". Same target state,
+        // and a different question: `designApproval` answers "is this design
+        // good", this one asks for one. A NEW TYPE is admitted by no edge until
+        // it is added here, so without this pair the park's answer would be
+        // saved RESOLVED and the item would not move.
+        (
+          type: HumanDecisionType.designReviewRequest,
           choice: HumanDecisionChoice.approve,
         ),
       }),
@@ -546,6 +558,23 @@ class WorkItemTransitions {
           type: HumanDecisionType.escalation,
           choice: HumanDecisionChoice.approve,
         ),
+        // The design-review park's "re-triage" answer. It lands on
+        // `designNotRequired` because that is the state triage dispatches from
+        // — byte-identically to `(escalation, approve)` above — so the routing
+        // precedent is this edge's own.
+        //
+        // DELIBERATELY NOT added to the bound below. See that guard's comment:
+        // `qaRework`, `qaWaiver` and `escalation` are not bounded either, and
+        // `escalation` is the identical operator-invoked loop to the same
+        // target on this same edge. A ceiling on re-triage — "how many times
+        // may an operator re-triage an item?" — is product policy, not a
+        // lockstep move, and is recorded as an open question rather than taken
+        // here. `packages/workflow_engine/test/design_review_park_surface_test.dart` pins this absence
+        // from both sides: a bounded pair fails this edge, this pair does not.
+        (
+          type: HumanDecisionType.designReviewRequest,
+          choice: HumanDecisionChoice.reTriage,
+        ),
       }),
       GuardConditions.decisionActorIsHuman(),
       // Mirrors the escalation bound on the generic edge above EXACTLY, for
@@ -555,7 +584,14 @@ class WorkItemTransitions {
       // RELAX the bound it already had. `qaRework`, `qaWaiver` and `escalation`
       // are deliberately not added: the generic edge does not bound them
       // either, and inventing a bound here would be new policy rather than a
-      // lockstep move.
+      // lockstep move. `designReviewRequest` is not added for the SAME reason,
+      // and it is named here because it is the newest type to reach this edge:
+      // its `reTriage` answer is the same operator-invoked loop to the same
+      // target as `(escalation, approve)`, so `(escalation, approve)` not
+      // being bounded is a precedent for it rather than an argument against
+      // bounding it. Whether an operator may re-triage an item a bounded number
+      // of times is product policy and is an open question, not a lockstep
+      // move; `packages/workflow_engine/test/design_review_park_surface_test.dart` pins the absence.
       GuardConditions.escalationIndexWithinLimitForDecisionTypes(
         escalationDecisionTypes: {
           HumanDecisionType.engineeringReview,
@@ -643,6 +679,12 @@ class WorkItemTransitions {
       GuardConditions.blockingHumanDecisionResolved({
         (
           type: HumanDecisionType.escalation,
+          choice: HumanDecisionChoice.rework,
+        ),
+        // The design-review park's "put it back in the lane" answer — the same
+        // target `(escalation, rework)` above names, asked at a different gate.
+        (
+          type: HumanDecisionType.designReviewRequest,
           choice: HumanDecisionChoice.rework,
         ),
       }),

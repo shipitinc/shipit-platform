@@ -61,6 +61,35 @@ const _orch = WorkflowActor(
 const _recognisedReWorkChoices = <HumanDecisionChoice>[
   HumanDecisionChoice.rework,
   HumanDecisionChoice.reject,
+  // "Send this back to triage" is a re-triage by any reading, so
+  // `DurableWorkflowEngine._isReWorkDecision` classifies it as one. Under-
+  // stamping it would put the item back on a dedupe key the previous triage run
+  // already consumed and leave it inert for ever — the same defect, on the
+  // operator's own new answer.
+  HumanDecisionChoice.reTriage,
+];
+
+/// The other half of the same classification: every choice the rule does NOT
+/// treat as re-work, regardless of type.
+///
+/// This list exists so the spelling is TOTAL. `_isReWorkDecision` is an
+/// exhaustive `switch` with no wildcard arm, so the compiler already refuses to
+/// let a new `HumanDecisionChoice` value go unclassified IN THAT FILE — but the
+/// enum lives in `platform_contracts` and the coupling is invisible to every
+/// check that does not compile. This list is the same coupling made visible
+/// from the other side: add a value to the enum and this file fails until it is
+/// classified here too. See "the spelling is TOTAL" below.
+const _notRecognisedReWorkChoices = <HumanDecisionChoice>[
+  // The one approve that means "again" is `(escalation, approve)` alone, and
+  // the exception is keyed on the TYPE — which is exactly why `approve` cannot
+  // simply be a recognised choice here. See `_isReWork` below.
+  HumanDecisionChoice.approve,
+  HumanDecisionChoice.waive,
+  HumanDecisionChoice.cancel,
+  HumanDecisionChoice.defer,
+  HumanDecisionChoice.fixed,
+  HumanDecisionChoice.stillBroken,
+  HumanDecisionChoice.partiallyFixed,
 ];
 
 /// True when a route into a triage entry state also advances the discriminator.
@@ -112,6 +141,20 @@ const _declaredNotReWork = <(HumanDecisionType, HumanDecisionChoice), String>{
       're-requests the bare historical key, which the first triage job '
       'holds for ever. PRE-EXISTING; needs a human decision. See the '
       'REPORTED RESIDUAL test below, which demonstrates it mechanically.',
+  (HumanDecisionType.designReviewRequest, HumanDecisionChoice.approve):
+      'the design-review park\'s "do the design review" answer, landing on '
+      'designApproved — the SAME state, the SAME triage entry state, and '
+      'the SAME residual the entry above describes. Declared not re-work '
+      'because this is FORWARD PROGRESS: the operator is saying "do the '
+      'review", not "do the work again". The rule keys `approve` as re-work '
+      'for exactly one type — escalation, the one approve that means '
+      '"again" — so every other `approve`, this one included, is '
+      'acceptance. Neither the predicate nor this list distinguishes '
+      'design_approval from design_review_request: both are `approve` onto '
+      'designApproved and both inherit the consequence the entry above '
+      'escalates, which this one rides on rather than re-opens. The park is '
+      'green-vacuous at this slice — nothing raises this type yet, so '
+      'nothing routes through it in production.',
 };
 
 WorkItem _itemAt(WorkItemState state) {
@@ -156,6 +199,151 @@ void main() {
         reason: 'the two states the pre-existing guard did cover',
       );
     });
+  });
+
+  group('the spelling is TOTAL — a new choice cannot go unclassified', () {
+    // THIS GROUP IS THE EXECUTABLE FORM OF A COMPILE-TIME COUPLING, AND IT
+    // EXISTS BECAUSE THAT COUPLING IS INVISIBLE TO EVERYTHING ELSE.
+    //
+    // `DurableWorkflowEngine._isReWorkDecision` is an exhaustive `switch` over
+    // `HumanDecisionChoice` with NO wildcard arm, so adding a value to the enum
+    // fails the build in `workflow_store` until it is classified there. That
+    // coupling is real and it is free — but it crosses a package boundary, and
+    // the design artifact that had to name the resulting edits was verified
+    // citation-by-citation across seven review rounds and never compiled. A
+    // file table can therefore be wrong, be right about every line it cites,
+    // and still not build.
+    //
+    // This file is the second copy of the classification, written out literally
+    // precisely so it CANNOT be derived from the thing under test. A second
+    // copy is only worth having if the copies are pinned to each other, and the
+    // only thing that pins them is totality: the two lists below must partition
+    // the enum exactly, so a value that is classified in one place and not the
+    // other fails HERE rather than being silently classified by whichever file
+    // happens to read first.
+    test('every HumanDecisionChoice is classified exactly once, by name', () {
+      final recognised = _recognisedReWorkChoices.toSet();
+      final notRecognised = _notRecognisedReWorkChoices.toSet();
+
+      // No value may be in both lists. Overlap means the classification is
+      // ambiguous and the "not re-work" reading is the one nobody would notice
+      // losing, because an unclassified pair and a not-re-work pair both fail
+      // the guard only if they reach an entry state.
+      expect(
+        recognised.intersection(notRecognised),
+        isEmpty,
+        reason:
+            'a choice classified both ways is not classified at all. Move it to '
+            'exactly one list.',
+      );
+
+      // No value may be in neither. This is the assertion the compiler already
+      // forces inside `workflow_store`; here it forces the SECOND copy, which
+      // is the one a future enum value would silently pass.
+      final classified = recognised.union(notRecognised);
+      final unclassified = HumanDecisionChoice.values
+          .where((choice) => !classified.contains(choice))
+          .toList();
+      expect(
+        unclassified,
+        isEmpty,
+        reason:
+            'HumanDecisionChoice has a value this file does not classify: '
+            '$unclassified. Add it to _recognisedReWorkChoices or '
+            '_notRecognisedReWorkChoices and say why. It will already be '
+            'breaking the build in '
+            'DurableWorkflowEngine._isReWorkDecision — this is the '
+            'second copy failing with it.',
+      );
+
+      // And neither list may carry a value the enum has dropped: a stale entry
+      // classifies something that no longer exists and hides the fact that
+      // nothing was re-classified.
+      expect(
+        classified.difference(HumanDecisionChoice.values.toSet()),
+        isEmpty,
+        reason:
+            'these are classified by a file that names values the enum no '
+            'longer has. A stale entry means the real set moved and this copy '
+            'did not:',
+      );
+
+      // Non-vacuity, measured: the partition above is trivially satisfiable by
+      // two empty lists, so pin both the size of each side and the total.
+      expect(
+        HumanDecisionChoice.values,
+        hasLength(10),
+        reason:
+            'ten choices today. A change here is expected — the tenth is '
+            '`reTriage`, added by this slice — and must come with a '
+            're-classification, which the partition above enforces. What is NOT '
+            'acceptable is this number changing with no diff to the two lists.',
+      );
+      expect(recognised, hasLength(3), reason: 'rework, reject, reTriage');
+      expect(notRecognised, hasLength(7), reason: 'the other seven');
+    });
+
+    test('reTriage IS re-work, and that is a decision, not an omission', () {
+      // The ruling, asserted so it cannot be quietly reversed by someone who
+      // reads "re-triage is only reachable through an escalation" and assumes
+      // the new type inherits that exception. It does not: the exception is
+      // keyed on `escalation`, and `reTriage` is a recognised choice for EVERY
+      // type, which is the whole of why the park's own re-triage answer stamps
+      // a fresh dedupe key instead of reusing a consumed one.
+      for (final type in HumanDecisionType.values) {
+        expect(
+          _isReWork(type, HumanDecisionChoice.reTriage),
+          isTrue,
+          reason:
+              '$type/reTriage is re-triage by any reading. If it were not, a '
+              'parked item an operator sends back to triage would re-request '
+              'the key a terminal triage job holds and be inert for ever.',
+        );
+      }
+    });
+
+    test(
+      'approve counts ONLY for escalation, so the park needs a declaration',
+      () {
+        expect(
+          _isReWork(HumanDecisionType.escalation, HumanDecisionChoice.approve),
+          isTrue,
+          reason: 'the one approve that means "again"',
+        );
+        for (final type in HumanDecisionType.values.where(
+          (t) => t != HumanDecisionType.escalation,
+        )) {
+          expect(
+            _isReWork(type, HumanDecisionChoice.approve),
+            isFalse,
+            reason: '$type/approve is acceptance, not a re-triage',
+          );
+        }
+
+        // Which is exactly why `(designReviewRequest, approve)` has to appear in
+        // `_declaredNotReWork`. Asserted here so the declaration is not a
+        // coincidence of the main guard happening to reach designApproved with
+        // it: this is the pair whose classification the ruling fixed.
+        expect(
+          _declaredNotReWork.keys,
+          contains((
+            HumanDecisionType.designReviewRequest,
+            HumanDecisionChoice.approve,
+          )),
+          reason:
+              'the park lands on designApproved, a triage entry state, and its '
+              'answer is `approve`, which is not re-work. An undeclared route '
+              'into an entry state leaves the work item permanently inert.',
+        );
+        expect(
+          _declaredNotReWork.values.every((reason) => reason.length > 80),
+          isTrue,
+          reason:
+              'a declaration with no reason is an escape hatch. Each must say why '
+              'the pair is exempt and what the consequence is.',
+        );
+      },
+    );
   });
 
   group('M1 CLOSED — every entry state, not just designNotRequired', () {

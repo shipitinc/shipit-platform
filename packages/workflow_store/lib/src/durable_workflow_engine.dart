@@ -961,12 +961,32 @@ class DurableWorkflowEngine {
   ///    folded into "rework or reject" because a rule keyed on the choice alone
   ///    would miss it, and missing it reintroduces the defect on the exact
   ///    route the dogfood work item took.
+  ///  * `reTriage` — "send this back to triage", which is re-triage by any
+  ///    reading, so it belongs with `rework` and `reject` and not in the
+  ///    paragraph below. `(designReviewRequest, reTriage)` routes to
+  ///    `designNotRequired` — the state triage dispatches from — byte-identically
+  ///    to `(escalation, approve)`, so an operator choosing it re-enters triage
+  ///    and the run needs a key nothing holds. Under-stamping here is the inert
+  ///    item, which is the asymmetry above: this is the arm that must NOT be
+  ///    omitted.
   ///
-  /// Every other choice — approve, waive, cancel, defer, fixed, stillBroken,
-  /// partiallyFixed — expresses either acceptance, abandonment, or a deferral,
-  /// and none of them re-enters triage. They leave the discriminator untouched,
-  /// which is the "a transition that carries no new intent must not inflate the
-  /// counter" half of the rule.
+  /// Every other choice — approve (except that one), waive, cancel, defer,
+  /// fixed, stillBroken, partiallyFixed — expresses either acceptance,
+  /// abandonment, or a deferral, and none of them re-enters triage. They leave
+  /// the discriminator untouched, which is the "a transition that carries no new
+  /// intent must not inflate the counter" half of the rule.
+  ///
+  /// ## THE SWITCH BELOW IS EXHAUSTIVE, AND THAT IS A COUPLING
+  ///
+  /// It has no wildcard arm, so adding a `HumanDecisionChoice` value makes
+  /// this file fail to compile until it is classified. That is the correct
+  /// behaviour — the alternative is a new choice silently classified by
+  /// accident — but it is a coupling in a DIFFERENT package from the enum, and
+  /// seven rounds of review verified the specification citation-by-citation
+  /// without ever compiling it.
+  /// `scheduler/test/triage_entry_state_drift_guard_test.dart` therefore spells
+  /// the classification out independently and asserts it is TOTAL over
+  /// `HumanDecisionChoice.values`, so the second copy cannot drift either.
   ///
   /// ## WHAT THIS DELIBERATELY DOES NOT COVER
   ///
@@ -991,6 +1011,8 @@ class DurableWorkflowEngine {
     return switch (choice) {
       HumanDecisionChoice.rework => true,
       HumanDecisionChoice.reject => true,
+      // "Send this back to triage" IS a re-triage. See the doc comment above.
+      HumanDecisionChoice.reTriage => true,
       // The one approve that means "again" — see above.
       HumanDecisionChoice.approve =>
         decisionType == HumanDecisionType.escalation,
