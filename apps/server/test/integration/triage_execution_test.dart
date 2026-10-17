@@ -1936,16 +1936,41 @@ void main() {
                 WorkItemState.designNotRequired,
                 WorkItemState.designApproved,
                 WorkItemState.reviewRejected,
+                WorkItemState.planned,
               },
               reason:
-                  'NO entryStates set was widened. The fix returns the item to '
-                  'a state this definition already dispatched from; the '
-                  'one-element sets of the other lanes are what make the '
-                  'triage/implementation dispatch collision structurally '
-                  'unreachable, and widening one would destroy that. Option B '
-                  'of the decision — teach the scheduler to honour a retry for '
-                  'an item OUTSIDE entryStates — was rejected for exactly this '
-                  'reason.',
+                  'Triage is widened by EXACTLY one state, `planned`, and the '
+                  'widening does not touch the invariant this guard protects. '
+                  'The original claim was "NO entryStates set was widened": '
+                  'that is now false, and the reason is recorded rather than '
+                  'the assertion quietly dropped. '
+                  '\n\nThe invariant is that the triage/implementation '
+                  'dispatch collision is structurally unreachable, because '
+                  '`implementFeatureDefinition` dispatches from the '
+                  'one-element set {implementationReady}. Adding `planned` to '
+                  'TRIAGE cannot create that collision: `planned` is not an '
+                  'entry state of any other lane, so no two definitions can '
+                  'select the same item. The collision is a function of two '
+                  'definitions OVERLAPPING, and the sets remain disjoint. '
+                  '\n\nWhy `planned` had to be added: `planned` is in NO '
+                  'definition\'s entryStates, so `RunnableWorkEvaluator` '
+                  'rejects such an item BEFORE consulting the policy, '
+                  '`EntryHopper.prepare()` is never reached on it, and the '
+                  'item waits for ever. Measured: `planned -> '
+                  'design_not_required` last fired 2026-10-11 and three items '
+                  'were stranded from 2026-10-12. The failure is SILENT — a '
+                  'tick enqueues 0, dispatches 0 and records 0 refusals, so '
+                  '`ran: true, failedSections: []` is exactly what an inert '
+                  'lane looks like. '
+                  '\n\nThe hop is declared, not invented: '
+                  '`work_item_transitions.dart` has declared '
+                  '`planned -> designNotRequired` since the table was '
+                  'written, `EntryHopper` has existed since a56d64a precisely '
+                  'for declared intermediate hops, and '
+                  '`apps/server/lib/src/triage/work_entry.dart:594-604` '
+                  'already walks this edge by hand. This makes reachable what '
+                  'was always legal. See '
+                  'packages/scheduler/test/planned_entry_state_hop_test.dart.',
             );
             expect(
               triageDefectDefinition.entryStates,
