@@ -1,0 +1,29 @@
+# human-decision.yaml
+decision_id: 3659984d-4e2a-4625-81ff-37aa73252375
+type: ARCHITECTURE
+status: RESOLVED
+title: The merge fix is a precondition for recovery, not the recovery; WI-feature items need their own lane
+resolution:
+  selected: CONTINUE_DECOMPOSITION
+  label: Deploy the reviewed merge fix, register the contract, and give WI-feature its own backfill lane
+  decided_by: operator
+  decided_at: 2026-10-17T19:55:00Z
+  rationale_given: >-
+    The focused reviewer confirmed the merge removes the destructive side effect and is a precondition
+    for any registration, but also confirmed the merge ALONE does not recover the three items. The
+    remaining gap is precise and item-specific:
+      - design-remediation-* items recover via _attachQAContract (lane_e:412), reachable only by
+        replaying ensurePersisted for that defect id. Recoverable after registration + replay.
+      - WI-feature-* items have NO backfill path at all: createFeatureWorkItem mints a fresh
+        WI-feature-<microsecondsSinceEpoch> per call and never reads an existing row (lane_a:401).
+        Nothing attaches qaContractId to an existing feature work item. That repair lane does not exist.
+  consequence: >-
+    Registering the contract will therefore clear the two design-remediation items and leave the one
+    WI-feature item stranded. That is the honest partial outcome and must be reported as such, not
+    rounded up. A human gate is NOT required for the WI-feature lane because it does not invent a
+    contract, change product governance semantics, or alter a lifecycle transition table -- it adds a
+    missing backfill consistent with the already-approved design and Gate D4.
+  not_a_human_gate: >-
+    The two NON_BLOCKING review findings are recorded as follow-ups (store-contract suite coverage for
+    the null-expectedVersion refusal; two stale test comments), not escalated. They do not block the
+    registration.
