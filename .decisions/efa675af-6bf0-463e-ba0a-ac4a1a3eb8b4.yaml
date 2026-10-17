@@ -1,0 +1,49 @@
+# human-decision.yaml
+decision_id: efa675af-6bf0-463e-ba0a-ac4a1a3eb8b4
+type: ARCHITECTURE
+status: RESOLVED
+title: The automatic implementation route is bounded by consecutive undetermined artifact probes
+resolution:
+  selected: BOUND_AFTER_N_UNDETERMINED
+  label: Stop auto-routing after N undetermined returns; the verdict reaches the scheduler on WorkItem.metadata
+  decided_by: operator
+  decided_at: 2026-10-16T12:20:00Z
+  rationale_given: >-
+    The operator's standing principle: a retry limit is only justified for work a MACHINE retries. The
+    human retry limit is already uncounted. Removing maxImplementationInflows left the automatic
+    implementation route unbounded, which is correct — but only because an implementation that produced
+    nothing is now a FAILURE and never reaches the state the loop ran between. One hole remained: when the
+    artifact probe cannot read git it answers UNDETERMINED, which is deliberately not a failure (a tooling
+    fault is not an agent that did nothing). Such a run completes at agent_completed with no commit, so the
+    inflow routes it back to implementation and it re-dispatches unattended and for ever. The operator chose
+    to stop the automatic route after N undetermined returns rather than to make a probe failure a hard
+    failure, which would contradict the same decision.
+  delegated: >-
+    N was chosen by the implementing lane as 3, reasoned from the platform's own constants: the spend is
+    N-1 = 2, and 2 == implementFeatureDefinition.maxAttempts, i.e. exactly the single machine retry this job
+    type already gets on a transient failure. N=2 would escalate on one probe blip, which is the expected
+    transient shape (the probe runs 1-2 subprocesses under a 30s timeout). The channel was chosen as
+    WorkItem.metadata because LocalWorker never sees the verdict and execution_coordinator cannot depend on
+    worker_runtime; metadata is the same channel, transaction, actor and durability that producerActorId
+    already uses on the same transition.
+context:
+  the_situation: >-
+    Implementation review B1/B2/H1 on branch integrate/combined-3 returned DO_NOT_MERGE. H1 was the unbounded
+    loop above. A prior lane had already established that the successArtifactUndetermined marker was written
+    to the agent_event table, which the scheduler cannot read: PostgresWorkerStore reads only worker_execution,
+    worker_result and worker_event, and packages/scheduler does not depend on execution_coordinator. The
+    marker was therefore persisted for a human to grep in SQL and invisible to the platform — observability,
+    not a mechanism.
+  governing_decision: 92d567e3-da03-4c43-99f4-e3726472f0ab (RETRY_LIMIT -> REMOVE, NO_OUTPUT -> ROLE_AWARE,
+    REREVIEW -> AUTOMATIC, RETRY_TARGET -> RE_TRIAGE_THEN)
+  evidence:
+    - "packages/scheduler/lib/src/implementation_inflow.dart — maxConsecutiveUndeterminedReturns = 3"
+    - "undetermined_return_brake_test.dart — refuses on exactly the 3rd return, spends zero dispatches, survives a new Scheduler over the same stores"
+    - "undetermined_brake_contract_test.dart — 'one key, declared twice' fails a rename rather than silently disabling the brake"
+provenance:
+  recorded_by: >-
+    orchestrator-main, after independent review of fee521a returned
+    APPROVE_WITH_NON_BLOCKING_FOLLOWUP with HUMAN_DECISION_REQUIRED YES on this item
+  note: >-
+    Written to close review finding M-A. The operator's answer was given in the structured question UI; this
+    object records it durably because a production constant cites it as its authority.

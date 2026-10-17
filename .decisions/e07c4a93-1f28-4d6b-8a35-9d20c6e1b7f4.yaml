@@ -18,7 +18,7 @@ resolution:
   rationale_given: >-
     Advisory was rejected: the current undeclared surfaces went unnoticed precisely because nothing policed
     them, and an advisory that never blocks is the same class as the warning that was softened into
- "could not be run" in the incident this mechanism exists to prevent. The accepted cost is explicit —
+    "could not be run" in the incident this mechanism exists to prevent. The accepted cost is explicit —
     adding any new package turns CI red until its capability entry is merged — and that is the correct
     trade for a declaration whose whole value is being exhaustive.
   delegated: >-

@@ -721,3 +721,68 @@ satisfied. HD-2 withdrew the recommendation that inference supported, so it no l
 decision; removing it is cleanup rather than correction. Recorded in the metadata's
 `not_fully_addressed` block rather than silently deleted, so a reviewer can check the judgement.
 
+
+---
+
+## 9. Decision records that do not parse — F-36
+
+**Status** OPEN · **BLOCKING for HD-2's authority** · discovered 2026-10-16
+
+While repairing the capability-parity metadata, the same check was run across the whole decision
+corpus. **Four Human Decision objects are syntactically invalid YAML and load in no tool.** A
+decision record that cannot be loaded cannot govern anything, and `aef-human-decision` reads these
+files.
+
+| object | fault | class |
+|---|---|---|
+| `3e9dfb75-7bdf-4a8c-89dd-c76779a65371` | under-indented continuation lines inside a folded block (`:88-90`), plus a further `mapping values` fault at `:110` | **multiple, layered** |
+| `f691aeb5-caa9-4019-942f-5fb9a5e6cdd1` | under-indented continuation inside a folded block (`:134`) | mechanical |
+| `30c00e6e-4168-44e0-8d1e-34d7de7e4c46` | a `## SUPERSEDED` heading and prose **appended after the YAML document ends** (`:204-208`) | structural |
+| `6d2bfffe-1631-498a-b053-4edaf8bd3048` | same shape — prose appended after the document (`:189-192`) | structural |
+
+### Why this is blocking, not cosmetic
+**`3e9dfb75` is the authority HD-2 cites.** It is Human Decision `3e9dfb75`, RESOLVED / OPTION_C,
+*"Pin CI to the exact rendering environment"* — the decision that makes the FVM/golden divergence
+deliberate, the finding that stopped the near-miss in which an operator would have re-rendered every
+golden baseline. **HD-2 rests on a record that does not load.**
+
+### Two faults were repaired; two were not, deliberately
+Two objects this session authored were invalid and are now fixed: `e07c4a93` (HD-3) had a
+**1-space indent** inside a folded block, and `efa675af` (the undetermined-route brake) had an
+**unquoted scalar containing `: `** (`HUMAN_DECISION_REQUIRED: YES`). Both were my typos, both are
+committed fixed.
+
+The other two were **deliberately left alone.** `f691aeb5` and `3e9dfb75` are human records; I began
+repairing `3e9dfb75` and found fault after fault, moving the parse error `:88 → :89 → :110`. **That
+is line-by-line guessing at a human decision record, and it stopped.** The partial edits were
+reverted rather than committed, because a half-repaired human record is worse than an honestly
+broken one: the first looks authoritative.
+
+`30c00e6e` and `6d2bfffe` need a **shape** decision, not a typo fix. Their supersession prose is
+real governance content appended after the document. Repairing them means choosing where a
+supersession belongs in the schema — `status: SUPERSEDED` plus a `superseded_by:` field, or keeping
+the prose as comments. **That is a human call on record shape**, and it should be made once for the
+corpus rather than per file.
+
+### The check that would have caught this
+```sh
+ruby -ryaml -e 'Dir.glob(".decisions/*.yaml").sort.each{|f| begin; YAML.parse_file(f);
+  rescue Psych::SyntaxError; puts "BROKEN: #{f}"; end}'
+```
+Note `YAML.safe_load` alone is **not** a validity check here: 34 of 55 objects parse fine but are
+refused by `safe_load` because unquoted dates become `Time` objects. Use a parse-level check, or
+pass `permitted_classes: [Time, Date]`.
+
+**Nothing in the design-review or human-decision checklist exercises whether these files load.** That
+is the same gap as F-35, one directory over.
+
+### F-37 `.decisions/atures.yaml` has a mangled id
+**Status** OPEN · **pre-existing** · from `93965ec`
+
+The file's own `decision_id` is the literal string **`atures`**, and its filename is truncated to
+match. It is a real, substantive decision — *"HD-1(b): for features, what should happen when the
+product is not governed? The designer flagged plainly that parking is a worse visible outcome than
+today's draft."* — recorded under an id that is the tail of a longer word, so **it cannot be cited
+by anyone** who does not already know it exists. Its `_authority` references by id will not resolve.
+The true id is unrecoverable from the filename; it must come from the author or from `93965ec`'s
+context.
