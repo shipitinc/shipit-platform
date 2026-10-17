@@ -1868,3 +1868,49 @@ is untouched.
 `apps/control_plane/.flutter-plugins-dependencies` is a **generated file committed to version control**
 and version-drifted (`.fvmrc` says 3.44.0; the committed file says 3.44.7), so any
 `fvm flutter test` dirties the tracked tree. Pre-existing.
+
+---
+
+## 26. F-74 and F-75 closed (`1b973b2`) — test-only, and both findings were partly wrong
+
+Three files, **all tests. No production code changed.** Both findings reproduced by mutation *before*
+correction, both closed by mutation after. `workflow_store` 61, `workflow_engine` 197, `scheduler` 423.
+
+### F-74 closed — and the lesson is sharper than the finding
+Production coverage added at `triage_discriminator_test.dart`: two cases that drive the **real**
+`resolveHumanDecision` and read the marker off the durable row. `(designReviewRequest, reTriage)` stamps
+3; `(designReviewRequest, approve)` stamps nothing. **They differ only in the choice, so the pair is
+two-sided.** Flipping `:1015` now turns exactly one test red (`Expected: <3> Actual: <2>`) and leaves
+the other 16 green.
+
+The guard's false `totality` claim is corrected, with what actually pins the copies stated instead.
+
+> **A test deriving its expectation from a literal list in its own file cannot detect production
+> disagreeing with that list.** Totality pins a copy to the **enum** — never to the other copy. This is
+> the third instance of one shape in this work: F-72 (a citation check is not a compile check), F-73
+> (a behavioural assertion cannot see a redundant arm), F-74 (a self-referential assertion is not
+> coverage).
+
+### F-75 closed — and the finding was wrong twice
+1. **Provenance.** It said *53 → 52* over BASE and HEAD. BASE at `84460a2` gives **52**. The real loss
+   is **`ddfbfff`(53) → `84460a2`(52)** — slice 1's own commit, reflowing that exact edge into
+   multi-line form. The attribution was right; the commit boundary was not.
+2. **"Would now fail nothing" is false.** `transition_consistency_test.dart:54` **does** go red. But it
+   is a **mirror guard** (live table vs. a hand-written `allowedTransitions`), so it fails for the
+   **wrong reason** and is removable by the **wrong edit**: anyone syncing the mirror to a
+   deliberately-removed edge turns it green while the park is stranded.
+
+**The real gap, stated correctly: the edge had no guard that said what it was *for*.**
+`feature_park_way_out_test.dart` now names it as the park's only way out via `isLegalTransition`, and
+deleting the edge turns it red.
+
+### Reported, not repaired — the Manager rules
+- **`transition_copy_test.dart:44`'s regex is not whitespace-tolerant**, and `dart format` — a
+  **mandatory** gate — silently shrank what it watched. **Outside the granted paths; not edited.**
+  Two properties would fix it: a whitespace-tolerant regex, and a pinned pair count.
+- `execution_coordinator/budget_expiry_is_a_timeout_test.dart` is **TIMING-FLAKY** — failed once on a
+  real clock with 2–6s waits, passed on rerun. **It can produce a false blocker report**, which matters
+  because that is exactly how a lane learns it failed.
+- `human_decision_routing.dart:169` cites `durable_workflow_engine.dart:979` for
+  `_isEscalationTransition`, actually at `:1029` — **50-line drift**. The file was in the granted paths
+  and the fix was **deliberately not taken**, as unrelated to both findings. Recorded rather than fixed.
