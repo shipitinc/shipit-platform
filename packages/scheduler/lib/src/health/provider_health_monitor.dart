@@ -298,9 +298,9 @@ class ProviderHealthMonitor {
   /// Starts periodic health checks.
   void start() {
     if (_timer != null) return;
-    _timer = Timer.periodic(checkInterval, (_) => checkAll());
+    _timer = Timer.periodic(checkInterval, (_) => _fire());
     // Run immediately on start
-    unawaited(checkAll());
+    _fire();
   }
 
   /// Stops periodic health checks.
@@ -309,9 +309,118 @@ class ProviderHealthMonitor {
     _timer = null;
   }
 
+  /// Runs one cycle with its returned future DISCARDED ONLY BEHIND AN ERROR
+  /// HANDLER.
+  ///
+  /// ## Why this method exists
+  ///
+  /// This is the fix for a silent production outage measured on 2026-10-17.
+  /// [checkAll] does not merely observe: it reads `model_policy`, reads
+  /// `human_decision`, and WRITES `human_decision` through
+  /// [HumanDecisionStore.saveHumanDecision]. Both of its call sites used to
+  /// throw that future away — `Timer.periodic` does not await its callback, and
+  /// `unawaited` is a no-op wrapper — so when Postgres' socket closed
+  /// mid-write, `Bad state: StreamSink is closed` left [checkAll] with no
+  /// listener at all.
+  ///
+  /// A future whose error has no listener is an UNHANDLED asynchronous error,
+  /// and in a Dart isolate with no `runZonedGuarded` guard an unhandled async
+  /// error TERMINATES the isolate. The entire scheduler died, from a five
+  /// minute timer, while `postgres` stayed `Up (healthy)` beside it. It was
+  /// invisible from the operator surface for the same reason: the process that
+  /// would have logged the failure is the process that died, so all that
+  /// remained on screen was the last `scheduler.tick.completed` line from a
+  /// container that had already stopped.
+  ///
+  /// `WorkerRegistrationHeartbeat._fire` guards the sibling timer for exactly
+  /// this reason. This was the same defect, unguarded, in the other timer.
+  ///
+  /// The handler is ATTACHED rather than merely awaited because a self-rearming
+  /// timer has nobody to await it. [checkAll] also contains its own steps, so
+  /// this is the outer net rather than the only one.
+  void _fire() {
+    unawaited(checkAll().catchError(_reportCycleFailed));
+  }
+
+  /// The last-resort net: a cycle failure [checkAll] did not contain itself.
+  void _reportCycleFailed(Object error, StackTrace stack) {
+    _log('provider_health.check.failed', {
+      'error': '$error',
+      'stack': stack.toString(),
+      'operation': 'check_all',
+      'action': _failureAction,
+    });
+  }
+
+  /// What a contained step means, for an operator reading the line.
+  ///
+  /// Stated rather than left implied, because the outage this fixes was silent:
+  /// the failure mode worth re-introducing is a reader who sees
+  /// `check.failed` and assumes provider health is now unreliable, when in
+  /// fact nothing about any provider's verdict moved.
+  String get _failureAction =>
+      'this step of the provider health cycle failed and was skipped. The '
+      'monitor is still running and retries on the next cycle '
+      '(${checkInterval.inSeconds}s). No provider verdict was changed by this '
+      'failure, so nothing is marked down and nothing is released because the '
+      'database was unreachable.';
+
+  /// Runs one store-backed step of a cycle, degrading it to a failed STEP.
+  ///
+  /// A dead connection must cost one operation — not the cycle, and not the
+  /// isolate. Without this, a failed ticket write for the first provider
+  /// stopped every remaining provider from being probed at all, so the monitor
+  /// kept running while quietly observing less and less.
+  Future<void> _step(
+    String operation,
+    Map<String, dynamic> context,
+    Future<void> Function() body,
+  ) async {
+    try {
+      await body();
+    } on Object catch (error, stack) {
+      _log('provider_health.check.failed', {
+        'error': '$error',
+        'stack': stack.toString(),
+        'operation': operation,
+        ...context,
+        'action': _failureAction,
+      });
+    }
+  }
+
   /// Checks all providers from all model policies.
+  ///
+  /// ## Why every step below is contained
+  ///
+  /// Each read and write this performs is against Postgres in production, and a
+  /// closed connection is an ORDINARY condition for a long-lived process, not
+  /// an exceptional one. So no step is allowed to throw out of here: a failed
+  /// policy read, a failed probe and a failed ticket write each cost exactly
+  /// the one operation that failed, are reported as such, and the cycle
+  /// continues. [start]'s own handler remains as the outer net.
+  ///
+  /// The in-memory verdict map is only ever advanced by evidence, so a cycle
+  /// that loses a step leaves the previous verdict in place rather than
+  /// guessing — which means a provider that was down stays down until a
+  /// successful cycle can observe it, and that is the safe direction.
   Future<void> checkAll() async {
-    final policies = await _modelPolicyStore.getAllPolicies();
+    final List<ModelPolicy> policies;
+    try {
+      policies = await _modelPolicyStore.getAllPolicies();
+    } on Object catch (error, stack) {
+      // Without policies there is no provider set to probe, so the cycle has
+      // nothing left to do. Reported, not thrown: a throwing cycle from a dead
+      // database is how the process died.
+      _log('provider_health.check.failed', {
+        'error': '$error',
+        'stack': stack.toString(),
+        'operation': 'read_model_policies',
+        'action': _failureAction,
+      });
+      return;
+    }
+
     final providers = <String>{};
     for (final p in policies) {
       for (final step in p.chain) {
@@ -321,7 +430,7 @@ class ProviderHealthMonitor {
 
     for (final provider in providers) {
       final previous = _providerHealth[provider];
-      final result = await _runProbe(provider);
+      final result = await _probeContained(provider);
 
       // Accumulation rule: a failing probe is evidence and adds to the count;
       // a healthy probe erases it; an unknown probe does NEITHER, because it
@@ -348,11 +457,40 @@ class ProviderHealthMonitor {
 
       // A ticket requires evidence. An unknown probe never reaches this.
       if (health.isDown) {
-        await _createProviderTicket(provider, health);
+        await _step('provider_ticket', {
+          'provider': provider,
+        }, () => _createProviderTicket(provider, health));
       }
     }
 
-    await _checkAllProvidersDown(policies);
+    await _step(
+      'all_providers_down',
+      const <String, dynamic>{},
+      () => _checkAllProvidersDown(policies),
+    );
+  }
+
+  /// Probes [provider], degrading a probe implementation that THROWS to
+  /// [ProviderProbeResult.unknown].
+  ///
+  /// [runOpencodeProviderProbe] already answers `unknown` for a probe that
+  /// could not start, so a throw escaping the probe itself is the same fact
+  /// arriving a different way: NO observation of the provider. Mapping it to
+  /// `unhealthy` would mark a provider down on the strength of the observer
+  /// failing, which is the one direction this class exists to refuse.
+  Future<ProviderProbeResult> _probeContained(String provider) async {
+    try {
+      return await _runProbe(provider);
+    } on Object catch (error, stack) {
+      _log('provider_health.check.failed', {
+        'error': '$error',
+        'stack': stack.toString(),
+        'operation': 'probe',
+        'provider': provider,
+        'action': _failureAction,
+      });
+      return ProviderProbeResult.unknown('probe threw: $error');
+    }
   }
 
   Future<ProviderProbeResult> _runProbe(String provider) async {

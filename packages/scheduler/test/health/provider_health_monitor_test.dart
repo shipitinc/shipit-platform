@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:platform_contracts/platform_contracts.dart';
@@ -349,6 +350,272 @@ void main() {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // A CLOSED DATABASE CONNECTION.
+  //
+  // Reproduces the 2026-10-17 QA outage, in which the whole scheduler isolate
+  // died silently and took the 30-second tick with it.
+  //
+  // What is being pinned here is NOT "the monitor logs something". It is the
+  // weaker and much more important property: **a failing future that escapes
+  // here must not escape the monitor at all**. In a Dart isolate with no
+  // `runZonedGuarded` guard, an unhandled asynchronous error TERMINATES the
+  // isolate — and `package:test` reports an unhandled error as a test failure,
+  // which makes the test framework itself the detector. A regression re-opens
+  // the production outage and these tests go red without any assertion change.
+  // ---------------------------------------------------------------------------
+  group('a closed database connection', () {
+    test('is reproduced by a REAL locally-closed socket, not a hand-written '
+        'stand-in', () async {
+      // The production stack is `Bad state: StreamSink is closed` thrown from
+      // `_StreamSinkImpl.add` (dart:io/io_sink.dart) via `_Socket.add`. That
+      // is dart:io's own error for a CLOSED LOCAL SINK, so it is reproduced
+      // here by actually closing a socket — on loopback, with no docker, no
+      // psql and no database. Every assertion below is then made against the
+      // genuine error object rather than a mock that merely looks like it.
+      final error = await realClosedSinkError();
+
+      expect(error, isStateError);
+      expect(
+        '$error',
+        'Bad state: StreamSink is closed',
+        reason:
+            'this is the exact error in the 2026-10-17 crash log; if '
+            'dart:io changes it, the fixtures below are wrong and this is '
+            'where it should be noticed',
+      );
+    });
+
+    test('a write against a closed sink is caught, not propagated out of '
+        'checkAll()', () async {
+      // The production shape, in order: the probe runs and reports, and THEN
+      // the asynchronous write fires against a connection that has already
+      // closed. `saveHumanDecision` is that write.
+      final logs = _Logs();
+      final workflow = InMemoryWorkflowStore();
+      final store = _FaultyWorkflowStore(
+        workflow,
+        faults: {'saveHumanDecision'},
+      );
+      final monitor = ProviderHealthMonitor(
+        modelPolicyStore: InMemoryModelPolicyStore(),
+        workflowStore: store,
+        humanDecisionStore: WorkflowStoreHumanDecisionStore(store),
+        // Down on the FIRST probe so a ticket is attempted, which is what
+        // reaches the write. `failureThreshold: 1` is the whole setup: with
+        // the default of 2 there is no write on cycle one and the failure
+        // this test pins could not occur.
+        probe: always(const ProviderProbeResult.unhealthy('probe exited 1')),
+        failureThreshold: 1,
+        log: logs.record,
+      );
+
+      await expectLater(
+        monitor.checkAll(),
+        completes,
+        reason: 'a dead connection must cost one write, not the cycle',
+      );
+
+      final failed = logs.linesFor('provider_health.check.failed');
+      expect(failed, isNotEmpty);
+      expect(failed.first['operation'], 'provider_ticket');
+      expect(
+        '${failed.first['error']}',
+        'Bad state: StreamSink is closed',
+        reason:
+            'the log line must carry the real error, not "something '
+            'went wrong" — this outage was invisible partly because nothing '
+            'named a cause',
+      );
+      expect(failed.first['stack'], isNotEmpty);
+
+      // The cycle still PROBED: a failed write must not stop the monitor
+      // observing. Without this the monitor would keep running while quietly
+      // checking nothing, which is the failure this whole class exists to
+      // refuse and looks identical from the outside.
+      expect(monitor.getProviderHealth()['opencode']!.isDown, isTrue);
+    });
+
+    test(
+      'one failed step does not stop the remaining providers being probed',
+      () async {
+        final logs = _Logs();
+        final workflow = InMemoryWorkflowStore();
+        final store = _FaultyWorkflowStore(
+          workflow,
+          faults: {'readHumanDecisionsForWorkItem', 'saveHumanDecision'},
+        );
+        final monitor = ProviderHealthMonitor(
+          modelPolicyStore: InMemoryModelPolicyStore(),
+          workflowStore: store,
+          humanDecisionStore: WorkflowStoreHumanDecisionStore(store),
+          probe: always(const ProviderProbeResult.unhealthy('probe exited 1')),
+          failureThreshold: 1,
+          log: logs.record,
+        );
+
+        await monitor.checkAll();
+
+        // Every role is on `opencode`, so one provider — but the ticket write
+        // is attempted once per ROLE inside `_checkAllProvidersDown`, and all
+        // of those must have been reached and contained, not aborted by the
+        // first one.
+        final operations = logs
+            .linesFor('provider_health.check.failed')
+            .map((l) => l['operation'])
+            .toSet();
+        expect(
+          operations,
+          containsAll(<String>['provider_ticket', 'all_providers_down']),
+          reason: 'a step that fails must not skip the steps after it',
+        );
+        expect(monitor.getProviderHealth()['opencode']!.isDown, isTrue);
+      },
+    );
+
+    test('an unreadable policy set fails the CYCLE, not the process', () async {
+      final logs = _Logs();
+      final monitor = ProviderHealthMonitor(
+        modelPolicyStore: _FaultyModelPolicyStore(
+          InMemoryModelPolicyStore(),
+          faults: {'getAllPolicies'},
+        ),
+        workflowStore: InMemoryWorkflowStore(),
+        humanDecisionStore: WorkflowStoreHumanDecisionStore(
+          InMemoryWorkflowStore(),
+        ),
+        probe: always(const ProviderProbeResult.healthy()),
+        log: logs.record,
+      );
+
+      await expectLater(monitor.checkAll(), completes);
+
+      final failed = logs.linesFor('provider_health.check.failed');
+      expect(failed, hasLength(1));
+      expect(failed.single['operation'], 'read_model_policies');
+      // No verdict may be invented from a cycle that read nothing.
+      expect(monitor.getProviderHealth(), isEmpty);
+    });
+
+    test('a probe that THROWS is unknown, never down', () async {
+      // Direction matters more than containment here: mapping a thrown probe
+      // to `unhealthy` would mark a provider down on the strength of the
+      // OBSERVER failing, which is the one inference this class exists to
+      // refuse.
+      final logs = _Logs();
+      final monitor = ProviderHealthMonitor(
+        modelPolicyStore: InMemoryModelPolicyStore(),
+        workflowStore: InMemoryWorkflowStore(),
+        humanDecisionStore: WorkflowStoreHumanDecisionStore(
+          InMemoryWorkflowStore(),
+        ),
+        probe: (_) async => throw StateError('probe blew up'),
+        failureThreshold: 1,
+        log: logs.record,
+      );
+
+      for (var i = 0; i < 3; i++) {
+        await monitor.checkAll();
+      }
+
+      final health = monitor.getProviderHealth()['opencode']!;
+      expect(health.verdict, ProviderProbeVerdict.unknown);
+      expect(health.isDown, isFalse);
+      expect(health.isUnknown, isTrue);
+      // Three absent observations are not three failures.
+      expect(health.consecutiveFailures, 0);
+      expect(monitor.getAllProvidersDownTickets(), isEmpty);
+      expect(
+        logs.linesFor('provider_health.check.failed').first['operation'],
+        'probe',
+      );
+    });
+
+    test('start() does not let it escape: the crash itself', () async {
+      // THE REGRESSION TEST. This is the production call path — `start()`,
+      // its self-rearming `Timer.periodic`, and a write that fails — and it
+      // asserts nothing directly. `package:test` fails a test on an unhandled
+      // asynchronous error, so if this future ever escapes `checkAll` again
+      // the isolate dies here instead of in QA and the suite goes red.
+      final logs = _Logs();
+      final store = _FaultyWorkflowStore(
+        InMemoryWorkflowStore(),
+        faults: {'saveHumanDecision'},
+      );
+      final wrote = Completer<void>();
+      final monitor = ProviderHealthMonitor(
+        modelPolicyStore: InMemoryModelPolicyStore(),
+        workflowStore: store,
+        humanDecisionStore: _SignallingDecisionStore(
+          WorkflowStoreHumanDecisionStore(store),
+          onWrite: () {
+            if (!wrote.isCompleted) wrote.complete();
+          },
+        ),
+        probe: always(const ProviderProbeResult.unhealthy('probe exited 1')),
+        failureThreshold: 1,
+        // Short enough that the test does not wait a production interval,
+        // and the monitor is stopped below regardless.
+        checkInterval: const Duration(milliseconds: 5),
+        log: logs.record,
+      );
+
+      monitor.start();
+      addTearDown(monitor.stop);
+
+      // A cycle really ran, reached the write, and the write really failed.
+      await wrote.future;
+      // Give the error delivery the turns it needs. If it is unhandled, it
+      // is reported to the zone during this window and fails the test.
+      await _flushAsyncErrorDelivery();
+
+      expect(
+        logs
+            .linesFor('provider_health.check.failed')
+            .map((l) => l['operation']),
+        isNotEmpty,
+        reason:
+            'the failure must be reported, not merely survived — the '
+            'outage was invisible because nothing was logged',
+      );
+    });
+
+    test(
+      'a recovered monitor keeps working after the connection returns',
+      () async {
+        // Containment must not be a one-way door: the monitor has to resume
+        // doing its job once the connection is back, or "graceful degradation"
+        // is just a quieter outage.
+        final logs = _Logs();
+        final workflow = InMemoryWorkflowStore();
+        final store = _FaultyWorkflowStore(
+          workflow,
+          faults: {'saveHumanDecision'},
+        );
+        final monitor = ProviderHealthMonitor(
+          modelPolicyStore: InMemoryModelPolicyStore(),
+          workflowStore: store,
+          humanDecisionStore: WorkflowStoreHumanDecisionStore(store),
+          probe: always(const ProviderProbeResult.unhealthy('probe exited 1')),
+          failureThreshold: 1,
+          log: logs.record,
+        );
+
+        await monitor.checkAll();
+        expect(logs.linesFor('provider_health.check.failed'), isNotEmpty);
+
+        store.faults.clear();
+        await monitor.checkAll();
+
+        expect(
+          await _decisions(workflow),
+          isNotEmpty,
+          reason: 'with the connection restored the ticket must actually land',
+        );
+      },
+    );
+  });
+
   group('runOpencodeProviderProbe', () {
     late Directory temp;
 
@@ -527,6 +794,218 @@ Future<List<HumanDecision>> _decisions(WorkflowStore store) async {
     'system:provider-health',
   );
   return all..sort((a, b) => a.decisionId.compareTo(b.decisionId));
+}
+
+/// Opens a loopback socket, closes its sink LOCALLY, and returns the ACTUAL
+/// error the next write throws.
+///
+/// This is the crash, reproduced by the same `dart:io` code path the stack
+/// trace names: `_Socket.add` → `_StreamSinkImpl.add` (`dart:io/io_sink.dart`).
+/// A locally-closed sink is the only thing that produces this error — a peer
+/// that merely went away fails later, in the kernel, with a different error —
+/// so closing the socket here is what makes the reproduction faithful rather
+/// than approximate.
+///
+/// No docker, no compose, no psql, no database: loopback only, and the socket
+/// is closed by this function on every path.
+Future<Object> realClosedSinkError() async {
+  final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+  server.listen((_) {});
+  try {
+    final client = await Socket.connect(
+      InternetAddress.loopbackIPv4,
+      server.port,
+    );
+    // Closed early, and not awaited on the peer: the reproduction needs the
+    // client sink to be closed, and nothing else.
+    await server.close();
+
+    // One byte out and back, so the write path is genuinely live before it is
+    // closed. A sink that was never written to has not exercised `add`.
+    client.add(const [0]);
+    await client.flush();
+
+    client.close();
+    await client.done;
+
+    try {
+      client.add(const [0]);
+    } on Object catch (error) {
+      return error;
+    }
+    throw StateError(
+      'the closed socket accepted a write, so this reproduction no longer '
+      'exercises the failure it exists to produce',
+    );
+  } finally {
+    // Idempotent: already closed on the normal path, and closing an
+    // already-closed listener is what keeps the failure path from leaking it.
+    await server.close();
+  }
+}
+
+/// The error a closed socket throws, CONSTRUCTED rather than observed.
+///
+/// [realClosedSinkError] proves this is byte-identical — same runtime type,
+/// same `toString()` — to what `dart:io` throws from `_StreamSinkImpl.add`, so
+/// the fakes below cannot quietly drift into testing a different failure than
+/// the one that killed the process.
+///
+/// The message is `'StreamSink is closed'` and NOT
+/// `'Bad state: StreamSink is closed'`: `StateError.toString()` supplies the
+/// `Bad state: ` prefix itself, so supplying it here would double it and the
+/// fixture would no longer match the log line an operator reads.
+StateError closedSinkError() => StateError('StreamSink is closed');
+
+/// Yields enough event-loop turns for an unhandled asynchronous error to be
+/// delivered to the zone.
+///
+/// Deliberately event-loop (`Future.delayed`) rather than microtask turns: an
+/// uncaught error is reported through the event queue, so a microtask-only
+/// flush would let a regression pass.
+Future<void> _flushAsyncErrorDelivery({int turns = 20}) async {
+  for (var i = 0; i < turns; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+}
+
+/// A [ModelPolicyStore] that fails the named operations the way Postgres fails
+/// when its connection has closed, and delegates everything else.
+///
+/// Failures are INJECTED rather than raised by a real server because the
+/// assertion is about containment at this boundary; [realClosedSinkError]
+/// separately proves the injected error is the genuine `dart:io` one.
+class _FaultyModelPolicyStore implements ModelPolicyStore {
+  _FaultyModelPolicyStore(this._inner, {required this.faults});
+
+  final ModelPolicyStore _inner;
+
+  /// Operation names that fail instead of reaching [_inner].
+  final Set<String> faults;
+
+  Future<T> _guard<T>(String operation, Future<T> Function() body) async {
+    if (faults.contains(operation)) {
+      throw closedSinkError();
+    }
+    return body();
+  }
+
+  @override
+  Future<ModelPolicy?> getPolicy(AgentRole role) =>
+      _guard('getPolicy', () => _inner.getPolicy(role));
+
+  @override
+  Future<void> upsertPolicy(ModelPolicy policy) =>
+      _guard('upsertPolicy', () => _inner.upsertPolicy(policy));
+
+  @override
+  Future<List<ModelPolicy>> getAllPolicies() =>
+      _guard('getAllPolicies', _inner.getAllPolicies);
+}
+
+/// A [WorkflowStore] that fails the named operations and delegates the rest.
+class _FaultyWorkflowStore implements WorkflowStore {
+  _FaultyWorkflowStore(this._inner, {required this.faults});
+
+  final WorkflowStore _inner;
+
+  /// Mutable on purpose: the "connection came back" test clears it in place.
+  final Set<String> faults;
+
+  Future<T> _guard<T>(String operation, Future<T> Function() body) async {
+    if (faults.contains(operation)) {
+      throw closedSinkError();
+    }
+    return body();
+  }
+
+  @override
+  Future<List<HumanDecision>> readHumanDecisionsForWorkItem(
+    String workItemId,
+  ) => _guard(
+    'readHumanDecisionsForWorkItem',
+    () => _inner.readHumanDecisionsForWorkItem(workItemId),
+  );
+
+  @override
+  Future<void> saveHumanDecision(HumanDecision decision) =>
+      _guard('saveHumanDecision', () => _inner.saveHumanDecision(decision));
+
+  @override
+  Future<WorkItem> readWorkItem(String workItemId) =>
+      _guard('readWorkItem', () => _inner.readWorkItem(workItemId));
+
+  @override
+  Future<List<WorkItem>> readAllWorkItems() =>
+      _guard('readAllWorkItems', _inner.readAllWorkItems);
+
+  @override
+  Future<void> saveWorkItem(WorkItem item, {int? expectedVersion}) => _guard(
+    'saveWorkItem',
+    () => _inner.saveWorkItem(item, expectedVersion: expectedVersion),
+  );
+
+  @override
+  Future<HumanDecision> readHumanDecision(String decisionId) =>
+      _guard('readHumanDecision', () => _inner.readHumanDecision(decisionId));
+
+  @override
+  Future<List<WorkflowTransitionRecord>> readTransitionHistory(
+    String workItemId,
+  ) => _guard(
+    'readTransitionHistory',
+    () => _inner.readTransitionHistory(workItemId),
+  );
+
+  @override
+  Future<WorkflowTransitionRecord?> findTransitionByIdempotencyKey(
+    String workItemId,
+    String idempotencyKey,
+  ) => _guard(
+    'findTransitionByIdempotencyKey',
+    () => _inner.findTransitionByIdempotencyKey(workItemId, idempotencyKey),
+  );
+
+  @override
+  Future<void> appendTransitionRecord(WorkflowTransitionRecord record) =>
+      _guard(
+        'appendTransitionRecord',
+        () => _inner.appendTransitionRecord(record),
+      );
+
+  @override
+  Future<void> appendOperatorAction(OperatorActionRecord record) =>
+      _guard('appendOperatorAction', () => _inner.appendOperatorAction(record));
+
+  @override
+  Future<List<OperatorActionRecord>> readOperatorActionsForWorkItem(
+    String workItemId,
+  ) => _guard(
+    'readOperatorActionsForWorkItem',
+    () => _inner.readOperatorActionsForWorkItem(workItemId),
+  );
+
+  @override
+  Future<T> inTransaction<T>(Future<T> Function(WorkflowStore store) body) =>
+      _guard('inTransaction', () => _inner.inTransaction<T>(body));
+}
+
+/// Reports the moment a human-decision WRITE is attempted, then delegates.
+///
+/// The write is what the production crash died on, so the regression test waits
+/// for the attempt rather than for a timer — the test cannot pass or fail
+/// without the code path having actually run.
+class _SignallingDecisionStore implements HumanDecisionStore {
+  const _SignallingDecisionStore(this._inner, {required this.onWrite});
+
+  final HumanDecisionStore _inner;
+  final void Function() onWrite;
+
+  @override
+  Future<void> saveHumanDecision(HumanDecision decision) {
+    onWrite();
+    return _inner.saveHumanDecision(decision);
+  }
 }
 
 /// Captures the operator log so a test can assert that a state change was
