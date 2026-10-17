@@ -810,3 +810,109 @@ today's draft."* — recorded under an id that is the tail of a longer word, so 
 by anyone** who does not already know it exists. Its `_authority` references by id will not resolve.
 The true id is unrecoverable from the filename; it must come from the author or from `93965ec`'s
 context.
+
+---
+
+## 10. The `planned` dead end — FIXED and verified at runtime (`863831a`, guard at `caa1272`)
+
+**Status** RESOLVED
+
+### Diagnosis
+`planned` had **no automated path forward**. Two facts, both verified:
+
+1. `planned` was in **no** `JobDefinition.entryStates` (`baseline_product`,
+   `implement_feature`, `triage_defect` — enumerated directly). `RunnableWorkEvaluator` rejects a
+   state outside `entryStates` **before** consulting the policy, so `EntryHopper.prepare()`
+   (`scheduler.dart:922`) was **never reached** on such an item. The mechanism existed and was
+   unreachable.
+2. The hop itself was always legal: `work_item_transitions.dart:28` has declared
+   `planned → designNotRequired` since the table was written, `EntryHopper` has existed since
+   `a56d64a` precisely for declared intermediate hops, and
+   `apps/server/lib/src/triage/work_entry.dart:594-604` already walks this edge **by hand** —
+   independent evidence it was the intended route, not a lane's invention.
+
+`planned → designRequired` requires `designContractExists()`; all three stranded items had
+`designContractId` NULL and empty `artifactRefs`, so `designNotRequired` was their only legal edge.
+
+### Why it survived five days — worth more than the fix
+**The failure is silent.** With `planned` absent, a tick enqueues 0, dispatches 0 **and records 0
+refusals** — an item no definition dispatches from is never *considered*, so it is never *refused*.
+`ran: true, dispatched: 0, failedSections: []` is precisely what an inert lane looks like. The
+scheduler was healthy the whole time and had nothing to say.
+
+### Fix
+Added `planned` to `triageDefectDefinition.entryStates` with the declared intermediate hop, following
+the existing `reviewRejected → designNotRequired` precedent. **`workflow_engine`'s transition table is
+unchanged** — nothing was declared that was not already legal.
+
+### Runtime verification (deployed, `main = caa1272`)
+    planned -> design_not_required   accepted x3
+    design_not_required -> agent_executing   accepted x3
+All three previously-stranded items moved, including one parked since 2026-10-12.
+
+### Three guards fired, none loosened
+- `entry_hop_drift_guard_test.dart` — `placeIn` has no walk to `planned`, so it **failed** on the
+  addition; satisfied honestly rather than relaxed.
+- Two exact-set pins in `retry_return_to_entry_state_test.dart` and
+  `retry_return_edges_test.dart` — updated with the reason `planned` was added; their live property
+  (exactly one retry-return target per lane) is unchanged and still asserted.
+- **`triage_execution_test.dart:1934`** is the significant one: its reason read *"NO entryStates set
+  was widened"* and explained that narrow entry sets make the triage/implementation dispatch
+  collision **structurally unreachable**. Adding `planned` makes that sentence false. Satisfied at
+  `caa1272` by recording the widening and showing the invariant is untouched — the collision requires
+  two definitions to **overlap**, and `planned` is an entry state of no other lane, so the sets stay
+  disjoint. **The guard's claim was changed; the guard was not dropped.**
+
+### F-39 A guard that iterates live config cannot detect a MISSING element
+**Status** OPEN · found by the implementation lane
+
+`triage_entry_state_drift_guard_test.dart` **does not fail if an entry state is removed** — it
+iterates the live set, so removal silently shrinks its loop and the guard gets weaker without any
+signal. This is why non-vacuity needed a separate test: the mutation ("remove `planned`") turns
+**10 tests red**, and none of them were that guard.
+
+Generalisable: *a guard that reads the thing it guards only proves the thing is well-formed, never
+that it is complete.* Every config-pinning guard in this repository should be asked which direction
+its failure runs.
+
+### F-40 Conditional routing is not expressible — an item with a design contract skips design
+**Status** OPEN · **architecture decision** · deliberately not implemented
+
+`planned → designNotRequired` is **unguarded**, so now that `planned` is dispatchable, a `planned`
+item that **does** carry a design contract is routed to triage rather than to design. The minimal
+restoration was authorised on the basis that all three stranded items have no contract, and that
+holds — but the edge case is real.
+
+Closing it needs the probe target chosen from the item's evidence, and
+`entryProbeTargets` is a `Map<WorkItemState, WorkItemState>` — **static by construction**, so the
+choice has nowhere to live. Three options, none taken:
+(a) widen `JobDefinition` to `Map<WorkItemState, WorkItemState Function(WorkItem)>`;
+(b) a second declaration kind for evidence-dependent hops;
+(c) a guard on the `planned` edges.
+
+All three change a type or the engine's table. **This is an architecture decision, not an
+implementation one**, and it is not blocking: it bites only an item whose producer creates the
+contract *after* planning completes.
+
+### F-41 The next wall: `agent_executing → agent_completed` requires a QA contract
+**Status** OPEN · pre-existing · exposed by F-39's fix, not caused by it
+
+All three items now dispatch and run, and **all three completions were rejected**:
+
+    agent_executing -> agent_completed   rejected x3
+
+`work_item_transitions.dart:120-124` guards that edge with `qaContractExists()`, which is
+`context['qaContractId'] != null` (`guard_conditions.dart:247`). **All three items have
+`qaContractId` NULL.** So triage runs, produces a result, and the result cannot be recorded.
+
+Pre-existing and strictly downstream — these items were stuck *earlier* (at `planned`) until this
+session. The fix moved them one layer forward and exposed the next one. **Not a regression**, and the
+layer beneath is now reachable, which it was not before.
+
+### The loop bound — the implementation lane corrected the Manager
+I asked it to confirm `planned` is unreachable from `designNotRequired`. **That is false and its test
+caught the claim.** A real path exists: `designNotRequired → … → waitingForHumanDecision →
+planning → planned`. The correct bound is that the single edge back carries
+`blocking_human_decision_resolved` **and** `decision_actor_is_human`, so **no unattended actor can
+take it**. Verified by 25 ticks producing exactly 3 hops and 3 dispatches. **The bound holds for a
+better reason than the one I asked for.**
