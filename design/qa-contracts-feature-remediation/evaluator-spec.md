@@ -2,8 +2,10 @@
 
 **Parent:** [`design-revision.md`](./design-revision.md) §5 — deliverable 1
 **Authoring HEAD:** `e3634a0cbbdf656267b22908284dd1ae8b655085` (revision 1)
-**Corrected at:** `c8fd361906f0d831bbcfd431b75d1eb21ae9db5d` (revision 2, correction lane
-`design-QA-CONTRACTS-CORRECTION`)
+**Revision 2 at:** `c8fd361906f0d831bbcfd431b75d1eb21ae9db5d`
+**Revision 2 corrected at:** `90b6f5f` (revision 2 correction lane
+`design-QA-CONTRACTS-CORRECTION-2`) — LOW finding L-2: the triage contract's `required` flags are
+counted correctly in §5.3 and §6.
 **Status of this document:** a specification. This lane implements no production code.
 
 > The mandate: *"Who populates `context['gateResults']`, from what, at which point in the
@@ -432,15 +434,30 @@ Two **non-negotiable** properties:
   well-formed triage classification", nothing more. Anything richer belongs in
   `triage-evidence-grounding` / `triage-clarification-routing`, neither of which has an evaluator
   and neither of which is in scope here.
-- **It must be honest about the two triage gates that have no evaluator.** After slice 2, the
-  triage contract's *first* gate is `PASSING` when the shape is right and the other two remain
-  `notExecuted`. Because `allRequiredGatesMustPass: true` and both are `required: true`
-  (`{L}:175`, `:201`), `allRequiredGatesPassed` **still fails** — which is
-  correct. Recording this matters: a reader who sees one triage gate enforced must
-  not infer the contract is satisfied. `{L}:107-118` already states the honest
-  position; keep `'evaluatorRuntime': 'absent'` (`:156`) until *all three* have
-  evaluators, and record the partial state in a way that cannot be read as full
-  enforcement.
+- **It must be honest about the triage gates that have no evaluator.** After slice 2, the triage
+  contract's *first* gate is `PASSING` when the shape is right and its **second required** gate
+  remains `notExecuted`. Because `allRequiredGatesMustPass: true` and that gate is `required: true`
+  (`{L}:175` and `{L}:202`), `allRequiredGatesPassed` **still fails** — which is correct. Recording
+  this matters: a reader who sees one triage gate enforced must not infer the contract is satisfied.
+  `{L}:107-118` already states the honest position; keep `'evaluatorRuntime': 'absent'` (`:156`)
+  until *every required* gate has an evaluator, and record the partial state in a way that cannot be
+  read as full enforcement.
+
+  > **Correction (LOW finding L2) — revision 2 counted this wrong.** It wrote *"both are
+  > `required: true` (`{L}:175`, `:201`)"* about the two gates left `notExecuted`. **There are two
+  > required gates and one optional one.** Verified at `90b6f5f`:
+  > `triage-classification-admitted` `required: true` (`:175`) ·
+  > `triage-evidence-grounded` `required: true` (`:202`) ·
+  > `triage-clarification-routing` **`required: false`** (`:222`) — and deliberately so, per its own
+  > comment at `:216-218`: *"It is conditional on ambiguity, which is a property of the report
+  > rather than of the run, so a required flag here would mark every well-formed triage as a gate
+  > failure."*
+  >
+  > **The conclusion is unaffected** — `triage-evidence-grounding` is required and has no evaluator,
+  > so `allRequiredGatesPassed` still fails — but the reasoning has to be right, because the honest
+  > reading is *"one required gate is unsatisfiable"*, not *"two are"*. A `required: false` gate being
+  > `notExecuted` is not a gate failure at all, and an implementer who trusted the count would go
+  > looking for a second evaluator to build.
 
 ---
 
@@ -468,11 +485,13 @@ caller). The reference was a phantom and it is corrected rather than resolved to
 seemed nearest, because guessing would have been the same defect one level down.
 
 **And one thing this table should have said and did not:** `PARTIALLY ENFORCED` is **not reachable
-at all** under §5.2 as corrected. Reaching it requires a contract's required gates to be evaluated
-honestly, and the only contract with an evaluator after 2b is the triage contract — whose other two
-required gates (`triage-evidence-grounding`, `triage-clarification-routing`) have none
-(`lane_g_triage_qa_contract.dart:199, 221` — package path given at §3.4). So the honest cell reads
-**"not reachable at any slice of this spec"**, exactly like `PASSING`.
+at all** under §5.2 as corrected. Reaching it requires a contract's **required** gates to be
+evaluated honestly, and the only contract with an evaluator after 2b is the triage contract — whose
+one remaining **required** gate, `triage-evidence-grounding`, has none
+(`lane_g_triage_qa_contract.dart:199-209`, `required: true` at `:202`; package path given at §3.4).
+Its third gate, `triage-clarification-routing`, is **`required: false`** (`:222`) and so is not a
+barrier — **which is the L-2 correction applied here too.** So the honest cell reads **"not
+reachable at any slice of this spec"**, exactly like `PASSING`.
 
 `PARTIALLY ENFORCED` is a real state of the world. It is simply not one this repository can reach by
 building only what this spec builds — which is itself the §5.2 finding, one vocabulary level up.
