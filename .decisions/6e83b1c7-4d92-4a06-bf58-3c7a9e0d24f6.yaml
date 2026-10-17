@@ -1,0 +1,39 @@
+# human-decision.yaml
+decision_id: 6e83b1c7-4d92-4a06-bf58-3c7a9e0d24f6
+type: ARCHITECTURE
+status: RESOLVED
+title: Re-registering a product must MERGE its declaration, never clobber its lifecycle state
+resolution:
+  selected: MERGE_ON_REREGISTER
+  label: registerProductWithManifest preserves an existing product's state/description/createdAt and only adds or updates the declared QA contract
+  decided_by: operator
+  decided_at: 2026-10-17T19:30:00Z
+  rationale_given: >-
+    Registering the QA contract is the only legitimate way to clear the 3 stranded items (decision
+    7a1c9f34 forbids hand-written SQL). But `registerProductWithManifest` calls `createProduct` first,
+    and `saveProduct` with a null expectedVersion is `INSERT ... ON CONFLICT DO UPDATE SET name,
+    description, manifestVersion, state, createdAt, updatedAt, version`
+    (postgres_product_registry_store.dart:95). So re-registering `shipit-platform` — currently
+    `governed`, with an accepted baseline (bl-shipit-platform-1 rev 1) and a non-null description —
+    would reset state to `registered`, `createdAt` to now, version to 1, and then null the
+    description via updateProduct.
+  why_this_is_worse_than_it_looks: >-
+    `ProductTransitions` has NO edge from `registered` back to `governed` — only
+    `registered -> baselinePending` (product_transitions.dart:81) and `registered -> archived` (:138,
+    human-gated). So the product would be stranded, and recovery would require a NEW baseline revision,
+    a NEW verification and a NEW human approval. Irreversible in practice.
+  what_must_change: >-
+    Re-registration must be a MERGE: an existing product keeps its lifecycle `state`, `description`,
+    `createdAt` and `version`; only the declared QA contract is written (added or updated). The
+    on-offboard path, which legitimately re-creates, is unaffected.
+  related_contradiction_too: >-
+    `apps/control_plane/lib/features/products/add_product_page.dart:274` comments "Both writes are
+    upserts server-side (ON CONFLICT DO UPDATE), so calling this on every check and every register is
+    idempotent." That is false: an ON CONFLICT DO UPDATE is idempotent in VALUE only if every column
+    is rewritten identically. Here `state` and `createdAt` are not. Correct the comment as part of this
+    change -- it is the client-side statement of the same defect.
+  scope_note: >-
+    This is a product/governance change to the registry's re-registration semantics, made deliberately:
+    the operator chose "merge, not clobber" over registering a new product id (which orphans every
+    existing work item, decision and baseline) and over hand-writing the spec row (which bypasses the
+    declaration validation, the three named refusals, and the audit the endpoint exists to provide).
