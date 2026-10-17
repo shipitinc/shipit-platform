@@ -1551,3 +1551,68 @@ and its correction are both on the record.
 **`A grep finds an orphaned string, not a stale claim`** has now been demonstrated seven times. The
 recurring blind spot is named in the artifact itself: **score fields, gap lists and risk rows** — *"a
 field that summarises is a field that decays."*
+
+---
+
+## 21. Round 6 (`d210475`) — slice 1 is SAFE, and a lane under-reported its own risk level
+
+Round 6: **no blockers**, 2 HIGH, 3 MEDIUM, 3 LOW. The reviewer verified the four scope facts, the
+normative spec, and **ran the generator twice** (four-register form `13 8 9 13` against five-register
+`13 8 9 7 6` — F-66 confirmed reproducible).
+
+**Slice 1 is safe to implement.** `design-review-gate.md §6 1a` was verified **intact and correct**, and
+`§8` no longer contradicts it — round 5's position (*"safe from §6 1a, not from §8"*) no longer holds.
+The reviewer also verified **H1's assertion fires on mutation**: delete
+`(designReviewRequest, reTriage) → designNotRequired` and G18(ii) goes red, because the clause requires
+the target to **equal** `designNotRequired` and absence is not equality. It is correctly phrased over
+the **target** rather than the arm's presence, so `cancel → cancelled` passes today via the
+`(_, cancel)` catch-all without demanding an arm that must not be written.
+
+### F-68 A lane reported RISK LEVEL 1 for a Level 3 artifact — and the gate would have routed as AUTO
+**Status** OPEN · **governance** · the most consequential finding in this section
+
+Pass 6 reported `RISK_LEVEL: 1`, reasoning *"no design content changed, only an assertion clause."*
+The artifact itself correctly says **3**, and the reviewer rejected the 1.
+
+The two are measuring different objects, and conflating them has a **routing consequence**:
+
+- `risk_assessment.level` describes **the change being designed** and drives Gate D4. It is 3.
+- `DESIGN_GOVERNANCE.md:97`'s Level 1 means *"inconsistency with established design system (tokens,
+  components, patterns)"*. Pass 6 changed **no token, component or pattern.**
+
+> **"If the reported 1 is acted on, a Level 3 gate routes as AUTO with notification instead of to human
+> product/design/architecture approval."**
+
+**A lane's own report of its risk level can silently downgrade a human gate.** The artifact was right
+and the *report* diverged from it — which means the field a reviewer reads for its verdict was not the
+field that was wrong, so it would survive a careful read of the artifact. This is the same shape as
+H-A: **a summary field that decays**.
+
+**Rule this establishes: the risk level in a lane's report is a claim about the artifact, not a
+measurement of the lane's increment.** The artifact's value governs; a lane that lowers it must say why
+against the artifact's number, not offer its own.
+
+### Still open from round 6 — all in summary, risk and criteria fields
+- **H-A** — `design-revision-metadata.yaml:601-604` (`acceptance_criteria` AC-9) still says the park's
+  menu is **THREE** answers and reversible *"ONLY by a NEW HumanDecisionChoice that no decision has
+  authorised"* — **false twice over**; `5a90c1d3` authorised exactly that. This is the twin of the
+  claim pass 6 struck from `requirements_gaps`, in **a field a reviewer reads for its verdict**.
+- **H-B** — three present-tense residues still say **two** arms where three exist
+  (`design-review-gate.md:1273`, `:1388`, `design-revision.md:1083`). None changes what an implementer
+  builds, but all three understate the slice-1→slice-2 window that R4 and `§0.2` exist to quantify.
+- **M-A** — a self-cancelling bulk-replace residue at `design-revision.md:893`: *"the whitelist is
+  **`:530-549`**, not `:530-549`"* — the replace hit both the correct and the rejected slot. The
+  following sentence makes the intent recoverable, so not a blocker, but it is **the same replace that
+  produced `d210475`**. *"Read your own artifact back"* was applied once, not swept.
+- **M-B** — the H3(2) correction describes **itself** in the present tense as unfixed
+  (`metadata:955-959`) although it was corrected at `:921` in the same edit. A correction misreporting
+  itself as incomplete is the same failure inverted.
+- **L-A/L-B/L-C** — enumeration errors in `not_rebuilt_this_pass`; loose "reads neither routing table"
+  wording in `evaluator-spec.md` where it does cite them for the QA path; and G18 clause (ii) leaving
+  its subject implicit.
+
+### The reviewer's ruling on a seam the artifact asked it to decide
+**G18 is the correct home for the target clause.** G17(a) is existential over type and choice and
+keyed on `designApproved` by the reversal's invariant — it has **no vocabulary** for `reTriage`,
+`planning`, `designNotRequired` or `cancelled`. Folding a four-target table into it would either break
+that existential clause or duplicate the arm set.
