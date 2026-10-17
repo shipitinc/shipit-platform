@@ -6,6 +6,13 @@
 **Revision 2 corrected at:** `90b6f5f` (revision 2 correction lane
 `design-QA-CONTRACTS-CORRECTION-2`) — LOW finding L-2: the triage contract's `required` flags are
 counted correctly in §5.3 and §6.
+**Correction pass 3 at:** `2b182fd3215fde12a5814f0c7db4753514aa4c62` — two changes, both mechanical
+and both recorded where they were made: **the evaluator's slices are renumbered 2a/2b/2c → 3a/3b/3c**
+(§8 of `design-revision.md`; the crosswalk is at `design-review-gate.md` §0.2), and **`§4.3` V6's
+citation of `implementation_inflow.dart:1543-1578` is corrected** — that file is 440 lines long, so
+the range pointed 1103 lines past its end; the property is stated at **`:124-126`** and demonstrated
+at `scheduler.dart:1582-1599`. **No finding, no gate, no gate-result vocabulary and no ordering
+constraint in this document changed.**
 **Status of this document:** a specification. This lane implements no production code.
 
 > The mandate: *"Who populates `context['gateResults']`, from what, at which point in the
@@ -86,7 +93,7 @@ Revision 1 wrote the walk as:
 agentCompleted -> reviewInProgress -> reviewApproved -> qaInProgress -> STUCK
 ```
 
-**That is wrong by one hop, and the error mattered:** it put a QA drain in slice 2c that would have
+**That is wrong by one hop, and the error mattered:** it put a QA drain in slice 3c that would have
 had nothing to drain. Verified:
 
 - `reviewApproved` is in **no** `JobDefinition.entryStates`. Every `entryStates` set in the
@@ -113,8 +120,8 @@ agentCompleted -> reviewInProgress -> reviewApproved -> STUCK          ← (no c
    stops there permanently"* is **corrected**: it stops one hop earlier, at `reviewApproved`, and
    `qaInProgress` is unreachable. The finding is not retired — it moves one state left and grows a
    second one.
-2. **Slice 2c must be widened.** It is not "the drain"; it is *the drain **and** whatever walks
-   `reviewApproved -> qaInProgress`*. The engine may not be reimplemented here, so slice 2c's
+2. **Slice 3c must be widened.** It is not "the drain"; it is *the drain **and** whatever walks
+   `reviewApproved -> qaInProgress`*. The engine may not be reimplemented here, so slice 3c's
    specification is: **name the caller**, and its obligations are the existing
    `actorAllowed([orchestrator])` + `qaContractExists()` on that edge. The *reason* no caller exists
    is the design-governance-adjacent gap `server.dart:1327-1330` generalises: a transition declared
@@ -149,7 +156,7 @@ that nothing dispatches"*. That is incomplete. The edge admits **both**
 ```
 
 `design-revision.md:153-154` had it right; this document did not. **The distinction is load-bearing
-for slice 2c:** the failure arm is reachable by `ActorType.orchestrator` today, which is what makes
+for slice 3c:** the failure arm is reachable by `ActorType.orchestrator` today, which is what makes
 §4.2 step 4's "record a failed QA rather than silently leave it in place" a wiring change rather
 than a new-actor change.
 
@@ -312,7 +319,7 @@ bypassed**, not assertions that pass when it works:
 | V3 | `gateResults` present but `qaContract` **absent** does not reach `qaPassed` | §1's vacuous-pass hole is reopened |
 | V4 | `gateResults: []` with a contract declaring gates does not reach `qaPassed` | §1's empty-iterable hole is reopened |
 | V5 | The drain reaches `qaFailed` (not `qaPassed`) on a failing contract, and a blocking decision is raised | the failure arm of `:691-694` is dropped |
-| V6 | The drain is per-item isolated: one item whose contract id is unreadable does not lose the lane's whole tick | the throw escapes — the exact failure `implementation_inflow.dart:1543-1578` was written about |
+| V6 | The drain is per-item isolated: one item whose contract id is unreadable does not lose the lane's whole tick | the throw escapes — the exact failure `implementation_inflow.dart:124-126` was written about (*corrected in pass 3: this row previously cited `:1543-1578` of a 440-line file*) |
 
 V3 and V4 are the two that do not exist in any form today and that a naive wiring would pass.
 
@@ -349,7 +356,7 @@ The content is fabricated:
 `thresholds: {}`".** That is a false green with an audit trail, and it is strictly worse than the
 `notExecuted` the guard currently handles correctly.
 
-### 5.2 What slice 2a must do, before any wiring
+### 5.2 What slice 3a must do, before any wiring
 
 Independent review found that revision 1's option 1 **cannot achieve what it was offered for**, and
 the review is right. Stated as corrected:
@@ -434,7 +441,7 @@ Two **non-negotiable** properties:
   well-formed triage classification", nothing more. Anything richer belongs in
   `triage-evidence-grounding` / `triage-clarification-routing`, neither of which has an evaluator
   and neither of which is in scope here.
-- **It must be honest about the triage gates that have no evaluator.** After slice 2, the triage
+- **It must be honest about the triage gates that have no evaluator.** After slice 3, the triage
   contract's *first* gate is `PASSING` when the shape is right and its **second required** gate
   remains `notExecuted`. Because `allRequiredGatesMustPass: true` and that gate is `required: true`
   (`{L}:175` and `{L}:202`), `allRequiredGatesPassed` **still fails** — which is correct. Recording
@@ -467,7 +474,7 @@ Two **non-negotiable** properties:
 |---|---|---|
 | `ABSENT` | no declaration exists | the two contracts this revision declines (`design-revision.md` §3) |
 | `DECLARED` | a `QAContract` row exists; its gates are readable and auditable; **nothing evaluates them** | `qa-triage-*`; every `qa-product-*` |
-| `PARTIALLY ENFORCED` | some gate types have evaluators and pass/fail honestly; the contract's `allRequiredGatesMustPass` still cannot be satisfied because other required gates are `notExecuted` | reachable only after **slice 2b** (`triage-classification-structure` has an evaluator) *and* slice 2c (the drain that calls it) — **and only for a product whose every other required gate type also has an evaluator** |
+| `PARTIALLY ENFORCED` | some gate types have evaluators and pass/fail honestly; the contract's `allRequiredGatesMustPass` still cannot be satisfied because other required gates are `notExecuted` | reachable only after **slice 3b** (`triage-classification-structure` has an evaluator) *and* slice 3c (the drain that calls it) — **and only for a product whose every other required gate type also has an evaluator** |
 | `PASSING` | every required gate evaluated and satisfied by a real evaluator | **nothing in this repository, at any slice of this spec** |
 
 The single sentence this spec exists to make true: **`DECLARED` is not `PASSING`, and the word on
@@ -478,15 +485,25 @@ survive every slice, and must be **removed only** when the contract's every requ
 gate type has a real evaluator.
 
 **Correction to revision 1 (MEDIUM finding).** This table said `PARTIALLY ENFORCED` was "reachable
-only after slice **2.3**". **No slice 2.3 exists** — `design-revision.md` §8 defines **2a**
-(replace the content-blind validation), **2b** (implement `triage-classification-structure`) and
-**2c** (the `qaInProgress` drain, now widened per §2.1 to include the `reviewApproved -> qaInProgress`
-caller). The reference was a phantom and it is corrected rather than resolved to whichever slice
-seemed nearest, because guessing would have been the same defect one level down.
+only after slice **2.3**". **No slice 2.3 has ever existed under any numbering of this design** —
+`design-revision.md` §8 defines three sub-slices of the evaluator, now numbered **3a**
+(de-registration and the content-reading replacement), **3b** (implement
+`triage-classification-structure`) and **3c** (the `qaInProgress` drain, widened per §2.1 to include
+the `reviewApproved -> qaInProgress` caller). The reference was a phantom and it is corrected rather
+than resolved to whichever slice seemed nearest, because guessing would have been the same defect one
+level down.
+> **Correction pass 3 renumbers these, and says why the correction above is now phrased in absolute
+> terms.** `.decisions/b81f40c7-…` reversed the slice order (the human surface is now slice 1, the
+> gate slice 2), so "2a/2b/2c" became "3a/3b/3c". **A correction that pins a phantom reference to a
+> bare number is itself fragile**: had this paragraph kept saying "no slice 2.3 exists — §8 defines
+> 2a, 2b and 2c", the renumbering would have made the sentence meaningless without anything being
+> wrong in isolation. Phrasing it against what §8 *defines* rather than against a numeral survives a
+> renumbering. **Same failure class as the L3 pattern, in the other direction:** a claim that is only
+> true because of a label rather than because of what it names.
 
 **And one thing this table should have said and did not:** `PARTIALLY ENFORCED` is **not reachable
 at all** under §5.2 as corrected. Reaching it requires a contract's **required** gates to be
-evaluated honestly, and the only contract with an evaluator after 2b is the triage contract — whose
+evaluated honestly, and the only contract with an evaluator after 3b is the triage contract — whose
 one remaining **required** gate, `triage-evidence-grounding`, has none
 (`lane_g_triage_qa_contract.dart:199-209`, `required: true` at `:202`; package path given at §3.4).
 Its third gate, `triage-clarification-routing`, is **`required: false`** (`:222`) and so is not a

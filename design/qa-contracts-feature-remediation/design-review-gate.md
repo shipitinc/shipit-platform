@@ -6,10 +6,15 @@
 - `.decisions/7f3e2a95-6c81-4d70-b215-8e94a0c7d382.yaml` — **the reading of HD-1's undelegated
   clause, RESOLVED by the operator 2026-10-17: `READING_B_CLAUSE_COVERS_EVERY_ROUTE`.** This
   document no longer asks the question; see §5.2.
+- `.decisions/b81f40c7-2a96-4e38-bd51-6c07e9f3a824.yaml` — **the SEQUENCING, RESOLVED by the
+  operator 2026-10-17: `HUMAN_SURFACE_FIRST`.** The park's human surface is built **BEFORE** the
+  gate, reversing the order this document's previous pass used. See §0.2 and §5.2.2.
 **Authoring HEAD:** `e3634a0cbbdf656267b22908284dd1ae8b655085` (revision 1)
 **Revision 2 at:** `c8fd361906f0d831bbcfd431b75d1eb21ae9db5d`
 **Revision 2 corrected at:** `90b6f5f` (revision 2 correction lane
 `design-QA-CONTRACTS-CORRECTION-2`)
+**Correction pass 3 at:** `2b182fd3215fde12a5814f0c7db4753514aa4c62` (lane
+`design-QA-CONTRACTS-CORRECTION-3`) — the sequencing reversal, plus M-A through M-D and L-A, L-B.
 **Status of this document:** a specification. This lane implements no production code.
 
 ---
@@ -22,7 +27,7 @@ artifacts, that **"the park carries a durable reason"** — citing
 `blockingReason` only when `to == waitingForHumanDecision`, and writes `null` otherwise, so the
 park hop *erased* its own reason. The distinct state survived; the promise did not.
 
-Two other corrections change what §5.2 is allowed to say, and one changes sub-slice 1b's file list.
+Two other corrections change what §5.2 is allowed to say, and one changes sub-slice 2b's file list.
 
 | | Revision 2 said | Actual | §
 |---|---|---|---|
@@ -30,11 +35,94 @@ Two other corrections change what §5.2 is allowed to say, and one changes sub-s
 | **H-2** | the park's only out-edge is `(designReviewRequired, waitingForHumanDecision)`, taken by nothing, and no component originates it | the out-edge is taken by **`DurableWorkflowEngine.requestHumanDecision`**, a named, already-called component (`:546`, writing at `:651-653`); the route-3 refusal that re-enters the park is originated by **`resolveHumanDecision`** (`:758-761`, refusing at `:820-841`) | §5.1.2 |
 | **H-3** | Reading B is "specified, argued, and **left open**" for an independent reviewer to judge; the rationale's word is disposed of "as a different field" | **Reading B is DECIDED** (`.decisions/7f3e2a95…`). Reading A is rejected. The artifacts must say so, and must stop disposing of the rationale as a different field | §5.2 |
 | **M-2** | the park is taken "inside the existing per-item `try` (`scheduler.dart:1582-1599`)" | that range is the **`try` around the four per-item reads**, whose reason string is *"this item could not be read well enough to decide whether it should be reviewed or implemented."* The transition's `try` is `:1740-1843`, rejection caught at `:1823-1833` | §5.1.2 |
-| **M-3** | sub-slice 1b lists `implementation_inflow.dart`, `server.dart`, and the route-3 caller | the actual route-1 context writer is `packages/scheduler/lib/src/scheduler.dart`, whose context at `:1746` is a **`const` literal** — the two keys cannot exist until it becomes a computed map | §6, 1b |
+| **M-3** | sub-slice 1b lists `implementation_inflow.dart`, `server.dart`, and the route-3 caller | the actual route-1 context writer is `packages/scheduler/lib/src/scheduler.dart`, whose context at `:1746` is a **`const` literal** — the two keys cannot exist until it becomes a computed map | §6, 2b |
 
 **The correction spec recommended landing the park at `waitingForHumanDecision` instead of a new
 state. This revision does not, and §5.1.1b states why with evidence — because that option is not
 implementable as written, and it moves the dead end rather than closing it.**
+
+---
+
+## 0.1 What correction pass 3 changed, in one place
+
+**The previous pass's BLOCKING finding is closed and is NOT rebuilt.** The independent review
+verified at the line level that the park carries a durable reason, a resolvable decision id, is
+idempotent, and has a reachable raiser — and that **this lane's refusal of the correction spec's
+recommended B-1 fix was correct on the merits**: there is no `(agentCompleted,
+waitingForHumanDecision)` edge, and `resolveHumanDecision` saves the decision as resolved then
+throws. Everything below is metadata, argument and sequencing. `durable_discoveries` at
+`not_rebuilt_this_pass` in `design-revision-metadata.yaml` records the confirmations.
+
+| | Correction pass 3 changed | § |
+|---|---|---|
+| **SEQ** | **The slice order REVERSES.** The park's human surface is now built **BEFORE** the gate. The previous pass routed it as "slice 1.5", after the gate — a flagged judgement that the operator has now overridden **on authority, not reasoning**. | §0.2, §5.2.2, §6 |
+| **M-A** | **`FOLLOW_UPS` F-55 now EXISTS.** The previous pass cited it in six places as the place the gap "is recorded", while stating in four of them that it had never been written. `0bfb6fb` wrote F-55 and F-56. Every one of those citations now resolves, and each is corrected to say so. | §5.2.2 |
+| **M-C** | §5.1.1a stated the park's two steps without saying the order is **load-bearing**. It is: step 1's `transition` is what clears the resolved blocking id that would make step 2 throw. | §5.1.1a |
+| **M-D** | The route-3 caller was named by role ("the human-decision endpoint"). It is now named with `file:line` end to end, and the design says that **discriminating the rejection is the work** — the existing catch is generic. | §5.1.2, §6 (2b) |
+| **L-A** | Three artifacts called `durable_workflow_engine.dart:996` "the escalation-index computation". It is inside `_isReWorkDecision`, which drives `nextTriageAttempt`. The escalation-index predicate is `:1007-1021`. | §6 (2d), `design-revision.md` §11 |
+| **G17** | **NEW.** The invariant the reversal exists to enforce, now **asserted** rather than asserted-by-convention: `designReviewRequired` may not have an in-edge while the decision raised there offers no "do the design review" answer. | §5.2.2, §6 (1c) |
+| **G17b** | **NEW — and it corrects this document's own text.** §5.2.2 stated the `targetFor`/`escalationTargetFor` lockstep rule flatly for this work. It does **not** apply to an `approve` answer, and an implementer who believed it would have started escalation accounting silently on a design approval. | §5.2.2, §6 (1c) |
+| **PASS3-1** | **FOUND BY THIS PASS, NOT BY THE REVIEW.** `implementation_inflow.dart:1543-1578` — a range 1103 lines past the end of a 440-line file, cited twice for a load-bearing property. | §6 (2b), `evaluator-spec.md` §4.3 |
+
+### 0.2 The sequencing reversal — recorded, with the merits argument kept
+
+> **Decision `b81f40c7-2a96-4e38-bd51-6c07e9f3a824.yaml`** · `type: ARCHITECTURE` · `status: RESOLVED` ·
+> `resolution.selected: HUMAN_SURFACE_FIRST` · `decided_by: operator` · `decided_at:
+> 2026-10-17T14:10:00Z`
+>
+> **`consequence`, verbatim:** *"Slice ordering REVERSES: the human surface becomes the FIRST slice,
+> the gate follows. This costs a new HumanDecisionType plus a routing arm, and
+> human_decision_routing.dart:151-162 records why that is not small — 'a value here that disagrees
+> with targetFor does not error, it silently stops the escalation index advancing.' The two routing
+> tables must move in lockstep."*
+>
+> **`invariant`, verbatim:** *"NO item may be parked at `designReviewRequired` before the decision
+> raised there offers a 'do the design review' answer. A park without a way to produce what the item
+> waits for is the dead-end class (F-42, F-50, F-54) this area has produced repeatedly. This
+> invariant is the whole point of the reversal and must be asserted, not assumed."*
+
+**What the previous pass argued, and it is not withdrawn.** It routed the human surface as slice 1.5
+because while the gate is absent, a refused intake item sits at `agentCompleted`, whose only consumer
+**stands down** (`engineering_review_gate.dart:2860-2871`, §5.1) — a silent position, which is worse
+than parking. **The independent review agreed with that argument on the merits** and held the
+opposite on authority: *"a flagged judgement is not a discharged obligation."* The decision's own
+`authority_note` records the same thing: *"The lane's merits argument is recorded and is not
+dismissed. It is overridden on AUTHORITY, not on reasoning."*
+
+**So a reader must be able to see which it was.** The distinction this artifact draws, everywhere the
+point appears: **a merits argument is this lane's; deferring a Level 3 operator instruction is the
+operator's.** The previous pass made the first and claimed the second. That is corrected here, and
+the correction is not a change of mind about the merits.
+
+**What the reversal costs, stated rather than minimised.** For the window in which the human surface
+exists and the gate does not, the platform carries **a new `HumanDecisionType` and a routing arm
+that no guard consumes** — an answer an operator is offered that changes nothing about whether an item
+may reach an implementer. The design's judgement was that a silent `agentCompleted` is worse; the
+operator has decided it is not. **That is the whole disagreement, and it is resolved against this
+lane.**
+
+#### Slice-number crosswalk — read this if you are holding the previous review
+
+The reversal moves the gate off "slice 1", so every slice is renumbered. **No claim changed; the
+numbers moved.** A reviewer reading `225ee5c`'s review alongside this document should use this table.
+
+| | This document | Previous pass (`225ee5c`) | What it is |
+|---|---|---|---|
+| **1** | **the park's human surface** — a `HumanDecisionType` + routing arm answering "do the design review" | slice 1.5 | **the reversal** |
+| **2** | **the design-review gate** (§6, sub-slices 2a–2d) | slice 1 (sub-slices 1a–1d) | the gate |
+| **3** | the evaluator (§6 `evaluator-spec.md`, 3a–3c) | slice 2 (2a–2c) | unchanged in content |
+| **4** | the design lane (M6 + M7 + M5) | slice 3 | unchanged |
+| **5** | the path-specific contracts (M8–M12) | slice 4 | unchanged |
+| **0** | Manager-owned ledger | slice 0 | unchanged |
+
+> **One decision quote needs a gloss.** `.decisions/7f3e2a95…`'s `precondition` reads *"sub-slice
+> 1a's pinned content depends on this answer … so slice 1 may not begin until this decision is
+> recorded — which it now is."* **"Slice 1" and "1a" in that decision mean the design-review gate,
+> which this revision numbers 2a.** The precondition is discharged: the decision is recorded, and
+> §6 2a's pinned content is the one the decision describes (both guards, one commit). The decision
+> predates the reversal; the renumbering does not reopen anything it settled.
+
+---
 
 ---
 
@@ -261,7 +349,7 @@ R3's mitigation is withdrawn with it.
 
 Add one guard to **two existing edges that have callers**, and to **one more that revision 1 left
 open**. No edge is added, removed, or retargeted *in this sub-slice*; the two new park edges are
-§5.1 and §6 sub-slice 1d.
+§5.1 and §6 sub-slice 2d.
 
 ```dart
 // work_item_transitions.dart
@@ -382,7 +470,7 @@ closest precedent says so itself: `qaContractExists()` null-checks `context['qaC
 from the store while the scheduler cannot (`work_item_transitions.dart:126-134`).
 
 **What the design must therefore do is name the component and make it the only writer.** §6,
-sub-slice 1b.
+sub-slice 2b.
 
 ### 4.5 Which actor satisfies it
 
@@ -558,6 +646,63 @@ blockingReason: question ?? 'Awaiting human decision',
 | 1 | `transition(to: designReviewRequired)` — P2 or P3 | the dispatchable-by-nobody state |
 | 2 | **`requestHumanDecision(decisionType: escalation, blocking: true, question: <park reason>, options: <§5.2's set>)`** | the item moves to `waitingForHumanDecision`, and writes **`blockingHumanDecisionId`** (a real decision id) and **`blockingReason`** (the text a human reads) itself |
 
+**The order is load-bearing. Do not collapse these two calls into one, and do not invert them.**
+
+The previous pass specified the order and **never said why**, which leaves an implementer free to
+"optimise" it. The reason is in the tree, and it is stronger than the order itself:
+
+```dart
+// packages/workflow_store/lib/src/durable_workflow_engine.dart:564-584  (requestHumanDecision)
+if (item.state == WorkItemState.waitingForHumanDecision &&
+    item.blockingHumanDecisionId != null) {                      // :564-565
+  final existing = await _store.readHumanDecision(item.blockingHumanDecisionId!);
+  if (existing.decisionType == decisionType &&
+      !existing.status.isResolved) {                             // :569-570
+    return existing;                                             // :571  ← idempotence arm
+  }
+  throw WorkflowTransitionRejectedException( …                    // :573-583
+    reason: 'Work item is already waiting for a blocking human decision',   // :581
+  );
+}
+```
+
+**So `requestHumanDecision` REFUSES to raise anything for an item that is already at
+`waitingForHumanDecision` carrying a non-null blocking id whose decision is resolved. And that is
+precisely the state a P3 entry is taken from** — §5.1.1b establishes it: a route-3 refusal saves the
+decision as **resolved** (`:817`) and then throws (`:821`), leaving the item at
+`waitingForHumanDecision` holding that resolved id, because the `copyWith` that would move it is at
+`:854`, after the throw.
+
+Step 1 is therefore not a formality that gives the item a nicer place to wait. **Step 1 is the only
+thing that makes step 2 possible**, because `transition`'s own `copyWith` is what clears the id:
+
+```dart
+// :215-221  (transition)
+blockingHumanDecisionId: to == WorkItemState.waitingForHumanDecision
+    ? …                                                          // :215-218
+    : identical(to, item.state)
+      ? item.blockingHumanDecisionId                            // :219-220
+      : null,                                                    // :221  ← P2/P3 land here
+```
+
+P3 changes the state (`waitingForHumanDecision -> designReviewRequired`), so `identical` is false and
+the id is **nulled**. That null is the precondition step 2 checks at `:564-565`.
+
+**Three ways to get this wrong, all of which a single-call helper would do:**
+
+1. **One call, no hop** — call `requestHumanDecision` straight from the catch. On a **P3** entry the
+   call **throws**, inside a catch block, and §6 2b's per-item isolation is what stands between that
+   and a whole-lane tick (`scheduler.dart:1582-1599`, `implementation_inflow.dart:124-126`). The item
+   keeps its resolved id and no decision is ever raised — B1 with a different state name.
+2. **Hop, but skip step 2** — the reason-less park. That is R3b, and G14/G15/G16 fail on it.
+3. **Step 2 before step 1** — same as (1).
+
+**This coupling is the strongest argument for the distinct state that this artifact has**, and it is
+the one §5.1.1b's negative claim could not make: even granting that parking at
+`waitingForHumanDecision` was somehow reachable, the *exit* could not be taken from the state a
+route-3 refusal leaves behind. **Recorded because §5.1.1a previously asserted the order without
+this, and an undriven step is what produced the last two BLOCKING findings in this design.**
+
 Step 2's consumer of P4 is `requestHumanDecision`'s own `evaluateWorkItemTransition`; its default
 actor is `orchestrator` (`:41-44`), which P4's `actorAllowed([human, orchestrator])` admits.
 
@@ -566,7 +711,8 @@ production caller today is `raiseStallDecision`
 (`apps/server/lib/src/triage/stalled_work_item_gate.dart:195-227`), and the two-hop shape used here
 is that function's own shape (`:136-160`, `:194-227`). It is also **idempotent by construction**: an
 item already at `waitingForHumanDecision` with a pending blocking decision of the same type returns
-that decision rather than minting a second one (`durable_workflow_engine.dart:564-572`), and
+that decision rather than minting a second one (`durable_workflow_engine.dart:564-572` for the
+return arm; the throw arm is `:573-583` and is what the order of §5.1.1a's two steps turns on), and
 `stalled_work_item_gate.dart:111-118` documents why that matters at a 30-second tick.
 
 **And it puts the item somewhere an operator already looks.** `blockingHumanDecisionId` is what the
@@ -623,7 +769,7 @@ The `copyWith` that would move the item is at `:854`, **after** the throw. So th
 `waitingForHumanDecision` carrying a **resolved** decision id and a stale `blockingReason`. And
 re-parking it is refused:
 
-> `durable_workflow_engine.dart:563-580` — an item already at `waitingForHumanDecision` with a
+> `durable_workflow_engine.dart:564-584` — an item already at `waitingForHumanDecision` with a
 > non-null `blockingHumanDecisionId` either returns a pending decision of the same type, or throws
 > `'Work item is already waiting for a blocking human decision'`. A resolved one is the throw case.
 
@@ -656,15 +802,43 @@ by a downstream drain.
     `CompletionInflowMove` an operator reads would be wrong.** The transition's `try` is `:1740-1843`;
     the rejection is caught at `:1823-1833`; the concurrent-writer catch is `:1834-1843`. `:672` uses
     `:1582-1599` correctly, for read isolation — one range, two jobs, two different meanings.
-- **Route 3 refusal — `resolveHumanDecision`, named.**
-  `packages/workflow_store/lib/src/durable_workflow_engine.dart` computes the target at `:758-761`
-  (`HumanDecisionRouting.targetFor`) and refuses at `:820-841` when the new guard fails. **P3 is
-  taken by the caller of that method** — the human-decision endpoint — which catches the rejection
-  and parks. Naming the engine method removes the ambiguity about *which* hop was refused; naming the
-  endpoint is what makes the edge reachable, and the endpoint is in `apps/server/lib`, outside this
-  slice's two files, so it is named here as a required third file.
+- **Route 3 refusal — the whole chain, named to `file:line`.**
+  The previous pass named this caller **by role only** ("the human-decision endpoint"), which is
+  weaker than the citation discipline applied everywhere else in this document — and against its own
+  standard at `design-review-gate.md` §16(2): *"check that the design names a component that exists
+  and is reachable, not one that merely sounds right."* Here is the chain, every hop verified:
 
-**A single shared helper**, named in sub-slice 1b, so the three callers (route 1's catch, the
+  | Hop | Where | What |
+  |---|---|---|
+  | 1 | `apps/server/lib/src/endpoints/workflow_endpoints.dart:141-142` | `WorkflowEndpoints.resolveDecision` opens a `try` and calls `service.resolveHumanDecision(…)` |
+  | 2 | `apps/server/lib/src/services/control_plane_service.dart:2040` | `ControlPlaneService.resolveHumanDecision({…})` — one pre-engine refusal of its own at `:2048-2071` (`throw StateError`, `:2065`) |
+  | 3 | `apps/server/lib/src/services/control_plane_service.dart:2073` | `await workflowEngine.resolveHumanDecision(…)` — the engine call |
+  | 4 | `packages/workflow_store/lib/src/durable_workflow_engine.dart:758-761` | `HumanDecisionRouting.targetFor(decision.decisionType, effectiveChoice)` computes the target |
+  | 5 | `packages/workflow_store/lib/src/durable_workflow_engine.dart:820-841` | `if (!unlock.isValid) throw WorkflowTransitionRejectedException(…)` — **the refusal the new guard causes**, carrying `unlock.guardResults` at `:830-838` |
+  | 6 | `apps/server/lib/src/endpoints/workflow_endpoints.dart:168-174` | the only catch on that path today |
+
+  **Step 6 is where the work is, and it is not already done.** It is a **generic**
+  `catch (error, stackTrace)` that logs `workflow.resolve.failed` (`:169-172`) and rethrows unchanged
+  via `Error.throwWithStackTrace(error, stackTrace)` (`:173`). **It does not discriminate
+  `WorkflowTransitionRejectedException`** — so today a guard refusal on route 3 surfaces to the
+  operator as a generic endpoint failure with a `500`-class shape and no park. **Discriminating it is
+  part of this sub-slice, not a consequence of it**, and there are two kinds to tell apart at that
+  boundary:
+
+  - the **engine's** `WorkflowTransitionRejectedException` from step 5 — this is the one the park
+    helper takes P3 on, and it carries the `guardResults` that say which guard refused;
+  - the **service's** `StateError` from `control_plane_service.dart:2065` — a different refusal, raised
+    *before* the engine is called and with **nothing written** (`:2049-2051`, `:2068-2069`). **It must
+    keep propagating.** A catch written as "on any error, park" would park an item the engine never
+    touched, which is a fourth way to get §5.1.1a's order wrong.
+
+  **P3 is therefore taken in a `catch` that tests the exception type**, in
+  `apps/server/lib/src/endpoints/workflow_endpoints.dart` — a file in `apps/server/lib`, outside this
+  slice's two transition-table files, and named here as a required third file. Naming the engine
+  method removes the ambiguity about *which* hop was refused; naming the endpoint with `file:line` is
+  what makes the edge **reachable**, because the reachable place to catch it is the one already open.
+
+**A single shared helper**, named in sub-slice 2b, so the three callers (route 1's catch, the
 route-3 endpoint, and step 2's `requestHumanDecision`) cannot drift — the same discipline
 `human_decision_routing.dart:151-162` states for `targetFor`/`escalationTargetFor`
 ("a value here that disagrees … does not error — it silently stops the escalation index advancing").
@@ -708,7 +882,8 @@ than left standing with a new label:
    which is the "next slice, named owner" below.
 3. **The dead end is not accepted as a state to leave the item in.** The decision says so in terms:
    *"This decision does not make the dead end acceptable; it makes it the next thing to build."*
-   §5.2.2 records it as slice 1.5 with an owner.
+   **§5.2.2 now records it as SLICE 1** — the first slice — and `.decisions/b81f40c7…` says so in
+   terms, having overridden the "after the gate" ordering this document's previous pass chose (§0.2).
 
 #### The two readings, and which one is in force
 
@@ -744,8 +919,8 @@ than left standing with a new label:
    109-110, 119-120`): `(engineeringReview, rework)`, `(qaWaiver, reject)`, `(qaRework, reject)`,
    `(humanQaApproval, reject)`. **Each becomes reachable for an intake origin as soon as the missing
    runtimes land** — `(engineeringReview, rework)` the moment a design-remediation or feature-intake
-   run produces a commit (M8/M10, slice 4); the `qa*` and `humanQaApproval` pairs the moment slice
-   2c makes `qaInProgress` reachable at all. Under Reading A, HD-1's invariant would have held today
+   run produces a commit (M8/M10, slice 5); the `qa*` and `humanQaApproval` pairs the moment slice
+   3c makes `qaInProgress` reachable at all. Under Reading A, HD-1's invariant would have held today
    and dissolved the first time anyone shipped the backlog HD-1 was decided *because of*.
    - *Correction to a prior review's phrasing, retained:* an earlier review named
      `(escalation, approve)` as a fourth human route. It is in the edge's
@@ -776,10 +951,10 @@ them — and cannot dispatch code from a request that has never been designed.
 design.** HD-1's `rationale_given` rejected "refusing completion outright" because it *"re-creates
 the dead end this work exists to remove."* Reading B does not refuse **completion** — the item
 completes, is recorded, and parks. What it refuses is the **implementer dispatch**, which is exactly
-what the undelegated clause says it must refuse. §6 slice 3 (M6 + M7 + M5) is what makes the park
+what the undelegated clause says it must refuse. §6 slice 4 (M6 + M7 + M5) is what makes the park
 resolvable, and it is sequenced so the gate is already in place when the producer appears.
 
-#### 5.2.2 The dead end Reading B creates — named, owned, and not accepted as a resting state
+#### 5.2.2 The dead end Reading B creates — **NOW SLICE 1, and the invariant it exists to enforce**
 
 **Under Reading B the park's human surface offers re-triage / re-plan / stop, and NONE of them is
 "do the design review"** — which is the very thing the item is parked waiting for. This was
@@ -787,105 +962,238 @@ revision 2's §13.7 "deliberate gap". **The operator's decision closes the quest
 accept it, and the answer is no** (`consequence`: *"The dead end this creates must be solved FIRST …
 This decision does not make the dead end acceptable; it makes it the next thing to build."*).
 
-**What the decision changes about slice 1a's content:** revision 2 noted that 1a pinned both guards
-in one commit and left the reading open. **With the answer recorded, the route-3 guard is not
-optional and 1a is specified with both guards** (§5.3, R12). The decision's own `precondition` says
+**What the decision changed about slice 2a's content:** revision 2 noted that its sub-slice 1a — the
+gate's, now 2a — pinned both guards in one commit and left the reading open. **With the answer recorded, the route-3 guard is not
+optional and 2a is specified with both guards** (§5.3, R12). The decision's own `precondition` says
 the same: *"sub-slice 1a's pinned content depends on this answer … so slice 1 may not begin until
-this decision is recorded — which it now is."*
+this decision is recorded — which it now is."* (**"1a" and "slice 1" there mean the gate — this
+revision numbers them 2a and slice 2; §0.2's gloss.**)
 
-**What this design cannot close, and hands on:**
+**And a second decision changed the ORDER, not the content.**
+
+> `.decisions/b81f40c7-2a96-4e38-bd51-6c07e9f3a824.yaml` · `resolution.selected: HUMAN_SURFACE_FIRST`
+> · `decided_by: operator` · `decided_at: 2026-10-17T14:10:00Z`
+> — *"Slice ordering REVERSES: the human surface becomes the FIRST slice, the gate follows."*
+
+The previous pass routed this as **slice 1.5, after the gate**, and flagged that ordering as its own
+judgement against the decision's word "FIRST". **That judgement is now overridden, on authority.**
+§0.2 keeps the merits argument in full and states plainly which axis the override was on; the
+independent review agreed with the merits and held that *"a flagged judgement is not a discharged
+obligation."*
+
+#### The invariant the reversal exists to enforce — stated, and ASSERTED
+
+> **NO item may be parked at `designReviewRequired` before the decision raised there offers a
+> "do the design review" answer.** *(the decision's `invariant`, verbatim)*
+
+**This artifact's previous pass asserted that property by convention and nothing checked it** — which
+is the failure mode this design has now produced twice and names twice (R3, R3b: *"G7 asked whether
+the item MOVED and nothing asked what it CARRIED"*). **So the invariant is pinned by an assertion,
+and the assertion fails on absence: G17** (§6, sub-slice 1c). Its shape:
+
+> **G17 — `designReviewRequired` has an in-edge (`P2` or `P3`) IF AND ONLY IF the decision raised at
+> the park offers an answer that routes to `designApproved`.**
+
+Both halves are checkable against the tree, and neither is a convention:
+
+- **the "if"** — the park's option set (`requestHumanDecision`'s `options`) contains a
+  `(decisionType, choice)` pair for which **`HumanDecisionRouting.routesTo(type, choice,
+  WorkItemState.designApproved)` is true** — the predicate the routing table already provides for
+  exactly this question (`:219-225`), rather than a comparison this document would hand-roll;
+- **the "only if"** — `designReviewRequired` appears as a target in `work_item_transitions.dart` at
+  all, i.e. P2 and P3 are absent.
+
+**Today G17 fails**, and it is *supposed* to: `designReviewRequired` does not exist yet (it arrives
+with slice 2d) and the human surface does not exist yet (slice 1). **What the assertion forbids is the
+window between them** — the gate and park landing while no answer can produce what the item waits for.
+That window is precisely what the previous pass's ordering opened and the reversal closes. A park
+with no way to produce what the item waits for is the dead-end class (F-42, F-50, F-54) this area has
+produced repeatedly, and it is now checked rather than assumed.
+
+**What this design cannot specify, and hands on:**
 
 | | |
 |---|---|
-| **The gap** | No `HumanDecisionType` offers "produce an approved design revision". The park's `escalation` answers route to `designNotRequired` / `planning` / `cancelled` — none is the design review. |
-| **Why it cannot be closed here** | It needs a new `HumanDecisionType` plus a routing arm, and `human_decision_routing.dart:151-162` requires `targetFor` and `escalationTargetFor` to move in lockstep or escalation accounting *"silently stops"* advancing. That is an architecture change, and `AGENTS.md` reserves architecture decisions to the human. |
-| **What is specified** | The park's options list is **explicit** (`requestHumanDecision`'s `options` argument, `stalled_work_item_gate.dart:199-211` for the shape). It names exactly the answers in the table above — no hidden fourth. An operator sees three real options and the reason, and the absence of a fourth is a recorded gap, not an oversight. |
-| **Owner and next step** | **Slice 1.5**, between slice 1 and slice 2. Owner: **the Manager**, to route a `HumanDecisionType` + routing-arm decision (Level 3). It is the same artifact the decision record already points at — `FOLLOW_UPS` **F-55**, which the decision names as the place this is recorded. **`FOLLOW_UPS.md` is Manager-owned and was not written by this lane.** |
-| **What makes it cheaper by then** | Slice 3 (M5–M7) is what makes the park resolvable at all; slice 1.5's decision and slice 3's producer are the same missing capability, so they should be scoped together rather than as two independent items. |
-| **Stated residual risk** | Between slice 1 and slice 3+1.5, an operator at the park has **no way to unblock an intake item**. The item is visible, durable and honestly stoppable — but "stop" is the only exit that terminates. Recorded as **R4** in `design-revision.md` §10, and it is the cost the operator chose. |
+| **The gap** | No `HumanDecisionType` offers "produce an approved design revision". The park's `escalation` answers route to `designNotRequired` / `planning` / `cancelled` — none is the design review. `FOLLOW_UPS` **F-55** records this in the Manager's own words: *"The operator is offered three answers — approve → `designNotRequired`, rework → `planning`, cancel → `cancelled` (`human_decision_routing.dart:121, 132-135`). **None of them is 'do the design review.'**"* |
+| **Why it needs care, and what is actually required** | It needs a `targetFor` arm whose target is `designApproved`, and `human_decision_routing.dart:151-162` states that `targetFor` and `escalationTargetFor` must move in lockstep or escalation accounting *"silently stops"* advancing (`:159-162`). **CORRECTED IN PASS 3, and this is the L3 pattern in the other direction:** the previous pass stated that rule flatly for this work, and the cited range **does not state it for an `approve` answer**. `escalationTargetFor` returns `null` for any choice that is not `reject` or `rework` (`:196-199`), so an `approve` arm has **no lockstep obligation at all** — and `_isEscalationTransition` short-circuits on the same condition (`durable_workflow_engine.dart:1012-1015`). `:213`'s `(designApproval, _)` arm exists for `reject`/`rework` and is **unreachable for `approve`**. **So the lockstep rule bites only if the new answer is a `reject` or a `rework`, and "do the design review" is neither.** Pinned by **G17b** so the answer stays a decision rather than a side effect. The architecture change that DOES remain is the `HumanDecisionType` itself, which `AGENTS.md` reserves to the human. |
+| **What IS specified here** | **Slice 1 itself**, to the point an implementer needs (§6): the new `HumanDecisionType`, the `targetFor` arm, the matching `escalationTargetFor` arm, the park's option list widened to include the new answer, and **G17**. §6 sub-slices 1a–1c. This is the material change from the previous pass, which specified only a hand-off. |
+| **The shape of the answer, named** | The existing type is already there: `targetFor(designApproval, approve) = designApproved` (`human_decision_routing.dart:93-94`, inside `targetFor` at `:88-138`). **What is missing is a `HumanDecision` of that type reachable FROM the park** — the park's `options` must offer it, and its blocking decision must be answerable while the item sits at `waitingForHumanDecision`. **This design's reading is that no NEW enum value is needed**, and a reviewer who thinks one is — or who thinks re-using `designApproval` conflates approving a design with producing one — should say so; it is `points_for_independent_review: SLICE-1-MECHANISM`. **Whether answering it can actually produce an approved revision is slice 4's job (M5–M7); until then the answer exists and the producer does not, which is the same `DECLARED`-not-`PASSING` state §5.2.1 already names.** Stated so no one reads slice 1 as making the park resolvable. |
+| **What is specified about the options list** | It is **explicit** (`requestHumanDecision`'s `options` argument; `stalled_work_item_gate.dart:199-211` is the shipped shape — two `HumanDecisionOption`s with `optionId`, `label`, `description`, then `recommendation` and `blocking`). §6 sub-slice 1b pins the widened set, and G16 is **widened with it** — G16 as written today asserts "exactly escalation's three", which becomes "exactly the set including the design-review answer". |
+| **`FOLLOW_UPS` F-55 — NOW EXISTS** | **Correction (M-A).** The previous pass cited `FOLLOW_UPS` **F-55** in **six places** across two artifacts as an existing ledger entry, while stating in four of them that it had never been written. **It was genuinely absent — the file ended at F-54 — and the pointer originated in the decision's own `consequence` text.** `0bfb6fb` has since written **F-55** (§16, *"the park's human surface has no 'do the design review' answer"*) **and F-56** (the process note). **Every one of those six citations now resolves, and F-55 independently confirms this section's gap statement** — its `### The gap, precisely` names the same three answers and the same `human_decision_routing.dart:121, 132-135` citations, all re-verified above. **It also reserves the sequencing question to the operator, which is how `b81f40c7…` came to exist.** `docs/engineering/FOLLOW_UPS.md` is Manager-owned; this lane read F-55 and F-56 and wrote neither. |
+| **What makes it cheaper by then** | Slice 4 (M5–M7) is what makes the park resolvable at all. **This lane's judgement, and it is now moot as to ORDER and stands only as to SCOPE:** slice 1's decision and slice 4's producer are the same missing capability, so they should be scoped together. The operator has ordered them apart; that is the reversal's cost, named in §0.2. |
+| **Stated residual risk under the new order** | **The window between slice 1 and slice 2 is the one this lane argued against and lost.** During it the platform carries a `HumanDecisionType` and a routing arm that **no guard consumes** — an answer an operator is offered that does not change whether an item may reach an implementer. It is strictly *additive* (§5.2.1's table already held that no park answer reaches an implementer), so nothing regresses; it is an answer to a question nothing is yet asking. **Recorded as R4** in `design-revision.md` §10. |
+| **The residual that survives everything** | "stop" (`cancel` → `cancelled`) remains the only park answer that terminates, and it still terminates: slice 1 does not change §5.1's refusal, it changes what the operator is offered when the refusal is answered. After slice 2 lands, the answer exists and the producer does not — until slice 4. **That gap is R4 and it is not closed by slice 1.** |
 
 > #### ⚠ WHAT AN INDEPENDENT `design-reviewer` IS NOW BEING ASKED
 >
 > **Not** whether Reading B is right. It is decided, in `7f3e2a95`, by the operator, and this
 > document applies it.
 >
-> **Instead, two things that a decision did not settle:**
+> **Not** whether the sequencing is right. It is decided, in `b81f40c7`, by the operator, and this
+> document applies it — human surface first. The merits argument for the other order is recorded in
+> §0.2 because the decision's own `authority_note` says it *"is recorded and is not dismissed"* and
+> overrides *"on AUTHORITY, not on reasoning."* **A reviewer who wants to re-argue the merits should
+> know the axis they are on: it is a merits argument against a decision that was made on authority,
+> so re-arguing it here changes nothing without a new human decision.**
 >
-> 1. **Is this document's application of the decision faithful and complete** — §4.1's guard on both
->    caller-bearing edges, §5.1's park, §5.1.1a's two-step `requestHumanDecision`, §5.1.1b's rejection
->    of the `waitingForHumanDecision` alternative, and §5.1.2's named writers. The decision chose a
->    *scope*; it did not choose a mechanism, and the mechanism is this design's own.
-> 2. **Whether §5.2.2 is an honest hand-off or a deferral dressed as one.** The operator said the dead
->    end must be solved first and made it the next thing to build. This design cannot build it (it is
->    an architecture change behind a human-owned decision), so the question for a reviewer is whether
->    naming it slice 1.5 with the Manager as owner, and making the park's option list explicit rather
->    than implicit, is sufficient — or whether slice 1 should be blocked until 1.5 has a decision.
->    **This design's position is that slice 1 should land**: it is strictly a reduction in what the
->    platform may dispatch, the item becomes visible with a real reason and a real pending decision
->    (which is strictly better than both the current silent route and the stand-down dead end), and
->    blocking on 1.5 would leave intake items in the worse position for longer. A reviewer who
->    disagrees should say so, because the decision's own `consequence` calls this a precondition
->    ("must be solved **FIRST**") and this document is choosing to read that as scoping, not as a
->    gate. **That reading is this revision's judgement, and it is flagged as one.**
+> **Instead, three things that the decisions did not settle — all of them this design's own:**
+>
+> 1. **Is this document's application of Reading B faithful and complete** — §4.1's guard on both
+>    caller-bearing edges, §5.1's park, §5.1.1a's two-step `requestHumanDecision` **and the coupling
+>    that makes the order load-bearing**, §5.1.1b's rejection of the `waitingForHumanDecision`
+>    alternative, and §5.1.2's chain to `file:line`. The decision chose a *scope*; it did not choose a
+>    mechanism, and the mechanism is this design's own.
+> 2. **Is slice 1 as specified here the right slice 1?** The operator ordered the human surface first
+>    and **left the mechanism to this design** — the decision's `consequence` names the cost (a new
+>    `HumanDecisionType` plus a routing arm, two tables in lockstep) without prescribing the shape.
+>    §6 sub-slices 1a–1c are that mechanism, and **they are the substantive new content of this pass**.
+>    The sharpest question: **does G17 state the invariant the decision requires, or is it a weaker
+>    restatement of it?** A reviewer who thinks the invariant should be checked at a different seam —
+>    on the `options` list rather than on the transition table, say — should say so, because G17 is
+>    the only thing standing between this document and the assertion-by-convention it corrects.
+> 3. **Is the cost named in §0.2 the right cost?** The reversal leaves, for the slice-1→slice-2 window, a
+>    decision type and a routing arm that **no guard consumes**. This document calls that additive and
+>    harmless; **a reviewer who thinks an unconsumed human-facing answer is itself a dead end — an
+>    operator offered something that changes nothing — should make that finding.** It is the one
+>    respect in which the merits argument survives into the implemented order, and it is the reason the
+>    merits argument is kept rather than deleted.
 
 ### 5.3 How §5.1 and §5.2 interact — note for the implementer
 
 **Independent review observed this and it is correct:** fixing B1 makes the route-3 reachability
 question live, and the two items cannot be sequenced independently.
 
-**Today, before either lands:** route 3 is unreachable for the two intake origins. No `qa*` or
-`humanQaApproval` decision can be pending, because `qaInProgress` is unreachable
+**Before slice 1 lands (today, and after the reversal):** route 3 is unreachable for the two intake
+origins. No `qa*` or `humanQaApproval` decision can be pending, because `qaInProgress` is unreachable
 (`design-revision.md` §2.1 — nothing takes `reviewApproved -> qaInProgress`), and no
 `engineeringReview` decision can be raised, because a triage run commits nothing so the review
 resolver returns `null` and the handler stands down (§5.1). So guarding route 3 changes nothing
 observable — which is exactly why revision 1 could call it optional.
 
-**After 1d lands (B1):** the refused item parks at `designReviewRequired` and then raises its
+**After slice 1 lands (the reversal's window):** **nothing about §5.1 changes.** The gate is still
+absent; no item is parked; no intake origin reaches `implementationReady` if it does not today. What
+changes is that a `designApproval`-typed decision with a `targetFor` of `designApproved` is
+**raisable and answerable** — an answer that exists before anything raises it. **This is additive and
+this lane has lost the argument that it should not be:** §0.2 states the merits case and states that
+it was overridden on authority. **G17 passes in this window for the honest reason** — `designReviewRequired`
+does not exist yet, so neither half of the iff is violated by a park that cannot happen.
+
+**After 2d lands:** the refused item parks at `designReviewRequired` and then raises its
 blocking decision via `requestHumanDecision` (§5.1.1a), landing at `waitingForHumanDecision` with a
 real `blockingHumanDecisionId` and `blockingReason`. The decision is `escalation`-typed, whose
 answers route to `designNotRequired`/`planning`/`cancelled` — never to `implementationReady`. **Route
-3 is still not reached from the park.**
+3 is still not reached from the park.** **This is where G17 becomes load-bearing:** from here the park
+exists, and the new answer from slice 1 must be in its option list or the invariant is violated.
 
 **Route 3 is nevertheless reached from elsewhere, and that is why P3 is required rather than
 optional.** The four `targetFor` pairs that route to `implementationReady` belong to the item's *own*
 lanes — `qaFailed -> waitingForHumanDecision` (`:709-715`) raises `qaRework`/`qaWaiver`,
 `reviewInProgress -> waitingForHumanDecision` (`:351-360`) raises `engineeringReview`, and so on.
-**When those lanes become reachable (slices 2c and 4), route 3 refuses for an intake origin with the
+**When those lanes become reachable (slices 3c and 5), route 3 refuses for an intake origin with the
 item at `waitingForHumanDecision` and a now-RESOLVED decision** — and §5.1.1b shows that position is
 unrecoverable. **P3 is the sink for exactly that case.**
 
-**After slice 2c lands:** `reviewApproved -> qaInProgress` gets a caller (`design-revision.md` §8,
-slice 2c widened), so an item can be failed by QA, raise `qaRework`/`qaWaiver`, be refused by a human,
+**After slice 3c lands:** `reviewApproved -> qaInProgress` gets a caller (`design-revision.md` §8,
+slice 3c widened), so an item can be failed by QA, raise `qaRework`/`qaWaiver`, be refused by a human,
 and be routed to `implementationReady` by `targetFor`. **Now route 3 matters, and P3 has a caller.**
 
-**After slice 4 lands (M8/M10):** a real intake run commits, an `engineeringReview` decision
+**After slice 5 lands (M8/M10):** a real intake run commits, an `engineeringReview` decision
 becomes raisable, and `(engineeringReview, rework) -> implementationReady` becomes a live path for an
 intake origin. **This is the path Reading B closes** — the decision is recorded
 (`.decisions/7f3e2a95…`), so the guard is required and P3 must exist.
 
 **The sequencing consequence, which is the actionable part:**
 
-> **Sub-slice 1a MUST land both route-1 and route-3 guards in one commit.** Splitting them creates a
-> window in which the park exists but the human route is unguarded — and every slice-2 and slice-4
+> **Sub-slice 2a MUST land both route-1 and route-3 guards in one commit.** Splitting them creates a
+> window in which the park exists but the human route is unguarded — and every slice-3 and slice-5
 > change above widens that window's value. A reviewer seeing "route 1" and "route 3" land separately
 > should treat it as a finding.
 >
 > **This is no longer a design choice. `.decisions/7f3e2a95…`'s `precondition` states it directly:**
 > *"sub-slice 1a's pinned content depends on this answer … so slice 1 may not begin until this
-> decision is recorded — which it now is."* **1a's pinned content changed with the answer, and this
+> decision is recorded — which it now is."* **2a's pinned content changed with the answer, and this
 > is the change:** revision 2 pinned the route-3 guard as the point under judgement; it is now
 > pinned as required, and Reading A's alternative (drop the guard, restore P3) is **closed**.
+> (**"1a"/"slice 1" in the quoted decision are the gate — this document numbers it 2a/slice 2.
+> §0.2's gloss.**)
+
+**And one sequencing consequence that is new, and comes from the reversal:**
+
+> **Slice 1 must land BEFORE slice 2, and slice 1 alone is not enough.** `b81f40c7…` orders it, and
+> **G17 is what makes the order checkable rather than asserted**: if `designReviewRequired` acquires
+> P2/P3 while the park's option set carries no answer routing to `designApproved`, G17 fails. That
+> is the specific window this document's previous pass opened by routing the human surface as
+> "slice 1.5", and §5.2.2 states the invariant in the decision's own words.
 
 ---
 
 ## 6. Sub-slices, each independently mergeable
 
-**Ordering constraint between them, from §5.3: 1a must add BOTH the route-1 and the route-3 guard in
-one commit** — now required by `.decisions/7f3e2a95…`, not merely recommended by this design. 1b, 1c
-and 1d may be separate. 1d must land no later than 1a+1a+1b in practice, because without it the
-route-1 guard refuses into a void.
+**Two ordering constraints, and both are load-bearing.**
 
-### 1a — the guard and its context contract
+**A. Across slices, from `.decisions/b81f40c7…`: slice 1 (the human surface) precedes slice 2 (the
+gate).** Slice 3 (the evaluator), slice 4 (the design lane) and slice 5 (the contracts) follow
+unchanged. §0.2 carries the crosswalk from the previous pass's numbering, so a reader holding that
+review can follow.
+
+**B. Inside slice 2, from §5.3: 2a must add BOTH the route-1 and the route-3 guard in one commit** —
+now required by `.decisions/7f3e2a95…`, not merely recommended by this design. 2b, 2c and 2d may be
+separate. **2d must land no later than 2a+2b in practice**, because without the park the route-1
+guard refuses into a void — that is the BLOCKING finding reproduced in code. (The previous pass wrote
+"1d must land no later than 1a+1a+1b", which double-counted 1a; the constraint is one guard commit
+plus the context writer.)
+
+### 1 — the park's human surface — "do the design review"
+
+**NEW in this pass, and it is the substantive change.** `.decisions/b81f40c7…` ordered it first
+and left the mechanism to this design. **Files, all four verified:**
+`packages/platform_contracts/lib/src/enums/human_decision.dart:1-30` — **this is where
+`HumanDecisionType` is declared** (the enum carries NINETEEN values at `:1-20`, each with a `wire` at
+`:22-24`; `designApproval('design_approval')` is `:2`). **It carries no `options` field**, so the
+answer set is a property of the **call site**, not of the type — which is why sub-slice 1b touches the
+park helper and 1a touches the enum separately, and why conflating them would hide the work.
+`packages/workflow_engine/lib/src/transitions/human_decision_routing.dart` — the `targetFor` arm
+(`:88-138`) and, **only if the answer is a `reject` or a `rework`**, the `escalationTargetFor` arm
+(`:192-216`; G17b says it is not, for an `approve`).
+`packages/workflow_engine/lib/src/transitions/work_item_transitions.dart` — **only** if the new answer
+needs a bound on an existing edge; on this design's reading (re-use `designApproval`) it does not.
+And the park helper's option list, in slice 2b.
+
+- **1a — the type and the `targetFor` arm.** Add the `HumanDecisionType` whose answer means "do the
+  design review", with a `targetFor` arm to `designApproved`. **The existing type to reuse is
+  `designApproval`**, whose `(approve)` arm already targets `designApproved`
+  (`human_decision_routing.dart:93-94`, inside `targetFor` at `:88-138`) — so the honest reading of
+  "what is missing" is *a decision of that type reachable from the park*, not necessarily a new enum
+  value.
+  **And the lockstep rule does NOT bind this arm, which is the part an implementer would get wrong.**
+  `:151-162` requires `targetFor` and `escalationTargetFor` to move together or escalation accounting
+  *"silently stops"* advancing — **but that obligation is conditional on the answer being a `reject` or
+  a `rework`.** `escalationTargetFor` returns `null` for any other choice (`:196-199`), and
+  `_isEscalationTransition` short-circuits on the same condition
+  (`durable_workflow_engine.dart:1012-1015`), so **an `approve` answer increments no escalation index
+  and appends no `EscalationTriggered` record.** `:213`'s `(designApproval, _)` arm exists for
+  `reject`/`rework` and is unreachable for `approve`. **Do not add an `escalationTargetFor` arm for an
+  `approve` answer** — doing so would start escalation accounting silently on a design approval, which
+  is the exact failure `:159-162` warns about. **G17b pins this.** (If slice 1's answer turns out to
+  be a `rework` — "send it back to be designed" — the lockstep rule binds and `:213` already covers
+  the pair.)
+- **1b — the park's option list gains the answer.** One `HumanDecisionOption` added to the set slice
+  2b raises, beside the three §5.2.1 names. **`HumanDecisionOption` carries `optionId`, `label` and
+  `description`** and `requestHumanDecision` also takes `recommendation` and `blocking`
+  (`stalled_work_item_gate.dart:199-214` is the shipped shape for all five).
+- **1c — G17 and G17b, the assertions.** §5.2.2 specifies G17 and §6's table carries both.
+  **G17 is the deliverable of this sub-slice**: it fails if `designReviewRequired` has an in-edge while
+  no park answer routes to `designApproved`, and it fails if such an answer is offered while the park
+  is still unreachable — **which is the window the reversal exists to close.** G17b pins 1a's
+  escalation-index consequence so it stays a decision.
+- **What slice 1 does NOT do, stated so it is not over-read:** it does not make the park resolvable.
+  Answering the new question routes the item to `designApproved`, and **nothing produces an approved
+  `design_revision` until slice 4** (M5–M7, §6 of `design-revision.md`). **After slice 1 and slice 2
+  and before slice 4, the operator has an answer that changes the item's state and still cannot
+  produce what the item needs.** That is the same `DECLARED`-not-`PASSING` distinction §5.2.1 makes,
+  applied to a different artifact, and it is **R4**.
+
+### 2a — the guard and its context contract
 
 **Files:** `packages/workflow_engine/lib/src/validation/guard_conditions.dart`,
 `packages/workflow_engine/lib/src/transitions/work_item_transitions.dart`.
@@ -917,7 +1225,9 @@ route-1 guard refuses into a void.
 | **G13** | **no edge out of `designReviewRequired` other than P4** (plus the generic escapes) | a second predecessor into `planned`/`designNotRequired` re-opens the loop `:45-50` records |
 | **G14** | **NEW — the durable reason.** A refused intake item reaches `waitingForHumanDecision` with `item.blockingReason` **non-null and non-default**, and it is the park helper's `why` string | the park is taken by a bare `transition`, which writes `blockingReason: null` for any non-`waitingForHumanDecision` target (`durable_workflow_engine.dart:222-225`) — **the exact defect this revision corrects** |
 | **G15** | **NEW — the blocking decision id.** The same item reaches `waitingForHumanDecision` with `item.blockingHumanDecisionId` **non-null**, and that decision is resolvable through `resolveHumanDecision` (`durable_workflow_engine.dart:747-748` requires `blockingHumanDecisionId == decisionId` **and** state `waitingForHumanDecision`) | the park is taken by `transition` instead of `requestHumanDecision`, which nulls the id for any other target (`:215-221`) — a decision nothing can answer |
-| **G16** | **NEW — the operator surface.** A refused intake item at `waitingForHumanDecision` appears as a pending blocking decision in the operator surface, and its offered options are exactly `escalation`'s three (`approve`/`rework`/`cancel`) — no fourth | the options list is left implicit or widened past §5.2's table, and an operator is offered an answer the gate will refuse |
+| **G16** | **NEW — the operator surface.** A refused intake item at `waitingForHumanDecision` appears as a pending blocking decision in the operator surface, and its offered options are **exactly the set §6 sub-slice 1b specifies** — re-triage / re-plan / stop (`escalation`'s three) **plus** the design-review answer, and no others | the options list is left implicit, widened past §5.2's set, or an operator is offered an answer the gate will refuse. **WIDENED by correction pass 3:** the previous pass asserted "exactly `escalation`'s three — no fourth", which would have **failed** the moment slice 1 landed. G16 is now pinned to the set, not to the enum. |
+| **G17** | **NEW — the reversal's invariant.** `designReviewRequired` has an in-edge (`P2`/`P3`) **iff** the park's `options` list contains a `(decisionType, choice)` pair for which **`HumanDecisionRouting.routesTo(type, choice, WorkItemState.designApproved)` is true** (`human_decision_routing.dart:219-225`). Both halves read the parsed routing table and the parsed transition table, never a name or a comment | the gate and park land while no park answer can produce what the item waits for — **the dead-end class (F-42, F-50, F-54), which is what `.decisions/b81f40c7…`'s reversal exists to close.** Also fails if such an answer is offered while the park is still unreachable, which is the same defect pointed the other way |
+| **G17b** | **NEW — the escalation-index consequence of the new answer.** Answering the park's design-review question with `approve` does **not** increment `metadata['escalationIndex']` and appends **no** `EscalationTriggered` record. Asserted so it is a decision rather than a side effect | an implementer reads `:151-162`'s lockstep rule as requiring an `escalationTargetFor` arm for the new answer and adds one, **silently starting escalation accounting on a design approval.** Verified false twice over: `escalationTargetFor` returns `null` for any choice that is not `reject`/`rework` (`:196-199`), and `_isEscalationTransition` short-circuits on the same condition (`durable_workflow_engine.dart:1012-1015`). `:213`'s `(designApproval, _)` arm is therefore **unreachable for `approve`** |
 
 **G5′ says six, and the count must be exact.** G5′ exists to prove the new guard was added **at the
 cost of no existing bound**, so an off-by-one would defeat the assertion. The edge's
@@ -933,16 +1243,20 @@ satisfied by a dead end: a refused item that simply stops at `agentCompleted` pa
 document no longer cites G1/G2 as evidence that the gate fails closed**, and §5.1 says so in its own
 words.
 
-**A reviewer should check G7, G10 and G14 first.** G7 and G10 are the BLOCKING and HIGH findings;
-**G14 is this revision's correction of revision 2's own error** — it is the assertion whose absence
-let a null `blockingReason` pass as a durable reason in three artifacts. **G14/G15/G16 exist because
-B-1 was a claim about a property that no assertion checked.**
+**A reviewer should check G17 first, then G7, G10 and G14.** **G17 is new and it is the whole point
+of the reversal**: if it does not state the invariant `.decisions/b81f40c7…` requires, then this
+document has committed the L3 pattern a third time — a property asserted, in prose, with nothing
+that fails when it is absent. G7 and G10 are the BLOCKING and HIGH findings of earlier rounds;
+**G14 is the correction of revision 2's own error** — it is the assertion whose absence let a null
+`blockingReason` pass as a durable reason in three artifacts. **G14/G15/G16 exist because B-1 was a
+claim about a property that no assertion checked, and G17 exists because the sequencing reversal was
+a claim about an ordering that nothing checked.**
 
-### 1b — the context supplier, and the one park helper
+### 2b — the context supplier, and the one park helper
 
 **Files:** `packages/scheduler/lib/src/scheduler.dart`, `packages/scheduler/lib/src/implementation_inflow.dart`,
-`apps/server/lib/server.dart`, the composition root, and the endpoint that resolves a blocking human
-decision (the route-3 caller named in §5.1.2).
+`apps/server/lib/server.dart`, `apps/server/lib/src/endpoints/workflow_endpoints.dart` (the
+route-3 caller, named to `file:line` in §5.1.2), the composition root.
 
 > **Correction (M-3). Revision 2's file list omitted `packages/scheduler/lib/src/scheduler.dart`,
 > which is the actual route-1 context writer** — `_routeOneCompletion` builds the map that reaches
@@ -977,20 +1291,36 @@ decision (the route-3 caller named in §5.1.2).
   to the composition root beside the other stores (`server.dart:208-219`).
 - **Per-item isolation is mandatory — and the two `try` blocks are not the same one.** `_routeOneCompletion`
   guards every per-item **read** in one `try` (`:1582-1599`) and takes the **transition** in another
-  (`:1740-1843`), for exactly the reason `implementation_inflow.dart:1543-1578` documents: a throw
-  outside them takes the **whole lane's tick**. The store read goes **inside `:1582-1599`**; the park
-  goes **inside the transition's own catch, `:1823-1833`** (§5.1.2, M-2). Putting the park in the
-  reads' `try` files the refusal under *"this item could not be read well enough to decide whether
-  it should be reviewed or implemented"* — true of nothing that happens there.
+  (`:1740-1843`), for exactly the reason `implementation_inflow.dart:124-126` documents in its own
+  words: *"It throws INSIDE `_routeOneCompletion`'s per-item guard, which turns that throw into 'leave
+  this one item alone and say so', rather than out of `tick`, which would cost the whole lane its
+  pass."* The store read goes **inside `:1582-1599`**; the park goes **inside the transition's own
+  catch, `:1823-1833`** (§5.1.2, M-2). Putting the park in the reads' `try` files the refusal under
+  *"this item could not be read well enough to decide whether it should be reviewed or implemented"*
+  — true of nothing that happens there.
+  > **Correction found in correction pass 3, and it is the L3 pattern the reviewer named:** the
+  > previous pass cited **`implementation_inflow.dart:1543-1578`** for this property, in this file and
+  > in `evaluator-spec.md` §4.3 (V6). **`packages/scheduler/lib/src/implementation_inflow.dart` is 440
+  > lines long.** The range is 1103 lines past the end of the file. **The property is real and the
+  > correction above is exact** — it is stated at `:124-126` and demonstrated at
+  > `scheduler.dart:1582-1599` — but the citation pointed at nothing, and a well-formed `file:line`
+  > is exactly what invites acceptance without reading. **Both instances are corrected here and
+  > recorded in `design-revision.md` §12.**
+- **The route-3 catch discriminates by exception type, and the shipped precedent for it is named.**
+  `stalled_work_item_gate.dart:228-234` is a production `on WorkflowTransitionRejectedException
+  catch` around its own `requestHumanDecision` call (`:195-227`) — it logs `stall.decision-refused`
+  (`:229-232`) and returns `StallGateOutcome.notParkable` (`:233`). **Follow that shape at
+  `workflow_endpoints.dart:168-174`, which is currently a generic `catch` (§5.1.2), and do not
+  swallow the `StateError` from `control_plane_service.dart:2065`.**
 
-### 1c — the transition-table pins
+### 2c — the transition-table pins
 
 `packages/workflow_engine/test/implementation_ready_edge_test.dart` already pins the
 `waitingForHumanDecision -> implementationReady` edge by name. Extend it for **G5′ and G6**, and add
 a drift guard that fails if the new guard appears on any edge not listed in §4.1 — including
 `(implementationReady, agentExecuting)`, the one edge whose contamination would strand the lane.
 
-### 1d — the park
+### 2d — the park
 
 **Files:** `packages/platform_contracts/lib/src/enums/workflow_state.dart`,
 `packages/workflow_engine/lib/src/states/workflow_state.dart`,
@@ -1003,24 +1333,52 @@ a drift guard that fails if the new guard appears on any edge not listed in §4.
   park has no durable reason, and §5.1.1a names the component that produces one here.
 - **The park's exit is `requestHumanDecision`, not a bare `transition`** (§5.1.1a), so the exit
   writes `blockingHumanDecisionId` and `blockingReason` itself
-  (`durable_workflow_engine.dart:651-653`).
-- **No new `HumanDecisionType`, no new `HumanDecisionRouting` arm.** The park raises
-  `HumanDecisionType.escalation`, whose `targetFor` arms already exist
-  (`human_decision_routing.dart:132-135`, and the `(_, cancel)` catch-all for the stop answer).
+  (`durable_workflow_engine.dart:651-653`). **The order of the two steps is load-bearing and §5.1.1a
+  says why** — a single-call helper is refused there, with the three failure modes enumerated.
+- **No new `HumanDecisionType` in THIS sub-slice, and no new `HumanDecisionRouting` arm.** The park
+  itself raises `HumanDecisionType.escalation`, whose `targetFor` arms already exist
+  (`human_decision_routing.dart:132-135`, and the `(_, cancel)` catch-all at `:121` for the stop
+  answer). **The human-surface arm that slice 1 adds lands before this, not here** — that is what
+  the reversal is for, and **G17 fails if this sub-slice's P2/P3 land without it.**
   §5.2.1's table states what a human can then do — the honest set, which does not include reaching an
-  implementer.
+  implementer — **plus the answer slice 1 added.**
   - **Recorded because it is a first:** `escalation` is **raised nowhere in production today**. The
-    only production references to the type are the routing arms and the escalation-index
-    computation (`durable_workflow_engine.dart:996`). This sub-slice would be its first raiser. That
-    is a *new use of an existing type*, not a new type — which is what keeps it inside this slice —
-    and it is named here because "the park uses an existing decision type" and "the park introduces
-    the first use of that type in production" are different statements and only the second is a
-    surprise.
+    only production references to the *type* are the routing arms
+    (`human_decision_routing.dart:132`, `:134`) and one comparison inside the engine —
+    `durable_workflow_engine.dart:996`.
+    > **Correction (L-A, correction pass 3).** Three artifacts called `:996` *"the escalation-index
+    > computation."* **It is not.** `:996` is the single line inside **`_isReWorkDecision`
+    > (`:987-1005`)**, whose result becomes `reTriageAttempt` at `:788-792` — the
+    > **`nextTriageAttempt` counter, which is not escalation accounting at all.** The
+    > escalation-index predicate is **`_isEscalationTransition` (`:1007-1021`)**, which is called at
+    > `:770` and whose only job is to gate the `metadata['escalationIndex']` increment at `:847-849`.
+    > It **delegates** to `HumanDecisionRouting.routesToEscalation` (`:1016`;
+    > `human_decision_routing.dart:228-234`, itself `escalationTargetFor(type, choice) == target`) and
+    > therefore **never names `HumanDecisionType.escalation` itself** — which is exactly why
+    > `grep -rn 'HumanDecisionType.escalation' --include='*.dart' apps packages | grep -v test`
+    > returns `:996` and the routing arms and nothing else. **The grep RESULT claim was accurate
+    > throughout and is unchanged; only the characterisation was wrong.**
+    > **One corroboration found while verifying, and it is not this lane's to fix:** the class
+    > comment that states the lockstep rule cites `DurableWorkflowEngine._isEscalationTransition
+    > (packages/workflow_store/.../durable_workflow_engine.dart:979)` — **`_isEscalationTransition` is
+    > at `:1007`, not `:979`.** The repository's own comment about this rule points 28 lines off, so
+    > a reader who trusts it lands on `_getMaxEscalationForDecisionType`. **Recorded, not corrected:
+    > `packages/**` is `PROHIBITED_PATHS` for this lane.**
+  - This sub-slice would be `escalation`'s **first production raiser**. That is a *new use of an
+    existing type*, not a new type — which is what keeps it inside slice 2 — and it is named because
+    "the park uses an existing decision type" and "the park introduces the first production use of
+    that type" are different statements and only the second is a surprise.
   - **The `escalation` answer set is fixed and explicit** (`requestHumanDecision`'s `options`
     argument), matching §5.2.1's table and §5.2.2's gap. **No answer routes to
     `implementationReady`, so the park can never re-enter the refusal it exists to handle** — G16.
-- **The park's human surface does not offer "do the design review".** That is a recorded gap with a
-  named owner and slice, not an omission: §5.2.2.
+- **The park's human surface DOES offer "do the design review" — because slice 1 lands first.** That
+  is the reversal (`.decisions/b81f40c7…`, §0.2), and **G17 is what makes it an enforced property of
+  the order rather than a promise in prose**. The previous pass recorded this as a gap with a named
+  owner and put it *after* the gate; both halves of that are reversed. §5.2.2.
+- **What the human surface still does not do:** produce an approved `design_revision`. Answering it
+  routes the item to `designApproved`; **nothing writes that row until slice 4** (M5–M7). So the
+  answer exists and the producer does not — R4, and the same `DECLARED`-not-`PASSING` distinction
+  §5.2.1 draws for the contract.
 
 ---
 
@@ -1041,7 +1399,23 @@ Every edge into `implementationReady` that has a caller carries the guard: the o
 reaches `AgentRole.implementer` without a satisfied design review** — which is HD-1's undelegated
 clause as the operator has now ruled it, covering **every** route.
 
-The price is §5.2.1's table: until M5–M7 land, those items park and a human can re-triage, re-plan or
-stop them, and nothing else — **and none of the three is "do the design review"**, which is §5.2.2's
-named gap with the Manager as owner. **That price is the point of the gate on this repository today,
-it was chosen by the operator knowing it, and it is flagged rather than minimised.**
+The price is §5.2.1's table: until M5–M7 land (slice 4), those items park and a human can re-triage,
+re-plan, stop — **or, from slice 1, say "do the design review"**, which moves the item to
+`designApproved` and, on its own, still produces nothing, because no producer exists. **That price is
+the point of the gate on this repository today, the operator chose it knowing it, and it is flagged
+rather than minimised.**
+
+### 7.1 The second invariant — the one the reversal exists to enforce
+
+The first invariant is HD-1's: no intake-origin item reaches an implementer unreviewed. **The second
+is this document's own, and it is what `.decisions/b81f40c7…` decided:**
+
+> **No item may be parked at `designReviewRequired` before the decision raised there offers a "do the
+> design review" answer.** *(decision `invariant`, verbatim)*
+
+**Stated, and asserted.** G17 (§6, sub-slice 1c) fails if `designReviewRequired` has an in-edge while
+no park answer routes to `designApproved`, and fails if such an answer exists while the park is
+unreachable. **A park without a way to produce what the item waits for is the dead-end class (F-42,
+F-50, F-54) this area has produced repeatedly** — and this design has now produced it twice inside
+its own corrections (R3, R3b). **So the invariant is a test, not a convention**, which is the only
+form this document will accept for a property it asserts.
