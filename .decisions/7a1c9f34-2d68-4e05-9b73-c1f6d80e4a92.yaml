@@ -1,0 +1,28 @@
+# human-decision.yaml
+decision_id: 7a1c9f34-2d68-4e05-9b73-c1f6d80e4a92
+type: ARCHITECTURE
+status: RESOLVED
+title: The 3 stranded agent_executing items are recovered by registering a QA contract, not cancelled
+resolution:
+  selected: REGISTER_QA_CONTRACT_AND_BACKFILL
+  label: Register the product's QA-contract manifest, let the backfill attach it, then operator-transition
+  decided_by: operator
+  decided_at: 2026-10-17T18:10:00Z
+  rationale_given: >-
+    The operator first chose "cancel and re-file for a clean slate". A verification check before acting
+    overturned that, and the operator accepted the correction:
+      1. There is NO operator cancel path from `agent_executing`. `_isOperatorActionSurface` is
+         `agentFailed` only; the sole legal edges out are `agentCompleted` (refused, no QA contract),
+         `agentFailed`, and `featureIntakeParked`. Cancelling is not a button -- it is a new code path
+         or a hand-written row.
+      2. EVERY work item is `category: feature`. A re-filed defect therefore lands on the same
+         un-provisioned path and is refused identically, so re-filing cannot succeed.
+      3. Their triage output was already discarded, but the ITEMS still carry a producer run and a
+         discarded result; cancelling would destroy real triage work for no functional gain.
+  consequence: >-
+    Recovery is: register the product with a QA-contract manifest -> the backfill attaches it on replay
+    -> an operator transition completes them. Nothing hand-written, consistent with `c4d70b18`.
+  note: >-
+    This is the FOURTH time an operator's first answer was overturned by a check run before execution
+    (`c4d70b18`, `7f3e2a95`, `3e5a7c26`, `5a90c1d3` were accepted on the second pass; this one was not).
+    Recorded because the pattern is the point: the check is cheap and the alternative was irreversible.

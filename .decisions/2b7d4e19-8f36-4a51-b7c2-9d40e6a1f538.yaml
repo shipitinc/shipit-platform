@@ -1,0 +1,22 @@
+# human-decision.yaml
+decision_id: 2b7d4e19-8f36-4a51-b7c2-9d40e6a1f538
+type: ARCHITECTURE
+status: RESOLVED
+title: The unhandled Postgres StreamSink crash is fixed, not watched
+resolution:
+  selected: FIX_UNHANDLED_CRASH
+  label: Make a closed-sink DB write degrade one tick, not kill the isolate
+  decided_by: operator
+  decided_at: 2026-10-17T18:10:00Z
+  rationale_given: >-
+    The QA server died on an unhandled `Bad state: StreamSink is closed` raised inside the Postgres
+    driver: an async write fired after the connection closed, and the exception was unhandled, so it
+    killed the isolate and took the scheduler with it. The stack then served nothing and no work
+    progressed -- visibly nothing, because a dead scheduler logs `ran: false` ticks and nothing else.
+  why_not_watch: >-
+    Watching was offered and declined. A crash that stops the entire workflow silently is not
+    environmental: it was invisible for hours precisely because there was no operator signal.
+  scope: >-
+    Fix the UNHANDLED path so a closed sink degrades one tick. Liveness monitoring was separately
+    offered and not chosen; recorded as a follow-up rather than bundled, so the fix is small and the
+    crash is closed first.
