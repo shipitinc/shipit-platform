@@ -1757,7 +1757,8 @@ workspace as a required gate**, because a `switch` in one package is a compile-t
 enum in another, and nothing about the change's own package reveals it.
 
 ### F-73 A behavioural assertion cannot see a redundant arm — the guard had to read source
-**Status** OPEN · **executable knowledge**
+**Status** OPEN · **QA_DISCOVERY** (retagged: this file's own first draft used "executable knowledge", which
+is a principle, not one of `LEARNING_POLICY.md`'s 11 categories — corrected on review)
 
 Acceptance criterion 4 requires that `cancel` acquire **no** `targetFor` arm, since `(_, cancel)` at
 `human_decision_routing.dart:121` already serves it. **Mutation M6 added a redundant
@@ -1793,3 +1794,77 @@ mutation.
 pair is *refused* at escalationIndex 99/max 3 while this pair *passes* the same fixture. Per
 `d41a6e85` no escalation arm was added. **Whether a ceiling should apply is product policy and is still
 unanswered.**
+
+---
+
+## 25. Review of slice 1 — DO_NOT_MERGE on 1 HIGH + 1 MEDIUM, no blockers
+
+Independent engineering review. **No blockers, all gates green, provenance verified, no production
+defect.** The review re-ran the gates, **confirmed all four claimed pre-existing defects at BASE**
+rather than accepting them, and ran **6 mutations of its own** rather than the lane's 15 — 5 of 6
+caught.
+
+### F-74 The classification ruling has ZERO executable coverage against production
+**Status** OPEN · **BLOCKING** · found by mutation, not by reading
+
+Flipping `durable_workflow_engine.dart:1015` from `HumanDecisionChoice.reTriage => true` to
+`=> false` leaves **every test green** — the drift guard 15/15, all 38 scheduler files, all 9
+workflow_engine files, all 4 workflow_store files, all 42 non-Postgres `apps/server` files.
+
+**Cause:** `triage_entry_state_drift_guard_test.dart:96-99` derives `_isReWork` from
+`_recognisedReWorkChoices`, so the test at `:286-303` ("reTriage IS re-work") **asserts the literal
+list against itself**. And `packages/workflow_store/test/triage_discriminator_test.dart` — the file that
+drives the **real** predicate — has **no `reTriage` case**; its own group header at `:283` records that
+the guard was moved out of this package, which is **how the production coverage was lost**.
+
+The doc comment at `durable_workflow_engine.dart:966-972` calls this *"the arm that must NOT be
+omitted"* and names the consequence — the item goes inert for ever. **One silent edit away, fully
+green.**
+
+**A second, related claim is false.** `triage_entry_state_drift_guard_test.dart:216-218` says: *"A
+second copy is only worth having if the copies are pinned to each other, and the only thing that pins
+them is totality."* **Totality pins each copy to the ENUM, not to the other copy.** A value classified
+in BOTH copies on **opposite sides** satisfies every assertion in the file. The stated sufficiency does
+not hold.
+
+This is F-72's and F-73's lesson again, and it is the sharpest instance: **an assertion that reads its
+own input back is not coverage.** No human decision is needed — `d41a6e85` already states the answer;
+it is simply untested against production.
+
+### F-75 A mandatory format fix silently shrank a drift guard's coverage
+**Status** OPEN · **BLOCKING** · undisclosed consequence, not a wrong action
+
+The lane correctly formatted `work_item_transitions.dart` — the file is in `OWNED_PATHS` and the gate
+is mandatory. **But** replaying `transition_copy_test.dart`'s own regex over BASE and HEAD gives
+**53 pairs → 52**. The lost pair is
+`featureIntakeParked → waitingForHumanDecision` — **the multi-line form the formatter produced no
+longer matches the single-line regex.**
+
+That edge is the **feature park's only way out**: the file's own comment reads *"DELIBERATELY NO EDGE
+BACK TO `planned` … Recovery is via the human gate."* Nothing else in the tree asserts it exists —
+`featureIntakeParked` appears in tests only at `transition_consistency_test.dart:206-212`
+(entry-state dispatchability), `design_review_park_surface_test.dart:609` (a different probe), and
+`work_entry_test.dart` (state assertions). **Deleting it would now fail nothing and turn the park into
+a dead end.**
+
+**Two classes in one finding: an enforced gate that can silently reduce coverage, and a regex that is
+not whitespace-tolerant.** Making `transition_copy_test.dart`'s regex tolerant is the better fix but is
+**outside the six granted paths** and needs a scope grant; asserting the edge exists from a test inside
+the granted paths is the available fix.
+
+### Confirmed sound by mutation — do not re-litigate
+Three arms and four answers, with the structural guard proven **not defeatable by the realistic
+attack**: a redundant `cancel` arm added in single-line form was caught, and **re-added in the
+multi-line form `dart format` itself produces** — which the arm regex does not match — was still caught
+by the `allMatches` count. Fail-closed on rename. **No `escalationTargetFor` arm for any of the four**,
+`designReviewRequest` absent from the ceiling set, **R14 open and pinned from both sides** (a smuggled
+ceiling turns red). `_declaredNotReWork`'s reason is enforced (`length > 80`). The two-step park order
+is untouched.
+
+*Correction to the Manager's brief, not the code:* the throw is at
+`durable_workflow_engine.dart:573-583`; `:564-565` is the idempotent-return condition.
+
+### Also disclosed by the reviewer
+`apps/control_plane/.flutter-plugins-dependencies` is a **generated file committed to version control**
+and version-drifted (`.fvmrc` says 3.44.0; the committed file says 3.44.7), so any
+`fvm flutter test` dirties the tracked tree. Pre-existing.
