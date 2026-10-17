@@ -996,3 +996,51 @@ prescribed remedy rather than weakening it, which was correct.
 Recorded because **any new method named `provision` in `apps/server/lib/**` will trip this gate**,
 and the failure message's advice — "if this receiver is some unrelated API, rename it" — is right
 more often than a reviewer will assume.
+
+---
+
+## 12. REGRESSION — the `planned` fix made features dispatch onto the defect triage lane
+
+**Status** OPEN · **introduced by this session at `863831a`** · verified by bisect
+
+`apps/server/lib/src/triage/work_entry_test.dart` — *"the parked feature is invisible to the
+category-blind scheduler, while a defect is not"*:
+
+    792855d (before the planned fix)   →  +1: All tests passed!
+    HEAD (19fc529)                    →  Expected: noAction   Actual: runnable
+
+**This session's `planned` restoration caused it.** Adding `planned` to
+`triageDefectDefinition.entryStates` made `RunnableWorkEvaluator` treat *any* `planned` item as
+runnable, **including a feature** — so a feature now acquires a `triage_defect` job. That is exactly
+the failure `work_entry.dart:389-391` exists to prevent, and the test names it:
+
+> *"Routing a feature into lane A produces a queued -> dispatched -> succeeded job whose TriageResult
+> is then discarded at readDefect: a healthy-looking job and no work done."*
+
+### Why the fix had this shape, and why it was not caught at the time
+`entryProbeTargets` is a `Map<WorkItemState, WorkItemState>` — keyed by **state only**. There is no
+place in that map to say "take this hop for a defect, not for a feature". The restoration made
+`planned` dispatchable on the triage lane wholesale, which is correct for the three stranded items
+(all `category: feature` per the DB, but two named `design-remediation-*` and one `WI-feature-*`,
+all created by the **defect-triage** producer path) and wrong for a feature created by feature
+intake.
+
+**The implementation lane's own gates did not cover it.** Its non-vacuity was measured against the
+stranded items and against two exact-set pins in `packages/scheduler`. The test that *did* cover it
+lives in `apps/server/lib/src/triage/`, which was `PROHIBITED_PATHS` for that lane — so the lane
+could not have run it, and the Manager's own post-merge verification did not run it either. **A
+prohibited-path boundary hid a regression from the lane that could have caught it.**
+
+### What this says about the previous entry
+**F-45 was recorded inaccurately and is corrected here.** It said the red test was "the blocker this
+work restored" and implied `8b38a95` addressed it. It did not: `8b38a95` touched no file that test
+reads, and the test is still red. The correct statement is worse and simpler — **the test was written
+before this session, was green, and this session made it red.**
+
+### The repair
+The `planned` hop must be **category-aware**: taken for a defect-category item, refused for a
+feature. `EntryHopper` already receives the whole item (`entry_hop.dart:181` reads
+`_definition.entryProbeTargets[current.state]` inside a method holding `current`), so the item's
+category **is in scope at the call site** — but the map cannot express the condition. This is the
+same expressiveness gap recorded as **F-40**, reached from a second direction and now with a live
+regression behind it.
