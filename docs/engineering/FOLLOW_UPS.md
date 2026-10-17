@@ -1505,3 +1505,49 @@ verified verbatim. **The reason does not**, and it recurs in three more places
 (`design-revision.md:1013`, `:1960`, `design-review-gate.md:1660`). Recorded because *a correct
 conclusion reached by a false reason is still a defect*: the next reader inherits the reason, and four
 places now do.
+
+---
+
+## 20. Pass 6 (`d210475`) — and F-66, a generated count that silently mis-counted
+
+### F-66 A generated count is not a mitigation when the generator's boundaries are hand-typed
+**Status** OPEN · **WORKFLOW_IMPROVEMENT** · found by running it, not by reading it
+
+Pass 5 committed itself to **generated, not restated, counts** — the cure for count rot (F-65's
+neighbour, the ninth L3 instance). Pass 6 **ran** the generator rather than describing it, and found
+it returned `13 8 9 **13**` where the five-register form counts `13 8 9 7 6`: **it silently absorbed
+the new register** instead of counting it.
+
+> *"A generator that silently mis-counts is worse than a prose number, because it looks
+> machine-checked."*
+
+**A generator whose own boundaries are hand-typed is a restatement with extra steps.** The remedy the
+lane adopted is the right one: **re-derive the generator's boundaries**, and delete the restated count
+from `§9.1` entirely rather than correcting it.
+
+This is the sharpest instance in the ledger of a general lesson: **the cure for a class of defect can
+become an instance of it, and only executing the cure reveals which.**
+
+### F-67 `_resolvedOptionId`'s fallback is live in production today
+**Status** OPEN · `apps/**` is PROHIBITED to design lanes — specified, not fixed
+
+Two of `control_plane_service.dart`'s three option ids are **not** `HumanDecisionChoice` wires —
+`stillBroken` / `partiallyFixed` against wires `still_broken` / `partially_fixed`
+(`enums/human_decision.dart:40-41`). So `_resolvedOptionId`'s `choice.wire` fallback
+(`durable_workflow_engine.dart:1113`) is **not a hypothetical hole in a future park** — it is already
+reachable.
+
+The design's original argument against G16 was *"no shipped precedent"*. **That is false**: a shipped
+precedent exists and it **violates** the convention. The live counter-example is the **strongest
+available motivation** for G16/G17(c), and the artifact now says so — strengthening the assertion
+rather than weakening it.
+
+### A sweep by reading found nine things the spec did not name
+Four of HIGH-2's sites in the metadata register, the missing third registration site, the enum
+marking, a fifth whitelist range, and a live `:531-546` the lane **caught by reading its own artifact
+back** after a bulk replace — committed as `d210475` rather than amended into `cc7cca6`, so the error
+and its correction are both on the record.
+
+**`A grep finds an orphaned string, not a stale claim`** has now been demonstrated seven times. The
+recurring blind spot is named in the artifact itself: **score fields, gap lists and risk rows** — *"a
+field that summarises is a field that decays."*
