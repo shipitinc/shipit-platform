@@ -1318,3 +1318,64 @@ anchor propagates silently, because a citation that looks well-formed invites ac
 downstream. As a fallible rule: *an artifact citing `FOLLOW_UPS F-NN` that no one in the session
 wrote is a smell, not a fact.*
 
+
+---
+
+## 17. Design Revision 3 (`7caa1d8`) — sequencing reversed, and the lane's own errors
+
+Four review rounds on one artifact. Round 3 returned **no blockers, no highs** and confirmed the
+previous round's BLOCKING finding genuinely closed, re-derived at the line level rather than accepted.
+
+### The reversal is applied and the merits argument is kept
+Decision `b81f40c7-…` (`HUMAN_SURFACE_FIRST`) reversed the slice ordering. The design now reads:
+**1 = human surface, 2 = the gate, 3 = evaluator, 4 = design lane, 5 = contracts**, with a crosswalk in
+`design-review-gate.md §0.2`.
+
+The prior pass's own merits argument — that shipping the gate first leaves items in the *silent*
+position, which is worse than parking — is **preserved verbatim, not deleted and not restated as
+agreement**, because the override was on **authority, not reasoning**.
+
+**G17 asserts the invariant** rather than stating it: `designReviewRequired` has an in-edge **iff** the
+park's decision offers an answer whose `routesTo(type, choice, designApproved)` is true, reading both
+**parsed** routing tables. Fails on absence in both directions, **and fails today** — correctly.
+
+### F-57 The repository's own comment points 28 lines off
+**Status** OPEN · `packages/**` is PROHIBITED to design lanes — recorded, not corrected
+
+`human_decision_routing.dart:154` cites `durable_workflow_engine.dart:979` for
+`_isEscalationTransition`, which is at **`:1007`**. This is a comment **in the product source**,
+misdirecting exactly the reader it is meant to help.
+
+### F-58 A well-formed citation is what invites acceptance without opening
+**Status** OPEN · **WORKFLOW_IMPROVEMENT** · three rounds of evidence
+
+Three review rounds, each confirming ~60 citations — and each round finding errors the previous round
+missed. This pass found one **in its own artifacts**: `implementation_inflow.dart:1543-1578` cited for
+a load-bearing property, **1103 lines past EOF**.
+
+The design lane proposes two mechanical discriminators, both of which would have caught this class:
+1. **an end line inside the file** — `:1543-1578` is syntactically well-formed and passes any
+   `file:line` regex;
+2. **the cited range containing the quoted string.**
+
+Worth stating plainly: the reviewer's careful re-derivation is a genuine strength of this process, and
+it is **not** evidence about the citations it did not name.
+
+### F-59 R13 — the ordering creates a window with an answer that cannot unblock
+**Status** OPEN · created by decision `b81f40c7…` · **flagged by the lane, not argued**
+
+For the slice-1 → slice-2 window, the park's decision offers a fourth answer that **changes the item's
+state and still cannot unblock it** — the producer that writes the approved design revision arrives in
+slice 4. The lane recorded this as R13 rather than re-arguing merits against a decision made on
+authority, and invited a reviewer who thinks this is *itself* a dead end to make that finding.
+
+**That is the same class as everything else in this ledger**: a state with a way out that does not
+actually let anything out. Worth deciding deliberately rather than inheriting.
+
+### Three errors this pass authored and caught itself
+Recorded because the discipline is the point: **PASS3-5b** stated the lockstep rule flatly when it is
+conditional on reject/rework — an implementer believing it would have started the escalation index
+silently on a design approval. **PASS3-7** invented a path, `human_decision_type.dart`, which does not
+exist (`HumanDecisionType` is at `platform_contracts/lib/src/enums/human_decision.dart:1-30`). Both
+were recorded in §12.1 rather than quietly fixed. It also found the spec's own M-C citation was one
+line short (`:563-572` → the throw is `:573-583`).
