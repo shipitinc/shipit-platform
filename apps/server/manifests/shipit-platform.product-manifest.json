@@ -1,0 +1,89 @@
+{
+  "productId": "shipit-platform",
+  "name": "ShipIt Platform",
+  "version": "1.0.0",
+  "description": "The ShipIt agentic engineering control plane: Flutter operator UI, Dart Serverpod control plane, worker fleet, and the packages they compose from.",
+  "capabilities": [
+    "backend",
+    "web",
+    "cli",
+    "library"
+  ],
+  "environments": [
+    {
+      "name": "staging",
+      "type": "custom",
+      "config": {
+        "deployment": "docker compose -f docker/compose.qa.yaml",
+        "apiPort": 8180,
+        "uiPort": 8081
+      }
+    },
+    {
+      "name": "production",
+      "type": "custom",
+      "config": {
+        "deployment": "cloudbuild.release.yaml",
+        "promotionAuthority": "human"
+      }
+    }
+  ],
+  "contracts": {
+    "workItemCategories": [
+      "feature"
+    ],
+    "designContract": {
+      "requiredArtifacts": [
+        "architecture-decision-record"
+      ],
+      "reviewers": [],
+      "approvalThreshold": 1
+    },
+    "qaContract": {
+      "gates": [
+        {
+          "gateId": "intake-structured-result-admitted",
+          "type": "triage-classification-structure",
+          "required": true,
+          "config": {
+            "sourceColumn": "agent_result.structuredResultJson",
+            "requiredFields": [
+              "classification",
+              "status",
+              "confidence",
+              "suspectedCategory"
+            ],
+            "classificationEnum": "DefectClassification",
+            "statusEnum": "DefectStatus",
+            "evidenceTypes": [
+              "triage_structured_result"
+            ]
+          }
+        }
+      ]
+    },
+    "deploymentContract": {
+      "promotionPath": [
+        "staging",
+        "production"
+      ],
+      "approvalGates": []
+    }
+  },
+  "metadata": {
+    "authoredFor": "human decision 7a1c9f34 (REGISTER_QA_CONTRACT_AND_BACKFILL)",
+    "persistenceScope": "ONLY contracts.qaContract and manifestVersion are persisted, by ControlPlaneService._persistDeclaredQAContract (apps/server/lib/src/services/control_plane_service.dart:2300). capabilities, environments, workItemCategories, designContract and deploymentContract are REQUIRED BY ProductManifest.fromJson and are NOT written anywhere. They are recorded here because the wire type has no smaller shape, not because this file changes platform behaviour.",
+    "inertFields": {
+      "createdAt": "Type-required, not persisted. Carries no assertion about when anything happened.",
+      "updatedAt": "Type-required, not persisted. Carries no assertion about when anything happened.",
+      "designContract.reviewers": "Empty because no reviewer identity is this file's to invent. It is not persisted, so the empty list asserts nothing.",
+      "deploymentContract.approvalGates": "Empty because promotion to production is human-authorised by policy, not by a recorded approver list. It is not persisted.",
+      "workItemCategories": "feature is the only category any intake path on this product actually files (triage, design remediation and feature intake all create WorkItemCategory.feature). It is not persisted."
+    },
+    "gateType": "triage-classification-structure is reused deliberately from qa_orchestration's structuredClassificationAdmitted (packages/qa_orchestration/lib/src/lane_g_triage_qa_contract.dart:172). Both gates make the SAME assertion about the SAME document - the terminal AgentResult's structuredResult as persisted in agent_result.structuredResultJson - so an evaluator registered once for that type evaluates both. A new type name would need a second evaluator for one assertion.",
+    "evidenceTypes": "triage_structured_result, matching structuredClassificationAdmitted.evidenceTypes. A declared gate has to carry it in config because QAGateSpec has no evidenceTypes field, while the derived QAGateDefinition has one; ProductQAContractProvisioner reads it back out of config (declaredGateEvidenceTypesConfigKey). Same value on both sides, so one evaluator serves both gates against one evidence type.",
+    "evaluatorRuntime": "absent. QAOrchestration.evaluate returns QAGateStatus.notExecuted for this type, and isGateSatisfied(notExecuted) is false, so this gate cannot silently pass. It is a durable declaration whose enforcement runtime is the unbuilt slice 3 evaluator."
+  },
+  "createdAt": "2026-10-17T00:00:00Z",
+  "updatedAt": "2026-10-17T00:00:00Z"
+}
