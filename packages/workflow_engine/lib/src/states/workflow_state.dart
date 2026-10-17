@@ -43,6 +43,12 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
     WorkItemState.planned => [
       WorkItemWorkflowState.designRequired,
       WorkItemWorkflowState.designNotRequired,
+      WorkItemWorkflowState.featureIntakeParked,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
+    WorkItemState.featureIntakeParked => [
+      WorkItemWorkflowState.waitingForHumanDecision,
       WorkItemWorkflowState.cancelled,
       WorkItemWorkflowState.terminated,
     ],
@@ -81,6 +87,7 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
     WorkItemState.agentExecuting => [
       WorkItemWorkflowState.agentCompleted,
       WorkItemWorkflowState.agentFailed,
+      WorkItemWorkflowState.featureIntakeParked,
       WorkItemWorkflowState.cancelled,
       WorkItemWorkflowState.terminated,
     ],
@@ -185,6 +192,9 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
   static const draft = WorkItemWorkflowState(WorkItemState.draft);
   static const planning = WorkItemWorkflowState(WorkItemState.planning);
   static const planned = WorkItemWorkflowState(WorkItemState.planned);
+  static const featureIntakeParked = WorkItemWorkflowState(
+    WorkItemState.featureIntakeParked,
+  );
   static const designRequired = WorkItemWorkflowState(
     WorkItemState.designRequired,
   );

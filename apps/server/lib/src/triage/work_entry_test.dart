@@ -306,7 +306,7 @@ void main() {
       // which is a visible state with an honest reason rather than `draft`
       // forever.
       final parked = await host.reread(item.workItemId);
-      expect(parked.state, WorkItemState.planned);
+      expect(parked.state, WorkItemState.featureIntakeParked);
 
       // Both blockers named, because an operator needs to tell them apart:
       // one resolves by waiting, one does not.
@@ -347,7 +347,7 @@ void main() {
             'does not exist',
       );
       final parked = await host.reread(item.workItemId);
-      expect(parked.state, WorkItemState.planned);
+      expect(parked.state, WorkItemState.featureIntakeParked);
       expect(
         parked.metadata?[workEntryDispatchGateKey],
         WorkEntrySkipCodes.productNotInRegistry,
@@ -926,7 +926,7 @@ void main() {
 
         expect(await host.allJobs(), isEmpty);
         final parked = await host.reread(item.workItemId);
-        expect(parked.state, WorkItemState.planned);
+        expect(parked.state, WorkItemState.featureIntakeParked);
         // A sweep runs every thirty seconds. If each pass rewrote an identical
         // row the durable record would churn for ever, and every one of those
         // writes would race every other lane's read-modify-write on the same

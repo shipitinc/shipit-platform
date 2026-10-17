@@ -2,6 +2,7 @@ enum WorkItemState {
   draft('draft'),
   planning('planning'),
   planned('planned'),
+  featureIntakeParked('feature_intake_parked'),
   designRequired('design_required'),
   designNotRequired('design_not_required'),
   designInReview('design_in_review'),

@@ -246,6 +246,7 @@ abstract final class WorkEntrySkipCodes {
 /// history being attributed to the other.
 const String _planningKey = 'work-entry:planning';
 const String _plannedKey = 'work-entry:planned';
+const String _featureIntakeParkedKey = 'work-entry:featureIntakeParked';
 const String _designNotRequiredKey = 'work-entry:designNotRequired';
 
 /// How many compare-and-swap attempts the parked-feature annotation gets
@@ -539,7 +540,7 @@ class WorkEntryTrigger {
       );
     }
 
-    final parked = await _walkToPlanned(item);
+    final parked = await _walkToFeatureIntakeParked(item);
     await _annotateParked(parked, gate: gate);
 
     // The gate that is closed RIGHT NOW, named. Same three-way choice the
@@ -599,6 +600,44 @@ class WorkEntryTrigger {
         actor: _orchestrator,
         context: _walkContext(current),
         idempotencyKey: _designNotRequiredKey,
+      );
+    }
+    return current;
+  }
+
+  /// `draft -> planning -> planned -> featureIntakeParked`, stopping there.
+  ///
+  /// ## Why the park has its own state
+  ///
+  /// The park used to stop at `planned`, and that was correct only while
+  /// `planned` was invisible to dispatch. It stopped being invisible at
+  /// `863831a`, which restored `planned -> designNotRequired` and therefore
+  /// put `planned` into `triageDefectDefinition.entryStates`. The scheduler is
+  /// category-blind, so a feature parked at `planned` is triaged as a defect.
+  ///
+  /// Neither widening nor narrowing fixes it: `RunnableWorkEvaluator` rejects
+  /// a state outside `entryStates` BEFORE consulting policy
+  /// (`packages/scheduler/lib/src/policy/runnable_work.dart:172`), so the two
+  /// defect-origin stranded items need `planned` to stay dispatchable, while
+  /// `work_entry_test.dart:881` requires the parked feature's state not to be
+  /// in that same SET. Those cannot both hold while features and defects share
+  /// `planned`. Giving the park its own state satisfies both structurally --
+  /// no predicate, guard or metadata condition is consulted.
+  ///
+  /// ## Why `_walkToPlanned` is still here
+  ///
+  /// It is NOT dead. `_walkToDesignNotRequired` calls it at its first line, so
+  /// the defect route still resumes from `draft`/`planning` exactly as before.
+  Future<WorkItem> _walkToFeatureIntakeParked(WorkItem item) async {
+    final current = await _walkToPlanned(item);
+    if (current.state == WorkItemState.planned) {
+      return workflowEngine.transition(
+        workItemId: current.workItemId,
+        to: WorkItemState.featureIntakeParked,
+        trigger: TransitionTrigger.systemEvent,
+        actor: _orchestrator,
+        context: _walkContext(current),
+        idempotencyKey: _featureIntakeParkedKey,
       );
     }
     return current;

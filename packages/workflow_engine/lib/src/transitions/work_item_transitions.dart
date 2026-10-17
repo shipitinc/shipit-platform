@@ -28,6 +28,29 @@ class WorkItemTransitions {
     (WorkItemState.planned, WorkItemState.designNotRequired): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
     ],
+    (WorkItemState.planned, WorkItemState.featureIntakeParked): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+    ],
+    // THE WAY OUT OF THE FEATURE PARK. `featureIntakeParked` is in the
+    // entryStates of NO wired JobDefinition, so an item parked here is
+    // dispatchable by nobody -- the point of the state. Without an edge out it
+    // would be a terminal state nobody can leave, which is the same class of
+    // defect this state was created to end.
+    //
+    // `waitingForHumanDecision` is the operator route: a human can resolve the
+    // gate and route the item onward (`evaluate` returns `blocked` there, not
+    // `runnable`, so parking at the gate grants no dispatch). `cancelled` and
+    // `terminated` come free from `_isGenericEscape`.
+    //
+    // DELIBERATELY NO EDGE BACK TO `planned`. `planned_entry_state_hop_test`
+    // asserts `planning -> planned` is the ONLY edge into `planned`, so the
+    // scheduler's `planned -> designNotRequired` hop can never cycle. An edge
+    // from here to `planned` would give it a second predecessor and re-open
+    // exactly the loop that invariant exists to close. Recovery is via the
+    // human gate, which is slower and deliberately so.
+    (WorkItemState.featureIntakeParked, WorkItemState.waitingForHumanDecision): [
+      GuardConditions.actorAllowed([ActorType.human, ActorType.orchestrator]),
+    ],
     /*** Design ***/
     (WorkItemState.designRequired, WorkItemState.designInReview): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
@@ -123,6 +146,17 @@ class WorkItemTransitions {
       GuardConditions.agentResultValid(),
     ],
     (WorkItemState.agentExecuting, WorkItemState.agentFailed): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+    ],
+    // THE RECOVERY EDGE for a feature item that took the old bad hop before
+    // `featureIntakeParked` existed. `_parkFeature` used to walk a feature to
+    // `planned` and leave it there, and `planned` became a `triageDefect`
+    // entry state, so the scheduler -- which is category-blind -- dispatched
+    // the feature as a defect and advanced it to `agentExecuting`. This edge is
+    // the sanctioned way back out. The scheduler cannot originate it:
+    // `EntryHopper` may only land a hop on its OWN definition's entry states,
+    // and `featureIntakeParked` is in none of them.
+    (WorkItemState.agentExecuting, WorkItemState.featureIntakeParked): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
     ],
     (WorkItemState.agentFailed, WorkItemState.agentExecuting): [

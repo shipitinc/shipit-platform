@@ -193,6 +193,24 @@ void main() {
       );
       expect(wired, isNot(contains(WorkItemState.agentExecuting)));
 
+      // `featureIntakeParked` is where a feature intake request rests, because
+      // NO consumer runtime exists for feature work items in this platform
+      // (`externalWorkEntryConsumerDependency`). It exists to hold such a
+      // request visibly rather than refuse it. If it ever became an entry state
+      // of anything, the park would silently start dispatching jobs — which is
+      // the exact shape of defect the separate park state was introduced to
+      // prevent: a queued -> dispatched -> succeeded job whose result is then
+      // discarded. This is the non-vacuity half for that property: remove the
+      // state from this assertion's reach by adding it to any definition's
+      // `entryStates`, and this goes red.
+      expect(
+        wired,
+        isNot(contains(WorkItemState.featureIntakeParked)),
+        reason:
+            'a parked feature intake request must never become dispatchable. '
+            'Its whole purpose is to rest where no job can reach it.',
+      );
+
       const reworkPairs = {
         (HumanDecisionType.engineeringReview, HumanDecisionChoice.rework),
         (HumanDecisionType.qaWaiver, HumanDecisionChoice.reject),
