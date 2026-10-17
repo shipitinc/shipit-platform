@@ -322,6 +322,17 @@ Future<WorkItem> placeIn(
   await step(WorkItemState.planned, context: const {'featureRef': 'f-1'});
 
   switch (state) {
+    // `planned` is a triage entry state that the SCHEDULER routes rather than
+    // the coordinator, and the walk above already lands on it: `draft ->
+    // planning -> planned` is the unconditional prefix. So the case has no body
+    // on purpose — the item is left exactly where the shared prefix put it,
+    // reached through real transitions rather than written onto the row.
+    //
+    // Without it this guard's `default:` arm fires for `planned`, which is the
+    // guard working: it refuses to let a new entry state be covered by a walk
+    // that does not exist.
+    case WorkItemState.planned:
+      break;
     case WorkItemState.designNotRequired:
       await step(WorkItemState.designNotRequired);
     // The implementation lane's own entry state. Reached the way production

@@ -721,6 +721,18 @@ void main() {
         WorkItemState.designNotRequired,
         WorkItemState.designApproved,
         WorkItemState.reviewRejected,
+        // `planned` was added AFTER the retry-return decision, by lane
+        // `impl-PLANNED-ENTRY-HOP`, for a reason that is not the retry: a
+        // `planned` item had NO legal route out of the state at all, so the
+        // table was unreachable and three work items were stranded there
+        // permanently. It is recorded in this pin rather than excised from it,
+        // because a pin that silently drops a state is not a pin.
+        //
+        // The property this group actually protects — that the RETRY return
+        // stays unambiguous — is unaffected, and is asserted LIVE and
+        // INDEPENDENTLY below: `planned` is not reachable from `agentFailed`,
+        // so it contributes no second answer to the derivation.
+        WorkItemState.planned,
       });
       expect(engineeringReviewDefinition.entryStates, {
         WorkItemState.agentCompleted,

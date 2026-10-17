@@ -175,6 +175,13 @@ void main() {
         WorkItemState.designNotRequired,
         WorkItemState.designApproved,
         WorkItemState.reviewRejected,
+        // Added after the retry-return decision by lane `impl-PLANNED-ENTRY-HOP`
+        // for an unrelated reason: `planned` had no route out of itself at all,
+        // so work items parked there were stranded permanently. Recorded in the
+        // pin rather than removed from it. The retry property this file guards
+        // is untouched and asserted live in the next test — `planned` is not
+        // reachable from `agentFailed` and so adds no second return candidate.
+        WorkItemState.planned,
       });
       expect(engineeringReviewDefinition.entryStates, {
         WorkItemState.agentCompleted,

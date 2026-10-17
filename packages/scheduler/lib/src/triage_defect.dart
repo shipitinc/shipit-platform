@@ -51,6 +51,74 @@ import 'package:workflow_store/workflow_store.dart';
 /// change cannot pull a design rejection into the triage lane, and it does not
 /// widen any other job's entry set. `test/triage_entry_state_drift_guard_test.dart`
 /// asserts both halves of that against the live routing table.
+///
+/// ## WHY `planned` IS AN ENTRY STATE
+///
+/// The same dead end as `reviewRejected`, seen from the other side of the
+/// table. `planned` had two legal edges out of it — `planned ->
+/// designRequired` (guarded by `designContractExists()`) and `planned ->
+/// designNotRequired` (unguarded) — and was in the `entryStates` of NO wired
+/// `JobDefinition`. `RunnableWorkEvaluator` rejects a state outside `entryStates`
+/// BEFORE it consults the policy, so `Scheduler.tick` never selected a `planned`
+/// item, `EntryHopper.prepare` was never called on one, and both edges stayed
+/// permanently unreachable. `planned` was therefore a state the platform could
+/// ENTER and never LEAVE: `planning -> planned` had been taken 13 times, and the
+/// route out stopped firing entirely on 2026-10-11, leaving work items parked
+/// there while every tick reported `ran: true, failedSections: []` and
+/// `dispatched: 0`.
+///
+/// Note the failure shape is the SILENT one, which is why it survived days: a
+/// tick that enqueues nothing reports nothing, so a lane looks idle rather than
+/// broken, and `entryHopRefused` is never even populated — the item is never
+/// considered, so it is never refused.
+///
+/// `planned -> designNotRequired` is the right hop because it is the only one
+/// available to an item with no design contract, and it is the ordinary
+/// convention for an edge into an entry state: `actorAllowed([orchestrator])`
+/// alone, which is the actor the scheduler already acts as
+/// ([schedulerOrchestratorActor]). `planned -> designRequired` is not usable as
+/// a blanket route precisely because it carries `designContractExists()` — see
+/// the DELIBERATE CONSEQUENCE below.
+///
+/// ## IT NEEDS A PROBE TARGET FOR THE SAME REASON `reviewRejected` DOES
+///
+/// `planned -> agentExecuting` is not an edge (and must not become one —
+/// `agentExecuting` is in no wired `entryStates`, so an item parked there is
+/// never dispatched again). Listing `planned` alone would classify it `noAction`
+/// and enqueue nothing. So the state names its own legal hop in
+/// [JobDefinition.entryProbeTargets], exactly as `reviewRejected` does, and the
+/// policy is asked about that edge rather than a private copy of the table being
+/// consulted. `test/triage_entry_state_drift_guard_test.dart` derives the set of
+/// entry states needing an override from the live policy and asserts the map
+/// covers EXACTLY that set, so an override added or dropped wrongly fails by
+/// name.
+///
+/// ## DELIBERATE CONSEQUENCE: A `planned` ITEM WITH A CONTRACT SKIPS THE DESIGN
+/// LANE
+///
+/// `planned -> designNotRequired` is UNGUARDED, so this route does not ask
+/// whether the item carries a design contract. An item at `planned` that DOES
+/// carry one is therefore routed to `designNotRequired` rather than
+/// `designRequired`, and would be triaged instead of designed.
+///
+/// That is accepted deliberately, and for a measured reason: every item observed
+/// parked at `planned` had `designContractId` null and an empty artifact map, so
+/// for them `planned -> designRequired` was unavailable and
+/// `planned -> designNotRequired` was the only legal edge — the alternative was
+/// leaving them parked for ever. The opposite is not left implicit: an item
+/// whose producer creates the contract BEFORE planning completes reaches
+/// `designRequired` directly through its own route and never sits at `planned`
+/// with a contract, so the case this route mishandles is not the one production
+/// reaches. `test/planned_entry_state_hop_test.dart` pins both halves — that the
+/// hop is taken for a contract-less item, and that the contract-carrying case is
+/// a named, recorded residual rather than a silent one.
+///
+/// CONDITIONAL ROUTING IS NOT EXPRESSIBLE HERE AND WAS NOT ATTEMPTED. Choosing
+/// `designRequired` when a contract exists would need a probe target chosen by
+/// the item's evidence, and [JobDefinition.entryProbeTargets] is a
+/// `Map<WorkItemState, WorkItemState>` — static by construction, read without
+/// the work item. Widening it is an architecture decision outside this file, and
+/// is reported as a discovery rather than built here.
 const JobDefinition triageDefectDefinition = JobDefinition(
   jobType: JobType.triageDefect,
   requiredRole: AgentRole.triageDefect,
@@ -59,9 +127,11 @@ const JobDefinition triageDefectDefinition = JobDefinition(
     WorkItemState.designNotRequired,
     WorkItemState.designApproved,
     WorkItemState.reviewRejected,
+    WorkItemState.planned,
   },
   entryProbeTargets: {
     WorkItemState.reviewRejected: WorkItemState.designNotRequired,
+    WorkItemState.planned: WorkItemState.designNotRequired,
   },
   priority: JobPriority.high,
   maxAttempts: 2,
