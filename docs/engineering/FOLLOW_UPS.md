@@ -1914,3 +1914,51 @@ deleting the edge turns it red.
 - `human_decision_routing.dart:169` cites `durable_workflow_engine.dart:979` for
   `_isEscalationTransition`, actually at `:1029` — **50-line drift**. The file was in the granted paths
   and the fix was **deliberately not taken**, as unrelated to both findings. Recorded rather than fixed.
+
+---
+
+## 27. Focused re-review: APPROVE_CORRECTIONS, READY_FOR_MERGE
+
+Independent focused re-review of `1b973b2`. **No blockers, no highs.** Both mutation proofs
+**reproduced independently in a sandbox** — not accepted:
+
+- **F-74** — flipping `durable_workflow_engine.dart:1015` to `=> false` reds exactly one test
+  (`Expected: <3> Actual: <2>`); 17 others green; `scheduler` 423/423 and `workflow_engine` 197/197
+  stay green. The reviewer confirmed the new tests drive the **real** `resolveHumanDecision` with
+  nothing stubbed, and that the marker is computed by production `nextTriageAttempt` over a durable,
+  re-read seed. The pair is genuinely two-sided: making `approve` fire at `designReviewRequest` reds
+  only the second case.
+- **F-75** — deleting the edge reds `feature_park_way_out_test.dart`. The reviewer **proved the mirror
+  judgement** by applying the wrong edit: deleting the edge *and* syncing
+  `allowedTransitions` turns the mirror guard **green** while the new test is the only failure in the
+  package. *"The mirror is synchronisable and the two guards fail in opposite directions."*
+- **Regression risk: none of the three.** The new file asserts an edge *exists*, so it cannot contradict
+  the authoritative `_legalTransitions`; `allowedTransitions` has **zero production readers**; it
+  duplicates no guard; non-vacuous by deletion. The scheduler guard's +63/−6 is **comments-only** —
+  485 code lines each side after comment stripping, byte-identical, no assertion weakened.
+
+### F-76 A false rationale inside the artifact whose subject is "what pins what"
+**Status** OPEN · non-blocking · **MEDIUM-1** on review
+
+`triage_entry_state_drift_guard_test.dart:249-253` and `:263-265` justify why the cross-copy check
+cannot live in that file: *"this package depends on `workflow_store`, so its tests may not import the
+engine."* **That is false.** `scheduler` declares a `workflow_engine` path dependency and **this very
+file imports `package:workflow_engine/workflow_engine.dart` on line 4**; `scheduler` also depends on
+`workflow_store`, so a scheduler test *could* drive `resolveHumanDecision` and compare both copies.
+
+The correction's **conclusion** is sound and verified. **The stated blocker is invented** — and it is
+invented inside the artifact whose subject is exactly *what pins what*, in a repository that has been
+harmed repeatedly by confident-but-unverified reasoning. Recorded because the failure mode is the one
+this ledger keeps documenting: **a correct conclusion reached by a false reason is still a defect.**
+
+### Reviewer's rulings on the three reported-not-repaired items
+- **`transition_copy_test.dart:44`'s non-whitespace-tolerant regex** — **NOT blocking, HIGH
+  follow-up, new owner.** It caused F-75, but the correction added a direct guard for the edge whose
+  loss mattered. **Not neutral, though: a mandatory gate that has already silently dropped TWO pairs
+  and is already red for copy predating slice 1 enforces nothing.** The reviewer also found the second
+  pair — `(waitingForHumanDecision, implementationReady)` — was already invisible at `ddfbfff`, so the
+  defect **predates slice 1**.
+- **`budget_expiry_is_a_timeout_test.dart` timing flake** — NOT blocking, LOW. 1 failure in 19 runs,
+  unreproducible in 18 including 4 concurrent, in a package this change does not touch.
+- **The 50-line citation drift at `human_decision_routing.dart:170`** — NOT blocking, LOW. Cites
+  `durable_workflow_engine.dart:979`; `_isEscalationTransition` is at **`:1029`**.
