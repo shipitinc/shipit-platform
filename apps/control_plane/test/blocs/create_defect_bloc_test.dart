@@ -27,6 +27,11 @@ class FakeDefectRepository extends DefectRepository {
   Object? evidenceError;
   Object? productError;
 
+  /// Hashes whose attachment throws, so a test can fail exactly one file and
+  /// let the rest attach. Empty means "fail every attachment" (via
+  /// [evidenceError]), which is the all-or-nothing case.
+  final Set<String> evidenceFailuresFor = {};
+
   @override
   Future<List<ProductSummaryResponse>> listProductSummaries() async {
     if (productError != null) throw productError!;
@@ -83,7 +88,12 @@ class FakeDefectRepository extends DefectRepository {
     String? contentHash,
     String? sourceRef,
   }) async {
-    if (evidenceError != null) throw evidenceError!;
+    final failsForThis =
+        evidenceFailuresFor.contains(contentHash) ||
+        (evidenceFailuresFor.isEmpty && evidenceError != null);
+    if (failsForThis) {
+      throw evidenceError ?? StateError('artifact store rejected the upload');
+    }
     evidenceCalls.add({
       'defectId': defectId,
       'kind': kind,
@@ -258,6 +268,7 @@ void main() {
         expect(bloc.state.success, isTrue);
         expect(bloc.state.createdDefectId, 'DEF-42');
         expect(bloc.state.errorMessage, isNull);
+        expect(bloc.state.partialFailureMessage, isNull);
         expect(repository.lastCreate, {
           'title': 'Checkout button does nothing',
           'description': 'Clicked pay, nothing happened.',
@@ -288,6 +299,9 @@ void main() {
       expect(bloc.state.success, isFalse);
       expect(bloc.state.createdDefectId, isNull);
       expect(bloc.state.errorMessage, contains('Connection failed'));
+      // Nothing was created, so there is no partial outcome to report either:
+      // this is the one state where a failure message is the whole story.
+      expect(bloc.state.partialFailureMessage, isNull);
     });
 
     test('attaches evidence to the new defect after it exists', () async {
@@ -345,11 +359,185 @@ void main() {
         bloc.add(CreateDefectSubmitted());
         await pumpEventQueue();
 
+        // The defect exists and the operator must be told the file was lost.
         expect(bloc.state.success, isTrue);
         expect(bloc.state.createdDefectId, 'DEF-42');
-        expect(bloc.state.errorMessage, contains('failure.png'));
+        expect(bloc.state.partialFailureMessage, contains('failure.png'));
+        // The load-bearing assertion: a created defect is NOT a failed
+        // submission. Before the fix this state carried `errorMessage`, which
+        // rendered as "Could not create defect" and sent the operator off to
+        // file the same bug twice.
+        expect(bloc.state.errorMessage, isNull);
+        expect(bloc.state.hasPartialFailure, isTrue);
       },
     );
+
+    test('a clean create carries no failure message on either field', () async {
+      final bloc = await settled();
+      addTearDown(bloc.close);
+      fillRequiredExceptSeverity(bloc);
+      bloc
+        ..add(CreateDefectSeverityChanged('blocking'))
+        ..add(
+          CreateDefectEvidenceAdded([
+            const CreateDefectEvidenceFile(
+              name: 'failure.png',
+              size: 10,
+              sha256: 'abc123',
+            ),
+          ]),
+        );
+      await pumpEventQueue();
+
+      bloc.add(CreateDefectSubmitted());
+      await pumpEventQueue();
+
+      expect(bloc.state.success, isTrue);
+      expect(bloc.state.createdDefectId, 'DEF-42');
+      expect(repository.evidenceCalls, hasLength(1));
+      expect(bloc.state.partialFailureMessage, isNull);
+      expect(bloc.state.errorMessage, isNull);
+      expect(bloc.state.hasPartialFailure, isFalse);
+    });
+
+    test('one attachment failing still attaches the other, and names only the '
+        'lost file', () async {
+      repository.evidenceFailuresFor.add('bad1');
+      repository.evidenceError = Exception('no artifact store');
+      final bloc = await settled();
+      addTearDown(bloc.close);
+      fillRequiredExceptSeverity(bloc);
+      bloc
+        ..add(CreateDefectSeverityChanged('blocking'))
+        ..add(
+          CreateDefectEvidenceAdded([
+            const CreateDefectEvidenceFile(
+              name: 'kept.png',
+              size: 10,
+              sha256: 'good',
+            ),
+            const CreateDefectEvidenceFile(
+              name: 'lost.png',
+              size: 10,
+              sha256: 'bad1',
+            ),
+          ]),
+        );
+      await pumpEventQueue();
+
+      bloc.add(CreateDefectSubmitted());
+      await pumpEventQueue();
+
+      // The surviving file was really attached — a partial failure is not a
+      // wholesale loss dressed up as one.
+      expect(repository.evidenceCalls, hasLength(1));
+      expect(repository.evidenceCalls.single['contentHash'], 'good');
+      expect(bloc.state.success, isTrue);
+      expect(bloc.state.createdDefectId, 'DEF-42');
+      expect(bloc.state.partialFailureMessage, contains('lost.png'));
+      expect(bloc.state.partialFailureMessage, isNot(contains('kept.png')));
+      expect(bloc.state.errorMessage, isNull);
+    });
+
+    test('two failing attachments are both named', () async {
+      repository.evidenceFailuresFor.addAll(['bad1', 'bad2']);
+      repository.evidenceError = Exception('no artifact store');
+      final bloc = await settled();
+      addTearDown(bloc.close);
+      fillRequiredExceptSeverity(bloc);
+      bloc
+        ..add(CreateDefectSeverityChanged('blocking'))
+        ..add(
+          CreateDefectEvidenceAdded([
+            const CreateDefectEvidenceFile(
+              name: 'first.png',
+              size: 10,
+              sha256: 'bad1',
+            ),
+            const CreateDefectEvidenceFile(
+              name: 'second.png',
+              size: 10,
+              sha256: 'bad2',
+            ),
+          ]),
+        );
+      await pumpEventQueue();
+
+      bloc.add(CreateDefectSubmitted());
+      await pumpEventQueue();
+
+      // Reporting only the last failure is the same defect in miniature: the
+      // reporter would assume `first.png` was attached and stop looking.
+      expect(bloc.state.partialFailureMessage, contains('first.png'));
+      expect(bloc.state.partialFailureMessage, contains('second.png'));
+      expect(bloc.state.errorMessage, isNull);
+      expect(bloc.state.success, isTrue);
+      expect(bloc.state.createdDefectId, 'DEF-42');
+    });
+
+    test(
+      'a resubmit does not inherit the previous attempt’s failure',
+      () async {
+        repository.evidenceError = Exception('no artifact store');
+        final bloc = await settled();
+        addTearDown(bloc.close);
+        fillRequiredExceptSeverity(bloc);
+        bloc
+          ..add(CreateDefectSeverityChanged('blocking'))
+          ..add(
+            CreateDefectEvidenceAdded([
+              const CreateDefectEvidenceFile(
+                name: 'failure.png',
+                size: 10,
+                sha256: 'abc123',
+              ),
+            ]),
+          );
+        await pumpEventQueue();
+
+        bloc.add(CreateDefectSubmitted());
+        await pumpEventQueue();
+        expect(bloc.state.hasPartialFailure, isTrue);
+
+        // The second attempt's attachments all succeed.
+        repository.evidenceError = null;
+        bloc.add(CreateDefectSubmitted());
+        await pumpEventQueue();
+
+        expect(bloc.state.partialFailureMessage, isNull);
+        expect(bloc.state.errorMessage, isNull);
+      },
+    );
+
+    test(
+      'the state refuses to be a success and a failed submission at once',
+      () {
+        // The contradiction the old code relied on convention to avoid: any
+        // consumer that reads `errorMessage != null` as "this failed" is right
+        // for one state and wrong for the other, and only one caller existed.
+        expect(
+          () => CreateDefectState(
+            success: true,
+            createdDefectId: 'DEF-42',
+            errorMessage: 'Evidence "a.png" was not attached: boom',
+          ),
+          throwsA(isA<AssertionError>()),
+        );
+      },
+    );
+
+    test('the state refuses a success that has no reference to show', () {
+      // The advisory case: success with no id fell through to the editable
+      // form, which is an invitation to file the same defect a second time.
+      expect(
+        () => CreateDefectState(success: true),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(
+        () => CreateDefectState(success: true, createdDefectId: ''),
+        throwsA(isA<AssertionError>()),
+      );
+    });
 
     test('removing an evidence row is bounded by the list length', () async {
       final bloc = await settled();

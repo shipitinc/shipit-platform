@@ -241,7 +241,15 @@ class CreateDefectBloc extends Bloc<CreateDefectEvent, CreateDefectState> {
       return;
     }
 
-    emit(state.copyWith(isSubmitting: true, clearError: true));
+    // A new attempt starts clean: a message left by a previous submission must
+    // not attach itself to this one.
+    emit(
+      state.copyWith(
+        isSubmitting: true,
+        clearError: true,
+        clearPartialFailure: true,
+      ),
+    );
     try {
       final response = await _repository.createDefect(
         title: state.title.trim(),
@@ -259,7 +267,11 @@ class CreateDefectBloc extends Bloc<CreateDefectEvent, CreateDefectState> {
 
       // Evidence is registered after the defect exists, so a failure here
       // never loses the report — it is reported alongside the new reference.
-      String? evidenceError;
+      //
+      // Every failing file is collected rather than only the last one: an
+      // operator who attached three screenshots and lost two needs to know
+      // WHICH TWO, or they will assume all three are gone and re-upload.
+      final attachmentFailures = <String>[];
       for (final file in state.evidence) {
         try {
           await _repository.addDefectEvidence(
@@ -270,23 +282,37 @@ class CreateDefectBloc extends Bloc<CreateDefectEvent, CreateDefectState> {
             sourceRef: 'file-picker',
           );
         } catch (error) {
-          evidenceError = evidenceError == null
-              ? 'Evidence "${file.name}" was not attached: $error'
-              : '$evidenceError  ·  Evidence "${file.name}" was not attached: '
-                    '$error';
+          attachmentFailures.add(
+            'Evidence "${file.name}" was not attached: $error',
+          );
         }
       }
 
+      // The defect exists. `success: true` with a live reference, and every
+      // attachment failure on `partialFailureMessage` — never on `errorMessage`,
+      // which would tell the operator the report itself failed and send them
+      // off to file a duplicate of a defect that is already in the system.
       emit(
         state.copyWith(
           isSubmitting: false,
           createdDefectId: response.defectId,
           success: true,
-          errorMessage: evidenceError,
+          clearError: true,
+          partialFailureMessage: attachmentFailures.isEmpty
+              ? null
+              : attachmentFailures.join('  ·  '),
         ),
       );
     } catch (e) {
-      emit(state.copyWith(isSubmitting: false, errorMessage: e.toString()));
+      // Nothing was created, so there is no reference to protect and no
+      // partial outcome to distinguish: this is the one true failure.
+      emit(
+        state.copyWith(
+          isSubmitting: false,
+          errorMessage: e.toString(),
+          clearPartialFailure: true,
+        ),
+      );
     }
   }
 }

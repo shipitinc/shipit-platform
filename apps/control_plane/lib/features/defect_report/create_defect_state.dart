@@ -46,7 +46,33 @@ class CreateDefectState {
     this.createdDefectId,
     this.success = false,
     this.errorMessage,
-  });
+    this.partialFailureMessage,
+  })
+    // Two facts that must never be true at once, asserted rather than left to
+    // convention:
+    //
+    //  * `success` means a defect reference exists. Without one there is
+    //    nothing for the operator to act on, so a "success" the page cannot
+    //    render is a defect the page would silently hide.
+    //  * `errorMessage` means NOTHING WAS CREATED. A submission that created a
+    //    defect is not a failed submission, and reporting it as one strands a
+    //    real reference and invites the operator to file a duplicate. A failure
+    //    that happens after the write — evidence that would not attach — is a
+    //    partial failure and travels on [partialFailureMessage].
+    //
+    // These run in every test and in every debug build, which is what makes the
+    // invariant a property of the state instead of a habit of its one caller.
+    : assert(
+         !success || (createdDefectId != null && createdDefectId.isNotEmpty),
+         'success requires a created defect reference: a success the page cannot '
+         'render would be swallowed by the form.',
+       ),
+       assert(
+         !success || errorMessage == null,
+         'success and a failure-bearing errorMessage must never both be set: '
+         'that is the contradiction that reports a created defect as a failed '
+         'submission. Use partialFailureMessage for a failure after the write.',
+       );
 
   final String title;
   final String description;
@@ -77,8 +103,30 @@ class CreateDefectState {
   final String? clientContextJson;
   final bool isSubmitting;
   final String? createdDefectId;
+
+  /// A submission that produced a defect reference. Never true together with a
+  /// non-null [errorMessage] — the constructor refuses that state.
   final bool success;
+
+  /// The submission failed and nothing was created. Always accompanied by a
+  /// null [createdDefectId].
   final String? errorMessage;
+
+  /// The defect WAS created, but something attached to the form was not.
+  ///
+  /// This is deliberately not [errorMessage]. The report exists and its
+  /// reference is real; only the attachment is missing, and an operator has to
+  /// be able to see which file was lost without being told the report itself
+  /// failed.
+  final String? partialFailureMessage;
+
+  /// True only when a submission produced a reference there is something to
+  /// show. [success] says the write landed; this says there is a reference.
+  bool get hasCreatedReference =>
+      createdDefectId != null && createdDefectId!.isNotEmpty;
+
+  /// The defect exists and at least one attachment did not make it.
+  bool get hasPartialFailure => partialFailureMessage != null;
 
   /// The work item that will actually be attached, if any.
   String? get effectiveWorkItemId => affectedWorkItemId ?? prefilledWorkItemId;
@@ -110,7 +158,9 @@ class CreateDefectState {
     String? createdDefectId,
     bool? success,
     String? errorMessage,
+    String? partialFailureMessage,
     bool clearError = false,
+    bool clearPartialFailure = false,
     bool clearProduct = false,
     bool clearAffectedWorkItem = false,
   }) {
@@ -136,6 +186,9 @@ class CreateDefectState {
       createdDefectId: createdDefectId ?? this.createdDefectId,
       success: success ?? this.success,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
+      partialFailureMessage: clearPartialFailure
+          ? null
+          : (partialFailureMessage ?? this.partialFailureMessage),
     );
   }
 

@@ -83,10 +83,20 @@ class _CreateDefectViewState extends State<_CreateDefectView> {
         final mobile = isMobile(context);
         return Scaffold(
           body: SafeArea(
-            child: state.success && state.createdDefectId != null
+            // `success` is the switch, and a submission that created a defect never
+            // falls back to the editable form — falling back is what let an
+            // operator re-file a defect that already exists. `hasCreatedReference`
+            // is checked alongside it only so that the unreachable residue of a
+            // success without a reference degrades to an honest message below
+            // rather than to a blank form that invites a duplicate.
+            child: state.success && state.hasCreatedReference
                 ? _SuccessInline(
                     message: 'Defect ${state.createdDefectId} created',
-                    detail: state.errorMessage,
+                    // What did not make it is still owed to the operator. It is
+                    // reported here, on the success screen, because the defect
+                    // WAS created — hiding it behind the success state would
+                    // lose a file the reporter believes was submitted.
+                    detail: state.partialFailureMessage,
                     onAction: () =>
                         context.go('/reports/${state.createdDefectId}'),
                     actionLabel: 'View defect',
@@ -111,7 +121,14 @@ class _CreateDefectViewState extends State<_CreateDefectView> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        if (state.errorMessage != null && !state.success)
+                        // No `&& !state.success` guard here, deliberately. That guard is what made a
+                        // message disappear whenever a success carried one — the
+                        // exact shape this defect took. It is now safe to drop
+                        // because `CreateDefectState` refuses to hold `success`
+                        // and a failure-bearing `errorMessage` at the same time,
+                        // so a failure message on this branch genuinely means the
+                        // submission failed and is shown as one.
+                        if (state.errorMessage != null)
                           Padding(
                             padding: const EdgeInsets.only(bottom: 16),
                             child: DesignErrorState(
