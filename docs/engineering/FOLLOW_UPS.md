@@ -1616,3 +1616,60 @@ against the artifact's number, not offer its own.
 keyed on `designApproved` by the reversal's invariant — it has **no vocabulary** for `reTriage`,
 `planning`, `designNotRequired` or `cancelled`. Folding a four-target table into it would either break
 that existential clause or duplicate the arm set.
+
+---
+
+## 22. Pass 7 (`3642a64`) — the mitigation its own documentation invalidated
+
+### F-69 The count generator broke by being written down
+**Status** OPEN · **WORKFLOW_IMPROVEMENT** · the generalisable form of F-66
+
+Pass 7 **broke the very generator it had just fixed**, by documenting it. The boundaries were matched as
+**unanchored substrings**, so writing the command into the artifact put the literal string
+`### 12.4 ` *inside the command's own text*. `awk`'s range re-opened there, and the form began
+reporting §12.4 as **seven** rows when it has **six**. Both boundaries are now anchored in all three
+copies (`[.]`, not `\.` — a YAML double-quoted scalar rejects an unknown escape, which the parse
+failure caught).
+
+> **"A mitigation whose own documentation invalidates it is not a mitigation."**
+
+This is the **third** iteration of the same object — a prose count (F-65's neighbour), then a generated
+count (F-66), then a generated count that its own documentation disables. **The class is not
+"counts rot". It is that any count kept adjacent to the thing it counts is coupled to it**, and only
+executing the cure reveals which. Worth carrying into the framework.
+
+The lane left the **count recursion open on purpose**: its row quotes the outputs at the moment of
+finding, and appending the row moved the correct output again. It recorded that as *"the rule
+demonstrating itself rather than chasing a fixed point"* — and noted a reviewer may reasonably call it
+**a stale count with a rationalisation attached**. That is a fair reading and it is the right thing to
+have flagged.
+
+### F-70 The arm-count slip runs BOTH ways — and the normative spec was right throughout
+**Status** OPEN · **informative**
+
+The Manager named three sites saying **"two arms"** where three exist. A read sweep found a fourth
+— and also found **four sites saying "four arms"** where three exist.
+
+**There are four *answers* and three `targetFor` arms**: `cancel` is served by the pre-existing
+`(_, cancel)` catch-all at `human_decision_routing.dart:121`, which is why no arm must be written for
+it. `design-review-gate.md §6 1a`'s file table has read **"THREE"** correctly since pass 5; **every
+summary site around it did not, in either direction.**
+
+Recorded because it is the strongest evidence yet for the artifact's own lesson: **a reviewer reading
+only the normative spec would have seen nothing wrong** — and every summary site, which is what a
+reviewer actually reads for a verdict, was wrong.
+
+### Pass 7 found eight more, five in the fields §12.4 names as this artifact's blind spot
+Notably **PASS7-4**: `risk_assessment.risks` carried **no R14 row at all** — `§10` has carried R14 since
+pass 5 — so the one risk a reviewer should overturn first was **missing from where a reviewer looks**.
+AC-5 also carried the wrong count three ways. And **PASS7-5** is F-70.
+
+### PASS7-16 deliberately not addressed — a reviewer should rule
+~21 sites across all four artifacts carry `work_item_transitions.dart:559-563` for a guard call that
+is `:559-564` — a **uniform one-line truncation**. Every one of the 21 states the correct property.
+The lane corrected the three `:528-563` edge-range sites but declined these, on `§14.5`'s precedent
+that rewriting a verified citation for tidiness is worse than leaving it — and reverted an earlier
+partial fix, because that would have created a **3-vs-21-site inconsistency inside one artifact set**.
+
+**Recorded rather than resolved.** It is a judgement a reviewer can overturn, and the reasoning is
+stated.
