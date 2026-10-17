@@ -1,0 +1,33 @@
+# human-decision.yaml
+decision_id: 5a90c1d3-8e47-4b26-9f0c-3d7a5b2e6c19
+type: ARCHITECTURE
+status: RESOLVED
+title: A fourth HumanDecisionChoice is added for the design-review park, so the operator's menu is not silently reduced
+resolution:
+  selected: FOURTH_CHOICE_VALUE
+  label: Add a distinct choice value for 're-triage'; the park keeps all four coherent answers
+  decided_by: operator
+  decided_at: 2026-10-17T15:10:00Z
+  rationale_given: >-
+    A decision carries ONE type, so the park's new type must carry its whole menu. Nine existing
+    HumanDecisionChoice values cannot express four coherent answers, and the design lane merged
+    're-triage' into 'put it back in the lane', leaving three. That silently removed a genuine
+    operator choice: re-triaging a parked item would become cancel-and-refile, losing the item's
+    history and the durable reason it was parked. HD-1 delegates the park's handling to the design
+    lane, but a product-facing menu reduction is not that delegation.
+  scope_warning: >-
+    HumanDecisionChoice is SHARED with every other decision type. A new value is therefore visible
+    wherever a decision is rendered, not only in the park. The implementing lane MUST scope its
+    presentation: the new value must be offered only by the design-review park's decision type, and
+    must not appear in any other decision's option list. If the enum cannot carry a per-type option
+    set, that is itself a finding to escalate rather than work around by showing it everywhere.
+  consequence: >-
+    This authorises what 3e5a7c26 did not. The new value is a choice, not a type, so it additionally
+    requires: an arm in targetFor for (designReviewParked, <new choice>) and any companion edge
+    whitelist entries that arm implies -- human_decision_routing.dart:66-83 records the two routing
+    tables must move in LOCKSTEP or a disagreement does not error, it silently stops the escalation
+    index advancing.
+  invariant: >-
+    The operator's menu for a parked design-review item must remain four coherent answers. A design
+    that cannot express them must escalate, as this one did, rather than merge two into one and
+    report the reduction as resolved.

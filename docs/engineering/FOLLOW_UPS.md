@@ -1379,3 +1379,60 @@ silently on a design approval. **PASS3-7** invented a path, `human_decision_type
 exist (`HumanDecisionType` is at `platform_contracts/lib/src/enums/human_decision.dart:1-30`). Both
 were recorded in §12.1 rather than quietly fixed. It also found the spec's own M-C citation was one
 line short (`:563-572` → the throw is `:573-583`).
+
+---
+
+## 18. Round 4 (`0fc4a63`) — the fork resolved, and the decision's own enumeration was incomplete
+
+### F-60 The authorised decision under-specified its own registration sites
+**Status** OPEN · **found by the lane, not by the review**
+
+`3e5a7c26` said the new type's arms must be registered, naming **two** sites. There are **three.**
+`blockingHumanDecisionResolved` is a **strict whitelist** —
+`allowed.contains((type: decision.decisionType, choice: decision.choice!))`
+(`guard_conditions.dart:425-428`) — so a new type is admitted by **no** edge until it is added to
+that edge's set. Both `(waitingForHumanDecision, designApproved)` (`:75-80`) and
+`(waitingForHumanDecision, planning)` (`:641-650`) need it.
+
+Without the third registration the decision **resolves, is saved as resolved, and the item does not
+move** — §5.1.1b's unrecoverable position reached by a new route. The lane specified it rather than
+stopping, on the grounds that omitting it would make slice 1 ship a stranding, and recorded it as a
+gap in **the decision's enumeration**, not in the design. Correct record-keeping; the decision file
+still reads as though two suffice.
+
+### F-61 The `rework` arm INVERTS the pass-3 correction
+**Status** OPEN · **BLOCKING slice 1**
+
+Pass 3's G17b warned against adding an `escalationTargetFor` arm, because `approve` is protected by
+the short-circuit at `human_decision_routing.dart:196-199`. **The new type has a `rework` arm — the
+one choice that short-circuit does *not* protect.** Its inertness rests solely on `_ => null` at
+`:214`. Completing the "lockstep" would make `routesToEscalation` true and **start escalation
+accounting silently on a re-plan** — the exact failure `:159-162` warns about. G17b is extended, not
+carried.
+
+### F-62 An orphan-string checklist has a demonstrated blind spot
+**Status** OPEN · **WORKFLOW_IMPROVEMENT** · five instances in one artifact
+
+Five superseded-claim-surviving-as-live instances were found in this artifact. **A read sweep found
+all five. A grep found none** — because a superseded claim is well-formed text, not an orphaned
+string. Recorded by the lane as the generalisable lesson:
+
+> *"`A grep finds an orphaned string, not a stale claim`"*
+
+Compounding it: the dispatch's own `1.5`-orphan check was clean in both `.md` artifacts and **missed
+the metadata register** — and a read sweep found a *third* stale claim in `design-revision.md §4.2`
+(*"No new `HumanDecisionType`, no new routing-table arm, no new decision type"*) that had been carried
+through **three passes unmarked**.
+
+### The menu: four answers, restored
+The lane merged *re-triage* into *put it back in the lane*, leaving **three** — and flagged it as
+possibly the operator's to reverse, because a product-facing menu reduction is not what HD-1's
+delegation covered. The operator chose a **fourth `HumanDecisionChoice`**
+(`.decisions/5a90c1d3-…`), with a recorded scope warning: the enum is **shared with every other
+decision type**, so the new value is visible wherever a decision is rendered and **must be scoped to
+the park's type only**. If the enum cannot carry a per-type option set, that is a finding to escalate,
+not a reason to show it everywhere.
+
+**The invariant, recorded because it is the pattern, not the instance:** the operator's menu for a
+parked item must remain four coherent answers. A design that cannot express them **escalates**, as
+this one did — it did not merge two into one and report the reduction as resolved.
