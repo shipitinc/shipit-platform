@@ -60,8 +60,15 @@ class CreateDefectState {
     //    that happens after the write — evidence that would not attach — is a
     //    partial failure and travels on [partialFailureMessage].
     //
-    // These run in every test and in every debug build, which is what makes the
-    // invariant a property of the state instead of a habit of its one caller.
+    // These run in every test and in every DEBUG build. They are NOT a release
+    // guard: `flutter build web --release` — the command docker/Dockerfile.client
+    // ships — strips them (flutter_tools web/compiler_config.dart gates
+    // `--enable-asserts` on BuildMode.debug). In the released bundle the
+    // invariant rests on `CreateDefectBloc` having exactly one success emitter.
+    // Independent review 2026-10-16 (dcaf538): reverting the page's guard this
+    // assert backs turns ZERO tests red, precisely because the assert makes that
+    // state unconstructable in a test. Do not "simplify" this by deleting the
+    // page guard and trusting the assert.
     : assert(
          !success || (createdDefectId != null && createdDefectId.isNotEmpty),
          'success requires a created defect reference: a success the page cannot '
