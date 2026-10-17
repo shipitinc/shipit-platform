@@ -1194,3 +1194,70 @@ Recorded because a spec that points at the wrong line sends a lane hunting:
 
 The lane flagged both rather than complying silently. **That is the behaviour the correction-loop
 brief asks for, and it is the reason the errors cost nothing but a paragraph.**
+
+---
+
+## 15. Design Revision 2 (`86e38b5`) — corrections applied, two new findings
+
+Independent review returned `DESIGN_REVIEW_HUMAN_DECISION_REQUIRED` with `CORRECTION_REQUIRED: YES`
+(1 BLOCKING, 4 HIGH, 4 MEDIUM, 2 LOW). **Only H4 went to the operator** — who routed it back to the
+design lane plus independent review. Revision 2 addresses all 11 items.
+
+### F-53 The composition-root comment contradicts the stand-down — recorded nowhere
+**Status** OPEN · **BLOCKING a reader, not a machine**
+
+`apps/server/lib/src/review/engineering_review_gate.dart:2210-2229` stands **down** for a no-commit
+producer at `agentCompleted` on the stated premise that *"the implementation lane's completion inflow
+routes it back into implementationReady **without a bound** — so this gate stands down rather than
+asking a human a question whose options are only rework and reject."* At `:2860-2871` it logs
+`engineering-review-missing-artifact-stands-down` and returns — **no decision, no park, no durable
+reason.**
+
+**`apps/server/lib/server.dart:539-543` still says the opposite**: that the drain turns
+`blockedArtifactMissing` into a blocking human decision. The two are in direct contradiction, and the
+comment is the one a future lane reads first. **This is what made B1 invisible to the design lane** —
+the artifact it consulted was wrong.
+
+### F-54 `work_item_transitions.dart` declares edges that **no caller takes** — two verified today
+**Status** OPEN · **BLOCKING** · systemic
+
+Two confirmed in this session's work:
+
+1. `agentExecuting → agentCompleted` has no satisfying writer for items without a QA contract
+   (F-41), and `agentExecuting → designNotRequired` **does not exist at all**, so `operatorRetry` is
+   refused (F-42).
+2. `reviewApproved → qaInProgress` — **nothing takes it.** `reviewApproved` is in no
+   `JobDefinition.entryStates`, its only in-edge is the human one at `:425`, and no endpoint or drain
+   transitions it. So `qaInProgress` (F-50) is **not merely a dead end — it is unreachable**, and the
+   item stops one hop earlier, at `reviewApproved`.
+
+**The pattern is the point.** A transition table is a declaration of what is *legal*; it says nothing
+about what is *called*. Two of the walls this session has been chipping at were legal edges with no
+caller, which is why "the guard should refuse and a human should be asked" kept failing to produce a
+human.
+
+**Suggested check, not implemented:** for each declared edge, is there a producer that can originate
+it? Reading a guard exactly — as the QA revision's otherwise excellent citation pass did, ~45 ranges
+all correct — **is not the same question** as whether anything calls the edge it sits on. That
+distinction survived a careful citation pass and is worth stating.
+
+### H4 — specified, not decided
+Per the operator's routing, Revision 2 specifies the behaviour following from HD-1's text, states both
+readings and **marks it as the one point an independent `design-reviewer` must judge.**
+`human_decisions_required` stays `[]`; a separate `points_for_independent_review` block carries the
+question, both readings, and the cost of each. **The operator's answer was not re-asked.**
+
+### Two non-goals withdrawn — the consequence of B1, not a choice
+Revision 1 claimed *"Not a new `WorkItemState`"* and *"Not a new edge to `waitingForHumanDecision`"*.
+Both were premised on a refused guard leaving the item somewhere with usable exits — **false for these
+origins**, per B1. The design now carries **one new state and three edges**, and slice 1 feasibility
+is downgraded **HIGH → MEDIUM** because Revision 1's HIGH rested on the claim the review found false.
+
+### Still open, stated not smoothed
+- **R1 is UNMITIGATED.** The drift test naming the single writer of `workItemOrigin` /
+  `approvedDesignRevisionId` is specified but a design artifact cannot make a mitigation executable.
+- **The park's human surface is a deliberate gap.** It offers re-triage / re-plan / stop — **none is
+  "do the design review"**, which is the very thing the item is parked waiting for. Fixing it needs a
+  new `HumanDecisionType` plus a routing arm; `human_decision_routing.dart:151-162` records the two
+  tables must move in lockstep or escalation accounting silently breaks.
+- **Tests were not re-run** — no production code changed and no claim rests on a test.
