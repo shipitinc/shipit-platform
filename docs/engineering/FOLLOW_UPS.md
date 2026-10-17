@@ -1490,5 +1490,18 @@ only; routing is unaffected. Recorded for the owning lane.
 `re_triage → designNotRequired` is the park's **only** arm carrying an escalation-index bound, and
 pass 5 specified **not** adding one, on that edge's own rule (`:553-558` — four types are already
 unbounded there). But re-triage is an **operator-invoked loop by construction**, unlike `escalation`.
-A ceiling is a product decision. It does not block slice 1; it blocks nothing, and is recorded so it
-is chosen rather than inherited.
+A ceiling is a product decision. It does not block slice 1, and is recorded so it is chosen rather
+than inherited.
+
+**CORRECTED — the justification was false.** Independent review established that this entry's *only*
+reason for flagging was *"re-triage is an **operator-invoked** loop by construction, unlike
+`escalation`"*. That is **wrong**: `(escalation, approve) → designNotRequired` is the **identical**
+operator-invoked loop, to the identical target, on the identical edge, and `escalation` is equally
+absent from the bound's set (`human_decision_routing.dart:560-563` contains only `engineeringReview`
+and `humanQaApproval`). The loop fires only when a human approves.
+
+**The conclusion — no ceiling — survives**, on the edge's own rule at `:553-558`, which the reviewer
+verified verbatim. **The reason does not**, and it recurs in three more places
+(`design-revision.md:1013`, `:1960`, `design-review-gate.md:1660`). Recorded because *a correct
+conclusion reached by a false reason is still a defect*: the next reader inherits the reason, and four
+places now do.
