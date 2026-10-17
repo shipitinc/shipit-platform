@@ -1,0 +1,428 @@
+# Design Revision metadata — design-QA-CONTRACTS-RESUME
+# Required fields per docs/engineering/DESIGN_GOVERNANCE.md ("Artifacts" ->
+# "Design Revision" -> "Required Metadata"). Continues design-brief.md (Revision 1,
+# DESIGN_REVISION_BLOCKED) for brief_id 7C4E1A6B-…; this is revision_number 1 of the
+# REVISION, produced under resolved decision 2a8f5c31-….
+#
+# DISPOSITION: DESIGN_REVISION_COMPLETE. Deliverables 1 (evaluator), 2 (design-review
+# gate) and 4 (the missing-artifact backlog) are specified in full. Deliverable 3 — the
+# two QA contracts — is DECLINED ON EVIDENCE, which the mandate expressly authorised
+# ("If the result shape still cannot be established, say so rather than inferring one").
+# See design-revision.md §3.
+
+revision_id: 8F3B27D4-6C15-4E9A-B0D7-3F62C81A4E50
+brief_id: 7C4E1A6B-2F30-4D18-9E77-0B5A9C31D4E2
+revision_number: 1
+version: 1.0.0
+status: DRAFT
+  # DRAFT, not UNDER_REVIEW: this lane does not advance lifecycle state. It hands the
+  # artifact to an independent design-reviewer, which is what sets UNDER_REVIEW.
+
+supersedes: null
+  # Does not supersede the brief. The brief is Revision 1 of the BRIEF and is retained in
+  # full — three of its four findings no longer hold at e3634a0 and the corrections are
+  # recorded in design-revision.md §1 and §12 rather than by editing it.
+
+governing_decision: 2a8f5c31-9d47-4e6b-b2f8-7c15e0d9a4b2
+
+requirements_refs:
+  - "Manager resume spec design-QA-CONTRACTS-RESUME — deliverable 1: the QA gate evaluator, specified not deferred"
+  - "Manager resume spec — deliverable 2: the design-review gate under HD-1 (four delegated sub-questions)"
+  - "Manager resume spec — deliverable 3: the two contracts, from evidence, or a stated refusal"
+  - "Manager resume spec — deliverable 4: what must exist before B1's consumer problem is solvable"
+  - "Manager resume spec — traceability, risks, non-goals, implementation sequence in reviewable slices"
+  - "Manager resume spec — 'A contract that exists and is not evaluated is DECLARED, not PASSING — use that word'"
+  - "HD-1 resolution — ALLOW_COMPLETION_GATE_IMPLEMENTATION_ON_DESIGN_REVIEW (operator, 2026-10-17)"
+  - "docs/engineering/FOLLOW_UPS.md §13 F-47 — no QA gate is evaluated by any production code (BLOCKING)"
+  - "docs/engineering/FOLLOW_UPS.md §13 F-48 — featureIntakeParked regression fixed at ddfbfff"
+  - "design-brief.md §6 M1-M4 — the missing-artifact backlog, carried forward as M5-M11"
+
+architecture_refs:
+  - "docs/adr/0021-design-defect-routing.md:112 — the boundary stops at WorkItem creation until the design governance runtime exists"
+  - "docs/adr/0021-design-defect-routing.md:114-122 — authority separation; implementation consumes an APPROVED revision only"
+  - "docs/adr/0021-design-defect-routing.md:126-128 — HUMAN_DESIGN_APPROVAL_REQUIRED is a designApproval HumanDecision"
+  - "packages/workflow_engine/lib/src/validation/guard_conditions.dart:247 — qaContractExists null-checks context['qaContractId']"
+  - "packages/workflow_engine/lib/src/validation/guard_conditions.dart:257-318 — allRequiredGatesPassed; reads gateResults (:267) AND qaContract (:274)"
+  - "packages/workflow_engine/lib/src/transitions/work_item_transitions.dart:135-138, 265, 340-342, 599-602 — the three in-edges of implementationReady and the dispatch edge"
+  - "packages/workflow_engine/lib/src/transitions/work_item_transitions.dart:651-654, 690-696, 697-702 — reviewApproved->qaInProgress, qaInProgress->qaPassed, qaInProgress->qaFailed"
+  - "packages/workflow_engine/lib/src/transitions/work_item_transitions.dart:111-114 — designApproved's ONLY out-edge (-> agentExecuting)"
+  - "packages/workflow_engine/lib/src/transitions/human_decision_routing.dart:88-138 — targetFor; (designApproval, approve) -> designApproved"
+  - "packages/workflow_engine/lib/src/states/workflow_state.dart — DurableWorkflowEngine.transition: context reaches the policy (:173) and is NOT persisted (:211-233)"
+  - "packages/qa_orchestration/lib/src/qa_orchestration.dart:11-120 — evaluate / isGateSatisfied / requiresFormalDetermination / isOverallPass"
+  - "packages/qa_orchestration/lib/src/gates/gate_registry.dart:19-23 — four registered evaluators, all implementation gates"
+  - "packages/qa_orchestration/lib/src/gates/gate_evaluator.dart:5-13, 31-39, 53-58 — GateEvaluator; _validateEvidence is content-blind"
+  - "packages/qa_orchestration/lib/src/gates/predefined/{static_analysis,test_coverage,security_scan,performance}_gate.dart — all four collectors return hardcoded empty findings"
+  - "packages/qa_orchestration/lib/src/lane_g_triage_qa_contract.dart:119-159, 172-188, 199-209, 219-230 — the only contract precedent and its three gates"
+  - "packages/qa_orchestration/lib/src/product_qa_contract.dart:108-159, 168-192 — buildProductQAContract; _declaredEvidenceTypes throws on a malformed value"
+  - "packages/platform_contracts/lib/src/types/qa_contract.dart:66-102 — QAGateDefinition (evidenceTypes required, non-null)"
+  - "packages/platform_contracts/lib/src/types/product_manifest.dart:129-165 — QAContractSpec (gates only); QAGateSpec (no evidenceTypes field)"
+  - "packages/platform_contracts/lib/src/enums/agent_role.dart:1-13 — twelve roles; none for either intake path"
+  - "packages/platform_contracts/lib/src/types/agent_result.dart:43 — structuredResult is a free-form Map<String, dynamic>"
+  - "packages/scheduler/lib/src/triage_defect.dart:122-138 — triageDefectDefinition; planned IS an entry state (:130)"
+  - "packages/scheduler/lib/src/implement_feature.dart:110-118 — implementFeatureDefinition.entryStates = {implementationReady}"
+  - "packages/scheduler/lib/src/scheduler.dart:3196-3203, 3255-3265, 3269-3280, 3357-3378 — defaultImplement (unwired), designRevision, designReview, engineeringReview"
+  - "packages/scheduler/lib/src/implementation_inflow.dart:334-396, 437-440 — producedCommitFor; completionRouteFor: NoCommitProduced -> implementationReady"
+  - "packages/scheduler/lib/src/policy/runnable_work.dart:167-195 — entryStates is checked before policy; category-blind"
+  - "apps/server/lib/server.dart:475-481, 523-529, 706-712 — exactly THREE wired Schedulers; no design scheduler"
+  - "apps/server/lib/src/triage/work_entry.dart:380-392, 529-583, 608-641 — the feature park, now at featureIntakeParked"
+  - "apps/server/lib/src/triage/lane_e_design_remediation_work_item.dart:116-145, 449-492 — why it stops at planned; _advanceToPlanned"
+  - "apps/server/lib/src/triage/triage_processor.dart:48-49, 102-105, 120-132, 199-222, 279-285 — parse, save, discard, required fields, _extractDefectId"
+  - "packages/execution_coordinator/lib/src/coordinator/execution_coordinator.dart:1065-1073 — the agentExecuting->agentCompleted call whose context already carries qaContractId"
+  - "packages/design_governance/lib/src/store/design_governance_store.dart:8-13 — DesignGovernanceStore"
+  - "packages/design_governance/lib/src/store/design_revision_store.dart:16-19 — readApprovedDesignRevisionForWorkItem (the HD-1 fact)"
+  - "apps/server/lib/src/persistence/postgres_design_governance_store.dart:9-10, 46-60 — the impl and its SQL; INSTANTIATED NOWHERE"
+  - "packages/platform_contracts/lib/src/types/design_revision.dart:13-108 — DesignRevision"
+  - "packages/platform_contracts/lib/src/enums/design_revision_status.dart:1-28 — the lifecycle and canTransitionToApproved"
+  - "packages/platform_contracts/lib/src/types/design_review_result.dart:12-46 — DesignReviewResult"
+  - "apps/server/migrations/20260928233022000, 20261012145629000 — design_revision and design_revision_event tables"
+
+problem_statement: >
+  HD-1 is resolved: allow completion, insert a design-review gate before implementationReady
+  dispatches an IMPLEMENTER, and delegate the gate's shape to the design lane. The blocker
+  brief (at 5afc230) declined to author the two QA contracts on three grounds, of which the
+  Manager independently confirmed the third — no gate in this repository is evaluated by any
+  production code, because nothing writes context['gateResults'] and
+  allRequiredGatesPassed() therefore always fails. This revision proceeds under the decision
+  and delivers three of the four delegated items in full: the evaluator, specified to the
+  point of naming its insertion points and its ordering constraints; the design-review gate,
+  specified as one guard on two existing edges, satisfied by a durable artifact query that
+  already exists; and the missing-artifact backlog, each item carrying the gate it would
+  justify. It declines the fourth — the two contracts — on evidence, and states the evidence.
+  Three findings materially change the shape of the work. First, the design governance
+  PERSISTENCE layer already exists (types, stores, migrations, a PostgreSQL implementation
+  and a one-line readApprovedDesignRevisionForWorkItem query), so the HD-1 gate needs a
+  producer, not a model — the blocked brief's framing understated this. Second, the four
+  registered gate evaluators are not merely unenforced but would return a fabricated
+  PASSING with an audit trail, so wiring the evaluator before replacing their validation
+  would convert an honest notExecuted into a false green. Third, every work item that
+  produces a reviewable commit and passes engineering review is stranded at qaInProgress,
+  which is a live dead end on the main implementation lane that no FOLLOW_UPS entry records.
+
+user_flows: >
+  ALL FLOWS BELOW ARE OBSERVED AND CITED. No flow is designed or changed by this revision
+  except the guard in FLOW E, which is specified and not built.
+
+  FLOW A — feature intake (observed, CHANGED since the blocked brief). A human files a
+  feature request; `WI-feature-<micros>` is minted
+  (apps/server/lib/src/services/control_plane_service.dart:916) and a QA contract is
+  provisioned from the product's declaration inside the creation transaction (:918-950).
+  `WorkEntryTrigger.ensureWorkEntry(kind: featureIntake)` takes the first unconditional
+  branch (work_entry.dart:390-392) and `_parkFeature` (:529-583) walks the item
+  `draft -> planning -> planned -> featureIntakeParked` (:608-641). EXIT: the item sits at
+  `featureIntakeParked`, which is in no JobDefinition's entryStates, so NO scheduler
+  dispatches it. No agent execution, no AgentResult, no structured result. CHANGED: the
+  blocked brief recorded this path parking at `planned` and being triaged as a defect; F-48
+  (ddfbfff) gave the park its own state and the red test
+  "the parked feature is invisible to the category-blind scheduler" is GREEN at e3634a0
+  (executed). This is the single most consequential correction to the brief.
+
+  FLOW B — design remediation (observed, unchanged). Triage classifies a defect
+  `design_defect`; DesignRemediationWorkItemProvisioner.ensurePersisted creates
+  `design-remediation-<defectId>` and `_advanceToPlanned` walks it `draft -> planning ->
+  planned` and stops (lane_e_design_remediation_work_item.dart:449-492), recording
+  EXTERNAL_DESIGN_GOVERNANCE_DEPENDENCY. EXIT: the item sits at `planned`.
+
+  FLOW C — what actually happens to each (observed, executable, and the asymmetry). The two
+  paths are no longer symmetric. `planned` IS in triageDefectDefinition.entryStates
+  (triage_defect.dart:130), so FLOW B's item IS dispatched by sched-triage, hops to
+  designNotRequired, runs AgentRole.triageDefect under triageDefectInstruction — whose
+  DEFECT DETAILS block degrades to the item's own title with an EMPTY `EVIDENCE: []`
+  (triage_defect.dart:223-231) while :274 tells the agent to cite evidence ids from it —
+  and then has its result abandoned: _extractDefectId (:279-285) yields the work-item id,
+  readDefect raises DefectNotFoundException (:122), and the catch returns the result
+  unused (:124-132) with the job sitting `succeeded`. FLOW A's item is NOT dispatched at
+  all. EXIT: FLOW B produces a healthy-looking job and no work; FLOW A produces no job.
+  There is therefore no run to describe for FLOW A and an abandoned one for FLOW B.
+
+  FLOW D — the walk the decision governs (observed, and specified in
+  design-review-gate.md). implementationReady is the only state that dispatches an
+  IMPLEMENTER (implement_feature.dart:112-114), reached by three edges: agentCompleted
+  (:340-342) and agentFailed (:265), both automatic via completionRouteFor's NoCommitProduced
+  branch (implementation_inflow.dart:437-440), and waitingForHumanDecision (:599-602),
+  human. EXIT: the spec places one origin-conditional guard on the two automatic edges and
+  deliberately not on the human one.
+
+  FLOW E — what the design-review gate actually reads (observed). The gate reads
+  context['approvedDesignRevisionId'], supplied after
+  DesignGovernanceStore.readApprovedDesignRevisionForWorkItem(workItemId)
+  (design_revision_store.dart:16-19; postgres_design_governance_store.dart:46-60, a
+  SELECT ... WHERE status = 'approved' against a real migrated table). EXIT: null for
+  every work item in existence, because nothing writes those rows. The gate is DECLARED,
+  not PASSING, and it will refuse every intake item until the design lane is built — which
+  is correct under HD-1 and is flagged in design-revision.md §13.2 rather than discovered in
+  staging.
+
+success_criteria: >
+  A reviewer can re-derive every factual claim from the cited file:line at e3634a0, and
+  from the three commands in design-revision.md §14, without running the platform and
+  without touching the QA stack. The evaluator is specified well enough that an
+  implementer needs no further design question except the two named in evaluator-spec.md
+  §4.2. The gate is specified well enough that the only judgement left is placement, and
+  two negative placement assertions (G5, G6) pin the two dead ends it could have shipped.
+  The refusal on deliverable 3 is evidenced rather than asserted, and a reader who believes
+  a contract should have been authored can find the specific missing artifact in
+  design-revision.md §6 and see which gate it would justify. No reader can come away
+  believing a gate in this repository is enforced: design-revision.md §7 states the state
+  vocabulary three ways and evaluator-spec.md §6 defines it in four.
+
+constraints: >
+  DESIGN ONLY. No docker, no compose, no psql; the QA stack was not touched. No bare
+  `git stash`, no `git checkout .`, no `git add -A`; explicit paths only. apps/**,
+  packages/**, docs/**, docker/**, .github/**, Makefile and tooling/** were read and never
+  written. docs/engineering/FOLLOW_UPS.md is the Manager's and was NOT modified — F-47
+  already records B3. This revision is a NEW commit atop e3634a0; nothing was amended,
+  rebased or reset. No gate may be proposed whose justification is a role name or a lane
+  name rather than a cited consumer that reads the result. No claim of enforcement may rest
+  on the existence of a qa_contract row.
+
+acceptance_criteria: >
+  AC-1 (deliverable 1) The evaluator is specified: who populates context['gateResults'],
+  from what, at which point in the transition, and how a gate's config is read; naming the
+  code that does it or stating it must be built and what it must do. SATISFIED:
+  evaluator-spec.md §1 (both context keys the guard reads, including the vacuous-pass hole
+  in qaContract), §2 (the transition and the fact that nothing takes it), §3 (the service,
+  step by step, and the sourceColumn-must-never-be-a-query rule), §4 (the call site, the
+  actor, and six fail-when-bypassed assertions), §5 (the ordering constraint and the one
+  evaluator honestly specifiable today). Names the insertion points:
+  guard_conditions.dart:267/274, work_item_transitions.dart:690-696,
+  execution_coordinator.dart:1065-1073, qa_orchestration.dart:11-39, gate_registry.dart:19-23.
+  AC-2 (deliverable 2) The design-review gate answers all four delegated questions —
+  where in the graph, which actor, what for an item that never gets one, and whether
+  defect-origin takes the same path. SATISFIED: design-review-gate.md §7 answers each in a
+  row, and §3 proves why the design states cannot host the gate (three wired Schedulers only;
+  no design-to-implementation edge; designApproved routes to triage;
+  designInReview->designApproved does not exist). The invariant is enforced on both
+  automatic routes, and the human route is deliberately left intact with the reason stated
+  (§5.2).
+  AC-3 (deliverable 3) The two contracts, authored from what the agents actually emit, or a
+  stated refusal. REFUSED ON EVIDENCE, as the mandate permitted: design-revision.md §3.1
+  (feature intake produces no execution at all — featureIntakeParked is in no
+  entryStates), §3.2 (design remediation's run has its result abandoned at
+  triage_processor.dart:124-132), §3.3 (no consumer on either path, so any
+  config.requiredFields would be justified by nothing). Not a bare refusal: §6 names M5-M11,
+  each with a location and the gate it would justify.
+  AC-4 (deliverable 4) The result type, parser, instruction and AgentRole variants named,
+  each with where it belongs. SATISFIED: design-revision.md §6 — M5 (design-lane producer),
+  M6 (sched-design Scheduler), M7 (design->implementationReady edge), M8 (feature-intake
+  JobDefinition), M9 (AgentRole per path), M10 (result type + parser + instruction),
+  M11 (a real structural evaluator), plus the ordering constraint that M6/M5 without M7
+  builds a loop.
+  AC-5 Traceability, risks, explicit non-goals, implementation sequence in reviewable
+  slices. SATISFIED: §9, §10 (ten risks, each with the consequence stated rather than
+  mitigated away), §11, §8 (slice 0 is a Manager decision, then four mergeable slices).
+  AC-6 The word DECLARED, not PASSING. SATISFIED: design-revision.md §7 states it three
+  ways and adds a fourth level — the four registered gate types are not DECLARED but would
+  be fabricated PASSING if wired; evaluator-spec.md §6 defines four levels in a table.
+  AC-7 Every file:line verified against the tree at e3634a0. SATISFIED individually.
+  design-revision.md §12 records five corrections to inherited inputs, including two wrong
+  citations in the resume spec and three drifted line ranges in the blocked brief.
+  AC-8 Never approve your own work. SATISFIED: design-revision.md §15 hands the artifact to
+  an independent design-reviewer; approved_by is null.
+  AC-9 Prefer a blocked result to an invented one. APPLIED SELECTIVELY, and the selection
+  is argued rather than assumed: deliverables 1, 2 and 4 were specified in full rather than
+  blocked, because the evidence to specify them honestly is present; deliverable 3 was
+  refused rather than invented, because it is not. §13 lists all six items this revision
+  did not fully address.
+
+risk_assessment:
+  level: 3
+  rationale: >
+    Level 3 (Major Workflow / navigation / IA change) is the correct level for the change
+    being designed, and it is unchanged from the blocked brief's assessment — for the same
+    reason: the level is not about a screen, it is about whether production code may begin
+    being written from a request that has never been designed. Slice 1 changes what the
+    platform is permitted to do unattended on two intake paths, and that affects the
+    operator's mental model of what intake means. It is not a Level 2: Level 2 is a
+    feature-level UX change affecting user behaviour, whereas this governs whether an
+    IMPLEMENTER may be dispatched at all.
+    The residual scope this revision actually delivers is documentation of a design, so
+    the artifact itself carries no product-facing behaviour change — which is why the
+    disposition is COMPLETE for the specification while the shipped behaviour change is
+    gate on slice 1 and is strictly a REDUCTION in what the platform may do.
+    HD-1 resolved the Level 3 question itself (ALLOW_COMPLETION_GATE_IMPLEMENTATION_ON_DESIGN_REVIEW).
+    What remains delegated is the gate's shape, and the one element of that shape a human
+    may still wish to own is flagged rather than decided: whether the human override on
+    waitingForHumanDecision -> implementationReady (§5.2 of design-review-gate.md) is the
+    intended reading of "unattended". This revision argues it is, from the decision's own
+    rationale_given, and names the dead end that the alternative reading would create. It
+    does not treat that argument as settled.
+  risks:
+    - "R1 the guard is treated as satisfied because its context key is supplied by a caller that did not read the store — HIGH. DurableWorkflowEngine.transition passes context to the policy (:173) and persists none of it (:211-233), so a context guard is exactly as strong as its writer. This is the platform's EXISTING model (qaContractExists, guard_conditions.dart:247). design-review-gate.md §4.4 states it as a property of the design and sub-slice 1b requires the supplier to be the only writer."
+    - "R2 the evaluator is wired before _validateEvidence is replaced — MEDIUM/CRITICAL. All four registered evaluators would return QAGateStatus.passed with fabricated empty findings (gate_evaluator.dart:53-58 + the four collectors). evaluator-spec.md §5 makes this a hard ordering constraint with a named non-vacuity test. The one ordering in this revision that must not be violated."
+    - "R3 the design-review gate strands an intake item — LOW/HIGH. A refusal leaves the item at agentCompleted, which sched-review picks up and which fails closed into a blocking human decision with no execution burned (design-review-gate.md §5.1). Proved structurally, not asserted."
+    - "R4 a human cannot move an intake item forward at all — WAS HIGH, RESOLVED in this revision. The guard is deliberately NOT on waitingForHumanDecision -> implementationReady. Had it been placed on all three edges, that route's own decisionActorIsHuman() would have been permanently overridden by a gate nothing satisfies today, manufacturing a dead end."
+    - "R5 the qaInProgress dead end goes unrecorded — MEDIUM/HIGH. Every item that commits, is engineering-reviewed and approved is stranded there, because allRequiredGatesPassed always fails and nothing dispatches from qaInProgress. Affects the MAIN implementation lane, not these two paths. Reported in full (design-revision.md §2.1) and routed to the Manager as slice 0; not designed here and FOLLOW_UPS.md not written."
+    - "R6 the two contracts are authored anyway to close the ticket — MEDIUM/HIGH. This revision is the obstacle, and §6 gives the next lane a specification (which artifact justifies which gate) rather than a prohibition."
+    - "R7 a future implementer adds designApproved -> implementationReady without M7 and creates a loop — MEDIUM/HIGH. design-revision.md §4.1 Fact 2 names the trap: designApproved is in triageDefectDefinition.entryStates, so an approved design routes to TRIAGE."
+    - "R8 sourceColumn is interpolated into SQL — LOW/CRITICAL. It names a table and a column and arrives from operator-authored manifest JSON (product_registry_endpoints.dart:470-510). evaluator-spec.md §3.4 forbids it and requires the typed store reader."
+    - "R9 M6/M5 land without M7 — MEDIUM/MEDIUM. Both are in slice 3 together, and §6 states the constraint."
+    - "R10 a reviewer reads gateRegistry and believes four gates work — HIGH/MEDIUM. §7's third row and evaluator-spec.md §5.1/§5.2 state it; the recommendation is to de-register rather than fix."
+
+changelog:
+  - "revision 1 (initial revision of the brief). DISPOSITION: DESIGN_REVISION_COMPLETE with deliverable 3 declined on evidence."
+  - "DELIVERABLE 1 — the QA gate evaluator, specified. Names the two context keys the guard reads (gateResults at guard_conditions.dart:267 AND qaContract at :274 — the second is unrecorded anywhere and is a vacuous-pass hole), the transition (qaInProgress -> qaPassed, :690-696), the fact that nothing takes it, the service contract, and the insertion point. Requires QAOrchestration.evaluate to be reused verbatim rather than re-derived."
+  - "DELIVERABLE 2 — the design-review gate under HD-1. One new GuardCondition on TWO existing edges (agentCompleted -> implementationReady at :340-342 and agentFailed -> implementationReady at :265-267), origin-conditional on the work-item id prefix, satisfied by DesignGovernanceStore.readApprovedDesignRevisionForWorkItem. All four delegated sub-questions answered in design-review-gate.md §7."
+  - "DELIVERABLE 3 — the two contracts: REFUSED ON EVIDENCE. Feature intake produces no agent execution at all (featureIntakeParked is in no entryStates); design remediation's run has its result abandoned at triage_processor.dart:124-132. No consumer exists on either path, so config.requiredFields would be justified by nothing."
+  - "DELIVERABLE 4 — M5 through M11, each with a location and the gate it would justify, plus the ordering constraint that M6/M5 without M7 builds a loop."
+  - "FINDING 1 — the design governance PERSISTENCE layer already exists: types (DesignRevision, DesignReviewResult, DesignFinding, DesignRevisionEvent, DesignRiskTier), stores with CAS and lineage, a 693-line PostgresDesignGovernanceStore, migrations, and readApprovedDesignRevisionForWorkItem. What is missing is a PRODUCER. The blocked brief's §6 and lane E's own comment at :125-127 ('no design_contract table, no DesignContractStore') are literally true and point at the wrong absence; a design built on that framing would have been substantially larger than necessary."
+  - "FINDING 2 — the four registered gate evaluators would return a fabricated PASSING with an audit trail if wired today, because GateEvaluatorImpl._validateEvidence returns evidence.isNotEmpty and every collector returns a hardcoded empty finding. This inverts the naive plan ('wire the evaluator in and the gates start working') and is the reason the ordering constraint in evaluator-spec.md §5 exists."
+  - "FINDING 3 — a live dead end nobody has recorded: qaInProgress is entered only from reviewApproved, has two out-edges, one of which requires a guard that can only fail and the other of which requires a qaExecutor that nothing dispatches. Every work item that commits and passes engineering review is stranded there. This is the main implementation lane, not these two paths; reported for the Manager, not designed here."
+  - "FINDING 4 — the blocked brief's proof-by-execution is retired. 'the parked feature is invisible to the category-blind scheduler' is GREEN at e3634a0 (F-48/ddfbfff gave the park its own state). The brief's CONTRADICTION against F-45 is no longer live, and its Flow A no longer describes HEAD. The two intake paths are no longer symmetric, which changes what can be honestly designed for each."
+  - "FINDING 5 — the guard reads TWO context keys, not one. Supplying gateResults without qaContract yields a vacuous pass, because requiredGates is then an empty iterable and .every() over it is true. A partially-wired evaluator looks enforced and judges nothing. Six fail-when-bypassed assertions are specified, of which V3 and V4 cover this and exist in no form today."
+  - "CORRECTIONS to inherited inputs (design-revision.md §12): design-resume.md cites work_item_transitions.dart:657-662 for qaInProgress -> qaPassed, which is :690-696; it cites triage_processor.dart:272-276 for _extractDefectId, which is :279-285; FOLLOW_UPS.md §13 line 1073 carries the same off-by-29 citation and is Manager-owned so it is not corrected here. The blocked brief's §4.2 line table drifted by 3-7 lines throughout; its substance is correct."
+
+created_by: design-agent / design-QA-CONTRACTS-RESUME
+created_at: "2026-10-17"
+approved_by: null
+approved_at: null
+  # NOT SELF-APPROVED. This lane does not approve its own work. An independent
+  # design-reviewer decides. Set by that reviewer's disposition, never by this file.
+
+design_system_compliance: "NOT APPLICABLE — this artifact introduces no user-facing UI, declares no gate
+  set, changes no component, no token and no pattern. Recorded rather than left blank so a reviewer does
+  not read the omission as an unassessed dimension. ONE operator-facing consequence is in scope and is
+  recorded rather than scored: a work item refused by the design-review gate now reports
+  `blockedArtifactMissing` on the review lane and is raised as a blocking human decision
+  (design-review-gate.md §5.1), which an operator will see on the Reports screen. That is a reuse of an
+  existing fail-closed surface, not a new one, and the decision-review gate's own text names the cause."
+
+ux_accessibility_score: "NOT APPLICABLE — no interface, no visual or interaction surface, no navigation and
+  no content is designed. The underlying walk does have an operator-facing consequence: an intake item
+  that cannot be implemented unattended now parks at agentCompleted and is surfaced as a blocking human
+  decision rather than silently reaching a build queue. That is strictly an improvement in operator
+  legibility over the current silent route, and it is recorded in design-review-gate.md §5.1 rather
+  than scored here, because scoring a consequence of a decision this revision does not make would be a
+  category error."
+
+implementation_feasibility: >
+  HIGH for slice 1 (the design-review gate), MEDIUM for slice 2 (the evaluator), LOW-to-MEDIUM for
+  slice 3 (the design lane, M5-M7), and NOT RATED for slice 4 (the contracts), which cannot be
+  estimated because their subject does not exist.
+  Slice 1 is HIGH because it adds one guard class to one existing file, adds it to two edges that
+  already exist, and reads a store method that already exists and is already tested. No new state, no
+  new edge, no new enum variant, no migration, no schema change. Nothing in it requires a technology
+  this platform does not already use.
+  Slice 2 is MEDIUM because it must first REPLACE existing validation (evaluator-spec.md §5.2) rather
+  than only add to it, and because the qaInProgress drain has to be added where no caller exists at
+  all. Both are ordinary Dart following patterns the repository has already shipped
+  (GateEvaluator's own interface; the engineering-review missing-artifact drain).
+  Slice 3 is LOW-to-MEDIUM because it is a runtime, not a wiring change: a producer, a scheduler and
+  an edge, where the scheduler and edge are individually small and the producer is a real agent lane.
+  Slice 4 is NOT RATED rather than rated LOW: M8-M10 must exist before there is anything to estimate,
+  and a LOW rating would imply the work is merely difficult rather than not yet specifiable.
+
+traceability:
+  requirements_covered:
+    - "deliverable 1 — the QA gate evaluator, specified not deferred → evaluator-spec.md §1-§5; design-revision.md §5"
+    - "deliverable 2 — the design-review gate under HD-1, all four delegated sub-questions → design-review-gate.md §7; design-revision.md §4"
+    - "deliverable 3 — the two contracts → design-revision.md §3, declined on evidence with the evidence cited; §3.1 (no execution exists for feature intake), §3.2 (the design-remediation run's result is abandoned), §3.3 (no consumer, so requiredFields is unjustifiable)"
+    - "deliverable 4 — result type, parser, instruction, AgentRole variants, each named and located → design-revision.md §6 M5-M11"
+    - "traceability → §9; risks → §10; explicit non-goals → §11; implementation sequence in reviewable slices → §8"
+    - "the word DECLARED, not PASSING → §7 (three levels) and evaluator-spec.md §6 (four levels)"
+    - "verify every file:line against the actual tree → §12 records five corrections to inherited inputs"
+  requirements_gaps:
+    - "Two authored contracts — feature intake produces NO agent execution at all and design remediation's only run has its result discarded, so there is no result shape and no consumer. B1 is unresolvable at e3634a0. This is the mandated refusal, taken with evidence."
+    - "Concrete requiredFields for either path — follows from the above. M10 is the precondition."
+    - "A design-review actor other than a human — no scheduler dispatches the design lane (server.dart has exactly three), so an agent design review cannot be specified honestly today. The design deliberately chooses the human and states that it is a consequence, not a preference (design-review-gate.md §4.5)."
+    - "An executable gate on the QA path — follows from FINDING 2 and FINDING 3. evaluator-spec.md §5, slices 2a-2c."
+    - "Whether the human override on waitingForHumanDecision -> implementationReady is the intended reading of HD-1's 'unattended' — argued from the decision's own rationale_given at design-review-gate.md §5.2, and flagged as the one element a human may still wish to own."
+
+owned_paths:
+  - "design/qa-contracts-feature-remediation/**"
+
+read_only_paths:
+  - "apps/**"
+  - "packages/**"
+  - "docs/**"
+  - "docker/**"
+  - ".github/**"
+  - "Makefile"
+  - "tooling/**"
+
+prohibited_paths:
+  # Read freely, write nothing. Everything written by this lane is under owned_paths.
+  # docs/engineering/FOLLOW_UPS.md is the Manager's and was NOT modified, per the resume
+  # spec. No docker, no compose and no psql command was issued at any point.
+
+human_decisions_required: []
+  # HD-1 (2a8f5c31-9d47-4e6b-b2f8-7c15e0d9a4b2) is RESOLVED and its gate SHAPE is delegated
+  # to this lane. No new Level 2 or Level 3 decision is raised by this revision: the one
+  # candidate — whether the human override is the intended reading of "unattended" — is
+  # argued, not assumed, at design-review-gate.md §5.2, and the argument is against adding
+  # the guard to the human edge, on the grounds that doing so manufactures a dead end. If
+  # the operator disagrees, the change is one line in the placement list and the reasoning
+  # is already written down.
+  #
+  # NOT raised, and deliberately: this lane did not decide what a real static-analysis or
+  # security-scan gate should assert (evaluator-spec.md §5.2 recommends de-registering
+  # rather than fixing), did not decide the qaInProgress remedy (design-revision.md §9.3),
+  # and did not decide whether the design lane should be built at all (slice 3).
+
+review_disposition: >
+  NOT SELF-APPROVED. Handed to an independent design-reviewer. approved_by is null and
+  this lane sets no status beyond DRAFT — advancing lifecycle state is not a specialist's
+  to do (AGENTS.md: "Specialists do not independently advance lifecycle state").
+  READY_FOR_INDEPENDENT_DESIGN_REVIEW is set in the structured result because the artifact
+  is complete and reviewable, NOT because its conclusions are correct. The reviewer should
+  judge in particular:
+  (a) FINDING 2 (design-revision.md §2.2) — if the four registered evaluators would pass
+      unconditionally, the whole shape of the evaluator slice changes and this revision is
+      wrong in an important place;
+  (b) FINDING 1 (§1.3) — if the design governance store is NOT usable as the gate's
+      satisfaction fact, deliverable 2 needs rebuilding rather than amending;
+  (c) the placement in design-review-gate.md §4.1, and negative assertions G5 and G6, which
+      protect the two dead ends this design could have shipped;
+  (d) the refusal on deliverable 3 — the reviewer should check §3.1 and §3.2 against the
+      tree and decide whether a contract is authorable after all. If it is, this revision
+      is incomplete on its central mandate and should be returned for correction.
+
+durable_discoveries:
+  - category: PROJECT_FACT
+    authority: AUTO
+    finding: "No QA gate in this repository is evaluated by any production code. `rg gateResults packages apps` returns 3 hits inside guard_conditions.dart itself (the guard that reads it) and 7 in *_test.dart — zero producers in production. allRequiredGatesPassed() can therefore only fail. Confirms and extends F-47."
+  - category: PROJECT_FACT
+    authority: AUTO
+    finding: "qaInProgress is a live dead end on the MAIN implementation lane. It is entered only from reviewApproved (:651-654); its two out-edges are qaInProgress->qaPassed (:690-696, requires the guard that always fails) and qaInProgress->qaFailed (:697-702, requires ActorType.qaExecutor); and no JobDefinition lists qaInProgress in entryStates, so nothing dispatches from it. Every work item that produces a reviewable commit and passes engineering review is stranded there. NOT recorded in FOLLOW_UPS.md."
+  - category: PROJECT_FACT
+    authority: AUTO
+    finding: "The four registered gate evaluators (gate_registry.dart:19-23) would return QAGateStatus.passed unconditionally if invoked: GateEvaluatorImpl._validateEvidence returns evidence.isNotEmpty (gate_evaluator.dart:53-58), evidence gains one entry per evidenceTypes element (:31-39), evidenceTypes is required and non-null (qa_contract.dart:72,80), and all four collectors return hardcoded empty findings (static_analysis issues:[]; test_coverage has no coverage value at all; security_scan vulnerabilities:[]; performance benchmarks:[]). Wiring the evaluator without replacing this converts an honest notExecuted into a false green with an audit trail."
+  - category: PROJECT_FACT
+    authority: AUTO
+    finding: "The design governance persistence layer EXISTS and is usable: packages/design_governance with CAS, lineage and idempotency; PostgresDesignGovernanceStore (693 lines) against tables created by migrations 20260928233022000 and 20261012145629000; and readApprovedDesignRevisionForWorkItem (design_revision_store.dart:16-19; postgres_design_governance_store.dart:46-60). What is missing is a PRODUCER: PostgresDesignGovernanceStore is instantiated nowhere in apps/server/lib/server.dart, and server.dart constructs exactly three Scheduler instances (sched-triage, sched-review, sched-impl) — designRevisionDefinition and designReviewDefinition are declared and exported but never instantiated."
+  - category: PROJECT_FACT
+    authority: AUTO
+    finding: "The design lane and the implementation lane are disconnected in the transition graph: no edge runs from any design state to implementationReady, whose three in-edges are agentCompleted (:340), agentFailed (:265) and waitingForHumanDecision (:599). designApproved's only out-edge is -> agentExecuting (:111-114), and designApproved is in triageDefectDefinition.entryStates (triage_defect.dart:128) — so an approved design routes the item into TRIAGE, not implementation. defaultImplementFeatureDefinition (scheduler.dart:3196-3203), the one definition listing designApproved, is not wired."
+  - category: PROJECT_FACT
+    authority: AUTO
+    finding: "featureIntakeParked (F-48, ddfbfff) made the two intake paths asymmetric. A feature now parks at featureIntakeParked (work_entry.dart:543, :608-641), a state in no JobDefinition's entryStates, so no agent executes for it and there is no result to describe. design-remediation-* still parks at planned (lane_e_design_remediation_work_item.dart:449-492), which IS in triageDefectDefinition.entryStates, so its run still happens and its result is still abandoned (triage_processor.dart:279-285 then :124-132). The blocked brief applied one finding to both paths; that was correct at 5afc230 and is no longer."
+  - category: ARCHITECTURE_DISCOVERY
+    authority: HUMAN — flagged, not decided by this lane
+    finding: "allRequiredGatesPassed reads TWO context keys, not one: gateResults (:267) and qaContract (:274). Supplying gateResults without qaContract leaves requiredGates an empty iterable, and .every() over an empty iterable is true — a VACUOUS PASS. A partially-wired evaluator therefore looks enforced and judges nothing. Two of the six assertions in evaluator-spec.md §4.3 (V3, V4) exist to close this and exist in no form today."
+  - category: DESIGN_DISCOVERY
+    authority: HUMAN — HD-1 resolved; shape delegated and designed here
+    finding: "The HD-1 gate is specified as one origin-conditional guard on the two AUTOMATIC in-edges of implementationReady, satisfied by an approved design_revision row, and deliberately NOT on the human-driven edge. Placing it on all three would let the guard's own decisionActorIsHuman() on :604-624 be permanently overridden by a gate nothing satisfies today, manufacturing a dead end — the failure the gate was meant to prevent. Faithful to HD-1's rationale_given, which asks for no UNATTENDED dispatch."
+  - category: WORKFLOW_IMPROVEMENT
+    authority: INDEPENDENT REVIEW — reported, not persisted
+    finding: "A guard condition reads only `context`, and DurableWorkflowEngine.transition passes context to the policy (durable_workflow_engine.dart:173) and persists NONE of it (:211-233). Every guard in work_item_transitions.dart is therefore exactly as strong as the component that fills its context. qaContractExists is the same shape. This is the platform's enforcement model and it is usually described as though the guard were self-verifying; design-review-gate.md §4.4 states it plainly instead. Worth an executable declaration of which component writes each guard context key."
+  - category: WORKFLOW_IMPROVEMENT
+    authority: INDEPENDENT REVIEW — reported, not persisted
+    finding: "A registered-but-unreachable evaluator is worse than an absent one when its predicate is a constant. Four gate types sat in GateRegistry with content-blind validation and unreachable call sites; nothing flagged that the registry's contents were not a list of working gates. The executable-capability-declaration mechanism proposed in design/capability-parity/ would have caught it, and remains unbuilt. Generalises the F-45/F-15 lesson recorded in the blocked brief."
+
+head_sha_at_authoring: e3634a0cbbdf656267b22908284dd1ae8b655085
+base_sha: e3634a0cbbdf656267b22908284dd1ae8b655085
+head_sha_delta: >
+  This revision is authored in ONE new commit on top of base e3634a0, touching only
+  design/qa-contracts-feature-remediation/**. The exact post-commit HEAD is reported in the
+  lane's structured result as HEAD_SHA and is verifiable by `git rev-parse HEAD`. Nothing was
+  amended, rebased or reset. `docs/engineering/FOLLOW_UPS.md` and every path outside
+  owned_paths is byte-identical to e3634a0.
+
+verification_commands:
+  - "dart test lib/src/triage/work_entry_test.dart -r compact     # apps/server — 37 passed. Includes 'the parked feature is invisible to the category-blind scheduler', which the blocked brief found RED at 5afc230 and which is GREEN at e3634a0 (F-48/ddfbfff). §1.1"
+  - "dart test -r compact                                          # packages/qa_orchestration, whole package — 28 passed (10 qa_orchestration_test + 18 product_qa_contract_test). §3.4"
+  - "rg 'gateResults' packages apps                                # 3 hits in guard_conditions.dart, 7 in *_test.dart, ZERO producers in production code. §2"
+  - "rg 'Scheduler\\(' apps/server/lib/server.dart                  # 3 hits: :475, :523, :706. No design scheduler. design-review-gate.md §3.1"
+  - "rg 'PostgresDesignGovernanceStore' apps/server/lib            # only its own declaration — instantiated nowhere. §1.3"
+
+no_docker_issued: true
+  # No docker, no compose, no psql at any point in this lane. The QA stack was not touched.
