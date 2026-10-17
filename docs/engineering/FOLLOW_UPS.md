@@ -1728,3 +1728,68 @@ approval and **no review round has discharged it.**
 
 R14 — whether a re-triage ceiling is product policy — also remains an **open operator decision**,
 recorded as a risk rather than escalated. It does not block slice 1.
+
+---
+
+## 24. Slice 1 implemented (`84460a2`) — the human surface now exists
+
+`design/qa-contracts-feature-remediation/design-review-gate.md §6` sub-slices **1a** and **1c**, on a
+Gate-D4-approved design (`8c26d40f`). Eight files, +1139/−10, all inside the six granted paths.
+
+### The first attempt blocked, and was right to
+`_isReWorkDecision`'s switch (`durable_workflow_engine.dart:991-1003`) is **exhaustive with no wildcard**,
+so adding `reTriage` produced exactly **1 analyzer error** — in a file the approved table did not name.
+The scheduler's drift guard also went **red with 1a** (419 pass, 1 fail), green at base. The lane
+**did not widen its own scope and did not commit**; the operator ruled on both
+(`d41a6e85` classification, `0f72b3a1` scope).
+
+### F-72 A spec verified by citation is not a spec verified by compilation
+**Status** OPEN · **WORKFLOW_IMPROVEMENT** · the most transferable finding here
+
+The file table survived **seven rounds** of independent review, verified citation-by-citation, and was
+still wrong. **Every check was a citation check. None was a compile check.** The artifact set contains
+**zero occurrences of "exhaustiv"** — the coupling was never in anyone's mind.
+
+The whole defect class cost one command to find: **add the enum value, run `dart analyze`.**
+
+Standing recommendation: **any lane that adds an enum value should run `dart analyze` across the
+workspace as a required gate**, because a `switch` in one package is a compile-time coupling to an
+enum in another, and nothing about the change's own package reveals it.
+
+### F-73 A behavioural assertion cannot see a redundant arm — the guard had to read source
+**Status** OPEN · **executable knowledge**
+
+Acceptance criterion 4 requires that `cancel` acquire **no** `targetFor` arm, since `(_, cancel)` at
+`human_decision_routing.dart:121` already serves it. **Mutation M6 added a redundant
+`(designReviewRequest, cancel) => cancelled` arm and came back GREEN** — 22 pass, 0 fail. A redundant
+arm is byte-for-byte behaviourally identical to the catch-all it duplicates, so **no behavioural
+assertion can see it.**
+
+Fixed with a **structural** guard that counts the arms in the source — the one assertion in the file
+read over source rather than behaviour, and it says so in its own comment. Precedent:
+`transition_copy_test.dart:24-40` already derives the edge table from source for the same reason.
+
+**The generalisable part: "this cannot happen" and "this is not observable" are different claims**, and
+an acceptance criterion phrased as the first needs the second kind of evidence.
+
+### Non-vacuity — 15 mutations, all reverted, tree restored byte-identically (sha256 verified)
+Arm deletion, each of the three whitelist admissions, the forbidden escalation arm, the redundant
+`cancel` arm, `knownDecisionChoices` membership, the generic label arm, and dropping `reTriage` from
+`_isReWorkDecision` (**1 analyzer error** — the compile coupling, reproduced). Counts reported per
+mutation.
+
+### Pre-existing defects disclosed, not absorbed
+- `dart format` **red at base** (`work_item_transitions.dart:51`); green now only because that file is
+  in scope and was formatted — **stated plainly rather than letting a green gate imply the work**.
+- `platform_contracts/test/serialization_test.dart:420` — 26 vs 27 `WorkItemState`, red at base and at
+  HEAD, identical.
+- `apps/control_plane/test/shared/transition_copy_test.dart` — red at base, **proven** in a detached
+  worktree, and **CWD-sensitive by design**: run from the repo root it reports a *different* failure
+  (+14 −2 vs +15 −1). Worth knowing before someone runs it wrongly and blames the change.
+- `onboarding_test.dart` and the 10 integration files need Postgres; docker prohibited, not run.
+
+### R14 remains open
+`(designReviewRequest, reTriage)` is pinned as **deliberately unbounded** from both sides — a bounded
+pair is *refused* at escalationIndex 99/max 3 while this pair *passes* the same fixture. Per
+`d41a6e85` no escalation arm was added. **Whether a ceiling should apply is product policy and is still
+unanswered.**
