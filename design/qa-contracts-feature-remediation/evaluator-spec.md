@@ -25,6 +25,26 @@ here reads either. **Stated explicitly because "this document was in scope and I
 is exactly the claim a later reader cannot verify, and because the round-4 dispatch's own orphan sweep
 had a demonstrated blind spot in a different artifact — so the non-change is recorded here rather
 than left inferable from silence.**
+**Correction pass 5:** see `design-revision-metadata.yaml` `correction_pass_5_base_sha` (lane
+`design-QA-CONTRACTS-CORRECTION-5`). **PROVENANCE ONLY — NO FINDING, NO GATE, NO GATE-RESULT
+VOCABULARY AND NO ORDERING CONSTRAINT IN THIS DOCUMENT CHANGED, AND THE NON-CHANGE WAS ESTABLISHED BY
+READING, NOT INFERRED FROM SILENCE.** Pass 5's substantive change is the operator's
+`.decisions/5a90c1d3-8e47-4b26-9f0c-3d7a5b2e6c19.yaml`, which restores the design-review park's fourth
+answer and so adds a `HumanDecisionChoice`, an arm in `targetFor`, a third
+`blockingHumanDecisionResolved` whitelist admission, and a presentation registration in
+`apps/control_plane`. **This document reads none of them**: it is about `qaInProgress -> qaPassed`, the
+`gateRegistry` evaluators, and the `gateResults` / `qaContract` context contract, and it contains no
+claim about the park's menu, its decision type, its options list, or its routing arms — **verified by
+reading all 526 lines, because this document established that convention on pass 4 and a non-change
+that is merely asserted is the claim a later reader cannot check.**
+**One finding pass 5 made in an adjacent file and did NOT propagate here, recorded so its absence is
+deliberate:** pass 5 found `apps/control_plane/lib/shared/decision_choice.dart:12-19`'s
+`knownDecisionChoices` to be a hardcoded six-value set against a ten-value enum, with the file's own
+doc comment enumerating the six as though they were the enum's. **That file is a fourth registration
+site for a human decision's presentation, and this evaluator spec does not read it either** — but
+this document's subject (`gateRegistry`) is not a human decision, so the finding does not touch it.
+**The finding is recorded in `design-revision-metadata.yaml` `durable_discoveries` rather than here,
+because `durable_discoveries` is where a finding is meant to outlive the pass that made it.**
 **Status of this document:** a specification. This lane implements no production code.
 
 > The mandate: *"Who populates `context['gateResults']`, from what, at which point in the

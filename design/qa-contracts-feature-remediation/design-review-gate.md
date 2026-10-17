@@ -12,9 +12,16 @@
 - `.decisions/3e5a7c26-4b19-4f83-a0d7-6c29b8f1e540.yaml` — **the SHAPE of the park's decision,
   RESOLVED by the operator 2026-10-17: `NEW_HUMAN_DECISION_TYPE`.** The park's human surface gets
   **its own `HumanDecisionType`**, and may **not** reuse `escalation` or `designApproval`. This is
-  the fourth operator decision in force here, and the most recent; §5.2.2 and §6 sub-slice 1a are
+  the fourth operator decision in force here; §5.2.2 and §6 sub-slice 1a are
   rewritten against it, and every sentence this document carried about re-using `designApproval` is
   superseded in place below.
+- `.decisions/5a90c1d3-8e47-4b26-9f0c-3d7a5b2e6c19.yaml` — **the park's MENU, RESOLVED by the operator
+  2026-10-17T15:10:00Z: `FOURTH_CHOICE_VALUE`.** This is the **fifth** operator decision in force and
+  the most recent; it **reverses correction pass 4's merge**. The park's menu is **four** coherent
+  answers again, `re-triage` distinct from "put it back in the lane". **Its `scope_warning` is the
+  load-bearing clause and §6 1a answers it from the data model rather than assuming it** — the answer
+  is that a per-type option set **is** expressible, because the option list is a property of **the
+  decision**, not of the enum. See §0.4 and §6 1a.
 **Authoring HEAD:** `e3634a0cbbdf656267b22908284dd1ae8b655085` (revision 1)
 **Revision 2 at:** `c8fd361906f0d831bbcfd431b75d1eb21ae9db5d`
 **Revision 2 corrected at:** `90b6f5f` (revision 2 correction lane
@@ -29,6 +36,12 @@ consequences of that decision are corrected here: G17 is rewritten against the r
 fixed (H-2). The pass also swept **all four** artifacts for superseded claims left live — the L3
 pattern, now caught five times in this artifact set — because the previous round's own orphan-`1.5`
 sweep was clean in the two `.md` files and **missed the metadata register**.
+**Correction pass 5 at:** see `design-revision-metadata.yaml` `correction_pass_5_base_sha` (lane
+`design-QA-CONTRACTS-CORRECTION-5`) — **the operator restored the park's fourth answer**
+(`.decisions/5a90c1d3…`). The menu is four, `re-triage` is a **new `HumanDecisionChoice`**, and it
+implicates a **third edge whitelist** and a **fourth file** that pass 4 had no reason to find.
+**It also found two further instances of the L3 pattern, the sixth in the row written to correct a
+miscount** — §0.4.
 **Status of this document:** a specification. This lane implements no production code.
 
 ---
@@ -199,6 +212,46 @@ superseded claim in a `.md` artifact that the check had also passed over: `desig
 makes false and which carried **no supersession marker**. **That is five instances of the same
 pattern in one artifact set, and the check that was supposed to catch them is not the same as a
 human sweep.**
+
+---
+
+## 0.4 What correction pass 5 changed, in one place — **the operator restored the fourth answer**
+
+> **Decision `5a90c1d3-8e47-4b26-9f0c-3d7a5b2e6c19.yaml`** · `type: ARCHITECTURE` · `status:
+> RESOLVED` · `resolution.selected: FOURTH_CHOICE_VALUE` · `decided_by: operator` · `decided_at:
+> 2026-10-17T15:10:00Z`
+>
+> **`rationale_given`, verbatim (excerpt):** *"A decision carries ONE type, so the park's new type
+> must carry its whole menu. Nine existing `HumanDecisionChoice` values cannot express four coherent
+> answers, and the design lane merged 're-triage' into 'put it back in the lane', leaving three. That
+> silently removed a genuine operator choice … HD-1 delegates the park's handling to the design lane,
+> but a product-facing menu reduction is not that delegation."*
+>
+> **`invariant`, verbatim:** *"The operator's menu for a parked design-review item must remain four
+> coherent answers. **A design that cannot express them must escalate, as this one did**, rather than
+> merge two into one and report the reduction as resolved."*
+
+**Correction pass 4's merge is reversed, and the reversal is the operator's, not this lane's.**
+`design-revision.md` §13.14's *"Why it must not be escalated as-is either: the alternative is worse …
+the correct next step is a second human decision on `HumanDecisionChoice` — named here rather than
+taken"* **is the sentence that happened.** The second human decision exists. It is `5a90c1d3…`, and it
+decided the thing pass 4 said only a decision could decide.
+
+| | Correction pass 5 changed | § |
+|---|---|---|
+| **P5-1** | **The merge is undone in place.** The park's menu is **four** again. `re-triage` is restored as a **distinct `HumanDecisionChoice`**, with its wire `re_triage`, its `targetFor` arm, and its own edge-whitelist admission. Pass 4's three-answer text is preserved verbatim at §6 1a and superseded, not deleted. | §6 1a, §6 2b |
+| **P5-2** | **THE SCOPE WARNING IS ANSWERED FROM THE DATA MODEL, and the answer is that it IS expressible — so this is not an escalation.** `5a90c1d3…` says *"If the enum cannot carry a per-type option set, that is itself a finding to escalate rather than work around."* **It can**, and more strongly than a per-type set: the offered set is a property of **the decision instance** (`HumanDecision.options`, `DecisionContext.availableOptions`), and the operator UI builds its menu **only** from it. **The park's menu is therefore four and no other decision's menu is affected — by construction, not by filtering.** The derivation is §6 1a's scope section; it is the one thing in this pass that had to be *established* rather than applied. | §6 1a |
+| **P5-3** | **A FOURTH registration site, which the decision did not enumerate and pass 4 could not have found.** `re_triage` routes to `designNotRequired`, and `(waitingForHumanDecision, designNotRequired)` (`work_item_transitions.dart:528`) is a **third** `blockingHumanDecisionResolved` whitelist — and the only one of the three that carries an **escalation-index bound**. The arm count is now **four**; the changed-file count is now **four**. | §6 1a |
+| **P5-4** | **The short-circuit table, stated from the code**: which of the park's four arms are protected by `escalationTargetFor`'s short-circuit (`:196-199`) and which are not. **`re_triage` lands on the protected side**, so it does **not** create a fourth unprotected arm — the check the dispatch asked for by name. | §6 1a |
+| **P5-5** | **G16 re-pinned from three to four**, and the **four-answer invariant is now ASSERTED rather than prose** — a new assertion, **G18**, because `5a90c1d3…`'s `invariant` was, until now, a sentence with nothing that failed when it was absent. | §6, G16, G18 |
+| **P5-6** | **A sixth instance of the L3 pattern, in the row written to correct a miscount** — §12.2's own `PASS4-2` corrected two numbers in `design-revision.md` §16(11) and left two others stale, and the same rot is in §9.1, in §12's own summary sentence, and in the metadata register. **A correction register that counts itself in prose rots on every pass that adds a row.** | `design-revision.md` §12.3 |
+| **P5-7** | **A seventh instance — and it is in production code, not in this artifact set**: `apps/control_plane/lib/shared/decision_choice.dart:12-19`'s `knownDecisionChoices` is a hardcoded **six**-value set while the enum has **nine**, and the file's own doc comment enumerates the six as though they were the enum. That file is where a choice's *label* is resolved, so it is a **fourth registration site**. Recorded, not corrected — `apps/**` is `PROHIBITED_PATHS`. | §6 1a |
+
+**Not rebuilt**, because the review confirmed it and rebuilding would destroy verified work: pass 4's
+G17(a)/(b)/(c) rewrite against the real data model, its three-registration-site derivation, G17b's
+`rework` extension, the H-2 fold of 1b into 2b, §0.2's merits argument, and everything pass 4
+verified exactly. **G17(a) is extended, not rewritten** — it is about the `designApproved` arm, and
+that arm is unchanged by this pass.
 
 ---
 
@@ -1022,11 +1075,22 @@ exits, via `targetFor`, are therefore:
 
 > **PASS 4 — this table is the GROUND for a decision §6 1a makes, and it is kept for that reason, but
 > it is no longer the park's answer set.** `.decisions/3e5a7c26…` rules `escalation` out, so the rows
-> above describe a type the park does not raise. **They are retained because §6 1a's arm-set decision
-> rests on the first row's characterisation**: the cycle is what makes dropping `designNotRequired`
-> defensible, and dropping it is a judgement a reviewer may overturn. The park's actual three answers
-> are at **§6 1a**; the property this table exists to establish — **no park answer reaches
-> `implementationReady`** — survives the change and is re-verified there.
+> above describe a type the park does not raise.
+>
+> **PASS 5 — AND PASS 4'S REASON FOR KEEPING IT IS NOW FALSE, WHICH IS THE POINT OF KEEPING IT.** Pass
+> 4 kept this table *"because §6 1a's arm-set decision rests on the first row's characterisation: the
+> cycle is what makes dropping `designNotRequired` defensible."* **Pass 4 dropped `designNotRequired`
+> from the park's menu. Pass 5 puts it back** — `.decisions/5a90c1d3…` restores `re-triage`, and
+> §6 1a routes it to `designNotRequired` — **so the first row is no longer the ground for dropping
+> anything. It is now the ground for KEEPING the row, and its characterisation is load-bearing a
+> second time and in the opposite direction:** the operator may deliberately start that cycle, under a
+> name that says so, and §6 1a's arm-4 note is where the cost is stated. **The park's actual four
+> answers are at §6 1a.**
+>
+> **The property this table exists to establish — no park answer reaches `implementationReady` —
+> survives and is RE-VERIFIED for four arms in pass 5**, because the fourth adds a fifth distinct
+> target to check. `approve → designApproved`, `rework → planning`, `reTriage → designNotRequired`,
+> `cancel → cancelled`: **none is `implementationReady`.** G16 asserts it per arm.
 
 **So the honest statement of Reading B's consequence is this:** until the design lane exists,
 feature-intake and design-remediation items **cannot reach an implementer**. They park, visibly, with
@@ -1110,6 +1174,21 @@ and the assertion fails on absence: G17** (§6, sub-slice 1c). Its shape:
 | **G17(b)** — **NO PARK WITHOUT THE ARM** | `designReviewRequired` appears as a target in `work_item_transitions.dart` **only if** G17(a) holds — i.e. P2 and P3 may not land on an absent arm | the parsed transition table | `designReviewRequired` acquires an in-edge while G17(a) is false |
 | **G17(c)** — **THE MENU OFFERS IT** | The park's `options` list contains an option whose `optionId` the raising call site maps to a `HumanDecisionChoice` on `T`. **This is the part the previous G17 tried to express and could not, because it looked for the type on the option.** | the raising call site's option list, mapped to choices | the park raises `T` with no option mapping to an `approve` — the choice G17(a)'s arm uses |
 
+> **G17(a) IS ABOUT `designApproved` AND IS NOT CHANGED BY PASS 5.** `.decisions/5a90c1d3…` adds an arm
+> for a **different** target (`designNotRequired`), so the invariant `b81f40c7…` states — *"no item may
+> be parked before the decision raised there offers a 'do the design review' answer"* — is untouched, and
+> so is the obligation that enforces it. **The fourth answer does not weaken G17; it satisfies
+> `5a90c1d3…`'s own invariant, which is a different sentence about a different property.**
+>
+> **But the GENERALISATION G17(a) rests on does widen, and the correction is recorded here because
+> pass 4 generalised it from a two-site rule and this pass makes it a three-site rule.** The durable
+> discovery pass 4 recorded is: *for every existing `(waitingForHumanDecision -> X)` edge, adding a
+> decision type that routes to `X` is a THREE-SITE change, not a two-site one — the enum, `targetFor`,
+> AND the edge's whitelist.* **With four arms the park touches three edges, so for the park it is a
+> FOUR-SITE change plus the new choice's own enum value.** That is not a weakening of G17(a); it is the
+> same rule counted over a larger arm set. **G18, not G17(a), is the assertion that carries
+> `5a90c1d3…`'s invariant.**
+
 **Why the invariant now needs three and could be closed by one.** The decision's `invariant` has two
 clauses: *"NO item may be parked at `designReviewRequired` **before the decision raised there offers**
 a 'do the design review' answer"*. The first clause is **G17(b)** — the park may not exist without
@@ -1136,6 +1215,24 @@ here (H-1):**
 `.decisions/b81f40c7…`'s ordering is checkable as: *2d may not land while G17(a) is red.* That is
 the sentence an implementer can be held to, and it is the one §6 states.
 
+**PASS 5 ANSWERS THE DISPATCH'S QUESTION ABOUT THAT SENTENCE DIRECTLY: yes, it is enforced by
+something, and the thing enforcing it is G17(b), not the prose.** The concern was that *"2d may not
+land while G17(a) is red"* is an ordering stated in prose, which is the L3 pattern's cousin. **It is
+not prose, and the reason is structural.** G17(b)'s subject is `designReviewRequired` appearing as a
+transition target, and its antecedent is G17(a). **A commit that lands 2d — which is what *adds* P2
+and P3, and therefore what makes `designReviewRequired` appear as a target — is exactly a commit that
+turns G17(b) red if and only if G17(a) is red.** So the sentence is not a rule the implementer is
+asked to honour; **it is a restatement of what G17(b) reports about the tree after the commit.** The
+ordering is therefore checkable by anyone, at any time, by running the assertion — **and it is checkable
+*after* the fact, which is the property prose cannot have.** What G17(b) cannot do is *prevent* the
+commit, and this document does not claim it does: `2c`'s drift guard is the CI-shaped half. **Stated
+plainly, because the distinction is the difference between an enforced ordering and an enforced
+property, and only one of them is this design's.**
+**G18 enters one window later and is stated the same way:** its subject — the park's raising call site
+— is created by 2b, so G18 is green-vacuous before 2b and live after it, exactly as G17(c) is. **Its
+verdict does not change the ordering, and it is not meant to: `.decisions/5a90c1d3…` imposes no
+sequencing.**
+
 **What the assertion forbids is the window in which a park exists with no way to produce what the
 item waits for** — the gate and park landing while the arm does not. That window is precisely what
 the previous pass's ordering opened and the reversal closes. A park with no way to produce what the
@@ -1146,12 +1243,12 @@ now checked rather than assumed.
 
 | | |
 |---|---|
-| **The gap** | No `HumanDecisionType` offers "produce an approved design revision". The park's `escalation` answers route to `designNotRequired` / `planning` / `cancelled` — none is the design review. `FOLLOW_UPS` **F-55** records this in the Manager's own words: *"The operator is offered three answers — approve → `designNotRequired`, rework → `planning`, cancel → `cancelled` (`human_decision_routing.dart:121, 132-135`). **None of them is 'do the design review.'**"* **SUPERSEDED IN ITS REMEDY, NOT IN ITS FACT (pass 4).** The gap is exactly as recorded and is independently re-verified: `targetFor(escalation, approve) = designNotRequired` at `:132-133`, `(escalation, rework) = planning` at `:134-135`, and `(_, cancel) = cancelled` at `:121`. **No `escalation` arm reaches `designApproved` for any of the nine `HumanDecisionChoice` values**, which is the fact `.decisions/3e5a7c26…` rests on. What is superseded is the implication that the remedy is *widen the same type's option list* — there is nothing on `escalation` to widen **to**, because the target it would have to reach is not on it. |
-| **Why it needs care, and what is actually required** | It needs a `targetFor` arm whose target is `designApproved`, and `human_decision_routing.dart:151-162` states that `targetFor` and `escalationTargetFor` must move in lockstep or escalation accounting *"silently stops"* advancing (`:159-162`). **CORRECTED IN PASS 3, and this is the L3 pattern in the other direction:** the previous pass stated that rule flatly for this work, and the cited range **does not state it for an `approve` answer**. `escalationTargetFor` returns `null` for any choice that is not `reject` or `rework` (`:196-199`), so an `approve` arm has **no lockstep obligation at all** — and `_isEscalationTransition` short-circuits on the same condition (`durable_workflow_engine.dart:1012-1015`). `:213`'s `(designApproval, _)` arm exists for `reject`/`rework` and is **unreachable for `approve`**. **So the lockstep rule bites only if the new answer is a `reject` or a `rework`, and "do the design review" is neither.** Pinned by **G17b** so the answer stays a decision rather than a side effect. The architecture change that DOES remain is the `HumanDecisionType` itself, which `AGENTS.md` reserves to the human. **REVIEWED AND KEPT VERBATIM — the pass-3 correction is sound and is not rebuilt. Pass 4 adds one thing to it, because the new type has a `rework` arm and `rework` is the ONE choice the `:196-199` short-circuit does not protect:** for `(designReviewRequest, rework)` the inertness comes from `_ => null` at **`:214`**, not from the short-circuit. That is a weaker guarantee and it is the arm an implementer is most likely to "complete", so G17b is extended to pin it explicitly (§6, 1a and the G17b row). |
+| **The gap** | No `HumanDecisionType` offers "produce an approved design revision". The park's `escalation` answers route to `designNotRequired` / `planning` / `cancelled` — none is the design review. `FOLLOW_UPS` **F-55** records this in the Manager's own words: *"The operator is offered three answers — approve → `designNotRequired`, rework → `planning`, cancel → `cancelled` (`human_decision_routing.dart:121, 132-135`). **None of them is 'do the design review.'**"* **SUPERSEDED IN ITS REMEDY, NOT IN ITS FACT (pass 4).** The gap is exactly as recorded and is independently re-verified: `targetFor(escalation, approve) = designNotRequired` at `:132-133`, `(escalation, rework) = planning` at `:134-135`, and `(_, cancel) = cancelled` at `:121`. **No `escalation` arm reaches `designApproved` for any of the `HumanDecisionChoice` values** — nine today, and **still true after `5a90c1d3…` makes it ten**, because `reTriage` routes to `designNotRequired` and **no value added to a shared enum can change an existing type's arms.** That is the fact `.decisions/3e5a7c26…` rests on, and it is worth noting *why* it survives a tenth value: **the new choice is not a new target, and adding an enum member is not editing an existing arm.** What is superseded is the implication that the remedy is *widen the same type's option list* — there is nothing on `escalation` to widen **to**, because the target it would have to reach is not on it. |
+| **Why it needs care, and what is actually required** | It needs a `targetFor` arm whose target is `designApproved`, and `human_decision_routing.dart:151-162` states that `targetFor` and `escalationTargetFor` must move in lockstep or escalation accounting *"silently stops"* advancing (`:159-162`). **CORRECTED IN PASS 3, and this is the L3 pattern in the other direction:** the previous pass stated that rule flatly for this work, and the cited range **does not state it for an `approve` answer**. `escalationTargetFor` returns `null` for any choice that is not `reject` or `rework` (`:196-199`), so an `approve` arm has **no lockstep obligation at all** — and `_isEscalationTransition` short-circuits on the same condition (`durable_workflow_engine.dart:1012-1014`). `:213`'s `(designApproval, _)` arm exists for `reject`/`rework` and is **unreachable for `approve`**. **So the lockstep rule bites only if the new answer is a `reject` or a `rework`, and "do the design review" is neither.** Pinned by **G17b** so the answer stays a decision rather than a side effect. The architecture change that DOES remain is the `HumanDecisionType` itself, which `AGENTS.md` reserves to the human. **REVIEWED AND KEPT VERBATIM — the pass-3 correction is sound and is not rebuilt. Pass 4 adds one thing to it, because the new type has a `rework` arm and `rework` is the ONE choice the `:196-199` short-circuit does not protect:** for `(designReviewRequest, rework)` the inertness comes from `_ => null` at **`:214`**, not from the short-circuit. That is a weaker guarantee and it is the arm an implementer is most likely to "complete", so G17b is extended to pin it explicitly (§6, 1a and the G17b row). **PASS 5 ADDS THE THIRD CLAUSE, and it is a different kind of trap: `reTriage` IS protected by the short-circuit, so the hazard is not the arm but the EDGE.** Its target `designNotRequired` sits on the one park edge carrying `escalationIndexWithinLimitForDecisionTypes` (`work_item_transitions.dart:559-563`), so an implementer may conclude the answer is already counted. **It is not — `designReviewRequest` is not in that set, and must not be** (§6 1a's arm-4 note; R14). G17b(iii) pins it. |
 | **What IS specified here** — **STALE TEXT, PRESERVED VERBATIM, SUPERSEDED IN PASS 4 (B-2)** | **~~Slice 1 itself**, to the point an implementer needs (§6): the new `HumanDecisionType`, the `targetFor` arm, **the matching `escalationTargetFor` arm**, the park's option list widened to include the new answer, and **G17**. §6 sub-slices 1a–1c. This is the material change from the previous pass, which specified only a hand-off.~~ **SUPERSEDED, AND BOTH HALVES ARE WRONG. This row is the L3 pattern in the very clause written to correct it — the fourth instance in this artifact set, and G17b exists solely to catch the half that is wrong.** (i) *"the new `HumanDecisionType`"* was written as though it were an option; under the previous pass's reading **no** new enum value was needed, so the two rows contradicted each other and G17b had to police the gap. **Both are now decided in one direction: a new `HumanDecisionType` IS required** (`.decisions/3e5a7c26…`). (ii) *"**the matching `escalationTargetFor` arm**"* is **FALSE and must not be written** — see the corrected row immediately below and §6 sub-slice 1a, which derives the correct per-arm disposition from `human_decision_routing.dart:196-199`, `:214` and `:73-79`. An implementer following this row would have started escalation accounting silently on a design approval, which is the exact failure `:159-162` warns about and exactly what G17b asserts against. **This row is retained, not deleted, because a corrections register that removes what it withdraws cannot be audited.** |
-| **What IS specified here — CORRECTED (pass 4)** | **Slice 1, to the point an implementer needs** (§6): the new `HumanDecisionType` **with its wire value**, **every arm with its target state**, **every registration site for every arm**, the **`escalationTargetFor` disposition stated per arm and justified**, and **G17(a)/(b)/(c) and G17b**. §6 sub-slices 1a and 1c — **sub-slice 1b folded into 2b** (H-2). The park's option list is **not** specified here: it is a property of the raising call site, and the call site is created by 2b. **The specification now spans three files rather than two**, because two of the three registrations are in `work_item_transitions.dart` and are forced by a property the fork's own rationale does not mention — §6 sub-slice 1a names both and proves them from `guard_conditions.dart:425-428`. |
+| **What IS specified here — CORRECTED (pass 4)** | **Slice 1, to the point an implementer needs** (§6): the new `HumanDecisionType` **with its wire value**, **every arm with its target state**, **every registration site for every arm**, the **`escalationTargetFor` disposition stated per arm and justified**, and **G17(a)/(b)/(c) and G17b**. §6 sub-slices 1a and 1c — **sub-slice 1b folded into 2b** (H-2). The park's option list is **not** specified here: it is a property of the raising call site, and the call site is created by 2b. **PASS 4: the specification spanned three files rather than two**, because two of the three registrations are in `work_item_transitions.dart` and are forced by a property the fork's own rationale does not mention — §6 sub-slice 1a names both and proves them from `guard_conditions.dart:420-428`. **PASS 5: it is FOUR files, for two separate reasons —** a **third** edge whitelist (`:528-546`) forced by the restored `re-triage` arm, **and a fourth file entirely** (`apps/control_plane/lib/shared/decision_choice.dart`) because the new value is a **choice**, and a choice has a presentation registration that a type does not. |
 | **The shape of the answer, named** — **STALE TEXT, PRESERVED VERBATIM, SUPERSEDED IN PASS 4 (B-1a)** | **~~The existing type is already there: `targetFor(designApproval, approve) = designApproved` (`human_decision_routing.dart:93-94`, inside `targetFor` at `:88-138`). **What is missing is a `HumanDecision` of that type reachable FROM the park** — the park's `options` must offer it, and its blocking decision must be answerable while the item sits at `waitingForHumanDecision`. **This design's reading is that no NEW enum value is needed**, and a reviewer who thinks one is — or who thinks re-using `designApproval` conflates approving a design with producing one — should say so; it is `points_for_independent_review: SLICE-1-MECHANISM`. **Whether answering it can actually produce an approved revision is slice 4's job (M5–M7); until then the answer exists and the producer does not, which is the same `DECLARED`-not-`PASSING` state §5.2.1 already names.** Stated so no one reads slice 1 as making the park resolvable.~~ **SUPERSEDED IN ITS CONCLUSION, AND THE OPERATOR HAS DECIDED THE QUESTION THIS ROW ASKED.** *"This design's reading is that no NEW enum value is needed"* is **false**, and `.decisions/3e5a7c26-4b19-4f83-a0d7-6c29b8f1e540.yaml` decides it: **a new `HumanDecisionType` IS required**, and `designApproval` **may not** be re-used. The decision's `rejected_alternative` answers this row's own reviewer-invite — *"who thinks re-using `designApproval` conflates approving a design with producing one"* — and sides with that reviewer: re-typing the park would *"silently re-point the park's other answers — `reject` becomes `designRejected` and `rework` becomes `designInReview`, a state in no `JobDefinition`'s `entryStates` and therefore a dead end in its own right."* **The reviewer who raised that doubt was right and the decision says so; this row's reading was not.** **Two facts that survive the supersession, because they are still true and still load-bearing:** (a) `targetFor(designApproval, approve) = designApproved` at `:93-94` is **correct** — which is precisely why re-using the type looked attractive and precisely why it is wrong; (b) *"whether answering it can actually produce an approved revision is slice 4's job (M5–M7); until then the answer exists and the producer does not"* is **unchanged and still exactly right**. That is R4. |
-| **What is specified about the options list** | It is **explicit** (`requestHumanDecision`'s `options` argument; `stalled_work_item_gate.dart:199-211` is the shipped shape — two `HumanDecisionOption`s with `optionId`, `label`, `description`, then `recommendation` at `:212` and `blocking` at `:213`). **Pass 4 moves this out of sub-slice 1 and into 2b** (H-2: 1b edits the park helper, and 2b is what creates it), and **G16 is widened with it** — G16 as written asserts *"exactly escalation's three"*, which is false the moment the new type lands. **And pass 4 adds the fact that makes the widened assertion checkable at all**, which the previous pass did not have: **`optionId` is matched against the choice, not against the type.** `_resolvedOptionId` (`durable_workflow_engine.dart:1106-1114`) does `options?.where((o) => o.optionId == choice.wire).firstOrNull` and **falls back to `choice.wire` when no option matches** (`:1113`). Every production raiser follows the convention — `optionId: 'rework'`/`'cancel'` (`stalled_work_item_gate.dart:201, 207`), `'approve'`/`'reject'`/`'rework'` (`engineering_review_gate.dart:1647-1649`), `'fixed'`/`'stillBroken'`/`'partiallyFixed'` (`control_plane_service.dart:1831, 1837, 1842`) — and **all of them are `HumanDecisionChoice` wires** (`enums/human_decision.dart:33-41`). **The fallback is a silent hole and nothing in the tree catches it**: an operator is shown a menu, picks an answer, and `resolvedOptionId` records a string they were never shown. **So G16 is now pinned to the exact `(optionId, label, choice)` triples §6 sub-slice 2b specifies, and G17(c) asserts the `optionId == choice.wire` correspondence for the design-review answer specifically.** The `HumanDecisionType` is **not** on the option and must not be asserted there — that was B-1a's defect. |
+| **What is specified about the options list** | It is **explicit** (`requestHumanDecision`'s `options` argument; `stalled_work_item_gate.dart:199-211` is the shipped shape — two `HumanDecisionOption`s with `optionId`, `label`, `description`, then `recommendation` at `:212` and `blocking` at `:213`). **Pass 4 moves this out of sub-slice 1 and into 2b** (H-2: 1b edits the park helper, and 2b is what creates it), and **G16 is widened with it** — G16 as written asserts *"exactly escalation's three"*, which is false the moment the new type lands. **And pass 4 adds the fact that makes the widened assertion checkable at all**, which the previous pass did not have: **`optionId` is matched against the choice, not against the type.** `_resolvedOptionId` (`durable_workflow_engine.dart:1106-1114`) does `options?.where((o) => o.optionId == choice.wire).firstOrNull` and **falls back to `choice.wire` when no option matches** (`:1113`). Every production raiser follows the convention — `optionId: 'rework'`/`'cancel'` (`stalled_work_item_gate.dart:201, 207`), `'approve'`/`'reject'`/`'rework'` (`engineering_review_gate.dart:1647-1649`), `'fixed'`/`'stillBroken'`/`'partiallyFixed'` (`control_plane_service.dart:1831, 1837, 1842`) — and **all of them are `HumanDecisionChoice` wires** (`enums/human_decision.dart:33-41`). **The fallback is a silent hole and nothing in the tree catches it**: an operator is shown a menu, picks an answer, and `resolvedOptionId` records a string they were never shown. **So G16 is now pinned to the exact `(optionId, label, choice)` triples §6 sub-slice 2b specifies, and G17(c) asserts the `optionId == choice.wire` correspondence for the design-review answer specifically.** The `HumanDecisionType` is **not** on the option and must not be asserted there — that was B-1a's defect. **PASS 5: the set is FOUR triples, not three — `approve` / `rework` / `re_triage` / `cancel` — because `.decisions/5a90c1d3…` restored the re-triage answer; and the `optionId == choice.wire` requirement now binds a value (`re_triage`) with NO existing shipped precedent to copy, which is why G16 and G18 are re-pinned together rather than G16 alone.** |
 | **`FOLLOW_UPS` F-55 — NOW EXISTS** | **Correction (M-A).** The previous pass cited `FOLLOW_UPS` **F-55** in **six places** across two artifacts as an existing ledger entry, while stating in four of them that it had never been written. **It was genuinely absent — the file ended at F-54 — and the pointer originated in the decision's own `consequence` text.** `0bfb6fb` has since written **F-55** (§16, *"the park's human surface has no 'do the design review' answer"*) **and F-56** (the process note). **Every one of those six citations now resolves, and F-55 independently confirms this section's gap statement** — its `### The gap, precisely` names the same three answers and the same `human_decision_routing.dart:121, 132-135` citations, all re-verified above. **It also reserves the sequencing question to the operator, which is how `b81f40c7…` came to exist.** `docs/engineering/FOLLOW_UPS.md` is Manager-owned; this lane read F-55 and F-56 and wrote neither. |
 | **What makes it cheaper by then** | Slice 4 (M5–M7) is what makes the park resolvable at all. **This lane's judgement, and it is now moot as to ORDER and stands only as to SCOPE:** slice 1's decision and slice 4's producer are the same missing capability, so they should be scoped together. The operator has ordered them apart; that is the reversal's cost, named in §0.2. |
 | **Stated residual risk under the new order** | **The window between slice 1 and slice 2 is the one this lane argued against and lost.** During it the platform carries a `HumanDecisionType` and a routing arm that **no guard consumes** — an answer an operator is offered that does not change whether an item may reach an implementer. It is strictly *additive* (§5.2.1's table already held that no park answer reaches an implementer), so nothing regresses; it is an answer to a question nothing is yet asking. **Recorded as R4** in `design-revision.md` §10. **Pass 4 sharpens this rather than softening it, and a reviewer should read the sharper version.** Under the previous reading the slice-1 residue was *"a type and an arm"*. Under `.decisions/3e5a7c26…` it is **a type, two `targetFor` arms, two admissions into the `blockingHumanDecisionResolved` whitelists of two existing edges, and one `HumanDecisionOption` the operator will be offered** — all reachable, none consumed. **The residue is bigger and strictly more capable of being mistaken for working coverage**, because `(designReviewRequest, approve)` is admitted by `(waitingForHumanDecision, designApproved)`, so the park's design-review answer now sits on the same edge as the design-governance approval answer and looks identical from the transition table. **Nothing in slice 1 can consume it, because `designReviewRequired` does not exist until 2d.** |
@@ -1202,6 +1299,23 @@ now checked rather than assumed.
 >    > **(c) the `escalationTargetFor` disposition per arm**, especially that `(designReviewRequest,
 >    > rework)` must get **no** arm and that this is the one arm where `:196-199`'s short-circuit does
 >    > not protect it.
+>
+>    **PASS 5 REWRITES CLAUSES (a) AND (b) BECAUSE THE OPERATOR HAS ANSWERED THEM, AND ADDS ONE THIS
+>    LANE CANNOT.** (a) is **no longer a question a reviewer may overturn**: `.decisions/5a90c1d3…`
+>    ruled that the menu is four, so the merged answer is restored and **§6 1a specifies four**. The
+>    reviewer's remaining question on (a) is narrower and is this lane's: **is `reTriage` the right
+>    name for a tenth value, or should an existing value have been repurposed?** Pass 4's reasoning for
+>    rejecting `reject`, `waive`, `defer`, `fixed`, `stillBroken` and `partiallyFixed` **survives
+>    verbatim** — a park answer that waives the gate it exists to enforce is worse than a missing one,
+>    and the other four are verification vocabulary — **so a reviewer who thinks the tenth value was
+>    unnecessary is disagreeing with §6 1a's stale-text block, not with a claim this pass rests on.**
+>    (b) becomes **three** whitelist registrations (`:75-80`, `:643-648`, `:528-546`) plus a **fourth
+>    file** for the choice's presentation. **The clause this lane cannot supply is the re-triage
+>    ceiling**: §6 1a specifies that `designReviewRequest` is **not** added to that edge's
+>    `escalationIndexWithinLimitForDecisionTypes` bound, because four other types already are not and
+>    the edge's own rule forbids inventing a bound. **That is a judgement about product policy — "how
+>    many times may an operator re-triage an item?" — and it is the first item a reviewer or the
+>    operator should overturn if they disagree** (R14).
 >
 >    **And the G17 seam question is now answered by the data rather than left open**: G17's "if" half
 >    could not be asserted on the transition table alone, because an arm with no admitted edge moves
@@ -1258,6 +1372,17 @@ load-bearing:** from here the park exists, and G17(a)'s arm must already be in p
 because 1a precedes 2d, and **if 1a had not landed first this paragraph's park would be a live
 violation and G17(b) would be red.** G17(c) becomes load-bearing at 2b, when the raising call site
 starts listing options.
+
+> **PASS 5 CORRECTION, which changes the sentence above and nothing else in this paragraph.** The four
+> answers route to `designApproved` / `planning` / **`designNotRequired`** / `cancelled`
+> (`.decisions/5a90c1d3…`; §6 1a). **The load-bearing property is unchanged and re-verified for the
+> fourth arm: none of the four is `implementationReady`, so route 3 is still not reached from the
+> park.** **Route 3's reachability is a property of *which* decisions can be pending elsewhere, not
+> of the park's own menu**, so restoring `re-triage` does not bring route 3 closer — worth stating
+> explicitly, because `reTriage` is the one arm whose name suggests re-entering the flow. **It does
+> not: `designNotRequired` re-triages the ITEM, and triage's completion path is where the guard
+> refuses and parks it again (§5.2.1's first row). The operator is not offered a route into
+> `implementationReady`; they are offered a way to be told "no" again on the record.**
 
 **Route 3 is nevertheless reached from elsewhere, and that is why P3 is required rather than
 optional.** The four `targetFor` pairs that route to `implementationReady` belong to the item's *own*
@@ -1340,25 +1465,42 @@ and left the mechanism to this design; `3e5a7c26…` has now fixed the one thing
 have gone either way on — **a new `HumanDecisionType`, and `escalation` and `designApproval` are
 both ruled out.**
 
-**Files — THREE, not two, and the third is new in this pass:**
+**Files — FOUR, not two. The third was pass 4's finding; the fourth is pass 5's, and it exists only
+because the operator restored `re-triage`:**
 
 | File | What it changes here | Verified |
 |---|---|---|
-| `packages/platform_contracts/lib/src/enums/human_decision.dart` | the enum value + its `wire` | `:1-30` — nineteen values at `:1-20`, `wire` at `:22-24`, `fromWire` at `:26-29` |
-| `packages/workflow_engine/lib/src/transitions/human_decision_routing.dart` | two `targetFor` arms | `targetFor` at `:88-138`; `escalationTargetFor` at `:192-216` |
-| `packages/workflow_engine/lib/src/transitions/work_item_transitions.dart` | **two `blockingHumanDecisionResolved` whitelist admissions** | `:75-80` and `:643-648` |
+| `packages/platform_contracts/lib/src/enums/human_decision.dart` | **the `HumanDecisionType` value + its `wire`** — and, **new in pass 5, the `HumanDecisionChoice` value `reTriage('re_triage')`** | `:1-30` — nineteen `HumanDecisionType` values at `:1-20`, `wire` at `:22-24`, `fromWire` at `:26-29`; **`HumanDecisionChoice` is the second enum in the same file, at `:32-52` — NINE values at `:33-41` today, `wire` at `:43-45`, `fromWire` at `:47-51`** |
+| `packages/workflow_engine/lib/src/transitions/human_decision_routing.dart` | **THREE** `targetFor` arms | `targetFor` at `:88-138`; `escalationTargetFor` at `:192-216` |
+| `packages/workflow_engine/lib/src/transitions/work_item_transitions.dart` | **THREE** `blockingHumanDecisionResolved` whitelist admissions | `:75-80`, `:643-648`, **and `:528-546`** |
+| `apps/control_plane/lib/shared/decision_choice.dart` | **NEW IN PASS 5 — `knownDecisionChoices` membership + the per-type label arm.** Without this the new choice still routes correctly but renders as its raw wire string | `:12-19` (the set), `:32-57` (`decisionChoiceLabel`, whose `escalation` per-type arm is at `:37-46`) |
 
 > **The previous pass listed the third file only conditionally** — *"**only** if the new answer needs
 > a bound on an existing edge; on this design's reading (re-use `designApproval`) it does not."* **It
-> does, and the condition is false.** This is a finding of this pass, not a restatement: the previous
+> does, and the condition is false.** This is a finding of pass 4, not a restatement: the previous
 > pass's reading was that reusing `designApproval` made the edge already-admitted, which is true —
 > and irrelevant, because `3e5a7c26…` rules that type out. **A new type is not admitted by any edge
 > until someone adds it to that edge's `allowed` set**, because
 > `blockingHumanDecisionResolved` is a strict whitelist:
 > `allowed.contains((type: decision.decisionType, choice: decision.choice!))`
-> (`packages/workflow_engine/lib/src/validation/guard_conditions.dart:425-428`). **So `3e5a7c26…`'s
-> own `consequence` — *"Its routing arms MUST be registered in the same change"* — names two of the
-> three registration sites and not the third.** All three are specified below.
+> (`packages/workflow_engine/lib/src/validation/guard_conditions.dart:420-428`; the containment test
+> is `:421-425` and the refusal message `:427-428`). **So `3e5a7c26…`'s own `consequence` — *"Its
+> routing arms MUST be registered in the same change"* — names two of the registration sites and not
+> the others.**
+>
+> **The fourth file is pass 5's, and it is a registration site for the new CHOICE rather than the new
+> TYPE.** `apps/control_plane/lib/shared/decision_choice.dart:12-19` hardcodes
+> `knownDecisionChoices = {'approve','reject','waive','rework','cancel','defer'}` — **six values,
+> against an enum that has nine** — and the file's own doc comment (`:3-5`) enumerates those six as
+> though they were the enum's values. That is a **superseded claim surviving as live text in
+> production code**: `fixed`, `still_broken` and `partially_fixed` are absent from it today, and the
+> enum's nine are at `enums/human_decision.dart:33-41`. **It does not stop the new choice working** —
+> `decision_detail_bloc.dart:38-41` falls through to `o.optionId`, which *is* the wire, and
+> `decisionChoiceLabel`'s default arm (`:55`) falls back to the caller's `label` — **but the operator
+> would be shown caller prose instead of a mapped label, and `isKnownDecisionChoice` is used in two
+> blocs** (`decision_detail_bloc.dart:38`, `needs_you_bloc.dart`) **so both surfaces are affected.**
+> Recorded here because it changes the file list; **not corrected, because `apps/**` is
+> `PROHIBITED_PATHS` for this lane.**
 
 - **1a — the type, every arm, and every registration site.** **This is the whole of sub-slice 1a, and
   it is specified to the level of a diff.**
@@ -1373,40 +1515,213 @@ both ruled out.**
   The wire follows the existing convention exactly — `design_approval`, `qa_waiver`,
   `human_qa_approval`.
 
-  **The arm set — and why it is THREE answers where the previous pass had FOUR.** This is forced by
-  the data model, not chosen for elegance, and the forcing is the finding:
+  **The new CHOICE — `HumanDecisionChoice.reTriage('re_triage')`.** This is pass 5's addition and it
+  is a **choice, not a type**, so `5a90c1d3…`'s `consequence` requires it to be registered
+  everywhere a choice is registered, not everywhere a type is. Declared in the **second enum of the
+  same file**, `packages/platform_contracts/lib/src/enums/human_decision.dart:32-52`, alongside the
+  nine existing values (`:33-41`), with its `wire` in the existing constructor (`:43-45`).
+  **`re_triage`, not `reTriage` and not `retriage`** — every wire in this enum is `snake_case`
+  (`still_broken`, `partially_fixed`, `human_qa_approval`), and `_resolvedOptionId` matches
+  `optionId` against `choice.wire` (`durable_workflow_engine.dart:1108-1113`), so the wire is the
+  `optionId` the park's raising call site must use (§6 2b).
 
-  > **One decision carries one type.** `HumanDecisionOption` has no `decisionType`
-  > (`platform_contracts/lib/src/types/human_decision.dart:156-159`), and
-  > `resolveHumanDecision` computes `targetFor(decision.decisionType, effectiveChoice)` **once**
-  > (`durable_workflow_engine.dart:758-761`) using the `choice` **argument** (`:707-709`), not the
-  > option. **So every answer the operator is offered at the park resolves through the same type, and
-  > each answer's target is `targetFor(type, itsChoice)`.** The park's whole menu must therefore live
-  > on the new type, and the number of coherent answers is bounded by how many of the **nine**
-  > `HumanDecisionChoice` values (`enums/human_decision.dart:33-41`) carry meanings the park needs.
+  **THE SCOPE WARNING, ANSWERED FROM THE DATA MODEL — a per-type option set IS expressible, so this
+  is not the escalation the decision contemplates.** `5a90c1d3…`'s `scope_warning` requires that the
+  new value *"must be offered only by the design-review park's decision type, and must not appear in
+  any other decision's option list"*, and says that *"If the enum cannot carry a per-type option set,
+  that is itself a finding to escalate rather than work around."* **The premise — that the enum is
+  what makes a value visible — is the thing to test, and it is false. Four independent facts, each
+  verified:**
+
+  1. **The offered set is a property of the DECISION, not of the enum or the type.**
+     `HumanDecision.options` is a `List<HumanDecisionOption>?` on the decision
+     (`platform_contracts/lib/src/types/human_decision.dart:55`), and `DecisionContext.availableOptions`
+     is a free-form `List<String>` on the decision's context (`:204`). `DurableWorkflowEngine`'s own
+     doc says `availableOptions` is *"the caller's own option ids, in the caller's order"*, and that a
+     caller passing none records an empty list rather than a guess
+     (`durable_workflow_engine.dart:531-535`). **Every production raiser supplies its own list** —
+     `['acknowledge','investigate']` (`provider_health_monitor.dart:449`), `['fixed','stillBroken',
+     'partiallyFixed']` (`control_plane_service.dart:1827`). **A per-instance set is strictly more
+     expressive than a per-type one**, so a per-type set is derivable from it — which is the answer to
+     the decision's question.
+  2. **The operator UI builds its menu from that list and from nothing else.**
+     `apps/control_plane/lib/features/decision_detail/decision_detail_bloc.dart:30-37`:
+     `sourceOptions = detail.options != null && detail.options!.isNotEmpty ? detail.options! :
+     (detail.context?.availableOptions ?? const []).map(...)`. **There is no filter over the enum
+     anywhere in that path**, so a value absent from a decision's list cannot be rendered for it.
+  3. **`HumanDecisionChoice.values` is enumerated NOWHERE in production code.** Verified: all nine
+     `HumanDecisionChoice.values` sites are in `test/` directories
+     (`workflow_engine/test/{engineering_rework_entry_state,transition_consistency,implementation_ready_edge,transition}_test.dart`,
+     `scheduler/test/{triage_entry_state_drift_guard,implement_feature_deferral}_test.dart`).
+     **Nothing in `lib/` iterates the enum to build a menu.**
+  4. **A per-type presentation layer already exists and is already in production.**
+     `decisionChoiceLabel(String wireValue, {String? fallback, String? decisionType})`
+     (`decision_choice.dart:32-57`) keys on `decisionType`, and its `escalation` arm
+     (`:37-46`) already relabels the same wire value per gate — its own doc comment records that the
+     board shows `approve` as *"Approve"* on a design gate and *"Resume"* on an escalation.
+
+  **So the park's fourth answer is scoped to the park BY CONSTRUCTION: `re_triage` becomes visible
+  exactly where some decision's own option list names it, which is the park's raising call site and
+  nowhere else.** No engineering-review, QA-waiver, escalation, deployment or defect decision menu
+  changes, because none of them names `re_triage` — and none of them will, since §6 2b specifies the
+  park's list as exactly four `HumanDecisionOption`s. **This is the opposite of a workaround: the
+  work-around the decision forbade was showing the value everywhere and filtering at render time;
+  nothing here filters, because nothing needs to.**
+
+  > **What the new choice DOES touch outside the park, stated rather than glossed**, because
+  > "scoped to the park" must not be read as "invisible everywhere else":
+  >
+  > - **The enum itself is shared**, so `re_triage` is parseable on any decision. **That is harmless
+  >   for routing** — `targetFor` has no `(anyType, reTriage)` arm, so `routesTo(_, reTriage, _)`
+  >   returns `null` and `resolveHumanDecision` saves the decision resolved and **does not move the
+  >   item** (`durable_workflow_engine.dart:762-769`) — which is correct: *no other decision type
+  >   offers it*, so no other decision can carry it as a resolved choice through its own UI.
+  > - **`HumanDecisionChoice.fromWire` (`:47-51`) accepts it for any type.** A decision that somehow
+  >   carried `choice: re_triage` without offering it would resolve to `null` target rather than
+  >   moving. **G16 and G18 below are what keep the park's list and no other honest.**
+  > - **`decision_choice.dart`'s `knownDecisionChoices` (`:12-19`) must gain it** — the file's file
+  >   list above. **Without that entry the operator sees caller prose instead of a mapped label**
+  >   (`:55`'s `fallback ?? wireValue` default arm), because `isKnownDecisionChoice` gates the label
+  >   lookup at `decision_detail_bloc.dart:44-48` and in `needs_you_bloc`. **Routing still works; the
+  >   presentation is what degrades.**
+
+  **The arm set — FOUR answers, and the fourth was restored by the operator after pass 4 merged it.**
+
+  > **STALE TEXT, PRESERVED VERBATIM — CORRECTION PASS 4's arm set, SUPERSEDED IN PLACE BY PASS 5.**
+  > *"**The arm set — and why it is THREE answers where the previous pass had FOUR.** This is forced by
+  > the data model, not chosen for elegance, and the forcing is the finding … So every answer the
+  > operator is offered at the park resolves through the same type, and each answer's target is
+  > `targetFor(type, itsChoice)`. The park's whole menu must therefore live on the new type, and the
+  > number of coherent answers is bounded by how many of the nine `HumanDecisionChoice` values
+  > (`enums/human_decision.dart:33-41`) carry meanings the park needs."*
+  >
+  > **The forcing argument above is CORRECT and is retained — it is the reason the park needs its own
+  > type at all. The conclusion drawn from it was wrong, and the error was mine, not the data model's.**
+  > The premise *"the number of coherent answers is bounded by how many of the nine values carry
+  > meanings the park needs"* held only while the answer set had to be drawn from nine. `.decisions/
+  > 5a90c1d3…` adds a tenth value, and **the bound is a function of the enum's size, not of the
+  > park's semantics.** Pass 4 treated an artefact of the enum as a property of the design, merged two
+  > answers to fit inside it, and reported the reduction as resolved. **The operator's `rationale_given`
+  > names this precisely: *"Nine existing HumanDecisionChoice values cannot express four coherent
+  > answers"* — the decision says the *existing* nine cannot, and then authorises the tenth.**
+
+  **The forcing argument, restated live because it is load-bearing and survives the supersession
+  above:** one decision carries one type. `HumanDecisionOption` has **no** `decisionType`
+  (`platform_contracts/lib/src/types/human_decision.dart:156-159`), and `resolveHumanDecision`
+  computes `targetFor(decision.decisionType, effectiveChoice)` **once**
+  (`durable_workflow_engine.dart:758-761`) using the `choice` **argument** (`:707-709`), not the
+  option. **So every answer the operator is offered at the park resolves through the same type, and
+  each answer's target is `targetFor(type, itsChoice)`. The park's whole menu therefore lives on the
+  new type** — which is why `.decisions/3e5a7c26…` required a new type at all, and why the fourth
+  answer's addition touches `platform_contracts` in **two** enums rather than one.
 
   | # | Operator label | `HumanDecisionChoice` | `targetFor` target | `escalationTargetFor` arm | Edge whitelist registration |
   |---|---|---|---|---|---|
   | 1 | **"Do the design review"** | `approve` | `designApproved` | **none, and none is reachable** — the short-circuit at `:196-199` returns `null` before the switch for any choice that is not `reject`/`rework`, so an arm would be dead code | **REQUIRED** — add `(designReviewRequest, approve)` to the `allowed` set on `(waitingForHumanDecision, designApproved)`, `work_item_transitions.dart:75-80` |
-  | 2 | **"Put it back in the lane"** | `rework` | `planning` | **none, and this is the one that MUST NOT have one** — see below | **REQUIRED** — add `(designReviewRequest, rework)` to the `allowed` set on `(waitingForHumanDecision, planning)`, `:643-648` |
+  | 2 | **"Put it back in the lane"** | `rework` | `planning` | **none, and this is the one that MUST NOT have one** — see the table below | **REQUIRED** — add `(designReviewRequest, rework)` to the `allowed` set on `(waitingForHumanDecision, planning)`, `:643-648` |
   | 3 | **"Stop"** | `cancel` | `cancelled` | **none** — short-circuit at `:196-199` | **none needed** — `(_, cancel) => WorkItemState.cancelled` at `:121` covers every type, and `waitingForHumanDecision → cancelled` is admitted by the generic escape (`:786-791`, `:806-811`), which `work_item_transitions.dart:640` says in the file's own words must not be narrowed |
+  | 4 | **"Re-triage"** — **NEW IN PASS 5** | **`reTriage`** (wire **`re_triage`**) | **`designNotRequired`** | **none** — **the short-circuit fires, so `reTriage` is protected exactly like `approve` and `cancel`.** It does **not** create a fourth unprotected arm | **REQUIRED, and this is the registration site pass 4 had no reason to find** — add `(designReviewRequest, reTriage)` to the `allowed` set on `(waitingForHumanDecision, designNotRequired)`, **`work_item_transitions.dart:528-546`** |
+
+  **Why `reTriage` targets `designNotRequired`, and what that costs — stated, because it is the one
+  arm in this table whose target this document has already called a defect.** `re-triage` means
+  *"send this back to triage"*, and `designNotRequired` is the state triage dispatches from — it is
+  exactly what `(escalation, approve)` targets (`:132-133`), so the routing precedent is the
+  routing table's own. **The cost is real and §5.2.1 names it: `designNotRequired` walks back to
+  `agentCompleted`, the guard refuses, and the item parks again — *"a cycle — visible, durable, and
+  dispatching nothing."*** That characterisation is **not withdrawn by this pass**; what changes is
+  that the operator is now offered the loop **under its own name**, instead of it being reachable only
+  by answering "resume" on an escalation. **What the operator gains is exactly what
+  `5a90c1d3…`'s rationale says it gains: re-triage no longer has to be approximated by
+  cancel-and-refile**, and the item's history and the durable reason it was parked are not discarded
+  to achieve it. **A reviewer should treat "the operator may now deliberately start a visible
+  non-terminating cycle" as a real property of this arm, not as a defect this pass introduced** — it
+  is the property the operator bought.
+
+  > **A consequence of arm 4 the decision did not enumerate, and the reason this arm needs its own
+  > paragraph rather than a table cell: the `designNotRequired` edge is the ONLY ONE of the three this
+  > park touches that carries an escalation-index bound.** `(waitingForHumanDecision,
+  > designNotRequired)` (`work_item_transitions.dart:528-563`) ends with
+  > `escalationIndexWithinLimitForDecisionTypes({engineeringReview, humanQaApproval})` (`:559-563`),
+  > and the edge's own comment states the reason at `:517-522`: *"`designNotRequired -> agentExecuting
+  > -> agentCompleted -> reviewInProgress -> waitingForHumanDecision -> designNotRequired` is a cycle,
+  > and every traversal of it requires a RESOLVED decision signed by a human decider, **bounded by
+  > `escalationIndexWithinLimitForDecisionTypes` below**. Nothing in it is automatic, so no unattended
+  > rework loop is created."*
+  >
+  > **This pass specifies NOT adding `designReviewRequest` to that bound, and the reason is the edge's
+  > own stated rule, not convenience:** `:553-558` says `qaRework`, `qaWaiver` and `escalation` are
+  > *"deliberately not added: the generic edge does not bound them either, and inventing a bound here
+  > would be new policy rather than a lockstep move."* **Four types already reach this edge unbounded,
+  > and `reTriage` would be the fifth.** Adding a bound would be **new product policy — "how many times
+  > may an operator re-triage an item?" — which is not this lane's to set**, and the loop remains
+  > human-gated and visible either way, so nothing is unattended and nothing dead-ends silently.
+  >
+  > **This is flagged rather than escalated, and a reviewer or the operator should overrule it if they
+  > disagree.** Unlike `escalation` (a one-off provider failure), `reTriage` is an **operator-invoked
+  > loop by construction** — selecting it is choosing to go round again, and the item will be re-parked
+  > and re-offered it. **If the operator wants a ceiling on repetition, that is a second decision on
+  > `escalationIndexWithinLimitForDecisionTypes`, and it should be taken explicitly rather than
+  > arrived at by a design lane adding an enum member.** Recorded as R14 in `design-revision.md` §10.
+
+  **Which of the four arms the short-circuit actually protects — the table the dispatch asked for,
+  read from the code rather than inferred.**
+
+  > **There are TWO short-circuits on this condition, not one, and both matter.**
+  > `HumanDecisionRouting.escalationTargetFor` returns `null` for any choice that is not `reject` or
+  > `rework` (`human_decision_routing.dart:196-199`), **and `DurableWorkflowEngine._isEscalationTransition`
+  > short-circuits on the same condition before it ever calls the routing table**
+  > (`durable_workflow_engine.dart:1012-1014`). The routing file's class comment says so at `:69-70`,
+  > and that comment is **accurate**. So an answer on the *protected* side cannot reach the switch by
+  > either path, while an answer on the *unprotected* side is stopped only by the switch's own
+  > `_ => null` — a weaker guarantee, because an implementer adding an arm there changes behaviour
+  > silently and with no error.
+
+  | Park arm | Choice | `escalationTargetFor` short-circuit (`:196-199`) | What actually keeps it inert | `targetFor` target | Verdict |
+  |---|---|---|---|---|---|
+  | 1 `approve` | `approve` | **FIRES** — `approve != reject && approve != rework` | the short-circuit, on **both** paths | `designApproved` | **Protected.** An arm here would be unreachable dead code. |
+  | 2 `rework` | `rework` | **DOES NOT FIRE** — `rework` is one of the two admitted values | **`_ => null` at `:214` only.** `routesTo(designReviewRequest, rework, planning)` is `null == planning` → `false` | `planning` | **UNPROTECTED. This is the arm that bites** — see below. |
+  | 3 `cancel` | `cancel` | **FIRES** | the short-circuit, on both paths | `cancelled` | **Protected.** |
+  | 4 `reTriage` | `reTriage` | **FIRES** — `reTriage` is neither `reject` nor `rework` | the short-circuit, on both paths | `designNotRequired` | **Protected — and this is the answer to the dispatch's question: the fourth choice does NOT create a fourth unprotected arm.** |
+
+  **So the split is 3 protected / 1 unprotected, and the one unprotected arm is `rework` — unchanged
+  by this pass.** `escalationTargetFor` receives **no arm for any of the four.**
 
   **The `escalationTargetFor` disposition, per arm, with the table at `:73-79` consulted as the spec
   directs.** `:73-79` answers the question per pair for the five pairs that retarget to
   `implementationReady`, and its governing sentence is at `:68-71`: *"`escalationTargetFor`
   short-circuits to `null` for any choice that is not `reject` or `rework` … So of the five pairs,
-  exactly TWO are lockstep arms and three are not."* **Applied to this type's three answers:**
+  exactly TWO are lockstep arms and three are not."* **Applied to this type's four answers:**
   - `approve` → **short-circuit at `:196-199` fires.** No arm, and any arm added would be unreachable.
   - `cancel` → **short-circuit fires.** Same.
+  - **`reTriage` → short-circuit fires.** Same, and **newly true in pass 5**; it is on the protected
+    side precisely because it is neither `reject` nor `rework`.
   - `rework` → **the short-circuit does NOT fire. This is the whole risk.** The pair falls through to
     `_ => null` at `:214`, and `targetFor` returns `planning`, so
     `routesToEscalation(designReviewRequest, rework, planning)` is `null == planning` → `false` →
     **no escalation index, no `EscalationTriggered` record. That is the desired behaviour, and it is
-    the behaviour `(escalation, rework) → planning` already has today** (`escalationTargetFor`'s own
-    comment calls it out at `:188-191`). **Adding an arm here would make the comparison TRUE and start
-    escalation accounting silently on a re-plan answer** — the exact failure `:159-162` warns about,
-    in the direction the pass-3 correction was looking for. **`:213`'s `(designApproval, _)` arm does
-    not cover this pair**: it is keyed on the *type*, and the type is new.
+    the behaviour `(escalation, rework) → planning` already has today.**
+    **Adding an arm here would make the comparison TRUE and start escalation accounting silently on a
+    re-plan answer** — the exact failure `:159-162` warns about, in the direction the pass-3
+    correction was looking for. **`:213`'s `(designApproval, _)` arm does not cover this pair**: it is
+    keyed on the *type*, and the type is new.
+
+  > **PASS 5 CORRECTS A CITATION PASS 4 ADDED, in the very sentence that makes `rework` the risky arm
+  > — the sixth instance of the L3 pattern, and the second one pass 4 introduced.** Pass 4 wrote, of
+  > the `rework` arm: *"that is the behaviour `(escalation, rework) → planning` already has today
+  > (`escalationTargetFor`'s own comment calls it out at `:188-191`)."* **The behaviour claim is
+  > correct and independently re-derived here: `escalationTargetFor(escalation, rework)` falls to
+  > `_ => null` at `:214`, because `:188-191` is keyed on `HumanDecisionType.escalation` only in the
+  > sense that it does not mention it — but `:188-191` does NOT call this out. Read in full it is
+  > `## THE TWO LOCKSTEP ARMS MOVED WITH OD-3`, and it is about `(engineeringReview, rework)` and
+  > `(humanQaApproval, reject)` moving to `implementationReady`, plus `(qaWaiver, reject)` /
+  > `(qaRework, reject)` having no arm and `(escalation, approve)` not being classified as an
+  > escalation. **It says nothing about `(escalation, rework)` or about `planning`.** So the cited
+  > range does not state the property it is cited for — **the dominant class, 8 of 13 rows, and the
+  > one M-1 says a mechanical check cannot catch.** The *conclusion* is right; the *support* was
+  > hollow, and the property is now asserted by **G17b** rather than by a citation. **This is
+  > recorded because a conclusion that happens to be true, resting on a citation that does not state
+  > it, is the same defect as a false conclusion — the next edit to the range would have made it
+  > false silently.**
 
   > **B-2, resolved — and note that the previous pass's text on this was doubly wrong.** The
   > superseded row in §5.2.2 said slice 1 specifies *"the new `HumanDecisionType`, the `targetFor`
@@ -1414,7 +1729,7 @@ both ruled out.**
   > `escalationTargetFor` arm is not — and is actively harmful for the `rework` answer.** G17b existed
   > solely to catch that, which means the correction lane knew the hazard and the specification text
   > still told an implementer to walk into it. **Both halves are corrected above, and G17b is extended
-  > in the table below to cover all three arms rather than only `approve`.**
+  > in the table below to cover all four arms rather than only `approve`.**
 
 - **1b — FOLDED INTO 2b (H-2). It is not a landable sub-slice, and it is specified where the call
   site it edits is created.** The previous pass's 1b said: *"One `HumanDecisionOption` added to the
@@ -1429,7 +1744,7 @@ both ruled out.**
 - **1c — G17(a), G17(b), G17(c) and G17b, the assertions.** §5.2.2 specifies the shape and §6's
   assertion table carries the exact "fails if" text. **G17(a) and G17b are the deliverable of this
   sub-slice**: G17(a) is red until 1a lands and is the gate on 2d; G17b pins the escalation-index
-  consequence of all three arms. G17(b) and G17(c) go green at 2d and 2b respectively and are
+  consequence of all four arms. G17(b) and G17(c) go green at 2d and 2b respectively and are
   specified here because they must exist *before* those slices, not after.
 
 - **What slice 1 does NOT do, stated so it is not over-read:** it does not make the park resolvable.
@@ -1439,37 +1754,78 @@ both ruled out.**
   produce what the item needs.** That is the same `DECLARED`-not-`PASSING` distinction §5.2.1 makes,
   applied to a different artifact, and it is **R4**.
 
-- **The one judgement in 1a that a reviewer may overturn, stated as a judgement.** The previous pass
-  gave the operator **four** answers at the park: re-triage (`designNotRequired`), re-plan
-  (`planning`), stop (`cancelled`), and — from this pass — do-the-design-review. **The four
-  `HumanDecisionChoice` values those four targets need do not exist, and no clean fourth does**: the
-  nine values are `approve`, `reject`, `waive`, `rework`, `cancel`, `defer`, `fixed`,
-  `stillBroken`, `partiallyFixed` (`enums/human_decision.dart:33-41`). `reject` and `waive` are wrong
-  on their face — a park answer that "rejects" the item, or that **waives** the gate it exists to
-  enforce, is worse than the missing answer. `defer`, `fixed`, `stillBroken` and `partiallyFixed` are
-  verification vocabulary that carries no meaning for a park. **So one answer is merged rather than
-  forced onto an ill-fitting choice**, and the merged-away one is chosen on evidence rather than
-  taste: **`designNotRequired` is the target §5.2.1 itself labels a defect** — *"re-enters triage;
-  walks back to `agentCompleted`; refused again; parked again. **A cycle — visible, durable, and
-  dispatching nothing.**"* — whereas `planning` is the target the same table labels *"re-plans."*
-  **So the surviving "put it back in the lane" answer routes to `planning`, byte-identically to
-  `(escalation, rework)` at `:134-135`, and the arm that did nothing but loop is dropped from the
-  operator's menu.**
-  - **What this costs, plainly: the operator is offered three answers where the previous pass
-    specified four.** That is a product-facing reduction, and it is the one thing in this pass that a
-    human could reasonably want to reverse.
-  - **Why this lane may decide it rather than escalate it.** HD-1's `delegated` clause puts *"what
-    happens to an item that never gets one"* with the design lane, and the park's menu is exactly
-    that. **The park does not exist**, so no shipped operator surface changes. And
-    `.decisions/3e5a7c26…` re-points this menu by mandating a new type whose arms are *"designed for
-    it"* — designing them is the authorisation, not an extension of it.
-  - **Why it must not be escalated as-is either: the alternative is worse.** The only way to keep four
-    answers is a **new `HumanDecisionChoice`** — and `.decisions/3e5a7c26…` authorised a new
-    `HumanDecisionType`, **not** a new choice. **`platform_contracts` is not in scope of that
-    decision, so adding a choice would be exactly the widening the spec forbids.** **The merging is
-    what keeps this pass inside the decision's authorisation.** If the operator wants four answers,
-    the correct next step is a second human decision on `HumanDecisionChoice` — named here rather
-    than taken.
+- **The judgement pass 4 made and flagged, and the operator has now reversed — the whole bullet is
+  superseded in place and kept verbatim, because "a flagged judgement is not a discharged
+  obligation" cuts both ways.**
+
+  > ~~**The one judgement in 1a that a reviewer may overturn, stated as a judgement.** The previous pass
+  > gave the operator **four** answers at the park: re-triage (`designNotRequired`), re-plan
+  > (`planning`), stop (`cancelled`), and — from this pass — do-the-design-review. **The four
+  > `HumanDecisionChoice` values those four targets need do not exist, and no clean fourth does**: the
+  > nine values are `approve`, `reject`, `waive`, `rework`, `cancel`, `defer`, `fixed`,
+  > `stillBroken`, `partiallyFixed` (`enums/human_decision.dart:33-41`). `reject` and `waive` are wrong
+  > on their face — a park answer that "rejects" the item, or that **waives** the gate it exists to
+  > enforce, is worse than the missing answer. `defer`, `fixed`, `stillBroken` and `partiallyFixed` are
+  > verification vocabulary that carries no meaning for a park. **So one answer is merged rather than
+  > forced onto an ill-fitting choice**, and the merged-away one is chosen on evidence rather than
+  > taste: **`designNotRequired` is the target §5.2.1 itself labels a defect** — *"re-enters triage;
+  > walks back to `agentCompleted`; refused again; parked again. **A cycle — visible, durable, and
+  > dispatching nothing.**"* — whereas `planning` is the target the same table labels *"re-plans."*
+  > **So the surviving "put it back in the lane" answer routes to `planning`, byte-identically to
+  > `(escalation, rework)` at `:134-135`, and the arm that did nothing but loop is dropped from the
+  > operator's menu.**
+  > - **What this costs, plainly: the operator is offered three answers where the previous pass
+  >   specified four.** That is a product-facing reduction, and it is the one thing in this pass that a
+  >   human could reasonably want to reverse.
+  > - **Why this lane may decide it rather than escalate it.** HD-1's `delegated` clause puts *"what
+  >   happens to an item that never gets one"* with the design lane, and the park's menu is exactly
+  >   that. **The park does not exist**, so no shipped operator surface changes. And
+  >   `.decisions/3e5a7c26…` re-points this menu by mandating a new type whose arms are *"designed for
+  >   it"* — designing them is the authorisation, not an extension of it.
+  > - **Why it must not be escalated as-is either: the alternative is worse.** The only way to keep four
+  >   answers is a **new `HumanDecisionChoice`** — and `.decisions/3e5a7c26…` authorised a new
+  >   `HumanDecisionType`, **not** a new choice. **`platform_contracts` is not in scope of that
+  >   decision, so adding a choice would be exactly the widening the spec forbids.** **The merging is
+  >   what keeps this pass inside the decision's authorisation.** If the operator wants four answers,
+  >   the correct next step is a second human decision on `HumanDecisionChoice` — named here rather
+  >   than taken.~~
+
+  > **SUPERSEDED BY `.decisions/5a90c1d3-8e47-4b26-9f0c-3d7a5b2e6c19.yaml` (RESOLVED, operator,
+  > 2026-10-17T15:10:00Z, `FOURTH_CHOICE_VALUE`). The last bullet predicted its own refutation and
+  > named the correct remedy: *"the correct next step is a second human decision on
+  > `HumanDecisionChoice` — named here rather than taken."* **That decision was taken, and it ruled the
+  > other way.**
+  >
+  > **What the decision says about this lane's reasoning, quoted rather than paraphrased, because the
+  > reasoning was wrong in a specific and instructive way:** *"Nine **existing** `HumanDecisionChoice`
+  > values cannot express four coherent answers, and the design lane merged 're-triage' into 'put it
+  > back in the lane', leaving three. That silently removed a genuine operator choice: re-triaging a
+  > parked item would become cancel-and-refile, losing the item's history and the durable reason it
+  > was parked. **HD-1 delegates the park's handling to the design lane, but a product-facing menu
+  > reduction is not that delegation.**"*
+  >
+  > **The two errors in this bullet, isolated, because they are what an independent reviewer should
+  > take from it:**
+  >
+  > 1. **The second bullet's conclusion is now false as policy.** *"HD-1 delegates … the park's menu is
+  >    exactly that"* — the delegation covers **what happens to an item that never gets a design
+  >    review**, and this bullet used it to justify removing an answer from that item's menu. The
+  >    operator's ruling is that **menu composition is not delegated**, and this bullet is the record
+  >    of a lane reading a delegation more broadly than it is written.
+  > 2. **The third bullet's premise was an artefact, treated as a constraint.** *"The four
+  >    `HumanDecisionChoice` values those four targets need do not exist"* was true, and so was the
+  >    corollary *"no clean fourth does"* — **among nine.** The number of park answers is bounded by the
+  >    **enum's size**, which is a fact about `platform_contracts` that a `HumanDecisionType` decision
+  >    did not fix. **A design lane may propose a new enum value; it may not report the resulting menu
+  >    reduction as resolved.** That is the decision's own `invariant`, and it is the sentence this
+  >    pass most needed to have already been holding.
+  >
+  > **What survives, unchanged, and is used by pass 5:** the reasoning that **`reject` and `waive` are
+  > wrong on their face** for a park — *"a park answer that **waives** the gate it exists to enforce is
+  > worse than the missing answer"* — and that `defer`, `fixed`, `stillBroken` and `partiallyFixed`
+  > are verification vocabulary. **Those four are still the wrong choices, and `reTriage` is still the
+  > right name to add rather than repurpose one of them.** The finding that produced this correction
+  > was sound; only the conclusion drawn from it was not.
 
 ### 2a — the guard and its context contract
 
@@ -1503,17 +1859,27 @@ both ruled out.**
 | **G13** | **no edge out of `designReviewRequired` other than P4** (plus the generic escapes) | a second predecessor into `planned`/`designNotRequired` re-opens the loop `:45-50` records |
 | **G14** | **NEW — the durable reason.** A refused intake item reaches `waitingForHumanDecision` with `item.blockingReason` **non-null and non-default**, and it is the park helper's `why` string | the park is taken by a bare `transition`, which writes `blockingReason: null` for any non-`waitingForHumanDecision` target (`durable_workflow_engine.dart:222-225`) — **the exact defect this revision corrects** |
 | **G15** | **NEW — the blocking decision id.** The same item reaches `waitingForHumanDecision` with `item.blockingHumanDecisionId` **non-null**, and that decision is resolvable through `resolveHumanDecision` (`durable_workflow_engine.dart:747-748` requires `blockingHumanDecisionId == decisionId` **and** state `waitingForHumanDecision`) | the park is taken by `transition` instead of `requestHumanDecision`, which nulls the id for any other target (`:215-221`) — a decision nothing can answer |
-| **G16** | **NEW — the operator surface.** A refused intake item at `waitingForHumanDecision` appears as a pending blocking decision in the operator surface, and its offered options are **exactly the three `(optionId, label, choice)` triples §6 sub-slice 2b specifies** — `approve` (do the design review) / `rework` (put it back in the lane) / `cancel` (stop) — and no others | the options list is left implicit, widened past §6 2b's set, or an operator is offered an answer the gate will refuse. **WIDENED by correction pass 3** (from "exactly `escalation`'s three — no fourth", which would have failed the moment slice 1 landed) **and RE-WIDENED by pass 4**, because the decision type itself changed: the set is now pinned to **triples on `HumanDecisionType.designReviewRequest`**, not to `escalation`'s arms. **Pass 4 also pins the `optionId == choice.wire` correspondence**, which the previous two forms left open: `_resolvedOptionId` matches on `o.optionId == choice.wire` and **falls back to `choice.wire` when no option matches** (`durable_workflow_engine.dart:1110-1113`), so an operator can pick from a menu and get a `resolvedOptionId` they were never shown. Asserted over the exact triples, including the wires. |
+| **G16** | **NEW — the operator surface.** A refused intake item at `waitingForHumanDecision` appears as a pending blocking decision in the operator surface, and its offered options are **exactly the four `(optionId, label, choice)` triples §6 sub-slice 2b specifies** — `approve` (do the design review) / `rework` (put it back in the lane) / **`re_triage` (re-triage) — NEW IN PASS 5** / `cancel` (stop) — and no others | the options list is left implicit, widened past §6 2b's set, narrowed below it, or an operator is offered an answer the gate will refuse. **WIDENED by correction pass 3** (from "exactly `escalation`'s three — no fourth", which would have failed the moment slice 1 landed) **RE-WIDENED by pass 4** (the decision type changed, so the set is pinned to **triples on `HumanDecisionType.designReviewRequest`**, not to `escalation`'s arms), **and RE-WIDENED AGAIN BY PASS 5** from three to four by `.decisions/5a90c1d3…`. **Pass 4 also pinned the `optionId == choice.wire` correspondence**, which the previous two forms left open: `_resolvedOptionId` matches on `o.optionId == choice.wire` and **falls back to `choice.wire` when no option matches** (`durable_workflow_engine.dart:1106-1113`, the fallback at `:1113`), so an operator can pick from a menu and get a `resolvedOptionId` they were never shown. **With a fourth choice this matters more, not less** — `re_triage` is a wire no prior production raiser uses, so it is the first option id in this design that is *not* covered by an existing shipped precedent to copy. Asserted over the exact four triples, including the wires. |
+| **G18** | **NEW IN PASS 5 — THE FOUR-ANSWER INVARIANT, ASSERTED.** `.decisions/5a90c1d3…`'s `invariant`, verbatim: *"The operator's menu for a parked design-review item must remain four coherent answers."* **The park's raising call site supplies exactly four `HumanDecisionOption`s, and `re_triage` is one of them** | **a merge of any two, or an option list of three — the exact failure pass 4 shipped and the operator reversed.** **This assertion exists because the decision's invariant was, until this pass, a sentence with nothing that failed when it was absent**, which is the L3 pattern this artifact set has produced seven times. **It is deliberately narrow**: it pins the **count and the membership** (§6 2b's four triples) and asserts **nothing about any other decision type's option list** — because that is guaranteed structurally by `decision_detail_bloc.dart:30-37` and would be redundant if asserted. **If someone later adds a fifth park answer, G18 goes red and the count becomes a decision again rather than an accident — which is the intent.** |
 | **G17(a)** | **NEW IN PASS 4 — the arm exists AND is admitted.** There is a `HumanDecisionType` value `T` such that for some `c` in `HumanDecisionChoice.values`, **`HumanDecisionRouting.routesTo(T, c, WorkItemState.designApproved)` is true** (`human_decision_routing.dart:219-225`), **AND** `(T, c)` is in the `blockingHumanDecisionResolved` `allowed` set on `(waitingForHumanDecision, designApproved)` (`work_item_transitions.dart:75-80`). Reads the parsed enum, the parsed routing table and the parsed transition table — never a name or a comment | **either** no such `T` exists (**RED today** — and `.decisions/3e5a7c26…` requires a new one, so this is the gate on 2d), **or** the `targetFor` arm is added but the edge whitelist is not, in which case the decision resolves, is **saved resolved**, and the item does not move — §5.1.1b's unrecoverable position, reached by a new route. **The previous single G17 could not catch that second case at all**, because it asserted nothing about the edge. |
 | **G17(b)** | **NEW IN PASS 4 — no park without the arm.** `designReviewRequired` appears as a target in `work_item_transitions.dart` **only if** G17(a) holds — P2 and P3 may not land on an absent arm | the park and the gate land while no answer can produce what the item waits for — **the dead-end class (F-42, F-50, F-54), which is what `.decisions/b81f40c7…`'s reversal exists to close.** **This is the assertion that makes the ORDER checkable**: it is green before 2d (its subject does not exist) and live after it, so the sentence an implementer can fail is *"2d may not land while G17(a) is red."* |
 | **G17(c)** | **NEW IN PASS 4 — the menu offers it.** The park's raising call site lists an option whose `optionId` equals the `HumanDecisionChoice.wire` of the pair G17(a) found, and `recommendation` names an `optionId` that is in that list | the park raises a type whose design-review arm exists but is never offered — the operator sees a menu with no design-review answer, which is the original gap in new clothing. **This obligation is about the CALL SITE, which is why it belongs to 2b and not to slice 1** (H-2) |
 | **G17 (as previously written)** | **~~SUPERSEDED BY G17(a)/(b)/(c) — the text is preserved here so a reader holding the previous two passes can see what changed and why.~~ `designReviewRequired` has an in-edge (`P2`/`P3`) **iff** the park's `options` list contains a `(decisionType, choice)` pair for which `routesTo(type, choice, designApproved)` is true. Both halves read the parsed routing table and the parsed transition table, never a name or a comment. **It fails today.** **TWO DEFECTS, both now corrected above.** (i) **It asked for a field that does not exist**: `HumanDecisionOption` carries only `optionId`/`label`/`description`/`recommended` (`platform_contracts/lib/src/types/human_decision.dart:156-159`), so *"the park's `options` list contains a `(decisionType, choice)` pair"* could never be true of a parsed option list — **the assertion could not go green and no implementer could satisfy it.** (ii) **It conflated reachability with routing**: `targetFor` returning `designApproved` does not move the item, because `blockingHumanDecisionResolved` is a strict whitelist (`guard_conditions.dart:425-428`) — which is why G17(a) has a second clause the previous form had no place for. The previous form's *"Also fails if such an answer is offered while the park is still unreachable"* also contradicted §5.3, and that contradiction is H-1; §5.2.2's window table now states each obligation's verdict per window. |
-| **G17b** | **NEW — the escalation-index consequence of every arm of the new type.** (i) Answering the park's design-review question with `approve` does **not** increment `metadata['escalationIndex']` and appends **no** `EscalationTriggered` record; (ii) **and neither does answering "put it back in the lane" with `rework`** | (i) an implementer reads `:151-162`'s lockstep rule as requiring an `escalationTargetFor` arm for the new answer and adds one, **silently starting escalation accounting on a design approval.** Verified false twice over: `escalationTargetFor` returns `null` for any choice that is not `reject`/`rework` (`:196-199`), and `_isEscalationTransition` short-circuits on the same condition (`durable_workflow_engine.dart:1012-1015`). `:213`'s `(designApproval, _)` arm is therefore **unreachable for `approve`**. **(ii) PASS 4 ADDS THIS, AND IT IS THE ONE THAT BITES.** `rework` is exactly the choice the `:196-199` short-circuit does **not** protect: the pair falls to `_ => null` at `:214`, and that `_ => null` — not the short-circuit — is what keeps
+| **G17b** | **NEW — the escalation-index consequence of every arm of the new type.** (i) Answering the park's design-review question with `approve` does **not** increment `metadata['escalationIndex']` and appends **no** `EscalationTriggered` record; (ii) **and neither does answering "put it back in the lane" with `rework`**; **(iii) PASS 5 ADDS THIS — neither does answering "re-triage" with `reTriage`**, which is the arm whose *target* (`designNotRequired`) sits on the one park edge that **does** carry an `escalationIndexWithinLimitForDecisionTypes` bound, and the distinction matters | (i) an implementer reads `:151-162`'s lockstep rule as requiring an `escalationTargetFor` arm for the new answer and adds one, **silently starting escalation accounting on a design approval.** Verified false twice over: `escalationTargetFor` returns `null` for any choice that is not `reject`/`rework` (`:196-199`), and `_isEscalationTransition` short-circuits on the same condition (`durable_workflow_engine.dart:1012-1014`). `:213`'s `(designApproval, _)` arm is therefore **unreachable for `approve`**. **(ii) PASS 4 ADDS THIS, AND IT IS THE ONE THAT BITES.** `rework` is exactly the choice the `:196-199` short-circuit does **not** protect: the pair falls to `_ => null` at `:214`, and that `_ => null` — not the short-circuit — is what keeps
 `routesToEscalation(designReviewRequest, rework, planning)` false. **An implementer who "completes the
 lockstep" by adding `(designReviewRequest, rework) => WorkItemState.planning` to `escalationTargetFor`
 would turn that comparison true and start escalation accounting on a re-plan answer** — the same
-silent failure, on the arm the previous pass never considered. `escalationTargetFor`'s own comment at
-`:188-191` records that `(escalation, rework)` has no arm for exactly this reason |
+silent failure, on the arm pass 3 never considered. **(iii) PASS 5 ADDS THIS, AND IT IS THE CHEAPEST
+OF THE THREE TO GET WRONG, BECAUSE THE EDGE LOOKS LIKE IT IS ALREADY BOUND.** `reTriage` IS protected
+by the short-circuit — it is neither `reject` nor `rework` — so adding an `escalationTargetFor` arm for
+it would be unreachable dead code, the same as `approve`. **The trap is not the arm; it is the
+edge.** `(waitingForHumanDecision, designNotRequired)` (`work_item_transitions.dart:528-563`) carries
+`escalationIndexWithinLimitForDecisionTypes({engineeringReview, humanQaApproval})` at `:559-563`, so
+an implementer reading the edge's comment — *"every traversal of it … bounded by
+`escalationIndexWithinLimitForDecisionTypes`"* — may conclude re-triage is already counted and that
+answering it advances `escalationIndex`. **It does not, and it must not:** `designReviewRequest` is not
+in that bound's set, and adding it would be new product policy (§6 1a's arm-4 note, and R14). **G17b's
+(iii) clause is what keeps that distinction from being resolved by assumption.** |
 
 **G5′ says six, and the count must be exact.** G5′ exists to prove the new guard was added **at the
 cost of no existing bound**, so an off-by-one would defeat the assertion. The edge's
@@ -1529,7 +1895,7 @@ satisfied by a dead end: a refused item that simply stops at `agentCompleted` pa
 document no longer cites G1/G2 as evidence that the gate fails closed**, and §5.1 says so in its own
 words.
 
-**A reviewer should check G17(a) first, then G17(b)/G17(c), then G7, G10 and G14.** **G17 is the whole
+**A reviewer should check G17(a) first, then G17(b)/G17(c), then G18, then G7, G10 and G14.** **G17 is the whole
 point of the reversal**: if it does not state the invariant `.decisions/b81f40c7…` requires, then this
 document has committed the L3 pattern a third time — a property asserted, in prose, with nothing
 that fails when it is absent. G7 and G10 are the BLOCKING and HIGH findings of earlier rounds;
@@ -1618,7 +1984,8 @@ route-3 caller, named to `file:line` in §5.1.2), the composition root.
     `.decisions/3e5a7c26-4b19-4f83-a0d7-6c29b8f1e540.yaml`. **`escalation` is now raised nowhere in
     production for the first time in this design's plan, and the park was to be its raiser** — a
     statement §6 2d carries and this pass corrects;
-  - `options`: **exactly three `HumanDecisionOption`s**, on the shipped shape at
+  - `options`: **exactly FOUR `HumanDecisionOption`s — RE-WIDENED AGAIN IN PASS 5, from three, by
+    `.decisions/5a90c1d3…`**, on the shipped shape at
     `stalled_work_item_gate.dart:199-213` (`optionId`/`label`/`description`, then `recommendation` at
     `:212` and `blocking` at `:213`):
 
@@ -1626,13 +1993,36 @@ route-3 caller, named to `file:line` in §5.1.2), the composition root.
     |---|---|---|---|
     | `approve` | Do the design review | *(the text is the implementer's; G16 pins the id, not the prose)* | `designApproved` |
     | `rework` | Put it back in the lane | | `planning` |
+    | **`re_triage`** | **Re-triage** — **NEW IN PASS 5** | | **`designNotRequired`** |
     | `cancel` | Stop | | `cancelled` |
 
-  - `recommendation`: **an `optionId` that is in that list** — G17(c) asserts the membership, because
+    **Four rows, and the fourth is the operator's ruling.** **`re_triage` is this decision's entire
+    content**: the whole reason the arm exists is that *"re-triaging a parked item would become
+    cancel-and-refile, losing the item's history and the durable reason it was parked"*
+    (`5a90c1d3…`'s `rationale_given`). **Note what the row does NOT claim: it does not claim re-triage
+    makes progress.** It routes to `designNotRequired`, §5.2.1's visible non-terminating cycle, and
+    the operator is choosing that knowingly. **The option's `description` is therefore not free prose
+    — it is the only place the operator is told so, and G18 asserts that a description exists rather
+    than asserting its wording.** A park menu whose re-triage row silently looks like progress would
+    be the defect; the row's honesty is a content requirement even though its text is the
+    implementer's.
+
+  - **`recommendation`: an `optionId` that is in that list** — G17(c) asserts the membership, because
     `recommendation` is a bare `String` (`requestHumanDecision` takes it as one) and nothing in the
     tree checks that it names an option the operator was actually shown. This is the same class of
     hole as `_resolvedOptionId`'s fallback (`:1113`);
   - `blocking: true` — G15's subject.
+
+  > **The scope property is enforced HERE and nowhere else, and it is why `re_triage` appearing on
+  > another decision's menu is impossible rather than merely unintended.** `5a90c1d3…` requires the
+  > new value *"must be offered only by the design-review park's decision type, and must not appear in
+  > any other decision's option list."* **This list is the park's list, and it is the only place in
+  > the repository where `re_triage` is written as an `optionId`.** Because the operator UI derives its
+  > menu solely from a decision's own `options` / `availableOptions`
+  > (`decision_detail_bloc.dart:30-37`), and because nothing enumerates `HumanDecisionChoice.values` in
+  > `lib/` (§6 1a's scope derivation, fact 3), **no other decision can render `re_triage` unless
+  > someone adds that string to that decision's own list.** G18 makes "exactly four, and none of them
+  > on another type" checkable.
 
   **`optionId` MUST be the choice's wire, and that is a requirement rather than a convention this
   document is inventing.** `_resolvedOptionId` (`durable_workflow_engine.dart:1106-1114`) finds the
@@ -1645,7 +2035,8 @@ route-3 caller, named to `file:line` in §5.1.2), the composition root.
   would fail.** G16 and G17(c) are what make it fail.
 - **What 2b therefore owns that slice 1 does not, restated for the implementer:** the context supplier,
   the park helper, the composition-root wiring, the route-3 catch discrimination, **and the option
-  list.** Slice 1 owns the type, its arms, its three registrations, and the assertions. **The two
+  list.** Slice 1 owns the type, **the new choice's enum value**, its arms, its three whitelist
+  registrations, its presentation registration, and the assertions. **The two
   meet at G17(c), which is why 2b cannot land before 1a even though nothing in 2b's file list is a
   slice-1 file: G17(c) is red until 1a's arm exists.**
 
@@ -1739,6 +2130,19 @@ a drift guard that fails if the new guard appears on any edge not listed in §4.
     `(designReviewRequest, approve) → designApproved`** — a new target that is emphatically not
     `implementationReady`, which is why the property holds with a new arm rather than being weakened
     by it.
+    > **PASS 5 — the set is FOUR, and this bullet's own check is now stronger rather than weaker.**
+    > The three specified above are `approve` / `rework` / `cancel`; `.decisions/5a90c1d3…` adds
+    > **`reTriage`**, so the set is `approve` / `rework` / **`re_triage`** / `cancel` (§6 2b's table,
+    > asserted by **G16** and **G18**). **The property this bullet exists to hold is re-verified for
+    > the new arm**, and this is the one place where it was genuinely at risk: `re_triage`'s target is
+    > `designNotRequired`, **which is the state triage dispatches from** and therefore the arm most
+    > likely to be misread as a step toward the implementer. **It is not.** `designNotRequired` does
+    > not lead to `implementationReady`; it leads back to `agentCompleted`, where the guard refuses
+    > and the item parks again (§5.2.1's first row). **So `reTriage` is the second arm whose target
+    > had to be checked against this property from a new direction, after `approve`, and it passes.**
+    > **A reviewer should treat "enumerate every `HumanDecisionChoice` against `targetFor`" as an
+    > obligation that re-runs whenever an arm is added, not once** — it is the check that keeps this
+    > property true, and it is cheap.
 - **The park's human surface DOES offer "do the design review" — because slice 1 lands first.** That
   is the reversal (`.decisions/b81f40c7…`, §0.2), and **G17(b) and G17(c) are what make it an
   enforced property of the order rather than a promise in prose.** The previous pass recorded this as
@@ -1771,14 +2175,30 @@ reaches `AgentRole.implementer` without a satisfied design review** — which is
 clause as the operator has now ruled it, covering **every** route.
 
 The price is §5.2.1's table: until M5–M7 land (slice 4), those items park and a human can stop, put
-the item back in the lane, **or — from slice 1 — say "do the design review"**, which moves the item to
-`designApproved` and, on its own, still produces nothing, because no producer exists. **That price is
+the item back in the lane, **re-triage it**, **or — from slice 1 — say "do the design review"**, which
+moves the item to `designApproved` and, on its own, still produces nothing, because no producer
+exists. **That price is
 the point of the gate on this repository today, the operator chose it knowing it, and it is flagged
 rather than minimised.** **Pass 4 corrects the answer set in this sentence**: it read *"re-triage,
 re-plan, stop"* — `escalation`'s three — and the park no longer raises `escalation`. The three answers
 are `cancel` (stop) / `rework` (put it back in the lane) / `approve` (do the design review), on
 `HumanDecisionType.designReviewRequest` (§6 1a). **The property this sentence rests on is unchanged
 and re-verified: none of the three reaches `implementationReady`.**
+> **PASS 5 CORRECTS IT AGAIN, and the direction is the opposite of pass 4's.** The sentence above read
+> *"re-triage, re-plan, stop"* and pass 4 replaced `re-triage` with "do the design review", leaving
+> three. `.decisions/5a90c1d3…` **restores `re-triage` as its own answer**, so the four are:
+> **`approve`** (do the design review → `designApproved`), **`rework`** (put it back in the lane →
+> `planning`), **`re_triage`** (re-triage → `designNotRequired`), **`cancel`** (stop → `cancelled`) —
+> all on `HumanDecisionType.designReviewRequest` (§6 1a, §6 2b; asserted by **G16** and **G18**).
+> **The property this paragraph rests on is unchanged and re-verified for all four: none of them
+> reaches `implementationReady`.**
+> **Note what this costs the reader and why it is worth the two corrections.** Between passes 4 and 5
+> this paragraph described a menu that was never the operator's: first three answers that were not
+> the park's, then three that were the park's but had silently absorbed one. **The invariant the
+> paragraph exists to state — the gate refuses, and no operator answer is a route to an implementer —
+> survived both.** **A product-facing sentence that is corrected twice in three passes, while the
+> property beneath it never moves, is the clearest available evidence that the sentence was never the
+> load-bearing artefact and the assertion was.**
 
 ### 7.1 The second invariant — the one the reversal exists to enforce
 
@@ -1787,6 +2207,17 @@ is this document's own, and it is what `.decisions/b81f40c7…` decided:**
 
 > **No item may be parked at `designReviewRequired` before the decision raised there offers a "do the
 > design review" answer.** *(decision `invariant`, verbatim)*
+
+**And there is now a THIRD invariant, from a later decision, about a different property of the same
+menu.** `.decisions/5a90c1d3…`'s `invariant`, verbatim: *"The operator's menu for a parked
+design-review item must remain four coherent answers."* **It is a different sentence about a different
+thing** — not about whether the park can be created, but about what the operator is offered once it
+exists — **and it is asserted by G18, separately from G17.** The two are kept apart deliberately: G17
+guards against a park that cannot produce what the item waits for, and G18 guards against a menu that
+has been quietly narrowed. **A merge of two answers satisfies G17 and violates G18**, which is exactly
+what pass 4 shipped and exactly what the operator reversed. **Asserting them as one obligation would
+have let either one go red for the other's reason; asserting them as two means a reviewer can see
+that the reversal is closed by a specific clause.**
 
 **Stated, and asserted.** The invariant has **two clauses** and it is now asserted by **three
 obligations**, because the data model has three properties (§5.2.2, B-1a):
