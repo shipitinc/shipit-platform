@@ -2253,18 +2253,149 @@ class ControlPlaneService {
   /// — but no declaration row is written, the omission is logged by name, and
   /// the first attempt to provision a contract for that product fails closed
   /// with [ProductQAContractSpecRefusal.declaresNoGates].
+  ///
+  /// ## RE-REGISTRATION MERGES — IT DOES NOT RE-CREATE
+  ///
+  /// Human decision `6e83b1c7-4d92-4a06-bf58-3c7a9e0d24f6`. This used to route
+  /// EVERY registration through `createProduct` + `updateProduct`, and both of
+  /// those are lifecycle writes, not merges:
+  ///
+  /// - `createProduct` builds a fresh `Product` with `state:
+  ///   ProductState.registered`, `createdAt: now` and `version: 1` and saves it
+  ///   with a NULL `expectedVersion`, which on the Postgres store is
+  ///   `INSERT ... ON CONFLICT ("productId") DO UPDATE SET name, description,
+  ///   manifestVersion, state, createdAt, updatedAt, version`. On a product that
+  ///   already exists that branch is not an upsert in the harmless sense — it
+  ///   overwrites `state`, `createdAt` and `version` from the fabricated
+  ///   object.
+  /// - `updateProduct` then passes `description: null`, and
+  ///   `ProductRegistryEngine.updateProduct` copies a null straight through, so
+  ///   the description is nulled as well.
+  ///
+  /// `ProductTransitions` has NO edge from `registered` back to `governed`
+  /// (`product_transitions.dart:81` is `registered -> baselinePending`, `:138`
+  /// is `registered -> archived` and human-gated). So re-registering the live
+  /// `shipit-platform` — verified `governed`, `description` present,
+  /// `manifestVersion=v1791564352899`, `version=5`, with an ACCEPTED baseline
+  /// `bl-shipit-platform-1` rev 1 — did not merely rewrite the row. It knocked
+  /// the product out of governance with no way back, and recovery meant a new
+  /// baseline revision, a new independent verification and a new human approval.
+  /// A re-registration is an operator pressing a button, and it destroyed the
+  /// product's governance.
+  ///
+  /// THE MERGE: for a product that already exists, `state`, `description`,
+  /// `createdAt` and `version` are PRESERVED and the ONLY write is the declared
+  /// QA contract — added if absent, updated if present. The product row is not
+  /// written at all, so preservation is true by construction rather than by four
+  /// careful assignments.
+  ///
+  /// ## WHAT THE MERGE DOES *NOT* UPDATE, STATED RATHER THAN LEFT IMPLICIT
+  ///
+  /// `name` and the product row's `manifestVersion` are also left as they are,
+  /// because the decision says the only write is the declared QA contract.
+  /// Nothing joins the two: the declaration carries its own `manifestVersion`
+  /// (`ProductQAContractDeclaration.manifestVersion`), and that is the value
+  /// `ProductQAContractProvisioner` puts in a contract's
+  /// `qaContractManifestVersionMetadataKey`. `product.manifestVersion` is read
+  /// back only to display it (`ui_view_mappers.dart:138`), so a stale one there
+  /// is cosmetic and cannot make a provisioner serve a stale gate list.
+  ///
+  /// ## THE ON/OFFBOARD PATH IS NOT THIS PATH
+  ///
+  /// `apps/server/bin/onboard_shipit_dev.dart:90-101` and
+  /// `apps/server/onboard_shipit_serverpod.dart:90-97` both call
+  /// `engine.createProduct` DIRECTLY, and only inside `on
+  /// ProductNotFoundException`, so they reach it only for a product that does
+  /// not exist. They are separate call sites: the merge below is a decision in
+  /// [registerProduct], which neither of them goes through.
   Future<Product> registerProductWithManifest({
     required String productId,
     required String name,
     String? description,
     required ProductManifest? manifest,
     String? manifestVersion,
+  }) {
+    return registerProduct(
+      engine: productRegistryEngine,
+      specStore: productQAContractSpecStore,
+      log: (event, fields) => logger.info(event, fields),
+      productId: productId,
+      name: name,
+      description: description,
+      manifest: manifest,
+      manifestVersion: manifestVersion,
+    );
+  }
+
+  /// [registerProductWithManifest] over injected [engine] and [specStore].
+  ///
+  /// A static, store-taking seam rather than logic reachable only through a
+  /// `Session`, because the merge is the one behaviour on this path that has to
+  /// be PROVABLE: it is a claim that four durable columns survive a
+  /// re-registration, and a claim about durable bytes wants an assertion rather
+  /// than a comment. `ControlPlaneService` needs a `Session` to construct, so
+  /// without this the merge could only be observed against a live database, and
+  /// `dart test` could not hold it at all. No annotation marks it: `meta` is not
+  /// a direct dependency of this package and adding one to carry an annotation
+  /// is not worth a pubspec change.
+  ///
+  /// [log] is the structured sink, injected for the same reason.
+  static Future<Product> registerProduct({
+    required ProductRegistryEngine engine,
+    required ProductQAContractSpecStore specStore,
+    required void Function(String event, Map<String, Object?> fields) log,
+    required String productId,
+    required String name,
+    String? description,
+    required ProductManifest? manifest,
+    String? manifestVersion,
+    DateTime? now,
   }) async {
-    final t = DateTime.now().toUtc();
+    final t = now ?? DateTime.now().toUtc();
     final version = manifestVersion ?? 'v${t.millisecondsSinceEpoch}';
 
+    // THE MERGE DECISION, and the only place it is made. Read first: a product
+    // that is absent raises `ProductNotFoundException` here and takes the create
+    // path below, which is unchanged.
+    Product? existing;
+    try {
+      existing = await engine.readProduct(productId);
+    } on ProductNotFoundException {
+      existing = null;
+    }
+
+    if (existing != null) {
+      // The product row is NOT written. See the class-level note on
+      // `registerProductWithManifest` for why a write here would be a defect
+      // and not a merge.
+      await _persistDeclaredQAContract(
+        specStore: specStore,
+        log: log,
+        productId: productId,
+        manifest: manifest,
+        manifestVersion: version,
+        now: t,
+      );
+
+      log('product_registry.registered_with_manifest', {
+        'productId': productId,
+        'name': existing.name,
+        'manifestVersion': version,
+        'manifestSupplied': manifest != null,
+        'mergedIntoExisting': true,
+        // The preserved lifecycle, logged so an operator can see from the log
+        // that the press was a merge and not a create, and see WHICH state was
+        // preserved rather than being told "governance is safe".
+        'preservedState': existing.state.wire,
+        'preservedVersion': existing.version,
+        'preservedCreatedAt': existing.createdAt.toUtc().toIso8601String(),
+        'preservedDescription': existing.description,
+      });
+      return existing;
+    }
+
     // Create the product with manifest reference
-    await productRegistryEngine.createProduct(
+    await engine.createProduct(
       productId: productId,
       name: name,
       description: description,
@@ -2272,24 +2403,27 @@ class ControlPlaneService {
     );
 
     // Update with manifest version
-    final updatedProduct = await productRegistryEngine.updateProduct(
+    final updatedProduct = await engine.updateProduct(
       productId,
       manifestVersion: version,
       now: t,
     );
 
     await _persistDeclaredQAContract(
+      specStore: specStore,
+      log: log,
       productId: productId,
       manifest: manifest,
       manifestVersion: version,
       now: t,
     );
 
-    logger.info('product_registry.registered_with_manifest', {
+    log('product_registry.registered_with_manifest', {
       'productId': productId,
       'name': name,
       'manifestVersion': version,
       'manifestSupplied': manifest != null,
+      'mergedIntoExisting': false,
     });
     return updatedProduct;
   }
@@ -2297,17 +2431,24 @@ class ControlPlaneService {
   /// Records what [manifest] DECLARED about QA, or names why it declared
   /// nothing.
   ///
-  /// Separate from [registerProductWithManifest] so that "is this a declaration
-  /// or the absence of one" has one implementation called from one place,
-  /// rather than three restatements of `gates.isEmpty` that can drift apart.
-  Future<void> _persistDeclaredQAContract({
+  /// Separate from [registerProduct] so that "is this a declaration or the
+  /// absence of one" has one implementation called from one place, rather than
+  /// three restatements of `gates.isEmpty` that can drift apart.
+  ///
+  /// Runs on BOTH registration paths — a merge writes the declaration, which is
+  /// the whole of what a merge is allowed to write — so an already-registered
+  /// product that re-declares its gates updates them rather than keeping the
+  /// ones it had.
+  static Future<void> _persistDeclaredQAContract({
+    required ProductQAContractSpecStore specStore,
+    required void Function(String event, Map<String, Object?> fields) log,
     required String productId,
     required ProductManifest? manifest,
     required String manifestVersion,
     required DateTime now,
   }) async {
     if (manifest == null) {
-      logger.info('product_registry.qa_contract_spec.not_declared', {
+      log('product_registry.qa_contract_spec.not_declared', {
         'productId': productId,
         'reason':
             'no manifest was supplied, so this product has declared no '
@@ -2327,7 +2468,7 @@ class ControlPlaneService {
       // Stated rather than swallowed: a manifest WAS supplied, and it is
       // specifically the QA contract inside it that is empty. A log that only
       // said "no manifest" would send an operator to look in the wrong place.
-      logger.info('product_registry.qa_contract_spec.not_declared', {
+      log('product_registry.qa_contract_spec.not_declared', {
         'productId': productId,
         'reason':
             'the supplied manifest declares contracts.qaContract with no '
@@ -2339,7 +2480,7 @@ class ControlPlaneService {
       return;
     }
 
-    await productQAContractSpecStore.saveQAContractSpec(
+    await specStore.saveQAContractSpec(
       ProductQAContractDeclaration(
         productId: productId,
         gates: spec.gates,
@@ -2349,7 +2490,7 @@ class ControlPlaneService {
       ),
     );
 
-    logger.info('product_registry.qa_contract_spec.declared', {
+    log('product_registry.qa_contract_spec.declared', {
       'productId': productId,
       'manifestVersion': manifestVersion,
       'gateCount': spec.gates.length,

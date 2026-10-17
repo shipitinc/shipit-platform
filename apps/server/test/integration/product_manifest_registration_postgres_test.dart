@@ -43,13 +43,23 @@ import 'test_tools/serverpod_test_tools.dart';
 /// `design-remediation-*`; and `createFeatureWorkItem` has no equivalent, which
 /// is why a `WI-feature-*` item is not repairable by this route at all).
 ///
-/// Nor is the PRODUCT ROW's behaviour on re-registration asserted here. The
-/// endpoint is named for creating a product, and `PostgresProductRegistryStore
-/// .saveProduct` is an unconditional `ON CONFLICT DO UPDATE` that rewrites
-/// `state`, `createdAt` and `description`. Pinning that here would bless it as
-/// intended behaviour; it is instead reported to the Manager as a blocker on
-/// registering an EXISTING product, which is the case this file does not cover
-/// because this file registers a NEW one under a fixture id.
+/// Nor is the PRODUCT ROW's behaviour on re-registration asserted here, and
+/// the reason has changed. It used to say that
+/// `PostgresProductRegistryStore.saveProduct` is an unconditional `ON CONFLICT
+/// DO UPDATE` that rewrites `state`, `createdAt` and `description`, and that
+/// pinning that here would bless it as intended behaviour — so it was
+/// reported to the Manager as a blocker on registering an EXISTING product.
+///
+/// It is fixed (human decision `6e83b1c7-4d92-4a06-bf58-3c7a9e0d24f6`):
+/// `ControlPlaneService.registerProductWithManifest` MERGES an existing
+/// product instead of re-creating it, and the store's null-`expectedVersion`
+/// branch is insert-only. The merge is held, without a database, by
+/// `test/product_reregistration_merge_test.dart`, which asserts all four
+/// preserved columns and a zero product-write count. This file still does not
+/// cover re-registration, because its subject is the DECLARATION round trip
+/// against a real database and it registers a NEW product under a fixture id;
+/// the merge's behaviour against real Postgres bytes is the Manager's runtime
+/// verification, not this file's.
 ///
 /// ## RESOURCE HYGIENE
 ///

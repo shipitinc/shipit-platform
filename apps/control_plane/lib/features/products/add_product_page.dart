@@ -267,10 +267,37 @@ class AddProductBloc extends Bloc<AddProductEvent, AddProductState> {
 
   /// Creates the product and its repository reference if they are not there.
   ///
-  /// Both writes are upserts server-side (`ON CONFLICT DO UPDATE`), so calling
-  /// this on every check and every register is idempotent. It is the one thing
-  /// that has to happen before a deploy key can exist, and it lives here rather
-  /// than in a separate step because the approved sequence has no step for it.
+  /// ## CALLING THIS REPEATEDLY IS SAFE BECAUSE THE SERVER MERGES, NOT BECAUSE
+  /// ## `ON CONFLICT DO UPDATE` IS IDEMPOTENT
+  ///
+  /// This used to say "Both writes are upserts server-side (`ON CONFLICT DO
+  /// UPDATE`), so calling this on every check and every register is idempotent."
+  /// That was false, and the way it was false is the reason the server changed.
+  ///
+  /// An `ON CONFLICT DO UPDATE` is idempotent only when every column it rewrites
+  /// is written with the value it already holds. The product upsert rewrote
+  /// eight columns, and at least two of them are not the caller's to set:
+  /// `state`, which the server computed as `registered`, and `createdAt`, which
+  /// it computed as "now". Pressing this on an EXISTING product therefore reset
+  /// its lifecycle state to `registered` and its `createdAt` to the press, and
+  /// `version` back to 1. `description` came along too, because this method
+  /// passes `description: ''`.
+  ///
+  /// On the live `shipit-platform` that was not a cosmetic overwrite: it was
+  /// `governed` with an accepted baseline, and `ProductTransitions` has no edge
+  /// from `registered` back to `governed`, so the press stranded it.
+  ///
+  /// The server now MERGES on this path (see
+  /// `ControlPlaneService.registerProductWithManifest`): for a product that
+  /// already exists it preserves `state`, `description`, `createdAt` and
+  /// `version` and writes only the declared QA contract. So this method may
+  /// still be called on every check and every register — that is now a property
+  /// of the server's behaviour and is asserted there, not an assumption made
+  /// here about what an upsert does.
+  ///
+  /// Note also that `manifestJson: '{}'` still declares NO QA contract: the
+  /// server reads `'{}'` as "no manifest supplied". The gate list this flow
+  /// declares is a separate concern, and it is not this method's job.
   Future<void> _ensureProductAndRepository(String productId) async {
     await _repository.createProduct(
       productId: productId,

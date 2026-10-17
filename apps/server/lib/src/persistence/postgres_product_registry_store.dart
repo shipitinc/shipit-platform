@@ -91,16 +91,48 @@ class PostgresProductRegistryStore implements ProductRegistryStore {
       );
     }
 
-    await _db.execute(
-      '''$bareInsert ON CONFLICT ("productId") DO UPDATE SET
-             "name" = EXCLUDED."name",
-             "description" = EXCLUDED."description",
-             "manifestVersion" = EXCLUDED."manifestVersion",
-             "state" = EXCLUDED."state",
-             "createdAt" = EXCLUDED."createdAt",
-             "updatedAt" = EXCLUDED."updatedAt",
-             "version" = EXCLUDED."version"''',
+    // A NULL `expectedVersion` IS A CREATE, NOT A MINT-WHATEVER. See the
+    // method's own doc comment: this branch used to be
+    // `ON CONFLICT ("productId") DO UPDATE` over every column, which turned
+    // `ProductRegistryEngine.createProduct` into "reset this product to
+    // `registered`, `createdAt` = now, `version` = 1". `ProductTransitions` has
+    // no edge from `registered` back to `governed`, so the conflict branch did
+    // not merely rewrite a row — it took a governed product out of governance
+    // with no way back, and recovery meant a new baseline revision, a new
+    // independent verification and a new human approval.
+    //
+    // It is `DO NOTHING` plus a typed refusal rather than a silent
+    // `DO NOTHING`, because a silent `DO NOTHING` would leave
+    // `engine.createProduct` returning the Product object it just fabricated
+    // while the row on disk is somebody else's: the caller would be handed a
+    // `registered` v1 product that does not exist, and the divergence would only
+    // surface later and elsewhere. This is the same refusal the
+    // `expectedVersion == 0` branch above already reports for "insert at zero
+    // into a row that is at N", and it carries the same `ConcurrentModification`
+    // type, so there is one failure to learn rather than two.
+    //
+    // This is defence in depth and not the fix. The fix is the MERGE in
+    // `ControlPlaneService.registerProductWithManifest`, which for an existing
+    // product writes no product row at all. This branch exists so that any
+    // OTHER caller reaching `createProduct` for a product that already exists
+    // gets a typed exception instead of a silent governance reset.
+    final inserted = await _db.execute(
+      '$bareInsert ON CONFLICT ("productId") DO NOTHING',
       parameters: QueryParameters.named(_productParams(product)),
+    );
+    if (inserted == 1) return;
+    final existing = await _db.query(
+      'SELECT "version" FROM "product" WHERE "productId" = @productId',
+      parameters: QueryParameters.named({'productId': product.productId}),
+    );
+    // `existing.isEmpty` after a zero-row insert means the conflicting row was
+    // deleted between the two statements, so this write did land. Returning is
+    // right there; refusing would report a conflict that no longer exists.
+    if (existing.isEmpty) return;
+    throw ConcurrentModificationException(
+      entityId: product.productId,
+      expectedVersion: 0,
+      actualVersion: existing[0].toColumnMap()['version'] as int,
     );
   }
 
