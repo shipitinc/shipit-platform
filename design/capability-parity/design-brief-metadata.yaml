@@ -15,8 +15,8 @@ requirements_refs:
   - "docs/engineering/FOLLOW_UPS.md §6 req 3 — the same set consumed by CI"
   - "docs/engineering/FOLLOW_UPS.md §6 req 4 — lane gate refusing an unmeasured 'clean'"
   - "docs/engineering/FOLLOW_UPS.md §5 F-27 — silent harness truncation; 'green' may mean 'truncated'"
-  - "docs/engineering/FOLLOW_UPS.md §5 F-15(1) — CI installs Dart only; melos bootstrap crashes"
-  - "docs/engineering/FOLLOW_UPS.md §5 F-15(5) — golden test asserts an FLUTTER_ROOT path shape"
+  - "docs/engineering/FOLLOW_UPS.md §3 F-15(1) — CI installs Dart only; melos bootstrap crashes"
+  - "docs/engineering/FOLLOW_UPS.md §3 F-15(5) — golden test asserts an FLUTTER_ROOT path shape"
 
 architecture_refs:
   - "apps/control_plane/test/tools/golden_render_environment.json (existing declared-environment contract; imported, not re-authored)"
@@ -65,10 +65,10 @@ risk_assessment:
 
 changelog:
   - "revision 1 (initial brief). Four ledger requirements designed as one committed declaration
-     (tool/capabilities.json) plus one dependency-free checker (tool/capability-check), with three
+     (tool/capabilities.conf) plus one dependency-free checker (tool/capability-check), with three
      consumers: make qa-up, CI, and the lane gate."
   - "ANSWERED Q1 hybrid declaration (derive what is derivable, declare what is not) at
-     tool/capabilities.json, with --verify re-derivation as the teeth. Derive-only rejected
+     tool/capabilities.conf, with --verify re-derivation as the teeth. Derive-only rejected
      (cannot express service.postgres_test or the render environment); declare-only rejected
      (duplicates pubspec.yaml and adds a third place to forget)."
   - "ANSWERED Q2 component = a repository path owning a validation surface; identity IS the path, so
@@ -137,7 +137,7 @@ implementation_feasibility:
 
 traceability:
   requirements_covered:
-    - "REQ-1 — §3.1 (tool/capabilities.json), §4 Q1/Q2/Q3"
+    - "REQ-1 — §3.1 (tool/capabilities.conf), §4 Q1/Q2/Q3"
     - "REQ-2 — §3.2 (checker), §3.3 (codes 1/2/3), §3.5 (qa-up prerequisite, before any docker line)"
     - "REQ-4 — §3.3 (code 3), §3.4 (three lane surfaces, exit-0-only-permits-clean)"
     - "F-27 — §3.3 ('0 is never returned when nothing was probed')"
@@ -270,13 +270,18 @@ review_disposition:
 
 not_fully_addressed:
   - id: L3
-    finding: "section 4 Q5 infers exit 0 from 'probeable'. Probeable is not the same as satisfied."
-    status: PARTIAL
-    why: >
-      The inference is still present in Q5's prose, but Q5's recommendation it supported has been
-      withdrawn by HD-2, so the inference no longer carries any decision. Removing it is cleanup,
-      not a correction, and the reviewer's own note records that the outcome happens to hold on this
-      host. Left visible rather than silently deleted so a reader can check it.
+    finding: >
+      section 4 Q5 infers exit 0 from "probeable". Probeable is not the same as satisfied.
+    status: REGRADED_MEDIUM
+    prior_classification: PARTIAL — "no longer carries any decision"
+    why_regraded: >
+      That prior classification was WRONG and the re-review showed it. The inference is carried by
+      AC#1, an implementer's grading criterion, and under HD-2 AC#1 was UNSATISFIABLE: it required
+      exit 0 with drift as a NON-FATAL entry, which HD-2 forbids outright. So L3 is not cleanup
+      left over from a withdrawn recommendation -- it is the same defect as H-A, reaching the
+      acceptance criteria, and treating it as cosmetic is what allowed five live texts to keep
+      treating drift as warnable. Corrected: AC#1 now requires a matching exact version and exit 0.
+    corrected_in: "second correction pass (this working tree)"
 
 corrections_by: "Manager/orchestrator-main, applied directly"
 corrections_at: "2026-10-16"

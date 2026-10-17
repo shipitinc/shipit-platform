@@ -2,6 +2,13 @@
 decision_id: e07c4a93-1f28-4d6b-8a35-9d20c6e1b7f4
 type: ARCHITECTURE
 status: RESOLVED
+# NUMBERING CORRECTION (Manager, 2026-10-16, second design-review pass):
+# The title and label below were written BEFORE design/capability-parity renumbered its exit
+# table, in which UNDECLARED became 5 (4 is UNKNOWN, so that it could not collide with the
+# imported contract's exitRefusedToGrade=3). The DECISION IS UNCHANGED -- UNDECLARED is fatal in
+# CI from day 1 of slice 2 -- only the integer moved. design/capability-parity section 3.3 is the
+# authority; an implementer following this file's "4" and one following the brief would emit
+# different codes for one condition. Recording the reconciliation rather than silently diverging.
 title: An UNDECLARED workspace member is fatal in CI from the first day of slice 2
 resolution:
   selected: FATAL_FROM_DAY_ONE

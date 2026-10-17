@@ -42,7 +42,7 @@ Facts established for this lane (per the dispatch brief) and corroborated here:
 | # | Fact | Source |
 |---|---|---|
 | E1 | Host has Flutter 3.44.7 (`/Users/alkebut/fvm/default/bin/flutter`), Dart 3.12.2 | dispatch |
-| E2 | **`.fvmrc` pins `3.44.0`. ~~The pin is enforced nowhere.~~ CORRECTED IN REVIEW: it IS enforced, at `pubspec.yaml:112` (`cd apps/control_plane && fvm flutter test`), which resolves through it. The original evidence here was wrong.** | `.fvmrc` (2 lines); `pubspec.yaml:112`; dispatch |
+| E2 | **`.fvmrc` pins `3.44.0`. ~~The pin is enforced nowhere.~~ CORRECTED IN REVIEW: it IS enforced, at `pubspec.yaml:112` (`cd apps/control_plane && fvm flutter test`), which resolves through it. The original evidence here was wrong.** | `.fvmrc` (3 lines); `pubspec.yaml:112`; dispatch |
 | E3 | `apps/control_plane/pubspec.yaml` declares `sdk: '>=3.12.0 <4.0.0'`, which 3.44.7 satisfies | `apps/control_plane/pubspec.yaml:8` |
 | E4 | The QA **client** container needs no Flutter: `docker/Dockerfile.client` is `FROM nginx:alpine` and COPYs pre-built `build/web` | `docker/Dockerfile.client:12,18` |
 | E5 | The Flutter **build** stays on the host by deliberate design | `docker/build-client.sh:19-23` (header) |
@@ -71,7 +71,7 @@ as `dart run …` inside this workspace could not run on exactly the machine it 
 One committed declaration, one dependency-free checker, three consumers.
 
 ```
-        tool/capabilities.json          ← the declaration (DATA, committed, reviewed)
+        tool/capabilities.conf          ← the declaration (DATA, committed, reviewed)
                     │
                     ▼
         tool/capability-check            ← POSIX sh. No SDK. No network. No Docker.
@@ -93,8 +93,10 @@ direction — a false `SATISFIED` — is precisely the failure this entire mecha
 prevent, so the format is chosen so that the expensive mistake is not expressible.
 
 The contract this design imports is greppable **precisely because it is flat**:
-`golden_render_environment.json:13-21` is top-level scalars with `_`-prefixed doc keys, no nesting,
-no arrays. The draft abandoned exactly the property that made the precedent cheap. Flattening costs
+`golden_render_environment.json:13-21` is top-level scalars with `_`-prefixed doc keys — no nesting and no arrays **in the enforced
+region** (the whole file is not flat: `golden_render_environment.json:6-9` is a nested
+`_what_is_enforced` array). Flatness is what makes the *enforced* keys cheap to read, which is the
+property being borrowed. The draft abandoned exactly the property that made the precedent cheap. Flattening costs
 nothing and is strictly more robust; a real JSON parser in `sh` is neither.
 
 Conventions carried over wholesale from that contract:
@@ -112,6 +114,27 @@ Grammar, deliberately trivial to parse without a real parser:
 - `require.<capability>` declares a requirement, `probe.<capability>` defines its **one** probe;
 - a capability referenced by `require.` but not defined by `probe.`/`import.`/`assert.` is
   `UNUSABLE` (exit 2), never implicitly satisfied.
+
+**The directive set is CLOSED, and an unrecognised line is a parse error.** Corrected in review: the
+grammar originally *named* five directives and then *used* seven, while scoping is positional — so an
+unrecognised prefix is indistinguishable from a `_`-prefixed continuation, and a typo'd
+`require.flutter.skd` would **silently disappear**. That is the expensive direction: the checker
+would report a requirement it never checked. Fixed by making the reader fail closed.
+
+| prefix | meaning |
+|---|---|
+| `#` (line-leading only) | comment |
+| `component` `kind` `derived_from` `environments` | component header fields |
+| `surface` `_description` `enforce` | scope header fields |
+| `require.<capability>` | declares a requirement; optional `source=`, `satisfies=`, `requires_env=` |
+| `probe.<capability>` | the one probe command for a capability |
+| `import` `assert` | delegation and invariant directives |
+| `_<name>` | documentation, never enforcement |
+
+**Any other non-comment, non-blank line is a PARSE ERROR → exit `2` `UNUSABLE`,** naming the line
+number. There is no lenient mode and no flag enabling one (`check_render_environment.dart:24-26`
+rejects *any* argument). Adding a directive is therefore a schema change — friction paid at review
+time rather than at gate time, which is the correct place for it.
 
 ```
 # ---------------------------------------------------------------- component
@@ -138,7 +161,8 @@ require.fvm             derived   _why=.fvmrc exists and root pubspec.yaml `test
 # ---------------------------------------------------------------- surface: golden
 surface        apps/control_plane.golden
 _description   a SEPARATE surface with a SEPARATE, stricter, already-authorised contract.
-                                    Imported whole, not re-described.
+                                    Imported whole, not re-described — but **only its machine axes are evaluated by `sh`**; the
+noise-floor verdict stays with `check_golden_domination.dart` (§3.6).
 import         apps/control_plane/test/tools/golden_render_environment.json
 enforce        exactly
 
@@ -202,7 +226,7 @@ This is the same technique, and the same justification, already used in this rep
 daemon contact. That is deliberate — it runs before every client build, so it must be free, and it
 must be runnable by anyone (CI included) without Docker authority."*
 
-Parsing: the script reads `pubspec.yaml`, `.fvmrc` and `capabilities.json` with `awk`/`grep` for a
+Parsing: the script reads `pubspec.yaml`, `.fvmrc` and `capabilities.conf` with `awk`/`grep` for a
 **fixed, named set of keys**, exactly as `melos run verify:schema-deviations` greps SQL for
 `grep -qF -- "$pattern"`. **If a required key is not found, the check reports `UNKNOWN`, never a
 default.** This is the property that matters; the parsing strategy is replaceable and is called out
@@ -245,8 +269,10 @@ Three properties, each closing a distinct hole:
   success. This is F-27 applied to capability checking: *"A missing 'All tests passed!' line must be
   treated as inconclusive, never as green."*
   **A selection matching ZERO requirements has no defined answer in this table, and that gap is a
-  defect, not a convenience** — it is reachable today via `--env ci`, whose selection is empty under
-  §3.1's scoping. **Rule: a zero-requirement selection returns `2` `UNUSABLE`.** Nothing was
+  defect, not a convenience** — it is reachable whenever a selector names nothing: an environment no
+  component declares, or `--component <path>` for a path outside the manifest. *(The earlier example,
+  `--env ci`, no longer reaches it: H3 added `ci` to `apps/control_plane`'s environments precisely
+  so F-15(1) becomes visible. The rule stands; that example did not.)* **Rule: a zero-requirement selection returns `2` `UNUSABLE`.** Nothing was
   checked, so the tool must not report success, and it must not invent a mismatch either. Reporting
   `0` would be the F-27 defect in new clothing; reporting `1` would name a failure that was never
   observed.
@@ -257,6 +283,8 @@ Three properties, each closing a distinct hole:
   the claim is refused. Per **HD-3** (`.decisions/e07c4a93-1f28-4d6b-8a35-9d20c6e1b7f4.yaml`) this
   is **fatal in CI from the first day of slice 2**, with no advisory phase. Slice 1 does not emit
   `5` at all, because it declares only 1 of 16 workspace members (§4 Q2).
+
+**Numbering note.** Human Decision HD-3 (`e07c4a93…`) was written before this table was renumbered and still reads *"Exit code 4 (UNDECLARED)"*. **This table governs.** The decision's *intent* — UNDECLARED is fatal in CI from day 1 of slice 2 — is unchanged and implemented; only the integer moved, because `4` is `UNKNOWN` here. An implementer following HD-3's number and one following this table would emit different codes for one condition; this note is the reconciliation.
 
 **This is the code that would have stopped the incident.** On the review machine in §6,
 `which flutter` → not found ⇒ `flutter.sdk` is `UNKNOWN` ⇒ **exit 4** ⇒ the word "clean" is not
@@ -337,8 +365,11 @@ qa-build`, justified by "Make evaluates prerequisites left to right". That is tr
 false under `make -j`**, which `qa-up` supports: with no `.NOTPARALLEL`, `.MAKEFLAGS` or `MAKEFLAGS`
 in `Makefile` (verified), the two prerequisites run **concurrently**, so the refusal need not precede
 `build-client.sh:235`. An order-only prerequisite (`|`) is the correct construct — it sequences the
-check ahead of `qa-build`'s recipe without changing what `qa-up` depends on. This matches the shape
-of the existing `check-client-build` guard at `Makefile:129`, so it is also repo-consistent.
+check ahead of `qa-build`'s recipe without changing what `qa-up` depends on. **Not repo-precedented — the earlier claim was wrong.** `Makefile:129` is
+  `qa-build-client: check-client-build`, a **normal** prerequisite: the very shape this correction
+  rejected. `grep` finds **zero** order-only prerequisites in `Makefile`. The construct is still
+  correct (`make -j` is the only reason one is needed); it is simply new to this repository. The
+  lines actually touched are `Makefile:77` and `Makefile:103`.
 
 `capability-check` is `.PHONY`, runs `./tool/capability-check --env host --surface validation`, and
 touches nothing. `build-client.sh:235` **already** fails closed on absent Flutter (E10), so the gate
@@ -365,8 +396,11 @@ no Flutter**. The boundary:
 
 **Consequence, stated rather than hidden:** `sh` can decide whether the golden surface's *machine*
 facts match, and **must** exit `1` on a mismatch. It **cannot** decide whether the baselines still
-reproduce, and must not pretend to. Slice 1 therefore reports the golden surface's machine axes and
-**delegates the noise-floor verdict to the existing Dart check** — which is the entire point of
+reproduce, and must not pretend to. **Slice 1 covers the `validation` surface only**, so it never evaluates the golden surface at all;
+  slice 1 only *verifies* that the delegation target (`check_golden_domination.dart`) is reachable,
+  reporting `UNUSABLE` if it is not, and grades nothing golden. Slice 3 adds the golden surface, at
+  which point `sh` reports its machine axes and **delegates the noise-floor verdict to the existing
+  Dart check** — which is the entire point of
 importing that contract instead of re-implementing it. A slice that re-implements `maxNoiseFloorRatio`
 in `sh` is rejected on sight.
 
@@ -376,7 +410,7 @@ in `sh` is rejected on sight.
 
 ### Q1 — Where does the declaration live, and in what format?
 
-`tool/capabilities.json`, at the repository root, outside the Dart workspace, committed and
+`tool/capabilities.conf`, at the repository root, outside the Dart workspace, committed and
 reviewed like any other source. JSON, adopting E9's conventions (`_`-prefixed documentation keys,
 unreadable values are errors, provenance recorded).
 
@@ -410,7 +444,8 @@ mapping table and no alias table to drift.
 
 - **`validation`** — "may a lane say the gates are clean?" Binds `flutter.sdk`, `fvm`, `host.build_web`.
 - **`golden`** — "may golden verdicts be graded?" Imports `golden_render_environment.json` and
-  enforces it **exactly**.
+  enforces the **machine axes exactly** (osFamily, osMajor, architecture, flutterVersion). The
+  `maxNoiseFloorRatio` verdict is **delegated to Dart**, not decided here — see §3.6.
 
 These are different claims with different evidence. Folding them into one "capability check" would
 either weaken the golden contract to the loose one, or make the loose gate unpassable. A lane may
@@ -430,8 +465,8 @@ already has.
 | `dart.sdk` (range) | **derived** | root `pubspec.yaml` `environment.sdk: '>=3.12.0 <4.0.0'` |
 | `fvm` | **derived** | `.fvmrc` exists **and** `pubspec.yaml`'s `test:flutter` invokes `fvm flutter test` |
 | `melos` | **derived** | root `pubspec.yaml` `dev_dependencies` |
-| `host.build_web` | **probed, never derived** | `build/` is gitignored (E12). The artifact's existence is a **runtime** fact, not a repository fact; deriving it from the tree would be wrong by construction. |
-| `host.render_environment` | **imported** | It already exists, is already Human-Decision-authorised (`3e9dfb75`), and already refuses with exit 3. Duplicating it would create two contracts for one fact. |
+| `host.build_web` | **declared, and probed at runtime** | `build/` is gitignored (E12). The artifact's existence is a **runtime** fact, not a repository fact; deriving it from the tree would be wrong by construction. |
+| `apps/control_plane.golden` (imported, not probed) | **imported** | It already exists, is already Human-Decision-authorised (`3e9dfb75`), and already refuses with exit 3. Duplicating it would create two contracts for one fact. |
 | `service.postgres_test` | **declared** | Needs a live Postgres **and** a secret. No pubspec, no Dockerfile records it; `Makefile:241` does, in prose inside a shell recipe. |
 | `egress.googleapis` | **declared** | It exists today **only as a comment** (`build-client.sh:19-23`). A comment is not a requirement. This is the requirement most likely to be violated, because the violating act — "let's move the Flutter build into the container, it's cleaner" — feels like an improvement. |
 
@@ -452,8 +487,7 @@ how this defect started.
 
 ### Q4 — Fail-closed semantics: what happens when a requirement is UNKNOWN?
 
-**This is the crux, and the answer is: UNKNOWN fails.** It gets its own verdict and its own exit
-code (`3`), because today's failure is precisely that an unknown was silently treated as satisfied.
+**This is the crux, and the answer is: UNKNOWN fails.** It gets its own verdict and its own exit code (`4`), because today's failure is precisely that an unknown was silently treated as satisfied.
 
 An `UNKNOWN` arises when — and only when — one of these is true:
 
@@ -462,7 +496,7 @@ An `UNKNOWN` arises when — and only when — one of these is true:
 3. the manifest is missing the key the probe needs;
 4. a requirement has no `probe` at all (declared but not yet measurable) — **this must be `UNKNOWN`,
    not `SATISFIED`, on day one**;
-5. the selected component has no manifest entry ⇒ `UNDECLARED` (4).
+5. the selected component has no manifest entry ⇒ `UNDECLARED` (5).
 
 Case 4 is the one that will be argued about, so it is stated as a rule rather than left to
 judgment: **a requirement that cannot be measured is `UNKNOWN`.** There is no "assume the best"
@@ -471,8 +505,44 @@ be probeable before the declaration is merged.
 
 ### Q5 — The pin-drift question: `.fvmrc` says 3.44.0, the host has 3.44.7
 
-**Recommendation: **SUPERSEDED BY HD-2** — both surfaces now pin EXACTLY and version drift is
-FATAL. (The original `range-satisfies` recommendation rested on E2, which review found false.)
+**WITHDRAWN BY HD-2** (`.decisions/b58d0e17-9c46-4f8a-a2d5-3e91b7c40a58.yaml`, RESOLVED). Both
+surfaces pin **exactly** and version drift is **FATAL**, not warned.
+
+Everything between this line and the withdrawal marker is the **original withdrawn reasoning, kept
+verbatim so the reversal is auditable**. It is NOT live guidance. In particular, argument 4 below
+("warning on version"), the `DRIFT, not fatal` output format, and the "exit 0" worked example were
+each **live contradictory text** in an earlier correction and are the reason this section is now
+closed rather than annotated. Do not read them as a fallback.
+
+**Why the original premise failed (recorded, because it nearly cost an irreversible change):**
+this recommendation argued that "nothing makes 3.44.0 special". That premise was **false**.
+`.fvmrc` **is** the repository-wide developer pin and `pubspec.yaml:112` (`fvm flutter test`)
+enforces it. Worse, the premise rested on `FOLLOW_UPS.md` F-33, which recorded the FVM/golden
+divergence as a "latent conflict" — it is **not a conflict**: `golden_render_environment.json`'s
+`_authority` cites Human Decision `3e9dfb75-7bdf-4a8c-89dd-c76779a65371` (RESOLVED/OPTION_C), its
+`_runner_note` states the divergence is **deliberate and policed by the precondition**, and running
+the goldens under 3.44.0 makes `check_golden_domination.dart` exit `refusedToGrade` — which **is
+the design working**. An operator was asked which version was authoritative on that framing and
+selected "re-render the goldens"; executing it would have overturned a resolved decision and changed
+every golden baseline for no gain.
+
+**Reading of HD-2, recorded because the decision text admits two.** HD-2's `label` says drift is
+"FATAL" ⇒ exit `1` (a measured mismatch). Its `delegated` clause says an unmatched version "must exit
+UNKNOWN" ⇒ exit `4`. **Both forbid "clean", so fail-closed holds either way**, but they are different
+codes. This brief takes **`1`** because a wrong version is *known and measured*, which is `1`'s
+definition; `4` is reserved for *could not be measured*. The operator confirmed the intent (fatal,
+never a warning) on being shown both readings.
+
+**Live behaviour now:** a `flutter.sdk` whose version does not match its surface's exact pin exits
+`1` and the lane may not write "clean". There is no `drift` array, no `DRIFT, not fatal` string, and
+no exit-0 path for a mismatched SDK. `--env host` / surface `validation` therefore exits `0` only when
+the SDK resolves through `.fvmrc` to **3.44.0**; surface `golden` requires **3.44.7** on its machine
+axes (§3.6) with the noise-floor verdict delegated to Dart.
+
+---
+
+<details>
+<summary>Original withdrawn recommendation (kept for audit; NOT guidance)</summary>
 
 Original, withdrawn: `range-satisfies` for build and validation; exact-match only where a contract
 already demands it. Specifically: `.fvmrc`'s exact version is a `preferredVersion`, reported and
@@ -483,39 +553,52 @@ Justification:
 
 1. **Nothing in the repository makes `3.44.0` semantically special.** The declared constraint is
    `sdk: '>=3.12.0 <4.0.0'` (E3). 3.44.7 satisfies it. A gate that fails on 3.44.7 would be
-   enforcing a distinction the codebase does not make.
+   enforcing a distinction the codebase does not make. **[FALSE — see "Why the original premise
+   failed" above. `.fvmrc` is enforced at `pubspec.yaml:112`.]**
 2. **An exact-pin gate here would be *permanently* red for most developers.** FVM's `default` is a
    shared, mutable pointer; every machine that runs `fvm use default` moves off the pin the moment
-   anyone upgrades. E9's own header names this exact failure and refuses to build it:
-   *"Enforcing a value that drifts every few days would make this gate refuse to grade on every
-   image rollout — a permanently red required gate with no owner, which is the same failure in the
-   other direction."*
+   anyone upgrades. **[Argument rests on an invocation this repository does not use — no
+   `fvm use default` appears anywhere in it. The repo's own path is `fvm flutter test`, which
+   resolves the pin, so a developer's global default does not move it.]**
 3. **The thing that genuinely requires an exact pin already has one, and it is a different axis.**
    Golden pixel data requires macOS 26 / arm64 / **3.44.7** (E8), it is already enforced at two
    points with exit 3, and it already **deliberately diverges from `.fvmrc`** under Human Decision
-   `3e9dfb75`. Making `.fvmrc` exact would create a second, contradictory exact pin over the same
-   toolchain and a contradiction between two contracts in one repository.
+   `3e9dfb75`. **[This argument is SURVIVED as fact but INVERTED as reasoning: the divergence being
+   deliberate is exactly why `.fvmrc` can be exact for its own axis without contradicting the golden
+   pin. They are different facts about different surfaces, so two exact pins coexist cleanly.]**
 4. **The asymmetry that decides it.** Absence of Flutter **breaks a gate**. A different patch
    version of Flutter **does not break anything the repo declares**. Failing on absence and warning
-   on version matches the actual consequence of each error.
+   on version matches the actual consequence of each error. **[REJECTED BY HD-2. Under the operator's
+   ruling a wrong version is fatal on both surfaces.]**
 
 **Drift is reported, never silent:** `flutter.sdk: SATISFIED (observed 3.44.7; .fvmrc prefers
 3.44.0 — DRIFT, not fatal)`. A drift that is only ever a warning is invisible within a week, so it
 is printed on **every** run to stderr and included in the `--json` payload as a `drift` array.
+**[WITHDRAWN — HD-2 makes drift fatal. This output format is withdrawn with it, and its survival in
+an earlier correction was a BLOCKER.]**
 
 **State the falsifiable test, so this recommendation can be checked rather than believed:** if a
 future change makes `.fvmrc` exact, the change must first demonstrate that some artifact produced by
 `3.44.7` differs from `3.44.0` in a way the repository cares about. The golden corpus is the one
-candidate, and it is already pinned separately.
+candidate, and it is already pinned separately. **[MOOT — `.fvmrc` is now exact by HD-2. The test
+below stands as the falsifier for HD-2 instead.]**
 
 **What actually happens on this host, stated plainly so nobody has to run it to find out:** for
 `apps/control_plane` / surface `validation` on the `host` environment, `flutter.sdk` is
 `SATISFIED (3.44.7, drift from `.fvmrc` 3.44.0)`, `fvm` and `host.build_web` are probeable, so the
 result is **exit 0**. For surface `golden` the imported contract is evaluated exactly and its own
 rules decide. **Two different checks; a green `validation` is not a licence to grade goldens**, and
-that sentence belongs in the tool's own `--help`.
+that sentence belongs in the tool's own `--help`. **[The exit-0 claim is FALSE under HD-2: a 3.44.7
+SDK on the `validation` surface now exits 1. The last sentence — a green `validation` is not a
+licence to grade goldens — SURVIVES and is retained as live guidance below.]**
 
-**Escalated, not decided** — see §9, HD-2.
+**A green `validation` is not a licence to grade goldens.** *Retained as live guidance.*
+
+</details>
+
+**Escalated, not decided** — see §9, HD-2. **Both are now RESOLVED**; this line is retained only to
+point at §9, which records the rulings and what they changed.
+
 
 ### Q6 — Migration: the smallest correct first version
 
@@ -524,10 +607,17 @@ declaration exists, derivation works, UNKNOWN fails closed, the lane gate exists
 on a machine that has no Flutter (because that is the machine it is for).
 
 **Slice 1 — MUST. The mechanism, on one component.**
-- `tool/capabilities.json` covering `apps/control_plane` / `validation` / `host` **only**
+- `tool/capabilities.conf` covering `apps/control_plane` / `validation` / `host` **only**
   (`flutter.sdk`, `fvm`, `host.build_web`).
-- `tool/capability-check` — the `sh` script, codes 0/1/2/3, `--json`, `--verify`.
-  **Codes 0–3 only. Code 4 (`UNDECLARED`) is slice 2**, because with one component declared, an
+- `tool/capability-check` — invoked as `sh tool/capability-check` (never `./`, so no exec-bit
+  dependency). Codes 0/1/2/4, plus `--json`, `--verify`, `--component`, `--surface`, `--env`,
+  `--help`. **No bypass flag** (`--force`/`--allow-missing`/`--skip`) exists and none may be
+  added. **`--verify` is ONE flag with two milestones — implemented in slice 1, wired into CI in
+  slice 3.** It never means two different things; the earlier ambiguity was in this brief's
+  prose, not the tool.
+  **`--verify` is ONE flag with two milestones — implemented in slice 1, wired into CI in slice 3.**
+  It never means two different things; the earlier ambiguity was in this brief's prose, not the tool.
+  **Codes 0/1/2/4 only. Code 5 (`UNDECLARED`) is slice 2**, because with one component declared, an
   `UNDECLARED` guard would fire on every other workspace member immediately and the first run would
   be a wall of red nobody reads.
 - `make capability-check` + the `qa-up: capability-check qa-build` prerequisite.
@@ -540,15 +630,19 @@ on a machine that has no Flutter (because that is the machine it is for).
   tooling and are NOT instantiated in this product repo**. Editing only the canonical paths would
   therefore change nothing and, more dangerously, **fail nothing** — requirement 4 would be inert in
   the exact runtime where the false claims happened, with no signal. opencode resolves
-  `.opencode/skill/`, so that mirror is the one actually loaded here.
-  *"record `CAPABILITY_PRECHECK: <exit>` for every component whose validation you report."*
+  `.opencode/skill/`, so that mirror is the one actually loaded here. **Honest scope:** `AGENTS.md:54-56`
+  enumerates the generated subtrees as `.opencode/agents/` and `.opencode/command/` — it does **not**
+  list `.opencode/skill/`. The operational conclusion is verified by observation (opencode resolved
+  the skills from that path), but the brief does **not** claim the repo documents it, because the
+  repo does not.
+  *"record `CAPABILITY_PRECHECK: <component> <surface> <exit> <HEAD_SHA>` for every component **and every surface** whose validation you report."* **This is the exact text inserted into the six `SKILL.md` files, so it is the form that actually ships — it carries the surface and the revision because HD-1 records both as load-bearing, and a bare integer cannot distinguish "could not measure" from "measured and absent".**
 - **Acceptance proof:** on a host with Flutter removed from `PATH`, the check for
-  `apps/control_plane` exits **3**, the JSON names `flutter.sdk`, and a lane holding that exit code
+  `apps/control_plane` exits **4**, the JSON names `flutter.sdk`, and a lane holding that exit code
   cannot emit the word "clean".
 
 **Slice 2 — the rest of the workspace, and `UNDECLARED`.**
 - Extend the manifest to `apps/server` (adding `service.postgres_test`) and all `packages/*`.
-- Add exit code **4**, with the workspace scan that produces it.
+- Add exit code **5**, with the workspace scan that produces it.
 - Only *then* add a derivation **drift** check (`--verify`) as a separate CI job — because `--verify`
   firing on a manifest that is not yet complete produces more noise than signal.
 
@@ -558,7 +652,11 @@ on a machine that has no Flutter (because that is the machine it is for).
   `melos bootstrap` crash at `:15` arriving as an unexplained CI failure.
 - **Install Flutter in the CI jobs whose declared capabilities need it** (fixes F-15(1)), reading
   the version from the manifest rather than from a hand-copied `uses:` line.
-- Import `golden_render_environment.json` (already written; nothing to author).
+- Import `golden_render_environment.json`. **NOT "nothing to author"** — §3.6 shows that claim was
+  false and the original design circular: the contract is enforced by **Dart**, so evaluating it
+  exactly needs the SDK it is about. What slice 3 authors is the **delegation boundary** — `sh`
+  decides the machine axes, `check_golden_domination.dart` keeps the noise-floor verdict — plus CI
+  wiring.
 - Replace the `FLUTTER_ROOT` path-shape assertion at
   `apps/control_plane/test/tools/golden_render_environment_test.dart:394` with a check of the
   **probed version**, so the assertion holds under FVM *and* under `subosito/flutter-action`
@@ -604,8 +702,8 @@ on a machine that has no Flutter (because that is the machine it is for).
 |---|---|---|---|---|
 | R1 | **The gate becomes a checkbox.** A lane learns to run `capability-check`, record `0`, and move on — or worse, learns which surfaces nobody checks. | **High** | The mechanism reports its own success while the class of defect recurs. | The lane obligation names the *component* and *HEAD*, not a pass. E9's precedent: the tool must have no skip flag. Countermeasures in slice 2 (`UNDECLARED` forces new components in) and slice 3 (CI consumes it, so it is exercised without a human asking). |
 | R2 | **`grep`/`awk` parsing of YAML is brittle.** A key moves, a `pubspec.yaml` reformats, a nested `sdk:` key is mistaken for `environment.sdk`. | Medium | A `derived` capability silently derives the wrong value — a **false `SATISFIED`**, the expensive error. | Parsing is restricted to a named key list; a key that cannot be located yields `UNKNOWN`, never a default. `--verify` re-derives. Stated in §9 as the main migration trigger to a real parser. |
-| R3 | **Scope explosion.** "Capabilities" invites `postgres_version`, `chrome`, `xcode`, `node`, … | **High** | Unreviewable manifest, slow check, and the mechanism loses the one property that makes it trustworthy: that a human committed to every line. | Slice 1 caps the manifest at **three** capabilities for **one** component. Every added capability must come with a *named* consumer. `capabilities.json` is reviewed like code. |
-| R4 | **The `UNDECLARED` guard (code 4) blocks all work** until every workspace member is declared. | Medium | A wall of red on day one of slice 2. | Deliberately deferred to slice 2, after the manifest is complete. Introduced as its own reviewable slice, never folded into slice 1. |
+| R3 | **Scope explosion.** "Capabilities" invites `postgres_version`, `chrome`, `xcode`, `node`, … | **High** | Unreviewable manifest, slow check, and the mechanism loses the one property that makes it trustworthy: that a human committed to every line. | Slice 1 caps the manifest at **three** capabilities for **one** component. Every added capability must come with a *named* consumer. `capabilities.conf` is reviewed like code. |
+| R4 | **The `UNDECLARED` guard (code 5) blocks all work** until every workspace member is declared. | Medium | A wall of red on day one of slice 2. | Deliberately deferred to slice 2, after the manifest is complete. Introduced as its own reviewable slice, never folded into slice 1. |
 | R5 | ~~**`.fvmrc` range-satisfies is read as "pins are now decorative."**~~ **CLOSED BY HD-2** — no asymmetry remains to be misread. Both surfaces are exact and drift is fatal, so there is no longer a weaker axis to mistake for a licence. | — | — | — |
 | R6 | **The check is bypassed by not declaring the component** — a lane reviews `apps/control_plane` while the manifest covers `apps/server`. | Medium | Requirement 4 silently does not apply. | This is R1/R4's real form and it is exactly why exit code **4** exists. Slice 1's honest limitation is recorded here rather than hidden. |
 | R7 | **The tool cannot run in some lane's context** (no `sh`, no `awk`, unusual sandbox). | Low | The check is skipped and the lane reports unverified — the safe outcome. | Acceptable by design: UNKNOWN is the failure mode, and R7 degrades to `UNKNOWN`, not to a false clean. |
@@ -659,7 +757,7 @@ reasonable. **Read the artifact.**
 | A6 | **A `dart run` tool inside the workspace.** | Cannot run on a Dart-only machine, because the root `pubspec.yaml` `workspace:` includes `apps/control_plane` (E7/F-15(1)). **The tool that detects a missing Flutter must not need Flutter.** |
 | A7 | **A `--force` / `--allow-missing` escape hatch.** | A bypass flag on a fail-closed gate is a flag that will be used, and its use is indistinguishable in the log from the gate passing. Explicitly forbidden, on E9's precedent. |
 | A8 | **Make `make qa-up` the primary gate.** | `qa-up` runs after the stack is up and long after review; §6's false claims were made by lanes that never ran it. It is a convenience surface, and treating it as the primary would optimise the wrong moment. |
-| A9 | **Exact-pin `.fvmrc` at 3.44.0.** | Enforces a distinction the codebase does not make (E3), contradicts the already-authorised golden pin (E8), and produces a permanently red gate for most developers — the failure E9's header names and refuses. |
+| A9 | **Exact-pin `.fvmrc` at 3.44.0.** | **WITHDRAWN AS A REJECTION — this is the option HD-2 ADOPTED.** Rejected originally on three grounds: (a) "enforces a distinction the codebase does not make (E3)" — **false**, `.fvmrc` is enforced at `pubspec.yaml:112`; (b) "contradicts the already-authorised golden pin (E8)" — **false**, the two pins govern different surfaces and their divergence is deliberate under HD `3e9dfb75`; (c) "produces a permanently red gate" — **true in principle, and HD-2 accepted that cost explicitly**. See §9 HD-2. An alternatives table must not reject the decision that governs it.ces a permanently red gate for most developers — the failure E9's header names and refuses. |
 | A10 | **A file an agent reads, with no executable.** | Satisfies requirement 1 and nothing else. Two agents reading the same declaration can still disagree about whether a probe succeeded; that disagreement is precisely the defect. |
 | A11 | **Provision-and-verify** (`fvm install` if missing, then verify). | Turns `SATISFIED` into a statement about a machine the tool silently mutated, with no evidence and no way to detect the next drift. Detection and provisioning must be separate artifacts with separate owners. |
 
@@ -669,10 +767,10 @@ reasonable. **Read the artifact.**
 
 | Ledger requirement | Where designed | Covered by | Gaps |
 |---|---|---|---|
-| **REQ-1** declared capability set per component, as data, derived from the codebase | §3.1 `tool/capabilities.json`; §4 Q1–Q3 | Slice 1 | `UNDECLARED` enforcement (code 4) is slice 2; production/staging environments deferred (NG-7) |
-| **REQ-2** check that the environment satisfies it, failing closed, naming the missing capability; `make qa-up` the gate; must not start-then-judge | §3.2 checker; §3.3 codes 1/2/3; §3.5 `qa-up: capability-check qa-build` (prerequisite, before any Docker line) | Slice 1 | Deliberately *not* the primary gate — see §3.5 |
+| **REQ-1** declared capability set per component, as data, derived from the codebase | §3.1 `tool/capabilities.conf`; §4 Q1–Q3 | Slice 1 | `UNDECLARED` enforcement (code 5) is slice 2; production/staging environments deferred (NG-7) |
+| **REQ-2** check that the environment satisfies it, failing closed, naming the missing capability; `make qa-up` the gate; must not start-then-judge | §3.2 checker; §3.3 codes 1/2/4; §3.5 `qa-build: \| capability-check` (prerequisite, before any Docker line) | Slice 1 | Deliberately *not* the primary gate — see §3.5 |
 | **REQ-3** the same set consumed by CI | §3 diagram; §6 slice 3 | **Slice 3, not slice 1** | F-15(1) (install Flutter in CI) lands with it; until then CI's mismatch becomes *visible* rather than silent |
-| **REQ-4** a lane gate that refuses "clean" when a capability it needs is absent | §3.3 code 3; §3.4 the three lane surfaces | Slice 1 (surfaces 1–2), full closure in slice 2 with code 4 | The executable half is enforced; the prose half (what an agent writes in a report) is an instruction, not a guarantee — stated, not glossed |
+| **REQ-4** a lane gate that refuses "clean" when a capability it needs is absent | §3.3 code 4; §3.4 the three lane surfaces | Slice 1 (surfaces 1–2), full closure in slice 2 with code 5 | The executable half is enforced; the prose half (what an agent writes in a report) is an instruction, not a guarantee — stated, not glossed |
 | **F-27** harness fails silently ⇒ "green" may mean "truncated" | §3.3 "`0` is never returned when nothing was probed"; §4 Q4 | Slice 1 | F-27's *own* instance (the `dart test` truncation) is a separate defect; this design imports the lesson, it does not fix that harness |
 
 **Deliberately out of scope** (so a reviewer does not read them as oversights): F-15(2)–(8), the
@@ -684,10 +782,17 @@ framing itself.
 ## 12. Acceptance criteria for this design
 
 1. `sh tool/capability-check --component apps/control_plane --surface validation --json` exits
-   **0** on this host and prints the `.fvmrc` drift as a non-fatal `drift` entry.
-2. With `flutter` removed from `PATH`, the same command exits **3**, names `flutter.sdk`, and the
+   **0** on this host. **Corrected in review: the previous form of this criterion was
+   UNSATISFIABLE** — it required "prints the `.fvmrc` drift as a non-fatal `drift` entry", which HD-2
+   forbids outright, so an implementer could not have satisfied it while conforming to the decision.
+   Now: exit 0 requires `fvm flutter --version` to resolve to **3.44.0 exactly** (§3.1's probe, not
+   PATH). There is **no `drift` entry**; a version that does not match exits **1**.
+   **Companion criterion:** with `PATH` pointing at 3.44.7 while `fvm` resolves 3.44.0, the check
+   still exits **0**, because the probe measures the SDK that runs the work — the property H4
+   established and the old criterion could not test.
+2. With `flutter` removed from `PATH`, the same command exits **4**, names `flutter.sdk`, and the
    JSON `verdict` is `UNKNOWN`.
-3. A lane holding exit 3 cannot emit the string `clean` in a validation claim without the report
+3. A lane holding exit 4 cannot emit the string `clean` in a validation claim without the report
    naming the unresolved capability — verified by reading the lane instruction text, not by running
    a lane.
 4. The tool runs with no Dart, no Flutter, no Docker, no Compose, no network.
@@ -703,8 +808,14 @@ framing itself.
 
 - **Repository:** `/Users/alkebut/air/shipit-platform`
 - **Branch:** `main`
-- **BASE_SHA / HEAD_SHA:** `64e92a0cfc86f9c0bf3b77294dce7c77f077bda4`
-- **Working tree:** modified only by this design artifact (`design/capability-parity/`) and
-  pre-existing untracked files not created by this lane. **No commit was made** — none was requested.
+- **BASE_SHA (at authoring):** `64e92a0cfc86f9c0bf3b77294dce7c77f077bda4`
+- **Reviewed HEAD:** `03aa2da0120f050f2725df5ec94dd238d891f0a5`
+- **Committed at:** `0033484` — **the earlier "No commit was made" was false and is withdrawn.** The
+  brief was authored as untracked working-tree state; it is now a tracked artifact, because an
+  untracked governance document cannot be reviewed by anyone else.
+- **Correction history:** `0033484` applied the first correction pass (1 BLOCKING, 7 HIGH, 5 MEDIUM,
+  8 LOW from `DESIGN_REVIEW_CHANGES_REQUIRED`). Re-review found that pass **over-claimed**: roughly
+  8 of the 21 were corrected at the *definition site* only and never propagated to the *use sites*.
+  The current working tree applies that second pass. See §8 and `FOLLOW_UPS.md`.
 - **Commands run:** read-only (`git`, `ls`, `cat`, `sed`, `grep`, `uuidgen`, `mkdir`). **No Docker,
   no Compose, no `psql`.** No `git stash`, `git checkout .` or `git add -A`.
