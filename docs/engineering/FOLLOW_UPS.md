@@ -1261,3 +1261,60 @@ is downgraded **HIGH → MEDIUM** because Revision 1's HIGH rested on the claim 
   new `HumanDecisionType` plus a routing arm; `human_decision_routing.dart:151-162` records the two
   tables must move in lockstep or escalation accounting silently breaks.
 - **Tests were not re-run** — no production code changed and no claim rests on a test.
+
+---
+
+## 16. F-55 — the park's human surface has no "do the design review" answer
+
+**Status** OPEN · **named by decision `7f3e2a95…`, which said it must be solved FIRST**
+· recorded 2026-10-17, referenced before it existed
+
+Decision `7f3e2a95-6c81-4d70-b215-8e94a0c7d382.yaml` (Reading B) has this `consequence`:
+
+> *"A human resolving a blocking decision on a feature-intake or design-remediation item CANNOT send
+> it to implementation without a satisfied design review. The dead end this creates must be solved
+> FIRST … This decision does not make the dead end acceptable; it makes it the next thing to build."*
+
+That consequence named **this entry** as where it would be recorded. It did not exist: the file ended
+at F-54, and the design lane — correctly barred from `docs/**` — then cited `FOLLOW_UPS F-55` as an
+existing artifact in **five places**. **The dangling pointer originated in my own decision text.**
+
+### The gap, precisely
+Under Reading B a refused gate parks the item at `designReviewRequired` with a raised
+`HumanDecision` (verified closed by review: `blockingReason` and `blockingHumanDecisionId` both set,
+idempotent, raiser reachable via `stalled_work_item_gate.dart:195-227`). The operator is offered three
+answers — **approve → `designNotRequired`, rework → `planning`, cancel → `cancelled`**
+(`human_decision_routing.dart:121, 132-135`).
+
+**None of them is "do the design review."** The item is parked waiting for a design review and the
+decision that unblocks it offers no way to produce one. `"stop"` (cancel) is the only terminating
+exit.
+
+Closing it needs a **new `HumanDecisionType` plus a routing arm**, and
+`human_decision_routing.dart:151-162` records why that is not a small change: *"a value here that
+disagrees with `targetFor` does not error — it silently stops the escalation index advancing."* The two
+tables must move in lockstep or escalation accounting breaks quietly. That is architecture, and
+`AGENTS.md` reserves architecture to the human.
+
+### The sequencing question this raises — RESERVED TO THE OPERATOR
+The design lane routed this as **slice 1.5, after slice 1**. The independent review disagreed on
+*authority* while agreeing on merits:
+
+> *"Choosing to defer a Level 3 operator instruction on the grounds that the design lane judges the
+> deferral net-positive is a consequential product/architecture decision, and the lane is not entitled
+> to make it. **A flagged judgement is not a discharged obligation.**"*
+
+The decision text says **FIRST**. The design says after. **That is an operator question, not a design
+one, and it gates slice 1.**
+
+### F-56 The ledger was cited before it existed — a process note
+Recorded because the cause was mine, not a lane's. A decision file named a follow-up entry as the
+place to record its consequence; the entry was then never written; and a later lane, barred from
+`docs/**` and correctly following instructions, cited it as real in five places across three artifacts.
+**No reviewer flagged it as suspicious — each took it as an existing artifact.** A named-but-unwritten
+anchor propagates silently, because a citation that looks well-formed invites acceptance.
+
+**Check:** when a decision names a ledger entry, that entry must exist before the decision is cited
+downstream. As a fallible rule: *an artifact citing `FOLLOW_UPS F-NN` that no one in the session
+wrote is a smell, not a fact.*
+
