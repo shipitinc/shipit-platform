@@ -1,0 +1,30 @@
+# human-decision.yaml
+decision_id: 7f3e2a95-6c81-4d70-b215-8e94a0c7d382
+type: ARCHITECTURE
+status: RESOLVED
+title: HD-1's undelegated clause governs EVERY route to implementationReady, including the human-driven one
+resolution:
+  selected: READING_B_CLAUSE_COVERS_EVERY_ROUTE
+  label: The gate applies to waitingForHumanDecision -> implementationReady as well as the automatic routes
+  decided_by: operator
+  decided_at: 2026-10-17T13:40:00Z
+  rationale_given: >-
+    Resolves the tension in HD-1 (2a8f5c31) between its undelegated clause and its rationale. The clause
+    is unqualified -- "an IMPLEMENTER dispatch must be preceded by a satisfied design review for items
+    originating on these two paths" -- and a clause that is not qualified is not narrowed by a
+    rationale that explains why it was written. Reading A was rejected.
+  rejected_alternative: >-
+    READING_A (automatic routes only) was recommended by neither party unprompted: the design lane
+    argued for it, and the independent reviewer found it "defensible and not compelled" while noting
+    the design disposes of the rationale "as a different field" in a single clause, and never reconciles
+    the design's own cost table -- the strongest evidence against its own pick.
+  consequence: >-
+    A human resolving a blocking decision on a feature-intake or design-remediation item CANNOT send it
+    to implementation without a satisfied design review. The dead end this creates must be solved
+    FIRST -- see FOLLOW_UPS F-55, which records why the park's human surface currently offers no
+    "do the design review" answer. This decision does not make the dead end acceptable; it makes it
+    the next thing to build.
+  precondition: >-
+    The reviewer judged this a PRECONDITION to slice 1, not a consequence to record afterwards:
+    sub-slice 1a's pinned content depends on this answer. Confirming it changes what slice 1a
+    contains, so slice 1 may not begin until this decision is recorded -- which it now is.
