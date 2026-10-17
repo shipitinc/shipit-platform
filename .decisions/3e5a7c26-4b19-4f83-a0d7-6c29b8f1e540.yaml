@@ -1,0 +1,43 @@
+# human-decision.yaml
+decision_id: 3e5a7c26-4b19-4f83-a0d7-6c29b8f1e540
+type: ARCHITECTURE
+status: RESOLVED
+title: The design-review park gets its own HumanDecisionType; it may not reuse escalation or designApproval
+resolution:
+  selected: NEW_HUMAN_DECISION_TYPE
+  label: Add a dedicated HumanDecisionType for the design-review park, with arms designed for it
+  decided_by: operator
+  decided_at: 2026-10-17T14:40:00Z
+  rationale_given: >-
+    Four review rounds established the park cannot serve the operator's reversal on an existing type.
+    Two independent facts, both verified:
+      (1) HumanDecisionOption carries only optionId/label/description/recommended
+          (platform_contracts/lib/src/types/human_decision.dart:148-160) -- there is NO per-option
+          decisionType, so a decision's type is a property of the DECISION, resolved as
+          targetFor(decision.decisionType, effectiveChoice) (durable_workflow_engine.dart:758-761).
+          The assertion written to guard this invariant asks for a field that does not exist.
+      (2) (escalation, approve) targets designNotRequired, DELIBERATELY, on the class comment's own
+          reasoning: "an escalation is a statement about EXECUTION failing, not a judgement on the
+          work". So an answer labelled "do the design review" re-triages the item straight back into
+          the guard that just refused it -- the dead-end class this area keeps producing, entered
+          through the door the reversal opened.
+    No escalation arm reaches designApproved for any of the nine HumanDecisionChoice values.
+  rejected_alternative: >-
+    Retyping the park to the existing designApproval was rejected: targetFor(designApproval, approve)
+    already targets designApproved, but it silently re-points the park's other answers -- reject
+    becomes designRejected and rework becomes designInReview, a state in no JobDefinition's
+    entryStates and therefore a dead end in its own right. That would invalidate the park's option
+    table, G16's pinned set, and R4's "stop is the only terminating answer".
+  consequence: >-
+    A new HumanDecisionType is ARCHITECTURE, which AGENTS.md reserves to the human; this decision is
+    that reservation being exercised. Its routing arms MUST be registered in the same change, because
+    human_decision_routing.dart:66-83 records that the two tables must move in LOCKSTEP or
+    "a value here that disagrees with targetFor does not error -- it silently stops the escalation
+    index advancing." A new type whose arms are not registered fails with no error message.
+    Note the artifact's own PASS3-5b finding applies here in the operator's favour: an `approve` answer
+    on a NEW type carries no escalation-index obligation, so the lockstep hazard the design warned
+    about does not apply to this branch.
+  invariant: >-
+    The park's decision type must have an arm reaching `designApproved`, and the artifact's assertion
+    G17 must be rewritten against the REAL data model -- one decisionType per decision, resolved
+    through targetFor -- rather than against a per-option field that does not exist.
