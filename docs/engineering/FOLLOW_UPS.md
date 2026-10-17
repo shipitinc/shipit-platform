@@ -1044,3 +1044,70 @@ feature. `EntryHopper` already receives the whole item (`entry_hop.dart:181` rea
 category **is in scope at the call site** — but the map cannot express the condition. This is the
 same expressiveness gap recorded as **F-40**, reached from a second direction and now with a live
 regression behind it.
+
+---
+
+## 13. HD-1 resolved — and F-47, the gate evaluator that does not exist
+
+**Status** OPEN · **blocking every QA contract** · verified by the Manager
+
+HD-1 is answered: **allow completion, insert a design-review gate before
+`implementationReady` dispatches an IMPLEMENTER** (`.decisions/2a8f5c31…`). The shape is
+delegated to the design lane; the invariant is not — no IMPLEMENTER dispatch for items originating on
+feature intake or design remediation without a satisfied design review.
+
+### F-47 No QA gate in this repository is evaluated by any production code
+**Status** OPEN · **BLOCKING** · verified twice, independently
+
+`allRequiredGatesPassed()` reads `context['gateResults']`:
+
+    guard_conditions.dart:267   final gateResults = context?['gateResults'] as List<QAGateResult>?;
+    guard_conditions.dart:268-270  if (gateResults == null) return GuardResult.fail(name, ...)
+
+**`grep -rn "gateResults:"` across `packages` and `apps` returns ZERO producers** — not in
+production, not in a test, not in a fixture. Nothing ever populates it.
+
+Consequences, stated plainly:
+
+1. `allRequiredGatesPassed()` can only ever **fail**. It guards
+   `qaInProgress → qaPassed` (`work_item_transitions.dart:661`), so **QA has never passed an item.**
+2. The existing triage contract's three gates — `triage-classification-admitted`,
+   `triage-evidence-grounded`, `triage-clarification-routing` — have **never been evaluated**. They
+   are declarations, not enforcement.
+3. Therefore **authoring two more contracts would be a second and third green lie**: rows that
+   exist, gate ids that read like guarantees, and no code that checks any of them. This is the same
+   class as `create_defect_bloc_test.dart:350`, which asserted the defective state — and as the
+   capability-parity disposition block that claimed 21 corrections and delivered ~8.
+
+**This is why the design lane was right to block, and why a `qa-architect` lane cannot honestly
+deliver contracts alone.** A contract without an evaluator is a comment with a schema.
+
+The gate evaluator is therefore **in scope for the design work**, not a follow-up. Until it exists,
+any QA contract in this repository — triage's included — should be read as **declaration only**.
+
+### F-48 `featureIntakeParked` — the regression is fixed (`ddfbfff`)
+**Status** RESOLVED
+
+The `planned`/`planned` structural conflict (§12) is resolved by separating the two cases at the
+state level. A feature parks at `featureIntakeParked`; `planned` stays in
+`triageDefectDefinition.entryStates`, so the two defect-origin items remain dispatchable.
+
+**The proof that the guarantee survived, not the implementation:** `work_entry_test.dart:877` and
+`:881` passed **unmodified**. Three other assertions (`:309`, `:350`, `:929`) moved
+`planned → featureIntakeParked`; those assert *where* the park is, while `:877`/`:881` assert *why*.
+
+No edge returns `featureIntakeParked → planned`, because `planning → planned` is asserted to be the
+only edge into `planned` and adding one re-opens the cycle its anti-cycle test forbids. Recovery is
+via `featureIntakeParked → waitingForHumanDecision`, which `evaluate()` returns as **blocked**, not
+runnable, so it grants no dispatch.
+
+Non-vacuity, measured: adding `featureIntakeParked` to any `entryStates` turns
+`transition_consistency_test` red (`+4 -1`) with the new assertion's own message. No migration:
+`work_item.state` is unconstrained `text` with no CHECK constraint and no PG enum type.
+
+**Two briefing errors of mine, recorded because they cost a lane round-trip:** I told the lane
+`WorkItemState` lives in `packages/workflow_engine` (it is in `packages/platform_contracts`), and I
+demanded "do not edit the test" when three assertions provably had to move. Both were scope errors
+of mine, not judgement calls the lane could have resolved. **A correction lane cannot grant itself
+authority, so a wrong `PROHIBITED_PATHS` or an unsatisfiable acceptance criterion costs a full
+cycle.**

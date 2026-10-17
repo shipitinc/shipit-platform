@@ -1,0 +1,31 @@
+# human-decision.yaml
+decision_id: 2a8f5c31-9d47-4e6b-b2f8-7c15e0d9a4b2
+type: ARCHITECTURE
+status: RESOLVED
+title: Feature-intake and design-remediation items may complete an agent execution, but may not reach an implementer without a design review
+resolution:
+  selected: ALLOW_COMPLETION_GATE_IMPLEMENTATION_ON_DESIGN_REVIEW
+  label: Allow the completion; insert a design-review gate before implementationReady dispatches an IMPLEMENTER
+  decided_by: operator
+  decided_at: 2026-10-17T11:50:00Z
+  rationale_given: >-
+    Authoring QA contracts for these two paths would complete a walk to
+    `implementationReady`, and that is `implementFeatureDefinition.entryStates` with
+    `requiredRole: AgentRole.implementer`. So the unconstrained outcome is a human's
+    undesigned request going straight to having production code written, with no design
+    review and no engineering review on the path -- which the design lane graded Level 3.
+    Refusing completion outright was also rejected: it re-creates the dead end this work
+    exists to remove, leaving two of three intake paths unable to run at all. The chosen
+    middle keeps both intake paths alive while refusing to let an unreviewed request
+    reach implementation unattended.
+  delegated: >-
+    The gate's SHAPE is a design question and is delegated to the design lane: where the
+    review sits in the graph, which actor satisfies it, what happens to an item that never
+    gets one, and whether a defect-origin item takes the same path. What is NOT delegated is
+    that an IMPLEMENTER dispatch must be preceded by a satisfied design review for items
+    originating on these two paths.
+  precondition: >-
+    This decision answers the GOVERNS question only. It does not by itself unblock the two
+    paths: the design lane separately established that no QA gate in this repository is
+    evaluated by any production code, because nothing writes `context['gateResults']` and
+    `allRequiredGatesPassed()` therefore always fails. See FOLLOW_UPS F-47.
