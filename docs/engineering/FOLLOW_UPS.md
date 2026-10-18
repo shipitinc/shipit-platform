@@ -2207,9 +2207,21 @@ that *did* predict correctly was the real run's `refused-or-absent`. Treat dry-r
 claimed retries it did not perform — RESOLVED by `correct-PER-FAILURE-IDEMPOTENCY`, with three
 findings the original entry did not name.** `design-remediation-DEF-1791686085546076` is stuck at
 `agent_executing` with **two** terminal failed jobs; the repair skipped recording the second failure
-because one `agentExecuting → agentFailed` row already existed for that item, then attempted
-`operatorRetry`, which correctly refuses from `agent_executing`. Its output still printed
-`retried: true` while the state did not move — a **false claim in the repair's own report**.
+because one `agentExecuting → agentFailed` row already existed for that item, then called
+`operatorRetry`, which returned the item **unchanged via an idempotency-key replay**
+(`durable_workflow_engine.dart:465-467`, and the `transition` replay at `:145-148`). Its output still
+printed `retried: true` while the state did not move — a **false claim in the repair's own report**.
+
+> **Corrected twice.** An earlier version of this entry said `operatorRetry` "correctly refuses from
+> `agent_executing`". **That is wrong at the layer the script operates on.** The script calls the
+> **engine** directly (`repair_stranded_work_items.dart:664`), not the endpoint. In the engine a genuine
+> refusal **throws** (`:205-208` via `:486`) and `_guard` turns it into `FAILED: … WorkflowTransitionRejectedException`
+> and `exit(1)` — it never reaches the `retried` line at all. So the observed `retried: true` could not
+> have come from a refusal; it came from a **replay returning the row unchanged**. My separate
+> `outcome: notApplicable` observation was true but describes a **third** layer the script never reaches
+> (`work_item_action_endpoints.dart:592-599`). A second incompleteness: `[stranded.failure_recorded]`
+> was *also* logged unconditionally on that replay path, so the original transcript of the output was
+> incomplete.
 
 1. **The idempotency key is now the failure, not the work item** — on both writes. The failure key
    and the `operatorRetry` key were *separately* per work item, so fixing only the first still left
@@ -2233,10 +2245,21 @@ because one `agentExecuting → agentFailed` row already existed for that item, 
    an unstranded item, a refused item with no durable failure, a repair that worked — so it cannot
    degenerate into always non-zero.
 
-**Consequence of (1), recorded rather than hidden:** rows written under the OLD per-work-item key are
-not deduplicated by the new one, so an item already carrying such a row will record one further row
-for the same failure. That row is truthful — the job really did fail — and, unlike the old key, it
-does not permanently block the retry that follows it, which is what unstuck the live item.
+**Consequence of (1), recorded rather than hidden, and stated CONDITIONALLY:** rows written under the OLD
+per-work-item key are not deduplicated by the new one. **Whether a further row is written depends on
+which job the old row names.** The fixed run selects the **newest** terminal failed job
+(`_terminalFailedJob`, `repair_stranded_work_items.dart:730-739`, sorted by `completedAt` descending);
+the old key was consumed by whichever job was newest *at that time*. If the pre-existing old-key row
+names the **first** failure — which is what "skipped recording the second failure" implies — the fixed
+run writes a row for the **second** failure: a genuinely new row, i.e. **the fix working, not a
+duplicate**. A further row for the *same* failure appears only if the old row names that same job.
+**Which case the live item is in is not established from the durable rows** and is settled by observing
+the `jobId` on the repair's `failure :` line. Any such row is truthful — the job really did fail — and,
+unlike the old key, it does not permanently block the retry that follows it.
+
+> **NOT YET RUN.** No run of the corrected script against any database has happened. The live item
+> **remains stranded at `agent_executing`**. Running the corrected script is the outstanding,
+> unproven step; nothing in this entry should be read as saying it already worked.
 
 **Not changed, deliberately:** `StrandedWorkItemOutcome.qaContractId`, `.stateBefore` and `.notes` were
 audited and are already truthful — all three are read back from the store rather than composed. The
@@ -2272,3 +2295,14 @@ matter reserved to the operator, not a flow blocker.
 F-84. Nothing invokes them today, so it is latent rather than active — but it is the same hazard that
 destroyed the database once. Recommended as its own correction: a guard refusing non-disposable
 `SERVERPOD_DATABASE_*` targets, **not** removal of `--apply-migrations`, which they legitimately need.
+
+**F-98 — "STRANDED" in the repair's output is asserted, not derived.**
+`apps/server/bin/repair_stranded_work_items.dart:700-708` and `:929-934`: the declined note and the
+summary line both state "The item is STRANDED" / "STRANDED: `<id>` is still at `<state>`" regardless of
+what `<state>` actually is. On the live run the declined path cannot fire (the item reaches
+`agent_failed` before the retry), but a reachable case exists: if the newest terminal failed job already
+carries a prior `requestId` action from an earlier run while its failure row sits under the OLD key, the
+failure row is written, the item reaches `agent_failed`, and `operatorRetry` **replays** and returns it
+unchanged. Exiting 1 is then conservative and correct, but "STRANDED" is a false label for an item an
+operator retry would accept. **Fix by deriving the label from the state, or hedge the wording.** Same
+false-claim class as F-92's other findings, left in place pending a follow-up correction.
