@@ -1,0 +1,63 @@
+# human-decision.yaml
+decision_id: c495e02f-5c5d-4b45-8124-42ad0e90d6d4
+type: DESIGN
+status: RESOLVED
+title: Level 3 approval — substantive QA quality gates for the feature and remediation lanes
+resolution:
+  selected: APPROVE_AT_LEVEL_3
+  label: approve design/qa-contracts-feature-remediation/substantive-qa-gates.md revision 3a
+  approved_by: human operator
+  approved_at: 2026-10-18T13:40:00Z
+  risk_level: 3
+  independent_review: >-
+    APPROVED with no blockers at 4a36b39 (BLOCKERS none, HIGH none, MEDIUM none, four LOW).
+    The reviewer's own verdict is APPROVED; the structured result reads HUMAN_DECISION_REQUIRED only
+    because DESIGN_GOVERNANCE.md requires Level 3 human approval to close the gate.
+  what_approval_authorises:
+    - The six new gate types: implementation-artifact-provenance, change-scope-confinement,
+      platform-verified-evidence, declared-validation-outcome, revision-identity-match,
+      triage-defect-existence.
+    - The two prerequisite readers the design names as NOT EXISTING and must be written:
+      CommittedDiffPathCollector and WorkspaceHeadReader.
+    - The section 7 vacuous-pass guard fix (guard_conditions.dart filters from gateResults rather than
+      from qaContract.gates).
+  what_approval_does_not_authorise:
+    - >-
+      qaPassed does NOT open. F4 alone holds the feature lane closed until OD-6, a role-scoped
+      VerificationPlan, exists -- and AGENTS.md section 12 plus the operator's earlier refusal of
+      claimedChecks mean agent-authored validation claims are not a substitute.
+    - >-
+      Items continue to accumulate at review_approved until the gates are implemented and evaluated.
+      That is the accepted cost of not rubber-stamping, decided in 92d567e3 and unchanged here.
+  what_a_pass_asserts:
+    feature_lane: >-
+      A commit exists at a recorded revision; every path it touched is owned and none prohibited;
+      platform-verified evidence (never agentClaimedEvidence) bound to that execution; every declared
+      check ran under the exact declared command and passed; and the reviewed revision IS the produced
+      revision. No agent-authored field participates.
+    remediation_lane: >-
+      The named defect resolves; every cited evidence id exists AND belongs to that defect; the
+      classification is durably recorded, not discarded.
+  conditions_the_operator_imposed:
+    - >-
+      Four LOW pointer findings were to be fixed BEFORE approval, not waived. They were fixed and
+      verified against the code at 4464dc6: the drifted waitingForHumanDecision -> reviewApproved
+      citation now names :437 with its guard at :439-444 (the stale range opened on a different, real
+      edge, which is why it survived); the companion finding reference names F-100 rather than the
+      unrelated F-52; one off-by-one line citation corrected; and the deliberate over-inclusion of
+      untracked files is now stated so a FAIL on pre-existing untracked files reads as intentional.
+      Scope was three documentation files; no specification, gate definition, threshold or count changed.
+  corrections_the_operator_approved_alongside_it:
+    - >-
+      The vacuous-pass hole is WIDER than first recorded: guard_conditions.dart:272 filters FROM
+      gateResults rather than FROM qaContract.gates, so a required gate with no result reads as absent
+      rather than notExecuted. Three required gates plus one passing result PASSES, with both keys
+      present and correct. isOverallPass shares the defect.
+    - >-
+      The gate the first draft called "red by construction" was actually GREEN today:
+      PlatformVerification.evidenceKind defaults to platformVerifiedEvidence
+      (platform_verification.dart:24), ExecutionCoordinator never overrides it
+      (execution_coordinator.dart:916-930), one verificationPlan is attached to the single coordinator
+      for every role, and readVerifications filters by executionId in the query itself, making the
+      "different executionId" row unconstructible. It was merged into F4 and F3's red claim deleted.
+      The REFUSAL of claimedChecks is unchanged and still correct -- only its stated reason was false.
