@@ -1,5 +1,5 @@
 import 'package:control_plane_server/src/triage/lane_a_defect_triage_work_item.dart'
-    show defectTriageWorkItemId;
+    show defectTriageBucketProductId, defectTriageWorkItemId;
 import 'package:control_plane_server/src/triage/lane_e_design_remediation_work_item.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:qa_orchestration/qa_orchestration.dart';
@@ -15,6 +15,18 @@ import 'package:test/test.dart';
 /// two subjects shared a name.
 const String kProduct = 'product-that-declares';
 const String kUndeclaredProduct = 'product-that-declared-nothing';
+
+/// The product an ALREADY-PERSISTED remediation row records in this file.
+///
+/// Distinct from [kProduct], from [kUndeclaredProduct] and from the `defects`
+/// bucket, because every assertion below about "which product governed the
+/// gate" is worthless if two of them can share a name.
+const String kRowProduct = 'product-the-existing-row-records';
+
+/// A `productId` the database would accept — `work_item."productId"` is `text
+/// NOT NULL`, so whitespace passes the NOT NULL check — and that no product row
+/// and no `product_qa_contract_spec` row can ever match.
+const String kBlankProductId = '   ';
 
 /// ONE defect, so the two lanes below genuinely contend for it:
 /// `design-remediation-DEF-1` and `defect-DEF-1` are the same defect, and
@@ -123,7 +135,10 @@ class _Host {
               }),
             )
           : null,
-      log: (event, fields) => events.add(event),
+      log: (event, fields) {
+        events.add(event);
+        logged.add((event, Map<String, dynamic>.of(fields)));
+      },
     );
   }
 
@@ -139,6 +154,20 @@ class _Host {
   final _OverwritingQAContractStore contracts = _OverwritingQAContractStore();
   final List<String> events = <String>[];
 
+  /// Event names AND their payloads, copied defensively so a later mutation of
+  /// the caller's map cannot rewrite what was logged. `events` above stays the
+  /// name-only view every pre-existing assertion uses.
+  final List<(String, Map<String, dynamic>)> logged =
+      <(String, Map<String, dynamic>)>[];
+
+  /// The payloads logged under [event], in order. Empty when it never fired —
+  /// which is itself an assertion, since the events this lane emits are the
+  /// only place some of these facts are recorded at all.
+  List<Map<String, dynamic>> payloadsOf(String event) => logged
+      .where((entry) => entry.$1 == event)
+      .map((entry) => entry.$2)
+      .toList();
+
   late final DurableWorkflowEngine workflowEngine;
   late final DesignRemediationWorkItemProvisioner provisioner;
 
@@ -153,6 +182,64 @@ class _Host {
     triageResult: triageResult(defectId),
     defect: await _awaitDefect(productId, defectId),
   );
+
+  /// The situation measured on 2026-10-17, reproduced: a defect reported from a
+  /// surface carrying NO work item, so `affectedWorkItemId` is null and
+  /// [resolveDesignRemediationProductId] has no join to follow.
+  Future<WorkItem?> runOrphan({
+    String defectId = kDefectId,
+  }) async => provisioner.ensurePersisted(
+    triageResult: triageResult(defectId),
+    defect: orphanDefect(defectId),
+  );
+
+  /// A defect with `affectedWorkItemId == null` — NOT an empty string and not
+  /// an id pointing at nothing. The difference matters: both of those still take
+  /// the `affectedWorkItemId` branch of the resolution and reach a store lookup,
+  /// and this is the case that reaches the `defects` bucket without one.
+  Defect orphanDefect(String defectId) => Defect(
+    defectId: defectId,
+    title: 'The funnel reports a different number than the invoice',
+    description: 'Checkout shows 47.00 where the invoice shows 42.00.',
+    expectedBehavior: 'Checkout total equals the invoice total.',
+    reproductionSteps: '1. Add two items\n2. Open checkout',
+    severity: 'high',
+    status: DefectStatus.reported,
+    reporter: 'reporter@example.com',
+    affectedWorkItemId: null,
+    createdAt: kNow,
+    updatedAt: kNow,
+    version: 1,
+  );
+
+  /// Seeds the remediation row a previous run already wrote, with no contract
+  /// on it — the state every item this change repairs was measured in.
+  ///
+  /// [productId] is written verbatim, blank and all, because that is what the
+  /// column accepts; the production store applies no validation on write.
+  Future<WorkItem> seedExistingRemediationRow({
+    required String defectId,
+    required String productId,
+    WorkItemState state = WorkItemState.agentExecuting,
+  }) async {
+    final row = WorkItem(
+      workItemId: designRemediationWorkItemId(defectId),
+      productId: productId,
+      category: WorkItemCategory.feature,
+      title: 'Design remediation: seeded by a previous run',
+      state: state,
+      featureRef: defectId,
+      metadata: <String, dynamic>{
+        'defectId': defectId,
+        designRemediationRequiredKey: true,
+      },
+      createdAt: kNow,
+      updatedAt: kNow,
+      version: 1,
+    );
+    await workflowStore.saveWorkItem(row);
+    return row;
+  }
 
   Future<Defect> _awaitDefect(String productId, String defectId) async {
     final affected = WorkItem(
@@ -594,6 +681,297 @@ void main() {
               'which is the same damage this whole change is shaped to avoid.',
         );
         expect(host.contracts.rowCount, writesBefore);
+      },
+    );
+  });
+
+  // The rows measured on 2026-10-17 that could not be repaired: the defect
+  // named no work item, so the defect-derived resolution landed on the `defects`
+  // ROUTING BUCKET, which has no product row and no declared QA contract — while
+  // the remediation row itself recorded a product that HAS one. The row and its
+  // gate disagreed about which product governed the item, and the gate lost.
+  group('an EXISTING row is governed by its OWN recorded product', () {
+    test(
+      'an orphan defect whose row records a real product gets the contract '
+      'ATTACHED — the reported failure, reproduced and repaired',
+      () async {
+        // `defects` is deliberately NOT declared here. That is the live
+        // situation: the bucket has no `product` row and no
+        // `product_qa_contract_spec` row, so provisioning through it refuses
+        // with notDeclared. Declaring it here would make the test pass for a
+        // resolution this change exists to stop using.
+        final host = _Host(declaredProducts: const [kRowProduct]);
+        await host.seedExistingRemediationRow(
+          defectId: kDefectId,
+          productId: kRowProduct,
+        );
+
+        final repaired = await host.runOrphan();
+
+        expect(repaired, isNotNull);
+        expect(
+          repaired!.qaContractId,
+          productQAContractIdForWorkItem(
+            designRemediationWorkItemId(kDefectId),
+          ),
+          reason:
+              'the work-item-scoped id for this defect. Asserting it exactly '
+              'rather than "not null" is the point: the contract is not merely '
+              'present, it is the ONE addressable by this work item, so '
+              'listQAContractsForWorkItem can find it.',
+        );
+
+        final contract = await host.contracts.readQAContract(
+          repaired.qaContractId!,
+        );
+        expect(
+          contract,
+          isNotNull,
+          reason:
+              'a real row, read back out of the store — not an id this code '
+              'computed and handed back. An id nothing resolves to would '
+              'satisfy GuardConditions.qaContractExists(), which null-checks '
+              'the column, and would satisfy nothing else.',
+        );
+        expect(
+          contract!.gates.single.gateId,
+          'human-declared-gate',
+          reason:
+              'the gates are the ROW\'S product\'s, so the gate set is an '
+              'observable consequence of which product id the code resolved to '
+              'and not a label it could have printed either way',
+        );
+        expect(
+          contract.metadata?[qaContractProductIdMetadataKey],
+          kRowProduct,
+        );
+        expect(
+          contract.metadata?[qaContractProductIdMetadataKey],
+          isNot(defectTriageBucketProductId),
+          reason:
+              'the gate came from the product the item belongs to, not from the '
+              'routing bucket the defect happened to fall into',
+        );
+        expect(host.contracts.rowCount, 1, reason: 'exactly one contract row');
+
+        // Read out of the store, not echoed from the in-memory value the CAS
+        // write was handed. A stamp that does not survive its write is
+        // indistinguishable from one that was never made.
+        final durable = await host.workflowStore.readWorkItem(
+          designRemediationWorkItemId(kDefectId),
+        );
+        expect(durable.qaContractId, repaired.qaContractId);
+        expect(
+          durable.productId,
+          kRowProduct,
+          reason: 'and the row still records the product it always recorded',
+        );
+
+        expect(
+          host.count('design_remediation.qa_contract.backfilled'),
+          1,
+          reason:
+              'the lane-E event only the changed path can emit. Before the '
+              'change the provisioner refused under the bucket and this event '
+              'never fired; a test that only re-read the column would not '
+              'distinguish the two.',
+        );
+        expect(
+          host.count('design_remediation.qa_contract.not_provisioned'),
+          0,
+          reason:
+              'the refusal that produced "contract: refused-or-absent" and '
+              'qaContractId NULL on 2026-10-17',
+        );
+        expect(
+          host.payloadsOf('design_remediation.replayed').single['productId'],
+          kRowProduct,
+        );
+        expect(
+          host
+              .payloadsOf('design_remediation.replayed')
+              .single['defectDerivedProductId'],
+          defectTriageBucketProductId,
+          reason:
+              'the defect-derived id is still computed and still logged; this '
+              'is the divergence the log now records instead of concealing',
+        );
+      },
+    );
+
+    test('a blank or whitespace productId on the row FALLS BACK', () async {
+      // The `defects` bucket is declared in this in-memory fixture store ONLY,
+      // so that WHICH id the fallback resolved to is observable on the contract
+      // row it writes. This registers nothing as a governed product: it is a
+      // test double for `product_qa_contract_spec`, and the production
+      // declaration table is untouched.
+      final host = _Host(declaredProducts: const [defectTriageBucketProductId]);
+      await host.seedExistingRemediationRow(
+        defectId: kDefectId,
+        productId: kBlankProductId,
+      );
+
+      final repaired = await host.runOrphan();
+
+      expect(repaired!.qaContractId, isNotNull);
+      final contract = await host.contracts.readQAContract(
+        repaired.qaContractId!,
+      );
+      expect(
+        contract,
+        isNotNull,
+        reason:
+            'the fallback is observable only if something is provisioned. A '
+            'blank id matches no declaration and would refuse with '
+            'notDeclared, so this goes red if the code provisioned under the '
+            'blank id instead of falling back.',
+      );
+      expect(
+        contract!.metadata?[qaContractProductIdMetadataKey],
+        defectTriageBucketProductId,
+        reason:
+            'the DEFECT-derived value, i.e. the bucket. Provisioning under an '
+            'empty product id would name a product that does not exist.',
+      );
+      expect(
+        host
+            .payloadsOf('design_remediation.replayed')
+            .single['productIdSource'],
+        'defectDerived',
+      );
+    });
+
+    test(
+      'an EMPTY productId falls back too — even when the empty id itself has a '
+      'declaration it could have been provisioned under',
+      () async {
+        // The strongest form of the blank case. The empty id is declared here,
+        // so provisioning under it WOULD have succeeded and produced a contract
+        // stamped `productId: ""` — a gate attributed to no product at all. The
+        // fallback has to run BEFORE the blank is reached, and only the stamped
+        // product id can show that it did.
+        final host = _Host(
+          declaredProducts: const [defectTriageBucketProductId, ''],
+        );
+        await host.seedExistingRemediationRow(
+          defectId: kDefectId,
+          productId: '',
+        );
+
+        final repaired = await host.runOrphan();
+
+        expect(repaired!.qaContractId, isNotNull);
+        final contract = await host.contracts.readQAContract(
+          repaired.qaContractId!,
+        );
+        expect(
+          contract!.metadata?[qaContractProductIdMetadataKey],
+          defectTriageBucketProductId,
+          reason:
+              'the defect-derived value, never the blank one — even though the '
+              'blank one would have answered',
+        );
+        expect(
+          host
+              .payloadsOf('design_remediation.replayed')
+              .single['productIdSource'],
+          'defectDerived',
+        );
+      },
+    );
+
+    test(
+      'CREATION is untouched: with no row to read, the defect still resolves '
+      'the product',
+      () async {
+        // Same orphan defect as the failing case, but NO row exists — so the
+        // changed branch is not taken and the create path runs. It must file
+        // the item under the bucket, exactly as it did before this change. If
+        // the resolution had been moved into resolveDesignRemediationProductId
+        // instead of the replay branch, this would file it under something else
+        // and go red.
+        final host = _Host(
+          declaredProducts: const [defectTriageBucketProductId],
+        );
+
+        final created = await host.runOrphan();
+
+        expect(created, isNotNull);
+        expect(
+          created!.productId,
+          defectTriageBucketProductId,
+          reason:
+              'at creation there is no row to read, so the defect-derived '
+              'resolution is the only input available. This is the behaviour '
+              'decision 8f1ed5bf requires to stay exactly as it was.',
+        );
+        final contract = await host.contracts.readQAContract(
+          created.qaContractId!,
+        );
+        expect(
+          contract!.metadata?[qaContractProductIdMetadataKey],
+          defectTriageBucketProductId,
+        );
+        expect(
+          host.count('design_remediation.created'),
+          1,
+          reason: 'the CREATE branch ran, not the replay branch',
+        );
+        expect(host.count('design_remediation.replayed'), 0);
+        expect(host.count('design_remediation.qa_contract.backfilled'), 0);
+      },
+    );
+
+    test(
+      'creation still follows a defect\'s own work-item link, so the change is '
+      'a SPLIT and not a redirection',
+      () async {
+        // The other half of the same claim: the defect-derived resolution is
+        // untouched in both of its outcomes, not just the orphan one.
+        final host = _Host(declaredProducts: const [kProduct]);
+
+        final created = await host.run(productId: kProduct);
+
+        expect(created!.productId, kProduct);
+        final contract = await host.contracts.readQAContract(
+          created.qaContractId!,
+        );
+        expect(contract!.metadata?[qaContractProductIdMetadataKey], kProduct);
+      },
+    );
+
+    test(
+      'when both inputs exist they DISAGREE, and the row wins — which is the '
+      'whole change',
+      () async {
+        // The defect links to a work item in one product; the remediation row
+        // records another. Both are declared, so both could satisfy the gate and
+        // only the choice is under test.
+        final host = _Host(declaredProducts: const [kProduct, kRowProduct]);
+        await host.seedExistingRemediationRow(
+          defectId: kDefectId,
+          productId: kRowProduct,
+        );
+
+        final repaired = await host.run(productId: kProduct);
+
+        final contract = await host.contracts.readQAContract(
+          repaired!.qaContractId!,
+        );
+        expect(
+          contract!.metadata?[qaContractProductIdMetadataKey],
+          kRowProduct,
+          reason:
+              'the row governs an existing row. Sourcing the gate from the '
+              'defect here would leave the item governed by one product and '
+              'gated by another, which is the contradiction being corrected.',
+        );
+        expect(
+          host
+              .payloadsOf('design_remediation.replayed')
+              .single['productIdSource'],
+          'existingWorkItem',
+        );
       },
     );
   });

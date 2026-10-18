@@ -61,6 +61,13 @@ const String productQAContractProvisionerUnavailable = 'provisionerUnavailable';
 const String _planningKey = 'design-remediation:planning';
 const String _plannedKey = 'design-remediation:planned';
 
+/// Log values naming WHICH INPUT resolved the product that governs an existing
+/// remediation row. Read on `design_remediation.replayed` so a divergence
+/// between the row's product and the defect-derived one is legible from a log
+/// line rather than only inferred from a refusal.
+const String _productIdSourceExistingRow = 'existingWorkItem';
+const String _productIdSourceDefectDerived = 'defectDerived';
+
 /// Stable work item identity for the remediation of [defectId].
 ///
 /// The `design-remediation-{defectId}` shape is load-bearing: it is what makes
@@ -70,6 +77,23 @@ String designRemediationWorkItemId(String defectId) =>
     'design-remediation-$defectId';
 
 /// Resolves the product a design remediation item for [defect] belongs to.
+///
+/// ## This is the CREATION-TIME resolution, and it is deliberately left alone
+///
+/// Every statement below describes the defect-derived resolution, and all of it
+/// still holds for creating an item. It is NOT how an item that already exists
+/// is resolved: on the replay/backfill branch — where there is a row to read —
+/// the row's own `productId` governs, via
+/// `_governingProductIdOfExistingRow`. There is nothing to read at creation
+/// time, so the defect remains the only input available then.
+///
+/// The split exists because a defect with no `affectedWorkItemId` resolves to
+/// the `defects` ROUTING BUCKET, which has no `product` row and no declared QA
+/// contract, so a gate sought there can never be provisioned. That is the right
+/// input for FIling a defect — there is genuinely no product — and the wrong one
+/// for governing a work item that already records the product it belongs to.
+/// Changing the resolution below would change the filing of every orphan defect
+/// ever triaged; the replay branch is where that disagreement is corrected.
 ///
 /// This is deliberately the SAME resolution `DefectTriageWorkItemProvisioner`
 /// applies to the defect's own triage work item, so a remediation item is
@@ -251,14 +275,27 @@ class DesignRemediationWorkItemProvisioner {
     final workItemId = designRemediationWorkItemId(defect.defectId);
     final existing = await _readOrNull(workItemId);
     if (existing != null) {
+      // On this branch there IS a row, so there is something to read, and the
+      // row's own recorded product governs it. `productId` above is still the
+      // DEFECT-derived resolution and stays the creation-time input below.
+      final governing = _governingProductIdOfExistingRow(
+        existing,
+        defectDerivedProductId: productId,
+      );
       log?.call('design_remediation.replayed', {
         'workItemId': workItemId,
         'defectId': defect.defectId,
         'state': existing.state.wire,
         'version': existing.version,
+        // Which product governs this row and which input it came from. The two
+        // can differ — that divergence is the defect this branch exists to stop
+        // — so the source is recorded rather than left to be inferred.
+        'productId': governing.productId,
+        'productIdSource': governing.source,
+        'defectDerivedProductId': productId,
       });
       return _advanceToPlanned(
-        await _attachQAContract(existing, productId),
+        await _attachQAContract(existing, governing.productId),
         defectId: defect.defectId,
         featureRef: defect.defectId,
       );
@@ -389,6 +426,51 @@ class DesignRemediationWorkItemProvisioner {
           productQAContractSpecDeclaresNoGates,
       };
 
+  /// Which product governs an ALREADY-PERSISTED remediation row, and which
+  /// input that answer came from.
+  ///
+  /// [resolveDesignRemediationProductId] can only reach a product through
+  /// `defect.affectedWorkItemId -> work_item.productId`, because [Defect]
+  /// carries no `productId` and the `defect` table has no such column. A defect
+  /// reported from a surface that carries no work item therefore resolves to the
+  /// triage bucket ([defectTriageBucketProductId]) — a ROUTING BUCKET, which
+  /// has no `product` row and no `product_qa_contract_spec` row, so the QA gate
+  /// for that item can never be provisioned from it.
+  ///
+  /// The remediation ROW is not derived from the defect: it records the product
+  /// the item was filed under, and that is the product whose declared spec
+  /// governs its gates. Measured on 2026-10-17, two `design-remediation-*` rows
+  /// recorded `shipit-platform` while their own gate was sought under `defects`,
+  /// and both refused with `ProductQAContractSpecUnavailable(notDeclared)`
+  /// although the contract for their own product was registered. So on the
+  /// branch where the row exists, its own `productId` is the answer.
+  ///
+  /// A blank or whitespace-only `productId` falls back to the defect-derived
+  /// value rather than being provisioned under: an empty id names no product and
+  /// matches no declaration, so provisioning under it would fail closed with a
+  /// refusal about a product that does not exist. The defect-derived value is
+  /// at least a real id. This is the ONLY case in which the defect-derived
+  /// resolution still governs an existing row.
+  ///
+  /// The row's product is used verbatim — not trimmed on the way through —
+  /// because that is the value the row records and the sibling resolution
+  /// returns its value verbatim too.
+  ({String productId, String source}) _governingProductIdOfExistingRow(
+    WorkItem row, {
+    required String defectDerivedProductId,
+  }) {
+    if (row.productId.trim().isNotEmpty) {
+      return (
+        productId: row.productId,
+        source: _productIdSourceExistingRow,
+      );
+    }
+    return (
+      productId: defectDerivedProductId,
+      source: _productIdSourceDefectDerived,
+    );
+  }
+
   /// Backfills `qaContractId` on an already-provisioned remediation item that
   /// has none.
   ///
@@ -400,6 +482,12 @@ class DesignRemediationWorkItemProvisioner {
   /// (`createFeatureWorkItem` has no equivalent: it mints a fresh
   /// `WI-feature-${now.microsecondsSinceEpoch}` every call and never reads an
   /// existing row, so a stranded feature item cannot be reached this way at all.)
+  ///
+  /// [productId] is the product that governs THIS row, so
+  /// `_governingProductIdOfExistingRow` has already resolved it from the row —
+  /// not from the defect — before this is called. Provisioning the gate under
+  /// anything other than the row's own product would leave the row and its gate
+  /// governed by different products, which is the state this was repaired from.
   ///
   /// The write goes through the store's CAS path rather than mutating state, and
   /// only runs when the column is actually null, so a replay of an already-stamped
