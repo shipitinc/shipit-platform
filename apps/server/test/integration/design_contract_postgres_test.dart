@@ -9,7 +9,7 @@ import 'test_tools/serverpod_test_tools.dart';
 /// Every session opened here is closed in [tearDown].
 ///
 /// `runDesignContractStoreSuite` opens a FRESH store — and therefore a fresh
-/// session — per test, which is twelve of them. The test host's pool is finite
+/// session — per test, which is ten of them. The test host's pool is finite
 /// and shared with every other file in `test/integration`, so a leaked session
 /// starves a concurrent sibling rather than failing here. `design_governance_postgres_test.dart`
 /// does not close its sessions; this file does, and the reason is the store
