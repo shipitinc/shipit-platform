@@ -2986,13 +2986,22 @@ the fail-closed refusal F-153 predicted:
 plus test-local engines. **This is correct behaviour, not a regression**: those tests were asserting
 `planned → designRequired` succeeding on a context-supplied string, which is the defect D-5 removed.
 
-**F-160 — THE STEP-3 PRECONDITION IS REACHABLE BUT FAILING. Do not proceed to step 3 yet.**
-`apps/server/test/integration/design_contract_postgres_test.dart` now **executes** (it could not before) and
-**fails in `setUpAll`**. The reviewer's condition was that this must **pass** before the first production
-`designContractId` is written, because `_resolveDesignContract` propagates store exceptions and a schema
-mismatch would refuse transitions for **every category**. **It has not been diagnosed.** The visible error
-stream is dominated by an unrelated pre-existing `DatabaseQueryException` from a product-repoint test, so the
-real cause is still masked.
+**F-160 — WITHDRAWN. The precondition is MET; my "FAILING" claim was wrong.** I read `dart test`'s **compact
+reporter status line** as evidence about the file named on it. That line names the file in `setUpAll` while
+**sibling files increment the counter underneath it**, so the name and the counter belong to different files —
+which is exactly the `+25 -1, +25 -2, +25 -3` signature I mistook for a silent boot failure.
+Measured three times against the disposable database:
+`dart test test/integration/design_contract_postgres_test.dart` → **exit 0, +10, "All tests passed!"**.
+**A genuinely failing `setUpAll` is reported with `[E]`; this file appears in no such line in any run.** Boot
+cost is ~2 s. Non-vacuity: reintroducing F-146 (`ORDER BY … DESC,DESC`) → `+8 −2`; making
+`saveDesignContract` a no-op → `+1 −9`, so 9 of 10 assertions bind to real Postgres rows (the tenth is
+"an unwritten id reads back null", the one assertion a store that stores nothing satisfies — correct by
+construction). **A doc comment claiming the suite opens a store "per test, which is twelve of them" was wrong
+(it is ten) and is corrected.** The lone other change: a false statement.
+
+**This is the same lesson as F-127 and F-85, now in a third form: a status line, a claim two reviews agreed
+on, and an over-claimed runtime diagnosis were each accepted as evidence. Run the single file before
+concluding anything about it.**
 
 **F-161 — a second, unrelated failure class surfaced: `dogfood_shipit_postgres_test.dart` throws
 `PathNotFoundException` for `apps/control_plane/lib/features/defect_report/`** inside a temporary checkout
@@ -3007,3 +3016,34 @@ a bare `SERVERPOD_DATABASE_PASSWORD is not set` and **exits 0 through the pipeli
 `tail` sees a green-looking run. It does clean up correctly on that path. **A guard or a clearer failure is
 owed**, and note the AGENTS.md rule that a cleanup failure must never be silenced — here the *setup* failure
 is the thing being lost.
+
+
+**F-163 — the 21 integration failures, classified.** `make test-integration` = **+288 −21** (not 22; the
+`dogfood` PathNotFound and the phantom design_contract boot failure did not occur in five runs).
+- **11 caused by this work, one class, and CORRECT:** `design_governance_e2e_test.dart` ×5,
+  `endpoints_persistence_test.dart` ×4, `triage_execution_test.dart` ×1, `e2e_restart_persistence_test.dart` ×1
+  — all `DurableWorkflowEngine(store:)` constructed **without** a `designContractStore`, correctly refused.
+  **This is F-155, and step 3 must mount the store at all three sites.**
+- **Genuinely broken, pre-existing, other lanes:** `product_qa_contract_spec_postgres_test.dart` ×3 — AC-2
+  asserts `LIKE 'qa-spec-it-%'` but ids are `'qa-product-$workItemId'`
+  (`qa_orchestration/.../product_qa_contract.dart:50`), so the count is **structurally zero**;
+  `product_credential_immutability_postgres_test.dart` ×2 — migration `20261014130500000`'s own guard at
+  `migration.sql:448`.
+- **Intermittent:** `product_credential_immutability_postgres_test.dart` "D-4 under concurrency" fails in
+  **2 of 5** runs — a genuine two-mint race against a single asserted refusal message. Pre-existing.
+- **Pre-existing stale:** `feature_request_intake_test.dart:121` expects `draft`, gets `feature_intake_parked`
+  (state added by `ddfbfff`); `lane_f_production_reachability_test.dart:1577` expects an unhandled async error
+  and gets none; `triage_execution_test.dart` ×2 expect `succeeded`, get `failed`;
+  `execution_store_roundtrip_test.dart` maps `AgentSessionStatus.failed` → `agentFailed`
+  (`local_worker.dart:346`).
+
+**F-164 — every Serverpod boot prints a schema-mismatch warning that is not caused by this work.**
+`Missing Index design_revision_approved_unique_per_work_item` and
+`product_credential_active_repository_unique`. Both indexes exist **only** in `tool/schema_bootstrap.sql` and
+in **no** `definition.sql`. Non-fatal, pre-existing, and **not** caused by the 42P07 fix — that deleted only
+the `product_qa_contract_spec_pkey` line. Route to the migrations lane.
+
+**F-165 — `product_qa_contract_spec` survives only as a hand-append after every regeneration, and the
+generator re-emits the colliding statement each time, so removal alone does not prevent recurrence.** Only
+the new guard detects it. The durable fix is F-144's: make it a managed model, or move its DDL into
+`tool/schema_bootstrap.sql` and add it to `verify:schema-deviations`. **Needs an owner.**
