@@ -1,0 +1,45 @@
+# human-decision.yaml
+decision_id: 8f1ed5bf-4147-449a-a221-558aac2303a9
+type: ARCHITECTURE
+status: RESOLVED
+title: On backfill, a design-remediation item's product comes from the item itself, not from its defect
+resolution:
+  selected: USE_WORK_ITEM_PRODUCT_ON_BACKFILL
+  label: when the remediation row already exists, resolve its product from the row's own productId
+  decided_by: operator
+  decided_at: 2026-10-18T03:40:00Z
+  rationale_given: >-
+    Two design-remediation items could not be repaired even with the contract registered. Lane E
+    resolves the product from the DEFECT: resolveDesignRemediationProductId
+    (lane_e_design_remediation_work_item.dart:86-98) reads defect.affectedWorkItemId and, when it is
+    null or empty, returns defectTriageBucketProductId -- the literal string "defects"
+    (lane_a_defect_triage_work_item.dart:17). Both defects have affectedWorkItemId = NULL, so the gate
+    was sought under "defects", which has no product row and no QA-contract declaration, and
+    provisionForWorkItem refused with notDeclared. The repair reported "refused-or-absent" and
+    qaContractId stayed NULL.
+  the_contradiction_this_names: >-
+    Every work item in the database -- all 14, including these two -- records productId =
+    shipit-platform. So the remediation row says shipit-platform while its own gate was sought under
+    the "defects" bucket. The row and its gate disagreed about which product governs the item.
+  what_must_change: >-
+    On the replay/backfill branch ONLY -- the branch taken when the remediation row already exists --
+    resolve the product from that row's own productId. Creation-time resolution from the defect stays
+    exactly as it is: when there is no item yet there is nothing to read, so the defect-derived
+    resolution remains the only available input, and no creation path changes.
+  what_must_not_change: >-
+    Do NOT change resolveDesignRemediationProductId globally. Its defect-derived behaviour is load-
+    bearing for every orphan defect ever triaged, and the blast radius of changing it is the entire
+    triage lane rather than two stranded rows. Do NOT register a QA-contract declaration for the
+    "defects" bucket: that would make a routing bucket a governed product, and it would gate these
+    items by the bucket's contract rather than by the product the item actually belongs to.
+  verification_that_motivated_this: >-
+    The repair script's generic path already does the right thing -- it passes item.productId to
+    provisionForWorkItem (bin/repair_stranded_work_items.dart:285), which is why
+    WI-feature-1791823723502264 was repaired successfully in the same run while the two
+    design-remediation items were not. The feature item now carries
+    qa-product-WI-feature-1791823723502264 whose gate is intake-structured-result-admitted, i.e.
+    shipit-platform's declared gate and NOT a triage contract.
+  scope_note: >-
+    Narrow code change inside the design-remediation lane's existing replay branch. It alters no
+    transition, no product governance semantics and no other lane, and it invents no contract.
+    Dispatchable as a correction with independent focused review; no further human gate required.
