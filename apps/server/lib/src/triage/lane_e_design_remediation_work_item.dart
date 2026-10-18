@@ -54,12 +54,35 @@ const String productQAContractSpecDeclaresNoGates = 'declaresNoGates';
 /// to pass the provisioner rather than to register a manifest.
 const String productQAContractProvisionerUnavailable = 'provisionerUnavailable';
 
+/// Metadata key naming that no [DesignContractProvisioner] was supplied, so no
+/// design contract was written for this item.
+///
+/// It is a separate key from [productQAContractSpecUnavailableKey] for the same
+/// reason that one is: two independent strands park a remediation item, and one
+/// key holding both would leave an operator unable to tell which is missing.
+/// Here the ONLY reason is a missing dependency — the design contract store is
+/// never asked and never answers — so this key's presence is the whole reason.
+const String designContractProvisionerUnavailableKey =
+    'designContractProvisionerUnavailable';
+
+/// The value under [designContractProvisionerUnavailableKey]. Named once, and
+/// asserted against, for the reason [_refusalName] gives for the QA side: this
+/// string is now a durable record on a work item.
+const String designContractProvisionerUnavailable = 'provisionerUnavailable';
+
 /// Idempotency keys for the `draft -> planning -> planned` walk-up. A crash
 /// between any two hops leaves the durable record consistent: the replay
 /// observes the same key and returns the already-accepted outcome instead of
 /// re-running the transition.
 const String _planningKey = 'design-remediation:planning';
 const String _plannedKey = 'design-remediation:planned';
+
+/// Idempotency key for the `planned -> designParked` hop into the design park.
+///
+/// A crash between the walk-up and the park leaves the durable record
+/// consistent, on the same terms as the two above it: the replay observes the
+/// same key and returns the already-accepted outcome.
+const String _designParkedKey = 'design-remediation:designParked';
 
 /// Log values naming WHICH INPUT resolved the product that governs an existing
 /// remediation row. Read on `design_remediation.replayed` so a divergence
@@ -137,7 +160,7 @@ Future<String?> resolveDesignRemediationProductId({
 /// Durably provisions the `WorkItem` that carries design remediation for a
 /// defect that AI triage classified as `DESIGN_DEFECT`.
 ///
-/// ## Why it stops at `planned`
+/// ## Why it parks at `designParked`
 ///
 /// This item used to be walked `draft -> planning -> planned ->
 /// designRequired`, with `context: {'designContractId': 'auto'}` supplied
@@ -146,9 +169,8 @@ Future<String?> resolveDesignRemediationProductId({
 /// the item persisted at `designRequired` with `designContractId == NULL`: a
 /// state that asserts design work is routed while no design artifact exists.
 ///
-/// There is no honest way to obtain a real design contract here — no
-/// `design_contract` table, no `DesignContractStore`, and ADR 0021 rejects
-/// triage producing design artifacts directly:
+/// There is no honest way to obtain a real design contract from TRIAGE — ADR
+/// 0021 rejects triage producing design artifacts directly:
 ///
 /// > **AI triage directly creates DesignRevision:** Rejected — triage is
 /// > advisory; design production requires design agent + independent review
@@ -161,12 +183,25 @@ Future<String?> resolveDesignRemediationProductId({
 /// > until the design governance runtime exists. This is reported as
 /// > `EXTERNAL_DESIGN_GOVERNANCE_DEPENDENCY`.
 ///
-/// So the walk stops at `planned` — the last state reachable without a design
-/// artifact — and the dependency is recorded in the work item's metadata
+/// So the walk stops at `designParked` — a state in no lane's `entryStates`,
+/// which is what makes it a holding state rather than a waypoint — and the
+/// dependency is recorded in the work item's metadata
 /// ([designRemediationRequiredKey], [designGovernanceRuntimeKey],
 /// [blockedByKey]) rather than in a fabricated id or an unreachable state.
 /// `designNotRequired` is not a substitute: it asserts the opposite of the
-/// truth, that no design work is needed.
+/// truth, that no design work is needed. `planned` is not one either: it is a
+/// triage entry state, and the triage lane takes a design-remediation item back
+/// out of it and re-dispatches for ever.
+///
+/// ## What this lane DOES write, and why
+///
+/// One `draft` [DesignContract] per remediation item, at creation, through
+/// [designContractProvisioner]. That is a REQUIREMENT contract — which artifact
+/// must be submitted, which reviewers, what approval threshold — and building it
+/// is not producing design: it asserts nothing about what the design says. It is
+/// what gives the `designParked -> designRequired` release something durable to
+/// be released against, instead of a string a caller passed. The id stamped on
+/// the item is the id of the row that was READ BACK, never a placeholder.
 ///
 /// ## Why the QA contract is provisioned here, too
 ///
@@ -211,6 +246,7 @@ class DesignRemediationWorkItemProvisioner {
     required this.workflowStore,
     required this.workflowEngine,
     this.qaContractProvisioner,
+    this.designContractProvisioner,
     this.log,
   });
 
@@ -229,6 +265,27 @@ class DesignRemediationWorkItemProvisioner {
   /// [productQAContractSpecUnavailableKey] on it, so the gap is greppable on the
   /// row rather than only in a log.
   final ProductQAContractProvisioner? qaContractProvisioner;
+
+  /// Where the design contract is built and persisted, read back, for this item.
+  ///
+  /// This is the production caller [DesignContractBuilder] lacked: without one,
+  /// `DesignContractStore` is a table nobody fills and
+  /// `designContractExists()` refuses every release for a reason that looks
+  /// identical to "the operator forgot to provision one".
+  ///
+  /// The [DesignContractProvisioner] is taken rather than a bare
+  /// `DesignContractStore` because the id this lane stamps on the work item
+  /// must name a row that was READ BACK, not one that was merely written — the
+  /// discipline §4.2(b) names, and the same one
+  /// [_provisionQAContract] uses for the QA contract. Provisioning the store
+  /// directly would put that half back within reach of a future edit.
+  ///
+  /// Nullable for the same reason [qaContractProvisioner] is: this class is
+  /// constructed in more than one place. When absent this class does NOT invent
+  /// a `designContractId` and does NOT skip the work item — it records
+  /// [designContractProvisionerUnavailableKey] on the item, so the gap is
+  /// greppable on the row rather than only in a log.
+  final DesignContractProvisioner? designContractProvisioner;
   final void Function(String event, Map<String, dynamic> data)? log;
 
   /// Routing a human-reported design flaw to the design lane is an orchestrator
@@ -294,7 +351,7 @@ class DesignRemediationWorkItemProvisioner {
         'productIdSource': governing.source,
         'defectDerivedProductId': productId,
       });
-      return _advanceToPlanned(
+      return _advanceToDesignParked(
         await _attachQAContract(existing, governing.productId),
         defectId: defect.defectId,
         featureRef: defect.defectId,
@@ -319,6 +376,14 @@ class DesignRemediationWorkItemProvisioner {
 
     final qaContract = await _provisionQAContract(productId, workItemId, now);
 
+    final designContract = await _provisionDesignContract(
+      productId: productId,
+      workItemId: workItemId,
+      defectId: defect.defectId,
+      triageResultId: triageResult.resultId,
+      now: now,
+    );
+
     final created = await workflowEngine.createWorkItem(
       workItemId: workItemId,
       productId: productId,
@@ -329,10 +394,20 @@ class DesignRemediationWorkItemProvisioner {
       // the product has declared none — in which case the metadata below names
       // which of the two reasons applies. Never a placeholder.
       qaContractId: qaContract.contractId,
+      // The id of a design contract that was persisted and read back, or null
+      // when no provisioner was supplied — in which case the metadata below
+      // names that reason. `designParked -> designRequired` is guarded on this
+      // column AND a store confirmation, so a null here is a correct refusal at
+      // release time rather than a broken row.
+      designContractId: designContract.contractId,
       // Traceability for the `planning_evidence_provided` guard on
       // planning -> planned. The defect IS the requirement reference.
       featureRef: defect.defectId,
-      metadata: _metadata(request, qaContract.refusal),
+      metadata: _metadata(
+        request,
+        qaContract.refusal,
+        designContract.refusal,
+      ),
       createdAt: now,
     );
 
@@ -343,9 +418,11 @@ class DesignRemediationWorkItemProvisioner {
       'triageResultId': request.triageResultId,
       'qaContractId': created.qaContractId,
       'productQAContractSpecUnavailable': qaContract.refusal,
+      'designContractId': created.designContractId,
+      'designContractProvisionerUnavailable': designContract.refusal,
     });
 
-    return _advanceToPlanned(
+    return _advanceToDesignParked(
       created,
       defectId: defect.defectId,
       featureRef: defect.defectId,
@@ -410,6 +487,69 @@ class DesignRemediationWorkItemProvisioner {
         _refusalName(refusal.refusal),
       );
     }
+  }
+
+  /// Builds and persists the [DesignContract] this remediation item is governed
+  /// by, and returns the row read back.
+  ///
+  /// ## WHY THIS IS AT CREATION AND NOT AT RELEASE
+  ///
+  /// The release edge (`designParked -> designRequired`) is guarded by
+  /// `designContractExists()`, which reads the work item's durable
+  /// `designContractId` column AND confirms it against a `DesignContractStore`.
+  /// A contract written but not stamped on the column satisfies neither half,
+  /// so the contract has to exist before the row that names it.
+  ///
+  /// ## WHY A FAILURE PROPAGATES RATHER THAN BECOMING A REFUSAL
+  ///
+  /// The only refusal this records is [designContractProvisionerUnavailable],
+  /// which means the store was never asked. `DesignContractProvisioner`
+  /// documents that it THROWS rather than returning a contract it did not read
+  /// back, and a store that cannot be reached is an outage — recording that as
+  /// "this item has no design contract" would file an infrastructure failure as
+  /// a missing artifact, which is the confusion
+  /// `DurableWorkflowEngine._resolveDesignContract` names for exactly the same
+  /// reason. So a throw propagates and the item is not created.
+  Future<_RemediationDesignContract> _provisionDesignContract({
+    required String productId,
+    required String workItemId,
+    required String defectId,
+    required String triageResultId,
+    required DateTime now,
+  }) async {
+    final provisioner = designContractProvisioner;
+    if (provisioner == null) {
+      log?.call('design_remediation.design_contract.provisioner_unavailable', {
+        'workItemId': workItemId,
+        'productId': productId,
+        'reason':
+            'no DesignContractProvisioner was supplied, so no design contract '
+            'row backs this item and designParked -> designRequired will '
+            'refuse until one does',
+      });
+      return const _RemediationDesignContract.refused(
+        designContractProvisionerUnavailable,
+      );
+    }
+    final contract = await provisioner.provisionForWorkItem(
+      workItemId: workItemId,
+      productId: productId,
+      // The defect this contract remediates, so an auditor reading the row can
+      // reconstruct its scope without following the work item back.
+      defectId: defectId,
+      triageResultId: triageResultId,
+      // The remediation item's own creation instant, so a replay that
+      // re-provisions writes the same bytes rather than churning the row.
+      now: now,
+    );
+    log?.call('design_remediation.design_contract.provisioned', {
+      'workItemId': workItemId,
+      'productId': productId,
+      'contractId': contract.contractId,
+      'status': contract.status.name,
+      'readBack': true,
+    });
+    return _RemediationDesignContract.provisioned(contract.contractId);
   }
 
   /// The one place a `ProductQAContractSpecRefusal` becomes a stored value.
@@ -532,9 +672,24 @@ class DesignRemediationWorkItemProvisioner {
     return updated;
   }
 
-  /// Walks the item as far as the workflow graph legally allows without a
-  /// design artifact, resuming from wherever a prior partial run left it.
-  Future<WorkItem> _advanceToPlanned(
+  /// Walks the item as far as the workflow graph legally allows without a design
+  /// artifact, resuming from wherever a prior partial run left it.
+  ///
+  /// ## WHY IT PARKS AT `designParked` AND NOT AT `planned`
+  ///
+  /// It used to stop at `planned`. That is not a holding state:
+  /// `triageDefectDefinition.entryStates` contains `planned`, and
+  /// `planned -> designNotRequired` is guarded by `actorAllowed([orchestrator])`
+  /// ALONE — it fires whether or not design work is needed. The category-blind
+  /// triage scheduler therefore takes a design-remediation item back OUT of
+  /// `planned` and re-dispatches it, for ever.
+  ///
+  /// `designParked` is in the `entryStates` of NO definition, so no scheduler
+  /// can see, probe or hop an item resting there. That is a structural closure
+  /// rather than a race the lane hopes to win: while the item is parked it is
+  /// invisible, so there is no competing write and no window. The release is
+  /// `designParked -> designRequired`, guarded by `designContractExists()`.
+  Future<WorkItem> _advanceToDesignParked(
     WorkItem item, {
     required String defectId,
     required String featureRef,
@@ -563,12 +718,23 @@ class DesignRemediationWorkItemProvisioner {
       );
     }
 
-    if (current.state != WorkItemState.planned) {
+    if (current.state == WorkItemState.planned) {
+      current = await workflowEngine.transition(
+        workItemId: current.workItemId,
+        to: WorkItemState.designParked,
+        trigger: TransitionTrigger.systemEvent,
+        actor: _actor,
+        context: {'featureRef': featureRef, 'designRemediation': true},
+        idempotencyKey: _designParkedKey,
+      );
+    }
+
+    if (current.state != WorkItemState.designParked) {
       // Someone else owns this item's lifecycle — a replay of an item an
-      // earlier revision already parked at `designRequired`, or a human. The
-      // workflow graph is the authority, so nothing is forced. Surfaced loudly
-      // because the remediation cannot progress from where it stands.
-      log?.call('design_remediation.not_at_planned', {
+      // earlier revision already released into `designRequired`, or a human.
+      // The workflow graph is the authority, so nothing is forced. Surfaced
+      // loudly because the remediation cannot progress from where it stands.
+      log?.call('design_remediation.not_at_design_parked', {
         'workItemId': current.workItemId,
         'defectId': defectId,
         'state': current.state.wire,
@@ -613,28 +779,32 @@ class DesignRemediationWorkItemProvisioner {
     buffer.write('\nTriage summary: ${request.triageSummary}');
     buffer.write('\nTriageResult: ${request.triageResultId}');
     buffer.write(
-      '\nThis item stops at planned. Producing the DesignRevision that would '
-      'unblock it belongs to the design governance runtime '
+      '\nThis item parks at designParked. Producing the DesignRevision that '
+      'would unblock it belongs to the design governance runtime '
       '(DESIGN_GOVERNATION_AUTOMATION_001), which does not exist in '
       'shipit-platform; triage is advisory and must not produce design '
-      'artifacts. Until that runtime exists this work item is reported as '
-      '$externalDesignGovernanceDependency (ADR 0021).',
+      'artifacts. designParked is in no lane\'s entry states, so nothing '
+      'dispatches this item while it waits. Until that runtime exists this work '
+      'item is reported as $externalDesignGovernanceDependency (ADR 0021).',
     );
     return buffer.toString();
   }
 
   /// The durable provenance of the item: what it was opened from, the
   /// external-runtime dependency that currently stops it, and — when the
-  /// product has no QA contract to provision — WHICH named reason that is.
+  /// product has no QA contract to provision, or no design contract could be
+  /// provisioned — WHICH named reason that is.
   ///
-  /// [qaContractRefusal] is null on every item that DID get a contract, so the
-  /// key is absent rather than present-and-null: absent is what
+  /// [qaContractRefusal] and [designContractRefusal] are null on every item
+  /// that DID get a contract, so the keys are absent rather than
+  /// present-and-null: absent is what
   /// `item.metadata?[productQAContractSpecUnavailableKey]` reads as, and a key
-  /// set to null would read as "known to be unknown", which is a different
-  /// claim and an unanswerable one.
+  /// set to null would read as "known to be unknown", which is a different claim
+  /// and an unanswerable one.
   Map<String, dynamic> _metadata(
     DesignRemediationRequest request,
     String? qaContractRefusal,
+    String? designContractRefusal,
   ) {
     return <String, dynamic>{
       'designRemediationRequest': request.toJson(),
@@ -645,8 +815,34 @@ class DesignRemediationWorkItemProvisioner {
       blockedByKey: externalDesignGovernanceDependency,
       if (qaContractRefusal != null)
         productQAContractSpecUnavailableKey: qaContractRefusal,
+      if (designContractRefusal != null)
+        designContractProvisionerUnavailableKey: designContractRefusal,
     };
   }
+}
+
+/// What [DesignRemediationWorkItemProvisioner._provisionDesignContract] got.
+///
+/// The same two-armed shape as [_RemediationQAContract], for the same reason:
+/// a caller that drops a `null` cannot then tell "no contract" from "no
+/// provisioner to build one with", and the two leave the row looking identical.
+class _RemediationDesignContract {
+  const _RemediationDesignContract._(this.contractId, this.refusal);
+
+  const _RemediationDesignContract.provisioned(String contractId)
+    : this._(contractId, null);
+
+  const _RemediationDesignContract.refused(String refusal)
+    : this._(null, refusal);
+
+  /// The id of a row that was persisted and read back, or null. Never a
+  /// placeholder.
+  final String? contractId;
+
+  /// [designContractProvisionerUnavailable] — recorded as the value of
+  /// [designContractProvisionerUnavailableKey] — or null when a contract WAS
+  /// provisioned.
+  final String? refusal;
 }
 
 /// What [_DesignRemediationWorkItemProvisioner._provisionQAContract] got.

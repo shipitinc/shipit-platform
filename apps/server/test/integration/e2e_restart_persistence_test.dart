@@ -12,6 +12,7 @@
 library;
 
 import 'package:control_plane_server/src/persistence/persistence_database.dart';
+import 'package:control_plane_server/src/persistence/postgres_design_contract_store.dart';
 import 'package:control_plane_server/src/persistence/postgres_execution_store.dart';
 import 'package:control_plane_server/src/persistence/postgres_job_store.dart';
 import 'package:control_plane_server/src/persistence/postgres_worker_store.dart';
@@ -112,7 +113,16 @@ class Harness {
     h._session = await Serverpod.instance.createSession(enableLogging: false);
     h._db = PersistenceDatabase(h._session.db);
     h.workflowStore = _ScopedWorkflowStore(h._db, _ownedWorkItems);
-    h.workflowEngine = DurableWorkflowEngine(store: h.workflowStore);
+    // Mounted over the SAME database, which is what the production composition
+    // root does. `designContractExists()` reads the durable
+    // `designContractId` column and CONFIRMS it against a store; an engine with
+    // none refuses `planned -> designRequired` for a deployment reason ("no
+    // store was mounted to ask") that reads exactly like "this item has no
+    // design contract" — two different facts about two different things.
+    h.workflowEngine = DurableWorkflowEngine(
+      store: h.workflowStore,
+      designContractStore: PostgresDesignContractStore(h._db),
+    );
     h.jobStore = _ScopedJobStore(h._db, _ownedWorkItems);
     h.workerStore = PostgresWorkerStore(h._db);
     h.executionStore = _ScopedExecutionStore(h._db, _ownedWorkItems);
@@ -518,7 +528,18 @@ void main() {
           category: WorkItemCategory.feature,
           title: 'Human decision durability',
           description: 'Human decision durability across restart',
-          designContractId: 'dc-1',
+          // A contract that was PROVISIONED, not one named inline: the guard
+          // confirms this id against the store, and the store is what the
+          // SECOND process below asks, which is the whole point of the test.
+          designContractId:
+              await DesignContractProvisioner(
+                    contractStore: PostgresDesignContractStore(_first!._db),
+                  )
+                  .provisionForWorkItem(
+                    workItemId: 'wi-hd',
+                    productId: 'prod-1',
+                  )
+                  .then((c) => c.contractId),
           featureRef: 'feature/hd',
         );
         await _first!.workflowEngine.transition(
@@ -536,14 +557,12 @@ void main() {
           workItemId: 'wi-hd',
           to: WorkItemState.designRequired,
           trigger: TransitionTrigger.systemEvent,
-          context: const {'designContractId': 'dc-1'},
         );
         await _first!.workflowEngine.transition(
           workItemId: 'wi-hd',
           to: WorkItemState.designInReview,
           trigger: TransitionTrigger.systemEvent,
           context: const {
-            'designContractId': 'dc-1',
             'designContractStatus': DesignContractStatus.underReview,
           },
         );

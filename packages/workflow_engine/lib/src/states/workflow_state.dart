@@ -44,10 +44,22 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
       WorkItemWorkflowState.designRequired,
       WorkItemWorkflowState.designNotRequired,
       WorkItemWorkflowState.featureIntakeParked,
+      WorkItemWorkflowState.designParked,
       WorkItemWorkflowState.cancelled,
       WorkItemWorkflowState.terminated,
     ],
     WorkItemState.featureIntakeParked => [
+      WorkItemWorkflowState.waitingForHumanDecision,
+      WorkItemWorkflowState.cancelled,
+      WorkItemWorkflowState.terminated,
+    ],
+    // The DESIGN park (R2.1/R2.2/R2.4 in `design-revision.md` §4.4.4). Its
+    // only release is `designRequired`, and that edge carries
+    // `designContractExists()` in the real table — the durable-column +
+    // store-confirmed guard — which is why this case cannot simply mirror
+    // `designRequired`'s. See `work_item_transitions.dart`.
+    WorkItemState.designParked => [
+      WorkItemWorkflowState.designRequired,
       WorkItemWorkflowState.waitingForHumanDecision,
       WorkItemWorkflowState.cancelled,
       WorkItemWorkflowState.terminated,
@@ -195,6 +207,7 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
   static const featureIntakeParked = WorkItemWorkflowState(
     WorkItemState.featureIntakeParked,
   );
+  static const designParked = WorkItemWorkflowState(WorkItemState.designParked);
   static const designRequired = WorkItemWorkflowState(
     WorkItemState.designRequired,
   );

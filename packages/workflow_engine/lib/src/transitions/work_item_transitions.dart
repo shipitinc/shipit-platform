@@ -31,6 +31,19 @@ class WorkItemTransitions {
     (WorkItemState.planned, WorkItemState.featureIntakeParked): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
     ],
+    // INTO THE DESIGN PARK (R2.2). Deliberately NO evidence guard and no
+    // `designContractExists()`: parking is the refusal to proceed, so the
+    // absence of a design contract is the POINT rather than a bar. It is
+    // asserted by the presence of this edge's successor instead.
+    //
+    // It adds NO predecessor to `planned` — the edge points away from it — so
+    // `planned_entry_state_hop_test`'s sole-predecessor pin (which asserts
+    // `planning` and nothing else) is untouched. `planned`'s successor
+    // assertion there is `containsAll`, not set equality, so a third successor
+    // is not a break.
+    (WorkItemState.planned, WorkItemState.designParked): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+    ],
     // THE WAY OUT OF THE FEATURE PARK. `featureIntakeParked` is in the
     // entryStates of NO wired JobDefinition, so an item parked here is
     // dispatchable by nobody -- the point of the state. Without an edge out it
@@ -52,6 +65,42 @@ class WorkItemTransitions {
       WorkItemState.featureIntakeParked,
       WorkItemState.waitingForHumanDecision,
     ): [
+      GuardConditions.actorAllowed([ActorType.human, ActorType.orchestrator]),
+    ],
+    // THE RELEASE OUT OF THE DESIGN PARK (R2.3) — the edge that stops
+    // `designParked` being the terminal-state-nobody-can-leave defect
+    // `featureIntakeParked`'s own comment (:34-38) says it exists to end.
+    //
+    // `designContractExists()` is the SAME guard `planned -> designRequired`
+    // (:24-27) carries, and it is load-bearing twice over: it reads the work
+    // item's DURABLE `designContractId` column and confirms it against a
+    // `DesignContractStore`, so a caller cannot release an item into design
+    // work by passing a string in transition context.
+    //
+    // WHO TAKES IT. Because `designParked` is in no definition's `entryStates`,
+    // no scheduler hop can move an item resting here — which is exactly what
+    // makes the release safe rather than a race: while the item is parked it is
+    // invisible to every scheduler, so there is no competing write and no
+    // window. The release is taken by the runtime's readiness reconciler, which
+    // reads the durable column and acts when it is non-null.
+    (WorkItemState.designParked, WorkItemState.designRequired): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+      GuardConditions.designContractExists(),
+    ],
+    // THE OPERATOR ROUTE OUT OF THE DESIGN PARK (R2.4). Mirrors
+    // `featureIntakeParked -> waitingForHumanDecision` above (:51-56): a human
+    // can resolve the gate and route the item onward, and `evaluate` returns
+    // `blocked` at `waitingForHumanDecision` rather than `runnable`, so parking
+    // at the gate grants no dispatch.
+    //
+    // `cancelled`/`terminated` come free from `_isGenericEscape`.
+    //
+    // DELIBERATELY NO EDGE BACK TO `planned`, for the reason given above the
+    // feature park's way-out: `planning -> planned` is the only edge into
+    // `planned` and a second predecessor re-opens the loop that invariant
+    // exists to close. Recovery is via the human gate, which is slower and
+    // deliberately so.
+    (WorkItemState.designParked, WorkItemState.waitingForHumanDecision): [
       GuardConditions.actorAllowed([ActorType.human, ActorType.orchestrator]),
     ],
     /*** Design ***/

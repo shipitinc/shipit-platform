@@ -211,6 +211,30 @@ void main() {
             'Its whole purpose is to rest where no job can reach it.',
       );
 
+      // `designParked` is the SAME property, for the same reason, and it is
+      // load-bearing twice over rather than once:
+      //
+      //  * no scheduler may see or hop an item parked there, which is what
+      //    stops the category-blind triage lane taking a design-remediation
+      //    item back out and re-dispatching it for ever; and
+      //  * `RunnableWorkEvaluator` rejecting it is what makes the release
+      //    (`designParked -> designRequired`) reachable only by the runtime's
+      //    readiness reconciler, with no competing scheduler write in the tick.
+      //
+      // NON-VACUITY: add `designParked` to any definition's `entryStates` and
+      // this goes red — the same proof the `featureIntakeParked` assertion
+      // above carries.
+      expect(
+        wired,
+        isNot(contains(WorkItemState.designParked)),
+        reason:
+            'a design-remediation item parked at `designParked` must never '
+            'become dispatchable. `planned` is a triage entry state and '
+            '`planned -> designNotRequired` is unguarded, which is why the '
+            'park needed a state of its own; putting that state in an entry '
+            'set would re-open exactly the convergence it exists to close.',
+      );
+
       const reworkPairs = {
         (HumanDecisionType.engineeringReview, HumanDecisionChoice.rework),
         (HumanDecisionType.qaWaiver, HumanDecisionChoice.reject),

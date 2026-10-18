@@ -3,6 +3,31 @@ enum WorkItemState {
   planning('planning'),
   planned('planned'),
   featureIntakeParked('feature_intake_parked'),
+  // The DESIGN park: where a design-remediation item rests until the design
+  // governance runtime is ready to release it.
+  //
+  // It exists instead of parking at `planned` because `planned` is NOT a
+  // holding state. `triageDefectDefinition.entryStates` contains `planned`, and
+  // `planned -> designNotRequired` is guarded by `actorAllowed([orchestrator])`
+  // ALONE, so the category-blind triage scheduler takes a remediation item back
+  // OUT of `planned` and re-dispatches it, for ever. `designParked` is in the
+  // `entryStates` of NO definition, so no scheduler can see, probe or hop an
+  // item resting here — the same structural property `featureIntakeParked` was
+  // built for, reached without relying on winning a race against the scheduler.
+  //
+  // Its out-edges are `-> designRequired` (the release, guarded by
+  // `designContractExists()`, which reads the durable column and confirms it
+  // against a store) and `-> waitingForHumanDecision` (operator recovery,
+  // "slower and deliberately so"). It has no edge to `planned`: `planned`'s sole
+  // predecessor is pinned as `planning`, and an edge back would re-open the loop
+  // that pin exists to close.
+  //
+  // `isTerminal` needs no change (that switch has a `_ => false` arm), and
+  // `WorkItemWorkflowState.allowedTransitions` MUST gain a case — that switch is
+  // exhaustive with no default, so omitting it is a COMPILE error rather than a
+  // silent lie, and `transition_consistency_test.dart` then cross-checks the
+  // mirror against the real table.
+  designParked('design_parked'),
   designRequired('design_required'),
   designNotRequired('design_not_required'),
   designInReview('design_in_review'),

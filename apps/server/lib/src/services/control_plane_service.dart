@@ -24,7 +24,11 @@ import 'package:scheduler/scheduler.dart'
     show JobStore, JobQueue, onboardingJob, onboardingWorkItemId;
 import 'package:serverpod/serverpod.dart';
 import 'package:workflow_store/workflow_store.dart'
-    show ConcurrentModificationException, DurableWorkflowEngine, WorkflowStore;
+    show
+        ConcurrentModificationException,
+        DesignContractStore,
+        DurableWorkflowEngine,
+        WorkflowStore;
 import 'package:worker_runtime/worker_runtime.dart'
     show WorkerRegistrationStore, WorkerStore;
 import 'package:worker_protocol/worker_protocol.dart' show WorkerRegistration;
@@ -38,6 +42,7 @@ import '../persistence/postgres_defect_store.dart'
         // lives here too, and this one is about a defect row, not a work item.
         hide
         ConcurrentModificationException;
+import '../persistence/postgres_design_contract_store.dart';
 import '../persistence/postgres_execution_store.dart';
 import '../persistence/postgres_human_decision_store.dart';
 import '../persistence/postgres_human_direction_store.dart';
@@ -109,11 +114,33 @@ class ControlPlaneService {
   WorkerRegistrationStore get workerRegistrationStore =>
       PostgresWorkerRegistrationStore(_db);
 
+  /// The store `designContractExists()` confirms a work item's durable
+  /// `designContractId` column against.
+  ///
+  /// Built over the SAME [_db] as every other store here, so the confirmation
+  /// reads the same durable row the rest of the platform reads — and over the
+  /// PostgreSQL implementation rather than an in-memory one, because confirming
+  /// against process state a redeploy erases would satisfy a guard whose entire
+  /// purpose is durability.
+  DesignContractStore get designContractStore =>
+      PostgresDesignContractStore(_db);
+
   DateTime Function() get clock => DateTime.now;
 
   /// The durable orchestration engine; the only place workflow state writes.
-  DurableWorkflowEngine get workflowEngine =>
-      DurableWorkflowEngine(store: workflowStore);
+  ///
+  /// [designContractStore] is mounted here, not left to a caller, for the same
+  /// reason `TriageProcessor` derives its QA-contract provisioner from `db`
+  /// rather than accepting an injected one: an engine with no store mounted
+  /// cannot take `planned -> designRequired` or the `designParked ->
+  /// designRequired` release, so a deployment that forgot to wire it would
+  /// refuse every design release **for the wrong reason** — "no store to ask"
+  /// rather than "no contract on this item" — and the distinction is invisible
+  /// on the row.
+  DurableWorkflowEngine get workflowEngine => DurableWorkflowEngine(
+    store: workflowStore,
+    designContractStore: designContractStore,
+  );
 
   /// Provisions the durable `defect-{defectId}` work item that carries AI
   /// triage. It is a view over the same [workflowStore]/[workflowEngine] the

@@ -26,7 +26,19 @@ class DesignGovernanceE2EHost {
     required String workspaceRoot,
   }) {
     workflowStore = InMemoryWorkflowStore();
-    workflowEngine = DurableWorkflowEngine(store: workflowStore);
+    // The store `designContractExists()` confirms the work item's DURABLE
+    // `designContractId` column against. Without it, `planned -> designRequired`
+    // is refused for a DEPLOYMENT reason — "no store was mounted to ask" — and
+    // that reads exactly like "this item has no design contract", which is a
+    // different claim about a different thing. The production composition root
+    // mounts `PostgresDesignContractStore`; the in-memory tier is the honest
+    // equivalent for a full-stack host with no server, and the rows it holds
+    // are real rows rather than context strings.
+    designContractStore = InMemoryDesignContractStore();
+    workflowEngine = DurableWorkflowEngine(
+      store: workflowStore,
+      designContractStore: designContractStore,
+    );
     executionStore = InMemoryExecutionStore();
     workerStore = InMemoryWorkerStore();
     jobStore = InMemoryJobStore();
@@ -125,6 +137,7 @@ class DesignGovernanceE2EHost {
   }
 
   late InMemoryWorkflowStore workflowStore;
+  late InMemoryDesignContractStore designContractStore;
   late DurableWorkflowEngine workflowEngine;
   late InMemoryExecutionStore executionStore;
   late InMemoryWorkerStore workerStore;
@@ -142,19 +155,32 @@ class DesignGovernanceE2EHost {
   late Scheduler designReviewScheduler;
 
   /// Creates a work item and walks it to [WorkItemState.designRequired].
+  ///
+  /// The design contract is PROVISIONED, not named. `createWorkItem` stamps a
+  /// `designContractId` the store can resolve and `planned -> designRequired`
+  /// is confirmed against it — so the id on the column and the row behind it
+  /// are produced by the same write, which is the only thing that makes the
+  /// edge's guard mean anything.
   Future<WorkItem> createDesignWorkItem({
     required String workItemId,
     required String productId,
     String title = 'Design a feature',
     String description = 'Design a feature for the product',
   }) async {
+    final contract =
+        await DesignContractProvisioner(
+          contractStore: designContractStore,
+        ).provisionForWorkItem(
+          workItemId: workItemId,
+          productId: productId,
+        );
     await workflowEngine.createWorkItem(
       workItemId: workItemId,
       productId: productId,
       category: WorkItemCategory.feature,
       title: title,
       description: description,
-      designContractId: 'dc-$workItemId',
+      designContractId: contract.contractId,
       qaContractId: 'qa-$workItemId',
       featureRef: 'feature/$workItemId',
     );
@@ -173,7 +199,6 @@ class DesignGovernanceE2EHost {
       workItemId: workItemId,
       to: WorkItemState.designRequired,
       trigger: TransitionTrigger.systemEvent,
-      context: {'designContractId': 'dc-$workItemId'},
     );
   }
 
@@ -223,7 +248,6 @@ class DesignGovernanceE2EHost {
       to: WorkItemState.designInReview,
       trigger: TransitionTrigger.systemEvent,
       context: {
-        'designContractId': 'dc-$workItemId',
         'designContractStatus': DesignContractStatus.underReview,
         'designRevisionId': designRevisionId,
         'designerExecutionId': designerExecutionId,

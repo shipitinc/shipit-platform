@@ -14,6 +14,7 @@ import 'package:worker_runtime/worker_runtime.dart';
 
 import 'package:control_plane_server/src/persistence/persistence_database.dart';
 import 'package:control_plane_server/src/persistence/postgres_defect_store.dart';
+import 'package:control_plane_server/src/persistence/postgres_design_contract_store.dart';
 import 'package:control_plane_server/src/persistence/postgres_job_store.dart';
 import 'package:control_plane_server/src/persistence/postgres_triage_store.dart';
 import 'package:control_plane_server/src/persistence/postgres_worker_store.dart';
@@ -511,6 +512,7 @@ class _TriageRun {
     required this.defectStore,
     required this.workflowStore,
     required this.workflowEngine,
+    required this.designContractStore,
     required this.coordinator,
     required this.workerStore,
   });
@@ -532,6 +534,11 @@ class _TriageRun {
   final PostgresDefectStore defectStore;
   final WorkflowStore workflowStore;
   final DurableWorkflowEngine workflowEngine;
+
+  /// The store the engine above confirms `designContractId` against. Exposed so
+  /// a test that seeds its OWN control work item provisions a contract into the
+  /// SAME store the run's engine asks; two stores would prove nothing.
+  final DesignContractStore designContractStore;
   final ExecutionCoordinator coordinator;
   final PostgresWorkerStore workerStore;
 
@@ -655,6 +662,11 @@ class _TriageRun {
       defectStore: defectStore,
       workflowStore: workflowStore,
       workflowEngine: workflowEngine,
+      // The SAME store instance the original run's engine confirms against.
+      // A restarted process would re-open it over the same database; handing
+      // back the live object is equivalent here and avoids a second handle
+      // into one connection pool.
+      designContractStore: designContractStore,
       coordinator: ExecutionCoordinator(
         store: store,
         workflowEngine: workflowEngine,
@@ -914,7 +926,16 @@ Future<_TriageRun> _dispatchTriage({
   final workerStore = PostgresWorkerStore(db);
   final defectStore = PostgresDefectStore(db);
   final triageStore = PostgresTriageStore(db);
-  final engine = DurableWorkflowEngine(store: workflowStore);
+  // Mounted over the SAME database, which is what the production composition
+  // root does and what `TriageProcessor` derives from its own `db`. Without it
+  // the control item below cannot reach `designRequired`, and it would refuse
+  // for a DEPLOYMENT reason — "no store was mounted to ask" — rather than for
+  // the reason the control exists to prove.
+  final designContractStore = PostgresDesignContractStore(db);
+  final engine = DurableWorkflowEngine(
+    store: workflowStore,
+    designContractStore: designContractStore,
+  );
 
   final runtime = AgentRuntime(
     registry: AgentAdapterRegistry()
@@ -1027,6 +1048,7 @@ Future<_TriageRun> _dispatchTriage({
     defectStore: defectStore,
     workflowStore: workflowStore,
     workflowEngine: engine,
+    designContractStore: designContractStore,
     coordinator: coordinator,
     workerStore: workerStore,
   );
@@ -1346,16 +1368,53 @@ void main() {
               run.designRemediationWorkItemId,
             );
 
-            // The stop is `planned`, not `designRequired`.
+            // The stop is `designParked`, not `designRequired` and not `planned`.
             //
             // `designRequired` would assert that a `DesignRevision` is
             // outstanding and a design agent is about to run. No such agent
             // exists in shipit-platform, so that state is a fabricated claim
-            // about work in flight. `planned` is the last state reachable
-            // without a design artifact, and the reason is recorded in metadata
-            // rather than implied by the state (ADR 0021).
-            expect(remediation.state, WorkItemState.planned);
+            // about work in flight.
+            //
+            // `planned` is not a stop either: `triageDefectDefinition
+            // .entryStates` contains it and `planned -> designNotRequired` is
+            // guarded by `actorAllowed` alone, so the category-blind triage
+            // lane takes a design-remediation item back out of it and
+            // re-dispatches, for ever. `designParked` is in no lane's entry
+            // states, so the item is genuinely held.
+            expect(remediation.state, WorkItemState.designParked);
+            expect(remediation.state, isNot(WorkItemState.planned));
+            expect(remediation.state, isNot(WorkItemState.designRequired));
             expect(remediation.featureRef, run.defectId);
+
+            // It is released by an EDGE, and that edge is guarded on this
+            // column plus a store confirmation — so a park with nothing behind
+            // it is a dead end rather than a wait.
+            //
+            // `TriageProcessor` derives its `DesignContractProvisioner` from its
+            // own `db`, over the same database this test reads: a contract that
+            // exists here is one the production composition wrote, not one a
+            // fixture supplied.
+            expect(
+              remediation.designContractId,
+              isNotNull,
+              reason:
+                  'F-143: `DesignContractBuilder` had no production caller, so '
+                  'a store nobody provisions is a table nobody fills and the '
+                  'release edge refuses for a reason about the deployment '
+                  'rather than about the item.',
+            );
+            final contract = await PostgresDesignContractStore(
+              db,
+            ).readDesignContract(remediation.designContractId!);
+            expect(
+              contract,
+              isNotNull,
+              reason:
+                  'a non-null id is only a NAME. This asserts the row behind '
+                  'it, which is the half `designContractExists()` checks.',
+            );
+            expect(contract!.workItemId, run.designRemediationWorkItemId);
+            expect(contract.status, DesignContractStatus.draft);
 
             // The reason is durable, not a comment in the test.
             expect(remediation.metadata![designRemediationRequiredKey], isTrue);
@@ -1430,6 +1489,17 @@ void main() {
             // dead harness.
             final controlWorkItemId = 'design-control-DEF-${run.runId}';
             final engine = run.workflowEngine;
+            // A PROVISIONED contract, not a named one: `designContractExists()`
+            // confirms this id against the store, so a string that resolves to
+            // nothing would refuse the edge and the positive control would
+            // never fire.
+            final controlContract =
+                await DesignContractProvisioner(
+                  contractStore: run.designContractStore,
+                ).provisionForWorkItem(
+                  workItemId: controlWorkItemId,
+                  productId: defectTriageBucketProductId,
+                );
             await engine.createWorkItem(
               workItemId: controlWorkItemId,
               productId: defectTriageBucketProductId,
@@ -1438,7 +1508,7 @@ void main() {
               description:
                   'Suite-owned control work item used to prove the design '
                   'scheduler really does dispatch when an item awaits design.',
-              designContractId: 'dc-${run.runId}',
+              designContractId: controlContract.contractId,
               // The coordinator completes the execution by transitioning
               // `agentExecuting -> agentCompleted`, and that transition is
               // guarded on a QA contract existing. Without one the control job
@@ -1460,7 +1530,6 @@ void main() {
               workItemId: controlWorkItemId,
               to: WorkItemState.designRequired,
               trigger: TransitionTrigger.systemEvent,
-              context: {'designContractId': 'dc-${run.runId}'},
             );
 
             final designScheduler = run.designRevisionSchedulerOver([

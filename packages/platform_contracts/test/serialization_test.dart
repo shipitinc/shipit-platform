@@ -417,8 +417,17 @@ void main() {
     });
 
     test('WorkItemState has expected values', () {
-      expect(WorkItemState.values.length, equals(26));
+      expect(WorkItemState.values.length, equals(28));
       expect(WorkItemState.draft.name, equals('draft'));
+      // The design park's wire token. `fromWire` throws on anything it does not
+      // recognise, so a state whose token no parser knows is parse-only in
+      // practice — and `work_item.state` is TEXT, so the token is the value a
+      // restart reads back.
+      expect(WorkItemState.designParked.wire, equals('design_parked'));
+      expect(
+        WorkItemState.fromWire('design_parked'),
+        equals(WorkItemState.designParked),
+      );
       expect(WorkItemState.completed.isTerminal, isTrue);
       expect(WorkItemState.cancelled.isTerminal, isTrue);
       expect(WorkItemState.terminated.isTerminal, isTrue);

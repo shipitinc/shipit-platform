@@ -1,4 +1,5 @@
 import 'package:control_plane_server/src/persistence/persistence_database.dart';
+import 'package:control_plane_server/src/persistence/postgres_design_contract_store.dart';
 import 'package:control_plane_server/src/persistence/postgres_workflow_store.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:serverpod/serverpod.dart';
@@ -42,6 +43,7 @@ void main() {
     final db = await newDb();
     const workItem = 'ep-%';
     const statements = <String>[
+      'DELETE FROM "design_contract"       WHERE "workItemId" LIKE \'$workItem\'',
       'DELETE FROM "human_decision"       WHERE "workItemId" LIKE \'$workItem\'',
       'DELETE FROM "work_item_transition" WHERE "workItemId" LIKE \'$workItem\'',
       'DELETE FROM "work_item"            WHERE "workItemId" LIKE \'$workItem\'',
@@ -51,16 +53,36 @@ void main() {
     }
   }
 
-  Future<DurableWorkflowEngine> newEngine([String? workItemId]) async {
+  /// Creates the engine and the seeded work item.
+  ///
+  /// [workItemId] is REQUIRED, not optional: the design contract id is a pure
+  /// function of the work item id, so an engine seeded under a minted id could
+  /// not be handed a contract that names the row it is about to create — and
+  /// the contract has to be written BEFORE that row, because the guard reads
+  /// the durable column rather than the transition context.
+  Future<DurableWorkflowEngine> newEngine(String workItemId) async {
+    // Mounted over the SAME database as the workflow store, which is what the
+    // production composition root does. `designContractExists()` reads the
+    // work item's durable `designContractId` column and CONFIRMS it against a
+    // store; an engine with none refuses `planned -> designRequired` for a
+    // deployment reason ("nothing was mounted to ask") that is
+    // indistinguishable, on the row, from the item genuinely having no design
+    // contract.
+    final designContracts = PostgresDesignContractStore(await newDb());
     final engine = DurableWorkflowEngine(
       store: PostgresWorkflowStore(await newDb()),
+      designContractStore: designContracts,
     );
+    final contract = await DesignContractProvisioner(
+      contractStore: designContracts,
+    ).provisionForWorkItem(workItemId: workItemId, productId: 'prod-1');
     await engine.createWorkItem(
       productId: 'prod-1',
       category: WorkItemCategory.feature,
       title: 'Endpoint seeded feature',
       description: 'Seeded feature for endpoint persistence tests',
       workItemId: workItemId,
+      designContractId: contract.contractId,
     );
     return engine;
   }
@@ -89,7 +111,6 @@ void main() {
       to: WorkItemState.designRequired,
       trigger: TransitionTrigger.systemEvent,
       actor: _orch,
-      context: const {'designContractId': 'dc-1'},
     );
     await engine.transition(
       workItemId: workItemId,

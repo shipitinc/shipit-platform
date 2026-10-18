@@ -5,7 +5,19 @@ import 'package:platform_contracts/platform_contracts.dart';
 import 'package:qa_orchestration/qa_orchestration.dart';
 import 'package:workflow_engine/workflow_engine.dart' show WorkflowEngine;
 import 'package:workflow_store/workflow_store.dart'
-    show DurableWorkflowEngine, InMemoryWorkflowStore;
+    show
+        DesignContractBuilder,
+        DesignContractProvisioner,
+        DurableWorkflowEngine,
+        InMemoryDesignContractStore,
+        InMemoryWorkflowStore,
+        WorkflowTransitionRejectedException,
+        designContractApprovalThreshold,
+        designContractDefectIdMetadataKey,
+        designContractProductIdMetadataKey,
+        designRevisionArtifactType,
+        requiredArtifactSchemasAbsent,
+        requiredArtifactSchemasMetadataKey;
 // `test` is a dev_dependency of `control_plane_server`; it is unresolved as a
 // `lib/` import, which is a known cost of co-locating tests here.
 // ignore: depend_on_referenced_packages
@@ -119,10 +131,19 @@ ProductQAContractDeclaration _declaration(String productId) =>
 /// Everything one [DesignRemediationWorkItemProvisioner] needs, plus the
 /// provisioner, so a test reads as a scenario rather than as wiring.
 class _Host {
-  _Host({this.declaredProducts = const [kProduct]}) {
+  _Host({
+    this.declaredProducts = const [kProduct],
+    this.withDesignContractProvisioner = true,
+  }) {
+    // The store lane E writes its design contract into, and the store the
+    // engine confirms the durable `designContractId` column against. Both are
+    // the SAME instance on purpose: a fixture that provisioned into one store
+    // while the engine asked another would prove nothing about the production
+    // path, where `TriageProcessor` derives both from one `db`.
     workflowEngine = DurableWorkflowEngine(
       store: workflowStore,
       policy: const WorkflowEngine(),
+      designContractStore: designContracts,
     );
     provisioner = DesignRemediationWorkItemProvisioner(
       workflowStore: workflowStore,
@@ -134,6 +155,9 @@ class _Host {
                 for (final id in declaredProducts) id: _declaration(id),
               }),
             )
+          : null,
+      designContractProvisioner: withDesignContractProvisioner
+          ? DesignContractProvisioner(contractStore: designContracts)
           : null,
       log: (event, fields) {
         events.add(event);
@@ -150,7 +174,24 @@ class _Host {
   /// different failure from "the product declared nothing" and must stay so.
   bool withProvisioner = true;
 
+  /// Set false to model the "no `DesignContractProvisioner` supplied"
+  /// construction. It is a DIFFERENT failure from a missing QA declaration and
+  /// from a refused release, and it must stay separable: this one means no
+  /// design contract was ever written, so the release edge will refuse for a
+  /// reason about the deployment rather than about the item.
+  ///
+  /// A CONSTRUCTOR parameter rather than a settable field on purpose. The
+  /// provisioner is built inside the constructor, so a cascade assignment
+  /// (`_Host()..withDesignContractProvisioner = false`) would arrive too late
+  /// and the test would silently assert against a host that HAS a provisioner.
+  final bool withDesignContractProvisioner;
+
   final InMemoryWorkflowStore workflowStore = InMemoryWorkflowStore();
+
+  /// Read directly by the assertions below so they check the ROW that was
+  /// written, not the id lane E happened to hold in memory.
+  final InMemoryDesignContractStore designContracts =
+      InMemoryDesignContractStore();
   final _OverwritingQAContractStore contracts = _OverwritingQAContractStore();
   final List<String> events = <String>[];
 
@@ -274,7 +315,270 @@ class _Host {
 }
 
 void main() {
-  group('a created remediation item is governed by a REAL contract', () {
+  group('the item parks at `designParked`, not at `planned`', () {
+    // `design-revision.md` §4.4.4 (R2). `planned` is not a holding state:
+    // `triageDefectDefinition.entryStates` contains it and
+    // `planned -> designNotRequired` is guarded by `actorAllowed` alone, so the
+    // category-blind triage lane takes a design-remediation item back out of
+    // it and re-dispatches for ever. These assert the park that replaces it.
+    test('a created item ends at designParked', () async {
+      final host = _Host();
+
+      final item = await host.run(productId: kProduct);
+
+      expect(
+        item!.state,
+        WorkItemState.designParked,
+        reason:
+            'read from the returned row, not from a local expectation about '
+            'where the walk ends.',
+      );
+      expect(
+        item.state,
+        isNot(WorkItemState.planned),
+        reason:
+            'naming this explicitly because `planned` is the state this lane '
+            'used to stop at, and it is a triage entry state: an item left '
+            'there is dispatched as a defect and taken out to '
+            '`designNotRequired` — asserting "no design work is needed" over a '
+            'defect that IS a design defect.',
+      );
+    });
+
+    test('the §4.6 metadata still says why it is parked', () async {
+      final host = _Host();
+
+      final item = await host.run(productId: kProduct);
+
+      expect(item!.metadata?[designRemediationRequiredKey], isTrue);
+      expect(
+        item.metadata?[designGovernanceRuntimeKey],
+        designGovernanceRuntimeUnavailable,
+      );
+      expect(
+        item.metadata?[blockedByKey],
+        externalDesignGovernanceDependency,
+        reason:
+            'moving to a different state must not quietly drop the record of '
+            'WHY the item stopped. `designParked` describes where it rests; '
+            'this says what is missing.',
+      );
+      expect(
+        item.description,
+        contains('parks at designParked'),
+        reason:
+            'the human-facing prose an operator reads must not still claim the '
+            'item stops at `planned`, which would now be a state it never '
+            'occupies.',
+      );
+    });
+
+    test(
+      'a replay of a row stranded at `planned` moves it INTO the park',
+      () async {
+        // The recovery direction that matters: rows written before this state
+        // existed are still sitting at `planned`, and `ensurePersisted` is what
+        // reaches them. Leaving one there would leave it in the triage lane's
+        // way.
+        final host = _Host();
+        await host.seedExistingRemediationRow(
+          defectId: kDefectId,
+          productId: kProduct,
+          state: WorkItemState.planned,
+        );
+
+        final repaired = await host.run(productId: kProduct);
+
+        expect(repaired!.state, WorkItemState.designParked);
+      },
+    );
+
+    test('a replay of an item already parked changes nothing — the hop is '
+        'idempotent', () async {
+      final host = _Host();
+      await host.run(productId: kProduct);
+
+      final again = await host.run(productId: kProduct);
+
+      expect(again!.state, WorkItemState.designParked);
+      expect(
+        await host.designContracts.listDesignContractsForWorkItem(
+          designRemediationWorkItemId(kDefectId),
+        ),
+        hasLength(1),
+        reason:
+            'a replay takes the existing-row branch, which does not provision '
+            'a second contract. The design contract id is a pure function of '
+            'the work item id, so even a second write would converge on one '
+            'row — but there is no second write to converge.',
+      );
+    });
+  });
+
+  group('the item is governed by a REAL design contract (F-143)', () {
+    test('it carries a designContractId that resolves to a row', () async {
+      final host = _Host();
+
+      final item = await host.run(productId: kProduct);
+
+      expect(
+        item!.designContractId,
+        isNotNull,
+        reason:
+            '`designContractExists()` on `designParked -> designRequired` reads '
+            'the DURABLE `designContractId` column and confirms it against a '
+            '`DesignContractStore`. A null here means the release refuses for '
+            'the right reason ("no contract"), and the park is a dead end.',
+      );
+      final contract = await host.designContracts.readDesignContract(
+        item.designContractId!,
+      );
+      expect(
+        contract,
+        isNotNull,
+        reason:
+            'a non-null id is only a NAME. This asserts the row behind it, '
+            'which is the half the guard actually checks.',
+      );
+      expect(contract!.status, DesignContractStatus.draft);
+      expect(contract.workItemId, item.workItemId);
+      expect(
+        contract.metadata?[designContractProductIdMetadataKey],
+        kProduct,
+      );
+      expect(
+        contract.metadata?[designContractDefectIdMetadataKey],
+        kDefectId,
+        reason:
+            'a contract with no recorded provenance is a contract whose scope '
+            'nobody can reconstruct later.',
+      );
+    });
+
+    test(
+      'THE BUILDER IS REACHED — the contract is built, not hand-written',
+      () async {
+        // F-143: `DesignContractBuilder` had no production caller, so a store
+        // nobody provisions is a table nobody fills. This asserts the SHAPE the
+        // builder alone produces, so a hand-written `DesignContract` cannot make
+        // the test above pass.
+        final host = _Host();
+
+        final item = await host.run(productId: kProduct);
+
+        final contract = await host.designContracts.readDesignContract(
+          item!.designContractId!,
+        );
+        expect(
+          contract!.requiredArtifacts.single.artifactType,
+          designRevisionArtifactType,
+        );
+        expect(contract.requiredArtifacts.single.validationSchema, isNull);
+        expect(
+          contract.metadata?[requiredArtifactSchemasMetadataKey],
+          requiredArtifactSchemasAbsent,
+          reason:
+              'a NAMED absence, not a claim that nothing needs checking. The '
+              'fidelity anchor that would make the schema checkable does not '
+              'exist yet.',
+        );
+        expect(contract.approvalThreshold, designContractApprovalThreshold);
+        expect(contract.submittedArtifacts, isNull);
+        expect(contract.decisions, isNull);
+      },
+    );
+
+    test('no provisioner supplied records a NAMED refusal and no fabricated '
+        'id', () async {
+      final host = _Host(withDesignContractProvisioner: false);
+
+      final item = await host.run(productId: kProduct);
+
+      expect(item, isNotNull, reason: 'the item is still created');
+      expect(
+        item!.designContractId,
+        isNull,
+        reason:
+            'a missing provisioner is a missing dependency, not a licence to '
+            'mint an id that names no row — which is the fabrication this lane '
+            'was rebuilt to refuse.',
+      );
+      expect(
+        item.metadata?[designContractProvisionerUnavailableKey],
+        designContractProvisionerUnavailable,
+      );
+      expect(
+        item.state,
+        WorkItemState.designParked,
+        reason:
+            'parking does not depend on having a contract. The release '
+            'refuses until one exists; the item is still held out of the '
+            'triage lane\'s reach.',
+      );
+    });
+
+    test(
+      'the release edge REFUSES without a contract and ACCEPTS with one',
+      () async {
+        // The end-to-end shape of the park, on a real durable engine: with no
+        // contract on the row the guard names the item's own missing contract,
+        // and after provisioning one the SAME transition succeeds. Neither half
+        // is asserted by the pure-policy tests in `workflow_engine`, because
+        // only the durable engine can supply the column and the store lookup.
+        final host = _Host(withDesignContractProvisioner: false);
+        final refusedItem = await host.run(productId: kProduct);
+
+        await expectLater(
+          host.workflowEngine.transition(
+            workItemId: refusedItem!.workItemId,
+            to: WorkItemState.designRequired,
+            trigger: TransitionTrigger.systemEvent,
+          ),
+          throwsA(
+            isA<WorkflowTransitionRejectedException>().having(
+              (e) => e.record.reason,
+              'reason',
+              contains('carries no designContractId'),
+            ),
+          ),
+        );
+        expect(
+          (await host.workflowStore.readWorkItem(refusedItem.workItemId)).state,
+          WorkItemState.designParked,
+          reason: 'a refused transition must not move the row',
+        );
+
+        // Now give the SAME row a real contract and try again. The id has to be
+        // stamped on the column as well as written to the store: the guard reads
+        // both, and either alone is worth nothing.
+        final contract = await host.designContracts.provisionDesignContract(
+          const DesignContractBuilder().buildDraftContract(
+            workItemId: refusedItem.workItemId,
+            productId: kProduct,
+            now: kNow,
+          ),
+        );
+        await host.workflowStore.saveWorkItem(
+          refusedItem.copyWith(designContractId: contract.contractId),
+        );
+
+        final released = await host.workflowEngine.transition(
+          workItemId: refusedItem.workItemId,
+          to: WorkItemState.designRequired,
+          trigger: TransitionTrigger.systemEvent,
+        );
+        expect(
+          released.state,
+          WorkItemState.designRequired,
+          reason:
+              'the same engine, the same store and the same row. The only thing '
+              'that changed is that a row now exists behind the id.',
+        );
+      },
+    );
+  });
+
+  group('a created remediation item is governed by a REAL QA contract', () {
     test('it carries a qaContractId that resolves to a row', () async {
       final host = _Host();
 
@@ -612,7 +916,12 @@ void main() {
               'from one that was never made.',
         );
         expect(durable.version, strandedVersion);
-        expect(repaired.state, WorkItemState.planned);
+        // The replay resumes from wherever the row actually is. This row was
+        // stranded at `planned`, and `planned -> designParked` is now the hop
+        // lane E takes, so the repair moves it INTO the park rather than
+        // leaving it at a state the category-blind triage scheduler will take
+        // it back out of.
+        expect(repaired.state, WorkItemState.designParked);
         expect(
           repaired.metadata?[productQAContractSpecUnavailableKey],
           productQAContractSpecUndeclared,

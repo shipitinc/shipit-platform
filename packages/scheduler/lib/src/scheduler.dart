@@ -535,6 +535,7 @@ class Scheduler {
     ExecutionLivenessProbe? executionLiveness,
     Duration? zombieStalenessAfter,
     WorkflowEngine? policy,
+    DesignContractStore? designContractStore,
     ModelSelectionService? modelSelection,
     DedupeKeyBuilder? dedupeKeyBuilder,
     InstructionBuilder? instructionBuilder,
@@ -570,9 +571,27 @@ class Scheduler {
        // Present because a reclaim has to move the work item, not just the job.
        // It exists ONLY for that; the scheduler otherwise never writes workflow
        // state, and `policy` stays the optional injection it always was.
+       //
+       // `designContractStore` is threaded through for the same reason: an entry
+       // hop or a reclaim that lands `planned -> designRequired` (or the
+       // `designParked -> designRequired` release) runs through THIS engine, and
+       // `designContractExists()` is fail-closed with no store — it would refuse
+       // because nothing was available to ask, which is a deployment
+       // misconfiguration and NOT the same claim as "this item has no design
+       // contract". `EntryHopper` is given this same instance below, so a hop
+       // and a reclaim can never disagree about which answer the guard gives.
+       //
+       // It stays OPTIONAL and defaults to null rather than being required or
+       // defaulted to an in-memory store, for the reasons
+       // `DurableWorkflowEngine._designContractStore` names: requiring it would
+       // break every construction site including ones that provably never reach
+       // the guarded edge, and an in-memory default would let process-local
+       // `Map` state satisfy a guard whose entire purpose is durability. A
+       // scheduler with none mounted refuses the design edges — correctly.
        _reclaimEngine = DurableWorkflowEngine(
          store: workflowStore,
          policy: policy,
+         designContractStore: designContractStore,
        ),
        // The second component that has to move a work item, for the same reason
        // and over the same policy: an entry state whose route to execution is

@@ -817,6 +817,62 @@ void main() {
         );
       }
     });
+
+    // R2.5 (`design-revision.md` §4.4.4): `designParked` MUST NOT be reachable
+    // from `agentFailed`.
+    //
+    // The constraint holds by CONSTRUCTION — a park in no entry set cannot be
+    // a return target — but "by construction" is exactly the kind of claim that
+    // stops being true when a later change widens an entry set, so it is
+    // asserted here where the derivation lives rather than left as a comment in
+    // the enum.
+    //
+    // NON-VACUITY: this is derived from the LIVE definitions and the LIVE
+    // transition table, not from a list written beside them. Add
+    // `designParked` to any definition's `entryStates`, or add an
+    // `agentFailed -> designParked` edge, and this goes red.
+    test('`designParked` is neither an entry state nor a retry-return target', () {
+      const allDefinitions = <JobDefinition>[
+        defaultImplementFeatureDefinition,
+        implementFeatureDefinition,
+        triageDefectDefinition,
+        designRevisionDefinition,
+        designReviewDefinition,
+        engineeringReviewDefinition,
+        onboardProductDefinition,
+      ];
+
+      final entryStates = <WorkItemState>{
+        for (final definition in allDefinitions) ...definition.entryStates,
+      };
+      expect(
+        entryStates,
+        isNot(contains(WorkItemState.designParked)),
+        reason:
+            '`designParked` is where a design-remediation item rests until the '
+            'design runtime exists. In an entry set it becomes dispatchable, '
+            'and the category-blind triage lane would take it out again — the '
+            'convergence the state was created to end.',
+      );
+
+      for (final failureState in <WorkItemState>[
+        WorkItemState.agentFailed,
+        WorkItemState.reviewInProgress,
+      ]) {
+        expect(
+          WorkItemTransitions.isLegalTransition(
+            failureState,
+            WorkItemState.designParked,
+          ),
+          isFalse,
+          reason:
+              'there must be no edge from ${failureState.wire} to '
+              '`designParked`. A retry return lands the item back in front of a '
+              'lane; a park is the absence of a lane, so returning an item to '
+              'it would strand the retry instead of restoring it.',
+        );
+      }
+    });
   });
 }
 

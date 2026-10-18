@@ -17,7 +17,11 @@ import 'package:scheduler/scheduler.dart'
         triageDefectDedupeKey;
 import 'package:workflow_engine/workflow_engine.dart' show WorkflowEngine;
 import 'package:workflow_store/workflow_store.dart'
-    show DurableWorkflowEngine, InMemoryWorkflowStore;
+    show
+        DesignContractProvisioner,
+        DurableWorkflowEngine,
+        InMemoryDesignContractStore,
+        InMemoryWorkflowStore;
 // `test` is a dev_dependency of `control_plane_server`; it is unresolved as a
 // `lib/` import, which is a known cost of co-locating tests here.
 // ignore: depend_on_referenced_packages
@@ -43,9 +47,18 @@ const String kTitle = 'Observed behaviour is not what the request expected';
 /// itself, so a test reads as a scenario rather than as wiring.
 class _Host {
   _Host() {
+    // The store `designContractExists()` confirms the durable `designContractId`
+    // column against. Mounted for the same reason the production composition
+    // root mounts `PostgresDesignContractStore`: an engine with none cannot
+    // take `planned -> designRequired` AT ALL, so a fixture that walks an item
+    // there would fail for a deployment reason rather than a graph one. The
+    // in-memory tier is the honest equivalent for a unit test — the rows it
+    // holds are real rows, not context strings.
+    designContractStore = InMemoryDesignContractStore();
     workflowEngine = DurableWorkflowEngine(
       store: workflowStore,
       policy: const WorkflowEngine(),
+      designContractStore: designContractStore,
     );
     trigger = WorkEntryTrigger(
       workflowStore: workflowStore,
@@ -57,6 +70,29 @@ class _Host {
   }
 
   final InMemoryWorkflowStore workflowStore = InMemoryWorkflowStore();
+
+  /// See the constructor: the store the engine confirms design contracts
+  /// against. Also read directly by [provisionDesignContractFor], so the
+  /// contract a fixture writes and the contract the engine confirms are the
+  /// same store rather than two that happen to look alike.
+  late final InMemoryDesignContractStore designContractStore;
+
+  /// Writes a real `draft` design contract for [workItemId] and returns its id.
+  ///
+  /// Goes through the production [DesignContractProvisioner] rather than
+  /// writing a row by hand, so a fixture that stamps the result on the work
+  /// item is exercising the same write-and-read-back path lane E does — which
+  /// is the only reason the stamped id is worth anything to
+  /// `designContractExists()`.
+  Future<String> provisionDesignContractFor(
+    String workItemId, {
+    String productId = kProduct,
+  }) async {
+    final contract = await DesignContractProvisioner(
+      contractStore: designContractStore,
+    ).provisionForWorkItem(workItemId: workItemId, productId: productId);
+    return contract.contractId;
+  }
 
   /// Bound to [workflowStore], deliberately: a second in-memory store would
   /// make every assertion in this file pass against a graph nothing else can
@@ -106,13 +142,26 @@ class _Host {
   Future<WorkItem> openDefectTriageItem(
     String defectId, {
     String? productId,
+    bool withDesignContract = false,
   }) async {
+    final workItemId = defectTriageWorkItemId(defectId);
+    // Provisioned BEFORE the row is created, because the id has to be on the
+    // row at creation: `designContractExists()` reads the durable column, not
+    // the transition context, so a contract written afterwards leaves an item
+    // that still cannot enter `designRequired`.
+    final contract = withDesignContract
+        ? await provisionDesignContractFor(
+            workItemId,
+            productId: productId ?? kProduct,
+          )
+        : null;
     final item = await workflowEngine.createWorkItem(
-      workItemId: defectTriageWorkItemId(defectId),
+      workItemId: workItemId,
       productId: productId ?? kProduct,
       category: triageWorkItemCategory,
       title: kTitle,
       description: kDescription,
+      designContractId: contract,
       featureRef: defectId,
     );
     return item;
@@ -1041,7 +1090,10 @@ void main() {
     test('an item at a non-entry state produces no job', () async {
       final host = _Host();
       await host.putGovernedProduct();
-      final item = await host.openDefectTriageItem('d-owned');
+      final item = await host.openDefectTriageItem(
+        'd-owned',
+        withDesignContract: true,
+      );
       // `designRequired` is legal, is not a triage entry state, and is where a
       // human or another lane leaves an item that is genuinely under
       // construction. Enqueueing here would recreate the 18-job orphan class

@@ -83,6 +83,7 @@ import 'package:control_plane_server/src/generated/endpoints.dart';
 import 'package:control_plane_server/src/generated/protocol.dart';
 import 'package:control_plane_server/src/persistence/persistence_database.dart';
 import 'package:control_plane_server/src/persistence/postgres_defect_store.dart';
+import 'package:control_plane_server/src/persistence/postgres_design_contract_store.dart';
 import 'package:control_plane_server/src/persistence/postgres_job_store.dart';
 import 'package:control_plane_server/src/persistence/postgres_product_qa_contract_spec_store.dart';
 import 'package:control_plane_server/src/persistence/postgres_qa_contract_store.dart';
@@ -318,6 +319,7 @@ class StrandedWorkItemRepair {
     required this.workflowStore,
     required this.workflowEngine,
     required this.qaContractProvisioner,
+    required this.designContractProvisioner,
     required this.jobStore,
     required this.defectStore,
     this.dryRun = false,
@@ -327,6 +329,14 @@ class StrandedWorkItemRepair {
   final WorkflowStore workflowStore;
   final DurableWorkflowEngine workflowEngine;
   final ProductQAContractProvisioner qaContractProvisioner;
+
+  /// Built from the same `db` as every other store, for the same reason the
+  /// engine takes a `designContractStore`: lane E stamps the id of a contract
+  /// it persisted and read back onto the remediation row, and
+  /// `designParked -> designRequired` refuses unless that id resolves against a
+  /// store. Without this the repair would leave the item parked with no
+  /// contract behind it.
+  final DesignContractProvisioner designContractProvisioner;
   final JobStore jobStore;
   final DefectStore defectStore;
 
@@ -477,6 +487,10 @@ class StrandedWorkItemRepair {
       workflowStore: workflowStore,
       workflowEngine: workflowEngine,
       qaContractProvisioner: qaContractProvisioner,
+      // Over the same `db` as every other store above, for the same reason:
+      // without it the item this branch repairs would be created with no
+      // design contract backing it and the release edge would refuse it.
+      designContractProvisioner: designContractProvisioner,
       log: _log,
     ).ensurePersisted(triageResult: triageResult, defect: defect);
 
@@ -884,12 +898,22 @@ Future<void> main(List<String> argv) async {
       workflowEngine: DurableWorkflowEngine(
         store: workflowStore,
         policy: const WorkflowEngine(),
+        // The repair CLI builds lane E's provisioner below, and lane E writes
+        // the durable `designContractId` column the release edge
+        // (`designParked -> designRequired`) is guarded on. An engine with no
+        // store mounted cannot take that edge for the RIGHT reason — it would
+        // refuse with "no store to ask", which is a misconfiguration, not a
+        // missing contract, and the two are indistinguishable on the row.
+        designContractStore: PostgresDesignContractStore(db),
       ),
       // The same two stores `TriageProcessor` builds lane E's provisioner
       // from, so the contract this writes is the product's own.
       qaContractProvisioner: ProductQAContractProvisioner(
         contractStore: PostgresQAContractStore(db),
         specStore: PostgresProductQAContractSpecStore(db),
+      ),
+      designContractProvisioner: DesignContractProvisioner(
+        contractStore: PostgresDesignContractStore(db),
       ),
       jobStore: PostgresJobStore(db),
       defectStore: PostgresDefectStore(db),

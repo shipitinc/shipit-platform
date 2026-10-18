@@ -10,6 +10,7 @@ import 'package:workflow_store/workflow_store.dart';
 import '../persistence/persistence_database.dart';
 import '../persistence/postgres_defect_store.dart'
     show DefectNotFoundException, PostgresDefectStore;
+import '../persistence/postgres_design_contract_store.dart';
 import '../persistence/postgres_product_qa_contract_spec_store.dart';
 import '../persistence/postgres_qa_contract_store.dart';
 import '../persistence/postgres_triage_store.dart' show PostgresTriageStore;
@@ -338,6 +339,7 @@ class TriageProcessor {
       workflowStore: workflowStore,
       workflowEngine: workflowEngine,
       qaContractProvisioner: _qaContractProvisioner,
+      designContractProvisioner: _designContractProvisioner,
       log: logger,
     ).ensurePersisted(triageResult: triageResult, defect: defect);
   }
@@ -358,4 +360,17 @@ class TriageProcessor {
         contractStore: PostgresQAContractStore(db),
         specStore: PostgresProductQAContractSpecStore(db),
       );
+
+  /// The design-contract provisioner for design remediation, over the same
+  /// [db].
+  ///
+  /// Constructed HERE for exactly the reason [_qaContractProvisioner] is:
+  /// `DesignContractBuilder` needs a production caller or a
+  /// `DesignContractStore` is a table nobody fills, and an injected dependency
+  /// here would be a nullable one a future caller could quietly leave unset —
+  /// reproducing the defect this lane exists to fix. Deriving it from [db] makes
+  /// "lane E items get no design contract" unreachable without editing this
+  /// class.
+  DesignContractProvisioner get _designContractProvisioner =>
+      DesignContractProvisioner(contractStore: PostgresDesignContractStore(db));
 }

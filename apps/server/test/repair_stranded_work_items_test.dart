@@ -1016,6 +1016,10 @@ class _Host {
   _Host({bool dryRun = false, Set<String> declared = const {kProduct}})
     : workflowStore = InMemoryWorkflowStore(),
       contracts = _CountingQAContractStore(),
+      // The store lane E writes its design contract into AND the store the
+      // engine confirms the durable `designContractId` column against — one
+      // instance for both, mirroring `main`, which derives both from one `db`.
+      designContracts = InMemoryDesignContractStore(),
       jobStore = InMemoryJobStore() {
     for (final productId in declared) {
       specStore._rows[productId] = _declaration(productId);
@@ -1023,6 +1027,7 @@ class _Host {
     engine = DurableWorkflowEngine(
       store: workflowStore,
       policy: const WorkflowEngine(),
+      designContractStore: designContracts,
     );
     repair = StrandedWorkItemRepair(
       workflowStore: workflowStore,
@@ -1030,6 +1035,9 @@ class _Host {
       qaContractProvisioner: ProductQAContractProvisioner(
         contractStore: contracts,
         specStore: specStore,
+      ),
+      designContractProvisioner: DesignContractProvisioner(
+        contractStore: designContracts,
       ),
       jobStore: jobStore,
       defectStore: _hostDefectStore,
@@ -1049,6 +1057,10 @@ class _Host {
 
   final InMemoryWorkflowStore workflowStore;
   final _CountingQAContractStore contracts;
+
+  /// Read by the assertions so they check the ROWS lane E wrote, not the ids it
+  /// happened to hold in memory.
+  final InMemoryDesignContractStore designContracts;
   final _SpecStore specStore = _SpecStore();
   final InMemoryJobStore jobStore;
 
