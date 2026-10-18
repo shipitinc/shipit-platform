@@ -1,0 +1,75 @@
+# Design contract table definition.
+#
+# WHY A MANAGED SERVERPOD TABLE AND NOT HAND-WRITTEN DDL.
+#
+# Serverpod derives `definition.json` from the models in this directory, so a
+# table with no model here cannot be expressed, and a hand-written
+# `CREATE TABLE "design_contract"` appended to a generated `definition.sql` is
+# erased by the next `serverpod create-migration` — and, worse, the next
+# generator run would then emit its OWN `CREATE TABLE "design_contract"` on
+# top of the applied one. That collision lands on a live database this
+# repository cannot recreate (AGENTS.md, "Shared Docker state"). The one
+# unmanaged table in the tree, `product_qa_contract_spec`, exists only because
+# it was added that way and nothing re-declares it in a model; that is a
+# precedent for a table being *fragile*, not for the approach.
+#
+# So the table is declared here, which is what makes the generator emit its DDL
+# into both `migration.sql` (the chain-migrated path) and `definition.sql` (the
+# fresh-database path) on every run.
+#
+# COLUMN SHAPE, and why each JSON column is `text`.
+#
+# The shape mirrors `qa_contract.spy.yaml` column for column in convention: a
+# typed domain object (`DesignContract`) holds a *typed* value in each JSON
+# column, and each of those types has its own generated `fromJson` that fails
+# loudly on an unknown key. `text` plus an explicit per-column decode keeps a
+# failure attributable to one column and keeps the `Map<String, dynamic>` the
+# transport only — never the domain object (AGENTS.md §8).
+#
+#   contractId              — the primary key of the contract, and the value
+#                             `WorkItem.designContractId` will carry.
+#   workItemId              — the remediation item this contract governs. A
+#                             plain column, NOT carried in metadata: the
+#                             lookup step 2's guard needs is
+#                             "the contract for THIS item", and a column is
+#                             indexable while a jsonb containment probe is not
+#                             the same thing.
+#   requiredArtifactsJson   — `List<RequiredArtifact>`.
+#   reviewersJson           — `List<String>`.
+#   approvalThreshold       — `int`.
+#   status                  — `DesignContractStatus`, stored through the
+#                             type's OWN `toJson` codec (which emits
+#                             `under_review`, not `underReview`) so the
+#                             column and `DesignContract.toJson()` can never
+#                             disagree about what the word means. It is
+#                             deliberately NOT a serverpod `enum` field: a
+#                             generated enum would be a SECOND vocabulary for
+#                             a status whose authority is
+#                             `platform_contracts`.
+#   submittedArtifactsJson  — `List<SubmittedArtifact>?`.
+#   decisionsJson           — `List<String>?`.
+#   createdAt/updatedAt     — `DateTime`.
+#   expiresAt               — `DateTime?`.
+#   metadataJson            — `Map<String, dynamic>?`.
+class: DesignContractRow
+table: design_contract
+serverOnly: true
+indexes:
+  design_contract_contract_id_unique:
+    fields: contractId
+    unique: true
+  design_contract_work_item_idx:
+    fields: workItemId
+fields:
+  contractId: String
+  workItemId: String
+  requiredArtifactsJson: String
+  reviewersJson: String
+  approvalThreshold: int
+  status: String
+  submittedArtifactsJson: String?
+  decisionsJson: String?
+  createdAt: DateTime
+  updatedAt: DateTime
+  expiresAt: DateTime?
+  metadataJson: String?

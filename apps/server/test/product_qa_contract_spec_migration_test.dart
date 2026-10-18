@@ -304,7 +304,14 @@ void main() {
       // one has. Two tables that both satisfied "contains the table" while
       // differing everywhere else is exactly the divergence these tests exist
       // to catch.
-      final previous = registry[registry.indexOf(freshVersion) - 1];
+      // The baseline is the schema as of BEFORE THIS MIGRATION, not the entry
+      // before `freshVersion`. The two coincide only while this migration is the
+      // newest; once a later migration exists, `registry.last - 1` IS this
+      // migration, and the delta being computed would be the later one's alone.
+      // With the creator's own predecessor as the baseline, the delta is
+      // "everything later migrations added", and this table is covered by the
+      // `contains` assertion below rather than by the delta.
+      final previous = registry[registry.indexOf(creator) - 1];
       final previousBody = sqlBody(
         File(
           p.join(migrationsDir.path, previous, 'definition.sql'),
@@ -326,15 +333,44 @@ void main() {
       }
       final freshTables = RegExp(
         r'CREATE TABLE \"([^\"]+)\"',
-      ).allMatches(freshBody).map((m) => m.group(1)).toSet();
+      ).allMatches(freshBody).map((m) => m.group(1)!).toSet();
       final previousSet = previousTables.map((m) => m.group(1)).toSet();
+      final added = freshTables.difference(previousSet);
       expect(
-        freshTables.difference(previousSet),
-        {table},
+        added,
+        contains(table),
         reason:
-            'the snapshot must add exactly this table and drop nothing. A table '
-            'missing from the fresh path is a table a new database silently '
-            'does not have.',
+            'the snapshot must add this table. A table missing from the fresh '
+            'path is a table a new database silently does not have.',
+      );
+      // ...and every OTHER table it adds must be one a LATER migration created.
+      //
+      // This used to be `{table}` exactly, which was true only while this
+      // migration was the newest — a property of the registry's TAIL, not of
+      // this migration, so it went false the moment a later table was added
+      // and the assertion could only be satisfied by editing it. It is stated
+      // the same strength without the version: the snapshot may add tables, and
+      // each added table must be traceable to a migration registered at or
+      // after this one. A table appearing in the fresh path with NO creating
+      // migration is the shape this guards against — the divergence
+      // `verify_schema_bootstrap.sh` exists for, where a fresh database and a
+      // chain-migrated one enforce different things.
+      final creatorIndex = registry.indexOf(creator);
+      final unexplained = added.where((name) {
+        final declaring = registry
+            .sublist(creatorIndex)
+            .where(
+              (version) => _createsTable(migrationsDir, version, name),
+            );
+        return declaring.isEmpty;
+      }).toSet();
+      expect(
+        unexplained,
+        isEmpty,
+        reason:
+            '${unexplained.join(', ')} appear(s) in $freshVersion but no '
+            'migration registered at or after $creator creates it. A table with '
+            'no migration is a table a chain-migrated database does not have.',
       );
     });
   });
@@ -361,7 +397,8 @@ void main() {
       );
     });
 
-    test('it is registered LAST, because it is the newest version', () {
+    test('it is registered AFTER every earlier migration, and the fresh path is '
+        'at or after it', () {
       final numeric = registry.map(int.parse).toList(growable: false);
       expect(
         numeric,
@@ -372,10 +409,24 @@ void main() {
             'the registry is applied in order; an out-of-order entry is a '
             'migration that can never be reached',
       );
-      expect(freshVersion, version);
+      // The creator sits after its own PREDECESSOR, not at the end of the
+      // registry. This used to assert it was the LAST entry, which is a
+      // statement about the registry's tail rather than about this migration,
+      // and it went false the moment any later migration was added. What the
+      // fresh-database assertions above need is that the artefact they read is
+      // at least as new as the creator, and that is what is asserted here.
+      final creatorIndex = registry.indexOf(creator);
+      expect(creatorIndex, greaterThan(0));
       expect(
-        int.parse(version),
-        greaterThan(int.parse(registry[registry.length - 2])),
+        int.parse(creator),
+        greaterThan(int.parse(registry[creatorIndex - 1])),
+      );
+      expect(
+        int.parse(freshVersion),
+        greaterThanOrEqualTo(int.parse(creator)),
+        reason:
+            '$freshVersion is the artefact a fresh database is built from, so '
+            'it cannot predate the migration that creates $table',
       );
     });
 
@@ -485,4 +536,28 @@ String _findRepoRoot() {
     }
     dir = parent;
   }
+}
+
+/// Whether the migration in `migrationsDir/version` CREATEs [name].
+///
+/// Scans the migration's executable SQL rather than trusting its position or
+/// its `definition.sql`: the fresh-database snapshot is rendered from the
+/// models, so a table can be in it without any migration having created it, and
+/// that is precisely the divergence this predicate exists to detect.
+///
+/// `--` comments are stripped first so a banner that names the table cannot
+/// answer the question.
+bool _createsTable(Directory migrationsDir, String version, String name) {
+  final sql = File(p.join(migrationsDir.path, version, 'migration.sql'));
+  if (!sql.existsSync()) return false;
+  return RegExp(
+    'CREATE\\s+TABLE\\s+(IF\\s+NOT\\s+EXISTS\\s+)?"$name"',
+    caseSensitive: false,
+  ).hasMatch(
+    sql
+        .readAsStringSync()
+        .split('\n')
+        .where((line) => !line.trimLeft().startsWith('--'))
+        .join('\n'),
+  );
 }

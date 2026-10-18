@@ -1,8 +1,11 @@
 library workflow_store;
 
+export 'src/design_contract_provisioner.dart';
+export 'src/design_contract_store.dart';
 export 'src/human_facing_description.dart';
 export 'src/operator_action_record.dart';
 export 'src/store/workflow_store.dart';
 export 'src/store/in_memory_workflow_store.dart';
+export 'src/store/in_memory_design_contract_store.dart';
 export 'src/store/file_json_workflow_store.dart';
 export 'src/durable_workflow_engine.dart';
