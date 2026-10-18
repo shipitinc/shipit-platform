@@ -98,7 +98,7 @@ This is the finding that most changes the work, and it is **not** the missing sc
 
 `planned` is in **`triageDefectDefinition.entryStates`**, with
 `entryProbeTargets: {planned: designNotRequired}`
-(`packages/scheduler/lib/src/triage_defect.dart:126-135`). The scheduler is category-blind. So the
+(`packages/scheduler/lib/src/triage_defect.dart:126-138`). The scheduler is category-blind. So the
 remediation item that lane E parks at `planned` is picked up by the **triage** scheduler, and the
 `EntryHopper` walks it `planned → designNotRequired` — a state that asserts *no design work is
 required*, the exact opposite of the truth. `designNotRequired` is itself a triage entry state, so it
@@ -131,7 +131,7 @@ is dispatched again. **Every retry re-converges on the same terminal state.**
 | Reuse existing machinery — no new scheduler, no new workflow, no parallel mechanism | ADR 0021 §7; checkpoint 003 §10 |
 | Triage is advisory; it must never produce design artifacts | ADR 0021 §2, §4 |
 | Reviewer ≠ designer, platform-enforced at dispatch | ADR 0021 §Consequences; checkpoint 003 §7.1 |
-| Risk policy is **data**, never hard-coded control flow | ADR 0021 §Consequences; checkpoint 003 §9.6 |
+| Risk policy is **data**, never hard-coded control flow | ADR 0021 §6 and §Consequences; checkpoint 003 §9.6 |
 | `qaPassed` stays CLOSED; this runtime must not reopen or weaken it | decision `92d567e3`; `design/qa-contracts-feature-remediation/` |
 | Credentials referenced by name, never value; no Penpot token in any artifact or log | `AGENTS.md` §13, §13a |
 | Design-defect verification is a **separate** gate from design approval | ADR 0021 §5 |
@@ -147,7 +147,10 @@ is dispatched again. **Every retry re-converges on the same terminal state.**
 - **A3.** `designApproval` is confirmed against what exists; any required enum addition is given as an
   exact addition.
 - **A4.** The `planned`-convergence defect (§2.3) is specified with its resolution, and the resolution
-  does not weaken `EXTERNAL_DESIGN_GOVERNANCE_DEPENDENCY`.
+  does not weaken `EXTERNAL_DESIGN_GOVERNANCE_DEPENDENCY`. **Revised in revision 2:** the resolution
+  must be one the scheduler's **code** will honour — traced through `RunnableWorkEvaluator.evaluate`
+  and `EntryHopper.prepare`, not inferred from a comment — and where a remedy cannot supply atomicity,
+  the absence of atomicity and the lost-race behaviour must both be stated.
 - **A5.** The interaction with the approved `qaPassed` decision is stated, and `qaPassed` is not
   reopened.
 - **A6.** Undecidable items are stated plainly, not guessed.
@@ -200,7 +203,7 @@ recommendation.
 | G-1 The already-parked item cannot be retroactively completed | Out of scope by the human decision's own terms. Stated in the preamble and §4.7, not solved. |
 | G-2 Risk-tier thresholds | Checkpoint 003 §9.5 declares them **unfinalized by the document itself**. Carried to §7. |
 | G-3 `DesignRiskPolicy` has no representation at all | Carried to §4.5 / §7. |
-| G-4 The fidelity anchor has no schema | Carried to §3.5 — and it is a **blocker on switching the runtime on**, not on designing it. |
+| G-4 The fidelity anchor has no schema | **Content DECIDED** by operator decision `a1c7d904-3b8e-4f21-9d6e-5c2f81b7a390` and specified in `design-revision.md` §3.5. Still a **blocker on switching the runtime on**, not on designing it. Residue (owner, build order, implementation-side diff) carried to §7 U-3. |
 
 ## 8. References
 

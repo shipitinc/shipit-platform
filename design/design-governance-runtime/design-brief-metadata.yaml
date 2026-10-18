@@ -14,7 +14,9 @@ requirements_refs:
   - "ADR 0021 §7 no new scheduler/workflow"
   - "Checkpoint 003 §7 independence rule (reviewer != designer, platform-enforced)"
   - "Checkpoint 003 §8 correction loop (parentRevisionId, loop bounds)"
-  - "Checkpoint 003 §9 design risk model (tiers, policy-as-data)"
+  - "ADR 0021 §6 (DesignRiskTier + DesignRiskPolicy are data, not code)"
+  - "ADR 0021 §Consequences (risk policy is data, changes without deploy)"
+  - "Checkpoint 003 §9.5 (thresholds NOT finalized), §9.6 (risk policy MUST be DATA)"
   - "Checkpoint 003 §10 job model (designRevision / designReview JobDefinitions)"
   - "Checkpoint 003 §11 workflow state reconciliation"
   - "Checkpoint 002 §13.5, §14.5 (designDefect routing), §16 (defect fix verification)"
@@ -78,7 +80,7 @@ constraints:
   - "Reuse existing machinery — no new scheduler, no new workflow, no parallel mechanism (ADR 0021 §7; checkpoint 003 §10)."
   - "Triage is advisory and must never produce design artifacts (ADR 0021 §2, §4)."
   - "Reviewer != designer, platform-enforced at dispatch (ADR 0021 Consequences; checkpoint 003 §7.1)."
-  - "Risk policy is DATA, never hard-coded control flow (ADR 0021 Consequences; checkpoint 003 §9.6)."
+  - "Risk policy is DATA, never hard-coded control flow (ADR 0021 §6 and Consequences; checkpoint 003 §9.6)."
   - "qaPassed stays CLOSED under decision 92d567e3; this runtime must not reopen or weaken it."
   - "Credentials referenced by name, never value; no Penpot token in any artifact or log (AGENTS.md §13, §13a)."
   - "Design-defect verification is a separate gate from design approval (ADR 0021 §5)."
@@ -119,13 +121,25 @@ risk_assessment:
     design/qa-contracts-feature-remediation artifact, which was likewise Level 3.
   approval_path: HUMAN_DECISION_REQUIRED (Gate D4)
   human_decision_required:
+    gate: D4
+    status: RESOLVED
+    decision_id: a1c7d904-3b8e-4f21-9d6e-5c2f81b7a390
     question: >-
       Fail-closed default while no DesignRiskPolicy exists (design-revision.md §5.6):
-      F-A treat every revision as HIGH until a policy exists (recommended), or F-B classify
-      by checkpoint 003 §9.2-§9.4 prose, which that document itself declares UNFINALIZED and
-      which ADR 0021 §9.6 forbids hard-coding.
-    recommendation: F-A — the only option that cannot silently under-gate.
-    note: "Raised as a blocker by this lane. NOT decided here."
+      F-A treat every revision as HIGH until a policy exists, or F-B classify by
+      checkpoint 003 §9.2-§9.4 prose, which that document itself declares UNFINALIZED and
+      which the data-not-hard-coded rule forbids hard-coding.
+    decision: >-
+      F-A. Until a DesignRiskPolicy exists, every design revision is HIGH tier and requires
+      human design approval. Accepted cost: a trivial copy-tweak waits on a person. Blocks
+      step 5 of §9 only; the other nine build steps are unaffected.
+    citation_correction: >-
+      Revision 1 and this file attributed "§9.6" to ADR 0021. ADR 0021 has sections 1-8
+      only. §9.6 — "Risk policy MUST be DATA, not hard-coded control flow" — is
+      CHECKPOINT 003's. ADR 0021 states the same principle independently at §6
+      ("DesignRiskTier + DesignRiskPolicy (data, not code) drive human gate") and in its
+      Consequences. Re-cited at every site.
+    note: "Raised by revision 1 as a blocker. Closed by a human decision. The correction lane did not decide it."
 
 created_by: design-DESIGN-GOVERNANCE-RUNTIME
 created_at: "2026-10-18T17:09:47Z"

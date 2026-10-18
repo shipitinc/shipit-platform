@@ -4,19 +4,51 @@
 
 revision_id: db7f8a05-13cb-4bcb-b269-5c23b68552f5
 brief_id: aabceaca-0d1f-492c-837c-2068a2ea9ed9
-revision_number: 1
+revision_number: 2
 status: DRAFT          # DRAFT | UNDER_REVIEW | APPROVED | REJECTED | SUPERSEDED
 
 risk_level: 3
 risk_rationale: >-
   Major Workflow Change. This artifact designs the runtime for a core workflow stage that
   does not exist, changes the meaning of four WorkItemStates (designRequired,
-  designInReview, designApproved, designRejected), and specifies one NEW edge
-  (designRejected -> designRequired) in the transition table that is the sole authority for
-  all work-item movement (AGENTS.md §1). Per DESIGN_GOVERNANCE.md:88-96 and checkpoint 003
-  §11, Level 3 requires HUMAN_DECISION_REQUIRED at Gate D4.
+  designInReview, designApproved, designRejected), and specifies changes to the
+  transition table that is the sole authority for all work-item movement (AGENTS.md §1).
+  UNCHANGED by the correction, and the reviewer agreed level 3. Revision 2 does not
+  reduce it: it adds a second change to that same table — a new WorkItemState
+  (designParked) with five edges — in §4.4/R2, which is if anything a larger footprint
+  than the single edge revision 1 proposed, because revision 1's edge was not actually
+  reachable on its own. Per DESIGN_GOVERNANCE.md:88-96 and checkpoint 003 §11, Level 3
+  requires HUMAN_DECISION_REQUIRED at Gate D4. Gate D4 is now RESOLVED for the interim
+  default (§5.6); U-2 and U-7 remain open but are not blocking this artifact.
 
 changelog:
+  - revision: 2
+    base_sha: 4c82de3d870dd2fcc182e9a9fec9ebec966a2385
+    correction_of: 1
+    summary: >-
+      CORRECTION of revision 1 after DESIGN_REVIEW_CHANGES_REQUIRED (CORRECTION_REQUIRED: YES,
+      risk level 3 agreed). BLOCKER-1: §4.4 R1's premise was falsified — planned is reached
+      unavoidably via planning -> planned, its sole predecessor is pinned by
+      planned_entry_state_hop_test.dart:467-497, and planned -> designNotRequired is guarded
+      by actorAllowed alone, so R1 is a race with no atomicity guarantee. R1 demoted to
+      fallback with the lost-race behaviour specified as a named terminal refusal; R2
+      promoted to primary and specified in five verified parts; reconciled with §2.4 pt 2.
+      BLOCKER-2: §5.4's edge alone changes nothing — RunnableWorkEvaluator still probes
+      designRejected -> agentExecuting (runnable_work.dart:46,98-99,187-196) and
+      EntryHopper.prepare reads entryProbeTargets directly and refuses when null
+      (entry_hop.dart:181-195). Both the edge AND entryProbeTargets:{designRejected:
+      designRequired} are now specified, with the honour-chain traced step by step;
+      §2.1's six-field table amended to seven. HIGH-1: D-4 extended to name
+      design_job_test.dart:614-698 as a vacuous test already claiming coverage.
+      MEDIUM-1: §9.6 re-cited to checkpoint 003 — ADR 0021 has §1-§8 only. MEDIUM-2: Q7
+      corrected from four blob columns to SIX (the review named five; reviewExecutionIdsJson
+      at definition.sql:201 is a sixth it also missed). LOW(a): the UNKNOWN enum deviation
+      against DESIGN_GOVERNANCE.md:81-82 recorded explicitly. LOW(b): eight test files
+      corrected to 14 (12 pinning the definition by name). LOW(c): §8.1 specifies five
+      executable pins for D-1/D-2/D-3/D-4/D-5, written by an implementation lane.
+      Operator decision a1c7d904-3b8e-4f21-9d6e-5c2f81b7a390 incorporated: D4 resolved
+      (every revision HIGH until a DesignRiskPolicy exists) and U-3's schema content
+      DECIDED (§3.5). Findings dispositioned in §12.
   - revision: 1
     base_sha: b95bffd5f23f1322caf7ae086b35cccf78262790
     summary: >-
@@ -28,6 +60,11 @@ changelog:
       boundary change that makes designRequired entry truthful, confirmed the designApproval
       gate against existing machinery and specified the missing re-design edge, stated the
       qaPassed interaction without reopening it, and recorded seven undecidable items.
+    superseded_because: >-
+      Two of its remedies were specified against the scheduler's own COMMENTS rather than its
+      CODE, and would not have been honoured: §4.4/R1 rested on a reachability claim the tree's
+      tests falsify, and §5.4 rested on a comment that is silent about EntryHopper.prepare.
+      Revision 1 is preserved, not rewritten away — a correction is never a self-approval.
 
 verdict_notice: >-
   A DESIGN IS NOT A VERIFICATION. No Dart file was changed by this lane, so no analyzer run,
@@ -37,21 +74,25 @@ verdict_notice: >-
 
 traceability:
   requirements_covered:
-    - "The designRevision JobDefinition — all six required fields, and WHY designRequired is an entry state (design-revision.md §2.1, §2.4)"
+    - "The designRevision JobDefinition — ALL fields including the seventh (entryProbeTargets), and WHY designRequired is an entry state (§2.1, §2.4)"
     - "What the lane must assert before a revision may be proposed — 6 preconditions, each with the input that makes it FAIL (§3.1)"
     - "What the lane must have produced — 7 postconditions, each with the input that makes it FAIL (§3.2)"
-    - "The fidelity anchor: why ADR 0021 §2's 'divergence is a defect' is currently undecidable (§3.3, §3.5)"
+    - "The fidelity gap behind ADR 0021 §2 — ALL SIX blob columns, not four (§3.3)"
+    - "THE FIDELITY ANCHOR'S SCHEMA CONTENT, DECIDED under operator decision a1c7d904 (§3.5.1-§3.5.4): one versioned document, six named subschemas, canonical form, fail-closed on write, and the comparison basis"
     - "The designApproval gate: NO new HumanDecisionType needed; three choices; approve/reject/rework (§5.1)"
     - "The HumanDecisionType.designRejection trap — declared, admitted by nothing (§5.2)"
-    - "How the item routes OUT of designInReview, including the missing re-design edge (§5.4)"
+    - "How the item routes OUT of designInReview — the re-design remedy requires BOTH the edge AND entryProbeTargets:{designRejected: designRequired}, with the honour-chain traced through EntryHopper.prepare step by step (§5.4a, §5.4b)"
     - "The currently-unbounded rework loop and its sole -1 stub supplier (§5.5)"
+    - "The interim risk default — DECIDED: every revision HIGH until a DesignRiskPolicy exists (§5.6)"
     - "The boundary change: what the runtime supplies so designRequired entry becomes truthful (§4.2-§4.3)"
-    - "The planned-convergence defect and its resolution (§4.4)"
-    - "What the item records while the runtime is still absent, unweakened (§4.6)"
+    - "The planned-convergence defect: R2 promoted to primary and specified in five verified parts; R1 demoted with its premise falsified in code; NO atomicity guarantee exists under R1 and the lost-race behaviour is a named terminal refusal (§4.4, §4.4.1-§4.4.4)"
+    - "What the item records while the runtime is still absent, unweakened — item state is now designParked (§4.6)"
     - "That the already-parked item is NOT repaired and is NOT claimed (§4.7)"
     - "Interaction with the approved qaPassed decision, without reopening it (§6)"
-    - "What remains undecidable, stated not guessed (§7)"
+    - "What remains undecidable, stated not guessed — U-3 reduced to three residue items (§7)"
     - "Findings routed to the Manager rather than self-edited into FOLLOW_UPS.md (§8)"
+    - "EXECUTABLE persistence specified for D-1/D-2/D-3/D-4/D-5 per LEARNING_POLICY.md:8,260 — SPECIFIED, NOT WRITTEN; test source is PROHIBITED_PATHS (§8.1)"
+    - "The review findings and the disposition of each (§12)"
 
   requirements_gaps:
     - id: G-1
@@ -62,34 +103,68 @@ traceability:
       disposition: "Checkpoint 003 §9.5 declares them UNFINALIZED by the source document itself. Carried to §7 U-2."
     - id: G-3
       text: "DesignRiskPolicy has no representation at all — no type, no store, no table, no row."
-      disposition: "Carried to §4.5 / §7 U-7; interim fail-closed default raised for human decision at §5.6."
+      disposition: >-
+        Carried to §4.5 / §7 U-7. The interim default is now DECIDED by human decision
+        a1c7d904-3b8e-4f21-9d6e-5c2f81b7a390: every revision is HIGH until a policy exists.
+        The policy itself is still absent, and §5.6 is therefore satisfiable for the first
+        time — Q4 had no implementable answer while this gap was open.
     - id: G-4
-      text: "The fidelity anchor has no declared schema: DesignRevision's four JSON blob columns have no validator anywhere in the tree."
-      disposition: "Carried to §3.5. A BLOCKER on switching the runtime ON, not on designing it. Named and ordered; schema/owner/order carried to §7 U-3."
+      text: "The fidelity anchor has no declared schema: DesignRevision's SIX JSON blob columns have no validator anywhere in the tree."
+      disposition: >-
+        CORRECTED in revision 2. Revision 1 named four; the tree has six
+        (boardIdsJson, responsiveTargetsJson, statesRepresentedJson, artifactRefsJson,
+        reviewExecutionIdsJson — all NOT NULL — and nullable reviewScopeJson; definition.sql:196-204).
+        Schema CONTENT is now DECIDED under operator decision
+        a1c7d904-3b8e-4f21-9d6e-5c2f81b7a390 and specified in §3.5. Still a BLOCKER on
+        switching the runtime ON, not on designing it. Residue (owner, build order, the
+        implementation-side diff) carried to §7 U-3.
     - id: G-5
       text: "No human Decision covers U-1 through U-7 in §7."
-      disposition: "Carried, each named."
+      disposition: >-
+        PARTLY CLOSED. Decision a1c7d904-3b8e-4f21-9d6e-5c2f81b7a390 closed Gate D4 (interim
+        risk default) and U-3's content question. U-1, U-2, U-4, U-5, U-6, U-7 and U-3's three
+        residue items remain open and each is still named.
 
 design_system_compliance: UNKNOWN
 design_system_compliance_rationale: >-
   This lane designs a RUNTIME, not a UI. It specifies no tokens, components, patterns or
   visual change, so there is nothing to assess against the design system. The fidelity
-  anchor (Q7) is where design-system conformance becomes checkable, and its schema is U-3.
-  UNKNOWN rather than PASS: a PASS would claim a compliance this design has no standing to
-  judge.
+  anchor (Q7) is where design-system conformance becomes checkable, and its content is now
+  DECIDED (§3.5) — including the breakpoint vocabulary that ties the anchor to the
+  product's declared design-system revision. UNKNOWN rather than PASS: a PASS would claim a
+  compliance this design has no standing to judge.
 
 ux_accessibility_score: UNKNOWN
 ux_accessibility_score_rationale: >-
   Same reason. No user-facing surface is designed here. Checkpoint 003 §9.4's HIGH criteria
   (human-authority UI) mean this runtime GOVERNS such surfaces — it does not design them.
+  The §3.5 schema constrains the review vocabulary ('contrast', 'a11y' dimensions in
+  reviewScope) without asserting any conformance.
+
+enum_deviation:
+  status: RECORDED, NOT RESOLVED — routed to the Manager
+  fields: [design_system_compliance, ux_accessibility_score]
+  declared_enum: "PASS | PARTIAL | FAIL   (docs/engineering/DESIGN_GOVERNANCE.md:81-82)"
+  used_value: UNKNOWN
+  why: >-
+    UNKNOWN is outside the documented enum and was recorded BARE by revision 1, leaving an
+    out-of-enum value indistinguishable from an oversight. It is used deliberately: neither
+    PASS (asserting a conformance this design has no standing to judge) nor FAIL (asserting a
+    defect in a surface it never designed) is honest for a runtime artifact that designs no UI.
+  routing: >-
+    Either DESIGN_GOVERNANCE.md:81-82 should read "PASS | PARTIAL | FAIL | UNKNOWN", or these
+    two artifacts must be judged against a different rule. Both are docs/engineering/ changes
+    this lane does not own and has NOT made. This deviation is surfaced, not silently adopted.
 
 implementation_feasibility: MEDIUM
 implementation_feasibility_rationale: >-
   Not an average that hides its parts. Feasibility of §2-§5 is HIGH: the JobDefinitions,
-  stores, tables, transitions, routing and human-gate machinery all already exist, and the
-  remaining work is wiring plus the missing producer. §3.5's fidelity anchor is LOW/unknown
-  (schema, owner and build order all open — U-3), and §5.6 is blocked on a human decision.
-  MEDIUM is the honest aggregate.
+  stores, tables, transitions, routing and human-gate machinery all already exist, the
+  remaining work is wiring plus the missing producer, and §5.4's remedy has been traced
+  step by step through the code that will honour it. §4.4/R2 is MEDIUM — a new WorkItemState
+  is an architecture-lane enum addition plus five edges, each checked against existing pins.
+  §3.5's anchor is MEDIUM: its CONTENT is decided, but owner and the implementation-side
+  diff remain open. §5.6's human gate is RESOLVED, not pending. MEDIUM is the honest aggregate.
 
 changelog_findings_routed:
   note: "FOLLOW_UPS.md is PROHIBITED_PATHS for this lane. Findings are REPORTED here for the Manager to route."
@@ -118,11 +193,22 @@ changelog_findings_routed:
         rework an unlimited number of times; the guard that reads as a bound bounds nothing.
         Affects designApproval rework today, not just the design lane.
     - id: D-4
-      title: "No maxAttempts-exhaustion to human route for the design lane"
+      title: "No maxAttempts-exhaustion to human route for the design lane — and a VACUOUS test already claiming it"
       detail: >-
         Checkpoint 003 §10.4 requires exhaustion to route to a human decision, never an
         unbounded agent re-run. No such path exists for the design lane; maxAttempts is 3
         (tree) against 2 (checkpoint 003 §10.2) and neither number is meaningful without it.
+        CORRECTION LANE ADDITION (HIGH-1): a test already claims this coverage and does not
+        provide it. packages/scheduler/test/design_job_test.dart:614-698 is named
+        'design revision maxAttempts=3 exhaustion triggers human decision' yet creates,
+        raises and asserts NO human decision at all — it enqueues a job, drives scheduleRetry
+        to attempt 3, and asserts only RetryPolicy().canRetry(...). Its own comment concedes
+        "Here we verify the policy behavior directly" (:695). This is the exact vacuous-pass
+        class §9 forbids and acceptance criterion A7 rejects. Either rename it to what it
+        asserts, or complete it to raise and assert a real exhaustion decision.
+      executable_pin: >-
+        design-revision.md §8.1. SPECIFIED, NOT WRITTEN — test source is PROHIBITED_PATHS
+        for this lane.
     - id: D-5
       title: "designContractExists() reads caller-supplied context, not the durable column"
       detail: >-
@@ -133,8 +219,20 @@ changelog_findings_routed:
       title: "planned is not a safe holding state for any lane"
       detail: >-
         planned is in triageDefectDefinition.entryStates with entryProbeTargets
-        {planned: designNotRequired} (triage_defect.dart:126-135) and the scheduler is
+        {planned: designNotRequired} (triage_defect.dart:126-138) and the scheduler is
         category-blind. Any future lane that parks there inherits the convergence defect.
+        CORRECTION LANE STRENGTHENING: revision 1 understated this. planned cannot stop being
+        reached — planning's only out-edges are planned and cancelled
+        (work_item_transitions.dart:17-23), no planning -> designRequired exists or can be
+        added, and planned's SOLE predecessor is pinned as planning by name
+        (planned_entry_state_hop_test.dart:467-497). planned -> designNotRequired carries
+        actorAllowed([orchestrator]) ALONE (:28-30), so it fires regardless of whether a
+        design contract exists. A discriminating guard is impossible without changing
+        GuardCondition.evaluate's signature, which receives only states and caller context and
+        never the WorkItem (guard_conditions.dart:141-145), and the scheduler's context is a
+        fixed {agentAvailable, capabilitiesMatch} (entry_hop.dart:118-121). §4.4/R2 is now
+        the primary remedy: a designParked state in NO definition's entryStates.
+      executable_pin: "design-revision.md §8.1 (pinned with D-5, which shares the guard)."
     - id: D-7
       title: "ADR 0021 §3 names a ControlPlaneService method that does not exist"
       detail: >-
@@ -145,26 +243,76 @@ changelog_findings_routed:
 
 created_by: design-DESIGN-GOVERNANCE-RUNTIME
 created_at: "2026-10-18T17:09:47Z"
+corrected_by: correct-DESIGN-GOVERNANCE-REVIEW-1
+corrected_at: "2026-10-18"
+correction_source_review: >-
+  design-DESIGN-GOVERNANCE-REVIEW-1 — DESIGN_REVIEW_CHANGES_REQUIRED, CORRECTION_REQUIRED: YES,
+  risk level 3 agreed. Every finding dispositioned in design-revision.md §12. Nothing the
+  reviewer CONFIRMED was altered: the three premise corrections, G-A..G-F, G-7, Q7's "no
+  validator anywhere", Q3's falsifier, D-2, D-3, D-5, the unclaimed parked item, and §6's
+  handling of qaPassed.
 
 base_sha: b95bffd5f23f1322caf7ae086b35cccf78262790
-head_sha: "recorded in the lane's structured result; this artifact's commit sits atop base_sha"
+corrected_from_head: 4c82de3d870dd2fcc182e9a9fec9ebec966a2385
+head_sha: "recorded in the lane's structured result; this artifact's commit sits atop 4c82de3"
 base_sha_verified: "git rev-parse --short HEAD == b95bffd; tracked tree clean before the first edit"
+corrected_from_head_verified: >-
+  git rev-parse --short HEAD == 4c82de3; tracked tree clean before the correction began. The
+  two live stash entries (stash@{0}, stash@{1}) belong to other lanes and were NOT touched.
 
-reviewed_by: null
+reviewed_by: null          # revision 1 was reviewed; revision 2 awaits a FRESH focused review
 reviewed_at: null
 approved_by: null
 approved_at: null
+self_approval_note: >-
+  A correction is NOT a self-approval. This lane never approves its own work, and revision 2
+  requires an independent focused review before it can advance. READY_FOR_INDEPENDENT_DESIGN_
+  REVIEW is a claim about readiness TO BE REVIEWED and about nothing else.
 
 human_decision_required:
   gate: D4
-  status: OPEN
+  status: RESOLVED
+  decision_id: a1c7d904-3b8e-4f21-9d6e-5c2f81b7a390
+  decided_at: "2026-10-18"
   question: >-
     Fail-closed default while no DesignRiskPolicy exists (design-revision.md §5.6):
-    F-A — treat every revision as HIGH until a policy exists (RECOMMENDED); or
-    F-B — classify by checkpoint 003 §9.2-§9.4 prose, which that document itself declares
-    UNFINALIZED and which ADR 0021 §9.6 forbids hard-coding.
-  recommendation: "F-A — the only option that cannot silently under-gate."
-  note: "Raised as a blocker by this lane. NOT decided here. This lane never approves its own design."
+    F-A — treat every revision as HIGH until a policy exists; or F-B — classify by
+    checkpoint 003 §9.2-§9.4 prose, which that document itself declares UNFINALIZED and
+    which the data-not-hard-coded rule forbids hard-coding.
+  decision: >-
+    F-A. Until a DesignRiskPolicy exists, EVERY design revision is HIGH tier and requires
+    human design approval. Accepted cost, recorded not minimised: a trivial copy-tweak waits
+    on a person. Blocks step 5 of §9 only; the other nine build steps are unaffected.
+  f_b_rejected_because: >-
+    Classifying from checkpoint 003 §9.2-§9.4 prose was rejected because that document
+    declares the question unsettled (§9.5: thresholds NOT finalized) and because the rule
+    is mandatory — checkpoint 003 §9.6 ("Risk policy MUST be DATA, not hard-coded control
+    flow") and, independently, ADR 0021 §6 and its Consequences.
+  note: >-
+    This gate was raised by revision 1 and is now closed by a human decision. The correction
+    lane did not decide it and did not reopen it. HIGH-by-default is a STANDING rule, not a
+    temporary default with an expiry: it stops being right when a policy lands, not when
+    someone remembers. U-2 and U-7 remain open.
+
+u3_fidelity_anchor:
+  status: CONTENT DECIDED
+  decision_id: a1c7d904-3b8e-4f21-9d6e-5c2f81b7a390
+  position: >-
+    BOTH anchors, each with a named role. A committed, versioned JSON schema validated on
+    write is what the MACHINE diffs an implementation against. Penpot is what a HUMAN
+    reviewer reads and approves. Both refer to the same approved revision, and WHERE THEY
+    DISAGREE, THE DISAGREEMENT IS ITSELF A FINDING — it is reported, not resolved by picking
+    a winner.
+  penpot_alone_rejected_because: >-
+    penpotFileId and penpotPageId are nullable (definition.sql:194-195) and nothing can diff
+    against a board. The schema closes that by requiring providerFileId inside boardIdsJson,
+    which makes Q5 enforceable by validation rather than by a separate check.
+  decided_content: "design-revision.md §3.5.1-§3.5.4 — one document, six named subschemas, canonical form, fail-closed on write, plus the comparison basis."
+  residue_open: >-
+    Schema owner (proposed workflow_engine, where guards live — an architecture call); build
+    order against §9 step 1; and how WorkspaceDeltaProbe / GitWorkspaceInspector — which the
+    approved QA artifact already records as undecided and which live in DIFFERENT packages —
+    obtain the implementation side of the §3.5.4 diff. Carried in §7 as U-3 residue.
 
 qa_passed_interaction:
   position: "NOT REOPENED, NOT WEAKENED, NOT INTERPRETED"
@@ -202,7 +350,32 @@ ownership:
     - "design/qa-contracts-feature-remediation/**   # Level-3 approved under 92d567e3"
 
 validation_performed:
-  dart_analyze: "NOT RUN — this lane changed no Dart file, so there is nothing for the analyzer to be evidence about."
-  tests: "NOT RUN — read-only design lane."
+  dart_analyze: >-
+    RUN, CLI (not the MCP analyzer), because the correction cites symbols and line ranges in
+    two packages and those citations must be live code. packages/scheduler: "No issues
+    found!". packages/workflow_engine: 2 pre-existing info-level deprecated_member_use
+    notices in lib/src/states/workflow_state.dart:189,246 — unrelated to this correction,
+    which changed no Dart file. No Dart file was created, modified or deleted by this lane.
+  tests: >-
+    NOT RUN, and no result is claimed. This correction changed no Dart file, so no suite
+    could be evidence about it. The BLOCKER-1 and BLOCKER-2 remedies were instead verified
+    by READING the scheduler's code — RunnableWorkEvaluator.evaluate, JobDefinition
+    .probeTargetFor, EntryHopper.prepare and _refusalFor, GuardCondition.evaluate, and the
+    transition table — and by resolving every cited file:line against the tree at 4c82de3.
+    That is static verification of mechanism, not execution evidence, and is not reported
+    as anything more.
   docker: "NONE — no docker, no docker compose, no psql (AGENTS.md shared-Docker-state rule; lane holds no deployment authority)."
-  method: "Every claim derived by reading the tree at b95bffd, each gap carrying a file-and-line proof."
+  method: >-
+    Every claim derived by reading the tree, each gap carrying a file-and-line proof.
+    Revision 2's BLOCKER-1 and BLOCKER-2 remedies were each traced through the code that
+    will honour them rather than asserted from a comment — the specific failure mode the
+    review named. Two of this lane's own draft assertions were falsified by that discipline
+    and corrected in place: the lost-race consequence (§4.4.3) and the test-file count
+    (§2.1).
+  correction_discipline: >-
+    apps/**, packages/** and docker/** were READ-ONLY throughout, including for the §8.1
+    executable-persistence proposals, which are SPECIFIED and NOT WRITTEN. FOLLOW_UPS.md,
+    design/qa-contracts-feature-remediation/**, docs/adr/** and .decisions/** were not
+    touched; those findings are reported to the Manager for routing. No live work-item,
+    defect or job id appears in this artifact. No stash operation was performed — the two
+    live stash entries belong to other lanes and were left untouched.
