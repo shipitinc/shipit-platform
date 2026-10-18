@@ -191,6 +191,15 @@ void run(List<String> args) async {
   // being reachable at all.
   final capacity = resolveDispatchCapacity(Platform.environment, log: _log);
 
+  // The single-flight guard's lease, resolved at the same point and for the same
+  // reason, and carrying the same kind of decision: how long this process stops
+  // dispatching before it takes the guard back from a tick that has held it too
+  // long. On 2026-10-18 a tick held it with no bound at all and nothing
+  // dispatched again; `scheduler.tick.hold_expired` is the line that says so
+  // out loud. Resolved before the server is constructed so an unusable value
+  // refuses rather than being quietly replaced by a number nobody chose.
+  final tickHoldBound = resolveTickHoldBound(Platform.environment, log: _log);
+
   // Initialize Serverpod and connect it with your generated code.
   final pod = Serverpod(args, Protocol(), Endpoints());
 
@@ -792,128 +801,6 @@ void run(List<String> args) async {
     log: _log,
   );
 
-  // One line that states the whole composition as it actually is, so an
-  // operator (or the next reader) can see what this process can do without
-  // reading the rest of the file.
-  _log('server.composition', {
-    'schedulerId': 'sched-triage',
-    'runtimeTypeId': triageRuntimeTypeId,
-    'providers': agentAdapters.providerIds,
-    'workerIds': workerRegistry.workers.map((w) => w.workerId).toList(),
-    // The DURABLE fleet view, and what this start actually wrote into it. Stated
-    // in both directions for the same reason `durableWorkspaceProvision` below
-    // is: a process that registered three workers and one that registered none
-    // must not print the same line. `registered` is what `listWorkers` will now
-    // return; `failed` is what it will not, and why.
-    'workerRegistration': workerRegistration.report.describe(),
-    'repositoryPath': triageSource.path,
-    'startingRevision': triageSource.startingRevision,
-    'workspaceRoot': workspaceRoot,
-    'providerHealthMonitor': true,
-    'providerHealthCheckIntervalMinutes': 5,
-    'baseline': baselineRuntime.describe(),
-    // A1's durable-workspace runtime. Its STATE, in both directions: an
-    // unavailable runtime names why and says every call is refused, because
-    // "the field is absent" is the ambiguity this entry point exists to
-    // remove — and a lane that is constructed but silently refusing every call
-    // looks exactly like a lane that does not exist.
-    'durableWorkspace': durableWorkspaceRuntime.describe(),
-    // What this START did about it. Absence is a state and it is printed, the
-    // same way `work_entry.sweep.disabled` is: an operator reading one line can
-    // tell "nobody asked for a durable clone" from "we asked and it failed",
-    // without grepping for something that is not there.
-    'durableWorkspaceProvision': durableProvisionOutcome,
-    // The implementation lane, in the same spirit. `schedulerId` and the
-    // definition's own entry states, so an operator can see from the banner that
-    // the lane exists AND what puts items into it. `OD-3` is resolved: four
-    // rework/reject decisions retarget `implementation_ready`, and `OD-10`'s
-    // completion inflow adds one automatic producer. So the lane is wired and
-    // REACHABLE, and the comment that used to sit here — that no routing entry
-    // targets it because the rework pairs were an open decision — was false on
-    // every clause. The distinction this banner still has to preserve is the
-    // one that survives: a lane that is wired and has nothing routed into it is
-    // not the same as a lane that is idle because it is broken.
-    'implementation': {
-      'schedulerId': implScheduler.schedulerId,
-      'definition': implementFeatureDefinition.jobType.wire,
-      'entryStates':
-          implementFeatureDefinition.entryStates.map((s) => s.wire).toList()
-            ..sort(),
-      'workerId': implementWorker.workerId,
-      'capabilities':
-          implementFeatureDefinition.requiredCapabilities
-              .map((c) => c.name)
-              .toList()
-            ..sort(),
-      'capacity': implScheduler.capacitySummary,
-      'producers':
-          'four resolved human decisions route here: (engineeringReview, '
-          'rework), (humanQaApproval, reject), (qaRework, reject) and '
-          '(qaWaiver, reject) — a gate reworking or rejecting work that '
-          'already exists means re-implement, not re-triage (OD-3). One '
-          'completion inflow also lands here: an agent_completed item this '
-          'scheduler produced NO commit for is retargeted for another pass '
-          '(OD-10); one that did commit is left for review, untouched. '
-          '(escalation, approve) deliberately does NOT route here — an '
-          'escalation is a statement about EXECUTION failing, not about work '
-          'quality, so it re-plans at design_not_required. The lane is wired '
-          'and REACHABLE, so an idle implementation scheduler means items are '
-          'not arriving at these producers, not that the lane is inert',
-    },
-    // The cap IN FORCE, not the cap that was requested. Read back off the
-    // scheduler rather than off the local `capacity` variable so that this line
-    // and the object actually dispatching can never disagree — `capacitySummary`
-    // is written to state UNBOUNDED when no guard is attached, which means this
-    // field is incapable of quietly describing a bound that is not there.
-    'capacity': scheduler.capacitySummary,
-    // Which model is in force for this scheduler's role, read back through the
-    // SAME selector the dispatch path uses, so this line and the request that
-    // is actually built cannot disagree. `source` says whether it came from a
-    // durable `model_policy` row or from the operator-configured default, and
-    // the seeding fields say whether the table was populated at startup or the
-    // process is running on the in-code default.
-    'modelPolicy': {
-      ...modelPolicySeeding,
-      'inForceModelId': triageModelPolicy.modelId,
-      'inForceSource': triageModelPolicy.source.name,
-      'inForceIsFallback': triageModelPolicy.isFallback,
-      'defaultModelId': kConfiguredDefaultModelId,
-      'defaultDecisionId': kConfiguredDefaultDecisionId,
-    },
-    // The gate's STATE, in both directions — not a claim that the sweep runs.
-    // Present when it does not, because "the field is absent" is exactly the
-    // ambiguity this entry point is supposed to remove. The sweep's liveness,
-    // once enabled, is the per-tick `work_entry.sweep.completed` line; that is
-    // a fact no startup-time field can carry.
-    'defectTriageSweep': workEntrySweepGate.describe(),
-    // The agent-execution budgets in force, AND their staleness bounds, read
-    // back off the live schedulers rather than off `AgentExecutionBudgets` —
-    // the same discipline as `capacitySummary` above: this banner must be
-    // incapable of describing a bound the object actually dispatching under
-    // does not have.
-    //
-    // Printed because a provisional number nothing prints is a provisional
-    // number nobody remembers to re-derive. The values here are ceilings chosen
-    // from operator-stated ranges; the Models -> Stats "Run duration" panel is
-    // what should replace them.
-    'agentExecutionBudgets': {
-      ...AgentExecutionBudgets.describe(),
-      // The staleness bound is read back OFF THE LIVE SCHEDULER, not off the
-      // table, so this line cannot describe a window the dispatching object
-      // does not actually have. Same discipline as `capacitySummary` above.
-      'stalenessBoundInForce': {
-        'triage': scheduler.zombieStalenessBound.inSeconds,
-        'review': reviewScheduler.zombieStalenessBound.inSeconds,
-        'implementation': implScheduler.zombieStalenessBound.inSeconds,
-      },
-      'livenessInForce': {
-        'triage': scheduler.livenessSummary,
-        'review': reviewScheduler.livenessSummary,
-        'implementation': implScheduler.livenessSummary,
-      },
-    },
-  });
-
   // Run the scheduler every 30 seconds — ONE tick at a time.
   //
   // `Timer.periodic` does NOT await its callback. `scheduler.tick()` blocks for
@@ -974,8 +861,33 @@ void run(List<String> args) async {
   // appearing constantly with no work completing, the BACKLOG DEPTH, the budget
   // and the tick period are the three things to look at, in that order — the
   // backlog first, because it is the multiplier.
+  //
+  // ---- WHAT IS NOW FIXED, AND WHAT IS STILL NOT ----
+  //
+  // The three candidate fixes named above — a per-tick dispatch cap, moving
+  // dispatch off the tick, and giving each lane its own single flight — remain
+  // undone and remain composition changes with their own ownership. Nothing
+  // below pretends otherwise.
+  //
+  // What IS fixed is the other half of the sentence, the one that made those
+  // three look urgent: **the guard had no bound.** `N × budget` describes how
+  // long a tick legitimately takes; it does NOT license a tick to take for
+  // ever, and before this change nothing anywhere said where "legitimately
+  // long" ended. A tick whose body wedged in workspace preparation, artifact
+  // commit or cleanup — every one of which is awaited with no timeout at all —
+  // held the guard for ever, and the platform then looked permanently busy
+  // while dispatching nothing.
+  //
+  // So the guard now carries a LEASE ([TickSingleFlight.maxHold], resolved from
+  // `SHIPIT_TICK_MAX_HOLD_SECONDS` with a derived default), and expiry releases
+  // the guard while leaving the stuck tick, its job and its agent execution
+  // completely untouched. It does not cancel anything — see the class comment —
+  // so this is not one of the three composition changes above smuggled in, and
+  // concurrent agent executions stay hard-bounded by the capacity cap, which is
+  // enforced durably at claim time rather than by this guard.
   final tick = TickSingleFlight(
     log: _log,
+    maxHold: tickHoldBound,
     runTick: () async {
       final outcome = TickOutcome(failedSections: <String>[]);
 
@@ -1223,6 +1135,135 @@ void run(List<String> args) async {
       return outcome;
     },
   );
+
+  // One line that states the whole composition as it actually is, so an
+  // operator (or the next reader) can see what this process can do without
+  // reading the rest of the file.
+  _log('server.composition', {
+    'schedulerId': 'sched-triage',
+    'runtimeTypeId': triageRuntimeTypeId,
+    'providers': agentAdapters.providerIds,
+    'workerIds': workerRegistry.workers.map((w) => w.workerId).toList(),
+    // The DURABLE fleet view, and what this start actually wrote into it. Stated
+    // in both directions for the same reason `durableWorkspaceProvision` below
+    // is: a process that registered three workers and one that registered none
+    // must not print the same line. `registered` is what `listWorkers` will now
+    // return; `failed` is what it will not, and why.
+    'workerRegistration': workerRegistration.report.describe(),
+    'repositoryPath': triageSource.path,
+    'startingRevision': triageSource.startingRevision,
+    'workspaceRoot': workspaceRoot,
+    'providerHealthMonitor': true,
+    'providerHealthCheckIntervalMinutes': 5,
+    'baseline': baselineRuntime.describe(),
+    // A1's durable-workspace runtime. Its STATE, in both directions: an
+    // unavailable runtime names why and says every call is refused, because
+    // "the field is absent" is the ambiguity this entry point exists to
+    // remove — and a lane that is constructed but silently refusing every call
+    // looks exactly like a lane that does not exist.
+    'durableWorkspace': durableWorkspaceRuntime.describe(),
+    // What this START did about it. Absence is a state and it is printed, the
+    // same way `work_entry.sweep.disabled` is: an operator reading one line can
+    // tell "nobody asked for a durable clone" from "we asked and it failed",
+    // without grepping for something that is not there.
+    'durableWorkspaceProvision': durableProvisionOutcome,
+    // The implementation lane, in the same spirit. `schedulerId` and the
+    // definition's own entry states, so an operator can see from the banner that
+    // the lane exists AND what puts items into it. `OD-3` is resolved: four
+    // rework/reject decisions retarget `implementation_ready`, and `OD-10`'s
+    // completion inflow adds one automatic producer. So the lane is wired and
+    // REACHABLE, and the comment that used to sit here — that no routing entry
+    // targets it because the rework pairs were an open decision — was false on
+    // every clause. The distinction this banner still has to preserve is the
+    // one that survives: a lane that is wired and has nothing routed into it is
+    // not the same as a lane that is idle because it is broken.
+    'implementation': {
+      'schedulerId': implScheduler.schedulerId,
+      'definition': implementFeatureDefinition.jobType.wire,
+      'entryStates':
+          implementFeatureDefinition.entryStates.map((s) => s.wire).toList()
+            ..sort(),
+      'workerId': implementWorker.workerId,
+      'capabilities':
+          implementFeatureDefinition.requiredCapabilities
+              .map((c) => c.name)
+              .toList()
+            ..sort(),
+      'capacity': implScheduler.capacitySummary,
+      'producers':
+          'four resolved human decisions route here: (engineeringReview, '
+          'rework), (humanQaApproval, reject), (qaRework, reject) and '
+          '(qaWaiver, reject) — a gate reworking or rejecting work that '
+          'already exists means re-implement, not re-triage (OD-3). One '
+          'completion inflow also lands here: an agent_completed item this '
+          'scheduler produced NO commit for is retargeted for another pass '
+          '(OD-10); one that did commit is left for review, untouched. '
+          '(escalation, approve) deliberately does NOT route here — an '
+          'escalation is a statement about EXECUTION failing, not about work '
+          'quality, so it re-plans at design_not_required. The lane is wired '
+          'and REACHABLE, so an idle implementation scheduler means items are '
+          'not arriving at these producers, not that the lane is inert',
+    },
+    // The cap IN FORCE, not the cap that was requested. Read back off the
+    // scheduler rather than off the local `capacity` variable so that this line
+    // and the object actually dispatching can never disagree — `capacitySummary`
+    // is written to state UNBOUNDED when no guard is attached, which means this
+    // field is incapable of quietly describing a bound that is not there.
+    'capacity': scheduler.capacitySummary,
+    // The single-flight guard's lease, read back OFF THE LIVE `tick` for the
+    // same reason `capacitySummary` is read back off the live scheduler rather
+    // than off the local `tickHoldBound`: so this line and the object that
+    // enforces the bound cannot disagree. `TickSingleFlight.holdSummary` states
+    // the unbounded case in words rather than omitting the field, which means
+    // this entry is incapable of quietly describing a lease that is not there.
+    'tickHold': tick.holdSummary,
+    // Which model is in force for this scheduler's role, read back through the
+    // SAME selector the dispatch path uses, so this line and the request that
+    // is actually built cannot disagree. `source` says whether it came from a
+    // durable `model_policy` row or from the operator-configured default, and
+    // the seeding fields say whether the table was populated at startup or the
+    // process is running on the in-code default.
+    'modelPolicy': {
+      ...modelPolicySeeding,
+      'inForceModelId': triageModelPolicy.modelId,
+      'inForceSource': triageModelPolicy.source.name,
+      'inForceIsFallback': triageModelPolicy.isFallback,
+      'defaultModelId': kConfiguredDefaultModelId,
+      'defaultDecisionId': kConfiguredDefaultDecisionId,
+    },
+    // The gate's STATE, in both directions — not a claim that the sweep runs.
+    // Present when it does not, because "the field is absent" is exactly the
+    // ambiguity this entry point is supposed to remove. The sweep's liveness,
+    // once enabled, is the per-tick `work_entry.sweep.completed` line; that is
+    // a fact no startup-time field can carry.
+    'defectTriageSweep': workEntrySweepGate.describe(),
+    // The agent-execution budgets in force, AND their staleness bounds, read
+    // back off the live schedulers rather than off `AgentExecutionBudgets` —
+    // the same discipline as `capacitySummary` above: this banner must be
+    // incapable of describing a bound the object actually dispatching under
+    // does not have.
+    //
+    // Printed because a provisional number nothing prints is a provisional
+    // number nobody remembers to re-derive. The values here are ceilings chosen
+    // from operator-stated ranges; the Models -> Stats "Run duration" panel is
+    // what should replace them.
+    'agentExecutionBudgets': {
+      ...AgentExecutionBudgets.describe(),
+      // The staleness bound is read back OFF THE LIVE SCHEDULER, not off the
+      // table, so this line cannot describe a window the dispatching object
+      // does not actually have. Same discipline as `capacitySummary` above.
+      'stalenessBoundInForce': {
+        'triage': scheduler.zombieStalenessBound.inSeconds,
+        'review': reviewScheduler.zombieStalenessBound.inSeconds,
+        'implementation': implScheduler.zombieStalenessBound.inSeconds,
+      },
+      'livenessInForce': {
+        'triage': scheduler.livenessSummary,
+        'review': reviewScheduler.livenessSummary,
+        'implementation': implScheduler.livenessSummary,
+      },
+    },
+  });
 
   Timer.periodic(const Duration(seconds: 30), (_) {
     // `unawaited`, and not `async` on this closure: the guard must be taken
@@ -1638,6 +1679,19 @@ ExecutionStore agentExecutionStore(PersistenceDatabase db) =>
 /// `sweepPassOverlappedCode` exists in `defect_triage_sweep.dart`.
 const String tickOverlapDroppedCode = 'TICK_OVERLAP_DROPPED';
 
+/// The code carried by the line emitted when a tick has held the single-flight
+/// guard past its lease and the guard has been taken back from it.
+///
+/// A DIFFERENT code from [tickOverlapDroppedCode] on purpose, because the two
+/// describe opposite facts and an operator must never grep one and read the
+/// other: a drop says a tick was not needed, this says a tick stopped being
+/// answerable. See [TickSingleFlight].
+const String tickHoldExpiredCode = 'TICK_HOLD_EXPIRED';
+
+/// The code carried by a tick that finished AFTER its hold lease expired — the
+/// late line that keeps an abandoned tick accounted for.
+const String tickCompletedLateCode = 'TICK_COMPLETED_AFTER_HOLD_EXPIRED';
+
 /// What one completed tick did.
 ///
 /// Mutable and filled in as the tick proceeds, because a tick is assembled from
@@ -1743,11 +1797,16 @@ class TickSingleFlightResult {
   const TickSingleFlightResult.dropped()
     : ran = false,
       outcome = null,
-      overlappedTicks = 1;
+      overlappedTicks = 1,
+      abandoned = false,
+      heldFor = null;
 
-  const TickSingleFlightResult.ran(this.outcome)
-    : ran = true,
-      overlappedTicks = 0;
+  const TickSingleFlightResult.ran(
+    this.outcome, {
+    this.abandoned = false,
+    this.heldFor,
+  }) : ran = true,
+       overlappedTicks = 0;
 
   /// Whether the tick actually ran.
   final bool ran;
@@ -1760,12 +1819,31 @@ class TickSingleFlightResult {
   /// absent field from a zero.
   final int overlappedTicks;
 
+  /// Whether this tick's hold lease expired before it finished.
+  ///
+  /// True only on a result whose [ran] is true, and never on a drop: a drop is
+  /// not an abandoned tick, it is a tick that was never started. A consumer that
+  /// counts completions MUST treat an abandoned completion as separate from a
+  /// normal one, which is why the two log under different event names.
+  final bool abandoned;
+
+  /// How long the guard was held before this tick finished.
+  ///
+  /// Null on a drop — nothing was held, because nothing ran. Carried on a
+  /// completion so a consumer can see that an abandoned tick held the guard for
+  /// at least the lease, rather than inferring it from the boolean alone.
+  final Duration? heldFor;
+
   @override
   String toString() => ran
       ? 'ran: true, overlappedTicks: $overlappedTicks, outcome: $outcome'
       : 'ran: false, overlappedTicks: $overlappedTicks (dropped, code: '
             '$tickOverlapDroppedCode)';
 }
+
+/// The default clock [TickSingleFlight] reads, named so a test that injects one
+/// is visibly replacing a real thing and not the absence of a thing.
+DateTime _systemUtcClock() => DateTime.now().toUtc();
 
 /// One tick at a time, with every trigger accounted for.
 ///
@@ -1806,11 +1884,65 @@ class TickSingleFlightResult {
 ///
 /// Both shapes mirror `DefectTriageSweep.run`, which already carries this guard
 /// for the narrower question of two passes over the same defects.
+///
+/// ## WHY THERE IS A LEASE ON THE GUARD, AND WHAT IT IS NOT
+///
+/// The guard is released by exactly two things: [_runGuarded] completing, and
+/// [_expireHold] firing. There is no third path, and no `finally` that can be
+/// skipped — so a *skipped release* is not a shape this class can take, and an
+/// earlier reading of the 2026-10-18 incident as one was wrong.
+///
+/// What this class CAN do is hold the guard forever, and that is the real
+/// defect. `whenComplete` releases the guard when the tick's future settles,
+/// and that future settles only when `runTick()` returns — and `runTick()`
+/// awaits a chain of things that are not all bounded. Exactly one bound exists
+/// on the whole dispatch path (`LocalWorker._drive`'s `.timeout()` around
+/// `executionDriver.execute`); workspace preparation, artifact commit, git
+/// inspection and cleanup are each awaited with no limit at all, and every one
+/// of them shells out. So a tick whose body is stuck in any of those holds the
+/// guard for ever, and a guard held for ever means every later trigger is
+/// dropped for ever: the log then reads as a busy platform doing nothing, which
+/// is the exact silence this class was written to end.
+///
+/// The lease fixes THAT, and it fixes it in the direction that loses the least.
+/// On expiry the guard is released and the abandoned tick is left RUNNING —
+/// its job, its claim, its capacity slot and its agent execution are all
+/// untouched. Cancelling it would free the symptom and destroy the evidence,
+/// and it would also destroy the work. So the lease never cancels: it stops
+/// *waiting*, loudly, and lets the next trigger take over.
+///
+/// ## WHY THE RELEASE IS TOKENISED, NOT A BOOLEAN WRITE
+///
+/// The obvious implementation — `Timer(..., () => _running = false)` — is
+/// wrong, and wrong in the one direction this class exists to prevent. The
+/// abandoned tick's `whenComplete` would then clear `_running` a second time,
+/// AFTER a fresh trigger had already taken the guard, so two ticks would be in
+/// flight and nothing would say so. Every release therefore carries the token
+/// of the tick that earned it and is applied only if that tick still holds the
+/// guard.
+///
+/// ## WHAT THE LEASE DOES NOT FIX, STATED RATHER THAN IMPLIED
+///
+/// Releasing the guard stops the platform WAITING. It does not stop the stuck
+/// work, and in one shape it can let abandoned work accumulate: if *every* tick
+/// wedges, each expiry admits one more abandoned body, and [_abandoned] grows by
+/// one per un-settled body because its entries are removed only when a body
+/// finally returns. That shape does not arise from a single stuck execution —
+/// a job that is already `running` is not eligible, so the ticks after it
+/// finish normally and drain the queue AROUND it, which is what the recovery
+/// test asserts — but it is not impossible, and the durable bound on it is the
+/// capacity cap plus the zombie reclaim, not this class.
+///
+/// Ending the stuck work itself means cancelling the execution or reaping the
+/// job, which is a different and more consequential decision than releasing a
+/// guard, and is deliberately not smuggled in here.
 class TickSingleFlight {
   TickSingleFlight({
     required this.runTick,
     this.log,
-  });
+    this.maxHold,
+    DateTime Function()? clock,
+  }) : _clock = clock ?? _systemUtcClock;
 
   /// The tick, invoked only after the guard has been taken. Public so the
   /// constructor can take it as an initializing formal, and so a test can hold
@@ -1820,6 +1952,37 @@ class TickSingleFlight {
   /// Where the two events go. Null silences them, which is what a test that only
   /// cares about control flow wants.
   final void Function(String event, Map<String, dynamic> data)? log;
+
+  /// How long the guard may be held before it is taken back.
+  ///
+  /// NULL means no lease, which is the library default and the right one for a
+  /// test that wants to control the clock itself. It is NOT what production
+  /// runs: the composition root always passes a resolved bound, and
+  /// [holdSummary] says in words which of the two a running process is in, so a
+  /// banner can never describe a lease the ticking object does not have.
+  final Duration? maxHold;
+
+  /// The clock, injectable so a test can assert the LEASE fired at the
+  /// configured elapsed time rather than whenever the machine scheduled it.
+  final DateTime Function() _clock;
+
+  /// Which tick holds the guard, by token. Null means free.
+  ///
+  /// A token rather than a bool precisely so a late release cannot clear a
+  /// guard that a later tick has taken — see the class comment.
+  int? _heldBy;
+
+  /// Monotonic token source. Overflow is not a concern: a tick per 30 seconds
+  /// takes about two billion years to exhaust a 64-bit int.
+  int _nextToken = 0;
+
+  /// Ticks whose lease expired and which have not finished yet. Membership is
+  /// what makes a completion line say "late", and the entry is removed when
+  /// that tick's body finally settles, so this cannot grow without bound.
+  final Set<int> _abandoned = <int>{};
+
+  /// When the current holder took the guard, for the lease diagnostics.
+  DateTime? _heldSince;
 
   /// The guard itself.
   ///
@@ -1836,10 +1999,26 @@ class TickSingleFlight {
   ///
   /// `_runTick` — everything below the guard — is async, which is where the
   /// awaiting belongs.
-  bool _running = false;
 
   /// Whether a tick is in flight. Read by tests and by nothing in production.
-  bool get isRunning => _running;
+  bool get isRunning => _heldBy != null;
+
+  /// One line naming the lease actually in force, for the startup banner.
+  ///
+  /// Read off this object rather than off the resolution that produced it, for
+  /// the same reason the banner reads `capacitySummary` off the live scheduler:
+  /// so the line and the object that enforces it cannot disagree. States the
+  /// unbounded case in words rather than omitting the field, because "the field
+  /// is absent" is exactly the ambiguity this exists to remove.
+  String get holdSummary => maxHold == null
+      ? 'NO LEASE: this single-flight guard can be held for ever by a tick that '
+            'never returns. This is the library default and is safe only for a '
+            'caller that bounds runTick itself.'
+      : 'tick hold lease: ${maxHold!.inSeconds}s '
+            '($tickHoldBoundEnvVar). Past it the guard is RELEASED and the '
+            'abandoned tick keeps running untouched — nothing is cancelled, and '
+            'its eventual completion is logged as '
+            'scheduler.tick.completed_late.';
 
   /// Runs one tick, or records that one is already running and returns.
   ///
@@ -1847,7 +2026,7 @@ class TickSingleFlight {
   /// wait for the running tick: see the class comment for why waiting is the
   /// wrong answer.
   Future<TickSingleFlightResult> trigger() {
-    if (_running) {
+    if (_heldBy != null) {
       const dropped = TickSingleFlightResult.dropped();
       // A dedicated event, IN ADDITION TO the `completed` line. The `completed`
       // line is there so every tick leaves the same shape; this one is there so
@@ -1877,26 +2056,107 @@ class TickSingleFlight {
       });
       return Future<TickSingleFlightResult>.value(dropped);
     }
-    _running = true;
+    final token = ++_nextToken;
+    final heldSince = _clock();
+    _heldBy = token;
+    _heldSince = heldSince;
     // `whenComplete` releases the guard on the success path AND on the failure
     // path, and passes the original error through untouched. A guard released
     // only on success would wedge the loop shut after the first failure, and
     // every later tick would report itself as "overlapping" against a tick that
     // ended minutes ago — a loop that looks busy and is permanently stopped.
-    return _runGuarded().whenComplete(() {
-      _running = false;
+    //
+    // The timer is the OTHER release, and it is armed only when a lease is in
+    // force. It is cancelled in [_releaseHold] whichever way the tick ends.
+    final lease = maxHold == null
+        ? null
+        : Timer(maxHold!, () => _expireHold(token));
+    return _runGuarded(token, heldSince).whenComplete(() {
+      _releaseHold(token, lease);
     });
+  }
+
+  /// Takes the guard back from a tick that has held it past its lease.
+  ///
+  /// Deliberately does NOT cancel, abort, signal or interrupt the tick: the
+  /// guard is what was taken back, not the work. The abandoned tick keeps its
+  /// claim, its capacity slot and its agent execution, and reports on its own
+  /// `completed_late` line whenever it finally settles — so an operator can see
+  /// both halves: that dispatch was released, and what the abandoned tick went
+  /// on to do.
+  void _expireHold(int token) {
+    if (_heldBy != token) {
+      // The tick already finished and a later one is in flight. A stale timer
+      // must be a no-op, or it would take a guard it never held.
+      return;
+    }
+    final elapsed = _heldSince == null
+        ? null
+        : _clock().difference(_heldSince!);
+    // Membership is what makes this tick's completion line say "late". Added
+    // BEFORE the guard is cleared so that a tick settling in the same turn is
+    // already accounted for as abandoned.
+    _abandoned.add(token);
+    _heldBy = null;
+    log?.call('scheduler.tick.hold_expired', <String, dynamic>{
+      'ran': true,
+      'overlappedTicks': 0,
+      'code': tickHoldExpiredCode,
+      'maxHoldSeconds': maxHold?.inSeconds,
+      'heldForSeconds': elapsed?.inSeconds,
+      'cancelled': false,
+      'action':
+          'the tick still in flight has held the single-flight guard past its '
+          'lease, so the guard has been RELEASED and the next trigger will run. '
+          'That tick was NOT cancelled: its claim, its capacity slot and its '
+          'agent execution are untouched and it is still running. When it '
+          'settles it reports on scheduler.tick.completed_late. If nothing ever '
+          'reported a real completion between this line and now, the tick is '
+          'stuck and the job it holds is stuck with it.',
+    });
+  }
+
+  /// Releases the guard for [token], if [token] still holds it.
+  ///
+  /// The identity check is the whole reason this is a method rather than an
+  /// assignment: see the class comment on tokenised release.
+  void _releaseHold(int token, Timer? lease) {
+    lease?.cancel();
+    _abandoned.remove(token);
+    if (_heldBy == token) {
+      _heldBy = null;
+      _heldSince = null;
+    }
   }
 
   /// The tick itself, and the completion line.
   ///
   /// Everything here is BELOW the guard, which is why it may await as much as it
   /// likes. The completion line is emitted on both paths so that a failing tick
-  /// still leaves the same shape behind as a clean one.
-  Future<TickSingleFlightResult> _runGuarded() async {
+  /// still leaves the same shape behind as a clean one — and on the LATE line
+  /// when the lease expired first, so that a consumer counting
+  /// `scheduler.tick.completed` never counts an abandoned tick as one of its
+  /// own.
+  Future<TickSingleFlightResult> _runGuarded(
+    int token,
+    DateTime heldSince,
+  ) async {
+    bool wasAbandoned() => _abandoned.contains(token);
+
+    // Measured against THIS tick's own start, not off [_heldSince]. After an
+    // expiry a later tick overwrites that field, and an abandoned tick that
+    // finished minutes later would otherwise report the LATER tick's elapsed
+    // time as its own — a number that is wrong in the one line an operator is
+    // reading precisely because they do not trust it.
+    Duration? elapsed() => _clock().difference(heldSince);
+
+    String event() => wasAbandoned()
+        ? 'scheduler.tick.completed_late'
+        : 'scheduler.tick.completed';
+
     try {
       final outcome = await runTick();
-      log?.call('scheduler.tick.completed', <String, dynamic>{
+      log?.call(event(), <String, dynamic>{
         'ran': true,
         'dispatched': outcome.dispatched,
         'handledOff': outcome.handledOff,
@@ -1905,19 +2165,33 @@ class TickSingleFlight {
         'reconcileFailed': outcome.reconcileFailed,
         'reconcileFailedCount': outcome.reconcileFailed.length,
         'overlappedTicks': 0,
+        'heldForSeconds': elapsed()?.inSeconds,
+        'code': wasAbandoned() ? tickCompletedLateCode : null,
+        if (wasAbandoned())
+          'action':
+              'this tick finished after its hold lease expired, so a later tick '
+              'has already run. Its counts below are real and its work was '
+              'never cancelled; read them as the abandoned tick\'s, not as the '
+              'current one.',
       });
-      return TickSingleFlightResult.ran(outcome);
+      return TickSingleFlightResult.ran(
+        outcome,
+        abandoned: wasAbandoned(),
+        heldFor: elapsed(),
+      );
     } on Object {
       // The tick's own halves already logged what they caught. This records
       // that the tick as a whole ended badly, so a line that says `ran: true`
       // with an empty `failedSections` is unambiguous: it means no half threw.
-      log?.call('scheduler.tick.completed', <String, dynamic>{
+      log?.call(event(), <String, dynamic>{
         'ran': true,
         'dispatched': -1,
         'handledOff': -1,
         'sweepEnqueued': -1,
         'failedSections': const <String>['tick'],
         'overlappedTicks': 0,
+        'heldForSeconds': elapsed()?.inSeconds,
+        'code': wasAbandoned() ? tickCompletedLateCode : null,
       });
       rethrow;
     }
@@ -1995,6 +2269,112 @@ ExecutionCapacity resolveDispatchCapacity(
     'capacity': capacity.startupSummary,
   });
   return capacity;
+}
+
+/// The environment variable that overrides how long the scheduler's
+/// single-flight guard may be held before the guard is taken back.
+///
+/// Same posture as [executionCapacityEnvVar] and for the same reason: a bound
+/// that needs a code change to move is a bound nobody moves, and how long a
+/// control plane should stop dispatching before it starts again is an operator
+/// decision, not a constant this file is entitled to bake in.
+///
+/// Unset does NOT mean "no lease" — it means the derived default in
+/// [AgentExecutionBudgets.tickHoldDefault]. See that member for why the derived
+/// value is as large as it is; the short version is that a tick dispatches its
+/// whole backlog serially, so a LEGITIMATE hold is a sum over the backlog and
+/// unbounded in it, and a lease shorter than that would abandon working ticks.
+const String tickHoldBoundEnvVar = 'SHIPIT_TICK_MAX_HOLD_SECONDS';
+
+/// Thrown when [tickHoldBoundEnvVar] is set to something unusable.
+///
+/// A refusal, on the reasoning [UnboundedDispatchRefused] already states: the
+/// failure this guards against is a platform that silently stops dispatching
+/// for ever, and quietly substituting a different bound for the one an
+/// operator asked for is the same defect wearing a different hat. The refusal
+/// happens before `Serverpod` is constructed, so the process never binds a
+/// port in this state.
+class UnusableTickHoldBound implements Exception {
+  const UnusableTickHoldBound(this.diagnostic);
+
+  /// Names the variable and what was wrong with it. Never a credential.
+  final String diagnostic;
+
+  @override
+  String toString() => diagnostic;
+}
+
+/// Resolves the tick hold lease from [environment], or refuses.
+///
+/// ## Why an unset variable is NOT an absent lease
+///
+/// "Unbounded" is the one answer that must never be reachable by accident — it
+/// is the exact state that stopped dispatch on 2026-10-18 — so absence
+/// resolves to the derived default rather than to nothing. Every OTHER unusable
+/// value refuses, because an operator who set the variable has stated an intent
+/// and silently serving a different number than the one they set is how a
+/// tuning knob becomes a lie.
+///
+/// The resolution is pure over its argument, so a test can exercise it without
+/// touching [Platform.environment].
+Duration resolveTickHoldBound(
+  Map<String, String> environment, {
+  void Function(String event, Map<String, dynamic> data)? log,
+}) {
+  final raw = environment[tickHoldBoundEnvVar];
+  if (raw == null) {
+    final derived = AgentExecutionBudgets.tickHoldDefault;
+    log?.call('server.tick_hold.resolved', <String, dynamic>{
+      'boundSeconds': derived.inSeconds,
+      'source': 'derived',
+      'note':
+          '$tickHoldBoundEnvVar is unset, so the derived default is in force. '
+          'It is large BECAUSE a tick dispatches its whole backlog serially and '
+          'a legitimate hold is therefore a sum over the backlog. Set '
+          '$tickHoldBoundEnvVar to shorten it if this deployment would rather '
+          'recover sooner from a stuck tick than wait out a large backlog.',
+    });
+    return derived;
+  }
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) {
+    log?.call('server.tick_hold.refused', <String, dynamic>{
+      'bound': 'NOT RESOLVED — refusing to start',
+      'action':
+          '$tickHoldBoundEnvVar is empty. Unset it to use the derived default, '
+          'or set it to an integer >= 1.',
+    });
+    throw UnusableTickHoldBound(
+      '$tickHoldBoundEnvVar is empty. Unset it to use the derived default '
+      '(${AgentExecutionBudgets.tickHoldDefault.inSeconds}s), or set it to an '
+      'integer >= 1.',
+    );
+  }
+  final parsed = int.tryParse(trimmed);
+  if (parsed == null || parsed < 1) {
+    final why = parsed == null
+        ? 'is not an integer'
+        : 'is below the minimum of 1 — a lease of 0 seconds would take the '
+              'guard back from every tick the instant it took it, which is the '
+              'same as no guard at all';
+    log?.call('server.tick_hold.refused', <String, dynamic>{
+      'bound': 'NOT RESOLVED — refusing to start',
+      'value': raw,
+      'action': '$tickHoldBoundEnvVar $why. Set an integer >= 1, or unset it.',
+    });
+    throw UnusableTickHoldBound(
+      '$tickHoldBoundEnvVar="$raw" $why. Set an integer >= 1, or unset it to '
+      'use the derived default '
+      '(${AgentExecutionBudgets.tickHoldDefault.inSeconds}s).',
+    );
+  }
+  final bound = Duration(seconds: parsed);
+  log?.call('server.tick_hold.resolved', <String, dynamic>{
+    'boundSeconds': bound.inSeconds,
+    'source': 'configured',
+    'derivedDefaultSeconds': AgentExecutionBudgets.tickHoldDefault.inSeconds,
+  });
+  return bound;
 }
 
 /// The single operator log for this file, so every event the composition emits
@@ -2998,6 +3378,46 @@ class AgentExecutionBudgets {
   /// copy of a number this file does not own. It only makes the rejected window
   /// LARGER, so the multiple printed below is a floor for it.
   static const int rejectedStalenessMultiplier = 4;
+
+  /// The derived default for [tickHoldBoundEnvVar]: how long the scheduler's
+  /// single-flight guard may be held before it is taken back.
+  ///
+  /// ## WHY IT IS THIS LARGE — READ BEFORE SHORTENING IT
+  ///
+  /// `Scheduler.tick` dispatches inside a `for (;;)` loop and `await`s
+  /// `_dispatchOne` for every eligible job SERIALLY, so one tick holds the guard
+  /// for `Σ (N × budget)` over the jobs it dispatched — a sum that is UNBOUNDED
+  /// IN N. There is therefore no lease short enough to be operationally useful
+  /// that is also longer than every legitimate tick, and any default chosen for
+  /// "recover from a stuck tick in a reasonable time" is also a default that
+  /// abandons legitimate ticks on a large backlog.
+  ///
+  /// So the default is chosen in the SAFE direction, and its size is stated
+  /// rather than implied: [rejectedStalenessMultiplier] × the largest budget in
+  /// [byRole] + [stallAllowance]. At today's budgets that is
+  /// `4 × 4h + 1h = 17h`, which is long — deliberately so. The cost is named:
+  /// **a tick that genuinely wedges leaves dispatch stopped for up to 17 hours**
+  /// rather than for ever.
+  ///
+  /// The two are separable without a code change, and that is what the
+  /// environment variable is for: the expensive thing about a stuck tick is that
+  /// it is silent, and `server.tick_hold.resolved` plus
+  /// `scheduler.tick.hold_expired` make it loud immediately, whether or not it
+  /// is short. An operator who would rather recover sooner than wait out a
+  /// backlog sets `SHIPIT_TICK_MAX_HOLD_SECONDS`; what they are then accepting
+  /// is stated in [TickSingleFlight]'s class comment — an expired lease releases
+  /// the GUARD and lets a second tick run alongside the abandoned one, and
+  /// concurrent AGENT executions remain hard-bounded by
+  /// `SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS`, which is enforced durably at claim
+  /// time rather than by this guard.
+  static Duration get tickHoldDefault {
+    var largest = Duration.zero;
+    for (final budget in byRole.values) {
+      if (budget > largest) largest = budget;
+    }
+    return Duration(seconds: largest.inSeconds * rejectedStalenessMultiplier) +
+        stallAllowance;
+  }
 
   /// One line naming every budget in force, for the startup banner.
   ///

@@ -8,9 +8,15 @@
 ///    number of ticks in flight, not on an end state — a tick that briefly
 ///    overlaps and then re-converges looks perfect to an end-state assertion,
 ///    and the peak is the only thing that exhausts a host.
-/// 2. **T7, the composition root refuses to run unbounded.** An absent,
+/// 2. **The hold lease on that guard** — added after the 2026-10-18 wedged tick.
+///    A guard released only by `runTick()` completing has NO BOUND: the tick
+///    body awaits a chain in which several steps are unbounded, so a tick that
+///    never returns holds the guard for ever and every later trigger is dropped
+///    for ever. The lease takes the guard back. These tests assert both halves
+///    that matter: it IS taken back, and taking it back cancels nothing.
+/// 3. **T7, the composition root refuses to run unbounded.** An absent,
 ///    unparseable or non-positive cap must not reach a running server.
-/// 3. **The advisory lock on `PostgresJobStore`.** What SQL is issued, when,
+/// 4. **The advisory lock on `PostgresJobStore`.** What SQL is issued, when,
 ///    and that two schedulers over one durable store contend for one slot.
 ///
 /// ## What this file does NOT cover, stated plainly
@@ -31,6 +37,14 @@
 /// What IS verified without a database: the exact statement this store issues,
 /// that it is issued inside the open transaction, that it precedes the body,
 /// and that its key is the one the budget derives.
+///
+/// ## And, stated plainly because it is the point of the lease tests
+///
+/// **No test below proves the live 2026-10-18 tick recovers.** Those tests
+/// drive [TickSingleFlight] directly with a synthetic `runTick`, which is where
+/// the defect is; what they cannot do is reproduce a real agent execution, a
+/// real workspace clone or a real `git commit` hanging inside one. See the
+/// `recovery` group for exactly what is and is not claimed.
 library;
 
 import 'dart:async';
@@ -321,6 +335,566 @@ void main() {
           expect(line['overlappedTicks'], 1);
         }
       },
+    );
+  });
+
+  group('the hold LEASE on the guard — the 2026-10-18 wedged tick', () {
+    // What the incident actually was, and what it was not. Asserted first,
+    // because the fix below is easy to misread as "a release was missing on an
+    // error path", and that is not what happened.
+    test(
+      'the release is NOT skipped on any path — it is the HOLD that had no bound',
+      () async {
+        final log = _LogCapture();
+        var attempts = 0;
+        final tick = TickSingleFlight(
+          log: log.record,
+          runTick: () async {
+            attempts++;
+            if (attempts == 1) throw StateError('the store was unreachable');
+            return TickOutcome();
+          },
+        );
+
+        await expectLater(tick.trigger(), throwsStateError);
+        expect(
+          tick.isRunning,
+          isFalse,
+          reason:
+              'success and failure both release — `whenComplete` covers '
+              'both, and the existing tests above already pin that',
+        );
+        expect((await tick.trigger()).ran, isTrue);
+
+        // Now the shape that really wedged: no throw at all, and no return
+        // either. Nothing is "skipped" — the release is simply waiting on a
+        // future that never settles.
+        final stuck = TickSingleFlight(
+          log: log.record,
+          runTick: () async => Completer<TickOutcome>().future,
+        );
+        final never = stuck.trigger();
+        for (var i = 0; i < 50; i++) {
+          expect((await stuck.trigger()).ran, isFalse);
+        }
+        expect(
+          stuck.isRunning,
+          isTrue,
+          reason:
+              'this is the whole defect: the guard is held for as long as the '
+              'body takes, and the body can take for ever',
+        );
+        expect(never, isNotNull);
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    test(
+      'the lease takes the guard back from a tick that never returns',
+      () async {
+        final log = _LogCapture();
+        final gate = _Gate();
+        var pass = 0;
+        final tick = TickSingleFlight(
+          log: log.record,
+          maxHold: const Duration(milliseconds: 40),
+          runTick: () async {
+            pass++;
+            // ONLY the first pass parks. A later pass returning is what "the
+            // next trigger is a real tick again" has to mean; parking every pass
+            // would hang this test on its own second trigger.
+            if (pass == 1) await gate.wait();
+            return TickOutcome();
+          },
+        );
+
+        final stuck = tick.trigger();
+        expect(tick.isRunning, isTrue);
+        expect(
+          (await tick.trigger()).ran,
+          isFalse,
+          reason: 'sanity: inside the lease this is still an ordinary drop',
+        );
+
+        await _waitUntil(() => !tick.isRunning, because: 'the lease to expire');
+        expect(
+          (await tick.trigger()).ran,
+          isTrue,
+          reason:
+              'and after it the next trigger is a real tick again, not a drop '
+              'against a guard held by a tick that is still stuck',
+        );
+
+        final expired = log.eventsNamed('scheduler.tick.hold_expired');
+        expect(expired, hasLength(1));
+        expect(expired.single['code'], tickHoldExpiredCode);
+        expect(expired.single['maxHoldSeconds'], 0);
+        expect(
+          expired.single['cancelled'],
+          isFalse,
+          reason:
+              'this is the field that keeps the fix honest: the lease releases '
+              'the GUARD and must never touch the work',
+        );
+        expect(expired.single['action'], contains('NOT cancelled'));
+
+        gate.open();
+        await stuck;
+      },
+    );
+
+    test(
+      'expiry cancels NOTHING: the body keeps running and reports late',
+      () async {
+        final log = _LogCapture();
+        final gate = _Gate();
+        var bodyFinished = false;
+        final tick = TickSingleFlight(
+          log: log.record,
+          maxHold: const Duration(milliseconds: 40),
+          runTick: () async {
+            await gate.wait();
+            bodyFinished = true;
+            return TickOutcome();
+          },
+        );
+
+        final stuck = tick.trigger();
+        await _waitUntil(() => !tick.isRunning, because: 'the lease to expire');
+        expect(
+          bodyFinished,
+          isFalse,
+          reason:
+              'the abandoned tick is STILL RUNNING. Cancelling it would free '
+              'the symptom, destroy the evidence and throw away the work.',
+        );
+
+        gate.open();
+        final result = await stuck;
+
+        expect(bodyFinished, isTrue, reason: 'and it really did finish');
+        expect(result.ran, isTrue);
+        expect(
+          result.abandoned,
+          isTrue,
+          reason: 'so a consumer can tell this completion from a current one',
+        );
+        expect(
+          log.eventsNamed('scheduler.tick.completed'),
+          isEmpty,
+          reason:
+              'an abandoned tick must NOT appear on the normal completion line, '
+              'or a consumer counting completions counts it as the current tick',
+        );
+        final late = log.eventsNamed('scheduler.tick.completed_late');
+        expect(late, hasLength(1));
+        expect(late.single['code'], tickCompletedLateCode);
+        expect(late.single['ran'], isTrue);
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    test(
+      'a tick INSIDE its lease is untouched — the lease cannot abandon work',
+      () async {
+        // The failure the other direction would produce, and the reason the
+        // derived default is what it is: a lease short enough to be useful
+        // must not also abandon ticks that are legitimately still working.
+        final log = _LogCapture();
+        final tick = TickSingleFlight(
+          log: log.record,
+          maxHold: const Duration(seconds: 30),
+          runTick: () async => TickOutcome(),
+        );
+
+        final result = await tick.trigger();
+
+        expect(result.ran, isTrue);
+        expect(result.abandoned, isFalse);
+        expect(
+          log.eventsNamed('scheduler.tick.hold_expired'),
+          isEmpty,
+          reason: 'a tick that finished inside its lease is not a held guard',
+        );
+        expect(log.eventsNamed('scheduler.tick.completed'), hasLength(1));
+        expect(log.eventsNamed('scheduler.tick.completed_late'), isEmpty);
+      },
+    );
+
+    test(
+      'an abandoned tick finishing later does NOT release a newer tick\'s guard',
+      () async {
+        // The reason release is tokenised. A bare `_running = false` in the
+        // expiry callback plus another in the abandoned tick's `whenComplete`
+        // clears the guard TWICE, and the second clear happens while a fresh
+        // tick holds it — two ticks in flight, and nothing anywhere says so.
+        final log = _LogCapture();
+        final firstGate = _Gate();
+        final secondGate = _Gate();
+        var pass = 0;
+        final tick = TickSingleFlight(
+          log: log.record,
+          maxHold: const Duration(milliseconds: 40),
+          runTick: () async {
+            pass++;
+            await (pass == 1 ? firstGate.wait() : secondGate.wait());
+            return TickOutcome();
+          },
+        );
+
+        final first = tick.trigger();
+        await _waitUntil(() => !tick.isRunning, because: 'the lease to expire');
+
+        final second = tick.trigger();
+        expect(tick.isRunning, isTrue);
+
+        // The abandoned tick finally settles, while the second one runs.
+        firstGate.open();
+        await first;
+        expect(
+          tick.isRunning,
+          isTrue,
+          reason:
+              'a late release must not clear a guard a newer tick is holding, '
+              'or the single-flight property this class exists to provide is '
+              'gone the moment a tick is abandoned',
+        );
+
+        secondGate.open();
+        await second;
+        expect(tick.isRunning, isFalse);
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    test('no lease is the library default, and is SAYS so', () {
+      final unbounded = TickSingleFlight(runTick: () async => TickOutcome());
+      expect(unbounded.maxHold, isNull);
+      expect(
+        unbounded.holdSummary,
+        contains('NO LEASE'),
+        reason:
+            'absence has to be stated in words: "the field is missing" is '
+            'exactly the ambiguity this summary exists to remove',
+      );
+
+      final bounded = TickSingleFlight(
+        runTick: () async => TickOutcome(),
+        maxHold: const Duration(seconds: 90),
+      );
+      expect(bounded.holdSummary, contains('90s'));
+      expect(bounded.holdSummary, contains(tickHoldBoundEnvVar));
+    });
+  });
+
+  group('resolving the tick hold lease', () {
+    test('UNSET resolves to the derived default, never to unbounded', () {
+      final log = _LogCapture();
+      final bound = resolveTickHoldBound(const {}, log: log.record);
+
+      expect(bound, AgentExecutionBudgets.tickHoldDefault);
+      expect(
+        bound,
+        isNotNull,
+        reason:
+            'absent must not mean "no lease" — that is the exact state that '
+            'stopped dispatch on 2026-10-18',
+      );
+      expect(log.eventsNamed('server.tick_hold.refused'), isEmpty);
+      expect(log.eventsNamed('server.tick_hold.resolved'), hasLength(1));
+    });
+
+    test('the derived default is DERIVED, and is stated in seconds', () {
+      final derived = AgentExecutionBudgets.tickHoldDefault;
+      var largest = Duration.zero;
+      for (final budget in AgentExecutionBudgets.byRole.values) {
+        if (budget > largest) largest = budget;
+      }
+      expect(
+        derived.inSeconds,
+        greaterThanOrEqualTo(
+          largest.inSeconds * AgentExecutionBudgets.rejectedStalenessMultiplier,
+        ),
+        reason:
+            'it must scale with the budgets rather than being a literal here, '
+            'or lowering a budget would silently leave a stale number in force',
+      );
+      expect(
+        derived.inSeconds,
+        greaterThan(largest.inSeconds),
+        reason: 'and it must exceed the longest single agent budget',
+      );
+    });
+
+    test('every unusable value REFUSES, each naming what was wrong', () {
+      final cases = <String, String>{
+        '': 'empty',
+        '   ': 'empty',
+        'soon': 'is not an integer',
+        '3600.5': 'is not an integer',
+        '0': 'is below the minimum of 1',
+        '-1': 'is below the minimum of 1',
+      };
+      cases.forEach((value, why) {
+        expect(
+          () => resolveTickHoldBound({tickHoldBoundEnvVar: value}),
+          throwsA(
+            isA<UnusableTickHoldBound>().having(
+              (e) => e.diagnostic,
+              'diagnostic for "$value"',
+              allOf(contains(tickHoldBoundEnvVar), contains(why)),
+            ),
+          ),
+          reason: '$tickHoldBoundEnvVar="$value" must refuse',
+        );
+      });
+    });
+
+    test(
+      'the refusal is logged and never silently replaced by another number',
+      () {
+        final log = _LogCapture();
+        expect(
+          () => resolveTickHoldBound(
+            const {tickHoldBoundEnvVar: 'later'},
+            log: log.record,
+          ),
+          throwsA(isA<UnusableTickHoldBound>()),
+        );
+        final refused = log.eventsNamed('server.tick_hold.refused');
+        expect(refused, hasLength(1));
+        expect(refused.single['bound'], contains('refusing to start'));
+        expect(
+          log.eventsNamed('server.tick_hold.resolved'),
+          isEmpty,
+          reason:
+              'serving a different bound than the operator asked for is the '
+              'same defect as no bound at all, wearing a different hat',
+        );
+      },
+    );
+
+    test('a configured value is honoured, surrounding whitespace and all', () {
+      expect(
+        resolveTickHoldBound({tickHoldBoundEnvVar: '3600'}).inSeconds,
+        3600,
+      );
+      expect(
+        resolveTickHoldBound({tickHoldBoundEnvVar: ' 900 '}).inSeconds,
+        900,
+      );
+    });
+  });
+
+  group('the lease is WIRED into the composition', () {
+    test(
+      'the tick is constructed WITH a lease, and the banner states it',
+      () async {
+        // Wiring pins, not behaviour: booting the composition needs a database,
+        // and a lease that was resolved and then not passed to the object would
+        // leave the platform exactly as wedged as before while printing a
+        // reassuring startup line.
+        final source = await _readServerSource();
+        expect(
+          source,
+          contains('maxHold: tickHoldBound,'),
+          reason:
+              'the resolved bound must reach the TickSingleFlight constructor',
+        );
+        expect(
+          source,
+          contains("'tickHold': tick.holdSummary,"),
+          reason:
+              "read back off the live object rather than off the local variable, "
+              "so the banner cannot describe a lease the ticking object lacks",
+        );
+        expect(
+          source,
+          contains('resolveTickHoldBound(Platform.environment'),
+          reason:
+              'and it must be resolved from the environment, not hard-coded',
+        );
+      },
+    );
+
+    test('the lease is resolved BEFORE the process can bind a port', () async {
+      final source = await _readServerSource();
+      final resolveAt = source.indexOf('resolveTickHoldBound(Platform');
+      final serverpodAt = source.indexOf('Serverpod(args,');
+      final startAt = source.indexOf('pod.start()');
+
+      expect(resolveAt, greaterThan(-1));
+      expect(
+        resolveAt,
+        lessThan(serverpodAt),
+        reason:
+            'a refusal that happens after the process binds a port is a '
+            'refusal an operator meets as a half-up server that looks healthy',
+      );
+      expect(resolveAt, lessThan(startAt));
+    });
+  });
+
+  group('recovery — a tick that used to wedge now DISPATCHES', () {
+    // The behavioural claim, as distinct from "the flag is released again".
+    //
+    // These drive a REAL `Scheduler.tick()` over real in-memory stores, wrapped
+    // in the real `TickSingleFlight`, with a dispatcher that gives one work item
+    // an execution which never returns. That is the 2026-10-18 shape minus the
+    // database: tick 1 dispatches the stuck item and blocks inside
+    // `_dispatchOne`, so without a lease nothing after it ever runs again.
+    //
+    // NO DATABASE WAS INVOLVED — see the file header. What is therefore NOT
+    // proved: that a real `git` clone, a real agent process or a real
+    // `ArtifactCommitter.commit` hangs in production the way this execution
+    // hangs here. That is a runtime observation and belongs to the operator.
+
+    test(
+      'with the lease, a later tick RUNS and dispatches the next item',
+      () async {
+        final t0 = DateTime.utc(2026, 1, 1, 12);
+        final host = _CapacityHost(clock: () => t0);
+        host.applyCap(capacityOf(2));
+        await host.enqueueAll(['wi-stuck', 'wi-next']);
+
+        // `wi-stuck` gets an execution that never returns; `wi-next` gets a
+        // normal one. The queue therefore has to drain AROUND the stuck item,
+        // which is the only way "recovery" can mean anything at all.
+        host.dispatch.parkRuns = true;
+        host.dispatch.neverReleaseFor = <String>{'wi-stuck'};
+
+        final log = _LogCapture();
+        final scheduler = host.schedulers.first;
+        final tick = TickSingleFlight(
+          log: log.record,
+          maxHold: const Duration(milliseconds: 40),
+          runTick: () async {
+            final outcome = TickOutcome(failedSections: <String>[]);
+            outcome.dispatched = (await scheduler.tick()).dispatched.length;
+            return outcome;
+          },
+        );
+
+        final stuck = tick.trigger();
+        await _waitUntil(
+          () => host.dispatch.startedWorkItems.contains('wi-stuck'),
+          because: 'tick 1 to dispatch the stuck item',
+        );
+        expect(
+          host.dispatch.startedWorkItems,
+          ['wi-stuck'],
+          reason: 'tick 1 dispatches serially, so it is still inside wi-stuck',
+        );
+
+        // Only `wi-stuck` is stuck. From here on, anything a later tick starts
+        // runs to completion — otherwise the recovering tick would itself park,
+        // and the test would be proving that a second wedged tick also wedges.
+        host.dispatch.parkRuns = false;
+
+        await _waitUntil(() => !tick.isRunning, because: 'the lease to expire');
+        expect(
+          tick.isRunning,
+          isFalse,
+          reason:
+              'the tick is blocked inside `_dispatchOne` awaiting an execution '
+              'that will never return; the lease is the only thing that ends it',
+        );
+
+        final recovered = await tick.trigger();
+
+        expect(recovered.ran, isTrue, reason: 'the later tick really RAN');
+        expect(recovered.outcome!.dispatched, 1, reason: 'and it DISPATCHED');
+        expect(
+          host.dispatch.startedWorkItems,
+          containsAll(<String>['wi-stuck', 'wi-next']),
+          reason:
+              'the second item was dispatched while the first is still stuck — '
+              'before this change nothing past the stuck item ever ran again',
+        );
+        expect(
+          host.dispatch.observedMaxConcurrency,
+          2,
+          reason:
+              'and the capacity cap is still what bounds concurrency, not this '
+              'guard: taking the guard back never exceeded C',
+        );
+        expect(
+          log.eventsNamed('scheduler.tick.hold_expired'),
+          hasLength(1),
+          reason: 'the recovery was announced, not silent',
+        );
+        expect(
+          log.eventsNamed('scheduler.tick.dropped_overlap'),
+          isEmpty,
+          reason:
+              'nothing was dropped while recovering: the queue drained rather '
+              'than the triggers piling up and being discarded',
+        );
+
+        // Teardown only, after every assertion above. `stuck` is deliberately
+        // NOT awaited: an abandoned tick is still running, which is the whole
+        // point, and waiting for it here would assert the opposite of what this
+        // test proves.
+        host.dispatch.releaseStuck();
+        expect(stuck, isNotNull);
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
+      'WITHOUT the lease the same world stays stuck — the counterfactual',
+      () async {
+        // Non-vacuity for the test above, in the only form that counts: the
+        // identical setup with the one thing removed, asserted to NOT recover.
+        final t0 = DateTime.utc(2026, 1, 1, 12);
+        final host = _CapacityHost(clock: () => t0);
+        host.applyCap(capacityOf(2));
+        await host.enqueueAll(['wi-stuck', 'wi-next']);
+
+        host.dispatch.parkRuns = true;
+        host.dispatch.neverReleaseFor = <String>{'wi-stuck'};
+
+        final scheduler = host.schedulers.first;
+        final tick = TickSingleFlight(
+          runTick: () async {
+            final outcome = TickOutcome(failedSections: <String>[]);
+            outcome.dispatched = (await scheduler.tick()).dispatched.length;
+            return outcome;
+          },
+        );
+
+        final stuck = tick.trigger();
+        await _waitUntil(
+          () => host.dispatch.startedWorkItems.contains('wi-stuck'),
+          because: 'tick 1 to dispatch the stuck item',
+        );
+
+        // Twenty more triggers over a second. Every one is dropped, forever.
+        var ranAfterwards = 0;
+        for (var i = 0; i < 20; i++) {
+          if ((await tick.trigger()).ran) ranAfterwards++;
+          await Future<void>.delayed(const Duration(milliseconds: 1));
+        }
+
+        expect(
+          ranAfterwards,
+          0,
+          reason: 'nothing ran while the guard was held',
+        );
+        expect(
+          host.dispatch.startedWorkItems,
+          ['wi-stuck'],
+          reason:
+              'and the second item was NEVER dispatched: this is the wedge. The '
+              'lease is the only difference between this world and the one above',
+        );
+        expect(tick.isRunning, isTrue);
+
+        // Teardown only.
+        host.dispatch.releaseStuck();
+        await stuck;
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
     );
   });
 
@@ -991,18 +1565,45 @@ class _InstrumentedDispatcher implements WorkerDispatch {
   final List<String> _parked = [];
   final List<Completer<void>> _releases = [];
 
+  /// Stuck executions, keyed by work item. See [neverReleaseFor].
+  final Map<String, Completer<void>> _neverRelease =
+      <String, Completer<void>>{};
+
   bool parkRuns = false;
+
+  /// Work items whose execution does not come back during the test.
+  ///
+  /// This is the shape the 2026-10-18 tick actually took: one job's execution
+  /// that never returns. Parking EVERYTHING models a slow tick; parking exactly
+  /// this item models a STUCK one, and is what lets the recovery test assert
+  /// that the queue drains AROUND the stuck item rather than after it. Nothing
+  /// here releases it mid-test; [releaseStuck] exists so a finished test can
+  /// leave the runner no pending future.
+  Set<String> neverReleaseFor = <String>{};
+
+  /// Every work item an execution was actually started for, in order.
+  final List<String> startedWorkItems = <String>[];
 
   int get parked => _parked.length;
 
   void releaseAll() {
     parkRuns = false;
-    final pending = List<Completer<void>>.from(_releases);
-    _releases.clear();
-    _parked.clear();
-    for (final release in pending) {
+    for (final release in List<Completer<void>>.from(_releases)) {
       if (!release.isCompleted) release.complete();
     }
+    _releases.clear();
+    _parked.clear();
+  }
+
+  /// TEARDOWN ONLY — lets a "stuck" execution finish once the test has finished
+  /// asserting about it. Never call mid-test: doing so is exactly the bug the
+  /// recovery tests exist to catch.
+  void releaseStuck() {
+    for (final stuck in List<Completer<void>>.from(_neverRelease.values)) {
+      if (!stuck.isCompleted) stuck.complete();
+    }
+    _neverRelease.clear();
+    releaseAll();
   }
 
   @override
@@ -1027,12 +1628,22 @@ class _InstrumentedDispatcher implements WorkerDispatch {
     _active++;
     if (_active > observedMaxConcurrency) observedMaxConcurrency = _active;
     final release = Completer<void>();
+    // Recorded for EVERY execution, parked or not — this list is how a test
+    // observes that a dispatch happened at all.
+    startedWorkItems.add(request.workItemId);
     if (parkRuns) {
       _parked.add(request.workItemId);
       _releases.add(release);
     }
     try {
-      if (parkRuns) await release.future;
+      if (parkRuns) {
+        if (neverReleaseFor.contains(request.workItemId)) {
+          final stuck = Completer<void>();
+          _neverRelease[request.workItemId] = stuck;
+          await stuck.future;
+        }
+        await release.future;
+      }
       await StoreScopedLockingJobStore.roundTrip();
       final now = DateTime.now().toUtc();
       return WorkerExecutionResult(
