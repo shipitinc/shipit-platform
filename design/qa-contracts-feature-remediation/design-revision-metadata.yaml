@@ -2732,3 +2732,118 @@ revision_3a_correction_design_review_3:
     the tree and to refute them again if they are still wrong. Nothing in this entry asserts that any
     gate is implemented, wired, verified, or enforced. They are DESIGNED, and one of them (the former
     F3) turned out not to have been a gate at all.
+# =====================================================================================
+# REVISION 3b — POINTER/DOCUMENTATION CORRECTION PASS. APPEND-ONLY ENTRY.
+# NOTHING ABOVE THIS LINE WAS MODIFIED.
+#
+# Appended by lane `correct-DESIGN-LOW-4` (design correction lane, acting under
+# `aef-correction-loop` on behalf of the design agent) on top of base 4a36b39. Every key above
+# retains its exact prior value.
+#
+#   *** THE APPEND-ONLY PROPERTY IS VERIFIED BY BYTE-PREFIX, NOT BY DIFF. ***
+#   Method: the pre-append bytes were copied aside BEFORE the first append, then compared with
+#   `python3 -c "n=open(new,'rb').read(); o=open(pre,'rb').read(); print(n.startswith(o))"`.
+#   NO BYTE-COUNT FIGURE IS ASSERTED ANYWHERE IN THIS ENTRY, deliberately. The revision-3 entry
+#   records that this artifact set's own PASS 5 / PASS5-5 defect was a correct "N bytes appended"
+#   note invalidated by the act of appending the row that counted. The METHOD is the claim: a
+#   reviewer re-runs the one-line prefix check; they cannot check a number this lane may edit again.
+#
+#   *** THE TRAILING-NEWLINE CAVEAT DOES NOT RECUR ON THIS APPEND. *** The revision-3 entry warns
+#   that a predecessor ending WITHOUT a trailing newline makes `git diff --numstat` report the last
+#   line as removed-and-re-added. Recorded honestly: THAT FILE'S successor — this file at base
+#   4a36b39 — ALREADY ENDS WITH a newline (its final three bytes are `6c 2e 0a`, i.e. `l.\n`), so
+#   this append adds no trailing newline and git should report insertions only. The prefix check,
+#   not the diff, remains the evidence either way.
+# =====================================================================================
+
+revision_3b_correction_design_low_4:
+
+  lane: "design correction lane — `correct-DESIGN-LOW-4`, dispatched by `orchestrator-main` under `aef-correction-loop`"
+  is_a: "CORRECTION OF revision_3_substantive_qa_gates — it edits two artifacts' own text and APPENDS this entry; no key above this line is touched"
+  base_sha: "4a36b396ea45cc25e1c18aa56564ee3d10c6c15c"
+  base_sha_short: "4a36b39"
+  base_sha_verified: >
+    `git rev-parse --short HEAD` returned 4a36b39 and `git rev-parse HEAD` returned
+    4a36b396ea45cc25e1c18aa56564ee3d10c6c15c BEFORE this lane's first edit.
+    `git status --porcelain --untracked-files=no` returned EMPTY, i.e. the TRACKED tree was clean.
+    Two pre-existing stash entries (stash@{0}, stash@{1}) were observed and NOT touched: this lane
+    issued no `git stash`, no `git checkout .`, and no `git add -A` at any point.
+  scope: >
+    POINTER AND DOCUMENTATION ONLY, authorised as such. Four LOW findings from an independent
+    focused design re-review. No specification change is authorised and none was made: no gate
+    definition, threshold, ordering, count, slice, or gate-result vocabulary was altered. The one
+    non-citation edit (L4) ADDS a sentence that RECORDS already-specified behaviour; it defines no
+    new behaviour.
+  findings_corrected:
+    - id: "L1"
+      file: "design/qa-contracts-feature-remediation/evaluator-spec.md"
+      was_cited: ":425-434 for the in-edge `waitingForHumanDecision -> reviewApproved`"
+      now_cited: ":437 (the edge) and :439-444 (its `blockingHumanDecisionResolved` guard)"
+      confirmed_by_opening: >
+        `packages/workflow_engine/lib/src/transitions/work_item_transitions.dart:437` =
+        `(WorkItemState.waitingForHumanDecision, WorkItemState.reviewApproved): [` and
+        `:439-444` = the `GuardConditions.blockingHumanDecisionResolved({(type:
+        HumanDecisionType.engineeringReview, choice: HumanDecisionChoice.approve)})` list.
+      why_it_survived_seven_passes: >
+        NOT out of bounds. `:425-434` OPENS ON `:434`, which is
+        `(WorkItemState.reviewInProgress, WorkItemState.agentCompleted): [` — a real, DIFFERENT
+        edge. This is precisely the "resolves to the wrong thing, not to nothing" class this
+        artifact set already recorded in the FOLLOW_UPS ledger.
+      corroboration_of_the_reviewers_diagnosis: >
+        The adjacent out-edge bullet two lines below was ALREADY corrected in the prior pass
+        (`:651-654` -> `:693-696`), so that sweep stopped one line short of the in-edge bullet.
+        Confirmed independently: at base 4a36b39 the file is still 894 lines and the previously
+        corrected ranges `:693-696`, `:732-738`, `:733-736`, `:737`, `:739-744` and `:751-757`
+        ALL still resolve to exactly what that pass claimed — the file did not drift again. Only
+        the one missed in-edge citation was wrong.
+    - id: "L2"
+      file: "design/qa-contracts-feature-remediation/evaluator-spec.md"
+      was_cited: "`docs/engineering/FOLLOW_UPS.md` (F-52)"
+      now_cited: "`docs/engineering/FOLLOW_UPS.md` (F-100)"
+      confirmed_by_opening: >
+        `docs/engineering/FOLLOW_UPS.md:1175` is `### F-52 The design-review gate needs a PRODUCER,
+        not a model` — unrelated to the citation class. `docs/engineering/FOLLOW_UPS.md:2364` is
+        `F-100 — evaluator-spec.md's qaInProgress -> qaPassed anchor pointed at a DIFFERENT EDGE`,
+        which is the same citation-class finding this file's correction banner documents.
+    - id: "L3"
+      file: "design/qa-contracts-feature-remediation/substantive-qa-gates.md"
+      was_cited: ":909 as guarding `plan != null && !alreadySettled`"
+      now_cited: ":910 as guarding `plan != null && !alreadySettled`"
+      confirmed_by_opening: >
+        `packages/execution_coordinator/lib/src/coordinator/execution_coordinator.dart:910` =
+        `if (plan != null && !alreadySettled) {`. The cited `:909` is the COMMENT line above it
+        (`// would carry it is refused, and the transition is already decided.`). The sibling
+        citation on the same row, `:905`, was already correct — `:905` = `final plan =
+        verificationPlan;` — and was left alone. No surrounding prose was touched.
+      path_note: >
+        Two files named `execution_coordinator.dart` exist. The implementation is
+        `packages/execution_coordinator/lib/src/coordinator/execution_coordinator.dart`; the
+        11-line `packages/execution_coordinator/lib/execution_coordinator.dart` is an export
+        barrel. The cited line numbers were confirmed against the implementation.
+    - id: "L4"
+      file: "design/qa-contracts-feature-remediation/substantive-qa-gates.md"
+      classification: "OBSERVATION, NOT A DEFECT — recorded as required"
+      change: >
+        ONE sentence added beside the collector's untracked half, stating that enumeration (2) is
+        over-inclusive BY DESIGN, that a workspace arriving with pre-existing untracked files
+        therefore produces a FAIL on paths the run never created, and that this is accepted rather
+        than an oversight.
+      classification_rationale: >
+        The reviewer classified this as an observation, not a defect, and it is recorded as such
+        above rather than as a corrected finding. It adds NO gate definition, threshold, ordering
+        or count: it documents the already-specified deliberate superset, whose safety direction is
+        over-inclusion. It also closes no correctness hole — a workspace that arrives dirty now
+        says so in the artifact instead of surprising its first reader.
+  residual_stale_citation_left_in_place_deliberately:
+    location: "design-revision-metadata.yaml:2422 (this file, above this line)"
+    content: "`execution_coordinator.dart:905, :909, :916-930` inside a historical `reverification_evidence` record"
+    handling: >
+      NOT edited. This file is append-only, and that line is a historical record of what a PAST
+      pass re-verified, not a live claim about current code. The supersession is recorded HERE
+      instead. Its `:916-930` and `:905` were opened and are accurate; only its `:909` is stale,
+      and L3 above corrects the live citation to `:910`.
+  self_approval: >
+    NONE. This lane does not approve this artifact and does not approve its own correction. The four
+    findings below were reported by an independent focused design re-review, and the correction is
+    offered for a fresh focused re-review. Nothing in this entry asserts that a gate is implemented,
+    wired, verified, or enforced; no gate was touched by this pass.

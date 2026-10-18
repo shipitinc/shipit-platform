@@ -443,6 +443,11 @@ Passes **iff** every path in the enumerated set is `>=1` owned glob and **zero**
 >    untracked in the worktree at settle time, which (2) above exists because `git diff` will never
 >    report it and an untracked **new** file is exactly what a confinement gate must catch.
 >
+> **Enumeration (2) is over-inclusive by design, not an oversight:** it reports every untracked file in
+> the worktree rather than only the ones this run created, so a workspace that arrives with pre-existing
+> untracked files produces a FAIL on paths this run never touched — accepted deliberately, because the
+> opposite error would let a prohibited new file through unseen.
+>
 > **Neither enumeration may be truncated, sampled or capped, and a failed enumeration is a FAIL, not
 > an empty list** — the empty list is the F2-on-a-committed-run hole above, and reproducing it inside
 > the new reader would rebuild the defect at a second layer.
@@ -481,7 +486,7 @@ review's.
 >
 > | F3's condition | Can it fail in production? | Established at |
 > |---|---|---|
-> | `readVerifications(executionId)` is non-empty | **yes**, but only when no plan is attached or the execution was already settled (`:909` guards `plan != null && !alreadySettled`) | `execution_coordinator.dart:905`, `:909` |
+> | `readVerifications(executionId)` is non-empty | **yes**, but only when no plan is attached or the execution was already settled (`:910` guards `plan != null && !alreadySettled`) | `execution_coordinator.dart:905`, `:910` |
 > | `evidenceKind == platformVerifiedEvidence` | **NO.** `PlatformVerification.evidenceKind` **defaults** to `EvidenceKind.platformVerifiedEvidence` (`platform_verification.dart:24`) and `ExecutionCoordinator` **never sets it** (`:916-930`) | `platform_verification.dart:24`; `execution_coordinator.dart:916-930` |
 > | `status == AgentClaimStatus.passed` | **NO.** `git rev-parse --verify 'HEAD^{commit}'` succeeds on any checkout that has a commit, and `outcome.passed` maps straight to `passed` (`:921-923`) | `server.dart:1578-1581`; `execution_coordinator.dart:921-923` |
 > | `requireBoundToExecution` | **NO — unconstructible.** The binding is not a gate predicate at all: `readVerifications` filters by `executionId` in the query itself, so a row "bound to another execution" **cannot be returned by this reader**. | `postgres_execution_store.dart:331-339` (`WHERE "executionId" = @executionId`); `in_memory_execution_store.dart:109-115` |

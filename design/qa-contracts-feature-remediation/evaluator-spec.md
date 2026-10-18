@@ -41,7 +41,7 @@ counted correctly in §5.3 and §6.
 > thing* is caught only by a reader who already knows the answer. **Three of this document's own
 > passages affirmed the stale ranges were correct** — that affirmation is what made the defect durable,
 > and **an affirmation outlives the file it was true of.** The companion finding is now open in
-> `docs/engineering/FOLLOW_UPS.md` (F-52), because **fixing a citation is not certifying it.**
+> `docs/engineering/FOLLOW_UPS.md` (F-100), because **fixing a citation is not certifying it.**
 >
 > Provenance of this pass: `design-revision-metadata.yaml` key
 > `revision_3a_correction_design_review_3`.
@@ -241,7 +241,9 @@ had nothing to drain. Verified:
   `scheduler.dart:3200, 3262, 3276, 3361`, `implement_feature.dart:114` — `reviewApproved` is in
   none of them.
 - Its **only** in-edge is the human one, `waitingForHumanDecision -> reviewApproved`
-  (`:425-434`), guarded by `blockingHumanDecisionResolved({(engineeringReview, approve)})`.
+  (`:437`; **corrected by `correct-DESIGN-LOW-4`, was cited as `:425-434` — a range that opens on
+  `(reviewInProgress, agentCompleted)` at `:434`, a DIFFERENT edge**), guarded by
+  `blockingHumanDecisionResolved({(engineeringReview, approve)})` (`:439-444`).
 - Its **only** out-edge is `reviewApproved -> qaInProgress` (`:693-696`; **corrected by
   `correct-DESIGN-REVIEW-3`, was cited as `:651-654`**).
 - **No production code calls `transition(to: WorkItemState.reviewApproved)` or
