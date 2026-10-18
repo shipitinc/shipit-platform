@@ -2649,3 +2649,53 @@ fourth instance of the stale-anchor class (F-100) in a file nobody had cited as 
 durable column (F-122). Step 4 (the fidelity anchor) is unblocked by `a1c7d904`'s U-3. Step 5 alone is
 blocked by D4's **ratification** only, and only its activation step. Steps 3, 6–10 wait on the design
 clearing re-review.
+
+## 35. A premise I stated to the operator as fact was FALSE — correction, and what survives
+
+**F-127 — I told the operator the design revision's JSON columns have "no schema and no validator
+anywhere in the tree, confirmed by exhausting it." That was wrong.** Verified directly:
+`schemas/design_revision.schema.json` **exists**, is committed (4018 bytes), declares **all six** blob
+columns (`boardIdsJson`, `responsiveTargetsJson`, `statesRepresentedJson`, `artifactRefsJson`,
+`reviewScopeJson`, `reviewExecutionIdsJson`; five in `required` at `:8`), carries
+`additionalProperties: false` at `:7`, and is **validated green** by
+`packages/platform_contracts/test/contract_schemas_test.dart:585` — *"DesignRevision.toJson() conforms to
+design_revision.schema.json"*. Two independent review rounds repeated the false premise before one
+falsified it in a single grep.
+
+**How it happened.** The design lane asserted "no schema, no validator"; the first design review
+**confirmed** it "by exhausting the tree"; I repeated it to the operator as the premise for decision
+`a1c7d904`'s U-3 branch. **A claim that two reviews agree on is not thereby verified** — the agreement is
+correlated, not independent. The falsifying check was one `ls schemas/` and one `grep`.
+
+**F-128 — what SURVIVES, and the decision stands.** The *operative* conclusion is unchanged: the blobs
+are declared as bare `"type": "string"` with only prose descriptions, so their **content** has no
+parseable contract and ADR 0021 §2's fidelity rule stays **undecidable**. `a1c7d904`'s selection —
+committed versioned JSON schema for machines, Penpot for humans, disagreement is a finding — is
+**correct** and is **not reopened**. `boardSet.minItems: 1` plus required `providerFileId` still closes the
+nullable-`penpotFileId` hole. **Only the justification and the schema's placement were wrong.** The
+operator's decision was made on a partly false premise but reached a sound conclusion; the correction is to
+the record, not to their choice.
+
+**F-129 — the remedy's PLACEMENT was wrong too, and it is load-bearing.**
+`design-revision.md` §3.5.1 proposed `docs/engineering/schemas/design_revision_fidelity_anchor.schema.json`.
+`docs/engineering/schemas/` **does not exist**; **all 50** committed schemas live in one root, `schemas/`
+(verified by counting every `*.schema.json` outside `.git`); and `contract_schemas_test.dart:8` hardcodes
+`const _schemasRoot = '../../schemas'` and loads by bare name — so a document at the proposed path is
+**unreachable by the tree's own harness**, producing "a validated-looking but unvalidated" document,
+which §3.5.3 itself warns against. Splitting one type's contract across two independently-versioned
+documents with no `$ref` also regresses a convention that is otherwise uniform (44/50 declare
+`additionalProperties: false`; `design_review_result.schema.json` carries the same free-form
+`reviewScopeJson`). **Required:** place the anchor as `$defs` + `$ref` inside
+`schemas/design_revision.schema.json` (or at `schemas/design_revision_fidelity_anchor.schema.json`) and add
+it to `contract_schemas_test.dart`'s `const schemas` list so it is **loaded and exercised**.
+
+**Build-order, re-derived from this review (`696bcd9`).** SAFE NOW, in §9's order, no step skipping a
+predecessor: **step 1** (`design_contract` migration + `DesignContractStore` + builder); **step 2**
+(`designContractExists()` reads the durable column — F-122, the shared-by-every-category root cause);
+**step 3** (`designParked` + R2.1/R2.2/R2.4 edges — BLOCKER-1's verified remedy, adding the
+`WorkItemWorkflowState.allowedTransitions` mirror in the same change); **step 7** (`designRejected →
+designRequired` edge **AND** `entryProbeTargets {designRejected: designRequired}`, both, never one —
+verified against the drift guard, which it activates rather than breaks); **step 10** (D-1 dedupe suffix at
+`scheduler.dart:3284-3285`, and rename-or-complete the vacuous `design_job_test.dart:614-698`).
+**BLOCKED by F-129:** step 4. **DEFERRED by D4:** step 5 (HIGH-by-default needs no policy call).
+**DEPENDENT:** steps 6, 8, 9. **Switching the runtime ON remains blocked** and nothing here unblocks it.
