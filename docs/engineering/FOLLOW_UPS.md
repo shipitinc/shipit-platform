@@ -2119,13 +2119,38 @@ adopted: byte-copy, `shasum` before and after, `dart format --set-exit-if-change
 29 files live in `test/integration/` and 28 boot a real Serverpod, so a plain `dart test` there burns
 ~15 min on 32 connection timeouts and **cannot be excluded by tag**.
 
-**F-87 — the unbounded hold has a root cause deeper than the guard (`correct-WEDGED-TICK`, out of
-scope).** The lease restores "dispatch eventually", not "dispatch promptly", and it treats the symptom
-at the guard. Only one bound exists on the whole dispatch path
-(`local_worker.dart:279-285`); `workspaceManager.prepare` (`:245`), `inspector.inspect` (`:310`),
-`artifactCommitter.commit` (`:375`) and cleanup are each awaited with **no timeout** and each shells
-out. A `packages/worker_runtime` change bounding those would close the class at its root. Recommended as
-a separate lane.
+**F-87 — the unbounded hold has a root cause deeper than the guard — RESOLVED by
+`correct-DEAD-INSPECTOR-TIMEOUT`, with the earlier text of this entry corrected.** The lease restores
+"dispatch eventually", not "dispatch promptly", and it treats the symptom at the guard. An earlier
+version of this entry — repeated in the `ab6b966` commit body, which is permanent provenance and
+cannot be amended — claimed that only one bound existed on the whole dispatch path and that
+`workspaceManager.prepare`, `inspector.inspect`, `artifactCommitter.commit` and cleanup were each
+awaited with **no timeout**. That was wrong for three of the four, and wrong in a way that would have
+sent the next lane hunting for the wrong defect. Verified against the tree:
+
+| await | bound |
+|---|---|
+| `workspaceManager.prepare` | bounded — every git command, 60s (`_git` in `git_worktree_workspace_manager.dart:44-49`) |
+| `artifactCommitter.commit` | bounded — 60s (`artifact_committer.dart:177-184`) |
+| cleanup | bounded — 60s, via `_removeWorktreeUnsafe` → `_runGit` → `_git` |
+| `inspector.inspect` | **was unbounded** — `await Process.run(git, args)` with no `.timeout()` (`git_workspace_inspector.dart:107`) |
+
+So the defect was not a *missing* timeout in four places. It was a **present-but-dead** one, in a
+single place: `GitWorkspaceInspector` declared `timeout = 30s` (`:25`) and its class doc (`:19-21`)
+promised "a hard bound so a wedged filesystem cannot hold the worker hostage", while `_capture` never
+applied the field. A declared, documented timeout that reads as a live one is worse than an absent
+one, because it converts a search into a false negative.
+
+Fixed by applying the declared field with the sibling classes' own idiom, and pinned by
+`packages/worker_runtime/test/inspector_timeout_bound_test.dart` — a stub `git` that sleeps, asserting
+the inspector gives up at the bound and reports `GitCommandException`. No database, no Docker. The
+test fails on the pre-fix tree (waited out the stub: 15.7s where the bound allowed 500ms) and passes
+after.
+
+**Residual, deliberately not closed here.** These bounds are per *command*, not per *await*: a phase
+running several git commands can still take a multiple of its bound, and `.timeout()` bounds the
+*wait*, not the process — an expired git command is abandoned, not killed. Bounding the phases as
+wholes is a different, larger change and stays out of scope for a correction lane.
 
 **F-88 — `SHARE IT WITH ME`: an in-flight tick's duration is unobservable after the fact.** The
 recovering observation for F-79 required reading the implementation budget and the job start time

@@ -104,7 +104,11 @@ class GitWorkspaceInspector {
   }
 
   Future<String> _capture(List<String> args) async {
-    final result = await Process.run(git, args);
+    final result = await Process.run(git, args).timeout(
+      timeout,
+      onTimeout: () =>
+          throw GitCommandException(args, -1, 'git command exceeded $timeout'),
+    );
     if (result.exitCode != 0) {
       throw GitCommandException(args, result.exitCode, result.stderr);
     }

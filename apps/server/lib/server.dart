@@ -1895,14 +1895,29 @@ DateTime _systemUtcClock() => DateTime.now().toUtc();
 /// What this class CAN do is hold the guard forever, and that is the real
 /// defect. `whenComplete` releases the guard when the tick's future settles,
 /// and that future settles only when `runTick()` returns — and `runTick()`
-/// awaits a chain of things that are not all bounded. Exactly one bound exists
-/// on the whole dispatch path (`LocalWorker._drive`'s `.timeout()` around
-/// `executionDriver.execute`); workspace preparation, artifact commit, git
-/// inspection and cleanup are each awaited with no limit at all, and every one
-/// of them shells out. So a tick whose body is stuck in any of those holds the
-/// guard for ever, and a guard held for ever means every later trigger is
-/// dropped for ever: the log then reads as a busy platform doing nothing, which
-/// is the exact silence this class was written to end.
+/// awaits a chain that is bounded per shell-out, not as a whole. The agent
+/// execution carries its own `.timeout()` (`LocalWorker._drive`, around
+/// `executionDriver.execute`), and the git phases each bound every command:
+/// workspace preparation and cleanup at 60s (`_git` in
+/// `GitWorktreeWorkspaceManager`, reached by `_removeWorktreeUnsafe` →
+/// `_runGit`), artifact commit at 60s (`ArtifactCommitter._capture`).
+///
+/// Two properties of those bounds are load-bearing, and an earlier revision
+/// of this paragraph got both wrong. They are per *command*, so a phase that
+/// runs several git commands can still take a multiple of its bound. And git
+/// inspection was the one await with no bound at all: `GitWorkspaceInspector`
+/// declared `timeout = 30s` and its class doc promised "a hard bound so a
+/// wedged filesystem cannot hold the worker hostage", yet `_capture` awaited
+/// `Process.run` directly and never applied the field — a declared,
+/// documented, dead timeout that read as a live one. It is applied now, and
+/// `inspector_timeout_bound_test.dart` pins it with a stub git that sleeps.
+/// Note too that `.timeout()` bounds the *wait*, not the process: an expired
+/// git command is abandoned, not killed.
+///
+/// So a tick whose body is stuck in any of those still holds the guard far
+/// longer than a dispatch cycle should take, and a guard held that long means
+/// every later trigger is dropped: the log then reads as a busy platform doing
+/// nothing, which is the exact silence this class was written to end.
 ///
 /// The lease fixes THAT, and it fixes it in the direction that loses the least.
 /// On expiry the guard is released and the abandoned tick is left RUNNING —
