@@ -2188,3 +2188,55 @@ await, because that worker's git runs through the now-bounded workspace manager 
 A lint or test failing on a declared-but-unreferenced bound would catch this class without a reviewer
 noticing — scope it to `final Duration` **class fields within one library**, since inherited fields and
 top-level constants read only elsewhere are false positives.
+
+## 30. Workflow restored — §29's recovery verified live, and what is deliberately left open
+
+**The flow runs again.** Scheduler healthy: 60 ticks in 30 min, `ran: true, dispatched: 0,
+overlappedTicks: 0, heldForSeconds: 5` — idle because the backlog is drained, **not** wedged. The
+lease's `heldForSeconds` field now appears on the tick line, which is the F-88 diagnostic that was
+missing. `design-remediation-DEF-1791685264570406` and `WI-feature-1791823723502264` both completed
+executions and the pending human-decision count rose 8 → 10, so items are reaching the human gate again.
+**Zero** new job failures cite the QA-contract guard.
+
+**F-91 — the repair script's `--dry-run` cannot rehearse the path it names (see F-80). Already
+recorded; restated here because it nearly cost a second green-washed verification.** The one signal
+that *did* predict correctly was the real run's `refused-or-absent`. Treat dry-run output for
+`repairDesignRemediation` as non-evidence, permanently.
+
+**F-92 — the repair's failure-recording idempotency is per work item, not per failure, so a second
+stranded execution can never be recorded.** `design-remediation-DEF-1791686085546076` is stuck at
+`agent_executing` with **two** terminal failed jobs; the repair skips recording the second failure
+because one `agentExecuting → agentFailed` row already exists for that item, then attempts
+`operatorRetry`, which correctly refuses from `agent_executing`. Its output still printed
+`retried: true` while the state did not move — a **false claim in the repair's own report**. Fix is to
+key the idempotency on the failure (job id), not the work item, and to report `retried` only when a
+transition actually occurred.
+
+**F-93 — `qaPassed` is deliberately held closed (`92d567e3`).** The only registered gate,
+`intake-structured-result-admitted`, is structural. Substantive per-lane quality gates must be designed
+first. **Consequence to expect: items accumulate at `review_approved`.** That is the accepted cost of
+not rubber-stamping, not a regression. Slice 3's evaluator machinery may be built but must not be wired
+to grant `qaPassed` until real gates exist. The structural gate must not be described as a quality
+gate anywhere.
+
+**F-94 — 49 orphaned pending decisions are a single batch and are already classified.** All 49 are
+`infrastructure_decision`, all dated `2026-10-11`, all pointing at work items that no longer exist;
+940 jobs still reference those ids. The Needs You surface already labels them `item_gone` and excludes
+them from the actionable list, so they are **noise, not a block**. If they are ever to be voided, that
+is a governance action on durable records and needs its own decision — deliberately not taken here.
+Whether the 2026-10-11 deletions were intentional is **not determinable from the database** and was
+not assumed either way.
+
+**F-95 — `review_approved → qa_in_progress` still has no production caller.** Confirmed: the only
+non-test references to `WorkItemState.qaInProgress` are `home_endpoints.dart:36` (a read filter) and
+the state tables themselves. Blocked behind F-93 by design, not by accident.
+
+**F-96 — push remains unauthorised, and that is not blocking the workflow.** `main` is hundreds of
+commits ahead of `origin/main`. Every fix in this section was verified against the local QA stack, so
+delivery is not gated on it. Recorded so it is not mistaken for an oversight. This is a delivery
+matter reserved to the operator, not a flow blocker.
+
+**F-97 — five sibling `bin/` scripts still apply migrations to the irreplaceable QA database.** See
+F-84. Nothing invokes them today, so it is latent rather than active — but it is the same hazard that
+destroyed the database once. Recommended as its own correction: a guard refusing non-disposable
+`SERVERPOD_DATABASE_*` targets, **not** removal of `--apply-migrations`, which they legitimately need.
