@@ -15,11 +15,14 @@
 /// entirely, so that no assertion here can be satisfied by naming one.
 library;
 
+import 'dart:io';
+
 import 'package:control_plane_server/src/triage/lane_e_design_remediation_work_item.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:product_registry/product_registry.dart' show DefectStore;
 import 'package:qa_orchestration/qa_orchestration.dart';
 import 'package:scheduler/scheduler.dart';
+import 'package:serverpod/serverpod.dart' show ServerpodRunMode;
 import 'package:test/test.dart';
 import 'package:workflow_engine/workflow_engine.dart';
 import 'package:workflow_store/workflow_store.dart';
@@ -43,6 +46,12 @@ const String kSyntheticFeatureItem = 'WI-feature-1789000000000001';
 const String kOtherSyntheticFeatureItem = 'WI-feature-1789000000000002';
 
 const String kSyntheticDefectId = 'DEF-1789000000000100';
+
+/// A second synthetic work item used as the defect's `affectedWorkItemId` in the
+/// unresolved-product refusal. It is seeded with a BLANK product id, which is
+/// the only condition under which `resolveDesignRemediationProductId` returns
+/// null and `DesignRemediationWorkItemProvisioner.ensurePersisted` returns null.
+const String kBlankProductAnchorItem = 'WI-feature-1789000000000003';
 
 final DateTime kNow = DateTime.utc(2026, 10, 17, 11, 45, 0);
 
@@ -333,6 +342,11 @@ void main() {
         // script's own attach — the action name says which.
         expect(outcome.qaContractAction, startsWith('via-laneE:attached:'));
 
+        // …and the action name is corroborated by something the script cannot
+        // fabricate. See 'only the design path runs lane E' below for why this
+        // is asserted on the log rather than on the string.
+        expect(host.logged('design_remediation.replayed'), isTrue);
+
         final item = await host.workflowStore.readWorkItem(workItemId);
         expect(item.qaContractId, productQAContractIdForWorkItem(workItemId));
         expect(
@@ -385,7 +399,304 @@ void main() {
       );
       expect(second.wroteAnything, isFalse);
     });
+
+    // ---------------------------------------------------------------------
+    // The design path above asserts `qaContractAction`, which is a STRING THIS
+    // SCRIPT COMPUTES. A repair that ignored lane E entirely and attached the
+    // contract by its own hand — producing the same row, the same contract id
+    // and the same `via-laneE:` prefix — satisfies every one of those
+    // assertions. `ensureQAContract` and lane E's `_attachQAContract` really
+    // are the same operation, so nothing about the resulting state
+    // distinguishes them.
+    //
+    // What DOES distinguish them is that only lane E logs. These four names are
+    // emitted from exactly one file in the repository
+    // (`lane_e_design_remediation_work_item.dart`); nothing in `bin/` emits
+    // them. Asserting on them makes "driven through lane E's provisioner" an
+    // observable fact rather than a label.
+    // ---------------------------------------------------------------------
+    test(
+      'ONLY the design path runs lane E, proven by lane E\'s own log',
+      () async {
+        // The design path: lane E's "the row already exists" branch ran, and its
+        // `_attachQAContract` backfilled the column.
+        final design = _Host();
+        final remediationId = designRemediationWorkItemId(kSyntheticDefectId);
+        await design.strandFeature(remediationId);
+        await design.seedDesignDefect(kSyntheticDefectId);
+        await design.failJobPermanently(remediationId);
+
+        await design.repair.repairDesignRemediation(kSyntheticDefectId);
+
+        expect(
+          design.logged('design_remediation.replayed'),
+          isTrue,
+          reason:
+              'lane_e_design_remediation_work_item.dart:254 logs this from '
+              '`ensurePersisted` only. A repair that called `ensureQAContract` '
+              'instead cannot emit it, whatever it names the action.',
+        );
+        expect(
+          design.logged('design_remediation.qa_contract.backfilled'),
+          isTrue,
+          reason:
+              'lane_e_design_remediation_work_item.dart:424, inside '
+              '`_attachQAContract`.',
+        );
+
+        // The generic `--work-item` path must emit NEITHER. This half is what
+        // gives the assertion above its meaning: "lane E ran here" is only a
+        // claim if "lane E did not run there".
+        final generic = _Host();
+        await generic.strandFeature(kSyntheticFeatureItem);
+        await generic.failJobPermanently(kSyntheticFeatureItem);
+
+        await generic.repair.repairWorkItem(kSyntheticFeatureItem);
+
+        expect(generic.logged('design_remediation.replayed'), isFalse);
+        expect(
+          generic.logged('design_remediation.qa_contract.backfilled'),
+          isFalse,
+        );
+
+        // …and the generic run really did accomplish the same repair, so the
+        // negative assertions above are not passing merely because nothing
+        // happened. The same contract id is reached by two different routes.
+        expect(generic.logged('qa_contract.provisioned'), isTrue);
+        final repaired = await generic.workflowStore.readWorkItem(
+          kSyntheticFeatureItem,
+        );
+        expect(
+          repaired.qaContractId,
+          productQAContractIdForWorkItem(kSyntheticFeatureItem),
+        );
+        expect(
+          designRemediationWorkItemId(kSyntheticDefectId),
+          isNot(kSyntheticFeatureItem),
+          reason: 'the two paths must not be the same id',
+        );
+      },
+    );
+
+    test('REFUSES a defect with no persisted TriageResult', () async {
+      // The row exists but nothing was ever triaged for it, so there is no
+      // result to replay lane E from. Driving `ensurePersisted` with an
+      // invented one would put fiction into the item's own provenance.
+      final host = _Host();
+      final workItemId = designRemediationWorkItemId(kSyntheticDefectId);
+      await host.strandFeature(workItemId);
+      await host.seedDesignDefect(kSyntheticDefectId, triageResult: false);
+      await host.failJobPermanently(workItemId);
+
+      final outcome = await host.repair.repairDesignRemediation(
+        kSyntheticDefectId,
+      );
+
+      // The refusal is NAMED, not silent.
+      expect(outcome.qaContractAction, 'not-attempted');
+      expect(
+        outcome.notes.join(' '),
+        contains('no persisted TriageResult'),
+        reason: 'the refusal must say why the row was left alone',
+      );
+      expect(outcome.wroteAnything, isFalse);
+      expect(outcome.retried, isFalse);
+
+      // Nothing was touched. The stranded item must come out of a refused
+      // repair exactly as it went in — a refusal that still attached a contract
+      // would be a partial repair nobody asked for.
+      expect(host.contracts.rowCount, 0);
+      final item = await host.workflowStore.readWorkItem(workItemId);
+      expect(item.qaContractId, isNull);
+      expect(item.version, 1, reason: 'no CAS write means no version bump');
+      expect(item.state, WorkItemState.agentExecuting);
+      expect(
+        await host.workflowStore.readTransitionHistory(workItemId),
+        isEmpty,
+      );
+      expect(
+        await host.workflowStore.readOperatorActionsForWorkItem(workItemId),
+        isEmpty,
+      );
+
+      // Lane E was never reached — there was nothing to replay it from.
+      expect(host.logged('design_remediation.replayed'), isFalse);
+    });
+
+    test('REFUSES when the defect resolves to no product at all', () async {
+      // `ensurePersisted` returns null for exactly one reason, and the row it
+      // would otherwise backfill must survive that refusal untouched.
+      final host = _Host();
+      final workItemId = designRemediationWorkItemId(kSyntheticDefectId);
+      await host.strandFeature(workItemId);
+      // The defect points at an EXISTING work item whose product id is blank:
+      // `work_item."productId"` is `text NOT NULL`, so a blank string is
+      // storable and must be treated as a failure to resolve.
+      await host.strandFeature(kBlankProductAnchorItem, productId: '   ');
+      await host.seedDesignDefect(
+        kSyntheticDefectId,
+        affectedWorkItemId: kBlankProductAnchorItem,
+      );
+      await host.failJobPermanently(workItemId);
+
+      final outcome = await host.repair.repairDesignRemediation(
+        kSyntheticDefectId,
+      );
+
+      expect(outcome.qaContractAction, 'not-attempted');
+      expect(
+        outcome.notes.join(' '),
+        contains('ensurePersisted returned null'),
+        reason: 'the refusal must say the lane declined to create anything',
+      );
+      expect(outcome.wroteAnything, isFalse);
+      expect(outcome.retried, isFalse);
+
+      // Lane E really was driven here, and really was the thing that refused.
+      // So this branch is reached by CALLING the provisioner, not by the
+      // script's own reasoning — which is what makes it worth a test at all.
+      expect(
+        host.logged('design_remediation.product_unresolved'),
+        isTrue,
+        reason: 'lane_e_design_remediation_work_item.dart:242',
+      );
+
+      // And it created nothing.
+      expect(host.contracts.rowCount, 0);
+      final item = await host.workflowStore.readWorkItem(workItemId);
+      expect(item.qaContractId, isNull);
+      expect(item.version, 1);
+      expect(item.state, WorkItemState.agentExecuting);
+      expect(
+        await host.workflowStore.readTransitionHistory(workItemId),
+        isEmpty,
+      );
+      expect(
+        await host.workflowStore.readOperatorActionsForWorkItem(workItemId),
+        isEmpty,
+      );
+    });
   });
+
+  group('the process cannot mutate the database by booting', () {
+    test('passes Serverpod no migration flag, and pins the run mode', () {
+      final argv = repairServerpodArgv();
+
+      // The single most consequential line in the file. With this absent,
+      // `migrateToLatest` (`serverpod.dart:862-879`) never runs, so no
+      // pending migration is applied to the QA schema — not even in a dry run.
+      expect(
+        argv,
+        isNot(contains('--apply-migrations')),
+        reason: 'a --dry-run rehearsal must not migrate a live database',
+      );
+      expect(
+        argv,
+        isNot(contains('--apply-repair-migration')),
+        reason: 'the repair-migration flag writes too',
+      );
+
+      // Pinned, not inherited: `_calculateRunMode` falls back to
+      // SERVERPOD_RUN_MODE (`serverpod.dart:940-965`), so leaving the mode out
+      // would let an unrelated environment variable shape this run.
+      expect(argv, containsAllInOrder(<String>['--mode', repairRunMode]));
+
+      // Not `development`, which is the only mode whose integrity mismatch is
+      // fatal (`serverpod.dart:893-896`). Per decision `6d2bfffe` a
+      // chain-migrated QA database can never satisfy that comparison, so in
+      // `development` this tool would exit 1 before printing anything.
+      expect(repairRunMode, isNot(ServerpodRunMode.development));
+    });
+
+    test('never calls Serverpod.start(), so no boot step can write', () {
+      // A GUARD, and it is a source inspection rather than a behavioural
+      // assertion because the property is unobservable without a live
+      // database: everything `Serverpod.start()` does that can write
+      // (`migrateToLatest`, `_loadRuntimeSettings`' RuntimeSettings INSERT,
+      // the servers, the maintenance tasks) happens before any code in this
+      // file runs, so no unit test can observe it happening or not happening.
+      //
+      // What it does protect is real and falsifiable: putting `await
+      // pod.start()` back — for instance to "also run the analyzer
+      // preflight" — fails this test here, rather than on the irreplaceable
+      // QA database. The substrings are formatting-independent.
+      //
+      // The pool the session needs is opened by the CONSTRUCTOR on purpose
+      // (`serverpod.dart:553-559`), which is why skipping `start()` is sound.
+      final code = _withoutComments(_repairScriptSource());
+
+      expect(
+        code.contains('start()'),
+        isFalse,
+        reason:
+            '`Serverpod.start()` must never be called: `_loadRuntimeSettings` '
+            'INSERTs a RuntimeSettings row on any boot where none exists '
+            '(serverpod.dart:728, :900-930), and `--apply-migrations` would '
+            'apply pending migrations to the live schema',
+      );
+      expect(
+        code.contains('--apply-migrations'),
+        isFalse,
+        reason: 'the flag must not reach Serverpod in any form',
+      );
+    });
+  });
+}
+
+/// [source] with its `//` comments removed.
+///
+/// The guard has to inspect CODE, and this file's documentation discusses
+/// `Serverpod.start()` and `--apply-migrations` at length precisely BECAUSE
+/// they are what it must never call — so a substring search over unstripped
+/// text matches the file's own explanation of the rule it enforces, which is
+/// how the first version of this guard failed.
+///
+/// String literals are tracked so that a `//` inside one is not mistaken for a
+/// comment. The file contains no block comments, so they are not handled.
+String _withoutComments(String source) {
+  final buffer = StringBuffer();
+  for (final line in source.split('\n')) {
+    var inString = false;
+    var quote = '';
+    var cut = line.length;
+    for (var i = 0; i < line.length; i++) {
+      final ch = line[i];
+      if (inString) {
+        if (ch == quote) inString = false;
+        continue;
+      }
+      if (ch == "'" || ch == '"') {
+        inString = true;
+        quote = ch;
+        continue;
+      }
+      if (ch == '/' && i + 1 < line.length && line[i + 1] == '/') {
+        cut = i;
+        break;
+      }
+    }
+    buffer.writeln(line.substring(0, cut));
+  }
+  return buffer.toString();
+}
+
+/// The repair script's own source text.
+///
+/// Resolved against both plausible working directories so the guard holds
+/// whether the suite is run from `apps/server` or from the repository root.
+String _repairScriptSource() {
+  const candidates = [
+    'bin/repair_stranded_work_items.dart',
+    'apps/server/bin/repair_stranded_work_items.dart',
+  ];
+  for (final path in candidates) {
+    final file = File(path);
+    if (file.existsSync()) return file.readAsStringSync();
+  }
+  throw StateError(
+    'cannot locate bin/repair_stranded_work_items.dart from '
+    '${Directory.current.path}; looked in $candidates',
+  );
 }
 
 /// Everything the repair needs, wired the way `main` wires it, plus the seams
@@ -411,9 +722,16 @@ class _Host {
       jobStore: jobStore,
       defectStore: _hostDefectStore,
       dryRun: dryRun,
-      // Silent, so a passing test's output stays readable; the repair's
-      // reporting is asserted through `StrandedWorkItemOutcome`.
-      log: (_, _) {},
+      // CAPTURED, not discarded.
+      //
+      // `StrandedWorkItemOutcome.qaContractAction` is a string this script
+      // computes, so an assertion on it is equally satisfied by a repair that
+      // never drove lane E at all and attached the contract by its own hand.
+      // These events are what make the call observable: the four
+      // `design_remediation.*` names are logged from exactly one file in the
+      // repository (`lane_e_design_remediation_work_item.dart`), so observing
+      // one proves the lane's own code ran.
+      log: (event, fields) => logEvents.add(event),
     );
   }
 
@@ -422,6 +740,12 @@ class _Host {
   final _SpecStore specStore = _SpecStore();
   final InMemoryJobStore jobStore;
   late final StrandedWorkItemRepair repair;
+
+  /// Every event handed to the repair's `log`, in order.
+  final List<String> logEvents = [];
+
+  /// True when [event] was logged by this host.
+  bool logged(String event) => logEvents.contains(event);
 
   String? permanentJobId;
 
@@ -485,7 +809,15 @@ class _Host {
   /// A defect plus the settled triage result lane E replays from. The defect
   /// names the remediation item as the affected work item, which is how its
   /// product resolves — `affectedWorkItemId -> work_item.productId`.
-  Future<void> seedDesignDefect(String defectId) async {
+  ///
+  /// [affectedWorkItemId] is overridable so a test can point the defect at a
+  /// different row; [triageResult] is nullable so the no-`TriageResult` refusal
+  /// can be set up.
+  Future<void> seedDesignDefect(
+    String defectId, {
+    String? affectedWorkItemId,
+    bool triageResult = true,
+  }) async {
     final remediationId = designRemediationWorkItemId(defectId);
     _hostDefectStore.defects[defectId] = Defect(
       defectId: defectId,
@@ -495,11 +827,12 @@ class _Host {
       status: DefectStatus.remediationPlanned,
       classification: DefectClassification.designDefect,
       reporter: 'someone@example.test',
-      affectedWorkItemId: remediationId,
+      affectedWorkItemId: affectedWorkItemId ?? remediationId,
       createdAt: kNow,
       updatedAt: kNow,
       version: 1,
     );
+    if (!triageResult) return;
     _hostDefectStore.results[defectId] = [
       TriageResult(
         resultId: 'tr-$defectId-1',

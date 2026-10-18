@@ -57,6 +57,24 @@
 /// It is parameterised by work item id and works for any stranded item of any
 /// category. See [StrandedWorkItemRepair.ensureQAContract] for why this lives
 /// in `bin/` rather than beside `createFeatureWorkItem`.
+///
+/// ## BOOTING DOES NOT WRITE, AND THAT IS STRUCTURAL
+///
+/// This database has been destroyed once already, so "the repair does not write"
+/// is not a strong enough claim about a `--dry-run` rehearsal: a process can
+/// write before any repair code runs. Two Serverpod boot steps can, and neither
+/// is wanted:
+///
+///  * `--apply-migrations` makes `migrateToLatest` run first
+///   (`serverpod.dart:862-879`), applying pending migrations to the live QA
+///   schema before a single line is printed;
+///  * `_loadRuntimeSettings` INSERTs a `RuntimeSettings` row on any boot where
+///   none exists (`serverpod.dart:728`, `:900-930`).
+///
+/// So the pod is constructed and **never started**. The constructor opens the
+/// database pool on purpose (`serverpod.dart:553-559`), so a session obtained
+/// from it works without `start()`, and every write-capable boot step lives in
+/// `start()`. See [repairServerpodArgv] and `main`.
 library;
 
 import 'dart:io';
@@ -92,6 +110,53 @@ const WorkflowActor repairActor = WorkflowActor(
 
 /// `requestedBy` recorded on the operator action row.
 const String repairRequestedBy = 'repair-stranded-work-items';
+
+/// Run mode this repair boots under, and why it is not `development`.
+///
+/// Serverpod runs `ServerMigrationManager.verifyDatabaseIntegrity`
+/// **unconditionally** on boot (`serverpod.dart:881`) — outside any
+/// `applyMigrations` guard — and compares the live database against the
+/// generated `definition.sql`. The ONLY fatal branch is
+/// `if (config.runMode == ServerpodRunMode.development) throw ExitException(1)`
+/// (`serverpod.dart:893-896`).
+///
+/// That matters here because repo decision `6d2bfffe` records that a
+/// chain-migrated QA database — one carrying the hand-maintained objects,
+/// which structurally cannot appear in `definition.sql` — can NEVER satisfy
+/// that comparison. In `development`, booting against such a database exits 1
+/// before this script prints anything at all.
+///
+/// Every mode other than `development` downgrades the mismatch to the printed
+/// warning the analyzer emits (`migration_manager.dart:329-341`) and carries
+/// on, and per decision `30c00e6e` every Serverpod consumer of `runMode` is an
+/// equality test against `development`, so no two non-development modes differ
+/// for a session this short. `staging` is chosen over `production` because this
+/// repair runs against a QA/staging-shaped database; labelling the run
+/// `production` would assert something untrue about where it is pointed.
+///
+/// The mode is pinned rather than inherited on purpose: `_calculateRunMode`
+/// falls back to `SERVERPOD_RUN_MODE` (`serverpod.dart:940-965`), so an
+/// inherited mode would let an unrelated environment variable silently reshape
+/// this run.
+const String repairRunMode = 'staging';
+
+/// The exact argument list handed to [Serverpod].
+///
+/// Exposed so the test suite can assert it, because the whole safety argument
+/// is about what is ABSENT from it:
+///
+///  * **no `--apply-migrations`** — `migrateToLatest` is gated on that flag
+///   (`serverpod.dart:862-879`), so no pending migration is applied to the
+///   database this repair targets, dry run or not. The repair needs no schema
+///   change: it reads and writes rows in tables that already exist, so a
+///   missing table surfaces as a loud query error, which is the correct failure
+///   mode for a one-shot repair. There is deliberately NO opt-in
+///   `--apply-migrations` flag either — it would put a schema-mutating switch
+///   back on the command line of a tool aimed at a database this repository has
+///   already destroyed once, to serve a need that does not exist;
+///  * **`--mode` is explicit**, so the run mode is a fact of this file rather
+///   than of the environment it is launched from.
+List<String> repairServerpodArgv() => ['--mode', repairRunMode];
 
 /// What happened to one work item.
 ///
@@ -509,7 +574,8 @@ String _env(String key, String fallback) {
 }
 
 void _usage() {
-  stdout.writeln('''
+  stdout.writeln(
+    '''
 Usage: dart run bin/repair_stranded_work_items.dart [options]
 
   --work-item <id>   repair this work item directly (the feature path).
@@ -520,7 +586,10 @@ Usage: dart run bin/repair_stranded_work_items.dart [options]
 
 Both options may be repeated, and may be combined. Connection details come from
 the environment: SERVERPOD_DATABASE_HOST, _PORT, _NAME, _USER, _PASSWORD.
-''');
+
+This tool never applies a migration and never starts a Serverpod server, so it
+cannot change the schema; --dry-run additionally skips every write it reports.''',
+  );
 }
 
 /// Parsed command line. No work item id is defaulted: a repair that guessed an
@@ -596,8 +665,27 @@ Future<void> main(List<String> argv) async {
   );
   stdout.writeln('  dry run    : ${args.dryRun}');
 
+  // Constructed, and deliberately NEVER started.
+  //
+  // The `Serverpod` constructor opens the database pool on purpose
+  // (`serverpod.dart:553-559`: "required because other operations in Serverpod
+  // assumes that the database is connected when the Serverpod is created (such
+  // as createSession(...))"), so the session below is fully usable without
+  // `start()`. Everything that can WRITE on boot lives in `start()`, and none
+  // of it is wanted here:
+  //
+  //   * `_applyMigrations` — `migrateToLatest` (needs --apply-migrations, which
+  //     [repairServerpodArgv] deliberately omits) and then the unconditional
+  //     `verifyDatabaseIntegrity`                  (:725, :862-883)
+  //   * `_loadRuntimeSettings`, which INSERTs a `RuntimeSettings` row whenever
+  //     none exists                            (:728, :900-930)
+  //   * the api / web / insights servers, the maintenance tasks, the
+  //     future-call manager and the health checks (:753-810)
+  //
+  // So `--dry-run` is not merely "the repair chose not to write": the process
+  // never runs a Serverpod boot step that is capable of writing.
   final pod = Serverpod(
-    ['--mode', 'development', '--apply-migrations'],
+    repairServerpodArgv(),
     Protocol(),
     Endpoints(),
     configOverride: (config) => config.copyWith(
@@ -607,12 +695,13 @@ Future<void> main(List<String> argv) async {
       insightsServer: null,
     ),
   );
-  await pod.start();
+
+  // `enableLogging: false` keeps the session from finalizing a log row into
+  // the database on `close()` (`session.dart:213-249`).
+  final session = await pod.createSession(enableLogging: false);
+  var failedItems = 0;
 
   try {
-    final session = await Serverpod.instance.createSession(
-      enableLogging: false,
-    );
     final db = PersistenceDatabase(session.db);
     final workflowStore = PostgresWorkflowStore(db);
     final repair = StrandedWorkItemRepair(
@@ -634,7 +723,6 @@ Future<void> main(List<String> argv) async {
     );
 
     var changed = 0;
-    var failedItems = 0;
     final total = args.defectIds.length + args.workItemIds.length;
     for (final defectId in args.defectIds) {
       stdout.writeln('\n--- design remediation for defect $defectId ---');
@@ -659,19 +747,26 @@ Future<void> main(List<String> argv) async {
       if (outcome.wroteAnything) changed++;
     }
 
-    stdout.writeln(
-      '\n$changed of $total item(s) changed.'
-      '${args.dryRun ? ' (dry run — nothing was written)' : ''}',
-    );
-    if (failedItems > 0) {
-      // Non-zero: the operator must not read a summary line that looks like
-      // success over a run where one item was refused.
-      stderr.writeln('$failedItems item(s) could not be repaired; see above.');
-      await pod.shutdown(exitProcess: false);
-      exit(1);
+    stdout.writeln('\n$changed of $total item(s) changed.');
+    if (args.dryRun) {
+      stdout.writeln(
+        '  Dry run: nothing was written. No Serverpod boot step that can '
+        'write was run (the pod is never started), no migration was applied, '
+        'and the repair skips every write it reports.',
+      );
     }
   } finally {
+    // `exit` below runs after this, so the session and the pool are always
+    // released on the refusal path too.
+    await session.close();
     await pod.shutdown(exitProcess: false);
+  }
+
+  // Non-zero: the operator must not read a summary line that looks like success
+  // over a run where one item was refused.
+  if (failedItems > 0) {
+    stderr.writeln('$failedItems item(s) could not be repaired; see above.');
+    exit(1);
   }
 }
 
