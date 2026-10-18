@@ -80,20 +80,40 @@ class QAOrchestration {
     ];
   }
 
+  /// Whether [results] constitute an overall pass under [contract].
+  ///
+  /// The required-gate branch iterates the **contract's** required gates and
+  /// looks each one up in [results], not the other way round. The invariant is
+  /// one line, and it is the same one
+  /// `_AllRequiredGatesPassedGuard` in `workflow_engine`'s
+  /// `guard_conditions.dart` holds: *a required gate with no result is
+  /// `notExecuted`, not absent.*
+  ///
+  /// Filtering [results] down to the required gate ids asks "of the results I
+  /// was handed, are the required ones satisfied?" and cannot express that
+  /// invariant: a contract declaring three required gates, handed only the one
+  /// result that passed, filtered to a single element, and returned `true` —
+  /// with two required gates never evaluated at all.
+  ///
+  /// §7.4 requires this and the guard to agree *by construction rather than by
+  /// parallel maintenance*, so the duplicate rule matches the guard's too:
+  /// every result carrying a required gate id must satisfy it, so a second
+  /// result cannot mask a failing one.
   bool isOverallPass(List<QAGateResult> results, QAContract contract) {
     final passCriteria = contract.passCriteria ?? const QAPassCriteria();
 
     if (passCriteria.allRequiredGatesMustPass) {
-      final requiredGates = contract.gates
-          .where((g) => g.required)
-          .map((g) => g.gateId)
-          .toSet();
-      final requiredResults = results.where(
-        (r) => requiredGates.contains(r.gateId),
-      );
+      for (final gate in contract.gates.where((g) => g.required)) {
+        final resultsForGate = results.where((r) => r.gateId == gate.gateId);
 
-      for (final result in requiredResults) {
-        if (!isGateSatisfied(result)) {
+        // A required gate the contract declares and no result covers was never
+        // evaluated. That is `not_executed`, which is not satisfied — so this
+        // fails closed rather than passing on a gate nobody ran.
+        if (resultsForGate.isEmpty) {
+          return false;
+        }
+
+        if (!resultsForGate.every(isGateSatisfied)) {
           return false;
         }
       }
