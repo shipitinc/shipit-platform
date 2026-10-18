@@ -689,7 +689,6 @@ CREATE TABLE "product_qa_contract_spec" (
 );
 
 -- Indexes
-CREATE UNIQUE INDEX "product_qa_contract_spec_pkey" ON "product_qa_contract_spec" USING btree ("id");
 CREATE UNIQUE INDEX "product_qa_contract_spec_product_unique" ON "product_qa_contract_spec" USING btree ("productId");
 
 --
