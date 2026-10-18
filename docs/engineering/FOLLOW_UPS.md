@@ -2050,11 +2050,22 @@ There is **no skipped release path**: acquisition `server.dart:1880`, release in
 `tick_single_flight_test.dart:200`/`:249` already pinned both. The defect is that the release had
 **no bound**. `whenComplete` fires only when `runTick()`'s future settles, which requires the body to
 return; the body awaits triage → impl → review → baseline → sweep, and the impl path blocks at
-`scheduler.dart:1941` `await _dispatch.run(request)`. **Exactly one bound exists on that whole path**
-(`local_worker.dart:279-285`, around `executionDriver.execute`); `workspaceManager.prepare`,
-`inspector.inspect`, `artifactCommitter.commit` and cleanup are each awaited with **no timeout** and
-each shells out. A tick that stalls in any of them holds the guard for the life of the process and
-dispatch stops. Fixed by leasing the guard (`ab6b966`): on expiry the guard is released, the tick is
+`scheduler.dart:1941` `await _dispatch.run(request)`.
+
+> **This paragraph was itself false, twice.** It originally claimed that `workspaceManager.prepare`,
+> `inspector.inspect`, `artifactCommitter.commit` and cleanup were "each awaited with no timeout at
+> all". **That was wrong for three of the four**, and the same false claim is in the `ab6b966` commit
+> body, which is permanent provenance and cannot be amended. Corrected facts: `prepare`
+> (`git_worktree_workspace_manager.dart:44-49`), `commit` (`artifact_committer.dart:177-184`, default
+> 60 s at `:82`) and cleanup (`:160` → `:162` → `_git`) each carry a **60 s per-command** `.timeout()`.
+> The genuinely unbounded one was **`GitWorkspaceInspector.inspect`/`_capture`**
+> (`git_workspace_inspector.dart:107`), whose declared `timeout = 30s` at `:25` was documented at
+> `:19-21` as "a hard bound" and **never applied** — a dead field reading as a live one. Fixed at
+> `7098dbf`; see **F-87**. Note the bounds are **per command, not per await**, and `.timeout()` bounds
+> the *wait*, not the process: an expired git is abandoned, not killed.
+
+A tick that stalls in any of them holds the guard for the life of the process and dispatch stops.
+Fixed by leasing the guard (`ab6b966`): on expiry the guard is released, the tick is
 left **running**, nothing is cancelled, and release is tokenised so an abandoned tick's `whenComplete`
 cannot clear a guard a newer tick holds. Bound is `SHIPIT_TICK_MAX_HOLD_SECONDS`, unset deriving to
 `4 × largest budget + stallAllowance` = **17 h** — the safe direction, because `Scheduler.tick`
@@ -2155,3 +2166,25 @@ wholes is a different, larger change and stays out of scope for a correction lan
 **F-88 — `SHARE IT WITH ME`: an in-flight tick's duration is unobservable after the fact.** The
 recovering observation for F-79 required reading the implementation budget and the job start time
 together. Neither is in the tick log. See F-79a.
+
+**F-89 — a timed-out inspection is indistinguishable from an untouched workspace.**
+`GitWorkspaceInspector._captureOrNull` guards only `diff --name-status` and `diff --stat`; after
+`7098dbf` a wedged git during either yields **null** rather than propagating, so `changedFiles` /
+`diffSummary` come back empty. **No lifecycle decision reads them** — the `agentCompleted` vs
+`agentFailed` verdict comes from `successArtifacts.inspect(...)` via `workspace_delta_probe.dart`, a
+separate mechanism — so this is a read-only view flowing into `worker_result.changedFilesJson`. The
+pre-existing position is stated at `workspace_delta_probe.dart:284-287`: *"A missing `git`, a wedged
+filesystem, a timeout. Never propagated: this probe answers a question, and 'could not answer' is an
+answer."* Accepted as correct. **The residual is human-facing**: an operator can read
+`changedFiles: []` as "touched nothing" when the truth is "git hung". The proper remedy is an
+"inspection incomplete" marker on the result, not a propagated exception.
+
+**F-90 — a declared-but-never-applied bound is mechanically findable and was found by hand.**
+`GitWorkspaceInspector.timeout` (`:25`) and `OnboardingWorker.gitTimeout`
+(`packages/worker_runtime/lib/src/worker/onboarding_worker.dart:55,69`, 5 minutes, read nowhere
+while its siblings `buildTimeout:201` / `testTimeout:228` are used) are both public `final Duration`
+fields with no read. The first is fixed (`7098dbf`); the second is vestigial rather than an unbounded
+await, because that worker's git runs through the now-bounded workspace manager and inspector.
+A lint or test failing on a declared-but-unreferenced bound would catch this class without a reviewer
+noticing — scope it to `final Duration` **class fields within one library**, since inherited fields and
+top-level constants read only elsewhere are false positives.
