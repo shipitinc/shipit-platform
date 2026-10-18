@@ -54,6 +54,14 @@ void main() {
       'clarification_request',
       'onboarding_record',
       'product_context',
+      // Step 4 of design-revision.md §9: the fidelity anchor. Registered HERE,
+      // in the list the tree's own harness reads, because a schema document
+      // nothing loads is the failure this step exists to prevent (F-129). The
+      // revision named `docs/engineering/schemas/`, which does not exist; every
+      // committed schema lives in the root `schemas/`, and `_schemasRoot` below
+      // hardcodes it, so a document placed elsewhere would be unreachable by the
+      // harness and therefore never exercised.
+      'design_revision_fidelity_anchor',
     ];
 
     for (final name in schemas) {

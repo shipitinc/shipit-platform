@@ -1,0 +1,84 @@
+{
+  "artifactRefs": [
+    {
+      "kind": "penpot-component",
+      "ref": "login-form/primary"
+    }
+  ],
+  "boardIds": [
+    {
+      "boardId": "login-desktop",
+      "boardName": "Login / desktop",
+      "provider": "penpot",
+      "providerFileId": "synthetic-penpot-file-0001"
+    },
+    {
+      "boardId": "login-mobile",
+      "boardName": "Login / mobile",
+      "provider": "penpot",
+      "providerFileId": "synthetic-penpot-file-0001"
+    }
+  ],
+  "responsiveTargets": [
+    {
+      "breakpoint": "2xl",
+      "minViewportWidthCss": 1536,
+      "orientation": "landscape"
+    },
+    {
+      "breakpoint": "lg",
+      "minViewportWidthCss": 1024
+    },
+    {
+      "breakpoint": "md",
+      "minViewportWidthCss": 768
+    },
+    {
+      "breakpoint": "sm",
+      "minViewportWidthCss": 640,
+      "orientation": "portrait"
+    },
+    {
+      "breakpoint": "xs",
+      "minViewportWidthCss": 320
+    }
+  ],
+  "reviewExecutionIds": [
+    "11111111-2222-4333-8444-555555555555",
+    "11111111-2222-4333-8444-666666666666"
+  ],
+  "reviewScope": {
+    "boardIds": [
+      "login-desktop",
+      "login-mobile"
+    ],
+    "dimensions": [
+      "a11y",
+      "color",
+      "contrast",
+      "responsive"
+    ]
+  },
+  "statesRepresented": [
+    {
+      "boardId": "login-desktop",
+      "stateKey": "form-filled",
+      "variant": "default"
+    },
+    {
+      "boardId": "login-mobile",
+      "stateKey": "form-filled",
+      "variant": "default"
+    },
+    {
+      "boardId": "login-desktop",
+      "stateKey": "form-submitting",
+      "variant": "loading"
+    },
+    {
+      "boardId": "login-mobile",
+      "stateKey": "keyboard-trapped",
+      "variant": "focus"
+    }
+  ]
+}

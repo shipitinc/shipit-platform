@@ -1,0 +1,219 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipit.platform/schemas/1.0.0/design_revision_fidelity_anchor.schema.json",
+  "title": "DesignRevisionFidelityAnchor",
+  "description": "The fidelity anchor: the machine-readable content of the six `design_revision` JSON blob columns, decoded and bundled. ADR 0021 section 2 makes divergence from an approved design revision a defect, which is undecidable while those columns are bare `type: string` with no parseable contract; this document is what an implementation is diffed against. The bundle is one object per `design_revision` row, keyed by each column's name minus its `Json` suffix, so that cross-column rules (a `stateSet.boardId` must resolve into `boardSet`) are checkable in ONE validation rather than six independent ones. TWO anchors exist by operator decision `a1c7d904-3b8e-4f21-9d6e-5c2f81b7a390`: this schema is what the MACHINE diffs against, and Penpot (`penpotFileId`/`penpotPageId`) is what a HUMAN reviewer reads. Where they disagree, the disagreement is itself a finding. NOT EXPRESSIBLE HERE, and deliberately absent rather than forgotten: the seventh rule `designerExecutionId NOT IN reviewExecutionIdsJson`. It compares a field of the record (`designExecutionId` column) against the `reviewExecutionIds` array, so no document constraint can state it; it is a validator assertion, implemented in `DesignRevisionFidelityAnchorValidator`. CANONICAL FORM is a precondition for diffing and is therefore a VALIDATION requirement, not only a formatting one: object keys sorted lexicographically at every level, arrays sorted by the sort key each subschema declares in `x-sort-key`, and no insignificant whitespace. A row that parses but is not canonical is refused, because two encodings of the same revision must be byte-identical to be diffable at all.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifactRefs",
+    "boardIds",
+    "responsiveTargets",
+    "reviewExecutionIds",
+    "reviewScope",
+    "statesRepresented"
+  ],
+  "properties": {
+    "boardIds": {
+      "$ref": "#/definitions/boardSet",
+      "description": "Decoded `boardIdsJson`. A revision asserting no board is a revision that can be diffed against nothing, so `minItems` is 1."
+    },
+    "responsiveTargets": {
+      "$ref": "#/definitions/responsiveSet",
+      "description": "Decoded `responsiveTargetsJson`. The breakpoint vocabulary is the design-system link."
+    },
+    "statesRepresented": {
+      "$ref": "#/definitions/stateSet",
+      "description": "Decoded `statesRepresentedJson`. Every `boardId` here must resolve into `boardIds`; that cross-column rule is checked by the validator, not by JSON Schema."
+    },
+    "artifactRefs": {
+      "$ref": "#/definitions/artifactSet",
+      "description": "Decoded `artifactRefsJson`. `minItems` is 0: a revision may honestly carry no extra artifact."
+    },
+    "reviewExecutionIds": {
+      "$ref": "#/definitions/executionIdSet",
+      "description": "Decoded `reviewExecutionIdsJson`. `minItems` is 0 because a draft revision has had no reviewer yet; that is a distinct state from claiming reviews happened."
+    },
+    "reviewScope": {
+      "$ref": "#/definitions/reviewScope",
+      "description": "Decoded `reviewScopeJson`, or JSON `null` when the nullable column is NULL. Nullable is PRESERVED; what is refused is an object carrying keys this document does not name."
+    }
+  },
+  "definitions": {
+    "boardId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$",
+      "description": "A board id that can be cross-checked against something. A free-text board id cannot be resolved against `boardSet`, which is what makes `stateSet.boardId` checkable."
+    },
+    "boardSet": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "x-sort-key": "boardId",
+      "description": "Subschema 1 of 6 -- `design_revision.boardIdsJson`. `providerFileId` is REQUIRED inside the blob, which is what closes the nullable-`penpotFileId` hole: it makes the Q5 coherence check enforceable by validation instead of by a separate check nobody runs.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["boardId", "provider", "providerFileId"],
+        "properties": {
+          "boardId": { "$ref": "#/definitions/boardId" },
+          "provider": {
+            "type": "string",
+            "enum": ["penpot"],
+            "description": "Closed vocabulary: a board is only describable through a provider the platform actually integrates."
+          },
+          "providerFileId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The provider's file identifier for this board. Required, so a revision cannot name a board while leaving the human anchor unopenable."
+          },
+          "boardName": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional display name. Constrained rather than free text: an unchecked string here is a claim the platform cannot check."
+          }
+        }
+      }
+    },
+    "responsiveSet": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "x-sort-key": "breakpoint",
+      "description": "Subschema 2 of 6 -- `design_revision.responsiveTargetsJson`. The breakpoint vocabulary is THE design-system link: these names must match the product's declared design-system revision, which is what P2 already requires to be named.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["breakpoint", "minViewportWidthCss"],
+        "properties": {
+          "breakpoint": {
+            "type": "string",
+            "enum": ["xs", "sm", "md", "lg", "xl", "2xl"],
+            "description": "Closed vocabulary. An open string here would let a revision name a breakpoint no design system declares, and 'did the implementation render the mobile board' would stay an opinion."
+          },
+          "minViewportWidthCss": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4096,
+            "description": "Lower bound of the breakpoint in CSS pixels."
+          },
+          "orientation": {
+            "type": "string",
+            "enum": ["portrait", "landscape"],
+            "description": "Optional orientation qualifier."
+          }
+        }
+      }
+    },
+    "stateSet": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "x-sort-key": "stateKey",
+      "description": "Subschema 3 of 6 -- `design_revision.statesRepresentedJson`. `boardId` here MUST resolve into the same bundle's `boardSet`: a cross-column referential-integrity rule JSON Schema cannot express across two properties, so `DesignRevisionFidelityAnchorValidator` checks it over the bundle. That is what makes 'every named state has a board' checkable, which today it is not.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stateKey", "boardId", "variant"],
+        "properties": {
+          "stateKey": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The named state. Not an enum: checkpoint 003 does not fix a state vocabulary, and inventing one would be a vocabulary this document has no authority to set."
+          },
+          "boardId": { "$ref": "#/definitions/boardId" },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "default",
+              "loading",
+              "empty",
+              "error",
+              "success",
+              "disabled",
+              "focus",
+              "readonly"
+            ],
+            "description": "Closed variant vocabulary."
+          }
+        }
+      }
+    },
+    "artifactSet": {
+      "type": "array",
+      "minItems": 0,
+      "uniqueItems": true,
+      "x-sort-key": ["kind", "ref"],
+      "description": "Subschema 4 of 6 -- `design_revision.artifactRefsJson`. `minItems: 0` is honest -- a revision may carry no extra artifact. What the enum buys is that 'artifact' stops meaning whatever the writer meant.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "ref"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "commit",
+              "diff",
+              "file",
+              "url",
+              "penpot-component",
+              "penpot-asset",
+              "qadoc"
+            ],
+            "description": "Closed vocabulary."
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The reference itself, in the form its `kind` implies."
+          }
+        }
+      }
+    },
+    "executionIdSet": {
+      "type": "array",
+      "minItems": 0,
+      "uniqueItems": true,
+      "x-sort-key": null,
+      "description": "Subschema 5 of 6 -- `design_revision.reviewExecutionIdsJson`. Sorted lexicographically, which is the sort key for an array of strings; `x-sort-key` is null because there is no member property to sort by. This is the array the seventh rule reads: the validator asserts `designerExecutionId` is not a member.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "reviewScope": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "Subschema 6 of 6 -- `design_revision.reviewScopeJson`, the only nullable one of the six. Nullable is PRESERVED -- JSON `null` validates. What is REFUSED is an object carrying keys this document does not name, which is precisely the `null` / `{}` / arbitrary-keys confusion. The enum stops a reviewer claiming a dimension nobody can check.",
+      "properties": {
+        "dimensions": {
+          "type": "array",
+          "uniqueItems": true,
+          "x-sort-key": null,
+          "items": {
+            "type": "string",
+            "enum": [
+              "layout",
+              "typography",
+              "color",
+              "contrast",
+              "motion",
+              "responsive",
+              "content",
+              "a11y",
+              "state-coverage",
+              "brand"
+            ]
+          }
+        },
+        "boardIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "x-sort-key": null,
+          "items": { "$ref": "#/definitions/boardId" }
+        }
+      }
+    }
+  }
+}

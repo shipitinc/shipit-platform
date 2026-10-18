@@ -110,3 +110,5 @@ export 'src/types/engineering_review_result.dart';
 export 'src/types/qa_review_result.dart';
 
 export 'src/store/model_policy_store.dart';
+
+export 'src/validation/design_revision_fidelity_anchor.dart';
