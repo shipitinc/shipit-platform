@@ -2566,3 +2566,86 @@ which genuinely passed for two reasons and was repaired. Recorded so the two are
 two suites each spent 12 minutes retrying `localhost:9099`. Nothing connected and nothing mutated, but the
 instruction was explicit and was run anyway. This is F-86's automation gap with a cost: a **committed tag
 or an explicit file list** is owed. Gate on an explicit file list until then.
+
+## 34. Design governance runtime designed (`baa2248`, corrected to `696bcd9`) — findings routed
+
+Decision `d41a6e85` chose to BUILD `DESIGN_GOVERNANCE_AUTOMATION_001`. Design revision 1 landed, was
+independently reviewed (`CHANGES_REQUIRED`, 2 blockers), and revision 2 corrected it. Two operator
+decisions closed the open policy gates (`a1c7d904`): **D4 — every revision HIGH until a `DesignRiskPolicy`
+exists** (blocks only build step 5 of 10); **U-3 — a committed versioned JSON schema validated on write is
+the machine-checkable fidelity anchor, Penpot is what a human reads and approves, and their disagreement
+is itself a finding.**
+
+**F-116 — three of my dispatch premises were WRONG; the design corrected all three.** "No wired
+`JobDefinition` occupies `designRequired`" is false — `designRevisionDefinition` and `designReviewDefinition`
+exist (`scheduler.dart:3255`, `:3269`), are exported, and are pinned by **14** test files. "Implemented
+nowhere" is false — the **data layer is real** (four tables, `PostgresDesignGovernanceStore`, a contract
+suite); only the **producer** is missing. "`designApproval` may need a new enum" is false — it exists and
+all three choices are wired. The real gap is **callerless** (F-95's exact class), plus a missing producer,
+composition root and approval raiser. **Check the tree before briefing a lane.**
+
+**F-117 — G-7 is real and stronger than first stated: mounting the design scheduler alone does NOT fix
+convergence.** `planned` is a `triageDefectDefinition` entry state with probe target `designNotRequired`
+(`triage_defect.dart:119-135`), and the scheduler is category-blind, so the **triage** lane takes lane E's
+parked item *out* to `designNotRequired` and re-dispatches forever. Corroborated twice more
+(`planned_entry_state_hop_test.dart:48-50`, lane E's own comment `:172-176`).
+
+**F-118 — R1 could not work, and no guard can replace it without a workflow-engine-wide signature change.**
+`GuardCondition.evaluate` takes `(WorkflowState, WorkflowState, Map?)` (`guard_conditions.dart:141-145`) —
+**never the `WorkItem`** — and the scheduler's context is a fixed `{agentAvailable, capabilitiesMatch}`
+(`entry_hop.dart:118-121`). So **no guard can distinguish a remediation item from a feature item** as things
+stand. R2 is promoted to primary; R1's lost-race behaviour is now specified (re-read, **never** re-drive
+`designNotRequired → designRequired`, record terminal `blockedBy: DESIGN_GOVERNANCE_RACE_LOST`, never
+report success).
+
+**F-119 — the named failure mode to avoid: prescribing a fix the scheduler will not honour.** Revision 1
+cited `scheduler.dart:3240-3246`'s "no change here" as authority for adding a `designRejected →
+designRequired` edge, but `EntryHopper.prepare` reads `entryProbeTargets` **directly** and **refuses when
+null** (`entry_hop.dart:181-195`) — the `probeTargetFor` fallback revision 1 assumed does not apply. Both
+blockers were the same mistake: **the defect was found correctly and the remedy was not.** Revision 2 traces
+the honour-chain per remedy, and that discipline falsified **two of its own draft assertions**.
+
+**F-120 — D-4 is worse than stated: a vacuous test already claims coverage.**
+`packages/scheduler/test/design_job_test.dart:614-698` is named
+`'design revision maxAttempts=3 exhaustion triggers human decision'` and **creates, raises and asserts no
+human decision at all** — it only asserts `RetryPolicy().canRetry(...)`. The exact vacuous-pass class §9
+invokes and A7 forbids. Specified, not written (test source is READ-ONLY for design lanes).
+
+**F-121 — five unvalidated blob columns, not four.** Q7 named four; `reviewScopeJson text` (nullable,
+`migrations/20260920232118956/definition.sql:204`) is the fifth and equally unvalidated. This is why ADR
+0021 §2's fidelity rule is currently **undecidable** — and it blocks switching the runtime **on**, not
+designing it. Revision 2 specifies `design_revision_fidelity_anchor.schema.json` `$id` 1.0.0 with six
+subschemas, `boardSet` requiring `providerFileId` (which closes the nullable-`penpotFileId` hole), and a
+seventh rule JSON Schema cannot express: **`designerExecutionId ∉ reviewExecutionIdsJson`**.
+
+**F-122 — D-5 is the most severe PRE-EXISTING defect: `designContractExists()` is satisfiable by any
+string.** `guard_conditions.dart:146` is `context?['designContractId'] != null`, and `designContractId`
+appears in `durable_workflow_engine.dart` only at `:59` (a `createWorkItem` param) and `:83` (the
+assignment) — **never in a transition**. It is the root cause of lane E's refusal to enter `designRequired`
+on a fabricated id, and it is **shared by every category**, not design-specific. Fixing it is build step 2
+and is unblocked.
+
+**F-123 — D-7 is the most severe GOVERNANCE defect: an accepted ADR names a method that does not exist.**
+ADR 0021 §3 specifies `ControlPlaneService.createDesignRemediationWorkItem()`; no such method exists. An
+accepted ADR and the code disagree. **A human-readable contradiction between two first-class records.**
+
+**F-124 — D-1 makes the runtime's purpose unreachable.** `designRevisionDedupeKey` burns permanently, so
+the correction loop — the entire reason `parentRevisionId` exists — cannot run. This is the same defect
+`engineeringReviewDedupeKey` already fixed with an `:a<n>` suffix.
+
+**F-125 — D-2/D-3.** `HumanDecisionType.designRejection` exists and is admitted by **nothing**; reaching for
+it yields a decision resolving to no target (`human_decision_routing.dart:152` falls to `_ => null`).
+`escalationIndexWithinLimitForDecisionTypes` is unbounded (`guard_conditions.dart:542` `?? -1`, `:544`
+`maxEscalation >= 0 &&`) with its sole supplier hard-coding `-1`
+(`durable_workflow_engine.dart:1047-1052`).
+
+**F-126 — a citation correction worth carrying forward.** The design attributed "§9.6" to **ADR 0021**,
+which has **sections 1–8 only**; it is **checkpoint 003 §9.6**. ADR 0021's own Consequences (`:166`) carries
+the substance, so the decision survived a citation that does not resolve. Recorded now because it is the
+fourth instance of the stale-anchor class (F-100) in a file nobody had cited as stale.
+
+**Build-order note for the lanes that follow:** steps 1–2 are unblocked and safe now — the
+`design_contract` migration + `DesignContractStore`, and changing `designContractExists()` to read the
+durable column (F-122). Step 4 (the fidelity anchor) is unblocked by `a1c7d904`'s U-3. Step 5 alone is
+blocked by D4's **ratification** only, and only its activation step. Steps 3, 6–10 wait on the design
+clearing re-review.
