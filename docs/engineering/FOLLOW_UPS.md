@@ -1150,7 +1150,8 @@ the **next** implementer, not a live hole today.
 
 `qaInProgress` is entered only from `reviewApproved`. From there:
 
-- `qaPassed` (`:690`) needs `allRequiredGatesPassed()`, which **always fails** (F-47);
+- `qaPassed` (`:732`) needs `allRequiredGatesPassed()`, which **always fails** (F-47);
+  *(citation corrected by `correct-DESIGN-REVIEW-3`; `:690` opened on `reviewApproved -> qaInProgress`)*;
 - `qaFailed` needs a `qaExecutor` actor, and **no scheduler dispatches the design lane**;
 - **no `JobDefinition` lists `qaInProgress` in `entryStates`**, so nothing can move it.
 
@@ -2351,3 +2352,112 @@ scheduler tick creates **no job** for it. What is verified, and what is not:
 Consequence: **1 item remains not flowing** out of 3 originally stranded. The other two completed and
 the pending human-decision count is 10. **Zero** job failures cite the QA-contract guard since
 `2026-10-18 03:10`.
+
+## 32. Correcting the QA gate design's anchor — F-93 gained a named gate set, and F-93's blocker list changed
+
+Added by lane `correct-DESIGN-REVIEW-3` (design correction, base `01b9fae`). Independent design review
+of `design/qa-contracts-feature-remediation/substantive-qa-gates.md` revision 3 returned
+`DESIGN_REVIEW_CHANGES_REQUIRED`. These are the findings that belong in this ledger rather than only
+in the design artifact. **No production code was changed by that lane** — every item below is a
+finding or a specification of work, not an edit.
+
+**F-100 — `evaluator-spec.md`'s `qaInProgress -> qaPassed` anchor pointed at a DIFFERENT EDGE for
+seven correction passes.** **NOW CORRECTED IN PLACE at base `01b9fae`; the ledger records the class,
+because the instance is gone and the class is not.** The spec cited
+`work_item_transitions.dart:690-696`; at `01b9fae` that range opens on
+`(reviewApproved, qaInProgress)` — a real edge with **different guards**
+(`actorAllowed([orchestrator])` + `qaContractExists()`). Correct ranges: `:732-738` (the edge),
+`:733-736` (its `actorAllowed`), `:737` (`allRequiredGatesPassed`), `:739-744`
+(`qaInProgress -> qaFailed`), `:751-757` (`(qaFailed, waitingForHumanDecision)`), `:693-696`
+(`reviewApproved -> qaInProgress`, also stale at `:651-654`). `F-50`'s `:690` was corrected in the
+same pass.
+- **Why it survived: the file is 894 lines, so NONE of the stale ranges is out of bounds.** A range
+  that resolves to *nothing* is caught by anyone who opens it. A range that resolves to *the wrong
+  thing* is caught only by a reader who already knows the answer.
+- **The durable lesson, and it is sharper than the finding: three passages of `evaluator-spec.md`
+  AFFIRMED the stale ranges were correct** — "they resolve there exactly", "are correct there". **An
+  affirmation outlives the file it was true of.** A pass that *fixes* a citation must not thereby
+  *certify* it, and a pass that *finds* one has no licence to add a positive claim about a line number
+  a later edit will move.
+- **Recommended, and NOT done by this lane** (it is `design/**` + `docs/**`, and the check must
+  compare what a range *claims*, not whether it exists): a repository check that every `file:line`
+  citation under `design/**` and `docs/**` resolves **and carries the property claimed**. A grep finds
+  an orphaned string; only opening the citation finds a range that resolves to the wrong thing.
+
+**F-101 — the `platform_verified` evidence kind is a constant, so the gate built on it was a constant
+too.** `PlatformVerification.evidenceKind` **defaults** to `EvidenceKind.platformVerifiedEvidence`
+(`packages/platform_contracts/lib/src/types/platform_verification.dart:24`) and
+`ExecutionCoordinator` never sets it
+(`packages/execution_coordinator/lib/src/coordinator/execution_coordinator.dart:916-930`). The one
+verification plan composed in production is `triageVerificationPlan` =
+`git rev-parse --verify 'HEAD^{commit}'` (`apps/server/lib/server.dart:1578-1581`), attached to the
+single coordinator every role drives (`:1638`). **So an implementation execution already writes a
+row satisfying any "is this platform-verified evidence?" assertion — and
+`execution_coordinator_test.dart:114` (role `implementer`) asserts exactly that and passes today.**
+Compounding it: a gate's "bound to this execution" check is **unconstructible as a falsifier**,
+because `readVerifications` filters by `executionId` in the query
+(`apps/server/lib/src/persistence/postgres_execution_store.dart:331-339`) — the row "from another
+execution" cannot be returned by the reader that would test for it.
+- **Consequence for F-93:** the feature lane's `qaPassed` is held closed by **F4 alone** (the
+  declared-command identity check), **not** by a "platform-verified evidence exists" gate. Anything
+  downstream that reasons about how many gates hold `qaPassed` closed is working from a count that
+  included a constant.
+- **The agent's `claimedChecks` remains refused** — F-93's standing refusal, and `AGENTS.md` §12. Only
+  the *reason* was wrong, not the refusal.
+
+**F-102 — the two reads the substantive gates need DO NOT EXIST, and the substitutes that do exist are
+truncated or blind.** `WorkspaceDelta.changedPaths` is **capped at 5**
+(`packages/execution_coordinator/lib/src/coordinator/workspace_delta_probe.dart:160`, `:213-214`) and
+is **`const []` on `WorkspaceDelta.committed`** (`:66`) — i.e. **empty on exactly the runs a
+"did this lane commit?" gate passes.** `GitWorkspaceInspector.changedFiles` is uncapped but enumerates
+`git diff --name-status <start>`, which **never lists untracked files**
+(`packages/worker_runtime/lib/src/workspace/git_workspace_inspector.dart:57-64`; the trap is named at
+`workspace_delta_probe.dart:127-133`). For a probe, a missed untracked file causes a spurious
+failure; **for a path-confinement gate it is the opposite and worse failure — a brand-new prohibited
+file is invisible and the gate passes.**
+- **Needed, and specified but NOT built:** a `CommittedDiffPathCollector` returning the uncapped union
+  of `git diff --name-only <start>..<produced>` **and** `git ls-files --others --exclude-standard`,
+  failing closed if either cannot be read. **`packages/**` is out of scope for a design lane**; this is
+  implementation work.
+
+**F-103 — `WorkspaceDelta.headMoved == null` means "HEAD was never read", and two rules read it as
+"HEAD did not move".** `GitWorkspaceDeltaProbe` short-circuits on a dirty tree and never reads `HEAD`
+(`workspace_delta_probe.dart:199-217`), returning `headRevision: null, headMoved: null` (`:210-216`).
+**A run that committed and left any untracked file therefore looks, to a `headMoved == true` check,
+like a run that produced nothing** — and the resulting null `producedRevision` then trips a downstream
+`nullRevisionIsFailure`. **This is the F-93 waiver-pressure mechanism appearing on the feature lane's
+own commit gate:** a gate that fails every correctly-committing run whose author ran
+`make clean` (a disarmed stub in this repository, so temp files are the norm) is a gate whose
+operators learn to waive it.
+- **Needed, and specified but NOT built:** an unconditional `git rev-parse HEAD` read returning a
+  three-valued answer, consulted **before** deciding. `GitWorkspaceInspector` cannot be reused as-is —
+  it throws `GitCommandException` and its `revision` is a non-nullable `String` that cannot express
+  "unreadable" (`git_workspace_inspector.dart:7-15`, `:35`, `:106-115`).
+
+**F-104 — `_declaredEvidenceTypes` returns `[]` for an ABSENT key, silently, and that is tested.** A
+gate that declares no `evidenceTypes` is given an empty evidence requirement and the row reads as a
+faithful copy of a declaration it is not
+(`packages/qa_orchestration/lib/src/product_qa_contract.dart:168-171`; asserted at
+`packages/qa_orchestration/test/product_qa_contract_test.dart:495-501`). `FormatException` fires only
+when the key is **present and malformed** (`:172-189`). Worth knowing because
+`GateEvaluatorImpl._validateEvidence` returns `evidence.isNotEmpty`
+(`packages/qa_orchestration/lib/src/gates/gate_evaluator.dart:53-57`) over a list built by looping that
+key (`:29-39`) — so the **fabricated pass is conditional**: declared ⇒ always passes; **absent ⇒
+always fails.** Neither branch is a designed behaviour, and both are reasons F-93's slice 3a must
+de-register the four evaluators rather than rely on them.
+- **Open question, deliberately not answered here:** whether the platform *should* require the key.
+  That is production behaviour on a governed provisioner and is F-93's implementer lane, not a
+  finding.
+
+**F-105 — two `required` `gateId`s exist for one gate type, and which contract carries which was never
+written down.** `triage-classification-admitted`
+(`packages/qa_orchestration/lib/src/lane_g_triage_qa_contract.dart:172-173`) and
+`intake-structured-result-admitted`
+(`apps/server/manifests/shipit-platform.product-manifest.json:45`) are both `required: true`, both
+type `triage-classification-structure`, and **make the same assertion about the same document** — the
+manifest says so in its own metadata (`:83`). Today they live in different contracts, so nothing
+collides. **The moment one contract declares both, F-93's guard fix requires two results for one
+structural check**, and the operator sees two gate ids to waive for one defect while the F-93 ledger
+is keyed by gate id.
+- **Convention recorded:** `intake-structured-result-admitted` is the **shipped manifest's**;
+  `triage-classification-admitted` is the **remediation contract's**; **no contract may declare both.**

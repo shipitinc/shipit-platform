@@ -6,6 +6,45 @@
 **Revision 2 corrected at:** `90b6f5f` (revision 2 correction lane
 `design-QA-CONTRACTS-CORRECTION-2`) — LOW finding L-2: the triage contract's `required` flags are
 counted correctly in §5.3 and §6.
+
+> ## ⚠ CORRECTION PASS `correct-DESIGN-REVIEW-3` — THE APPROVED SPEC'S ANCHOR WAS WRONG
+>
+> **Base SHA `01b9fae178b877ab05564273f0f583a4006ab042`. If you read this document before this pass,
+> its citation for `qaInProgress -> qaPassed` opened onto a DIFFERENT EDGE.**
+>
+> **What was wrong.** This document cited `work_item_transitions.dart:690-696` for the
+> `qaInProgress -> qaPassed` edge, `:691-694` for its `actorAllowed` list, `:697-702` for
+> `qaInProgress -> qaFailed`, `:709-715` for `(qaFailed, waitingForHumanDecision)`, and `:651-654` for
+> `reviewApproved -> qaInProgress`. **All five have drifted 42 lines.**
+>
+> | Property | Cited here **before** this pass | Correct at `01b9fae` |
+> |---|---|---|
+> | `qaInProgress -> qaPassed` | `:690-696` | **`:732-738`** |
+> | its `actorAllowed([qaExecutor, orchestrator])` | `:691-694` | **`:733-736`** |
+> | its `allRequiredGatesPassed()` | — | **`:737`** |
+> | `qaInProgress -> qaFailed` | `:697-702` | **`:739-744`** |
+> | `(qaFailed, waitingForHumanDecision)` | `:709-715` | **`:751-757`** |
+> | `reviewApproved -> qaInProgress` | `:651-654` | **`:693-696`** |
+>
+> **The stale `:690-696` is the dangerous one: it opens on `reviewApproved -> qaInProgress`, which is a
+> real edge with DIFFERENT guards (`actorAllowed([orchestrator])` + `qaContractExists()`).** A reader
+> who followed it would implement the wrong transition.
+>
+> **Nothing else changed. No gate, no slice, no ordering constraint, no gate-result vocabulary, and no
+> specification is different from what the earlier passes approved** — this pass corrected **line
+> numbers and three affirmative claims that those line numbers were correct**, and nothing else. Every
+> correction is marked in place.
+>
+> **Why this survived seven correction passes, recorded because the reason is the transferable part:
+> `work_item_transitions.dart` is 894 lines, so NONE of the stale ranges is out of bounds.** A range
+> that resolves to *nothing* is caught by anyone who opens it. A range that resolves to *the wrong
+> thing* is caught only by a reader who already knows the answer. **Three of this document's own
+> passages affirmed the stale ranges were correct** — that affirmation is what made the defect durable,
+> and **an affirmation outlives the file it was true of.** The companion finding is now open in
+> `docs/engineering/FOLLOW_UPS.md` (F-52), because **fixing a citation is not certifying it.**
+>
+> Provenance of this pass: `design-revision-metadata.yaml` key
+> `revision_3a_correction_design_review_3`.
 **Correction pass 3 at:** `2b182fd3215fde12a5814f0c7db4753514aa4c62` — two changes, both mechanical
 and both recorded where they were made: **the evaluator's slices are renumbered 2a/2b/2c → 3a/3b/3c**
 (§8 of `design-revision.md`; the crosswalk is at `design-review-gate.md` §0.2), and **`§4.3` V6's
@@ -62,14 +101,16 @@ GREP FOR THE PASS-5 TOPIC WOULD NEVER HAVE REACHED.** §4.2's steps 4 and 5 cite
 `:709-715` as bare ranges. The last file named before them is
 `packages/workflow_engine/lib/src/transitions/human_decision_routing.dart`, **which is 235 lines
 long — so under the convention those two ranges resolve 456 and 474 lines PAST THE END OF IT.**
-They are in fact `work_item_transitions.dart` lines, and they resolve there exactly: `:690-696` is the
-`qaInProgress -> qaPassed` edge whose `actorAllowed([qaExecutor, orchestrator])` is `:691-694`, and
-`:709-715` is the `(qaFailed, waitingForHumanDecision)` edge carrying
-`blockingHumanDecisionPendingOfType({qaWaiver, qaRework})`. **This is PASS3-1's exact shape — a
-well-formed `file:line` pointing at nothing — in the one place an implementer of slice 3c would look,
-and `work_item_transitions.dart` IS named earlier in this document (`:128`, `:198`), so a reader who
-guessed the file from context would get it right and a reader who applied the convention would not.
-Corrected below by naming the file. §12.5, PASS7-12.**
+They are in fact `work_item_transitions.dart` lines. **CORRECTED BY CORRECTION PASS
+`correct-DESIGN-REVIEW-3` (base `01b9fae`): PASS 7 WROTE THAT THEY "resolve there exactly", AND THAT
+SENTENCE IS NOW FALSE — those ranges have drifted 42 lines.** At `01b9fae`, `work_item_transitions.dart`
+is 894 lines and the current ranges are: **`qaInProgress -> qaPassed` is `:732-738`**, whose
+`actorAllowed([qaExecutor, qaExecutor's caller, orchestrator])` list is `:733-736` and whose
+`allRequiredGatesPassed()` is `:737`; **`(qaFailed, waitingForHumanDecision)` is `:751-757`**.
+**The stale `:690-696` now opens on a DIFFERENT edge — `(reviewApproved, qaInProgress)` at
+`:693-696` — and the stale `:709-715` lands inside a comment.** **The property this document
+describes is unchanged and no implementer builds anything different**; what changed is which lines the
+ranges open onto. Corrected below by naming the file AND the current line. §12.5, PASS7-12.
 **One finding pass 5 made in an adjacent file and did NOT propagate here, recorded so its absence is
 deliberate:** pass 5 found `apps/control_plane/lib/shared/decision_choice.dart:12-19`'s
 `knownDecisionChoices` to be a hardcoded six-value set against a ten-value enum, with the file's own
@@ -170,16 +211,19 @@ why §5's ordering constraint is the thing standing between "honest" and "falsel
 ## 2. The transition, and the fact that nothing takes it
 
 ```dart
-// packages/workflow_engine/lib/src/transitions/work_item_transitions.dart:690-696
+// packages/workflow_engine/lib/src/transitions/work_item_transitions.dart:732-738
+// (CORRECTED by correct-DESIGN-REVIEW-3: this range was cited as :690-696. At 01b9fae :690-696
+//  opens on (reviewApproved, qaInProgress) — a DIFFERENT edge. See the correction banner above.)
 (WorkItemState.qaInProgress, WorkItemState.qaPassed): [
-  GuardConditions.actorAllowed([ActorType.qaExecutor, ActorType.orchestrator]),
-  GuardConditions.allRequiredGatesPassed(),
+  GuardConditions.actorAllowed([ActorType.qaExecutor, ActorType.orchestrator]),  // :733-736
+  GuardConditions.allRequiredGatesPassed(),                                      // :737
 ],
 ```
 
 `qaInProgress` is entered from exactly one edge — `reviewApproved -> qaInProgress`
-(`:651-654`) — and has exactly two out-edges: this one and `qaInProgress -> qaFailed`
-(`:697-702`).
+(`:693-696`; **corrected by `correct-DESIGN-REVIEW-3`, was cited as `:651-654`**) — and has exactly
+two out-edges: this one and `qaInProgress -> qaFailed`
+(`:739-744`; **corrected, was cited as `:697-702`**).
 
 ### 2.1 Nothing takes `reviewApproved -> qaInProgress` either — revision 1 got the chain wrong
 
@@ -198,7 +242,8 @@ had nothing to drain. Verified:
   none of them.
 - Its **only** in-edge is the human one, `waitingForHumanDecision -> reviewApproved`
   (`:425-434`), guarded by `blockingHumanDecisionResolved({(engineeringReview, approve)})`.
-- Its **only** out-edge is `reviewApproved -> qaInProgress` (`:651-654`).
+- Its **only** out-edge is `reviewApproved -> qaInProgress` (`:693-696`; **corrected by
+  `correct-DESIGN-REVIEW-3`, was cited as `:651-654`**).
 - **No production code calls `transition(to: WorkItemState.reviewApproved)` or
   `to: WorkItemState.qaInProgress`.** Every such call site in the tree is in a `*_test.dart`.
 
@@ -240,7 +285,8 @@ agentCompleted -> reviewInProgress -> reviewApproved -> STUCK
 
 **Correction to revision 1** (LOW finding): revision 1 wrote *"`qaFailed` requires a `qaExecutor`
 that nothing dispatches"*. That is incomplete. The edge admits **both**
-(`work_item_transitions.dart:697-702`):
+(`work_item_transitions.dart:739-744`; **corrected by `correct-DESIGN-REVIEW-3`, was cited as
+`:697-702`**):
 
 ```dart
 (WorkItemState.qaInProgress, WorkItemState.qaFailed): [
@@ -392,23 +438,35 @@ Nobody today (§2). The wiring must add a drain that:
 3. calls `QAGateEvaluationService.evaluateForWorkItem(...)`;
 4. takes the transition with `ActorType.qaExecutor` when `isOverallPass`, and with
    `ActorType.orchestrator` when it is not — the edge permits both
-   (`work_item_transitions.dart:691-694`), and the distinction is what lets a *failed* QA be recorded
+   (`work_item_transitions.dart:733-736`; **corrected by `correct-DESIGN-REVIEW-3`, was cited as
+   `:691-694`**), and the distinction is what lets a *failed* QA be recorded
    rather than silently left in place;
 5. on `qaFailed`, raises the blocking `qaRework`/`qaWaiver` decision that
-   `qaFailed -> waitingForHumanDecision` expects (`work_item_transitions.dart:709-715`).
+   `qaFailed -> waitingForHumanDecision` expects (`work_item_transitions.dart:751-757`; **corrected by
+   `correct-DESIGN-REVIEW-3`, was cited as `:709-715`**).
 
 > **PASS 7 NAMES THE FILE ON STEPS 4 AND 5, AND THE REASON IS A CITATION THAT RESOLVED NOWHERE.** Both
 > were written as bare `:691-694` and `:709-715`, which under this artifact set's convention — a bare
 > `:NNN` continues the last file named — resolve inside **`human_decision_routing.dart`, a 235-line
 > file**, and therefore point 456 and 474 lines past its end. **That is PASS3-1's shape exactly: a
 > well-formed `file:line` that opens onto nothing.** Both ranges are `work_item_transitions.dart`
-> lines and are correct there: `:690-696` is the `qaInProgress -> qaPassed` edge and `:691-694` is its
-> `actorAllowed([qaExecutor, orchestrator])`; `:709-715` is the `(qaFailed, waitingForHumanDecision)`
-> edge carrying `blockingHumanDecisionPendingOfType({qaWaiver, qaRework})`. **The property is
-> unchanged and no implementer builds anything different** — `work_item_transitions.dart` is named
-> earlier in this document (§2 at `:128`, §2.2 at `:198`), so a reader inferring the file from context
-> got it right, and that is exactly why the defect survived four passes: it is only wrong for a reader
-> who applies the convention correctly. §12.5, PASS7-12.
+> lines. **CORRECTED BY `correct-DESIGN-REVIEW-3` (base `01b9fae`): PASS 7 ADDED "and are correct
+> there", AND THAT CLAUSE WAS ITSELF FALSE BY THE TIME A REVIEWER OPENED IT.** At `01b9fae` the
+> correct ranges are `:733-736` for the `actorAllowed([qaExecutor, orchestrator])` on
+> `qaInProgress -> qaPassed` (`:732-738`) and `:751-757` for the
+> `(qaFailed, waitingForHumanDecision)` edge carrying
+> `blockingHumanDecisionPendingOfType({qaWaiver, qaRework})`; the stale `:690-696` opens on
+> `(reviewApproved, qaInProgress)` at `:693-696`, **a different edge with different guards**, and
+> **none of the stale ranges is out of bounds** — the file is 894 lines — which is exactly why the
+> defect survived: a range that resolves to the *wrong thing* is harder to catch than one that
+> resolves to nothing. **The property is unchanged and no implementer builds anything different** —
+> `work_item_transitions.dart` is named earlier in this document (§2 at `:128`, §2.2 at `:198`), so a
+> reader inferring the file from context got it right, and that is exactly why the defect survived
+> four passes: it is only wrong for a reader who applies the convention correctly. §12.5, PASS7-12.
+> **A second lesson, recorded because it is the one that cost the most: fixing a citation is not
+> certifying it. Pass 7 opened the range, found the right edge, and then wrote down a positive claim
+> about a line number that a later edit would invalidate. An affirmation outlives the file it was true
+> of.**
 
 The closest existing precedent for "a lane that cannot dispatch raises a blocking human decision
 instead" is the engineering-review missing-artifact drain (`apps/server/lib/server.dart:540-543`).
@@ -428,7 +486,7 @@ bypassed**, not assertions that pass when it works:
 | V2 | A work item at `qaInProgress` with a contract whose required gate has **no registered evaluator** does not reach `qaPassed`, and its result is `notExecuted` | `notExecuted` is ever treated as satisfied |
 | V3 | `gateResults` present but `qaContract` **absent** does not reach `qaPassed` | §1's vacuous-pass hole is reopened |
 | V4 | `gateResults: []` with a contract declaring gates does not reach `qaPassed` | §1's empty-iterable hole is reopened |
-| V5 | The drain reaches `qaFailed` (not `qaPassed`) on a failing contract, and a blocking decision is raised | the failure arm of `:691-694` is dropped |
+| V5 | The drain reaches `qaFailed` (not `qaPassed`) on a failing contract, and a blocking decision is raised | the failure arm of `:739-744` is dropped *(range corrected by `correct-DESIGN-REVIEW-3`; was cited as `:691-694`, which at `01b9fae` is the `actorAllowed` list of `qaInProgress -> qaPassed`, not the failure edge)* |
 | V6 | The drain is per-item isolated: one item whose contract id is unreadable does not lose the lane's whole tick | the throw escapes — the exact failure `implementation_inflow.dart:124-126` was written about (*corrected in pass 3: this row previously cited `:1543-1578` of a 440-line file*) |
 
 V3 and V4 are the two that do not exist in any form today and that a naive wiring would pass.

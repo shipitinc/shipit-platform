@@ -2321,3 +2321,414 @@ revision_3_substantive_qa_gates:
     HUMAN_DECISION_REQUIRED at Level 3, and the sequence is independent design review FIRST, then
     human approval of the REVIEWED artifact. Nothing in this block, and nothing in the artifact,
     asserts that the gates are implemented, wired, or verified. They are DESIGNED.
+
+# =====================================================================================
+# REVISION 3a — CORRECTION PASS. APPEND-ONLY ENTRY. NOTHING ABOVE THIS LINE WAS MODIFIED.
+#
+# Appended by lane `correct-DESIGN-REVIEW-3` (design correction lane, acting under
+# `aef-correction-loop` on behalf of the design agent) on top of base 01b9fae. Every key above
+# retains its exact prior value.
+#
+#   *** THE APPEND-ONLY PROPERTY IS VERIFIED BY BYTE-PREFIX, NOT BY DIFF. ***
+#   Method: `git show HEAD:design/.../design-revision-metadata.yaml > /tmp/old.yaml`, then
+#   `python3 -c "new=open(new).read(); old=open(old).read(); print(new.startswith(old))"`.
+#   A diff is NOT evidence here: the revision-3 entry already records that this file's
+#   predecessor ended WITHOUT a trailing newline, so appending one makes git report the final
+#   line as removed-and-re-added. The content of that line is unchanged, and only a byte-prefix
+#   comparison can show it.
+# =====================================================================================
+
+revision_3a_correction_design_review_3:
+
+  lane: "design correction lane — `correct-DESIGN-REVIEW-3`, dispatched by `orchestrator-main` under `aef-correction-loop`"
+  is_a: "CORRECTION OF revision_3_substantive_qa_gates — it edits that artifact's own text and APPENDS this entry; no key above this line is touched"
+  base_sha: "01b9fae178b877ab05564273f0f583a4006ab042"
+  base_sha_short: "01b9fae"
+  base_sha_verified: >
+    `git rev-parse --short HEAD` returned 01b9fae and `git rev-parse HEAD` returned
+    01b9fae178b877ab05564273f0f583a4006ab042 BEFORE this lane's first edit.
+    `git status --porcelain --untracked-files=no` returned EMPTY, i.e. the TRACKED tree was clean.
+    Every porcelain entry present was UNTRACKED (??) and belonged to another lane's workspace.
+    A mismatch would have produced CORRECTION_BLOCKED; there was none.
+  reviewed_artifact: "design/qa-contracts-feature-remediation/substantive-qa-gates.md"
+  review_verdict_consumed:
+    verdict: "DESIGN_REVIEW_CHANGES_REQUIRED"
+    correction_required: true
+    human_decision_required: false
+    risk_level_agreed_by_reviewer: 3
+    findings: "B1 (BLOCKING), B2, B3, B4, B5, B6, MEDIUM (§6.1 test count), LOW (§4 heading numeral)"
+
+  ownership_this_pass:
+    owned_paths:
+      - "design/qa-contracts-feature-remediation/substantive-qa-gates.md"
+      - "design/qa-contracts-feature-remediation/design-revision-metadata.yaml  (THIS APPEND ONLY)"
+      - "design/qa-contracts-feature-remediation/evaluator-spec.md  (CITATIONS ONLY)"
+      - "docs/engineering/FOLLOW_UPS.md  (F-50's citation at line 1153, plus new findings F-100..F-105)"
+    read_only_paths:
+      - "apps/**"
+      - "packages/**"
+      - "docker/**"
+      - ".decisions/**"
+      - ".github/**"
+      - "Makefile"
+    prohibited_paths:
+      - "all production source (apps/**, packages/**, docker/**)"
+      - "design/qa-contracts-feature-remediation/design-review-gate.md"
+      - "design/qa-contracts-feature-remediation/design-revision.md"
+      - "design/qa-contracts-feature-remediation/design-brief.md"
+      - "design/qa-contracts-feature-remediation/design-brief-metadata.yaml"
+      - "apps/server/manifests/shipit-platform.product-manifest.json"
+      - ".decisions/**"
+    note_on_a_refused_edit: >
+      The PREVIOUS lane (design-SUBSTANTIVE-QA-GATES) reported evaluator-spec.md's and
+      FOLLOW_UPS.md's drifted citations instead of fixing them, because both were PROHIBITED_PATHS
+      for it. That refusal was CORRECT and this pass does not fault it. This pass holds both paths in
+      OWNED_PATHS — evaluator-spec.md CITATIONS ONLY — and therefore fixed them. The revision-3
+      metadata's own `citation_defects_found_and_reported_not_fixed` entry is left intact as the
+      historical record of what that lane could and could not touch.
+
+  risk_level: 3
+  risk_level_unchanged_from_revision_3: true
+  risk_rationale: >
+    Per DESIGN_GOVERNANCE.md:92-99, unchanged. This correction REMOVES a gate that was not a gate,
+    and that is a reduction in what the artifact CLAIMS, not a reduction in what it GOVERNS. Still
+    Level 3: it changes the meaning of qaPassed on two lanes, it introduces a guard that fails
+    closed where it previously passed vacuously (§7, untouched), and it specifies new gate types
+    registered on a governed path. Gate D4 remains HUMAN_DECISION_REQUIRED for Level 3, and this
+    lane does NOT grant it. qaPassed remains held CLOSED by F1 and F4 — the accepted cost under
+    human decision 92d567e3 is unchanged.
+  correction_rationale_for_unchanged_level: >
+    The obvious counter-argument — "you removed a gate, so the risk went down" — is rejected for a
+    reason the correction itself establishes: the removed gate was GREEN on every implementation
+    execution before it existed. Removing a constant reduces the number of gates and changes nothing
+    about what governs a pass. The gates that actually hold the lane closed (F1's commit check, F4's
+    declared-command identity) are both retained and F4 is now the sole documented basis for the
+    feature lane's closure.
+
+  what_changed_per_finding:
+
+    B1_F3_was_green_today:
+      severity: "BLOCKING"
+      reviewer_claim: >
+        F3 asserted "F3 IS RED TODAY, AND THAT IS ITS CORRECT STATE" and "F3 therefore cannot be made
+        green by anything this lane designs." Refuted: PlatformVerification.evidenceKind DEFAULTS to
+        platformVerifiedEvidence and is never overridden; the single coordinator carries
+        triageVerificationPlan for EVERY role; git rev-parse --verify HEAD^{commit} succeeds on any
+        checkout; requireBoundToExecution is enforced by the reader's own query, so its
+        "different executionId" row is unconstructible.
+      independently_reverified: true
+      reverification_evidence: >
+        platform_verification.dart:24 (the default);
+        execution_coordinator.dart:905, :909, :916-930 (plan guard, and the row built with NO
+        evidenceKind argument); server.dart:1578-1581, :1638 (the one plan, attached to the one
+        coordinator); postgres_execution_store.dart:331-339 and in_memory_execution_store.dart:109-115
+        (readVerifications filters by executionId server-side);
+        execution_coordinator_test.dart:93 (role: AgentRole.implementer), :125-131 (asserts
+        hasLength(1), status passed, evidenceKind platformVerifiedEvidence) — and the file was RUN
+        from packages/execution_coordinator with `dart test test/execution_coordinator_test.dart`:
+        "00:02 +9: All tests passed!"
+      disposition: "MERGED into F4. `evidenceKind` retained as a NON-DISCRIMINATING defensive invariant inside the merged gate; removed from §2.1 item 3 (§2.1 is now FOUR items) and from §11. §4's new-type count drops 6 -> 5."
+      text_removed_verbatim: '"F3 therefore cannot be made green by anything this lane designs."'
+      text_kept_because_true: >
+        The refusal of AgentResult.claimedChecks is UNCHANGED — the operator rejected it and
+        AGENTS.md §12 forbids it. Only the stated REASON was false, exactly as the reviewer directed.
+      derived: >
+        §8's ordering and §9's traceability re-derived. §8 P1 added; E3's list restated without
+        `platform-verified-evidence`; §9 gap 1 rewritten from "F3 and F4 are red" to "F4 is red, and
+        F4 alone"; §10 item 4 corrected from "unblocks F3 and F4" to "unblocks F4"; a new §8
+        sub-section states explicitly that F4 ALONE holds the feature lane closed today.
+
+    B2_F2_had_no_implementable_reader:
+      reviewer_claim: >
+        `pathSource: 'git_diff_name_only'` named no reader and none exists. WorkspaceDelta.changedPaths
+        is capped at 5 and is `const []` on WorkspaceDelta.committed — empty on exactly the path where
+        F1 passes.
+      independently_reverified: true
+      reverification_evidence: >
+        workspace_delta_probe.dart:160 (`reportedPathCap = 5`), :213-214 (the truncation), :66
+        (`WorkspaceDelta.committed` sets changedPaths = const []), :44-60 (why: changedPaths is
+        documented as coming from git status --porcelain); git_workspace_inspector.dart:57-64
+        (`git diff --name-status <start>` — never lists untracked).
+      disposition: >
+        Reader NAMED and specified: `CommittedDiffPathCollector`, returning the UNCAPPED union of
+        `git diff --name-only <start>..<produced>` and `git ls-files --others --exclude-standard`,
+        failing closed on either. Added as prerequisite step §8 **P1**, ordered BEFORE E2 and before
+        F5 inside E3. TWO new falsification rows in §3.1 F2 (the >5-path case, and the
+        committed-run/empty-list case) and TWO new tests in §6.2.
+      production_change_required: >
+        NAMED AS A FINDING, NOT MADE. `packages/**` is PROHIBITED_PATHS for this lane. Also recorded
+        as FOLLOW_UPS F-102. §9 gap 5 and §10 item 6 record that the reader's PACKAGE PLACEMENT is
+        itself undecided, because the two existing readers live in different packages.
+
+    B3_evidenceTypes_rule_was_false:
+      reviewer_claim: >
+        §3.0 rule 2 said `_declaredEvidenceTypes` is "always a List<String>, or throws". False: an
+        ABSENT key yields [] silently; FormatException fires only when present and malformed.
+      independently_reverified: true
+      reverification_evidence: >
+        product_qa_contract.dart:168-171 (absent -> `return const []`), :172-189 (the throw, present
+        and malformed only); product_qa_contract_test.dart:495-501 asserts `isEmpty`. The file was RUN
+        from packages/qa_orchestration with `dart test test/product_qa_contract_test.dart`:
+        "00:00 +18: All tests passed!"
+      disposition: >
+        Rule 2 rewritten: the key is RECOMMENDED, NOT MANDATORY, and is present in every gate
+        because omitting it yields an EMPTY evidence requirement — a weaker gate, not a rejected
+        declaration. The inference that the key is mandatory is DROPPED. §3.0 rule 4 was corrected in
+        the same pass because it depended on the false rule: `GateEvaluatorImpl._validateEvidence`
+        returns `evidence.isNotEmpty` (gate_evaluator.dart:53-57) over a list built by looping the key
+        (:29-39), so the fabricated pass is CONDITIONAL — declared => always passes, ABSENT => always
+        fails. Recorded as FOLLOW_UPS F-104, including the open question of whether the platform should
+        require the key (a production change this lane does not make).
+
+    B4_R3_gateId_conflicted_with_retained_gate:
+      reviewer_claim: >
+        §3.2 gave R3 `triage-classification-admitted` while §5 retained
+        `intake-structured-result-admitted` — two required gateIds for one type, which under §7.4 C1
+        step 3 requires two results for one structural check. §3.2 reconciled this for R2 and omitted
+        it for R3.
+      independently_reverified: true
+      reverification_evidence: >
+        lane_g_triage_qa_contract.dart:172-173 (`triage-classification-admitted`, required true,
+        type triage-classification-structure); shipit-platform.product-manifest.json:45-46
+        (`intake-structured-result-admitted`, required true, SAME type); manifest :83 states in its own
+        metadata that "Both gates make the SAME assertion about the SAME document ... so an evaluator
+        registered once for that type evaluates both"; product_qa_contract.dart:127 (optional gate count)
+      disposition: >
+        DECIDED and stated in both directions: the REMEDIATION contract carries
+        `triage-classification-admitted`; §5 retains `intake-structured-result-admitted` in the
+        SHIPPED MANIFEST's feature contract; a NORMATIVE MUTUAL-EXCLUSION RULE forbids any one
+        contract declaring both. §5 gained the alignment §3.2 owed it, §3.2's R3 subsection gained the
+        answer, and §7.4 C1 step 3 gained a note that it is the mechanism which fails loudly if the
+        rule is violated. §8 M1 gained "Not intake-structured-result-admitted". Nothing in the shipped
+        manifest is edited — it is PROHIBITED_PATHS, and §8 M1 is where an implementer would add gates.
+        Recorded as FOLLOW_UPS F-105.
+
+    B5_F1_conflated_HEAD_unmoved_with_HEAD_never_read:
+      reviewer_claim: >
+        GitWorkspaceDeltaProbe short-circuits on a dirty tree and never reads HEAD, so a run that
+        committed and left untracked files returns headMoved: null; F1 FAILS a real commit and
+        headRevision is then null, cascading into F5's nullRevisionIsFailure. §6.2 covered only
+        `unchanged` and `unreadable`, never `changed`. This is the waiver-pressure mechanism §3.3
+        names against the remediation lane, unnamed on F1 itself.
+      independently_reverified: true
+      reverification_evidence: >
+        workspace_delta_probe.dart:199-217 (short-circuit), :210-216 (returns
+        headRevision: null, headMoved: null), :219-225 (the second subprocess that never runs),
+        :31-35 (the type's own doc: "not established" vs "established as no"), :87-96 (bool? by
+        design), :113-114 (hasChanges = dirty || moved, the COMMITTER's predicate).
+      disposition: >
+        EXPLICIT DECISION RECORDED — REPROBE, NEVER ACCEPT. §3.1 F1 gained the three-state argument,
+        a code sketch for the re-read, and THREE falsification rows: dirty+HEAD-unmoved (FAIL),
+        dirty+HEAD-never-read+re-read-finds-movement (PASS — the correction), and
+        dirty+HEAD-never-read+re-read-fails (FAIL naming "HEAD could not be established", NEVER
+        "nothing was produced"). Two new F1 tests in §6.2 cover both branches of the decision.
+        F1's pass condition is restated in terms of the RE-READ's answer so a change to
+        WorkspaceDeltaProbe cannot silently reopen the hole. A DELIBERATE NON-GOAL was added: the
+        gate does not accept `hasChanges` as a pass, because that predicate is true for a dirty tree
+        with no commit. F5 gained the note that its `producedRevision` is the re-read's output and
+        that P1 is therefore a prerequisite of F5 too.
+      production_change_required: >
+        NAMED AS A FINDING, NOT MADE. `WorkspaceHeadReader` is specified at the call site and
+        ordered in §8 P1; recorded as FOLLOW_UPS F-103, including why `GitWorkspaceInspector` cannot
+        be reused (it throws, and its `revision` is a non-nullable String that cannot express
+        "unreadable").
+
+    B6_evaluator_spec_citations_were_drifted:
+      reviewer_claim: >
+        evaluator-spec.md:65, :173, :405 AFFIRMATIVELY asserted ":690-696 ... are correct there" — now
+        false; that range opens on reviewApproved -> qaInProgress and the real qaInProgress -> qaPassed
+        edge is :732-738. FOLLOW_UPS.md:1153 carries the same :690. The previous lane correctly refused
+        to edit it as PROHIBITED.
+      independently_reverified: true
+      reverification_evidence: >
+        work_item_transitions.dart is 894 lines. :693 (reviewApproved, qaInProgress); :732 (qaInProgress,
+        qaPassed); :733-736 (its actorAllowed list); :737 (allRequiredGatesPassed); :739
+        (qaInProgress, qaFailed); :751 (qaFailed, waitingForHumanDecision). All established by
+        grep -n on the edge headers, then the ranges read directly.
+      disposition: >
+        CORRECTED IN PLACE. A correction banner was added at the top of evaluator-spec.md with the
+        full stale->current table. The three AFFIRMATIVE claims were rewritten to state the drift and
+        the correct ranges rather than merely renumbering the digits beside them — because an
+        affirmative false claim cannot be repaired by the number next to it. The historical PASS-7
+        passage that made the claim is PRESERVED and marked as having been wrong, with the transferable
+        lesson recorded: an affirmation outlives the file it was true of. Six operative citations were
+        corrected (:690-696 -> :732-738, :691-694 -> :733-736, :697-702 -> :739-744, :709-715 ->
+        :751-757, :651-654 -> :693-696, and V5's failure-arm range). FOLLOW_UPS.md F-50's `:690` was
+        corrected to `:732`.
+      historical_notes_left_intact: >
+        The pass-4/5/6/7 provenance paragraphs that RECORD which ranges those passes cited were NOT
+        rewritten. Rewriting them would falsify a record of what a past pass did. They are labelled as
+        historical and sit under the banner.
+
+    MEDIUM_test_count:
+      reviewer_claim: "§6.1 claimed fourteen tests, 'two per feature gate, three for R2'. §6.2 has thirteen rows: F2=1 not 2, R2=2 not 3, feature total 9 not 10."
+      disposition: >
+        Corrected to SIXTEEN, derived by addition and SHOWN as an addition (4 F1 + 3 F2 + 3 F4 + 2 F5 +
+        1 R1 + 2 R2 + 1 R3 = 16). The count rose for stated reasons rather than to match the old
+        prose: F3 merged into F4, B5 added two F1 rows, B2 added two F2 rows. The hazard is named in
+        §6.1 itself: a count an implementer can satisfy by padding is a live hazard, and corrections
+        here add rows rather than removing them.
+
+    LOW_section_4_heading_numeral:
+      reviewer_claim: "§4's heading said '(5)' while its table listed six rows."
+      disposition: >
+        Both were wrong because the TABLE was: with F3 merged into F4 the count is five new types and
+        five rows, so '(5)' is now correct. The arithmetic is shown rather than asserted (7 evaluators
+        = 5 new + 2 declared-unregistered) so a reviewer can check it in one pass, and the withdrawn
+        `platform-verified-evidence` type is explained rather than silently dropped.
+
+  reviewer_confirmations_carried_forward_unchanged: >
+    The independent review confirmed as CORRECT the following, and this pass did NOT rebuild them:
+    (a) the append-only property of this metadata file, verified by byte-prefix; (b) the vacuous-pass
+    hole at guard_conditions.dart:272 — the filter selects FROM gateResults, not FROM
+    qaContract.gates, so three required gates plus one passing result PASSES — described by the
+    reviewer as the artifact's strongest work, and §7 and its C1/C2 are carried forward;
+    (c) §7's C1/C2 closure steps; (d) the risk-asymmetry argument in §2.2's table;
+    (e) that the four de-registered evaluators genuinely fabricate (`issues: []`,
+    `_validateEvidence` returns evidence.isNotEmpty); (f) that QAGateSpec.type is an unvalidated String
+    so six new types need no migration — restated by this pass as FIVE new types for the corrected
+    reason; (g) that OD-6 is load-bearing ONLY for F3 — restated by this pass as load-bearing only for
+    F4, which is the same observation after the merge; (h) that the path-ownership map and the
+    validation commands are correctly handled as required-but-unfilled with no invented values;
+    (i) that F5's lookup key is correctly undecidable.
+    §7 is byte-for-byte unchanged except for one ADDED cross-reference note at C1 step 3 pointing at
+    §3.2's mutual-exclusion rule. §2.2's table is unchanged. §5's retention decision is unchanged.
+
+  discipline_this_pass:
+    byte_copies_before_editing: >
+      `cp` of all four edited files to /tmp/correct-DESIGN-REVIEW-3/*.orig, with `shasum` recorded
+      before the first edit and again after the last, per §6.3 of the artifact and F-85.
+    no_docker_issued: true
+    no_docker_note: >
+      No docker, no docker compose, no psql, and not even a read-only `docker compose ps`. Per
+      AGENTS.md's shared-Docker-state rule this lane issued no Docker command at all. Reading compose
+      files as text is the supported way and was sufficient; this lane needed none.
+    stash_untouched: >
+      `git stash list` showed two entries belonging to other lanes (`stash@{0}`,
+      `stash@{1}`). NOT touched, dropped, listed, or inspected for content. No `git stash`,
+      no `git checkout .`, no `git add -A` at any point.
+    analyzer: >
+      CLI `dart analyze` was NOT run: no Dart file was changed. `apps/**` and `packages/**` are
+      PROHIBITED_PATHS, so there is nothing for the analyzer to be evidence about, and reporting an
+      analyzer result over an untouched tree would be a claim about nothing. The MCP analyzer tool was
+      not used at any point.
+    tests_run:
+      - "packages/execution_coordinator (run from its OWN root): `dart test test/execution_coordinator_test.dart` -> `00:02 +9: All tests passed!` — this is the evidence for B1"
+      - "packages/qa_orchestration (run from its OWN root): `dart test test/product_qa_contract_test.dart` -> `00:00 +18: All tests passed!` — this is the evidence for B3"
+    tests_run_batching: >
+      One file per invocation, each from its own package's root. **Both invocations reported the
+      literal string `All tests passed!`.** A missing that string would have been recorded as
+      INCONCLUSIVE and never as green — the rule this repository's own batched-run discipline states,
+      and the reason a green here is a positive observation rather than an absence of red.
+    no_live_ids_written: >
+      No live work-item id, defect id, job id, requestId or execution id was written into any artifact
+      by this pass. File and line citations only.
+
+  append_only_proof:
+    method: "byte-prefix, not diff"
+    statement: >
+      The bytes of design/qa-contracts-feature-remediation/design-revision-metadata.yaml AFTER this
+      pass begin with the COMPLETE bytes of the file BEFORE this pass, byte for byte and in order.
+      Verified programmatically by reading both files whole and asserting prefix equality, NOT by
+      reading `git diff` — because a diff reports a missing trailing newline as a removed-and-re-added
+      line, and the predecessor of this file is already on record for ending without one.
+      The exact command and its output are reported in the lane's structured result so a reviewer can
+      re-run one line rather than check a number this lane may edit again.
+    no_numstat_claim: >
+      Deliberately no "N lines appended / N bytes" figure is asserted here. An earlier pass recorded
+      that editing such a note invalidates the figure it carries — a count in prose is invalidated by
+      appending a row to the register it counts. The method is the claim, not the size.
+
+  implementation_feasibility: "MEDIUM"
+  implementation_feasibility_rationale: >
+    UNCHANGED at MEDIUM, and the composition changed rather than the total. HIGH for G1 (four lines
+    plus the seven-row guard test) and for E1 (evaluator-spec.md §5.3 already specifies both triage
+    evaluators, and a live consumer — _parseTriageResult — justifies requiredFields). MEDIUM for
+    F1/F2/F5, whose assertions are specified but whose readers do not exist (§8 P1 — this pass
+    established that two of the three are gated on code that must be WRITTEN, not merely wired).
+    LOW-BLOCKED for F4, which alone waits on OD-6. §9 gap 5 and §10 item 6 add a genuine new
+    unknown: the PACKAGE PLACEMENT of the two new readers is undecided, because the two existing
+    readers live in different packages and neither shape fits.
+
+  design_system_compliance: "NOT APPLICABLE — no UI, no visual or interaction surface, no tokens, no components. This correction changed a design artifact and two citations; it renders nothing."
+  ux_accessibility_score: "NOT APPLICABLE — no interface, no navigation, no content an operator reads as prose. Unchanged from revision 3."
+
+  durable_discoveries:
+    - category: "QA_DISCOVERY"
+      authority: "automatic — verified at 01b9fae by reading the tree AND by running the test that asserts it"
+      finding: >
+        PlatformVerification.evidenceKind DEFAULTS to platformVerifiedEvidence and no production path
+        overrides it, so "is this platform-verified evidence?" is a constant on every execution
+        ExecutionCoordinator writes. The only composed verification plan is a liveness probe
+        (`git rev-parse --verify HEAD^{commit}`) attached to the single coordinator every role drives,
+        so it passes on any checkout with a commit. A gate asserting "platform-verified evidence exists
+        bound to this execution" is therefore GREEN TODAY, and its "bound to another execution"
+        falsifier is unconstructible because readVerifications filters server-side. Follows F-93's
+        standing refusal of AgentResult.claimedChecks; only the reason given for it was wrong.
+      recorded_as: "FOLLOW_UPS F-101"
+    - category: "PROJECT_FACT"
+      authority: "automatic — verified at 01b9fae by reading the tree AND by running its test"
+      finding: >
+        ProductQAContract._declaredEvidenceTypes returns an EMPTY LIST for an ABSENT `evidenceTypes`
+        key, silently, and that is documented and asserted by a passing test. FormatException fires
+        only when the key is PRESENT and malformed. Consequently GateEvaluatorImpl's fabricated pass
+        is CONDITIONAL: a declared evidenceTypes always passes the validator, an absent one always
+        fails it. Neither branch is designed behaviour.
+      recorded_as: "FOLLOW_UPS F-104"
+    - category: "QA_DISCOVERY"
+      authority: "automatic — verified at 01b9fae by reading the tree"
+      finding: >
+        WorkspaceDelta.headMoved is a deliberate bool? and the git probe leaves it null on a dirty tree
+        because it short-circuits without reading HEAD. So "HEAD unmoved" and "HEAD never read" are
+        indistinguishable to a consumer that does not re-read, and a commit-then-leave-untracked-files
+        run is indistinguishable from a run that produced nothing. Combined with changedPaths being
+        capped at 5 and hard-coded to `const []` on WorkspaceDelta.committed, the existing delta type
+        can support neither a commit gate nor a path-confinement gate on its own.
+      recorded_as: "FOLLOW_UPS F-103 and F-102"
+    - category: "WORKFLOW_IMPROVEMENT"
+      authority: "requires independent review — reported, not persisted as a change"
+      finding: >
+        Two independent classes in this repository share one shape: a claim that was verified ONCE and
+        then asserted forever. `evaluator-spec.md` asserted "these ranges are correct" about line
+        numbers a later edit moved, and revision 3 of the gates artifact asserted "F3 is red" about a
+        condition that was true of the code at the moment it was read and false of the code as wired.
+        Both survived because every citation in them was individually true. The transferable rule: a
+        passage that CONFIRMS a prior pass's finding inherits its lifetime, so a pass that fixes or
+        verifies a claim must not restate it as settled fact about a mutable target. §6.4 N1a in the
+        corrected artifact exists to catch the second class at the point of authoring.
+      recorded_as: "FOLLOW_UPS F-100"
+    - category: "AUTOMATION_OPPORTUNITY"
+      authority: "requires independent review — reported, not persisted as a change"
+      finding: >
+        A repository check that every `file:line` citation under `design/**` and `docs/**` resolves AND
+        carries the property claimed would have caught both the 42-line drift and the "F3 is red"
+        misreading. A grep finds an orphaned STRING; only opening the citation finds a range that
+        resolves to the wrong thing, or a gate that was green before it existed.
+      recorded_as: "FOLLOW_UPS F-100"
+
+  findings_requiring_a_production_change_named_not_made:
+    - "F-49/F-93: the `allRequiredGatesPassed` subset hole and `isOverallPass`'s identical defect (§7.4 C1/C2). guard_conditions.dart and qa_orchestration.dart are PROHIBITED_PATHS here."
+    - "F-102: `CommittedDiffPathCollector` — the uncapped path enumeration F2 requires. It does not exist and must be written."
+    - "F-103: `WorkspaceHeadReader` — the unconditional three-valued HEAD read F1 and F5 require. It does not exist and must be written."
+    - "F-104: whether `ProductQAContract._declaredEvidenceTypes` SHOULD require the key. The current absent-key-succeeds-silently behaviour is production code on a governed provisioner and was not changed."
+    - "F-105: no production change is needed; the two gate ids already live in different contracts. Only the convention needed writing."
+
+  human_decision_required: false
+  human_decision_required_rationale: >
+    NONE RAISED, and this is not an evasion. Governing decision 92d567e3's scope_note dispatches this
+    design as an ordinary lane with independent review and states "No further human gate is required
+    to run that design." The reviewer returned HUMAN_DECISION_REQUIRED: NO. The new items surfaced by
+    this correction are implementation work, not product, architecture or design choices: §8 P1's two
+    readers are specified at the call site and their PACKAGE PLACEMENT is recorded as an open gap
+    (§9 gap 5, §10 item 6) rather than decided here, because deciding production placement is not a
+    design lane's to do. Gate D4 still requires independent review first and human approval after it.
+
+  ready_for_focused_re_review: true
+  self_approval: >
+    NONE. This lane does not approve this artifact and does not approve its own correction. The
+    independent review of revision 3 returned DESIGN_REVIEW_CHANGES_REQUIRED; the response to that
+    review is what this entry records. What comes next is a FOCUSED RE-REVIEW by an independent
+    reviewer, who is specifically invited to re-derive B1's and B2's corrected claims directly from
+    the tree and to refute them again if they are still wrong. Nothing in this entry asserts that any
+    gate is implemented, wired, verified, or enforced. They are DESIGNED, and one of them (the former
+    F3) turned out not to have been a gate at all.
