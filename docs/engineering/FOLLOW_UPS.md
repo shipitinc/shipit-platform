@@ -2954,3 +2954,56 @@ contract id, so it does not record *which* contract was confirmed. (b) The `serv
 unguarded by any test — `composition_wiring_test.dart` never mentions `DesignContractStore`, so removing it
 would be silent. (c) `guard_conditions.dart:172` `as DesignContractResolution?` throws on a wrong-typed
 planted value in the pure-policy path; it cannot produce a pass and no production caller plants the key.
+
+## 38. Integration testing is UNBLOCKED — and immediately revealed the step-3 precondition failing
+
+**`make test-integration` now runs.** For the first time in this repository's recorded history it gets past
+schema application and executes test code: **287 tests, 22 failures**, on a disposable Postgres it creates
+and removes correctly (`shipit_integration_<pid>` container + data + network all removed, every run). The
+42P07 blocker (F-154) is **fixed at both sites** — `20261017102506000/definition.sql:692` (`15d05ca`) and
+`20261018180816929/definition.sql:715` (`6cf3714`) — and a generalised repo-wide sweep of all 27
+`definition.sql` files found **exactly one** collision, now removed. The colliding index was proven
+**redundant, not a second constraint** (`"isPrimary": true` in the generated `definition.json`, same single
+column `("id")`, same uniqueness, no predicate; the genuine second constraint
+`product_qa_contract_spec_product_unique` on `("productId")` is untouched) — removal, not rename, because a
+rename would leave a permanent duplicate of the PK index.
+
+**F-158 — the fresh-database and chain-database paths take DIFFERENT files, and that asymmetry is the whole
+bug.** `definition.sql` is applied **only** when no migration version is recorded
+(`serverpod-3.4.13 migration_manager.dart:194-205`); a chain-migrated database replays each `migration.sql`.
+Corroborated in-repo at `schema_bootstrap.dart:6-9` and `verify_schema_bootstrap.sh:45-50`. **That is why QA
+never failed**: it recorded the migration as applied, and `20261017102506000/migration.sql:74` carries the
+same statement **with `IF NOT EXISTS`** — a no-op on the chain path. Only fresh databases hit the bare form.
+This also means **no `migration.sql` was edited, so the QA database's schema is untouched.**
+
+**F-159 — STEP 2'S GUARD IS WORKING, AND IT IS NOW REACHABLE-FEEDBACK.** The dominant new failure is exactly
+the fail-closed refusal F-153 predicted:
+> `Workflow transition rejected: WorkItemState.planned -> WorkItemState.designRequired (The work item names
+> design contract dc-wi-lifecycle, and that id was not confirmed against a design contract store: either no
+> store is mounted to ask or the id resolves to no row)`
+
+`design_governance_e2e_test.dart` constructs engines with **no** `designContractStore` — F-155's three sites,
+plus test-local engines. **This is correct behaviour, not a regression**: those tests were asserting
+`planned → designRequired` succeeding on a context-supplied string, which is the defect D-5 removed.
+
+**F-160 — THE STEP-3 PRECONDITION IS REACHABLE BUT FAILING. Do not proceed to step 3 yet.**
+`apps/server/test/integration/design_contract_postgres_test.dart` now **executes** (it could not before) and
+**fails in `setUpAll`**. The reviewer's condition was that this must **pass** before the first production
+`designContractId` is written, because `_resolveDesignContract` propagates store exceptions and a schema
+mismatch would refuse transitions for **every category**. **It has not been diagnosed.** The visible error
+stream is dominated by an unrelated pre-existing `DatabaseQueryException` from a product-repoint test, so the
+real cause is still masked.
+
+**F-161 — a second, unrelated failure class surfaced: `dogfood_shipit_postgres_test.dart` throws
+`PathNotFoundException` for `apps/control_plane/lib/features/defect_report/`** inside a temporary checkout
+(`/var/folders/…/shipit-head-*/…`), from `ReadOnlyRepositoryReader._walk`
+(`product_registry/lib/src/discovery/read_only_repository_reader.dart:90,96`). That directory does not exist
+in the temp copy. **Pre-existing and environmental**, not caused by any lane here.
+
+**F-162 — `make test-integration` needs `SERVERPOD_DATABASE_PASSWORD` set and does not fail clearly without
+it.** The Makefile sets host/port/name/user but not the password; the expected value is the `test:` profile's
+`database` in `apps/server/config/passwords.yaml` (`control_plane_test_pw`). Without it the target aborts with
+a bare `SERVERPOD_DATABASE_PASSWORD is not set` and **exits 0 through the pipeline**, so a caller piping to
+`tail` sees a green-looking run. It does clean up correctly on that path. **A guard or a clearer failure is
+owed**, and note the AGENTS.md rule that a cleanup failure must never be silenced — here the *setup* failure
+is the thing being lost.
