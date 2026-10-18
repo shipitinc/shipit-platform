@@ -2801,3 +2801,45 @@ gate is a separate authority whose tier is unresolvable while `DesignRiskPolicy`
 `submittedArtifacts`/`decisions`/`expiresAt` are `null`, meaning **"not yet"** rather than **"nothing."**
 `status` is deliberately a plain `String`, not a generated Serverpod enum, because
 `platform_contracts.DesignContractStatus` is the authority and a second enum would be a second vocabulary.
+
+
+### §37 review outcome — `APPROVE_CORRECTIONS`, with a MERGE CONDITION
+
+Verified independently at `ac037db`: the `product_qa_contract_spec` restoration is byte-correct across all
+three artefacts (`cmp`-identical, 2608-character blocks), its guard test is non-vacuous (2 tests red on
+erasure), and **nothing else was lost** — a full table-set diff across every `definition.sql` and both JSONs
+gives exactly `+design_contract` with `removed: []` and `changed entries: []`. 32 mutations measured
+independently, **zero vacuous**. All three green reverts reproduced. The generator's no-database claim is
+confirmed: `getLiveDatabaseDefinition()` occurs **exactly once** in `serverpod_cli-3.4.13`, at
+`generator.dart:187` inside `repairMigration()`. All four builder refusals judged **honest** — none is a
+fabricated value wearing a refusal's clothes.
+
+**F-144 — the `product_qa_contract_spec` erasure is CERTAIN, not merely likely.** `postgres.dart:58` renders
+`tables.where((table) => table.managed != false)`, so **an unmanaged table can never appear in a generated
+`definition.sql`** — by construction, on the next `create-migration`. The fresh-database path is exactly as
+correct as before the commit (no regression), and the erasure is now *detected* rather than silent, so this
+is **HIGH and non-blocking**. Two remedies already exist in this repository and **neither was applied**:
+`verify_schema_bootstrap.sh:503-504` says in terms *"A hand edit there is erased by the next regeneration.
+Put the DDL in `tool/schema_bootstrap.sql` instead"*, and the new
+`design_contract.spy.yaml:11-14` names this table as the precedent for the fragility. **Fix: either add
+`apps/server/lib/src/database/product_qa_contract_spec.spy.yaml` as a managed model, or move its DDL into
+`apps/server/tool/schema_bootstrap.sql` and add the table to `verify:schema-deviations`.**
+
+**F-145 — a durable record must carry the full ledger, not the headline.** §37's F-141 says "3 of 22
+mutations stayed green". The lane disclosed **two further mutations rejected as format-dirty** and re-measured
+with format-stable equivalents (both RED) — and the reviewer independently confirmed both rejections were
+real (`format-clean=False`). **That accounting is absent from the durable entry.** An unexamined "green" is
+what this discipline exists to catch, so the record of what was *discarded* matters as much as what was found.
+
+**F-146 — LOW, introduced by review: an interface promise its only implementation does not keep.**
+`design_contract_store.dart:81` documents `listDesignContractsForWorkItem` as returning **oldest first**;
+`in_memory_design_contract_store.dart:56-60` returns map insertion order. Constructible and pinned by no
+test: a `LinkedHashMap` overwrite keeps the original position, and descending-`createdAt` inserts read
+newest-first. A future `PostgresDesignContractStore` ordering by `createdAt` would silently disagree.
+
+**MERGE CONDITION — step 1 is a CONTRACTED PARTIAL, not complete.** `§4.2(a)` is headed "**A durable** design
+contract", and §9's own justification for step 2 is *"Without it, step 1's row and a fabricated string are
+indistinguishable."* What exists is a table with an interface and an in-memory implementation and **nothing
+durable**. Against that, §4.3's store-confirmation is **not durable** and **step 2 cannot be honest** until
+`PostgresDesignContractStore` is granted in `apps/server/lib/src/persistence/`. **F-142 was a dispatch defect,
+not a decision.**
