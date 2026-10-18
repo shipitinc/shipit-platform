@@ -2306,3 +2306,48 @@ failure row is written, the item reaches `agent_failed`, and `operatorRetry` **r
 unchanged. Exiting 1 is then conservative and correct, but "STRANDED" is a false label for an item an
 operator retry would accept. **Fix by deriving the label from the state, or hedge the wording.** Same
 false-claim class as F-92's other findings, left in place pending a follow-up correction.
+
+## 31. The repair ran live and worked; the last stranded item moved, then stopped at a new gap
+
+**F-92 resolved at runtime.** One deliberate run of the corrected script against live QA, output
+verified against the criteria the focused review set:
+
+```
+[stranded.failure_recorded] jobId=jb-hnbbvl52jy-c1whpy kind=permanent
+[stranded.retried]         state=design_not_required jobId=jb-hnbbvl52jy-c1whpy
+  state   : agent_executing -> design_not_required
+  recorded: true
+  retried : retried: operatorRetry moved the item to designNotRequired
+  1 of 1 item(s) changed.        exit=0
+```
+State moved, `recorded: true`, `retry_declined` absent, no `STRANDED:` line, empty stderr.
+
+**B3 settled, in the better direction.** The run named `jb-hnbbvl52jy-c1whpy` = `2026-10-18 03:04:11`,
+the **second/newest** failed job; the first was `jb-hnajiactyh-14p5mvo` = `2026-10-17 09:54:56`. So the
+history now holds **two genuine** `agentExecuting → agentFailed` rows (`03:03:53` and `13:12:44`), each
+followed by `agentFailed → designNotRequired`. **This is the fix working, not the duplicate F-92
+predicted.** The old-key row named the first failure, exactly as B3's conditional predicted.
+
+**F-99 — OPEN, cause NOT established — the last stranded item is not re-dispatched.**
+`design-remediation-DEF-1791686085546076` sits at `designNotRequired`, version 11, and the ordinary
+scheduler tick creates **no job** for it. What is verified, and what is not:
+
+- VERIFIED it is dispatchable in principle: `designNotRequired` **is** in `entryStates` of
+  `triageDefectDefinition` (`packages/scheduler/lib/src/triage_defect.dart:126-131`).
+- VERIFIED the probe has what it needs: `triage_defect.dart:224` reads
+  `metadata['defectId'] ?? item.workItemId`, and the item's metadata **does** carry
+  `defectId = DEF-1791686085546076` — identical in shape to the dispatching
+  `defect-DEF-1791685401972067`.
+- VERIFIED `triageDefectDefinition` declares **no category filter**, and the tick is healthy and busy
+  (two live jobs, `ran: true, dispatched: 0, overlappedTicks: 0`).
+- VERIFIED nothing in the tick log mentions the item.
+- **NOT ESTABLISHED: why no job is created.** The remaining suspects are a category-based rejection
+  inside `RunnableWorkEvaluator` (whose file was not located in this pass) or a state/category
+  interaction between the `feature`-category item and a `triageDefect` job. **Do not record either as
+  the cause until one is proven** — this repository has already had to withdraw two over-claimed
+  diagnoses written from incomplete evidence (F-79 "permanently wedged", F-87 "unbounded"). Next lane
+  should start from `RunnableWorkEvaluator.evaluate` and prove the rejection, not infer it.
+
+Consequence: **1 item remains not flowing** out of 3 originally stranded. The other two completed and
+the pending human-decision count is 10. **Zero** job failures cite the QA-contract guard since
+`2026-10-18 03:10`.
