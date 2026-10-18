@@ -466,11 +466,23 @@ void main() {
         isTrue,
       );
 
+      // Supplies a result for BOTH required gates, so this rejection is caused
+      // by the `failed` status alone. It previously supplied one result for a
+      // two-required-gate contract, so it also failed for the second, weaker
+      // reason that a required gate had no result at all — and therefore
+      // exercised neither reason in isolation.
       final failing = [
         QAGateResult(
           gateId: 'static-analysis',
           workItemId: _workItemId,
           status: QAGateStatus.failed,
+          evidence: const [],
+          evaluatedAt: DateTime.parse('2024-01-02T13:00:00Z'),
+        ),
+        QAGateResult(
+          gateId: 'unit-tests',
+          workItemId: _workItemId,
+          status: QAGateStatus.passed,
           evidence: const [],
           evaluatedAt: DateTime.parse('2024-01-02T13:00:00Z'),
         ),
@@ -484,6 +496,22 @@ void main() {
       );
       expect(rejected.isValid, isFalse);
       expect(rejected.failedGuards, contains('all_required_gates_passed'));
+
+      // The subset case, at the transition level: both required gates exist in
+      // the contract but only one result was produced. This is the vacuous
+      // pass that `guard_conditions_vacuous_pass_test.dart` pins row-by-row.
+      final subset = eval(
+        WorkItemState.qaInProgress,
+        WorkItemState.qaPassed,
+        trigger: TransitionTrigger.agentResult,
+        actor: _qaExecutor,
+        context: {
+          'gateResults': [gateResults.first],
+          'qaContract': qaContract,
+        },
+      );
+      expect(subset.isValid, isFalse);
+      expect(subset.failedGuards, contains('all_required_gates_passed'));
     });
 
     test('qaFailed gate accepts waiver and unlocks qaPassed', () {

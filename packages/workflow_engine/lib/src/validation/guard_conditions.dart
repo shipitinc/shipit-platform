@@ -258,6 +258,21 @@ class _AllRequiredGatesPassedGuard extends GuardCondition<WorkItemState> {
   @override
   String get name => 'all_required_gates_passed';
 
+  /// Evaluates the QA contract's **required gates**, not the results handed
+  /// to it.
+  ///
+  /// The invariant is one line: *a required gate with no result is
+  /// `not_executed`, not absent.* Iterating `gateResults` and asking "of the
+  /// results I was handed, are the required ones satisfied?" cannot express
+  /// that — a contract declaring three required gates, given only the one
+  /// result that passed, filtered to a single element whose `.every()` is
+  /// `true`, and passed while two required gates went unevaluated. The
+  /// iteration is inverted here: every required gate the contract declares is
+  /// looked up in the results, and a miss fails naming the gate id.
+  ///
+  /// This is fail-closed by construction: a gate that was never evaluated and
+  /// a gate that evaluated and failed now produce the same verdict, which is
+  /// the correct one.
   @override
   GuardResult evaluate(
     WorkflowState<WorkItemState> from,
@@ -269,23 +284,42 @@ class _AllRequiredGatesPassedGuard extends GuardCondition<WorkItemState> {
       return GuardResult.fail(name, 'Gate results required for QA evaluation');
     }
 
-    final requiredGates = gateResults.where(
-      (g) =>
-          context?['qaContract']?.gates.any(
-            (gc) => gc.gateId == g.gateId && gc.required,
-          ) ??
-          false,
-    );
+    // Without the contract there is no declared gate set, so "all required
+    // gates passed" has nothing to iterate and would be vacuously true.
+    final qaContract = context?['qaContract'] as QAContract?;
+    if (qaContract == null) {
+      return GuardResult.fail(
+        name,
+        "QA contract required in context under key 'qaContract'; without it no "
+        'required gate can be evaluated, and an empty gate set must not read as '
+        'an overall pass',
+      );
+    }
 
-    final allSatisfied = requiredGates.every(_isGateSatisfied);
-    return allSatisfied
-        ? GuardResult.pass(name)
-        : GuardResult.fail(
-            name,
-            'All required QA gates must pass; a required gate left '
-            'not_executed or skipped without an authority reference '
-            'requires a formal determination rather than a silent pass',
-          );
+    for (final gate in qaContract.gates.where((g) => g.required)) {
+      // Every result carrying this gate id must satisfy the gate. Duplicates
+      // are not collapsed, so a second result cannot mask a failing one.
+      final resultsForGate = gateResults.where((r) => r.gateId == gate.gateId);
+
+      if (resultsForGate.isEmpty) {
+        return GuardResult.fail(
+          name,
+          'Required QA gate ${gate.gateId} has no gate result; a required gate '
+          'left unevaluated is not_executed and blocks qa_passed',
+        );
+      }
+
+      if (!resultsForGate.every(_isGateSatisfied)) {
+        return GuardResult.fail(
+          name,
+          'All required QA gates must pass; a required gate left '
+          'not_executed or skipped without an authority reference '
+          'requires a formal determination rather than a silent pass',
+        );
+      }
+    }
+
+    return GuardResult.pass(name);
   }
 
   bool _isGateSatisfied(QAGateResult result) {
