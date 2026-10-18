@@ -2891,3 +2891,66 @@ the composition root, since the barrel will not do it; (3)
 against a real database — the gate that turns "compiled" into "executed"; (4) the `FOLLOW_UPS.md` ledger
 entry, which this entry is. **Not assumed done:** F-143 — `DesignContractBuilder` still has **no production
 caller** (step 3). A store nobody provisions is a table nobody fills.
+
+### §9 step 2 — D-5/F-122 CLOSED (`384a3d1`), `APPROVE_CORRECTIONS`, no regressions
+
+`designContractExists()` no longer reads `context?['designContractId']`. Verified by **independent mutation,
+not claim**: reverting the guard reproduces `planned -> designRequired was ACCEPTED with no contract behind it`.
+At HEAD the edge is refused and the item does not move.
+
+**F-151 — the mechanism, and why the offered signature change was correctly DECLINED.**
+`DurableWorkflowEngine` gains an optional `DesignContractStore`, resolves
+`WorkItem.designContractId` + `store.hasDesignContract(id)` into a `DesignContractResolution`
+(`contractId != null && storeConfirmed`), and writes it under a reserved context key **unconditionally after
+the caller's spread** — so planting the key is inert **by ordering**, and exactly one production writer
+(`:207`) and one reader (`guard_conditions.dart:170-172`) exist. The same idiom is already house style
+(`transition_validator.dart:72` writes `'actor'` after the metadata spread). Three narrower routes were
+rejected and all three rejections are real: the guard is constructed at one site inside a `static final`
+table at `work_item_transitions.dart:26` (**step 3's file**); `workflow_store` depends on `workflow_engine`,
+so the guard cannot take the store without a cycle; and `GuardCondition.evaluate` is synchronous against
+`Future<bool>` — async would mean `Future<GuardResult>` across all 20 guards **and still would not supply the
+`WorkItem` (F-118)**, so §4.3's *column* half would remain unimplemented. **The lane took permission for a
+repo-wide change and declined it. That was right.**
+
+**F-152 — all 53 regressions asserted the DEFECT, not the requirement.** Diff removes **0** `expect(` lines,
+**0** test/group declarations, adds **0** skips/tags; nine sites sampled across three packages all assert the
+requirement. `planned_entry_state_hop_test.dart:753` keeps its `isTrue` **strengthened** to a confirmed
+resolution and **gains** a new `isFalse` naming §4.3's falsifier, with the residual routing observation
+preserved byte-for-byte. 4 mutations measured, **0 green reverts**, nothing discarded.
+
+**F-153 — a PRECONDITION for step 3, not a follow-up: the runner must be EXECUTED before the first
+production `designContractId` is written.** `design_contract_postgres_test.dart` is written, analyze-clean
+and **UNEXECUTED**, and step 2's discharge condition item (3) required it *running* — **that condition is
+UNMET**. It was acceptable to land unmounted-risk-zero at this HEAD because **no production caller of
+`createWorkItem` ever passes `designContractId`**, so `_resolveDesignContract` short-circuits at `:327` and
+never issues a SELECT. **The argument degrades at step 3:** once lane E provisions contracts, every
+transition on a contract-bearing item hits the unverified query, and `:325` **deliberately lets a store
+exception propagate** — so a schema mismatch would refuse transitions for **every category**. A failure mode
+F-150 did not carry when it accepted the store unmounted.
+
+**F-154 — the runner is currently un-runnable, and the blocker is a pre-existing migration bug.**
+`make test-integration` is red at HEAD (migration `20261017102506000`, **42P07**: it creates
+`"id" bigserial PRIMARY KEY`, which Postgres names `product_qa_contract_spec_pkey`, then immediately
+`CREATE UNIQUE INDEX IF NOT EXISTS "product_qa_contract_spec_pkey"` on the same table). The QA database is
+unaffected because it recorded that migration as applied; **only the fresh-database path fails.** So the
+sanctioned disposable-Postgres route — the only sanctioned way to get a real database — is broken, and the
+durable store's only execution gate cannot be run. **Fix this before step 3**, not after.
+
+**F-155 — a third engine wiring site, missed by both the lane and my own brief.**
+`apps/server/lib/src/services/control_plane_service.dart:115-116`,
+`apps/server/bin/repair_stranded_work_items.dart:884-887`, **and `packages/scheduler/lib/src/scheduler.dart:573`
+(`_reclaimEngine`, also the `EntryHopper`'s engine at `:596`)** all construct engines with **no**
+`designContractStore`. All three are fail-closed and correct today — no production caller transitions TO
+`designRequired` — but once R2.x lands, the unmounted sites stop being harmless and start **refusing for the
+wrong reason**. Site (1) is the one lane E's release writes through. **Step 3 must own all three.**
+
+**F-156 — adjacent fabrication surface, pre-existing, outside §4.3.**
+`_DesignContractUnderReviewGuard` (`guard_conditions.dart:202-220`) reads a caller-supplied
+`context['designContractStatus']` on `designRequired → designInReview` — **the same class of defect D-5 was**,
+on the adjacent edge. Unchanged by step 2 and not in its scope; belongs to step 3 / §8.1.
+
+**F-157 — LOW, pre-existing.** (a) An ACCEPTED `planned → designRequired` record captures no confirmed
+contract id, so it does not record *which* contract was confirmed. (b) The `server.dart:249` mount is
+unguarded by any test — `composition_wiring_test.dart` never mentions `DesignContractStore`, so removing it
+would be silent. (c) `guard_conditions.dart:172` `as DesignContractResolution?` throws on a wrong-typed
+planted value in the pure-policy path; it cannot produce a pass and no production caller plants the key.
