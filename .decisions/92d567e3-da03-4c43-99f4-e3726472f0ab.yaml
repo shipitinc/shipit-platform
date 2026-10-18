@@ -1,0 +1,40 @@
+# human-decision.yaml
+decision_id: 92d567e3-da03-4c43-99f4-e3726472f0ab
+type: PRODUCT
+status: RESOLVED
+title: qaPassed stays closed until substantive quality gates are designed; the structural gate is not enough
+resolution:
+  selected: DESIGN_SUBSTANTIVE_GATES_FIRST
+  label: do not implement an evaluator that grants qaPassed on structural gates alone
+  decided_by: operator
+  decided_at: 2026-10-18T12:20:00Z
+  rationale_given: >-
+    The only registered gate is intake-structured-result-admitted
+    (type triage-classification-structure), which asserts that the agent returned a structured result
+    with four well-formed fields. It checks structure, not substance. The approved evaluator spec itself
+    warns that supplying gateResults with no qaContract "yields a QA pass that judged nothing", and the
+    same reasoning applies to a pass judged only on the shape of a payload. Choosing between the three
+    options put to the operator, the third was selected over the structural-only bar and over gating
+    qaPassed behind the human engineering-review sign-off.
+  what_this_blocks_on_purpose: >-
+    qaPassed remains unreachable until substantive per-lane quality gates are designed, registered and
+    evaluated. Work items therefore accumulate at review_approved rather than completing unattended on
+    a weak bar. That accumulation is the accepted cost of not rubber-stamping, and it is deliberate.
+  what_is_not_being_waived: >-
+    Nothing is fabricated to unblock this. The Manager will not invent quality gates, and will not
+    weaken the registered structural gate to manufacture a passing result. The evaluator machinery
+    (slice 3) may be built, but it must not be wired to grant qaPassed until real gates exist.
+  consequence_for_the_structural_gate: >-
+    intake-structured-result-admitted stays registered and truthful -- it really does assert that the
+    structured result was produced and parsed. It is simply not sufficient on its own to complete an
+    item, and it must not be described as a quality gate anywhere in code or docs.
+  rejected_alternatives:
+    - >-
+      Structural gate only, recorded as knowingly weak. Rejected: every future feature and remediation
+      item would complete on a well-formed payload alone.
+    - >-
+      Structural gate plus the human engineering-review sign-off. Rejected in favour of real gates:
+      it keeps the pass self-certifying rather than resting on an assertion about substance.
+  scope_note: >-
+    Dispatchable as an ordinary design lane with independent review, under the Gate-D4 approved
+    design/qa-contracts-feature-remediation/. No further human gate is required to run that design.
