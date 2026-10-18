@@ -232,7 +232,16 @@ void main() {
       for (final entry in definition.entryStates) {
         test('${definition.jobType.wire} at ${entry.wire}', () async {
           final store = InMemoryWorkflowStore();
-          final workflow = DurableWorkflowEngine(store: store);
+          // Mounted because `designContractExists()` reads the work item's
+          // `designContractId` column and confirms it against a store. Without
+          // one, every walk below that reaches `designRequired` would be
+          // refused, and this guard would be measuring a fixture that cannot
+          // be built rather than the graph it exists to check.
+          final contractStore = InMemoryDesignContractStore();
+          final workflow = DurableWorkflowEngine(
+            store: store,
+            designContractStore: contractStore,
+          );
           await workflow.createWorkItem(
             workItemId: 'wi-1',
             productId: 'prod-1',
@@ -243,6 +252,14 @@ void main() {
                 'entry state so the live evaluator and the live transition '
                 'table can be asked about it.',
             qaContractId: 'qa-1',
+            designContractId:
+                (await DesignContractProvisioner(
+                      contractStore: contractStore,
+                    ).provisionForWorkItem(
+                      workItemId: 'wi-1',
+                      productId: 'prod-1',
+                    ))
+                    .contractId,
           );
           final item = await placeIn(workflow, entry);
 
@@ -294,9 +311,13 @@ Future<WorkItem> placeIn(
     context: context,
   );
 
-  const designContract = {'designContractId': 'dc-1'};
+  // `designContractId` is NOT a context key any more: the guard reads the
+  // work item's durable column and confirms it against a store, which the
+  // fixture above arranges. So the design walk below supplies no contract in
+  // context at all — which is the honest shape of it, and a context string
+  // here would have kept this file green while the guard it exercises no longer
+  // read one.
   const underReview = {
-    'designContractId': 'dc-1',
     'designContractStatus': DesignContractStatus.underReview,
   };
   const executing = {'agentAvailable': true, 'capabilitiesMatch': true};
@@ -347,7 +368,7 @@ Future<WorkItem> placeIn(
     // `decisionActorIsHuman()`, so a walk that skipped the gate would be
     // asserting against a transition the engine would refuse.
     case WorkItemState.implementationReady:
-      await step(WorkItemState.designRequired, context: designContract);
+      await step(WorkItemState.designRequired);
       await step(WorkItemState.designInReview, context: underReview);
       await _resolveDesign(workflow, HumanDecisionChoice.approve);
       await step(WorkItemState.agentExecuting, context: executing);
@@ -380,21 +401,21 @@ Future<WorkItem> placeIn(
       await step(WorkItemState.agentExecuting, context: executing);
       await step(WorkItemState.agentFailed);
     case WorkItemState.designRequired:
-      await step(WorkItemState.designRequired, context: designContract);
+      await step(WorkItemState.designRequired);
     case WorkItemState.designInReview:
     case WorkItemState.designRejected:
-      await step(WorkItemState.designRequired, context: designContract);
+      await step(WorkItemState.designRequired);
       await step(WorkItemState.designInReview, context: underReview);
       if (state == WorkItemState.designRejected) {
         await _resolveDesign(workflow, HumanDecisionChoice.reject);
       }
     case WorkItemState.designApproved:
-      await step(WorkItemState.designRequired, context: designContract);
+      await step(WorkItemState.designRequired);
       await step(WorkItemState.designInReview, context: underReview);
       await _resolveDesign(workflow, HumanDecisionChoice.approve);
     case WorkItemState.agentCompleted:
     case WorkItemState.reviewRejected:
-      await step(WorkItemState.designRequired, context: designContract);
+      await step(WorkItemState.designRequired);
       await step(WorkItemState.designInReview, context: underReview);
       await _resolveDesign(workflow, HumanDecisionChoice.approve);
       await step(WorkItemState.agentExecuting, context: executing);

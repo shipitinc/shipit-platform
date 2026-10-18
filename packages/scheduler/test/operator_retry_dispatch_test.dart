@@ -1141,12 +1141,22 @@ class _Host {
   void releaseAll() => dispatcher.releaseAll();
 
   static Future<_Host> start({
-    required Future<String> Function(DurableWorkflowEngine engine) seed,
+    required Future<String> Function(
+      DurableWorkflowEngine engine,
+      DesignContractStore contractStore,
+    )
+    seed,
     required int cap,
   }) async {
     final store = InMemoryWorkflowStore();
-    final engine = DurableWorkflowEngine(store: store);
-    await seed(engine);
+    // Mounted because `designContractExists()` confirms the work item's durable
+    // `designContractId` column against a store; the seeds below write the rows.
+    final contractStore = InMemoryDesignContractStore();
+    final engine = DurableWorkflowEngine(
+      store: store,
+      designContractStore: contractStore,
+    );
+    await seed(engine, contractStore);
 
     final jobStore = _LockingJobStore(InMemoryJobStore());
     final dispatcher = _ParkingDispatcher();
@@ -1265,7 +1275,10 @@ class _Host {
 
 /// The defect work item an operator would find: parked at `agent_failed` with
 /// the full triage payload attached.
-Future<String> _seedFailedDefect(DurableWorkflowEngine engine) async {
+Future<String> _seedFailedDefect(
+  DurableWorkflowEngine engine,
+  DesignContractStore contractStore,
+) async {
   final id = _Host.seededWorkItemId;
   await engine.createWorkItem(
     workItemId: id,
@@ -1275,6 +1288,11 @@ Future<String> _seedFailedDefect(DurableWorkflowEngine engine) async {
     description:
         'A customer reported that the checkout total is wrong when a cart '
         'holds more than one item. Triage it and classify the defect.',
+    // The guard that opens `planned -> designRequired` reads this column and
+    // confirms it against a store, so the item carries a REAL contract row.
+    designContractId: (await DesignContractProvisioner(
+      contractStore: contractStore,
+    ).provisionForWorkItem(workItemId: id, productId: 'prod-1')).contractId,
     metadata: {
       'defectId': 'DEF-1791686704991884',
       'defectTitle': 'Checkout total is wrong',
@@ -1341,6 +1359,7 @@ Future<void> _failAgain(_Host host) async {
 /// tested) and the walk below must start from `draft`.
 Future<String> _seedDefectAtEngineeringReviewGate(
   DurableWorkflowEngine engine,
+  DesignContractStore contractStore,
 ) async {
   const id = _Host.seededWorkItemId;
   await engine.createWorkItem(
@@ -1351,6 +1370,9 @@ Future<String> _seedDefectAtEngineeringReviewGate(
     description:
         'A customer reported that the checkout total is wrong when a cart '
         'holds more than one item. Triage it and classify the defect.',
+    designContractId: (await DesignContractProvisioner(
+      contractStore: contractStore,
+    ).provisionForWorkItem(workItemId: id, productId: 'prod-1')).contractId,
     metadata: {
       'defectId': 'DEF-1791686704991884',
       'defectSeverity': 'high',
@@ -1373,10 +1395,7 @@ Future<String> _seedDefectAtEngineeringReviewGate(
 
   await step(WorkItemState.planning);
   await step(WorkItemState.planned, context: const {'featureRef': 'f-1'});
-  await step(
-    WorkItemState.designRequired,
-    context: const {'designContractId': 'dc-1'},
-  );
+  await step(WorkItemState.designRequired);
   await step(
     WorkItemState.designInReview,
     context: const {'designContractStatus': DesignContractStatus.underReview},

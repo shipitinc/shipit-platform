@@ -27,7 +27,15 @@ class DesignJobHost {
     RequestBuilder? requestBuilder,
   }) {
     workflowStore = InMemoryWorkflowStore();
-    workflowEngine = DurableWorkflowEngine(store: workflowStore);
+    // Every design-lane fixture below walks an item to `designRequired`, which
+    // `designContractExists()` now permits only when the work item's durable
+    // `designContractId` column resolves against a store. The mount is what the
+    // production composition root makes; the fixtures below write the rows.
+    designContractStore = InMemoryDesignContractStore();
+    workflowEngine = DurableWorkflowEngine(
+      store: workflowStore,
+      designContractStore: designContractStore,
+    );
     executionStore = InMemoryExecutionStore();
     session = GateFakeAgentSession(
       executionId: 'agx-fixed',
@@ -99,6 +107,17 @@ class DesignJobHost {
   }
 
   late InMemoryWorkflowStore workflowStore;
+  late InMemoryDesignContractStore designContractStore;
+
+  /// A design contract row written and READ BACK for [workItemId].
+  ///
+  /// Returns the store's read-back id rather than the submitted one, so no
+  /// fixture stamps a work item with an id it has not seen resolve.
+  Future<String> provisionDesignContractFor(String workItemId) async =>
+      (await DesignContractProvisioner(
+            contractStore: designContractStore,
+          ).provisionForWorkItem(workItemId: workItemId, productId: 'prod-1'))
+          .contractId;
   late DurableWorkflowEngine workflowEngine;
   late InMemoryExecutionStore executionStore;
   late GateFakeAgentSession session;
@@ -147,6 +166,7 @@ void main() {
     test('enqueues when work item enters designRequired', () async {
       await host.workflowEngine.createWorkItem(
         workItemId: 'wi-design-1',
+        designContractId: await host.provisionDesignContractFor('wi-design-1'),
         productId: 'prod-1',
         category: WorkItemCategory.feature,
         title: 'Design login page',
@@ -169,7 +189,6 @@ void main() {
         workItemId: 'wi-design-1',
         to: WorkItemState.designRequired,
         trigger: TransitionTrigger.systemEvent,
-        context: {'designContractId': 'dc-wi-design-1'},
       );
 
       final pending = host.scheduler.tick();
@@ -214,6 +233,7 @@ void main() {
     test('worker lacking visualDesign cannot claim design job', () async {
       await host.workflowEngine.createWorkItem(
         workItemId: 'wi-design-3',
+        designContractId: await host.provisionDesignContractFor('wi-design-3'),
         productId: 'prod-1',
         category: WorkItemCategory.feature,
         title: 'Design settings',
@@ -236,7 +256,6 @@ void main() {
         workItemId: 'wi-design-3',
         to: WorkItemState.designRequired,
         trigger: TransitionTrigger.systemEvent,
-        context: {'designContractId': 'dc-wi-design-3'},
       );
 
       host.worker = LocalWorker(
@@ -301,6 +320,7 @@ void main() {
     test('enqueues when work item enters designInReview', () async {
       await host.workflowEngine.createWorkItem(
         workItemId: 'wi-review-1',
+        designContractId: await host.provisionDesignContractFor('wi-review-1'),
         productId: 'prod-1',
         category: WorkItemCategory.feature,
         title: 'Review login design',
@@ -323,14 +343,12 @@ void main() {
         workItemId: 'wi-review-1',
         to: WorkItemState.designRequired,
         trigger: TransitionTrigger.systemEvent,
-        context: {'designContractId': 'dc-wi-review-1'},
       );
       await host.workflowEngine.transition(
         workItemId: 'wi-review-1',
         to: WorkItemState.designInReview,
         trigger: TransitionTrigger.systemEvent,
         context: {
-          'designContractId': 'dc-wi-review-1',
           'designContractStatus': DesignContractStatus.underReview,
           'designRevisionId': 'dr-1',
           'designerExecutionId': 'wx-designer-1',
@@ -369,6 +387,9 @@ void main() {
       () async {
         await host.workflowEngine.createWorkItem(
           workItemId: 'wi-review-2',
+          designContractId: await host.provisionDesignContractFor(
+            'wi-review-2',
+          ),
           productId: 'prod-1',
           category: WorkItemCategory.feature,
           title: 'Review dashboard design',
@@ -391,14 +412,12 @@ void main() {
           workItemId: 'wi-review-2',
           to: WorkItemState.designRequired,
           trigger: TransitionTrigger.systemEvent,
-          context: {'designContractId': 'dc-wi-review-2'},
         );
         await host.workflowEngine.transition(
           workItemId: 'wi-review-2',
           to: WorkItemState.designInReview,
           trigger: TransitionTrigger.systemEvent,
           context: {
-            'designContractId': 'dc-wi-review-2',
             'designContractStatus': DesignContractStatus.underReview,
             'designRevisionId': 'dr-2',
             'designerExecutionId': 'wx-designer-2',
@@ -531,6 +550,9 @@ void main() {
       () async {
         await host.workflowEngine.createWorkItem(
           workItemId: 'wi-dedupe-1',
+          designContractId: await host.provisionDesignContractFor(
+            'wi-dedupe-1',
+          ),
           productId: 'prod-1',
           category: WorkItemCategory.feature,
           title: 'Dedupe test',
@@ -553,14 +575,12 @@ void main() {
           workItemId: 'wi-dedupe-1',
           to: WorkItemState.designRequired,
           trigger: TransitionTrigger.systemEvent,
-          context: {'designContractId': 'dc-wi-dedupe-1'},
         );
         await host.workflowEngine.transition(
           workItemId: 'wi-dedupe-1',
           to: WorkItemState.designInReview,
           trigger: TransitionTrigger.systemEvent,
           context: {
-            'designContractId': 'dc-wi-dedupe-1',
             'designContractStatus': DesignContractStatus.underReview,
             'designRevisionId': 'dr-dedupe-1',
             'designerExecutionId': 'wx-designer-dedupe',
@@ -617,6 +637,9 @@ void main() {
         // Test maxAttempts logic directly by manipulating job state
         await host.workflowEngine.createWorkItem(
           workItemId: 'wi-maxattempt-1',
+          designContractId: await host.provisionDesignContractFor(
+            'wi-maxattempt-1',
+          ),
           productId: 'prod-1',
           category: WorkItemCategory.feature,
           title: 'Max attempts design',
@@ -639,7 +662,6 @@ void main() {
           workItemId: 'wi-maxattempt-1',
           to: WorkItemState.designRequired,
           trigger: TransitionTrigger.systemEvent,
-          context: {'designContractId': 'dc-wi-maxattempt-1'},
         );
 
         // Enqueue the job directly via queue
@@ -720,6 +742,7 @@ void main() {
       // Test lease reconciliation logic directly by manipulating job state
       await host.workflowEngine.createWorkItem(
         workItemId: 'wi-recon-1',
+        designContractId: await host.provisionDesignContractFor('wi-recon-1'),
         productId: 'prod-1',
         category: WorkItemCategory.feature,
         title: 'Reconciliation test',
@@ -742,7 +765,6 @@ void main() {
         workItemId: 'wi-recon-1',
         to: WorkItemState.designRequired,
         trigger: TransitionTrigger.systemEvent,
-        context: {'designContractId': 'dc-wi-recon-1'},
       );
 
       // Enqueue directly via queue

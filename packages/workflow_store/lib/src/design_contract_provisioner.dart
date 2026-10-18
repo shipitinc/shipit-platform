@@ -169,11 +169,13 @@ const int designContractApprovalThreshold = 1;
 ///
 /// It performs the write, reads the row back, and returns the resolved contract —
 /// in that order — so a caller cannot stamp a work item with an id it has not
-/// seen resolve. `GuardConditions.designContractExists()` checks only that a
-/// value is non-null, so an id that resolves to nothing is worth exactly as much
-/// as a real one at that boundary and nothing at all above it. The read-back is
-/// the whole point; [buildDraftContract] without it would reproduce the
-/// fabrication this exists to remove.
+/// seen resolve. `GuardConditions.designContractExists()` reads the durable
+/// `designContractId` column and confirms it against a [DesignContractStore],
+/// so an id that resolves to nothing is refused at the transition; before that
+/// confirmation existed the same id was worth exactly as much as a real one at
+/// that boundary and nothing at all above it. The read-back is the whole point;
+/// [buildDraftContract] without it would reproduce the fabrication this exists
+/// to remove.
 ///
 /// ## Idempotence
 ///

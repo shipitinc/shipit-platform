@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:test/test.dart';
+import 'package:workflow_engine/workflow_engine.dart'
+    show designContractResolutionContextKey, DesignContractResolution;
 import 'package:workflow_store/workflow_store.dart';
 
 const _workItemId = '123e4567-e89b-12d3-a456-426614174001';
@@ -83,6 +85,33 @@ DecisionSignature _sig() => DecisionSignature(
   signedAt: DateTime.now(),
 );
 
+/// The design contract governing [_workItemId], provisioned through the real
+/// [DesignContractProvisioner] and read back — so the `designContractId` these
+/// tests put on the work item is an id they have SEEN RESOLVE, which is the
+/// only kind `designContractExists()` accepts.
+Future<String> provisionContractForTest(
+  DesignContractStore contractStore,
+) async =>
+    (await DesignContractProvisioner(
+          contractStore: contractStore,
+        ).provisionForWorkItem(workItemId: _workItemId, productId: 'prod-1'))
+        .contractId;
+
+/// The `designContractId` a work item for [_workItemId] must carry to enter
+/// `designRequired` now that the guard reads the COLUMN.
+String contractIdForTest() => designContractIdForWorkItem(_workItemId);
+
+/// Walks `draft -> planning -> planned -> designRequired -> designInReview`.
+///
+/// ## THE `designContractId` IS DELIBERATELY ABSENT FROM THE CONTEXT
+///
+/// Every other guard this walk satisfies is satisfied by context, because it
+/// describes something happening *now*. This one cannot: the guard reads the
+/// work item's persisted `designContractId` column and confirms it against the
+/// store, so the item has to be CREATED carrying the id. A test that kept
+/// passing `context: {'designContractId': …}` here would be asserting the defect
+/// — it would go on passing while the guard grew stricter, which is precisely
+/// how a guard gets closed without anyone noticing.
 Future<void> pushToDesignInReview(DurableWorkflowEngine engine) async {
   final result = await engine.transition(
     workItemId: _workItemId,
@@ -104,7 +133,6 @@ Future<void> pushToDesignInReview(DurableWorkflowEngine engine) async {
     to: WorkItemState.designRequired,
     trigger: TransitionTrigger.systemEvent,
     actor: _orch,
-    context: {'designContractId': 'dc-1'},
   );
   await engine.transition(
     workItemId: _workItemId,
@@ -122,11 +150,17 @@ Future<void> pushToDesignInReview(DurableWorkflowEngine engine) async {
 void main() {
   group('DurableWorkflowEngine (InMemory)', () {
     late WorkflowStore store;
+    late DesignContractStore contractStore;
     late DurableWorkflowEngine engine;
 
-    setUp(() {
+    setUp(() async {
       store = InMemoryWorkflowStore();
-      engine = DurableWorkflowEngine(store: store);
+      contractStore = InMemoryDesignContractStore();
+      engine = DurableWorkflowEngine(
+        store: store,
+        designContractStore: contractStore,
+      );
+      await provisionContractForTest(contractStore);
     });
 
     test('golden path draft -> completed through all gates', () async {
@@ -137,6 +171,7 @@ void main() {
         description: 'Golden path item through all workflow gates',
         workItemId: _workItemId,
         featureRef: 'FEAT-001',
+        designContractId: contractIdForTest(),
       );
 
       await pushToDesignInReview(engine);
@@ -260,6 +295,7 @@ void main() {
           title: 'Reject route',
           description: 'Reject route through the engineering review gate',
           workItemId: _workItemId,
+          designContractId: contractIdForTest(),
         );
         await pushToDesignInReview(engine);
         await engine.resolveHumanDecision(
@@ -502,6 +538,7 @@ void main() {
           title: 'Resume resolve',
           description: 'Resume resolve of a blocking human decision',
           workItemId: _workItemId,
+          designContractId: contractIdForTest(),
         );
         await pushToDesignInReview(engine);
         final pending = await engine.requestHumanDecision(
@@ -561,13 +598,207 @@ void main() {
     );
   });
 
+  // `design-revision.md` §8.1, row D-5. The finding was specified as "the
+  // failing test to write", not as prose, precisely because a finding nobody can
+  // run rots. These are that test, and they are the ones that make this file's
+  // other `designContractId` handling mean something: without them, a guard that
+  // went back to reading `context['designContractId']` would leave every other
+  // test in this file green, because they all supply a real row.
+  group('designContractExists is confirmed against the store, not a string', () {
+    /// Creates an item at `planned`, carrying whatever [designContractId] the
+    /// caller asks for — including none, and including an id nothing holds.
+    Future<DurableWorkflowEngine> atPlanned(
+      WorkflowStore store,
+      DesignContractStore? contractStore, {
+      String? designContractId,
+    }) async {
+      final engine = DurableWorkflowEngine(
+        store: store,
+        designContractStore: contractStore,
+      );
+      await engine.createWorkItem(
+        productId: 'prod-1',
+        category: WorkItemCategory.feature,
+        title: 'Design contract probe',
+        description: 'The falsifier for a guard satisfied by any string',
+        workItemId: _workItemId,
+        featureRef: 'FEAT-001',
+        designContractId: designContractId,
+      );
+      await engine.transition(
+        workItemId: _workItemId,
+        to: WorkItemState.planning,
+        trigger: TransitionTrigger.systemEvent,
+        actor: _orch,
+      );
+      await engine.transition(
+        workItemId: _workItemId,
+        to: WorkItemState.planned,
+        trigger: TransitionTrigger.systemEvent,
+        actor: _orch,
+        context: const {'featureRef': 'FEAT-001'},
+      );
+      return engine;
+    }
+
+    Future<WorkflowTransitionRecord> attempt(
+      DurableWorkflowEngine engine,
+    ) async {
+      try {
+        await engine.transition(
+          workItemId: _workItemId,
+          to: WorkItemState.designRequired,
+          trigger: TransitionTrigger.systemEvent,
+          actor: _orch,
+          context: const {'designContractId': 'anything'},
+        );
+        fail(
+          'planned -> designRequired was ACCEPTED with no contract behind it',
+        );
+      } on WorkflowTransitionRejectedException catch (e) {
+        return e.record;
+      }
+    }
+
+    test(
+      "a caller's fabricated id on an item whose COLUMN is null is refused",
+      () async {
+        // THE FALSIFIER, verbatim: `context: {'designContractId': 'anything'}`
+        // on an item whose column is NULL. Before the guard change this was
+        // ACCEPTED and persisted an item at `designRequired` with nothing
+        // behind it — the fabrication lane E refused rather than perform.
+        final contractStore = InMemoryDesignContractStore();
+        await provisionContractForTest(contractStore);
+        final engine = await atPlanned(
+          InMemoryWorkflowStore(),
+          contractStore,
+          designContractId: null,
+        );
+
+        final record = await attempt(engine);
+        expect(record.outcome, TransitionOutcome.rejected);
+        expect(
+          (await engine.loadWorkItem(_workItemId)).state,
+          WorkItemState.planned,
+          reason: 'a refused transition must not move the item',
+        );
+      },
+    );
+
+    test('a COLUMN naming an id the store does not hold is refused', () async {
+      // The other half. A non-null column is a NAME; only the store lookup
+      // turns it into a contract.
+      final engine = await atPlanned(
+        InMemoryWorkflowStore(),
+        InMemoryDesignContractStore(),
+        designContractId: contractIdForTest(),
+      );
+
+      final record = await attempt(engine);
+      expect(record.outcome, TransitionOutcome.rejected);
+      expect(
+        record.reason,
+        contains('resolves to no row'),
+        reason: 'the refusal must name WHICH fact was missing',
+      );
+    });
+
+    test(
+      'an engine with NO contract store mounted refuses a real column too',
+      () async {
+        // Fail-closed by construction. A missing mount must not degrade to the
+        // pre-step-2 behaviour, because the pre-step-2 behaviour IS the defect.
+        final engine = await atPlanned(
+          InMemoryWorkflowStore(),
+          null,
+          designContractId: contractIdForTest(),
+        );
+
+        final record = await attempt(engine);
+        expect(record.outcome, TransitionOutcome.rejected);
+      },
+    );
+
+    test(
+      'a COLUMN the store confirms is accepted, with NO context id',
+      () async {
+        final contractStore = InMemoryDesignContractStore();
+        final contractId = await provisionContractForTest(contractStore);
+        final engine = await atPlanned(
+          InMemoryWorkflowStore(),
+          contractStore,
+          designContractId: contractId,
+        );
+
+        final moved = await engine.transition(
+          workItemId: _workItemId,
+          to: WorkItemState.designRequired,
+          trigger: TransitionTrigger.systemEvent,
+          actor: _orch,
+        );
+
+        expect(
+          moved.state,
+          WorkItemState.designRequired,
+          reason:
+              'the positive case: the COLUMN and the ROW are the whole of the '
+              'evidence, and the transition needs nothing from the caller',
+        );
+      },
+    );
+
+    test(
+      'a caller that PLANTS a confirmed resolution for a different id is refused',
+      () async {
+        // The ordering is the whole of the fix's second half. The resolution key
+        // is a public constant, so planting it is possible; it is inert only
+        // because `transition` writes its own value AFTER spreading the caller's
+        // map. A store holds a real contract for THIS item — so the planted value
+        // is not merely "true", it is true about the WRONG contract — and the
+        // item's own column is null, so the honest answer is a refusal.
+        final contractStore = InMemoryDesignContractStore();
+        await provisionContractForTest(contractStore);
+        final engine = await atPlanned(
+          InMemoryWorkflowStore(),
+          contractStore,
+          designContractId: null,
+        );
+
+        await expectLater(
+          engine.transition(
+            workItemId: _workItemId,
+            to: WorkItemState.designRequired,
+            trigger: TransitionTrigger.systemEvent,
+            actor: _orch,
+            context: {
+              designContractResolutionContextKey: DesignContractResolution(
+                contractId: designContractIdForWorkItem('some-other-item'),
+                storeConfirmed: true,
+              ),
+            },
+          ),
+          throwsA(isA<WorkflowTransitionRejectedException>()),
+          reason:
+              'a planted resolution must be OVERWRITTEN by the engine\'s own '
+              'reading, not honoured',
+        );
+      },
+    );
+  });
+
   group('DurableWorkflowEngine (FileJson) process-exit resume', () {
     late Directory tempDir;
     late File storeFile;
+    late DesignContractStore contractStore;
 
     setUp(() async {
       tempDir = await Directory.systemTemp.createTemp('shipit-store-');
       storeFile = File('${tempDir.path}/store.json');
+      // The SAME instance across the simulated process exit, which is what a
+      // mounted `PostgresDesignContractStore` over one database gives: the
+      // engine is rebuilt, the durable row behind it is not.
+      contractStore = InMemoryDesignContractStore();
+      await provisionContractForTest(contractStore);
     });
 
     tearDown(() async {
@@ -581,6 +812,7 @@ void main() {
       () async {
         final engineA = DurableWorkflowEngine(
           store: FileJsonWorkflowStore(storeFile),
+          designContractStore: contractStore,
         );
         await engineA.createWorkItem(
           productId: 'prod-1',
@@ -588,6 +820,7 @@ void main() {
           title: 'Process exit resume',
           description: 'Process exit resume after a durable decision',
           workItemId: _workItemId,
+          designContractId: contractIdForTest(),
         );
         await pushToDesignInReview(engineA);
 
@@ -608,7 +841,10 @@ void main() {
         );
 
         final storeB = FileJsonWorkflowStore(storeFile);
-        final engineB = DurableWorkflowEngine(store: storeB);
+        final engineB = DurableWorkflowEngine(
+          store: storeB,
+          designContractStore: contractStore,
+        );
 
         final reloaded = await engineB.loadWorkItem(_workItemId);
         expect(reloaded.state, WorkItemState.waitingForHumanDecision);

@@ -760,15 +760,51 @@ void main() {
               context: const {
                 'agentAvailable': true,
                 'capabilitiesMatch': true,
-                'designContractId': 'dc-1',
+                // The edge is legal when a contract CONFIRMED AGAINST THE
+                // STORE backs it. It used to assert legality with a bare
+                // `'designContractId': 'dc-1'` in context, which was the defect
+                // itself: the guard read that string, the durable engine
+                // discarded it, and an item was persisted at `designRequired`
+                // with a NULL column behind it. A pure policy engine has no
+                // work item and no store, so the strongest claim it can make
+                // here is "legal given a confirmed contract" — and that is what
+                // this now says.
+                designContractResolutionContextKey: DesignContractResolution(
+                  contractId: 'dc-1',
+                  storeConfirmed: true,
+                ),
               },
             )
             .isValid,
         isTrue,
         reason:
             'the design lane is NOT unreachable in principle — the edge is '
-            'legal when a contract is supplied. It is simply not the hop this '
-            'definition declares, which is the whole of the residual.',
+            'legal when a contract is supplied AND confirmed. It is simply not '
+            'the hop this definition declares, which is the whole of the '
+            'residual.',
+      );
+
+      // …and it is equally NOT legal on a string, which is the half that used
+      // to be the whole of it.
+      expect(
+        const WorkflowEngine()
+            .evaluateWorkItemTransition(
+              from: WorkItemState.planned,
+              to: WorkItemState.designRequired,
+              trigger: TransitionTrigger.systemEvent,
+              actor: schedulerOrchestratorActor,
+              context: const {
+                'agentAvailable': true,
+                'capabilitiesMatch': true,
+                'designContractId': 'dc-1',
+              },
+            )
+            .isValid,
+        isFalse,
+        reason:
+            'a caller-supplied id is not a contract. This assertion used to be '
+            'the `isTrue` above, and it is the falsifier '
+            '`design-revision.md` §4.3 names.',
       );
 
       await host.scheduler.tick();

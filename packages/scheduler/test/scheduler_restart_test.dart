@@ -167,7 +167,9 @@ void main() {
       category: WorkItemCategory.feature,
       title: 'Blocked',
       description: 'Blocked work item for restart durability',
-      designContractId: 'dc-1',
+      // Read by `designContractExists()` from the durable column and confirmed
+      // against a store — so the walk below supplies no contract in context.
+      designContractId: await first.provisionDesignContractFor('wi-1'),
       featureRef: 'feature/blocked',
     );
     await first.workflowEngine.transition(
@@ -185,16 +187,12 @@ void main() {
       workItemId: 'wi-1',
       to: WorkItemState.designRequired,
       trigger: TransitionTrigger.systemEvent,
-      context: const {'designContractId': 'dc-1'},
     );
     await first.workflowEngine.transition(
       workItemId: 'wi-1',
       to: WorkItemState.designInReview,
       trigger: TransitionTrigger.systemEvent,
-      context: const {
-        'designContractId': 'dc-1',
-        'designContractStatus': DesignContractStatus.underReview,
-      },
+      context: const {'designContractStatus': DesignContractStatus.underReview},
     );
     await first.workflowEngine.requestHumanDecision(
       workItemId: 'wi-1',

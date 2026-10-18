@@ -25,7 +25,15 @@ class FileRestartHarness {
     workflowStore =
         workflowStoreOverride ??
         FileJsonWorkflowStore(File('${dir.path}/workflow.json'));
-    workflowEngine = DurableWorkflowEngine(store: workflowStore);
+    // The same mount `SchedulerHost` makes and the composition root makes with
+    // `PostgresDesignContractStore`: `designContractExists()` confirms the
+    // work item's `designContractId` column against a store, so an engine with
+    // none mounted refuses `planned -> designRequired` outright.
+    designContractStore = InMemoryDesignContractStore();
+    workflowEngine = DurableWorkflowEngine(
+      store: workflowStore,
+      designContractStore: designContractStore,
+    );
     jobStore = FileJsonJobStore(File('${dir.path}/jobs.json'));
     workerStore = FileJsonWorkerStore(File('${dir.path}/workers.json'));
     this.dispatch = dispatch ?? ControlledDispatcher();
@@ -55,9 +63,23 @@ class FileRestartHarness {
   final Directory dir;
 
   late WorkflowStore workflowStore;
+  late InMemoryDesignContractStore designContractStore;
   late DurableWorkflowEngine workflowEngine;
   late FileJsonJobStore jobStore;
   late FileJsonWorkerStore workerStore;
+
+  /// The id of a design contract row written and read back for [workItemId].
+  ///
+  /// Returns the store's READ-BACK id rather than the submitted one, so a
+  /// fixture never stamps a work item with an id it has not seen resolve.
+  Future<String> provisionDesignContractFor(
+    String workItemId, {
+    String productId = 'prod-1',
+  }) async =>
+      (await DesignContractProvisioner(
+            contractStore: designContractStore,
+          ).provisionForWorkItem(workItemId: workItemId, productId: productId))
+          .contractId;
   late WorkerDispatch dispatch;
   late Scheduler scheduler;
 

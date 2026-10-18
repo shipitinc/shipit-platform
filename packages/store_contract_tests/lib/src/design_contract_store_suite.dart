@@ -22,9 +22,16 @@ import 'fixtures.dart';
 ///
 /// It does not establish DURABILITY. Run against an in-memory store it proves
 /// the contract; only the PostgreSQL instantiation proves a row survives a
-/// restart. It also does not prove the guard change — `designContractExists()`
-/// reading the durable column is `design-revision.md` §4.3, which is step 2 and
-/// a different lane's file.
+/// restart.
+///
+/// It does not, by itself, prove the guard change either. `designContractExists()`
+/// reading the durable column and confirming it against a store is design
+/// `design-revision.md` §4.3, and what proves IT is the falsifier: an item whose
+/// `designContractId` column is NULL, or names an id this store does not hold,
+/// must be REFUSED `planned -> designRequired` however much context a caller
+/// supplies. That is asserted where the engine lives
+/// (`packages/workflow_store/test/durable_workflow_engine_test.dart`), because it
+/// is a claim about a transition and this suite is a claim about a store.
 void runDesignContractStoreSuite({
   required String groupName,
   required Future<DesignContractStore> Function() createStore,

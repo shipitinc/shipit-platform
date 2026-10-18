@@ -451,7 +451,20 @@ Future<WorkItem> _resolveEngineeringRework() async {
   // Imported lazily so this file's import list reads as the subject, not the
   // fixture.
   final store = InMemoryWorkflowStore();
-  final workflow = DurableWorkflowEngine(store: store);
+  // A REAL design contract row, because `designContractExists()` reads the
+  // work item's `designContractId` column and confirms it against a store. A
+  // context string no longer opens `planned -> designRequired`, so the fixture
+  // carries the column and the row behind it.
+  final contractStore = InMemoryDesignContractStore();
+  final contractId =
+      (await DesignContractProvisioner(
+            contractStore: contractStore,
+          ).provisionForWorkItem(workItemId: 'wi-edge', productId: 'prod-1'))
+          .contractId;
+  final workflow = DurableWorkflowEngine(
+    store: store,
+    designContractStore: contractStore,
+  );
 
   await workflow.createWorkItem(
     workItemId: 'wi-edge',
@@ -460,6 +473,7 @@ Future<WorkItem> _resolveEngineeringRework() async {
     title: 'A fixture for the implementation entry edge',
     description: 'Walked through the real gate; nothing here is faked.',
     qaContractId: 'qa-1',
+    designContractId: contractId,
   );
 
   Future<void> step(
@@ -507,16 +521,10 @@ Future<WorkItem> _resolveEngineeringRework() async {
 
   await step(WorkItemState.planning);
   await step(WorkItemState.planned, context: const {'featureRef': 'f-1'});
-  await step(
-    WorkItemState.designRequired,
-    context: const {'designContractId': 'dc-1'},
-  );
+  await step(WorkItemState.designRequired);
   await step(
     WorkItemState.designInReview,
-    context: const {
-      'designContractId': 'dc-1',
-      'designContractStatus': DesignContractStatus.underReview,
-    },
+    context: const {'designContractStatus': DesignContractStatus.underReview},
   );
   final designGate = await workflow.requestHumanDecision(
     workItemId: 'wi-edge',

@@ -73,6 +73,7 @@ import 'src/persistence/postgres_job_store.dart';
 import 'src/persistence/postgres_worker_store.dart';
 import 'src/persistence/postgres_worker_registration_store.dart';
 import 'src/persistence/postgres_defect_store.dart';
+import 'src/persistence/postgres_design_contract_store.dart';
 import 'src/persistence/postgres_triage_store.dart';
 import 'src/persistence/postgres_model_execution_record_store.dart';
 import 'src/persistence/postgres_model_policy_store.dart';
@@ -227,7 +228,28 @@ void run(List<String> args) async {
   final defectStore = PostgresDefectStore(db);
   final triageStore = PostgresTriageStore(db);
 
-  final durableWorkflowEngine = DurableWorkflowEngine(store: workflowStore);
+  // THE DESIGN CONTRACT STORE, MOUNTED.
+  //
+  // `designContractExists()` on `planned -> designRequired` (and, from design
+  // step 3, on the `designParked -> designRequired` release) no longer accepts a
+  // caller-supplied string: it reads the work item's durable `designContractId`
+  // column and confirms it against a `DesignContractStore`. Confirming it
+  // against an IN-MEMORY store would satisfy the guard about process state that
+  // a redeploy erases, which is the opposite of what the guard is for, so the
+  // composition root wires the PostgreSQL one — the same `db` as every other
+  // store here, so the confirmation reads the same durable row the rest of the
+  // platform reads.
+  //
+  // This mounts a STORE, not a scheduler. `designRevisionDefinition` and
+  // `designReviewDefinition` remain unmounted (design step 8), so nothing
+  // dispatches design work: a guard that can confirm a contract is not a
+  // design lane running.
+  final designContractStore = PostgresDesignContractStore(db);
+
+  final durableWorkflowEngine = DurableWorkflowEngine(
+    store: workflowStore,
+    designContractStore: designContractStore,
+  );
 
   // The REAL agent provider, registered under the id the workload selects.
   //

@@ -7,24 +7,25 @@ import 'package:platform_contracts/platform_contracts.dart';
 /// `WorkItem.designContractId` is a persisted `String?` on every work item, and
 /// `GuardConditions.designContractExists()` on `planned -> designRequired` and
 /// on the R2.3 release edge `designParked -> designRequired` refuses the
-/// transition unless that column is non-null. Until this interface existed the
-/// column had **no writer at all**: there was no `design_contract` table, no
-/// store, and no builder, so the guard could only be satisfied by a caller
-/// passing a string in transition context — which
-/// `DurableWorkflowEngine.transition` then discards. That is the fabrication
-/// lane E refused rather than perform (see
+/// transition unless that column is non-null **and** the id resolves against a
+/// `DesignContractStore`. Until this interface existed the column had **no
+/// writer at all**: there was no `design_contract` table, no store, and no
+/// builder, so the guard could only be satisfied by a caller passing a string in
+/// transition context — which `DurableWorkflowEngine.transition` then discards.
+/// That is the fabrication lane E refused rather than perform (see
 /// `apps/server/lib/src/triage/lane_e_design_remediation_work_item.dart`).
 ///
 /// ## Why the write path returns the contract
 ///
 /// The reason this matters is not that the column is nullable. It is that a
-/// non-null string satisfies `designContractExists()` and **that is all the
-/// guard checks**: an id resolving to no row is indistinguishable from a real
-/// contract at the transition boundary while being worthless to every reader,
-/// auditor and gate evaluator above it. So [provisionDesignContract] makes the
-/// resolved [DesignContract] the return value of the write, and a caller holding
-/// a `designContractId` can only obtain it by way of a contract it has read
-/// back.
+/// non-null string on the column is still only a NAME, and a name is not a row.
+/// Since design step 2, `GuardConditions.designContractExists()` reads this
+/// column **and confirms the id against this store**, so an id resolving to no
+/// row is refused at the transition rather than persisted as a truth — which is
+/// the difference between an auditor reading a fact and reading an assertion.
+/// [provisionDesignContract] makes the resolved [DesignContract] the return
+/// value of the write, so a caller holding a `designContractId` can only obtain
+/// it by way of a contract it has read back.
 ///
 /// ## Where the two halves live
 ///
@@ -40,8 +41,8 @@ import 'package:platform_contracts/platform_contracts.dart';
 /// It does not decide when a contract is written, and it does not decide
 /// whether one may be. Both belong to the lanes that own them: the builder that
 /// provisions the draft contract, and `designContractExists()` itself, which
-/// must read the durable column rather than caller-supplied context before this
-/// store can be the thing that settles the question.
+/// confirms the durable column against this store and refuses when no store is
+/// mounted to ask.
 abstract interface class DesignContractStore {
   /// Writes [contract], replacing any existing row with the same
   /// [DesignContract.contractId].

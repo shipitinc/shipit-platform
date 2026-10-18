@@ -34,6 +34,31 @@ import 'package:workflow_store/workflow_store.dart';
 /// path that matters. These tests build a real `Scheduler` over real in-memory
 /// stores with a recording `WorkerDispatch`, tick it, and read
 /// `SchedulerTickResult` — the same surface the composition root reads.
+/// Builds an engine with a design-contract store MOUNTED and the draft contract
+/// row for [workItemId] already written and read back.
+///
+/// `designContractExists()` reads the work item's durable `designContractId`
+/// column and confirms it against a store, so an engine with neither cannot
+/// walk an item to `designRequired` at all — which is what `walkToReviewGate`
+/// below needs. Returning the READ-BACK id (not the submitted one) keeps the
+/// fixture to the discipline [DesignContractProvisioner] exists to enforce.
+Future<({DurableWorkflowEngine engine, String contractId})>
+engineWithDesignContract(WorkflowStore store, String workItemId) async {
+  final contractStore = InMemoryDesignContractStore();
+  final contractId =
+      (await DesignContractProvisioner(
+            contractStore: contractStore,
+          ).provisionForWorkItem(workItemId: workItemId, productId: 'prod-1'))
+          .contractId;
+  return (
+    engine: DurableWorkflowEngine(
+      store: store,
+      designContractStore: contractStore,
+    ),
+    contractId: contractId,
+  );
+}
+
 void main() {
   /// The repository a fall-through would have used, named so a request carrying
   /// it can be identified by name rather than by shape.
@@ -69,6 +94,7 @@ void main() {
   Future<WorkItem> seedWorkItem(
     DurableWorkflowEngine engine, {
     String workItemId = 'wi-impl',
+    String? designContractId,
   }) async {
     await engine.createWorkItem(
       workItemId: workItemId,
@@ -77,6 +103,7 @@ void main() {
       title: 'Add the thing',
       description:
           'A fixture work item used only to exercise the deferral path',
+      designContractId: designContractId,
     );
     return engine.loadWorkItem(workItemId);
   }
@@ -87,8 +114,8 @@ void main() {
       test('an item outside implementationReady enqueues nothing', () async {
         final workflowStore = InMemoryWorkflowStore();
         final jobStore = InMemoryJobStore();
-        final engine = DurableWorkflowEngine(store: workflowStore);
-        await seedWorkItem(engine);
+        final seeded = await engineWithDesignContract(workflowStore, 'wi-impl');
+        await seedWorkItem(seeded.engine, designContractId: seeded.contractId);
 
         final requests = <WorkerExecutionRequest>[];
         final result = await build(
@@ -143,8 +170,9 @@ void main() {
 
     test('a real rework now lands on THIS lane', () async {
       final workflowStore = InMemoryWorkflowStore();
-      final engine = DurableWorkflowEngine(store: workflowStore);
-      await seedWorkItem(engine);
+      final seeded = await engineWithDesignContract(workflowStore, 'wi-impl');
+      final engine = seeded.engine;
+      await seedWorkItem(engine, designContractId: seeded.contractId);
       await walkToReviewGate(engine);
 
       final gate =
@@ -224,8 +252,9 @@ void main() {
         final jobStore = InMemoryJobStore();
         final requests = <WorkerExecutionRequest>[];
 
-        final engine = DurableWorkflowEngine(store: workflowStore);
-        await seedWorkItem(engine);
+        final seeded = await engineWithDesignContract(workflowStore, 'wi-impl');
+        final engine = seeded.engine;
+        await seedWorkItem(engine, designContractId: seeded.contractId);
 
         // Walked to the implementation entry state through the REAL engine, by
         // taking the production route there: the rework edge out of a resolved
@@ -315,8 +344,9 @@ void main() {
         // asserted in `composition_wiring_test.dart`.
         final workflowStore = InMemoryWorkflowStore();
         final jobStore = InMemoryJobStore();
-        final engine = DurableWorkflowEngine(store: workflowStore);
-        await seedWorkItem(engine);
+        final seeded = await engineWithDesignContract(workflowStore, 'wi-impl');
+        await seedWorkItem(seeded.engine, designContractId: seeded.contractId);
+        final engine = seeded.engine;
         await walkToReviewGate(engine);
         await parkAtImplementationReady(workflowStore);
 
@@ -347,8 +377,9 @@ void main() {
         'workload', () async {
       final workflowStore = InMemoryWorkflowStore();
       final jobStore = InMemoryJobStore();
-      final engine = DurableWorkflowEngine(store: workflowStore);
-      await seedWorkItem(engine);
+      final seeded = await engineWithDesignContract(workflowStore, 'wi-impl');
+      final engine = seeded.engine;
+      await seedWorkItem(engine, designContractId: seeded.contractId);
       await parkAtImplementationReady(workflowStore);
 
       final requests = <WorkerExecutionRequest>[];
@@ -434,16 +465,10 @@ Future<void> walkToReviewGate(DurableWorkflowEngine engine) async {
 
   await step(WorkItemState.planning);
   await step(WorkItemState.planned, context: const {'featureRef': 'f-1'});
-  await step(
-    WorkItemState.designRequired,
-    context: const {'designContractId': 'dc-1'},
-  );
+  await step(WorkItemState.designRequired);
   await step(
     WorkItemState.designInReview,
-    context: const {
-      'designContractId': 'dc-1',
-      'designContractStatus': DesignContractStatus.underReview,
-    },
+    context: const {'designContractStatus': DesignContractStatus.underReview},
   );
 
   final designGate = await engine.requestHumanDecision(

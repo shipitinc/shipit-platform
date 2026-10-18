@@ -39,7 +39,17 @@ class SchedulerHost {
     AgentAdapter? adapter,
   }) {
     workflowStore = InMemoryWorkflowStore();
-    workflowEngine = DurableWorkflowEngine(store: workflowStore);
+    // `designContractExists()` reads the work item's `designContractId` column
+    // and confirms it against a store, so an engine with no store mounted can
+    // never take `planned -> designRequired`. This is the mount the production
+    // composition root makes with `PostgresDesignContractStore`; the in-memory
+    // tier is the honest equivalent for a test, and the rows it holds are real
+    // rows rather than context strings.
+    designContractStore = InMemoryDesignContractStore();
+    workflowEngine = DurableWorkflowEngine(
+      store: workflowStore,
+      designContractStore: designContractStore,
+    );
     executionStore = InMemoryExecutionStore();
     session = GateFakeAgentSession(
       executionId: 'agx-fixed',
@@ -111,8 +121,27 @@ class SchedulerHost {
   }
 
   late InMemoryWorkflowStore workflowStore;
+  late InMemoryDesignContractStore designContractStore;
   late DurableWorkflowEngine workflowEngine;
   late InMemoryExecutionStore executionStore;
+
+  /// The `designContractId` to stamp on a work item that will be walked to
+  /// `designRequired`, having written the contract row it names.
+  ///
+  /// Returns the id of the row the store READ BACK, not the id that was
+  /// submitted — the same discipline `DesignContractProvisioner` exists to
+  /// enforce, and the reason these fixtures no longer pass
+  /// `context: {'designContractId': …}`: a string in context is no longer what
+  /// the guard reads, so a fixture that kept passing one would go on working
+  /// while proving nothing.
+  Future<String> provisionDesignContractFor(
+    String workItemId, {
+    String productId = 'prod-1',
+  }) async =>
+      (await DesignContractProvisioner(
+            contractStore: designContractStore,
+          ).provisionForWorkItem(workItemId: workItemId, productId: productId))
+          .contractId;
 
   /// The gated fake agent the coordinator drives by default: it parks a run so a
   /// test can observe it in flight, then writes a real implementation into the
@@ -174,13 +203,17 @@ class SchedulerHost {
     String productId = 'prod-1',
     String title = 'Blocked item',
   }) async {
+    final contractId = await provisionDesignContractFor(
+      workItemId,
+      productId: productId,
+    );
     await workflowEngine.createWorkItem(
       workItemId: workItemId,
       productId: productId,
       category: WorkItemCategory.feature,
       title: title,
       description: 'Blocked item awaiting a human decision',
-      designContractId: 'dc-$workItemId',
+      designContractId: contractId,
       qaContractId: 'qa-$workItemId',
       featureRef: 'feature/blocked',
     );
@@ -199,16 +232,12 @@ class SchedulerHost {
       workItemId: workItemId,
       to: WorkItemState.designRequired,
       trigger: TransitionTrigger.systemEvent,
-      context: {'designContractId': 'dc-$workItemId'},
     );
     await workflowEngine.transition(
       workItemId: workItemId,
       to: WorkItemState.designInReview,
       trigger: TransitionTrigger.systemEvent,
-      context: {
-        'designContractId': 'dc-$workItemId',
-        'designContractStatus': DesignContractStatus.underReview,
-      },
+      context: const {'designContractStatus': DesignContractStatus.underReview},
     );
     await workflowEngine.requestHumanDecision(
       workItemId: workItemId,

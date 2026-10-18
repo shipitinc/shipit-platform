@@ -1,6 +1,7 @@
 import 'package:platform_contracts/platform_contracts.dart';
 
 import '../states/workflow_state.dart';
+import 'design_contract_resolution.dart';
 import 'transition_validator.dart';
 
 class GuardConditions {
@@ -133,6 +134,29 @@ class _ActorIsNotSelfGuard extends GuardCondition<WorkItemState> {
   }
 }
 
+/// ## This guard reads a DURABLE, STORE-CONFIRMED answer
+///
+/// It used to be `context?['designContractId'] != null` — a caller-supplied
+/// string. A `designContractId` NAMES a design contract; a string does not
+/// prove one exists, and the id this guard used to read was thrown away by
+/// `DurableWorkflowEngine.transition` rather than written anywhere. So the
+/// guard was satisfiable by any caller that passed a value, which is the
+/// behaviour `design-revision.md` §4.3 requires to be unbuildable and whose
+/// falsifier it names: `context: {'designContractId': 'anything'}` on an item
+/// whose column is NULL, which used to be ACCEPTED and persisted an item at
+/// `designRequired` with nothing behind it.
+///
+/// It now reads [DesignContractResolution] under
+/// [designContractResolutionContextKey]: the work item's persisted
+/// `designContractId` column AND a `DesignContractStore` lookup that confirmed
+/// it. Both halves are required, and the absence of a resolution is itself a
+/// refusal — see `DesignContractResolution` for why that is the honest default
+/// for the pure-policy path, which has no store and no work item to ask.
+///
+/// **This guard is shared by `planned -> designRequired` for EVERY category,
+/// not design remediation alone.** Closing it removes a fabrication path for
+/// all of them and breaks no working one: zero production callers transition
+/// TO `designRequired`.
 class _DesignContractExistsGuard extends GuardCondition<WorkItemState> {
   @override
   String get name => 'design_contract_exists';
@@ -143,13 +167,35 @@ class _DesignContractExistsGuard extends GuardCondition<WorkItemState> {
     WorkflowState<WorkItemState> to,
     Map<String, dynamic>? context,
   ) {
-    final hasContract = context?['designContractId'] != null;
-    return hasContract
-        ? GuardResult.pass(name)
-        : GuardResult.fail(
-            name,
-            'Design contract must exist before design work is routed',
-          );
+    final resolution =
+        context?[designContractResolutionContextKey]
+            as DesignContractResolution?;
+
+    if (resolution == null) {
+      return GuardResult.fail(
+        name,
+        'No durable design contract resolution was supplied for '
+        '${from.value} -> ${to.value}. This guard reads the work item\'s '
+        'persisted designContractId column and confirms it against the design '
+        'contract store; only DurableWorkflowEngine.transition can supply '
+        'that, and a caller-supplied context value is not a substitute for it.',
+      );
+    }
+
+    if (!resolution.isConfirmed) {
+      final contractId = resolution.contractId;
+      return GuardResult.fail(
+        name,
+        contractId == null
+            ? 'The work item carries no designContractId, so there is no '
+                  'design contract for design work to run against'
+            : 'The work item names design contract $contractId, and that id '
+                  'was not confirmed against a design contract store: either '
+                  'no store is mounted to ask or the id resolves to no row',
+      );
+    }
+
+    return GuardResult.pass(name);
   }
 }
 

@@ -80,7 +80,10 @@ void main() {
       'a real agent produces a real result on it',
       () async {
         final host = realHost();
-        await itemRejectedAtEngineeringReviewGate(host.workflowEngine);
+        await itemRejectedAtEngineeringReviewGate(
+          host.workflowEngine,
+          host.designContractStore,
+        );
         expect(
           (await host.workflowStore.readWorkItem('wi-1')).state,
           WorkItemState.reviewRejected,
@@ -141,7 +144,10 @@ void main() {
       'ever attempted an execution',
       () async {
         final host = realHost();
-        await itemRejectedAtEngineeringReviewGate(host.workflowEngine);
+        await itemRejectedAtEngineeringReviewGate(
+          host.workflowEngine,
+          host.designContractStore,
+        );
 
         host.session.release();
         await host.scheduler.tick();
@@ -192,7 +198,10 @@ void main() {
         // dispatch PER TICK, so the bound only means anything well above the
         // real duration of the work.
         final host = realHost();
-        await itemRejectedAtEngineeringReviewGate(host.workflowEngine);
+        await itemRejectedAtEngineeringReviewGate(
+          host.workflowEngine,
+          host.designContractStore,
+        );
 
         host.session.release();
         for (var i = 0; i < 25; i++) {
@@ -309,7 +318,11 @@ void main() {
             WorkerCapability.visualDesign,
           },
         );
-        await itemAtDesignRequired(host.workflowEngine, host.workflowStore);
+        await itemAtDesignRequired(
+          host.workflowEngine,
+          host.workflowStore,
+          host.designContractStore,
+        );
 
         host.session.release();
         final tick = await host.scheduler.tick();
@@ -398,7 +411,11 @@ void main() {
         clock: () => t0,
         definition: triageDefectDefinition,
       );
-      await itemAtDesignRejected(host.workflowEngine, host.workflowStore);
+      await itemAtDesignRejected(
+        host.workflowEngine,
+        host.workflowStore,
+        host.designContractStore,
+      );
 
       // `designRejected` has NO direct edge to `agentExecuting`, and the one
       // out-edge it does have lands on `designInReview` — which is in no entry
@@ -641,7 +658,10 @@ void main() {
         clock: () => t0,
         definition: triageDefectDefinition,
       );
-      await itemRejectedAtEngineeringReviewGate(host.workflowEngine);
+      await itemRejectedAtEngineeringReviewGate(
+        host.workflowEngine,
+        host.designContractStore,
+      );
 
       // A row from an EARLIER build: queued, keyed on the state the item is
       // in right now, before any hop.
@@ -724,7 +744,10 @@ Future<EntryHopResult> hopFor(
   return item.then(
     (item) => EntryHopper(
       policy: const WorkflowEngine(),
-      engine: DurableWorkflowEngine(store: host.workflowStore),
+      engine: DurableWorkflowEngine(
+        store: host.workflowStore,
+        designContractStore: host.designContractStore,
+      ),
       definition: definition,
     ).prepare(item),
   );
@@ -765,7 +788,8 @@ WorkerExecutionResult supersededResult(WorkerExecutionRequest request) {
 /// `reviewRejected` cannot tell a correct hop from one that happens to produce
 /// the right state, and the history below is what proves the state is real.
 Future<void> itemRejectedAtEngineeringReviewGate(
-  DurableWorkflowEngine engine, {
+  DurableWorkflowEngine engine,
+  DesignContractStore contractStore, {
   String workItemId = 'wi-1',
 }) async {
   Future<void> step(
@@ -785,21 +809,17 @@ Future<void> itemRejectedAtEngineeringReviewGate(
     category: WorkItemCategory.bugfix,
     title: 'Triage a reported defect',
     description: 'The checkout total ignores the second item.',
+    // Read by the guard, confirmed against a store — never supplied in context.
+    designContractId: await _contractIdFor(contractStore, workItemId),
     qaContractId: 'qa-1',
     metadata: const {'defectId': 'DEF-1', 'defectSeverity': 'high'},
   );
   await step(WorkItemState.planning);
   await step(WorkItemState.planned, context: const {'featureRef': 'f-1'});
-  await step(
-    WorkItemState.designRequired,
-    context: const {'designContractId': 'dc-1'},
-  );
+  await step(WorkItemState.designRequired);
   await step(
     WorkItemState.designInReview,
-    context: const {
-      'designContractId': 'dc-1',
-      'designContractStatus': DesignContractStatus.underReview,
-    },
+    context: const {'designContractStatus': DesignContractStatus.underReview},
   );
   await engine.resolveHumanDecision(
     decisionId: (await engine.requestHumanDecision(
@@ -887,9 +907,28 @@ Future<void> itemDesignRejected(SchedulerHost host) async {
 /// keep working now that its sibling's mis-declaration is closed.
 /// Parks an item at `designRequired` — the design revision entry state that
 /// must keep working now that its sibling's mis-declaration is closed.
+/// Provisions a draft design contract for [workItemId] and returns the id the
+/// store READ BACK.
+///
+/// `designContractExists()` confirms the work item's `designContractId` column
+/// against a [DesignContractStore], so a fixture that walks an item to
+/// `designRequired` has to leave a real row behind. Returning the read-back id
+/// rather than the submitted one is the discipline
+/// [DesignContractProvisioner] exists to enforce, and it is why these walks
+/// stopped passing `context: {'designContractId': …}`: that string was the
+/// defect, and a fixture still passing one would keep working while asserting
+/// nothing.
+Future<String> _contractIdFor(
+  DesignContractStore contractStore,
+  String workItemId,
+) async => (await DesignContractProvisioner(
+  contractStore: contractStore,
+).provisionForWorkItem(workItemId: workItemId, productId: 'prod-1')).contractId;
+
 Future<void> itemAtDesignRequired(
   DurableWorkflowEngine engine,
-  WorkflowStore store, {
+  WorkflowStore store,
+  DesignContractStore contractStore, {
   String workItemId = 'wi-1',
 }) async {
   await engine.createWorkItem(
@@ -898,6 +937,9 @@ Future<void> itemAtDesignRequired(
     category: WorkItemCategory.feature,
     title: 'Design the calculator',
     description: 'Produce a design revision.',
+    // The guard reads this COLUMN and confirms it against a store, so the
+    // transition below carries no `designContractId` in context at all.
+    designContractId: await _contractIdFor(contractStore, workItemId),
     qaContractId: 'qa-1',
     featureRef: 'feature/calc',
   );
@@ -916,7 +958,6 @@ Future<void> itemAtDesignRequired(
     workItemId: workItemId,
     to: WorkItemState.designRequired,
     trigger: TransitionTrigger.systemEvent,
-    context: const {'designContractId': 'dc-1'},
   );
   expect(
     (await store.readWorkItem(workItemId)).state,
@@ -974,7 +1015,8 @@ Future<void> itemAtAgentExecuting(
 /// could dispatch.
 Future<void> itemAtDesignRejected(
   DurableWorkflowEngine engine,
-  WorkflowStore store, {
+  WorkflowStore store,
+  DesignContractStore contractStore, {
   String workItemId = 'wi-1',
 }) async {
   await engine.createWorkItem(
@@ -983,7 +1025,7 @@ Future<void> itemAtDesignRejected(
     category: WorkItemCategory.feature,
     title: 'Design the calculator',
     description: 'A design was produced and a human rejected it.',
-    designContractId: 'dc-1',
+    designContractId: await _contractIdFor(contractStore, workItemId),
     qaContractId: 'qa-1',
     featureRef: 'feature/calc',
   );
@@ -1002,16 +1044,12 @@ Future<void> itemAtDesignRejected(
     workItemId: workItemId,
     to: WorkItemState.designRequired,
     trigger: TransitionTrigger.systemEvent,
-    context: const {'designContractId': 'dc-1'},
   );
   await engine.transition(
     workItemId: workItemId,
     to: WorkItemState.designInReview,
     trigger: TransitionTrigger.systemEvent,
-    context: const {
-      'designContractId': 'dc-1',
-      'designContractStatus': DesignContractStatus.underReview,
-    },
+    context: const {'designContractStatus': DesignContractStatus.underReview},
   );
   final decision = await engine.requestHumanDecision(
     workItemId: workItemId,

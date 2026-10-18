@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:workflow_engine/workflow_engine.dart';
 
+import 'design_contract_store.dart';
 import 'human_facing_description.dart';
 import 'operator_action_record.dart';
 import 'store/workflow_store.dart';
@@ -30,12 +31,36 @@ class WorkflowTransitionRejectedException implements Exception {
 /// object used here must be deterministic across restarts (it is: it is
 /// constructed from the same pure rule tables).
 class DurableWorkflowEngine {
-  DurableWorkflowEngine({required WorkflowStore store, WorkflowEngine? policy})
-    : _store = store,
-      _policy = policy ?? const WorkflowEngine();
+  DurableWorkflowEngine({
+    required WorkflowStore store,
+    WorkflowEngine? policy,
+    DesignContractStore? designContractStore,
+  }) : _store = store,
+       _policy = policy ?? const WorkflowEngine(),
+       _designContractStore = designContractStore;
 
   final WorkflowStore _store;
   final WorkflowEngine _policy;
+
+  /// The store `designContractExists()` is confirmed against.
+  ///
+  /// ## NULL IS A REFUSAL, NOT A DEGRADATION
+  ///
+  /// This is optional so that constructing an engine does not force a wiring
+  /// decision on every existing call site, and it is **fail-closed**: with no
+  /// store injected, [transition] cannot confirm a design contract and
+  /// `planned -> designRequired` is refused. There is deliberately no fallback
+  /// to the pre-step-2 behaviour, because the pre-step-2 behaviour is the
+  /// defect — a guard satisfied by whatever string a caller passed.
+  ///
+  /// It cannot be a required parameter without breaking every construction
+  /// site in the tree, including ones that provably never reach the guarded
+  /// edge; it cannot be defaulted to an in-memory store because that would let
+  /// a process-local `Map` stand in for a durable row and pass a guard whose
+  /// entire purpose is durability. The composition root mounts
+  /// `PostgresDesignContractStore`; tests mount `InMemoryDesignContractStore`.
+  final DesignContractStore? _designContractStore;
+
   final Random _random = Random();
 
   static const WorkflowActor _defaultActor = WorkflowActor(
@@ -170,7 +195,17 @@ class DurableWorkflowEngine {
       to: to,
       trigger: trigger,
       actor: actor,
-      context: {'workItemId': workItemId, ...context},
+      context: {
+        'workItemId': workItemId,
+        ...context,
+        // Written AFTER the caller's spread, so a caller that plants this key
+        // has its value discarded rather than read. This is the ordering that
+        // makes the guard unbuildable-by-string: `design-revision.md` §4.3's
+        // falsifier — `context: {'designContractId': 'anything'}` on an item
+        // whose column is NULL — no longer reaches the guard at all, because
+        // `designContractId` is not a key any guard reads any more.
+        designContractResolutionContextKey: await _resolveDesignContract(item),
+      },
       decisionId: decisionId,
     );
 
@@ -262,6 +297,51 @@ class DurableWorkflowEngine {
       }
     });
     return finalItem;
+  }
+
+  /// The durable answer to "does [item] have a design contract?", for
+  /// `designContractExists()`.
+  ///
+  /// ## BOTH HALVES ARE LOAD-BEARING
+  ///
+  /// [WorkItem.designContractId] is the column `design-revision.md` §4.3 names,
+  /// and [DesignContractStore.hasDesignContract] is the store confirmation it
+  /// also names. Either alone is the old defect wearing a new name: the column
+  /// alone is a string that resolves to nothing, and a store lookup alone has
+  /// no work item to be about.
+  ///
+  /// ## WHY IT RUNS ON EVERY TRANSITION
+  ///
+  /// Because it is cheap (one primary-key `SELECT`) and because a conditional
+  /// would be a second rule about which edges need a contract — maintained
+  /// apart from the transition table that declares the guards, and wrong the
+  /// day step 3 adds `designParked -> designRequired`. Resolving unconditionally
+  /// means the guard's input is always present, so there is no path on which it
+  /// sees a missing carrier and has to decide what that means.
+  ///
+  /// A store exception propagates rather than being swallowed into a refusal: a
+  /// store that cannot be reached is an outage, and reporting it as "no design
+  /// contract" would file an infrastructure failure as a missing artifact.
+  Future<DesignContractResolution> _resolveDesignContract(WorkItem item) async {
+    final contractId = item.designContractId;
+    if (contractId == null) {
+      return const DesignContractResolution.noContract();
+    }
+    final store = _designContractStore;
+    if (store == null) {
+      // The column names a contract and nothing was available to ask about it.
+      // Deliberately NOT `noContract()`: that would report "the work item
+      // carries no designContractId", which is false here, and a
+      // misconfigured deployment deserves to be told what is actually wrong.
+      return DesignContractResolution(
+        contractId: contractId,
+        storeConfirmed: false,
+      );
+    }
+    return DesignContractResolution(
+      contractId: contractId,
+      storeConfirmed: await store.hasDesignContract(contractId),
+    );
   }
 
   /// The actor an operator retry transitions as.

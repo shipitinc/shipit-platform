@@ -110,15 +110,76 @@ void main() {
       expect(withEvidence.isValid, isTrue);
     });
 
-    test('planned -> designRequired requires a design contract', () {
+    test('planned -> designRequired requires a CONFIRMED design contract', () {
+      // This used to read `context: {'designContractId': 'contract-123'}` and
+      // pass. That string was the whole of the evidence, the durable engine
+      // discarded it, and an item was persisted at `designRequired` with a NULL
+      // contract column behind it — `design-revision.md` §4.3's falsifier. The
+      // guard now reads the COLUMN and the STORE, which the pure policy engine
+      // has neither of, so "nothing supplied" is a refusal rather than a pass.
       final without = eval(WorkItemState.planned, WorkItemState.designRequired);
       expect(without.isValid, isFalse);
       expect(without.failedGuards, contains('design_contract_exists'));
 
+      // THE FALSIFIER, asserted so it can never come back: a caller-supplied
+      // string on an item with nothing behind it.
+      final fabricated = eval(
+        WorkItemState.planned,
+        WorkItemState.designRequired,
+        context: const {'designContractId': 'anything'},
+      );
+      expect(fabricated.isValid, isFalse, reason: 'a string is not a contract');
+      expect(fabricated.failedGuards, contains('design_contract_exists'));
+
+      // A caller that plants the resolution key itself is no more able to pass:
+      // the durable engine overwrites that key after spreading the caller's map.
+      final planted = eval(
+        WorkItemState.planned,
+        WorkItemState.designRequired,
+        context: {
+          designContractResolutionContextKey:
+              const DesignContractResolution.noContract(),
+        },
+      );
+      expect(planted.isValid, isFalse);
+      expect(planted.failedGuards, contains('design_contract_exists'));
+
+      // A column that names a contract the store could not confirm is refused,
+      // and the message says which of the two facts was missing.
+      final unconfirmedId = eval(
+        WorkItemState.planned,
+        WorkItemState.designRequired,
+        context: {
+          designContractResolutionContextKey: const DesignContractResolution(
+            contractId: 'contract-123',
+            storeConfirmed: false,
+          ),
+        },
+      );
+      expect(unconfirmedId.isValid, isFalse);
+      expect(unconfirmedId.rejectionReason, contains('contract-123'));
+
+      final noColumn = eval(
+        WorkItemState.planned,
+        WorkItemState.designRequired,
+        context: {
+          designContractResolutionContextKey:
+              const DesignContractResolution.noContract(),
+        },
+      );
+      expect(noColumn.isValid, isFalse);
+      expect(noColumn.rejectionReason, contains('no designContractId'));
+
+      // The only value that opens the edge: a column id the store confirmed.
       final withContract = eval(
         WorkItemState.planned,
         WorkItemState.designRequired,
-        context: {'designContractId': 'contract-123'},
+        context: {
+          designContractResolutionContextKey: const DesignContractResolution(
+            contractId: 'contract-123',
+            storeConfirmed: true,
+          ),
+        },
       );
       expect(withContract.isValid, isTrue);
     });

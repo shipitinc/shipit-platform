@@ -127,7 +127,19 @@ List<QAGateResult> _passingGateResults() => [
 
 Future<DurableWorkflowEngine> _engine() async {
   final store = InMemoryWorkflowStore();
-  final engine = DurableWorkflowEngine(store: store);
+  // A REAL design contract row, provisioned and read back, for the reason
+  // `designContractExists()` now reads the durable column and confirms it: the
+  // guard that lets this item into `designRequired` is satisfied by that row,
+  // not by a context string. See `_designApproved` for what the walks below
+  // deliberately stopped passing.
+  final contractStore = InMemoryDesignContractStore();
+  final contractId = (await DesignContractProvisioner(
+    contractStore: contractStore,
+  ).provisionForWorkItem(workItemId: _id, productId: 'prod-1')).contractId;
+  final engine = DurableWorkflowEngine(
+    store: store,
+    designContractStore: contractStore,
+  );
   _stores[engine] = store;
   await engine.createWorkItem(
     productId: 'prod-1',
@@ -135,6 +147,7 @@ Future<DurableWorkflowEngine> _engine() async {
     title: 'Triage discriminator',
     description: 'Work item used to prove the re-triage discriminator advances',
     workItemId: _id,
+    designContractId: contractId,
     metadata: const {'defectId': _id, 'defectSeverity': 'high'},
   );
   return engine;
@@ -172,7 +185,6 @@ Future<void> _designApproved(DurableWorkflowEngine engine) async {
     to: WorkItemState.designRequired,
     trigger: TransitionTrigger.systemEvent,
     actor: _orch,
-    context: const {'designContractId': 'dc-1'},
   );
   await engine.transition(
     workItemId: _id,
@@ -671,7 +683,6 @@ void main() {
         to: WorkItemState.designRequired,
         trigger: TransitionTrigger.systemEvent,
         actor: _orch,
-        context: const {'designContractId': 'dc-1'},
       );
       await engine.transition(
         workItemId: _id,
