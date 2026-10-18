@@ -2025,3 +2025,76 @@ decision, correctly — it is a **follow-up, not a blocker**.
   on the healthy path.
 - `onboarding_test.dart` is an integration test misfiled under `test/` (needs a DB); it will read as a
   regression in any local run.
+
+## 29. The three stranded items are REPAIRED — and the real blocker is a wedged scheduler tick
+
+**Outcome.** All three items stranded at `agent_executing` with `qaContractId = NULL` on 2026-10-17 now
+carry a real `qa_contract` row (`version 1.0.0`) and a non-null `qaContractId`, written by the product's
+own provisioners. No `work_item` row was ever written by SQL. The QA-contract guard — the original
+blocker — no longer fires: its four historical failures are all timestamped `2026-10-17 09:54` and
+`2026-10-18 03:04`, all before the contracts were attached, and **no new failure cites it**.
+`WI-feature-1791823723502264` produced a **`succeeded`** job after its contract was attached.
+
+**F-79 — BLOCKING — the scheduler tick is permanently wedged; nothing dispatches.**
+Every tick logs `scheduler.tick.dropped_overlap {ran: false, dispatched: 0, code: TICK_OVERLAP_DROPPED}`
+because a tick is always already in flight. Job `jb-hnbbwqcwm0-bduerb`
+(`WI-feature-1791823723502264`, started `2026-10-18 03:05:20`) is still `running` with no
+`completedAt`. One tick has evidently been in flight since then, so the single-flight guard refuses
+every subsequent tick forever. **This is a deadlock, not slow progress**: the queue cannot drain while
+its only drainer is stuck. Distinct from F-77/F-78 (the unhandled-async crash), which is fixed at
+`96db89c`; the process is alive here, it is the tick that is wedged.
+
+**F-80 — the repair script's `--dry-run` green-washed the exact bug it should have caught.**
+`repairDesignRemediation` in dry-run never calls `ensurePersisted`
+(`bin/repair_stranded_work_items.dart:349-360`); it calls the script's own `ensureQAContract`, which
+returns `would-attach:…` at `:276-281` **before it ever looks at `productId`**. So the dry run printed
+`via-laneE:would-attach:…` while the real run printed `via-laneE:refused-or-absent`. A clean dry run
+was never a rehearsal of the path that was broken. **Never treat this dry run as evidence about the
+design-remediation path.**
+
+**F-81 — a work item's own `productId` is authoritative for its gates; `defects` is not a product.**
+`resolveDesignRemediationProductId` (`lane_e_design_remediation_work_item.dart:86-98`) reads
+`defect.affectedWorkItemId` and falls back to `defectTriageBucketProductId` — the literal string
+`"defects"` (`lane_a_defect_triage_work_item.dart:17`) — when it is null. Both defects had
+`affectedWorkItemId = NULL`, so the gate was sought under `defects`, which has **no** `product` row and
+**no** `product_qa_contract_spec` row, and provisioning failed closed with `notDeclared`. Meanwhile
+**all 14** work items record `productId = shipit-platform`. The row and its own gate disagreed.
+Fixed at `0d32877` under decision `8f1ed5bf`: the replay branch now uses the existing row's `productId`,
+falling back to the defect-derived value only when blank. **Creation-time resolution is byte-identical**
+— verified by doc-stripped region SHA, not by assertion.
+
+**F-82 — re-registering a product is a MERGE, not a clobber (`6e83b1c7`).**
+`registerProductWithManifest` routed through `createProduct`, and `saveProduct` with a null
+`expectedVersion` is `INSERT … ON CONFLICT DO UPDATE SET … state, createdAt … version`, which would have
+reset `governed → registered`, nulled `description` and rewritten `createdAt` on `shipit-platform`.
+`ProductTransitions` has **no** `registered → governed` edge (only `→ baselinePending` at
+`product_transitions.dart:81` and human-gated `→ archived` at `:138`), so the product would have
+stranded an **accepted** baseline behind a fresh revision, verification and human approval.
+Verified live after the fix: all four columns byte-identical, declaration written. Note
+`apps/control_plane/.../add_product_page.dart` had asserted this path was an idempotent upsert — it was not.
+
+**F-83 — a `Serverpod` pod never needs `start()` for a one-shot script, and this is the only safe way
+to touch an irreplaceable database.** The constructor opens the DB pool (`serverpod.dart:544-558`,
+ISSUE(2421): it exists so `createSession` works) and `PostgresPoolManager.start()` only calls
+`pg.Pool.withEndpoints` — no connection, no write. **Every write-capable boot step lives inside
+`start()`**: `migrateToLatest`, the unconditional `verifyDatabaseIntegrity`, and the `RuntimeSettings`
+INSERT. So a repair script that never calls `start()` and never passes `--apply-migrations` cannot
+mutate schema — which is what made running it against the irrecoverable QA database defensible.
+`Database` is not constructible outside the package, so this cannot be proved behaviourally; the repo's
+proof is a comment-stripped source guard.
+
+**F-84 — five sibling scripts carry the F-83 hazard on the same irreplaceable database.**
+`bin/add_human_claims.dart`, `e2e_dev_server.dart`, `onboard_shipit_dev.dart`, `onboard_shipit.dart` and
+`test_pod.dart` each pass `['--mode','development','--apply-migrations']` **and** call `pod.start()`.
+Against `SERVERPOD_DATABASE_*` pointed at QA, any of them applies pending migrations. Unlike the repair
+they legitimately *need* migrations, so F-83's remedy is wrong for them; their correct remedy is a guard
+refusing non-disposable targets. `bin/main.dart` is clean.
+
+**F-85 — five of `apps/server/bin/`'s peers plus the tick share one lesson: the dry run must exercise
+the changed path.** See F-80. Non-vacity must also survive a phantom edit: a `Edit` call reported
+success while writing only whitespace, and only a `shasum` against a saved copy caught it. Standard
+adopted: byte-copy, `shasum` before and after, `dart format --set-exit-if-changed`, then trust the count.
+
+**F-86 — `apps/server/dart_test.yaml` declares `tags: integration: {}` but nothing annotates it.**
+29 files live in `test/integration/` and 28 boot a real Serverpod, so a plain `dart test` there burns
+~15 min on 32 connection timeouts and **cannot be excluded by tag**.
