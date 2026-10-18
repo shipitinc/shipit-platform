@@ -2203,14 +2203,46 @@ recorded; restated here because it nearly cost a second green-washed verificatio
 that *did* predict correctly was the real run's `refused-or-absent`. Treat dry-run output for
 `repairDesignRemediation` as non-evidence, permanently.
 
-**F-92 — the repair's failure-recording idempotency is per work item, not per failure, so a second
-stranded execution can never be recorded.** `design-remediation-DEF-1791686085546076` is stuck at
-`agent_executing` with **two** terminal failed jobs; the repair skips recording the second failure
-because one `agentExecuting → agentFailed` row already exists for that item, then attempts
+**F-92 — the repair's failure-recording idempotency was per work item, not per failure, and its report
+claimed retries it did not perform — RESOLVED by `correct-PER-FAILURE-IDEMPOTENCY`, with three
+findings the original entry did not name.** `design-remediation-DEF-1791686085546076` is stuck at
+`agent_executing` with **two** terminal failed jobs; the repair skipped recording the second failure
+because one `agentExecuting → agentFailed` row already existed for that item, then attempted
 `operatorRetry`, which correctly refuses from `agent_executing`. Its output still printed
-`retried: true` while the state did not move — a **false claim in the repair's own report**. Fix is to
-key the idempotency on the failure (job id), not the work item, and to report `retried` only when a
-transition actually occurred.
+`retried: true` while the state did not move — a **false claim in the repair's own report**.
+
+1. **The idempotency key is now the failure, not the work item** — on both writes. The failure key
+   and the `operatorRetry` key were *separately* per work item, so fixing only the first still left
+   the second producing a silent no-op: the engine returns the item unchanged on a matched
+   `idempotencyKey` while the caller believes a retry happened. Measured separately, each key is
+   load-bearing and each turns exactly one assertion red on its own. Keyed on the durable job id, a
+   replay of the same failure finds its own row and writes nothing while a genuinely new failure does
+   not collide — the same principle the operator-action ledger already applies, since the thing being
+   made idempotent is a specific *occurrence*, not a specific subject.
+2. **Reported outcome fields are now derived from what happened, not from having reached the code
+   that does it.** `retried` was hardcoded `true`; it is now a getter over a new
+   `StrandedRetryOutcome`. Three more fields were audited and found in the same shape: `wroteAnything`
+   (hardcoded `true` on the recovery path, so a run that changed nothing reported a change — and it
+   feeds the process's `N of M item(s) changed` summary), the `[stranded.retried]` **log event**
+   (emitted unconditionally, so the false claim also reached the log, where a reader takes it as a
+   fact rather than as a report), and `stateAfter`, which was the only already-truthful one. The new
+   `failureRecorded` field replaces the unconditional `[stranded.failure_recorded]` log.
+3. **The exit status now reports it.** A declined retry exits non-zero via
+   `strandedWorkItemExitCode`, because that run prints a complete, plausible report while leaving the
+   item exactly where it started. `null` for every run that legitimately changed nothing — a dry run,
+   an unstranded item, a refused item with no durable failure, a repair that worked — so it cannot
+   degenerate into always non-zero.
+
+**Consequence of (1), recorded rather than hidden:** rows written under the OLD per-work-item key are
+not deduplicated by the new one, so an item already carrying such a row will record one further row
+for the same failure. That row is truthful — the job really did fail — and, unlike the old key, it
+does not permanently block the retry that follows it, which is what unstuck the live item.
+
+**Not changed, deliberately:** `StrandedWorkItemOutcome.qaContractId`, `.stateBefore` and `.notes` were
+audited and are already truthful — all three are read back from the store rather than composed. The
+`REFUSED`-with-no-durable-failure path still exits 0: it is loudly reported and was not in scope here,
+so changing its exit semantics could break an operator's existing expectations. `qaContractAction`'s
+`via-laneE:refused-or-absent` remains a deliberately vague label for the same reason.
 
 **F-93 — `qaPassed` is deliberately held closed (`92d567e3`).** The only registered gate,
 `intake-structured-result-admitted`, is structural. Substantive per-lane quality gates must be designed

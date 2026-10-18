@@ -158,10 +158,37 @@ const String repairRunMode = 'staging';
 ///   than of the environment it is launched from.
 List<String> repairServerpodArgv() => ['--mode', repairRunMode];
 
+/// What the retry verb did to the work item.
+///
+/// A value rather than a boolean, because `true` is the answer for BOTH "the
+/// verb moved the item" and "the verb handed the item back unchanged" — and
+/// only the first of those means the operator's repair worked. The second is
+/// what this repair used to report as success.
+enum StrandedRetryOutcome {
+  /// `operatorRetry` took the item to `designNotRequired`; the ordinary
+  /// scheduler tick will re-dispatch it.
+  applied('retried: operatorRetry moved the item to designNotRequired'),
+
+  /// `operatorRetry` returned the item unchanged — a refusal, or an idempotent
+  /// replay of a retry already recorded. The item is STILL STRANDED.
+  ///
+  /// [wire] is deliberately not the bare word: this is the line an operator
+  /// reads when the repair did not repair, and "declined" alone reads like a
+  /// policy note rather than a failure to act.
+  declined('NOT RETRIED: operatorRetry refused or replayed; nothing moved');
+
+  const StrandedRetryOutcome(this.wire);
+
+  /// The text [StrandedWorkItemOutcome.render] prints for this outcome.
+  final String wire;
+}
+
 /// What happened to one work item.
 ///
 /// Reported per item and never swallowed: a repair that exits silently is
-/// indistinguishable from a repair that did nothing.
+/// indistinguishable from a repair that did nothing. Reported TRUTHFULLY for
+/// the same reason — a field that says a repair did something it did not do is
+/// worse than no field at all, because the operator has no way to tell.
 class StrandedWorkItemOutcome {
   StrandedWorkItemOutcome({
     required this.workItemId,
@@ -172,15 +199,20 @@ class StrandedWorkItemOutcome {
     this.qaContractId,
     this.qaContractAction,
     this.failureReason,
-    this.retried = false,
+    this.failureRecorded = false,
+    this.retryOutcome,
   });
 
   final String workItemId;
   final String stateBefore;
   final String stateAfter;
 
-  /// False when the item already carried a contract and was not at
-  /// `agentExecuting` — the shape a second run of this script takes.
+  /// Whether THIS RUN wrote anything at all.
+  ///
+  /// The process summary ("N of M item(s) changed") is derived from it, so it
+  /// is computed from what demonstrably happened — a contract attached, a
+  /// failure row written, a retry applied — and never from having merely
+  /// reached the code that does one of those.
   final bool wroteAnything;
 
   /// The contract id now on the row, or null when none was written.
@@ -189,11 +221,29 @@ class StrandedWorkItemOutcome {
   /// `already-present`, `attached`, `would-attach`, or `refused:<reason>`.
   final String? qaContractAction;
 
-  /// The failure reason recorded on the `agentExecuting -> agentFailed` row,
-  /// derived from the durable job row. Null when no failure was recorded.
+  /// The failure reason on the `agentExecuting -> agentFailed` row, derived
+  /// from the durable job row. Null when there was no failure to record.
   final String? failureReason;
 
-  final bool retried;
+  /// True only when an `agentExecuting -> agentFailed` row was WRITTEN by this
+  /// run.
+  ///
+  /// False when one was merely found: the same failure recorded by an earlier
+  /// run leaves the item exactly where it was, and reporting that as a
+  /// recording is the claim this field exists to stop making.
+  final bool failureRecorded;
+
+  /// What `operatorRetry` did. Null when no retry was attempted at all — a
+  /// dry run, an item that was not stranded, or a refused item with no durable
+  /// failure to source.
+  final StrandedRetryOutcome? retryOutcome;
+
+  /// Whether the work item was actually retried.
+  ///
+  /// Kept as a name because callers already read it, and as a getter because a
+  /// stored copy of it is what made the false claim possible in the first
+  /// place: it was set from the fact that `operatorRetry` was CALLED.
+  bool get retried => retryOutcome == StrandedRetryOutcome.applied;
 
   final List<String> notes;
 
@@ -206,14 +256,55 @@ class StrandedWorkItemOutcome {
       ..writeln('  qaContractId: ${qaContractId ?? 'NULL'}');
     if (failureReason != null) {
       buffer.writeln('  failure : $failureReason');
-      buffer.writeln('  retried : $retried');
     }
+    buffer.writeln('  recorded: $failureRecorded');
+    buffer.writeln('  retried : ${retryOutcome?.wire ?? 'not attempted'}');
     for (final note in notes) {
       buffer.writeln('  note    : $note');
     }
     buffer.writeln('  wrote   : $wroteAnything');
     return buffer.toString();
   }
+}
+
+/// The [outcomes] this repair reached `operatorRetry` on that the verb did not
+/// apply.
+///
+/// Reported rather than counted so the process summary can name the ids.
+List<StrandedWorkItemOutcome> declinedRetries(
+  List<StrandedWorkItemOutcome> outcomes,
+) => outcomes
+    .where((o) => o.retryOutcome == StrandedRetryOutcome.declined)
+    .toList();
+
+/// The exit status [outcomes] demand of this process, or null for a clean run.
+///
+/// Null means "nothing to report", and covers every shape that legitimately
+/// changes nothing: a dry run, an item that was not stranded, an item the
+/// repair refused to invent a failure for, and a repair that worked.
+///
+/// Non-zero is reserved for the one shape the operator cannot detect by
+/// reading: a failure was recorded, `operatorRetry` was called, and it moved
+/// nothing. The item is still stuck and the run must say so through its exit
+/// status rather than only through a line of prose someone has to notice.
+int? strandedWorkItemExitCode(List<StrandedWorkItemOutcome> outcomes) =>
+    declinedRetries(outcomes).isEmpty ? null : 1;
+
+/// Whether [contractAction] names a contract that was actually ATTACHED.
+///
+/// Lane E's actions carry a `via-laneE:` prefix because the contract was
+/// written by the lane's own provisioner rather than by this script. That
+/// prefix says WHO wrote the row and must not change whether anything was
+/// written, so it is stripped before the verb is read — otherwise
+/// `via-laneE:attached:` is a contract this run attached that the summary
+/// would count as no change at all.
+bool _attachedContract(String? contractAction) {
+  if (contractAction == null) return false;
+  const laneEPrefix = 'via-laneE:';
+  final verb = contractAction.startsWith(laneEPrefix)
+      ? contractAction.substring(laneEPrefix.length)
+      : contractAction;
+  return verb.startsWith('attached');
 }
 
 /// Repairs work items stranded at `agentExecuting` with no QA contract.
@@ -420,13 +511,24 @@ class StrandedWorkItemRepair {
   /// Records the truthful failure and retries, when the item is stranded.
   ///
   /// Shared by both entry points so the recovery sequence exists once.
+  ///
+  /// ## EVERY WRITTEN FIELD HERE IS SET FROM WHAT HAPPENED
+  ///
+  /// The two writes below are followed by reads of the same row, and every
+  /// reported field is derived from those reads rather than from having
+  /// reached the code that writes. `DurableWorkflowEngine.transition` returns
+  /// the work item unchanged on an idempotent replay and `operatorRetry`
+  /// returns it unchanged on both a refusal and a replay of an earlier retry,
+  /// so "I called it" and "it did something" are different facts, and only the
+  /// second one may reach an operator. A `version` that did not move is the
+  /// evidence: it advances on an accepted transition and on nothing else.
   Future<StrandedWorkItemOutcome> _recoverStrandedExecution(
     WorkItem before,
     WorkItem item,
     String contractAction,
   ) async {
     final notes = <String>[];
-    var wroteAnything = contractAction.startsWith('attached');
+    final attachedContract = _attachedContract(contractAction);
 
     if (item.state != WorkItemState.agentExecuting) {
       notes.add(
@@ -438,7 +540,7 @@ class StrandedWorkItemRepair {
         workItemId: item.workItemId,
         stateBefore: before.state.wire,
         stateAfter: item.state.wire,
-        wroteAnything: wroteAnything,
+        wroteAnything: attachedContract,
         qaContractId: item.qaContractId,
         qaContractAction: contractAction,
         notes: notes,
@@ -459,7 +561,7 @@ class StrandedWorkItemRepair {
         workItemId: item.workItemId,
         stateBefore: before.state.wire,
         stateAfter: item.state.wire,
-        wroteAnything: wroteAnything,
+        wroteAnything: attachedContract,
         qaContractId: item.qaContractId,
         qaContractAction: contractAction,
         notes: notes,
@@ -490,12 +592,34 @@ class StrandedWorkItemRepair {
       );
     }
 
+    // ## THE IDEMPOTENCY KEY IS THE FAILURE, NOT THE WORK ITEM
+    //
+    // A work item can be stranded more than once: the repair retries it, the
+    // scheduler re-dispatches it, and the execution fails again. Each of those
+    // is a separate event with its own durable job row, and each deserves its
+    // own `agentExecuting -> agentFailed` row carrying ITS OWN reason. Keyed on
+    // the work item, the FIRST such row consumes the key forever and no later
+    // failure can ever be recorded — the second stranded execution is not
+    // merely mis-reported, it is unrepresentable.
+    //
+    // Keyed on the job id, a replay of the same failure finds its own row and
+    // writes nothing, while a genuinely new failure does not collide. This is
+    // the same principle the operator-action ledger already applies: an
+    // idempotency-keyed operation is keyed per OCCURRENCE, because the thing
+    // being made idempotent is a specific intent, not a specific subject.
+    //
+    // Consequence, recorded rather than hidden: rows written by the PREVIOUS
+    // per-work-item key are not deduplicated by this one. An item already
+    // carrying such a row will record one more row for the same failure. That
+    // row is truthful — the job really did fail — and, unlike the old key, it
+    // does not permanently block the retry that follows it.
+    final failureKey =
+        'repair-stranded:${item.workItemId}:agentFailed:${failedJob.jobId}';
+
     // `agentExecuting -> agentFailed` carries `actorAllowed([orchestrator])`
     // alone; it is legal and needs no evidence, because the evidence IS this
-    // job row and it is named in the persisted reason. The result is not
-    // captured: the retry below re-reads the item, and holding a second copy
-    // here would be a second thing to go stale.
-    await workflowEngine.transition(
+    // job row and it is named in the persisted reason.
+    final afterFailure = await workflowEngine.transition(
       workItemId: item.workItemId,
       to: WorkItemState.agentFailed,
       trigger: TransitionTrigger.agentResult,
@@ -507,46 +631,93 @@ class StrandedWorkItemRepair {
       },
       // The engine's `reason` is the field PERSISTED on the transition record.
       reason: reason,
-      idempotencyKey: 'repair-stranded:${item.workItemId}:agentFailed',
+      idempotencyKey: failureKey,
     );
-    _log('stranded.failure_recorded', {
-      'workItemId': item.workItemId,
-      'jobId': failedJob.jobId,
-      'kind': failure.kind.name,
-    });
+    final failureRecorded = afterFailure.version > item.version;
+    if (failureRecorded) {
+      _log('stranded.failure_recorded', {
+        'workItemId': item.workItemId,
+        'jobId': failedJob.jobId,
+        'kind': failure.kind.name,
+      });
+    } else {
+      notes.add(
+        'this failure was ALREADY recorded on ${item.workItemId} (key '
+        '$failureKey); nothing was written for it this run.',
+      );
+      _log('stranded.failure_already_recorded', {
+        'workItemId': item.workItemId,
+        'jobId': failedJob.jobId,
+      });
+    }
 
     // `operatorRetry` is the sanctioned operator verb and it takes
     // `agentFailed -> designNotRequired`, an entry state of
     // `triageDefectDefinition`, so the ordinary scheduler tick re-dispatches
-    // with no change to any dispatch path. The requestId is derived from the
-    // durable job id, so a replay of the same operator intent finds its own
-    // audit row and writes nothing.
-    final retried = await workflowEngine.operatorRetry(
+    // with no change to any dispatch path.
+    //
+    // Its idempotency key is keyed on the failure for the same reason the
+    // transition above is: a key shared across failures would make the engine
+    // return the item UNCHANGED on the second failure while the operator
+    // believed a retry had happened. `requestId` was already failure-scoped;
+    // this key was not.
+    final afterRetry = await workflowEngine.operatorRetry(
       workItemId: item.workItemId,
       requestedBy: repairRequestedBy,
       reason: reason,
       requestId: 'repair-stranded:${item.workItemId}:${failedJob.jobId}',
-      idempotencyKey: 'repair-stranded:${item.workItemId}:operatorRetry',
+      idempotencyKey:
+          'repair-stranded:${item.workItemId}:operatorRetry:${failedJob.jobId}',
     );
-    _log('stranded.retried', {
-      'workItemId': item.workItemId,
-      'state': retried.state.wire,
-    });
+    final retried = afterRetry.version > afterFailure.version;
+    final retryOutcome = retried
+        ? StrandedRetryOutcome.applied
+        : StrandedRetryOutcome.declined;
+    // Two names, not one parameterised one. `stranded.retried` used to be
+    // logged unconditionally, so a run that moved nothing still printed a line
+    // saying it retried — the same false claim as the boolean, one layer down,
+    // where a log reader would take it as a fact rather than as a report.
+    if (retried) {
+      _log('stranded.retried', {
+        'workItemId': item.workItemId,
+        'state': afterRetry.state.wire,
+        'jobId': failedJob.jobId,
+      });
+    } else {
+      _log('stranded.retry_declined', {
+        'workItemId': item.workItemId,
+        'state': afterRetry.state.wire,
+        'jobId': failedJob.jobId,
+        'reason': 'operatorRetry returned the item unchanged',
+      });
+    }
 
-    notes.add(
-      're-dispatch is the ordinary scheduler tick: designNotRequired is an '
-      'entry state of triageDefectDefinition.',
-    );
+    if (retried) {
+      notes.add(
+        're-dispatch is the ordinary scheduler tick: designNotRequired is an '
+        'entry state of triageDefectDefinition.',
+      );
+    } else {
+      notes.add(
+        'operatorRetry did NOT move ${item.workItemId}: it is still at '
+        '${afterRetry.state.wire} (version ${afterRetry.version}, unchanged '
+        'since this run began). The item is STRANDED and this repair did not '
+        'unstick it. A failure row was '
+        '${failureRecorded ? 'written' : 'already present'}, so the next run '
+        'will find the same refusal.',
+      );
+    }
 
     return StrandedWorkItemOutcome(
       workItemId: item.workItemId,
       stateBefore: before.state.wire,
-      stateAfter: retried.state.wire,
-      wroteAnything: true,
-      qaContractId: retried.qaContractId,
+      stateAfter: afterRetry.state.wire,
+      wroteAnything: attachedContract || failureRecorded || retried,
+      qaContractId: afterRetry.qaContractId,
       qaContractAction: contractAction,
       failureReason: reason,
-      retried: true,
+      failureRecorded: failureRecorded,
+      retryOutcome: retryOutcome,
       notes: notes,
     );
   }
@@ -700,6 +871,10 @@ Future<void> main(List<String> argv) async {
   // the database on `close()` (`session.dart:213-249`).
   final session = await pod.createSession(enableLogging: false);
   var failedItems = 0;
+  // Declared out here because the exit-status check below the `finally` reads
+  // it, and a list built inside a `try` is out of scope by the time an
+  // exception has already unwound past it.
+  final outcomes = <StrandedWorkItemOutcome>[];
 
   try {
     final db = PersistenceDatabase(session.db);
@@ -733,6 +908,7 @@ Future<void> main(List<String> argv) async {
       );
       if (outcome == null) continue;
       stdout.writeln(outcome.render());
+      outcomes.add(outcome);
       if (outcome.wroteAnything) changed++;
     }
     for (final workItemId in args.workItemIds) {
@@ -744,10 +920,18 @@ Future<void> main(List<String> argv) async {
       );
       if (outcome == null) continue;
       stdout.writeln(outcome.render());
+      outcomes.add(outcome);
       if (outcome.wroteAnything) changed++;
     }
 
     stdout.writeln('\n$changed of $total item(s) changed.');
+    final stranded = declinedRetries(outcomes);
+    for (final outcome in stranded) {
+      stdout.writeln(
+        '  STRANDED: ${outcome.workItemId} is still at '
+        '${outcome.stateAfter} — it was not retried.',
+      );
+    }
     if (args.dryRun) {
       stdout.writeln(
         '  Dry run: nothing was written. No Serverpod boot step that can '
@@ -767,6 +951,22 @@ Future<void> main(List<String> argv) async {
   if (failedItems > 0) {
     stderr.writeln('$failedItems item(s) could not be repaired; see above.');
     exit(1);
+  }
+
+  // Also non-zero when the repair REACHED the retry verb and the verb moved
+  // nothing. That run prints a complete, plausible-looking report — a reason,
+  // a state line, a `retried` field — while leaving the item exactly where it
+  // started, so it is the shape an operator is least able to catch by reading.
+  // [strandedWorkItemExitCode] is null for every run that legitimately changed
+  // nothing, so this cannot fire on a clean replay.
+  final stranded = declinedRetries(outcomes);
+  final declinedCode = strandedWorkItemExitCode(outcomes);
+  if (declinedCode != null) {
+    stderr.writeln(
+      '${stranded.length} item(s) recorded a failure but were NOT retried and '
+      'remain stranded: see above.',
+    );
+    exit(declinedCode);
   }
 }
 

@@ -324,6 +324,277 @@ void main() {
     });
   });
 
+  group('a SECOND stranded execution is recordable (F-92)', () {
+    /// The live shape: one failure already recorded and retried, the item
+    /// re-dispatched, and stranded a second time with NO new failure row yet.
+    ///
+    /// This is the item the repair was run against, minus the live ids — nothing
+    /// here names a real work item, defect or job, so no assertion below can be
+    /// satisfied by hard-coding one.
+    Future<_Host> redispatchedAfterOneRecordedFailure() async {
+      final host = _Host();
+      await host.strandFeature(kSyntheticFeatureItem);
+      await host.failJobPermanently(kSyntheticFeatureItem);
+      await host.repair.repairWorkItem(kSyntheticFeatureItem);
+      await host.redispatch(kSyntheticFeatureItem);
+      return host;
+    }
+
+    test(
+      'two DISTINCT terminal failures produce two transitions, each naming '
+      'its OWN job id and JobFailureKind',
+      () async {
+        // Keyed per work item, the second failure can never be recorded: the
+        // first run's row already holds that key. Keyed per failure, it can.
+        final host = _Host();
+        await host.strandFeature(kSyntheticFeatureItem);
+        await host.failJobPermanently(kSyntheticFeatureItem);
+
+        final first = await host.repair.repairWorkItem(
+          kSyntheticFeatureItem,
+        );
+        expect(first.failureRecorded, isTrue);
+        expect(first.retried, isTrue);
+
+        // A genuinely different execution: its own job row, its own
+        // JobFailureKind, its own reason, a later completion.
+        await host.redispatch(kSyntheticFeatureItem);
+        await host.failJobPermanently(
+          kSyntheticFeatureItem,
+          jobId: 'job-transient-2',
+          kind: JobFailureKind.transient,
+          reason: 'worker lost its lease',
+          completedAfter: const Duration(minutes: 9),
+        );
+
+        final second = await host.repair.repairWorkItem(
+          kSyntheticFeatureItem,
+        );
+        expect(second.failureRecorded, isTrue);
+        expect(second.retried, isTrue);
+        expect(second.stateAfter, WorkItemState.designNotRequired.wire);
+
+        // TWO rows, not one — and each carries the job it was actually read
+        // from, so a row cannot borrow the other failure's kind.
+        final failureRows =
+            (await host.workflowStore.readTransitionHistory(
+                  kSyntheticFeatureItem,
+                ))
+                .where(
+                  (r) =>
+                      r.fromState == WorkItemState.agentExecuting &&
+                      r.toState == WorkItemState.agentFailed,
+                )
+                .toList();
+        expect(
+          failureRows,
+          hasLength(2),
+          reason:
+              'a second stranded execution is a second real event and needs its '
+              'own agentExecuting -> agentFailed row',
+        );
+        expect(failureRows[0].reason, contains('job-permanent-1'));
+        expect(failureRows[0].reason, contains('JobFailureKind.permanent'));
+        expect(failureRows[1].reason, contains('job-transient-2'));
+        expect(failureRows[1].reason, contains('JobFailureKind.transient'));
+        expect(
+          failureRows[1].reason,
+          isNot(contains('JobFailureKind.permanent')),
+          reason:
+              'the second row must carry the SECOND job kind, read off its own '
+              'durable row, never the first failure kind',
+        );
+
+        // The operator ledger grew with it: one retry per failure.
+        final actions = await host.workflowStore.readOperatorActionsForWorkItem(
+          kSyntheticFeatureItem,
+        );
+        expect(actions, hasLength(2));
+      },
+    );
+
+    test(
+      'replaying the SAME failure identity changes nothing, byte-level',
+      () async {
+        // Idempotency keyed on the FAILURE, not the work item: the same job
+        // recorded once must not be recorded twice, however often the repair
+        // runs.
+        final host = await redispatchedAfterOneRecordedFailure();
+        final before = await host.workflowStore.readWorkItem(
+          kSyntheticFeatureItem,
+        );
+        expect(before.state, WorkItemState.agentExecuting);
+
+        final historyBefore = await host.workflowStore.readTransitionHistory(
+          kSyntheticFeatureItem,
+        );
+        final actionsBefore = await host.workflowStore
+            .readOperatorActionsForWorkItem(kSyntheticFeatureItem);
+
+        final replay = await host.repair.repairWorkItem(
+          kSyntheticFeatureItem,
+        );
+        expect(replay.wroteAnything, isFalse);
+
+        // Nothing was written. A version that did not move is the evidence that
+        // no compare-and-swap write happened; identical row LISTS are the
+        // evidence that no transition or operator action was appended.
+        final after = await host.workflowStore.readWorkItem(
+          kSyntheticFeatureItem,
+        );
+        expect(after.version, before.version);
+        expect(after.state, before.state);
+        expect(
+          await host.workflowStore.readTransitionHistory(kSyntheticFeatureItem),
+          historyBefore,
+          reason: 'the same failure identity must not record a second row',
+        );
+        expect(
+          await host.workflowStore.readOperatorActionsForWorkItem(
+            kSyntheticFeatureItem,
+          ),
+          actionsBefore,
+          reason: 'and must not append a second operator action',
+        );
+
+        // A third run must be equally inert.
+        await host.repair.repairWorkItem(kSyntheticFeatureItem);
+        expect(
+          (await host.workflowStore.readWorkItem(
+            kSyntheticFeatureItem,
+          )).version,
+          before.version,
+        );
+        expect(
+          await host.workflowStore.readTransitionHistory(kSyntheticFeatureItem),
+          historyBefore,
+        );
+      },
+    );
+
+    test(
+      'an ALREADY-RECORDED failure is reported truthfully, instead of '
+      'claiming a retry it did not perform',
+      () async {
+        // The exact shape the Manager hit: a failure row this repair wrote last
+        // time is still there, the item was re-dispatched and stranded again,
+        // and `operatorRetry` will not move an item sitting at `agentExecuting`.
+        final host = await redispatchedAfterOneRecordedFailure();
+
+        // Everything logged so far belongs to the FIRST, genuine repair. Start
+        // the replay from a clean marker so the assertions below can only be
+        // satisfied by the run under test.
+        expect(host.logged('stranded.retried'), isTrue, reason: 'setup');
+        host.clearLog();
+
+        final replay = await host.repair.repairWorkItem(
+          kSyntheticFeatureItem,
+        );
+
+        expect(
+          replay.failureRecorded,
+          isFalse,
+          reason: 'no new agentExecuting -> agentFailed row was written',
+        );
+        expect(
+          replay.retried,
+          isFalse,
+          reason:
+              'this is the false claim under correction: the item did not move, '
+              'so nothing was retried',
+        );
+        expect(replay.retryOutcome, StrandedRetryOutcome.declined);
+        expect(
+          replay.stateAfter,
+          WorkItemState.agentExecuting.wire,
+          reason: 'the item is still stranded, and the report must show it',
+        );
+        expect(
+          replay.wroteAnything,
+          isFalse,
+          reason:
+              'N of M item(s) changed counts this field, so a repair that '
+              'changed nothing must not report a change',
+        );
+
+        // And the rendered output says so in words, not only in a boolean.
+        expect(replay.render(), contains('NOT RETRIED'));
+
+        // The LOG carries the same claim, one layer down. It used to print
+        // `[stranded.retried]` unconditionally, so a run that moved nothing
+        // still asserted it had retried — and a log line is read as a fact
+        // rather than as a report, which makes it the more dangerous of the two.
+        expect(host.logged('stranded.retry_declined'), isTrue);
+        expect(
+          host.logged('stranded.retried'),
+          isFalse,
+          reason: 'nothing was retried, so nothing may say it was',
+        );
+        expect(
+          host.logged('stranded.failure_already_recorded'),
+          isTrue,
+          reason:
+              'and the failure line must not claim a write that did not happen',
+        );
+        expect(host.logged('stranded.failure_recorded'), isFalse);
+      },
+    );
+
+    test('the exit status reports an item that was not retried', () async {
+      final host = await redispatchedAfterOneRecordedFailure();
+
+      final declined = await host.repair.repairWorkItem(
+        kSyntheticFeatureItem,
+      );
+
+      expect(
+        strandedWorkItemExitCode([declined]),
+        isNotNull,
+        reason:
+            'an item left stranded must not exit 0: the operator reads the '
+            'status, not only the prose',
+      );
+      expect(strandedWorkItemExitCode([declined]), isNot(0));
+      expect(declinedRetries([declined]).map((o) => o.workItemId), [
+        kSyntheticFeatureItem,
+      ]);
+
+      // A repair that DID its work is silent, and an empty run is silent — so
+      // this cannot degenerate into always non-zero.
+      final worked = _Host();
+      await worked.strandFeature(kSyntheticFeatureItem);
+      await worked.failJobPermanently(kSyntheticFeatureItem);
+      final applied = await worked.repair.repairWorkItem(
+        kSyntheticFeatureItem,
+      );
+      expect(applied.retried, isTrue);
+      expect(strandedWorkItemExitCode([applied]), isNull);
+
+      expect(strandedWorkItemExitCode(const []), isNull);
+      expect(declinedRetries(const []), isEmpty);
+    });
+
+    test('a dry run never claims a retry it did not attempt', () async {
+      final host = _Host(dryRun: true);
+      await host.strandFeature(kSyntheticFeatureItem);
+      await host.failJobPermanently(kSyntheticFeatureItem);
+
+      final outcome = await host.repair.repairWorkItem(
+        kSyntheticFeatureItem,
+      );
+
+      expect(outcome.retried, isFalse);
+      expect(outcome.retryOutcome, isNull, reason: 'no retry was attempted');
+      expect(outcome.failureRecorded, isFalse);
+      expect(outcome.wroteAnything, isFalse);
+      expect(
+        strandedWorkItemExitCode([outcome]),
+        isNull,
+        reason: 'a dry run that did nothing has nothing to report as failed',
+      );
+    });
+  });
+
   group('design remediation is repaired through lane E\'s own provisioner', () {
     test(
       'drives DesignRemediationWorkItemProvisioner and recovers the item',
@@ -369,6 +640,46 @@ void main() {
           ),
           isTrue,
         );
+      },
+    );
+
+    test(
+      'a contract LANE E attached counts as a change, even with no retry to '
+      'take',
+      () async {
+        // The process summary "N of M item(s) changed" counts `wroteAnything`.
+        // Lane E's actions carry a `via-laneE:` prefix because the LANE wrote
+        // the row rather than this script, and that prefix names WHO wrote it
+        // — it must not change WHETHER anything was written. Read as a prefix
+        // rather than as a verb, `via-laneE:attached:` is a contract this run
+        // just attached, which the summary would report as no change at all.
+        final host = _Host();
+        final workItemId = designRemediationWorkItemId(kSyntheticDefectId);
+        // Seeded at `planned`, so lane E's `_advanceToPlanned` has nothing to
+        // do and the item is NOT stranded: the contract is attached, and there
+        // is no stranded execution for the recovery path to recover. That
+        // isolates the contract write from every other write in this file.
+        await host.strandFeature(workItemId, state: WorkItemState.planned);
+        await host.seedDesignDefect(kSyntheticDefectId);
+
+        final outcome = await host.repair.repairDesignRemediation(
+          kSyntheticDefectId,
+        );
+
+        expect(outcome.qaContractAction, startsWith('via-laneE:attached:'));
+        expect(
+          host.logged('design_remediation.qa_contract.backfilled'),
+          isTrue,
+        );
+        expect(
+          outcome.wroteAnything,
+          isTrue,
+          reason: 'lane E attached a contract in this run, so it DID change',
+        );
+        // …and the fields that must NOT be inflated by that one write.
+        expect(outcome.retried, isFalse);
+        expect(outcome.failureRecorded, isFalse);
+        expect(outcome.retryOutcome, isNull);
       },
     );
 
@@ -709,12 +1020,13 @@ class _Host {
     for (final productId in declared) {
       specStore._rows[productId] = _declaration(productId);
     }
+    engine = DurableWorkflowEngine(
+      store: workflowStore,
+      policy: const WorkflowEngine(),
+    );
     repair = StrandedWorkItemRepair(
       workflowStore: workflowStore,
-      workflowEngine: DurableWorkflowEngine(
-        store: workflowStore,
-        policy: const WorkflowEngine(),
-      ),
+      workflowEngine: engine,
       qaContractProvisioner: ProductQAContractProvisioner(
         contractStore: contracts,
         specStore: specStore,
@@ -739,6 +1051,11 @@ class _Host {
   final _CountingQAContractStore contracts;
   final _SpecStore specStore = _SpecStore();
   final InMemoryJobStore jobStore;
+
+  /// The same engine [repair] drives, exposed so a test can walk the work item
+  /// forward through the REAL transition table instead of stamping a state.
+  late final DurableWorkflowEngine engine;
+
   late final StrandedWorkItemRepair repair;
 
   /// Every event handed to the repair's `log`, in order.
@@ -746,6 +1063,14 @@ class _Host {
 
   /// True when [event] was logged by this host.
   bool logged(String event) => logEvents.contains(event);
+
+  /// Drops everything logged so far.
+  ///
+  /// A single `_Host` runs the whole scenario — first repair, re-dispatch,
+  /// replay — so "this host logged `stranded.retried`" is true of the FIRST,
+  /// genuine retry as well as of the replay. Assertions about what ONE run
+  /// reported have to start from a marker, or they pass for the wrong run.
+  void clearLog() => logEvents.clear();
 
   String? permanentJobId;
 
@@ -756,6 +1081,7 @@ class _Host {
   Future<void> strandFeature(
     String workItemId, {
     String productId = kProduct,
+    WorkItemState state = WorkItemState.agentExecuting,
   }) async {
     await workflowStore.saveWorkItem(
       WorkItem(
@@ -766,7 +1092,7 @@ class _Host {
         description:
             'A feature request that was dispatched without a QA '
             'contract and refused at completion.',
-        state: WorkItemState.agentExecuting,
+        state: state,
         featureRef: workItemId,
         createdAt: kNow,
         updatedAt: kNow,
@@ -776,11 +1102,21 @@ class _Host {
 
   /// The durable failure the repair must READ rather than compose: one terminal
   /// job carrying a `permanent` [JobFailure] with a real reason.
+  ///
+  /// [jobId], [kind] and [completedAfter] exist so a test can create a SECOND,
+  /// DISTINCT failure on the same work item — the shape F-92 is about, where
+  /// one `agentExecuting -> agentFailed` row already exists and the repair still
+  /// has to record the next execution's failure. A second failure that reused
+  /// the first one's id would not be a second failure at all, so it is not
+  /// defaulted.
   Future<void> failJobPermanently(
     String workItemId, {
     String reason = 'platform verification failed',
+    String jobId = 'job-permanent-1',
+    JobFailureKind kind = JobFailureKind.permanent,
+    Duration completedAfter = const Duration(minutes: 3),
   }) async {
-    permanentJobId = 'job-permanent-1';
+    permanentJobId = jobId;
     await jobStore.saveJob(
       Job(
         jobId: permanentJobId!,
@@ -790,21 +1126,40 @@ class _Host {
         requiredCapabilities: const {},
         priority: JobPriority.normal,
         state: JobState.failed,
-        dedupeKey: '$workItemId:triage',
+        dedupeKey: '$workItemId:triage:$jobId',
         createdAt: kNow,
-        completedAt: kNow.add(const Duration(minutes: 3)),
+        completedAt: kNow.add(completedAfter),
         instruction: 'Triage the defect.',
         attempt: 1,
         maxAttempts: 3,
         version: 1,
         failure: JobFailure(
           code: JobFailureCode.executionFailed,
-          kind: JobFailureKind.permanent,
+          kind: kind,
           reason: reason,
         ),
       ),
     );
   }
+
+  /// The ordinary scheduler re-dispatch, walked through the real transition
+  /// table.
+  ///
+  /// The repair's whole purpose is to land the item back on `designNotRequired`
+  /// so the scheduler picks it up again. Reproducing that pick-up is what makes
+  /// a SECOND stranded execution reachable in a test, and doing it through
+  /// [engine] rather than by stamping `agentExecuting` onto the row is what
+  /// keeps the second failure a real one: the guards
+  /// (`actorAllowed`, `agentAvailable`) are satisfied by the context the
+  /// dispatch actually supplies, not by a test asserting a state into existence.
+  Future<WorkItem> redispatch(String workItemId) => engine.transition(
+    workItemId: workItemId,
+    to: WorkItemState.agentExecuting,
+    trigger: TransitionTrigger.systemEvent,
+    actor: repairActor,
+    context: {'agentAvailable': true, 'capabilitiesMatch': true},
+    reason: 'scheduler re-dispatch of the retried item',
+  );
 
   /// A defect plus the settled triage result lane E replays from. The defect
   /// names the remediation item as the affected work item, which is how its
