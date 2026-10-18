@@ -2329,29 +2329,36 @@ history now holds **two genuine** `agentExecuting → agentFailed` rows (`03:03:
 followed by `agentFailed → designNotRequired`. **This is the fix working, not the duplicate F-92
 predicted.** The old-key row named the first failure, exactly as B3's conditional predicted.
 
-**F-99 — OPEN, cause NOT established — the last stranded item is not re-dispatched.**
-`design-remediation-DEF-1791686085546076` sits at `designNotRequired`, version 11, and the ordinary
-scheduler tick creates **no job** for it. What is verified, and what is not:
+**F-99 — WITHDRAWN. This was NOT a defect; the item is correctly parked, and I mis-framed it.**
+I recorded this as an open dispatch gap and told the operator "1 item remains stuck". **That was wrong.**
+`DESIGN_GOVERNANCE_AUTOMATION_001` appears in the tree **only** inside
+`lane_e_design_remediation_work_item.dart` as the *named* dependency — it is **not implemented anywhere**.
+The item records `blockedBy: EXTERNAL_DESIGN_GOVERNANCE_DEPENDENCY`, and **ADR 0021
+`docs/adr/0021-design-defect-routing.md:112` states the expected behaviour exactly**:
 
-- VERIFIED it is dispatchable in principle: `designNotRequired` **is** in `entryStates` of
-  `triageDefectDefinition` (`packages/scheduler/lib/src/triage_defect.dart:126-131`).
-- VERIFIED the probe has what it needs: `triage_defect.dart:224` reads
-  `metadata['defectId'] ?? item.workItemId`, and the item's metadata **does** carry
-  `defectId = DEF-1791686085546076` — identical in shape to the dispatching
-  `defect-DEF-1791685401972067`.
-- VERIFIED `triageDefectDefinition` declares **no category filter**, and the tick is healthy and busy
-  (two live jobs, `ran: true, dispatched: 0, overlappedTicks: 0`).
-- VERIFIED nothing in the tick log mentions the item.
-- **NOT ESTABLISHED: why no job is created.** The remaining suspects are a category-based rejection
-  inside `RunnableWorkEvaluator` (whose file was not located in this pass) or a state/category
-  interaction between the `feature`-category item and a `triageDefect` job. **Do not record either as
-  the cause until one is proven** — this repository has already had to withdraw two over-claimed
-  diagnoses written from incomplete evidence (F-79 "permanently wedged", F-87 "unbounded"). Next lane
-  should start from `RunnableWorkEvaluator.evaluate` and prove the rejection, not infer it.
+> "If `DESIGN_GOVERNANCE_AUTOMATION_001` is not yet implemented in shipit-platform, the boundary stops at
+> WorkItem creation. The defect remains in `remediationPlanned` with a linked WorkItem **that cannot
+> progress until the design governance runtime exists**. This is reported as
+> `EXTERNAL_DESIGN_GOVERNANCE_DEPENDENCY`."
 
-Consequence: **1 item remains not flowing** out of 3 originally stranded. The other two completed and
-the pending human-decision count is 10. **Zero** job failures cite the QA-contract guard since
-`2026-10-18 03:10`.
+So **the absent job is the system working as designed.** The design-remediation lane deliberately refuses to
+enter `designRequired` on a fabricated `designContractId`, and `designNotRequired` is documented in code as
+"the honest terminal state of this flow until the design governance runtime exists"
+(`lane_e_design_remediation_work_item.dart:20-21`). I spent a diagnosis pass hunting a dispatch bug that
+does not exist, and recorded two unproven suspects rather than reading the ADR. **The correct lesson is the
+one already recorded as F-85: verify against the governing document before writing a diagnosis down.**
+
+What remains true and non-obvious: the item's `retry` path (`agentExecuting -> agentFailed ->
+designNotRequired` via `operatorRetry`) *converges on the same terminal state*, so retrying a
+design-remediation item is a no-op that will keep landing here. That is consistent with the ADR, but it
+means **no amount of repair effort will move this item**, and the two documented facts — "terminal state"
+and "an entry state of `triageDefectDefinition`" — sit in tension and should be reconciled by the design
+lane, not by an operator retry.
+
+Consequence, corrected: **all 3 originally-stranded items are accounted for** — 2 completed and reached the
+human gate (pending decisions = 10), and the third is **correctly parked** on `ADR 0021`'s
+`EXTERNAL_DESIGN_GOVERNANCE_DEPENDENCY`, which is a known, accepted, **permanent** block rather than a bug.
+**Zero** job failures cite the QA-contract guard since `2026-10-18 03:10`.
 
 ## 32. Correcting the QA gate design's anchor — F-93 gained a named gate set, and F-93's blocker list changed
 
