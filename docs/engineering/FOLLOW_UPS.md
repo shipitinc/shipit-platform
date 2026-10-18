@@ -2699,3 +2699,48 @@ verified against the drift guard, which it activates rather than breaks); **step
 `scheduler.dart:3284-3285`, and rename-or-complete the vacuous `design_job_test.dart:614-698`).
 **BLOCKED by F-129:** step 4. **DEFERRED by D4:** step 5 (HIGH-by-default needs no policy call).
 **DEPENDENT:** steps 6, 8, 9. **Switching the runtime ON remains blocked** and nothing here unblocks it.
+
+## 36. Design runtime steps 1–2: correctly blocked twice — on MY dispatch errors, not on decisions
+
+**A cancelled lane left unverified work in the tree, and it regressed tests.** A previous dispatch for steps
+1–3 was cancelled mid-flight, leaving 206 insertions across 5 files with **no tests, no migration and no
+store**. It broke **6 existing `workflow_engine` tests** (`+139 -6`). I reverted it by **explicit path**
+(never `git checkout .`), confirmed the suite back to **209/209 green**, HEAD and both stash entries
+intact. **A cancelled lane's output has no provenance and cannot be committed — check the tracked tree before
+dispatching anything.**
+
+**F-130 — `designContractExists()` (D-5/F-122) is confirmed LIVE, with a measured probe at HEAD.**
+`D5_PROBE outcome=ACCEPTED state=design_required column=null` — the transition is **accepted** with a NULL
+contract column and no contract row. Not assumed; measured.
+
+**F-131 — step 1 cannot be a migration alone: it needs a Serverpod model.**
+`design_contract` requires `apps/server/lib/src/database/design_contract.spy.yaml`; Serverpod derives
+`definition.json` from `.spy.yaml` models, so a table with no model cannot be expressed. The tree has
+**exactly one** unmanaged precedent — `product_qa_contract_spec` (`"managed": false`) — which
+`pubspec.yaml`'s `serverpod:migration` note describes as **erasable on every regeneration**, guarded by
+`verify:schema-deviations` for three named patterns that do **not** include `design_contract`. The lane
+**refused** to hand-roll that path, correctly: a hand-written `CREATE TABLE "design_contract"` collides with
+the next `serverpod create-migration` **on a live, irreplaceable database**. **Not a decision — a dispatch
+defect. Re-partitioned, not escalated.**
+
+**F-132 — step 2's blast radius is at least 44 regressions, 30 of them outside the dispatch's ownership.**
+Measured with a temporary patch, byte-copied, `shasum`-verified, format-gated before counting: `scheduler`
+430→402 (−28), `workflow_store` 61→47 (−14), `workflow_engine` 209→207 (−2). **A lower bound** — step 2 also
+requires store confirmation, which is stricter. **And the revert stayed green, which is what makes the count
+non-vacuous.** Mitigating fact: **zero production callers transition TO `designRequired`**, so closing the
+edge removes a fabrication path and breaks no working path.
+
+**F-133 — §4.6's cited line numbers have drifted.** `lane_e_design_remediation_work_item.dart` constants are
+at `:10,15,18,22,26` and writes at `:575,:643-645`, not the `:23,41-42` the design cites. Fifth instance of
+the stale-anchor class (F-100, F-126) — **in a design revision that just passed review with no blockers.**
+The dependency itself is verified unweakened; only the citation is wrong.
+
+**F-134 — `platform_contracts` is RED at HEAD**, measured not assumed: `serialization_test.dart:420` expects
+26 `WorkItemState` values, actual 27. Stale from whichever lane added `implementationReady`. Any "no other
+package may regress" gate is therefore measured against a **red baseline** — and the count is one away from
+becoming red for a *new* reason when `designParked` lands in step 3. **Fix the count before step 3**, or step
+3's new state will be blamed for a pre-existing failure.
+
+**Runtime remains OFF, verified in the composition root.** `apps/server/lib/server.dart` mounts only
+triage / implement / engineering-review. `designRevisionDefinition` and `designReviewDefinition` are
+**exported** (`scheduler.dart:31-32`) but **never mounted**.
