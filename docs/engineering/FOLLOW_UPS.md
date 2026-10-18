@@ -2461,3 +2461,40 @@ structural check**, and the operator sees two gate ids to waive for one defect w
 is keyed by gate id.
 - **Convention recorded:** `intake-structured-result-admitted` is the **shipped manifest's**;
   `triage-classification-admitted` is the **remediation contract's**; **no contract may declare both.**
+
+## 32. §7 C1 delivered; C2 blocked by my dispatch defect, and two adjacent holes found but NOT fixed
+
+**F-106 — the guard's third and fourth instances of the same iteration shape.** `impl-G1` closed the
+`allRequiredGatesPassed` hole (C1) and measured it across an 84-row contract×result matrix:
+**PASS→FAIL 25, FAIL→PASS 0, unchanged 59**. But two adjacent defects of the *same* shape were found and
+deliberately **not** fixed, because §7.4 specifies no fix and improvising one is not an implementer's
+call:
+- `requiresFormalDetermination` (`packages/qa_orchestration/lib/src/qa_orchestration.dart:67-81`)
+  iterates `results` filtered by required gate ids, so a required gate with **no result** is silently
+  absent from the determination list rather than named. **This is §7.4's third instance**, and §7.4
+  names only two.
+- A contract declaring **zero gates, or only `required: false` gates, still passes vacuously**: there is
+  no required gate to be `notExecuted`, so the loop body never runs. **§7.2's table has no row for this**
+  and §7.4 specifies no fix. (The zero-gates case is unreachable through the product path —
+  `ProductQAContractSpecRefusal.declaresNoGates` rejects it at registration — but the **only-optional-
+  gates** case may not be.)
+
+**F-107 — both of the above are LATENT, not live, and must not be recorded as flow blockers.**
+`isOverallPass` (`qa_orchestration.dart:83-100`) has **zero production callers** — only its definition and
+10 test call sites. `requiresFormalDetermination` likewise. They become load-bearing only when the
+determination lane is built. So fixing C2 is hygiene, not unblocking; the one **live** gate-status reader
+is `allRequiredGatesPassed` on the `qaInProgress → qaPassed` edge, which C1 now makes fail closed.
+
+**F-108 — `qaPassed` remains closed, and this was measured two ways.** C1 adds FAIL paths only, so
+old-pass ⊆ new-pass; the 84-row matrix confirms **0 inputs newly reach `qaPassed`**. The guard is used on
+exactly one edge (`work_item_transitions.dart:732-738`). The other `qaPassed` route,
+`waitingForHumanDecision → qaPassed` (`:758-764`), uses `blockingHumanDecisionResolved` +
+`decisionActorIsHuman`, never calls `allRequiredGatesPassed`, and is untouched.
+
+**F-109 — a test that passed for two reasons at once.** `transition_test.dart:469-486` supplied **one
+`failed` result for a two-required-gate contract**, so it failed both because the status was `failed` and
+because the other required gate had no result — exercising neither in isolation, and structurally unable
+to detect the hole. Repaired to supply results for **both** required gates, so the rejection is
+attributable to the `failed` status alone; the subset case is then asserted separately. The repaired
+assertion passes on **both** the pre-fix and post-fix trees, which is what makes it an honest regression
+guard rather than a fix-detector.
