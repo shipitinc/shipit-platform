@@ -2025,3 +2025,299 @@ no_docker_issued: true
   # No docker, no compose, no psql at any point in this pass or the one before it. The QA stack was
   # not touched. Per AGENTS.md's shared-Docker-state rule this lane issued no Docker or Compose
   # command at all — not even a read-only one — and read compose files as text where it needed to.
+# =====================================================================================
+# REVISION 3 — APPEND-ONLY ENTRY. NOTHING ABOVE THIS LINE WAS MODIFIED.
+#
+# Appended by lane `design-SUBSTANTIVE-QA-GATES` (design-agent) on top of base 9300eea.
+# Every key above retains its exact prior value. This is VERIFIED, not asserted:
+  #   - the new file's bytes are a strict PREFIX-EXTENSION of the original's — checked by
+  #     `new_bytes.startswith(old_bytes)` == True over the whole file, NOT by reading a diff;
+  #   - `git diff --numstat` therefore shows insertions with NO removed content.
+  #   *** THE METHOD IS THE CLAIM, NOT THE SIZE, and that is this artifact set's own PASS 5 / PASS5-5
+  #   lesson ("a count in prose is invalidated by appending a row to the register it counts").
+  #   An earlier draft of this note carried "342,312 / 364,626 / 22,314 appended"; editing the
+  #   note changed those figures, which is the defect repeating itself one section down. They are
+  #   removed rather than refreshed, because a reviewer can re-run the prefix check in one line
+  #   and cannot check a number this lane may edit again.
+  #   *** ONE HONEST CAVEAT, because `git diff --numstat` REPORTS "1 deletion" and an even earlier
+  #   draft of this note claimed "no `-` line", which IS FALSE. The original file ended WITHOUT a
+  #   trailing newline, so appending one makes git report the final line as removed-and-re-added.
+  #   Its CONTENT is unchanged — proven by the prefix check, not by the diff. Recorded because a
+  #   claim in this artifact that a reviewer can disprove in one command is worse than no claim,
+  #   and because this lane's own §6.3 requires shasum plus a byte check before trusting a diff. ***
+  # `revision_number` above still reads 2 and was NOT rewritten: revision 2 is an independently
+# reviewed, approved artifact set, and renumbering it from a design lane would edit the record
+# a reviewer holds rather than add to it. This block is the revision-3 entry, at a distinct
+# key, so both are readable and neither overwrites the other.
+# =====================================================================================
+
+revision_3_substantive_qa_gates:
+
+  lane: "design-agent / design-SUBSTANTIVE-QA-GATES"
+  is_a: "ADDITIVE COMPANION REVISION — subordinate to revision 2; it changes no claim revision 2 makes"
+  base_sha: "9300eea9259b1bc6f0ecaeaae5d45832652bf549"
+  base_sha_short: "9300eea"
+  base_sha_verified: >
+    `git rev-parse --short HEAD` returned 9300eea and `git rev-parse HEAD` returned
+    9300eea9259b1bc6f0ecaeaae5d45832652bf549 BEFORE this lane's first edit.
+    `git status --porcelain --untracked-files=no` returned EMPTY and `git diff --quiet HEAD`
+    returned 0, i.e. the TRACKED tree was clean. Every porcelain entry present was UNTRACKED
+    (??) and none was inside design/qa-contracts-feature-remediation/. A mismatch would have
+    produced DESIGN_BLOCKED; there was none.
+  artifact: "design/qa-contracts-feature-remediation/substantive-qa-gates.md"
+
+  governing_human_decision: "92d567e3-da03-4c43-99f4-e3726472f0ab"
+    # PRODUCT · RESOLVED · DESIGN_SUBSTANTIVE_GATES_FIRST · operator · 2026-10-18.
+    # Its `scope_note` verbatim: "Dispatchable as an ordinary design lane with independent
+    # review, under the Gate-D4 approved design/qa-contracts-feature-remediation/. No further
+    # human gate is required to run that design." This revision IS that design, which is why it
+    # raises no HUMAN_DECISION_REQUIRED of its own.
+
+  risk_level: 3
+  risk_name: "Major Workflow Change"
+  risk_rationale: >
+    Per DESIGN_GOVERNANCE.md:92-99. This revision redefines what `qaPassed` MEANS on two lanes,
+    adds a guard clause that fails closed where it previously passed vacuously, and specifies
+    six new gate types registered on a governed path. Gate D4 is HUMAN_DECISION_REQUIRED at
+    Level 3. This lane does NOT grant that approval and does not treat its own completion as
+    it: the artifact goes to INDEPENDENT DESIGN REVIEW first, and human approval follows the
+    review, not this lane.
+
+  what_a_pass_asserts:
+    feature_lane: >
+      A commit exists at a recorded revision; every path it touched matches the lane's declared
+      owned paths and none matches a declared prohibited path; platform-VERIFIED evidence
+      (EvidenceKind.platformVerifiedEvidence, never agentClaimedEvidence) exists bound to that
+      execution; every declared check ran under the EXACT declared command and reported passed;
+      and the revision engineering review approved IS the revision the commit produced. No
+      agent-authored field participates in any of the five.
+    remediation_lane: >
+      The defect the item names resolves in durable storage; every evidence id the classification
+      cites exists AND belongs to that defect; and the classification is durably recorded rather
+      than discarded.
+    risk_asymmetry: >
+      Opposite failure modes, non-interchangeable evidence. The feature lane's risk is a false
+      green on CODE THAT SHIPS, and its substance is only obtainable by RUNNING something
+      (commit, validator, revision identity). The remediation lane's risk is a false RECORD ABOUT
+      A DEFECT that scopes every later fix, and its substance is only obtainable by
+      CROSS-REFERENCING durable rows. A commit proves nothing about whether a cited evidence id
+      exists; a resolvable defect id proves nothing about whether the code that fixes it builds.
+      Neither gate set is a subset of the other, which is why a single merged list would be a
+      list whose members are individually vacuous on one of the two lanes.
+
+  new_gate_types:
+    # Six require an evaluator to be WRITTEN:
+    - "implementation-artifact-provenance   (F1 — falsifies on HEAD unmoved / delta unreadable)"
+    - "change-scope-confinement             (F2 — falsifies on a changed path outside the declared owned set, or inside the forbidden set)"
+    - "platform-verified-evidence           (F3 — falsifies when every row is agentClaimedEvidence, or there are no rows, or rows are bound to another execution)"
+    - "declared-validation-outcome          (F4 — falsifies when checkName matches but the COMMAND does not; or a declared check is absent; or one failed)"
+    - "revision-identity-match              (F5 — falsifies when the reviewed revision differs from, or is null/empty relative to, the produced revision)"
+    - "triage-defect-existence              (R1 — falsifies when the cited defect does not resolve)"
+  existing_gate_types_reused:
+    # Declared in the repository already; they need an evaluator WRITTEN, nothing else:
+    - "triage-classification-structure  — ALREADY DECLARED, unregistered. R3. STRUCTURAL, retained as a precondition and explicitly NOT counted as substance."
+    - "triage-evidence-grounding        — ALREADY DECLARED, unregistered. R2. Reused verbatim (lane_g_triage_qa_contract.dart:204-208)."
+  gate_types_to_be_de_removed:
+    - "static-analysis — fabricated PASS (static_analysis_gate.dart:24 returns issues: [])"
+    - "unit-tests      — fabricated PASS, and reads no coverage value at all (test_coverage_gate.dart:24)"
+    - "security-scan   — fabricated PASS (security_scan_gate.dart:24 returns vulnerabilities: [])"
+    - "performance     — fabricated PASS, echoes config back (performance_gate.dart:24-27)"
+    # Per evaluator-spec.md §5.2 option 2, the only option that spec leaves open.
+
+  gate_type_enum_premise_correction:
+    finding: >
+      The dispatch brief states QAGateSpec carries "a CLOSED type enum". IT DOES NOT.
+      `QAGateSpec.type` is `final String type;` (product_manifest.dart:155) and
+      `_$QAGateSpecFromJson` accepts any string (product_manifest.g.dart:111). No gate-type
+      enum exists anywhere in the repository.
+    consequence: >
+      Adding a type requires NO enum change and NO schema migration — only a registered
+      GateEvaluator plus a contract that declares it. The set that is genuinely closed is
+      GateRegistry._evaluators (gate_registry.dart:9-17), not the type field. This materially
+      reduces the work relative to the brief's framing and is the single largest reduction in
+      estimated effort this lane found.
+    fail_closed: >
+      An unknown type already degrades honestly: QAOrchestration.evaluate returns
+      QAGateStatus.notExecuted (qa_orchestration.dart:19-31) and _isGateSatisfied treats
+      notExecuted as unsatisfied (guard_conditions.dart:299-303).
+
+  vacuous_pass_closure:
+    verdict: "IT CLOSES, and the hole is WIDER than evaluator-spec.md §1 and FOLLOW_UPS F-49 record."
+    finding: >
+      The filter at guard_conditions.dart:272 selects FROM gateResults, not FROM
+      qaContract.gates. So the guard asks "of the results I was handed, are the required ones
+      satisfied?" and NEVER asks "was every required gate given a result at all?". A contract
+      declaring THREE required gates, supplied a gateResults list containing ONLY the one that
+      passed, PASSES. F-49 records the qaContract-absent variant; this is the SUBSET variant,
+      and it fires with both keys present and correctly populated.
+    also_affected: >
+      QAOrchestration.isOverallPass (qa_orchestration.dart:86-100) has the identical defect —
+      requiredResults is filtered from results and the loop iterates results, never
+      requiredGates. A fix to the guard ALONE would leave isOverallPass able to report an overall
+      pass on a contract it never fully evaluated, and evaluator-spec.md §3.2 step 3 records
+      isOverallPass as the value the determination lane reads. BOTH must be fixed.
+    fix:
+      - "C1 step 2 — qaContract absent from context => FAIL. Closes the F-49 / spec §1 hole."
+      - "C1 step 3 — for every qaContract.gates entry where gc.required, a result with that gateId MUST exist; absent => FAIL naming the gate. Closes the SUBSET hole. This is the whole fix and it is four lines."
+      - "C2 — invert isOverallPass to iterate requiredGates and look each up in results, failing on a miss."
+      - "C3 — QAGateEvaluationService must return both context keys; C1 step 2 makes this load-bearing."
+      - "C4 — a guard test for each of the seven rows of the artifact's §7.2 table, including the three currently green-and-wrong."
+    not_proposed: >
+      No change to _isGateSatisfied (guard_conditions.dart:291-317). It is already correct. The
+      bug is in WHAT IS ITERATED, not in how each element is judged.
+
+  structural_gate_migration:
+    decision: "RETAIN intake-structured-result-admitted, unchanged, required: true, alongside the substantive gates."
+    rationale: >
+      The governing decision says it "stays registered and truthful" and forbids only describing
+      it as a quality gate. Retaining it costs nothing and asserts something true; replacing it
+      would destroy a working declaration to no end.
+    not_sufficient_because: >
+      R3 passes on a structurally-valid-but-empty payload. Three independent mechanisms make
+      such a payload incapable of producing qaPassed, and all three are required: (1) R1 and R2
+      are required:true in the same contract; (2) the vacuous-pass closure means "R1 and R2 were
+      never evaluated" cannot be laundered into "R1 and R2 were satisfied"; (3) the differential
+      non-vacuity test fails if any registered evaluator's verdict is not a function of its input.
+    obligation: >
+      The gate must NOT be described as a quality gate anywhere — not in code comments, not in a
+      contract's metadata, not in a UI label. The metadata key evaluatorRuntime
+      (product_qa_contract.dart:156, lane_g_triage_qa_contract.dart:156) survives until every
+      required gate type has a real evaluator. Naming a structural gate "quality" is the
+      cheapest way to make this artifact ineffective, because it restores the exact wording the
+      operator rejected.
+
+  red_on_purpose:
+    gates: ["F3", "F4"]
+    why: >
+      F3 and F4 CANNOT be made green by anything this lane designs. ExecutionCoordinator carries
+      ONE verificationPlan field for ALL roles (execution_coordinator.dart:151, :162) and the
+      only plan composed in production is triageVerificationPlan —
+      `git rev-parse --verify 'HEAD^{commit}'`, checkName git_worktree_head — attached to the
+      single coordinator every role drives (server.dart:1578-1583, :1638). server.dart's own
+      comment states it without hedging: "Do not read a green implementation execution as
+      evidence that verification ran."
+    what_is_deliberately_not_done: >
+      Reading AgentResult.claimedChecks so the bar becomes reachable. That is the shortcut the
+      operator refused twice, and it would convert "the code was verified" into "the agent said
+      the code was verified". F3 and F4 go green when OD-6 (the role-scoped implementation
+      VerificationPlan) is decided, which server.dart reserves as an architecture decision and
+      declines to make itself.
+
+  requirements_covered:
+    - "Machine-checkable meaning of QA passed, per lane — artifact §2.1 (F), §2.2 (R)"
+    - "Different risk per lane, and why — §2.2's comparison table"
+    - "Concrete gate set with gateId / type / required / config — §3.1, §3.2"
+    - "Every gate falsifiable, with the failing input — per-gate tables in §3.1/§3.2 and the 14 required tests in §6.2"
+    - "Existing vs new gate types, explicitly — §1.3, §4, and the new_gate_types / existing_gate_types_reused / gate_types_to_be_de_removed lists above"
+    - "Falsification tests plus the non-vacuity discipline — §6, including F-85's byte-copy + shasum + dart format --set-exit-if-changed"
+    - "The vacuous-pass hole: closure or proof it cannot fire — §7, IT CLOSES"
+    - "Migration from the structural gate — §5, RETAIN, with three enforcement mechanisms"
+    - "A gate a structurally-valid-but-empty payload cannot pass — §2 (R3's stated limit), §5, §6.4 N1"
+
+  requirements_gaps:
+    - "OD-6, the role-scoped implementation VerificationPlan. F3 and F4 are red until it is decided. server.dart:1624-1638 reserves it and names its two options. THE GAP THAT MOST LIMITS WHAT THIS DESIGN CAN DELIVER; named rather than engineered around."
+    - "The WorkerExecution lookup key for F5. endingRevision exists and is persisted through a WorkerStore with CAS (worker_execution.dart:60, worker_execution_result.dart:48, worker_store_suite.dart:15-16, :19-22), but readWorkerExecution is keyed by execution id and whether a WorkerExecution is retrievable BY WORK ITEM is not established from the tree."
+    - "The product's declared owned/forbidden path globs for F2. AGENTS.md's Product-specific policy -> Path ownership map is TBD. F2 ships with the config keys and a FormatException on an empty ownedPathGlobs, NOT with a guessed glob."
+    - "The product's declared requiredCheckNames / requireCommands for F4. AGENTS.md's Required validation gates is TBD. Inventing a default would make the gate a constant every product satisfies for free — the fabricated pass in a new costume."
+
+  undecidable_stated_not_guessed:
+    - "What a product's declared validation commands are (F4). Same reason as above; no values invented."
+    - "The path-ownership map (F2). Same reason."
+    - "OD-6's shape — per-role coordinator vs a plan resolved from the job's role. Explicitly reserved at server.dart:1624-1638."
+    - "Whether the remediation contract is a SEPARATE contract or the triage contract with R1 and R3 appended. §3.2 reuses triage-evidence-grounded's declaration; if it is the same row, adding R1 and R3 changes optionalGateFailuresAllowed's derivation (product_qa_contract.dart:128-140)."
+    - "The evidenceTypes vocabulary for F1/F2/F5 (execution_delta, committed_diff_paths, review_verdict, committed_revision). QAEvidence.evidenceType is a free String and no registry of evidence types exists; these names are PROPOSED, not derived from a controlled list."
+    - "Which design document server.dart:1616-1619's bare '§9.2 row 5' belongs to. design-revision.md's §9.2 is 'Requirements gaps' (design-revision.md:1035) and the string endingRevision appears nowhere in it, in evaluator-spec.md, or in design-review-gate.md. F5's assertion does not depend on it and is stated in full independently."
+  undecidable_corrected_during_this_lane:
+    question_first_listed_as_undecidable: >
+      "Whether the shipped product manifest's workItemCategories should keep being [\"feature\"]
+      alone, and whether a remediation item gets a product-declared contract at all."
+    answer_found_in_the_tree: >
+      lane_e_design_remediation_work_item.dart:325 and :387 both create WorkItemCategory.feature,
+      and the manifest's own metadata.inertFields says so in words — "feature is the only category
+      any intake path on this product actually files (triage, design remediation and feature intake
+      all create WorkItemCategory.feature)" (apps/server/manifests/shipit-platform.product-manifest.json:81).
+      So the artifact's §3.2 remediation gates ARE reachable through the shipped manifest's
+      declared contract. Question closed.
+    disposition: >
+      Recorded here rather than silently dropped, because a question removed from a gaps list
+      without its answer reads as never having been asked.
+
+  citation_defects_found_and_reported_not_fixed:
+    note: >
+      packages/** and docs/** are PROHIBITED_PATHS for this lane. These are REPORTED. Each was
+      verified by opening the cited range at 9300eea, not inferred.
+    defects:
+      - artifact: "design/qa-contracts-feature-remediation/evaluator-spec.md"
+        defect: "work_item_transitions.dart citations have drifted by 42 lines. :690-696 for qaInProgress -> qaPassed is now :732-738; :691-694 is :733-736; :697-702 is :739-744; :709-715 is :751-757. The file is 894 lines, so NONE of the stale ranges is out of bounds — which is why it survived seven correction passes: a range that resolves to the WRONG THING is harder to catch than one that resolves to nothing. This is the L3 pattern (evaluator-spec.md §12.5, PASS3-1) in a new place, and on the edge every gate in this artifact is anchored on."
+        also_affected: "docs/engineering/FOLLOW_UPS.md §15 F-50 carries the same :690. Manager-owned; read, never written."
+      - artifact: "apps/server/lib/server.dart:1616-1619"
+        defect: "The bare '§9.2 row 5' citation resolves to no design document in this repository (see undecidable_stated_not_guessed). A well-formed citation that opens onto nothing — the L3 pattern again, and in a file this lane may not edit."
+      - artifact: "packages/workflow_engine/lib/src/transitions/human_decision_routing.dart"
+        defect: >
+          Already recorded by an earlier pass (evaluator-spec.md §12.5, PASS7-12) and NOT
+          re-recorded here as new. Re-read at 9300eea: the file is 235 lines and design-revision.md
+          §8's bare ranges still resolve past its end. Not this lane's artifact and not this
+          lane's to fix.
+
+  durable_discoveries:
+    - category: "PROJECT_FACT"
+      authority: "automatic — verified at 9300eea by reading the tree"
+      finding: >
+        QAGateSpec.type is an unvalidated String, not an enum. Adding a gate type needs no
+        migration; the closed set is GateRegistry._evaluators. Unknown types already fail closed
+        as notExecuted.
+    - category: "QA_DISCOVERY"
+      authority: "automatic — verified at 9300eea by reading the tree"
+      finding: >
+        The vacuous-pass hole in allRequiredGatesPassed is a SUBSET hole, not only the
+        qaContract-absent hole F-49 records. A required gate with NO RESULT is treated as absent
+        rather than notExecuted, so a partially-populated gateResults passes even with a correct
+        qaContract. isOverallPass shares the defect. This is the concrete mechanism by which a
+        partially-wired evaluator looks enforced and enforces nothing.
+    - category: "PROJECT_FACT"
+      authority: "automatic — verified at 9300eea by reading the tree"
+      finding: >
+        No implementation-lane platform verification exists and none can be added by a design
+        lane. ExecutionCoordinator carries one verificationPlan for all roles and only
+        triageVerificationPlan is composed, so an implementation run is verified by
+        `git rev-parse --verify 'HEAD^{commit}'`, which succeeds for any checkout with a commit.
+        Any substantive feature-lane gate asserting 'the platform validated the code' is therefore
+        RED by construction until OD-6 is decided.
+    - category: "AUTOMATION_OPPORTUNITY"
+      authority: "requires independent review — reported, not persisted"
+      finding: >
+        A repo-wide check that every file:line citation in design/** and docs/** resolves to a
+        line that actually exists AND carries the property claimed would have caught the
+        evaluator-spec.md 42-line drift and the server.dart phantom §9.2. A grep finds an orphaned
+        STRING, not a stale claim; only opening the citation finds a range that resolves to the
+        wrong thing.
+    - category: "WORKFLOW_IMPROVEMENT"
+      authority: "requires independent review — reported, not persisted"
+      finding: >
+        §6.3 of this artifact generalises F-85 beyond edit hygiene into test hygiene: before
+        trusting ANY count a lane reports about gate work — number of gates, number of tests,
+        number of evaluators — the count must be produced from a byte-copied file, compared with
+        shasum, and passed through `dart format --set-exit-if-changed` (CLI, not the MCP analyzer
+        tool, which has reported 'no errors' on code with ten real ones). A phantom edit that
+        reported success while writing only whitespace already corrupted one measurement in this
+        repository.
+
+  implementation_feasibility: "MEDIUM"
+  implementation_feasibility_rationale: >
+    HIGH for the guard closure (G1: four lines plus a seven-row test) and for the two declared
+    triage evaluators (E1: evaluator-spec.md §5.3 already specifies the config and semantics, and
+    a live consumer — _parseTriageResult — justifies requiredFields). MEDIUM for F1/F2/F5, whose
+    reads exist (WorkspaceDeltaProbe, a git diff, WorkerExecution.endingRevision) but whose
+    work-item-level lookup paths are not established (§requirements_gaps). LOW-BLOCKED for F3/F4,
+    which are gated on OD-6 and cannot be delivered by any implementer until that architecture
+    decision lands. Overall MEDIUM, and the blocker is named rather than absorbed.
+
+  design_system_compliance: "NOT APPLICABLE — no UI, no visual or interaction surface, no tokens, no components. This artifact introduces gate types and a guard clause; it renders nothing."
+  ux_accessibility_score: "NOT APPLICABLE — no interface, no navigation, no content an operator reads as prose. The one operator-visible surface is a waiver-rate alert (§6.4 N2), whose content is out of scope here and named as a gap."
+
+  ready_for_independent_design_review: true
+  self_approval: >
+    NONE. This lane does not approve this artifact. Gate D4 (DESIGN_GOVERNANCE.md:159-163) requires
+    HUMAN_DECISION_REQUIRED at Level 3, and the sequence is independent design review FIRST, then
+    human approval of the REVIEWED artifact. Nothing in this block, and nothing in the artifact,
+    asserts that the gates are implemented, wired, or verified. They are DESIGNED.
