@@ -2744,3 +2744,60 @@ becoming red for a *new* reason when `designParked` lands in step 3. **Fix the c
 **Runtime remains OFF, verified in the composition root.** `apps/server/lib/server.dart` mounts only
 triage / implement / engineering-review. `designRevisionDefinition` and `designReviewDefinition` are
 **exported** (`scheduler.dart:31-32`) but **never mounted**.
+
+## 37. §9 step 1 implemented (`b661c07`) — and the generator silently erased a table
+
+**F-138 — the authorised generator SILENTLY dropped `product_qa_contract_spec` from every generated
+definition.** Running `serverpod create-migration` rebuilds each `definition.sql` from the models, and
+`product_qa_contract_spec` is declared in **no** model — it survives only as a `"managed": false` entry in
+the previous `definition.json`. Measured: 54 tables → 55 with the table **gone**, and it was already absent
+from the three prior `definition.sql` files, so the last migration's copy was a **hand-append**. The
+chain-migrated path was unaffected (its DDL lives in `20261017102506000`), which is exactly why it was
+silent. **A fresh database would have had no `product_qa_contract_spec`, while
+`PostgresProductQAContractSpecStore` binds parameters to it.** Restored byte for byte and now guarded by a
+test that fails if it is ever erased again. **The generator-side guard still does not exist** — adding
+`CREATE TABLE "product_qa_contract_spec"` to `verify:schema-deviations` would make the erasure fail closed
+rather than needing a human to notice. That script is in `pubspec.yaml`, which the lane does not own.
+
+**F-139 — an unmanaged table can be erased by regeneration, and no guard names it.**
+`verify:schema-deviations` checks 3 patterns and `verify_schema_bootstrap.sh` checks 4 hand-maintained
+objects; **neither names this table.** New test coverage exists, but a test is not a generator guard — the
+erasure would still succeed and merely fail CI afterwards.
+
+**F-140 — `serverpod create-migration` opens NO database connection; only `create-repair-migration` does**
+(verified in `serverpod_cli-3.4.13 lib/src/migrations/generator.dart`). So it is safe to run against a repo
+whose development config points at a live stack — which is why this lane could generate safely with a
+deliberate port-1 fail-safe and touch no database. Also: the generator's `managed` filter excludes unmanaged
+tables from **both sides** of the diff, so an unmanaged table is never dropped from an existing database —
+its only casualty is the fresh-database `definition.sql`.
+
+**F-141 — three GREEN REVERTS were found and closed, all of them real defects in the new tests.**
+(A) Reverting `InMemoryDesignContractStore` to return its argument instead of the read-back row left the
+suite green — two fakes proved the *provisioner* uses the read-back value while nothing held the **shipped**
+implementation to it. (B) Case-folding `designContractIdForWorkItem` left it green because every fixture id is
+already lower-case, so purity and impurity coincided — and work-item ids are minted with an upper-case
+prefix by more than one lane, so the collision is constructible. (C) **A raw-string regex in the lane's own
+new migration test** made `$table` four literal characters, so inserting a real `INSERT INTO
+"design_contract"` stayed green; fixing it exposed **three more** of the same class. **A reverting mutation
+that stays green is the finding, not a nuisance** — three of twenty-two were missed-adjacent defects here.
+
+**F-142 — step 1 is a DESIGN CONTRACTION, named by the lane rather than hidden: `DesignContractStore` has NO
+durable implementation.** The interface and an in-memory impl exist; `PostgresDesignContractStore` belongs in
+`apps/server/lib/src/persistence/`, **outside this lane's grant**. §4.3 requires step 2's guard to confirm the
+contract "against the store" — against an in-memory store that check is **not durable**, so **step 2 cannot
+be honest until that path is granted.** This is a dispatch defect (mine), not a decision.
+
+**F-143 — the builder has no production caller.** Wiring it into
+`DesignRemediationWorkItemProvisioner.ensurePersisted` is step 3, in `apps/server/lib/src/triage/` — also
+outside this grant. Step 3 still owns `WorkItemState.designParked` + R2.1/R2.2/R2.4, and R2.3's release stays
+blocked until step 2 lands.
+
+**The builder's refusals are the notable part.** Every value it does **not** declare is a refusal to
+fabricate, stated in-source so a reviewer can check it: `requiredArtifacts` names the design_revision record
+and records `validationSchema: null` as a **named absence** (`requiredArtifactSchemas: 'absent'`), not a gate
+nothing runs; `reviewers` carries the designReviewer **role** wire with **no identity**, because identity is
+not knowable at creation; `approvalThreshold: 1` is **artifact approval only**, because the risk-tier human
+gate is a separate authority whose tier is unresolvable while `DesignRiskPolicy` is absent; and
+`submittedArtifacts`/`decisions`/`expiresAt` are `null`, meaning **"not yet"** rather than **"nothing."**
+`status` is deliberately a plain `String`, not a generated Serverpod enum, because
+`platform_contracts.DesignContractStatus` is the authority and a second enum would be a second vocabulary.
