@@ -2035,14 +2035,34 @@ blocker — no longer fires: its four historical failures are all timestamped `2
 `2026-10-18 03:04`, all before the contracts were attached, and **no new failure cites it**.
 `WI-feature-1791823723502264` produced a **`succeeded`** job after its contract was attached.
 
-**F-79 — BLOCKING — the scheduler tick is permanently wedged; nothing dispatches.**
-Every tick logs `scheduler.tick.dropped_overlap {ran: false, dispatched: 0, code: TICK_OVERLAP_DROPPED}`
-because a tick is always already in flight. Job `jb-hnbbwqcwm0-bduerb`
-(`WI-feature-1791823723502264`, started `2026-10-18 03:05:20`) is still `running` with no
-`completedAt`. One tick has evidently been in flight since then, so the single-flight guard refuses
-every subsequent tick forever. **This is a deadlock, not slow progress**: the queue cannot drain while
-its only drainer is stuck. Distinct from F-77/F-78 (the unhandled-async crash), which is fixed at
-`96db89c`; the process is alive here, it is the tick that is wedged.
+**F-79 — BLOCKING — the single-flight guard is released correctly but has NO BOUND; fixed at `ab6b966`.**
+
+> **CORRECTED 2026-10-18 after `correct-WEDGED-TICK`.** This entry originally read "the tick is
+> permanently wedged" and "a deadlock, not slow progress". **That was an over-claim and it is
+> withdrawn.** `overlappedTicks: 1` is byte-identical for a wedged tick and a tick within budget, so it
+> cannot distinguish them; and at the time of writing the job was only **~66 minutes** into a
+> **4 h + 60 s** budget (`server.dart:2889`, `local_worker.dart:283`). The evidence did not establish a
+> wedge. Job `jb-hnbbwqcwm0-bduerb` was **not** cancelled — it is live evidence and the fix does not
+> require reaping it. What follows is the defect that *is* real, and it is independent of that claim.
+
+There is **no skipped release path**: acquisition `server.dart:1880`, release in `whenComplete`
+`:1886-1888`, correct on success and failure alike, and the existing
+`tick_single_flight_test.dart:200`/`:249` already pinned both. The defect is that the release had
+**no bound**. `whenComplete` fires only when `runTick()`'s future settles, which requires the body to
+return; the body awaits triage → impl → review → baseline → sweep, and the impl path blocks at
+`scheduler.dart:1941` `await _dispatch.run(request)`. **Exactly one bound exists on that whole path**
+(`local_worker.dart:279-285`, around `executionDriver.execute`); `workspaceManager.prepare`,
+`inspector.inspect`, `artifactCommitter.commit` and cleanup are each awaited with **no timeout** and
+each shells out. A tick that stalls in any of them holds the guard for the life of the process and
+dispatch stops. Fixed by leasing the guard (`ab6b966`): on expiry the guard is released, the tick is
+left **running**, nothing is cancelled, and release is tokenised so an abandoned tick's `whenComplete`
+cannot clear a guard a newer tick holds. Bound is `SHIPIT_TICK_MAX_HOLD_SECONDS`, unset deriving to
+`4 × largest budget + stallAllowance` = **17 h** — the safe direction, because `Scheduler.tick`
+dispatches its backlog serially so a legitimate hold is unbounded in N.
+
+**F-79a — a dropped-overlap log line cannot distinguish "stuck" from "working".** `heldForSeconds` on
+the drop line, or a periodic held-tick heartbeat, would have made tonight's question answerable from
+logs alone. Not implemented — a second diagnostic, outside a focused correction.
 
 **F-80 — the repair script's `--dry-run` green-washed the exact bug it should have caught.**
 `repairDesignRemediation` in dry-run never calls `ensurePersisted`
@@ -2098,3 +2118,15 @@ adopted: byte-copy, `shasum` before and after, `dart format --set-exit-if-change
 **F-86 — `apps/server/dart_test.yaml` declares `tags: integration: {}` but nothing annotates it.**
 29 files live in `test/integration/` and 28 boot a real Serverpod, so a plain `dart test` there burns
 ~15 min on 32 connection timeouts and **cannot be excluded by tag**.
+
+**F-87 — the unbounded hold has a root cause deeper than the guard (`correct-WEDGED-TICK`, out of
+scope).** The lease restores "dispatch eventually", not "dispatch promptly", and it treats the symptom
+at the guard. Only one bound exists on the whole dispatch path
+(`local_worker.dart:279-285`); `workspaceManager.prepare` (`:245`), `inspector.inspect` (`:310`),
+`artifactCommitter.commit` (`:375`) and cleanup are each awaited with **no timeout** and each shells
+out. A `packages/worker_runtime` change bounding those would close the class at its root. Recommended as
+a separate lane.
+
+**F-88 — `SHARE IT WITH ME`: an in-flight tick's duration is unobservable after the fact.** The
+recovering observation for F-79 required reading the implementation budget and the job start time
+together. Neither is in the tick log. See F-79a.
