@@ -2498,3 +2498,64 @@ to detect the hole. Repaired to supply results for **both** required gates, so t
 attributable to the `failed` status alone; the subset case is then asserted separately. The repaired
 assertion passes on **both** the pre-fix and post-fix trees, which is what makes it an honest regression
 guard rather than a fix-detector.
+
+## 33. §7 is CLOSED and independently approved (`d0525ad`) — plus three residual holes it surfaced
+
+**Closed.** The invariant "a required gate with no result is `notExecuted`, not absent" is now enforced in
+**both** readers (`allRequiredGatesPassed`, `isOverallPass`) in §7.4's order, fail-closed, with every §7.2
+table row pinned in table order and non-vacuous (C1 6/12 pre-fix, C2 5/14 pre-fix, both reproduced).
+**0 FAIL→PASS** on the guard, `transition.isValid` and `isOverallPass`; `isValid == guard` on all 85 rows;
+**nothing newly reaches `qaPassed`**; the one live gate-status reader remains the guard on
+`qaInProgress → qaPassed`. `isOverallPass` still has **zero production callers**.
+
+**§7.4's "agree by construction" is met by CONVERGENT SHAPE, not shared code.** `_isGateSatisfied` and
+`isGateSatisfied` are byte-identical after name normalisation, and the residual reader disagreement
+(8/72 rows, all with `isOverallPass` permissive, never the reverse) is *exactly* the flagged product
+decision. A shared helper was unavailable because `workflow_engine` and `qa_orchestration` do not depend on
+each other and neither may gain one under the approved scope. A cross-reader equality test is therefore not
+owed. One notch short of §7.4's literal words — recorded rather than glossed.
+
+**F-110 — the absolute figures are NOT independently reproducible, and are not certified.** The lane
+deleted its harness before commit, so `26→4`, `22 closed / 0 opened`, and C1's `25/0/59` **cannot be
+derived** by a reviewer — they are matrix-dependent by construction. The reviewer's own 7×12 matrix yields
+different absolutes. What IS certified is the §7.4 **property**, derived structurally and on an independent
+harness. **Do not quote the absolutes as evidence.** A generalisable harness committed under
+`packages/qa_orchestration/test/` would fix this class permanently.
+
+**F-111 — MEDIUM, reachable TODAY — an all-optional-gates contract passes vacuously.**
+`ProductQAContractDeclaration.declaresQAContract => gates.isNotEmpty`
+(`product_qa_contract_spec_store.dart:96`) refuses only the **empty** list. A manifest declaring **only
+`required: false` gates** passes registration, and `buildProductQAContract` builds a contract with
+`allRequiredGatesMustPass: true` and **zero required gates** — which both readers report as an overall pass
+with nothing evaluated. The refusal's own rationale says an empty list "constrain[s] nothing … the exact
+fiction this route exists to avoid"; that reasoning extends to the all-optional case and is coded only for
+the empty one. **F-106 hedged this as "may not be" — it is reachable.** Closest of the three residuals to
+becoming live: it needs only a product manifest, no decision and no new component.
+
+**F-112 — MEDIUM, pre-existing — the optional-failure threshold is skipped at its own default.**
+`qa_orchestration.dart:122` gates the check on `optionalGateFailuresAllowed > 0`, and that field
+**defaults to `0`** (`qa_pass_criteria.dart:12`). Measured: one required gate passing plus one **optional
+gate failing** returns `isOverallPass == true`. Under the field's own name `0` means "none tolerated", so
+the check should run. Latent because `buildProductQAContract` derives `optionalGateFailuresAllowed:
+optionalCount` and triage sets `1` — but **the default is the unsafe direction**, and no test covers
+`allowed == 0`. **This is a fourth vacuous pass in the very method §7 exists to fix**, so the residual-risk
+list was incomplete.
+
+**F-113 — LOW, product decision — `allRequiredGatesMustPass == false` short-circuits the required branch
+entirely**, so `isOverallPass` returns `true` on 12/12 rows including the empty result set. It is the
+**entirety** of the residual reader disagreement. Inert today: both shipped contracts set it `true`
+explicitly, one with a written rationale (`lane_g_triage_qa_contract.dart:136-146`). **Deliberately not
+pinned as a passing test** — a passing assertion reads as *intended* to the next maintainer; the reasoning
+is recorded in the test file's header instead (`is_overall_pass_vacuous_pass_test.dart:23-32`). Needs a
+product decision on whether the flag may exempt required gates from the missing-result check.
+
+**F-114 — LOW — `qa_orchestration_test.dart` is structurally blind to this class.** All 10 assertions pass
+identically before and after C2; every one supplies a result for every declared gate, so the case was
+simply **untested**, not mis-written. **No edit is owed** — unlike F-109's `transition_test.dart` twin,
+which genuinely passed for two reasons and was repaired. Recorded so the two are not confused.
+
+**F-115 — PROCESS — a reviewer's `--exclude-tags=integration` burned 25 minutes.** `dart test test
+--exclude-tags=integration` **does not exclude by directory**; it recursed into `test/integration/`, where
+two suites each spent 12 minutes retrying `localhost:9099`. Nothing connected and nothing mutated, but the
+instruction was explicit and was run anyway. This is F-86's automation gap with a cost: a **committed tag
+or an explicit file list** is owed. Gate on an explicit file list until then.
