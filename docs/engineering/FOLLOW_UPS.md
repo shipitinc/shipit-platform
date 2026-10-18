@@ -2843,3 +2843,51 @@ indistinguishable."* What exists is a table with an interface and an in-memory i
 durable**. Against that, §4.3's store-confirmation is **not durable** and **step 2 cannot be honest** until
 `PostgresDesignContractStore` is granted in `apps/server/lib/src/persistence/`. **F-142 was a dispatch defect,
 not a decision.**
+
+### §37 step 1B — durable store landed (`868854d`), merge condition DISCHARGED
+
+`PostgresDesignContractStore` mirrors **`PostgresQAContractStore`**, not `PostgresDesignGovernanceStore` —
+same problem shape (text-keyed, JSON-in-`text`, `provision*` = write→read→throw `StateError`,
+`ON CONFLICT ("contractId") DO UPDATE`, `_asJson` normaliser, `decodeUtc`). The decisive fact neither the
+lane nor I had: **`PostgresQAContractStore` is both mounted AND executed**, so every borrowed idiom is
+execution-proven — the strongest mitigation available for a file that is not itself executed.
+
+**F-147 — `DesignContractStatus` has NO public wire mapping; this is now load-bearing.** Both
+`_designContractStatusFromJson` and `_designContractStatusToJson` are **file-private**
+(`platform_contracts/lib/src/types/design_contract.dart:66-76`), and `underReview` → `under_review` is
+private. The store therefore routes `status` through `DesignContract.toJson()/fromJson()` and nowhere else,
+because a hand-written pair would be the **second vocabulary** `design_contract.spy.yaml` warns against and
+could drift with **no failing test** — nothing in this repo may assert against a private function. Verified:
+zero hand-written mapping anywhere in the store, and the generated call sites route through those private
+functions.
+
+**F-148 — the tie-break's comparators are NOT provably identical.** `postgres_design_contract_store.dart:167`
+orders by the **database's** collation; `in_memory_design_contract_store.dart:87` uses Dart's **UTF-16
+code-unit** order. No `COLLATE` in any migration, no `LANG`/`LC_COLLATE` in compose, so the default governs —
+and under `en_US.UTF-8`, ids differing only in case sort **opposite** to Dart. **Reachability today is nil**:
+`designContractIdForWorkItem` is pure, so contracts for one item share a `contractId` and both stores key on
+it. The suite's tie-break ids are lowercase ASCII, so a Postgres runner would not catch it either. Remedy:
+state the assumption and the reachability limit at `design_contract_store.dart:103-107`, or pin
+`COLLATE "C"` if a runner ever exercises it.
+
+**F-149 — the proposed "every `Postgres*Store` has a runner" guard is NOT currently satisfiable.**
+Enumerating all 18, it fails on **three pre-existing stores** besides the new one:
+`PostgresEngineeringReviewResultStore` (0 references outside its own file and the barrel),
+`PostgresQAReviewResultStore` (0), `PostgresModelPolicyStore` (mounted, 0 tests). **This is the fourth
+instance, so it is a four-store remediation, not a one-liner** — size it before authorising.
+
+**F-150 — a durable IMPLEMENTATION is not a durable contract IN USE.** The new store is **unmounted**
+(`persistence_exports.dart` has **zero importers**, verified) and **unexecuted**; `designContractExists()` is
+still `context?['designContractId'] != null`. So step 1's row and a fabricated string remain indistinguishable
+**at the transition boundary** — which is precisely §9's stated reason step 2 exists. Accepted to land because
+its blast radius is zero, its idioms are proven in the mirrored sibling, and holding it would block step 2 on
+a sequencing technicality. The refusal to add a text-shape test to paper over the gap was **correct** — that
+is exactly the D-4 shape at `design_job_test.dart:614-698` (F-120).
+
+**Step 2 may proceed.** It needs all four of: (1) `designContractExists()` reading the durable column via an
+**injected** `DesignContractStore` — a **signature** change, not a body change; (2) **mounting** the store in
+the composition root, since the barrel will not do it; (3)
+`apps/server/test/integration/design_contract_postgres_test.dart` running `runDesignContractStoreSuite`
+against a real database — the gate that turns "compiled" into "executed"; (4) the `FOLLOW_UPS.md` ledger
+entry, which this entry is. **Not assumed done:** F-143 — `DesignContractBuilder` still has **no production
+caller** (step 3). A store nobody provisions is a table nobody fills.
