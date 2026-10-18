@@ -1,0 +1,43 @@
+# human-decision.yaml
+decision_id: a1c7d904-3b8e-4f21-9d6e-5c2f81b7a390
+type: PRODUCT
+status: RESOLVED
+title: Design governance — fail-closed risk default, and the fidelity anchor
+resolution:
+  D4_risk_default:
+    selected: TREAT_EVERY_REVISION_AS_HIGH
+    label: until a DesignRiskPolicy exists, every design revision is HIGH tier and requires human design approval
+    decided_by: operator
+    rationale_given: >-
+      There is no DesignRiskPolicy anywhere in the platform, and checkpoint 003 §9.5 states outright that
+      whether MEDIUM defaults gated or ungated is an unsettled empirical question. Classifying from that
+      document's prose was rejected because the source itself declines to settle it and checkpoint 003 §9.6
+      forbids hard-coding it. Fail-closed is the only option that cannot silently under-gate.
+    accepted_cost: >-
+      A trivial copy-tweak waits on a person. This blocks exactly one of ten build steps; the other nine
+      are unaffected.
+    note_on_citation: >-
+      The design reviewer's correction is adopted: the forbidding clause is checkpoint 003 §9.6, NOT
+      "ADR 0021 §9.6" as the design artifacts claimed. ADR 0021 has sections 1-8 only.
+  U3_fidelity_anchor:
+    selected: JSON_FOR_MACHINES_PENPOT_FOR_HUMANS
+    label: a committed versioned JSON schema is the machine-checkable anchor; Penpot is the human-facing source
+    decided_by: operator
+    rationale_given: >-
+      ADR 0021 §2 makes divergence from an approved revision a defect and requires implementation to
+      reproduce it with full fidelity, but that is currently undecidable: the revision's JSON columns have
+      no schema and no validator anywhere in the tree, confirmed by exhausting it. Penpot alone was
+      rejected because penpotFileId and penpotPageId are both nullable -- a revision without one could not
+      be checked at all -- and nothing in the tree can diff an implementation against a board.
+    both_roles_named_explicitly: >-
+      The committed versioned JSON, validated on write, is what the MACHINE diffs an implementation
+      against. Penpot is what a human reviewer READS and approves. Both must refer to the same approved
+      revision; where they disagree, that disagreement is itself a finding.
+  consequence_that_must_be_recorded: >-
+    Ratifying D4 does NOT authorise switching the runtime on. Of ten build steps, D4 blocks only step 5;
+    step 4 (the fidelity anchor) was independently blocked on U-3 and is now unblocked by this decision.
+    Neither decision authorises implementation to begin on a design that has not yet cleared its two
+    independent-review blockers.
+  what_remains_undecided: >-
+    The actual schema content for the versioned JSON is a design-system decision inside the correction
+    lane, not settled here. This decision settles WHAT it must be and WHO checks it, not its shape.
