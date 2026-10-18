@@ -78,7 +78,9 @@ abstract interface class DesignContractStore {
   /// a hot provisioning path off the deserializer.
   Future<bool> hasDesignContract(String contractId);
 
-  /// Every contract recorded for [workItemId], oldest first.
+  /// Every contract recorded for [workItemId], **oldest first**: ascending
+  /// [DesignContract.createdAt], with ascending [DesignContract.contractId]
+  /// breaking a tie.
   ///
   /// `DesignContract.workItemId` is a column rather than a metadata key
   /// precisely so this read is an indexed lookup; see
@@ -87,6 +89,22 @@ abstract interface class DesignContractStore {
   /// One per work item is the shape the builder produces, but the interface does
   /// not require it: a read that returned only the newest row would hide a
   /// second contract rather than surface it.
+  ///
+  /// ## The order is specified, not incidental (F-146)
+  ///
+  /// This method once read "oldest first" while every implementation returned
+  /// whatever order its storage happened to produce — a Dart `Map`'s insertion
+  /// order in the in-memory store, `"createdAt" ASC` in SQL. That is not a
+  /// cosmetic difference: two implementations disagreeing about which of a
+  /// work item's contracts comes FIRST is a caller that gets one answer in a
+  /// unit test and another in production, and the disagreement is invisible in
+  /// every artifact a reviewer reads.
+  ///
+  /// The tie-break is therefore part of the contract, not tidiness.
+  /// [DesignContract.createdAt] is the CALLER's assertion of when a contract
+  /// was written, so two contracts carrying the same instant is a normal state
+  /// rather than a malformed row; without a total order an implementation is
+  /// free to return those two in either order and still be "oldest first".
   Future<List<DesignContract>> listDesignContractsForWorkItem(
     String workItemId,
   );

@@ -55,7 +55,35 @@ class InMemoryDesignContractStore implements DesignContractStore {
   @override
   Future<List<DesignContract>> listDesignContractsForWorkItem(
     String workItemId,
-  ) async => _contracts.values
-      .where((c) => c.workItemId == workItemId)
-      .toList(growable: false);
+  ) async =>
+      _contracts.values.where((c) => c.workItemId == workItemId).toList()
+        ..sort(_oldestFirst);
+
+  /// The total order [DesignContractStore.listDesignContractsForWorkItem]
+  /// promises: ascending `createdAt`, then ascending `contractId`.
+  ///
+  /// ## WHY THIS IS NOT A NO-OP
+  ///
+  /// The interface documents this read as "oldest first", and a Dart `Map`'s
+  /// iteration order is INSERTION order — which coincides with oldest-first
+  /// only until something writes two contracts for one item out of
+  /// chronological order. Two constructions make that happen, and F-146 names
+  /// both: a descending-`createdAt` insert sequence reads back newest-first,
+  /// and a `LinkedHashMap` overwrite keeps the ORIGINAL position, so a
+  /// re-provisioned contract carrying a later `createdAt` keeps its old slot.
+  ///
+  /// `PostgresDesignContractStore` orders by `"createdAt" ASC` in SQL because
+  /// that is what the indexed lookup already sorts on. Sorting here is what
+  /// stops the two implementations from answering the same question with two
+  /// different orders — the divergence a caller cannot detect and a reviewer
+  /// cannot see without reading both files side by side.
+  ///
+  /// `contractId` breaks ties so the order is TOTAL. `createdAt` is a
+  /// caller-asserted instant and two contracts built in the same tick is not
+  /// exotic; without a tie-break, two equally-old rows may come back in either
+  /// order and the same store would disagree with itself between runs.
+  static int _oldestFirst(DesignContract a, DesignContract b) {
+    final byAge = a.createdAt.compareTo(b.createdAt);
+    return byAge != 0 ? byAge : a.contractId.compareTo(b.contractId);
+  }
 }

@@ -50,4 +50,15 @@ void main() {
     groupName: 'DesignGovernanceStore contract (InMemory)',
     createStore: () async => InMemoryDesignGovernanceStore(),
   );
+
+  // The in-memory half of the design contract store's contract. The durable
+  // half needs a real database and lives with the other PostgreSQL
+  // instantiations of these suites, under `apps/server/test/integration/`;
+  // running only this side is a real gap, and it is the same gap every other
+  // suite in this file has. Declared rather than implied: a suite with one
+  // runner proves the contract, not the implementation's durability.
+  runDesignContractStoreSuite(
+    groupName: 'DesignContractStore contract (InMemory)',
+    createStore: () async => InMemoryDesignContractStore(),
+  );
 }

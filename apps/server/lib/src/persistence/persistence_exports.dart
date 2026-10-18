@@ -1,4 +1,5 @@
 export 'postgres_defect_store.dart';
+export 'postgres_design_contract_store.dart';
 export 'postgres_design_governance_store.dart';
 export 'postgres_engineering_review_result_store.dart'
     hide PostgresConcurrentModificationException;

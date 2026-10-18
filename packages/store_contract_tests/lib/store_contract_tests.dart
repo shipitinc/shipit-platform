@@ -1,6 +1,7 @@
 /// Reusable store contract suites, parameterized by store factory.
 library;
 
+export 'src/design_contract_store_suite.dart';
 export 'src/design_governance_store_suite.dart';
 export 'src/execution_store_suite.dart';
 export 'src/job_store_suite.dart';

@@ -577,3 +577,54 @@ DesignRevisionEvent buildDesignRevisionEvent({
     createdAt: DateTime.utc(2026, 1, 1, 12),
   );
 }
+
+const kDesignContractId = 'design-contract-wi-0001';
+
+/// Builds a design-contract fixture exercising EVERY serialized field.
+///
+/// Mirrors `PostgresQAContractStore`'s column set one for one: the four
+/// JSON-document columns, the nullable ones among them, and the `status` column
+/// whose wire form is not its Dart name. A fixture that left the nullable
+/// columns empty would never exercise the store's null-decode path, which is
+/// how a column becomes unreadable without anything failing.
+DesignContract buildDesignContract({
+  String contractId = kDesignContractId,
+  String workItemId = kWorkItemId,
+  DesignContractStatus status = DesignContractStatus.draft,
+  DateTime? instant,
+}) {
+  final now = instant ?? DateTime.utc(2026, 1, 1, 12);
+  return DesignContract(
+    contractId: contractId,
+    workItemId: workItemId,
+    requiredArtifacts: const [
+      RequiredArtifact(
+        artifactType: 'design_revision',
+        description:
+            'The durable design revision record this contract requires.',
+        required: true,
+        validationSchema: {'type': 'object'},
+      ),
+    ],
+    reviewers: const ['design_reviewer'],
+    approvalThreshold: 1,
+    status: status,
+    submittedArtifacts: [
+      SubmittedArtifact(
+        artifactType: 'design_revision',
+        contentHash: 'sha256:fixture',
+        submittedBy: 'execution-fixture-1',
+        // Microsecond-aligned and far from a clock boundary: the column is
+        // `timestamp without time zone`, and neither an ordering assertion nor
+        // an equality assertion may depend on how a database rounds.
+        submittedAt: now,
+        location: 'object://artifacts/design-1',
+      ),
+    ],
+    decisions: const ['approved-by-independent-reviewer'],
+    createdAt: now,
+    updatedAt: now,
+    expiresAt: now.add(const Duration(days: 30)),
+    metadata: const {'productId': kProductId, 'defectId': null},
+  );
+}
