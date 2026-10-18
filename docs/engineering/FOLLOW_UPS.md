@@ -3047,3 +3047,72 @@ the `product_qa_contract_spec_pkey` line. Route to the migrations lane.
 generator re-emits the colliding statement each time, so removal alone does not prevent recurrence.** Only
 the new guard detects it. The durable fix is F-144's: make it a managed model, or move its DDL into
 `tool/schema_bootstrap.sql` and add it to `verify:schema-deviations`. **Needs an owner.**
+
+## 39. §9 steps 1–3 COMPLETE and independently verified — the runtime is still OFF
+
+**Steps 1, 1B, 2 and 3 are landed and `APPROVE_CORRECTIONS` with no regressions.** Step 3 (`44c8d0b`, 19 files,
++1438 −56) added `WorkItemState.designParked` with all three exhaustive-switch obligations, the R2.1/R2.2/R2.4
+edges, R2.3's release, the builder wiring (F-143), and mounts at all three engine sites (F-155).
+
+**F-166 — integration, the change's strongest evidence, reproduced twice.** `make test-integration`
+**+287 −22 → +299 −10**: the reviewer set-differenced the `[E]` lists of two full runs — **12 cleared, 0 new**.
+Teardown clean on both (container + network removed, **no `CLEANUP FAILED`**, compose project
+`shipit_integration_<pid>` only, **QA project `docker` never addressed**).
+
+**F-167 — the modified test did NOT move a goalpost, and the proof is not the assertion text.**
+`triage_execution_test.dart` had exactly **one** `expect(` removed and **+70/−1** overall (three state expects
+plus five on the production-composition contract row), with **no** `test(`/`group(` removal and **no**
+skip/tag anywhere in the diff. The decisive evidence: its **positive control** — "a real design scheduler does
+not dispatch a design revision for the blocked remediation item" — was **FAILING at base `786866f`** and is
+**PASSING at HEAD**. The lane had to provision a *real* contract for the control's `planned → designRequired`
+hop to fire, because the hardened guard refuses a bare string. **A lane moving a goalpost deletes or skips
+that control; this one repaired it.** Removing the planted `context: {'designContractId': …}` is itself a
+strengthening — the hop must now be *earned* by the durable column plus store confirmation.
+
+**F-168 — R2.1's structural half is live, proved by a mutation the reviewer added (M8).** Adding
+`designParked` to `triageDefectDefinition.entryStates` → **9 failures** (7 scheduler + 2 engine), caught by both
+dedicated assertions **and four pre-existing drift guards**. And R2.2's guarantee was verified from the other
+direction: every `(X, WorkItemState.planned)` pair in the live table returns **exactly one**,
+`(planning, planned)`; `planned_entry_state_hop_test.dart` has **zero diff** and its successor assertion is
+`containsAll`.
+
+**F-169 — F-134 was genuinely red and is now closed by a live assertion.** Counted independently: **27 at
+base, 28 at HEAD**. The base in a worktree gives `Expected: <26> Actual: <27>`. M4 (28→27) and M5 (28→**26**,
+the stale value) each → 1 failure. **The number is the true count, not fitted to pass.**
+
+**F-170 — a DESIGN RULING is needed, and it blocks step 8, not step 3: lane E has no replay-branch
+backfill.** `_provisionDesignContract` has exactly **one** caller (`:379`, creation); the replay branch (`:354`)
+calls only `_attachQAContract`. §4.2(a) says "at creation" and names no backfill, unlike the QA side's explicit
+`_attachQAContract` — **the gap is the design's silence, not the lane's work.** It bears directly on the parked
+item: §4.7 prescribes re-triage as U-1's disposition, but **re-triage parks the legacy row at `designParked`
+with a NULL `designContractId` and no named reason**, the §9 reconciler releases only when the column is
+non-null — so **it would silently never release** — and it falsifies `_metadata`'s own doc-comment invariant
+("absent … reads as [provisioned]") on that branch. **Not a regression**: at `planned` the row was already an
+unbounded loop; the change converts that into a bounded, operator-recoverable park.
+
+**F-171 — `server.dart`'s schedulers lack the new `Scheduler` param, and it is correctly inert by TWO
+independent verified reasons.** `_returnTargetsFrom` (`scheduler.dart:1439`) probes only the mounted
+definitions' `entryStates` — `{designNotRequired, designApproved, reviewRejected, planned}`,
+`{agentCompleted}`, `{implementationReady}` — **none is `designRequired` or `designParked`**, and
+`entryProbeTargets` targets only `designNotRequired`; and zero production code transitions to `designRequired`.
+**It becomes LIVE at step 8**, which is why it is a hard precondition for mounting the design schedulers.
+
+**Mutation-figure note (LOW):** M1/M2/M3 each undercount red by one — `transition_consistency_test.dart`'s
+mirror gate goes red on every edge deletion and was omitted from the lane's tally. **The error direction
+strengthens the claim.** 8 mutations total, 0 green reverts, none discarded as format-dirty.
+
+**What still blocks switching the runtime ON — none of it is a reason to reject step 3:**
+- **Step 4 — fidelity anchor schema + validator (§3.5, Q7).** Absent. The design calls this *"the one most
+  likely to be skipped and the one that matters most."* **It has a live consumer now**: contracts lane E
+  provisions carry `requiredArtifacts[0].validationSchema: null` and `requiredArtifactSchemas: 'absent'` — a
+  *named* absence. The anchor is what turns that `null` into something a validator can check.
+- **Step 6 — the producer.** Nothing runs `designRevision` or writes a `DesignRevision`.
+- **Step 7 — `designRejected → designRequired` AND `entryProbeTargets`.** Both absent; a rejected design still
+  strands the item, and it is **both, never one**.
+- **Step 8 — mount `sched-design-revision` / `sched-design-review`.** F-171 goes live here.
+- **Step 9 — raise `designApproval`.** No producer.
+- **Plus the F-170 design ruling, before step 8.**
+- Step 5 (`DesignRiskPolicy`) is deferred under D4 and not blocking; step 10 (D-1 dedupe suffix, D-4 vacuous
+  test) blocks the **second** run, not the first.
+- **F-156** (`_DesignContractUnderReviewGuard` reading caller-supplied `context['designContractStatus']`) belongs
+  on the runtime's ledger **before step 6** — same defect class step 2 closed on the adjacent edge.
