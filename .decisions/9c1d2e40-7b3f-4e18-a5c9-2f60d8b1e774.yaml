@@ -1,0 +1,31 @@
+# human-decision.yaml
+decision_id: 9c1d2e40-7b3f-4e18-a5c9-2f60d8b1e774
+type: PRODUCT
+status: RESOLVED
+title: ShipIt's required validation gates are the checks this repository already runs
+resolution:
+  selected: DECLARE_THE_EXISTING_CHECKS
+  label: format, analyze per package root, unit tests per package from their own root, flutter test for
+    apps/control_plane, and make test-integration
+  decided_by: operator
+  decided_at: 2026-10-18T22:05:00Z
+  rationale_given: >-
+    The QA gate declared-validation-outcome requires every declared check to have run under the EXACT
+    declared command, so the commands must be declared before the gate can mean anything. AGENTS.md:59
+    read "Required validation gates: TBD", and the approved design recorded it as a required-but-unfilled
+    key with no invented values. These are the checks the repository already runs and can compare
+    string-for-string.
+  load_bearing_detail: >-
+    cwd is part of the contract, not a convenience. Running a package suite from the repo root produces
+    DIFFERENT results -- design_review_park_surface_test.dart fails on its own relative-path guard from
+    the root and passes from packages/workflow_engine. That is measured here, not conventional.
+  also_measured_not_conventional:
+    - dart test -x integration does NOT exclude apps/server/test/integration/; use an explicit file list.
+    - "dart test" cannot load flutter_test in apps/control_plane against Flutter 3.44.7.
+    - A missing "All tests passed!" is inconclusive, never green.
+  where_it_now_lives: >-
+    Filled into AGENTS.md product-specific policy, replacing TBD. The decision file is the provenance; the
+    AGENTS.md entry is the durable contract the gate reads.
+  what_it_unblocks: >-
+    declared-validation-outcome (F4) becomes evaluable, which is one of the two gates holding the feature
+    lane's qaPassed closed.

@@ -1,0 +1,36 @@
+# human-decision.yaml
+decision_id: c2f8a713-4d62-4a0b-9e37-1b85c6f20d93
+type: PRODUCT
+status: RESOLVED
+title: ShipIt's path ownership map is the ownership convention already in force
+resolution:
+  selected: DERIVE_FROM_EXISTING_CONVENTION
+  label: owned = a lane's declared OWNED_PATHS; prohibited = .agents, .claude, .opencode, .junie, AGENTS.md,
+    docs/adr/**, .decisions/**
+  decided_by: operator
+  decided_at: 2026-10-18T22:05:00Z
+  rationale_given: >-
+    The QA gate change-scope-confinement requires every touched path to be owned and none prohibited, so it
+    needs an ownership map. AGENTS.md:61 read "Path ownership map: TBD". Deriving it from the convention
+    already in force avoids inventing boundaries, which is what the design deliberately refused to do.
+  owned: >-
+    Whatever paths a lane declares in its OWNED_PATHS. Every lane already publishes these, and the
+    framework already forbids concurrent writers with overlapping ownership -- so this map states an
+    existing invariant rather than creating one.
+  prohibited_for_every_lane:
+    - .agents/
+    - .claude/
+    - .opencode/
+    - .junie/**
+    - AGENTS.md
+    - docs/adr/**   (accepted records; changing one is an ADR, not a code change)
+    - .decisions/**  (human-owned durable records)
+  rejected_alternative: >-
+    A top-level split (apps/** and packages/** owned, everything else prohibited) was rejected: it is
+    coarser and would NOT catch a lane writing into another lane's package subtree, which is exactly the
+    case the concurrency rule exists to prevent.
+  where_it_now_lives: >-
+    Filled into AGENTS.md product-specific policy, replacing TBD.
+  what_it_unblocks: >-
+    change-scope-confinement (F2) becomes evaluable -- the other of the two gates holding the feature
+    lane's qaPassed closed.

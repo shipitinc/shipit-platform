@@ -55,12 +55,43 @@ subtrees only: `.opencode/agents/` and `.opencode/command/` are generated, while
 `.opencode/` (`node_modules/`, `package.json`, `package-lock.json`, `.gitignore`) belongs to opencode
 at runtime and is not generated content.
 
-## Product-specific policy (fill in)
-- Required validation gates: TBD
-- Environments & deployment strategy: TBD
-- Path ownership map: TBD
-- Orchestration conventions (see `aef-orchestrator` skill § 3 — override the defaults for every
-  convention your project does not want defaulted): TBD
+## Product-specific policy
+
+> **Filled in 2026-10-18.** These three were `TBD` for the whole life of the repository, which is why the
+> QA gates `declared-validation-outcome` and `change-scope-confinement` could not be evaluated at all — the
+> approved design recorded them as required-but-unfilled keys rather than guessing, because guessing would
+> have invented the definition of "done" for every item. Decisions `9c1d2e40` (validation gates) and
+> `c2f8a713` (path ownership) fill them from conventions already in force, not from invention.
+
+- **Required validation gates** — the checks this repository already runs and can compare **string for
+  string**. The QA gate requires each check to have run under the **exact declared command**, so every string
+  below is pinned verbatim and is part of the contract:
+
+  | gate | exact command | cwd |
+  |---|---|---|
+  | format | `dart format --output=none --set-exit-if-changed .` | repo root |
+  | analyze | `dart analyze` | **each package root** |
+  | unit tests | `dart test` | **each package root, individually per file** |
+  | control-plane app | `flutter test` | `apps/control_plane` — `dart test` cannot load `flutter_test` here |
+  | integration | `SERVERPOD_DATABASE_PASSWORD=control_plane_test_pw make test-integration` | repo root |
+
+  **Running a package suite from the repo root produces different results — this is measured, not
+  conventional.** `design_review_park_surface_test.dart` fails on its own relative-path guard from the root
+  and passes from `packages/workflow_engine`. `dart test -x integration` does **not** exclude
+  `apps/server/test/integration/`; use an explicit file list. A missing `All tests passed!` is
+  **inconclusive, never green**.
+
+- **Path ownership map** — derived from the convention already in force, not invented:
+  - **Owned**: whatever paths a lane declares in its `OWNED_PATHS`. Every lane already publishes these, and
+    concurrent writers must not overlap.
+  - **Prohibited, for every lane**: `.agents/`, `.claude/`, `.opencode/`, `.junie/**`, `AGENTS.md`,
+    `docs/adr/**` (accepted records — changing one is an ADR, not a code change), `.decisions/**` (human-owned
+    durable records).
+  - The QA gate asserts **every path a change touches is owned and none is prohibited** — which is what makes
+    a lane writing outside its declared scope a QA failure rather than a review comment.
+
+- **Environments & deployment strategy**: TBD — still unfilled. Nothing depends on it today.
+- **Orchestration conventions** (see `aef-orchestrator` skill § 3): defaults apply unchanged; no override.
 
 ### §12 Baseline independence
 
