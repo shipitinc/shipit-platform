@@ -1,0 +1,47 @@
+# human-decision.yaml
+decision_id: 6d2f1a84-7c93-4e05-8b1f-3a9d6e2c70f4
+type: ARCHITECTURE
+status: RESOLVED
+title: The destructive migration must recreate the trigger and partial unique index it cascades away
+resolution:
+  selected: RESTORE_IN_THE_NEW_MIGRATION
+  label: write the trigger and index DDL into 20261019010044759/migration.sql and extend the parity list
+  decided_by: operator
+  decided_at: 2026-10-18T21:20:00Z
+  the_damage: >-
+    `DROP TABLE "design_revision" CASCADE` destroys two objects that NOTHING recreates on a chain-migrated
+    database: the partial unique index `design_revision_approved_unique_per_work_item` (one approved
+    revision per work item) and the BEFORE UPDATE trigger `trigger_design_revision_immutability`. Both live
+    only in hand-maintained DDL from `20260920232118956` and mirrored in `tool/schema_bootstrap.sql`; the
+    generated `CREATE TABLE` carries only the four `.spy.yaml` indexes.
+  verified_state_at_decision_time: >-
+    On QA both objects EXIST today. The migration `20261019010044759` is on disk with 0 rows in the
+    `serverpod_migrations` ledger, and the QA server starts with `--apply-migrations` -- so the next QA
+    restart applies the DROP and the loss becomes permanent.
+  why_it_is_invisible_to_every_gate: >-
+    Fresh databases are built from the newest `definition.sql` then `schema_bootstrap.sql`, which recreates
+    both objects -- so `make test-integration` and CI cannot see the loss. And
+    `verify_schema_bootstrap.sh` builds its `chain_ddl` by CONCATENATING every `migration.sql` and grepping
+    for the DDL; the DROP does not remove `20260920232118956`'s text from that concatenation, so all 20
+    checks still pass (exit 0, measured). **A destructive migration is invisible to a textual-presence check
+    by construction.**
+  correction_the_manager_owes: >-
+    Before authorising 1b7e4c93 the Manager verified row count (0) and FK references (none) but NOT
+    dependent indexes and triggers. "CASCADE destroys nothing" was therefore too narrow and is withdrawn as a
+    general claim; it held for rows and FKs and fails for these two objects.
+  what_must_be_done: >-
+    Write `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER` for the immutability trigger and the partial unique
+    index into the new migration's `migration.sql`, mirroring the hand-maintained DDL in `20260920232118956`;
+    and extend `verify:schema-deviations`'s parity list so the check covers the hand-maintained objects this
+    migration now owns, so the check does not rot into another F-129.
+  precedent: >-
+    Hand-maintained DDL inside a generated migration is already the established practice here:
+    `20261017102506000` carries the whole `product_qa_contract_spec` table by hand.
+  alternatives_rejected:
+    - >-
+      Mark 20261019010044759 as applied in QA's ledger and never run it. Rejected: protects QA only, leaves
+      B1 unlanded on chain databases, and every developer machine and production replaying the chain still
+      loses both objects.
+    - >-
+      Back out the column and reopen 1b7e4c93. Rejected: the NOT NULL conflict returns and one of the
+      already-rejected alternatives would have to be chosen instead.
