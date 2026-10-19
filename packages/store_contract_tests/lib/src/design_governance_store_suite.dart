@@ -251,5 +251,196 @@ void runDesignGovernanceStoreSuite({
       );
       expect((await store.readEventsForRevision(kRevisionId)).length, 1);
     });
+
+    // ---------------------------------------------------------------------
+    // §3.5.3 -- validated on write, failing closed.
+    //
+    // These live in the SHARED suite rather than beside one implementation on
+    // purpose. `InMemoryDesignGovernanceStore` and
+    // `PostgresDesignGovernanceStore` are two implementations of one interface,
+    // and a gate enforced by only one of them is the F-146 class: the store
+    // that omits it accepts writes the other refuses, and nothing notices
+    // until someone runs the same input against both. Running the identical
+    // assertion here means a future implementation inherits the obligation
+    // rather than having to rediscover it, and an implementation that drops the
+    // gate fails HERE, in the suite that already runs for it.
+    // ---------------------------------------------------------------------
+
+    test('a revision whose anchor does not conform is NOT persisted', () async {
+      final store = await createStore();
+
+      // `boardIdsJson` names no board, so §3.5.1 row 1's `minItems: 1` is
+      // unsatisfied: this revision asserts nothing and could be diffed against
+      // nothing, which is the hole the anchor exists to close.
+      final nonConforming = _withColumn(
+        buildDesignRevision(),
+        'boardIdsJson',
+        '[]',
+      );
+
+      await expectLater(
+        store.saveDesignRevision(nonConforming),
+        throwsA(isA<DesignRevisionFidelityAnchorException>()),
+      );
+
+      // "Not persisted" is the claim being tested, so it is asserted as an
+      // absence. A gate that flagged and stored would satisfy the `throwsA`
+      // above in a persisting implementation and fail this line.
+      await expectLater(
+        store.readDesignRevision(kRevisionId),
+        throwsA(isA<DesignRevisionNotFoundException>()),
+      );
+    });
+
+    test('the designer may not appear in reviewExecutionIds', () async {
+      final store = await createStore();
+
+      // The seventh rule — the one JSON Schema cannot express, because it
+      // compares two fields of one record. It is here so the SEVENTH rule is
+      // enforced on the write path and not only in the differential.
+      final selfReviewed = _withColumn(
+        buildDesignRevision(),
+        'reviewExecutionIdsJson',
+        '["designer-exec-1","rev-exec-1"]',
+      );
+
+      await expectLater(
+        store.saveDesignRevision(selfReviewed),
+        throwsA(
+          isA<DesignRevisionFidelityAnchorException>().having(
+            (e) => e.violations.map((v) => v.code).toList(),
+            'violation codes',
+            contains(FidelityAnchorViolationCode.designerIsItsOwnReviewer),
+          ),
+        ),
+      );
+    });
+
+    test('a state naming no board in the same row is refused', () async {
+      final store = await createStore();
+
+      // The cross-column rule. Validating each column independently would make
+      // it unstatable, which is why the anchor's unit of validation is the
+      // bundle rather than the column.
+      final danglingState = _withColumn(
+        buildDesignRevision(),
+        'statesRepresentedJson',
+        '[{"boardId":"board-404","stateKey":"focus","variant":"focus"}]',
+      );
+
+      await expectLater(
+        store.saveDesignRevision(danglingState),
+        throwsA(
+          isA<DesignRevisionFidelityAnchorException>().having(
+            (e) => e.violations.map((v) => v.code).toList(),
+            'violation codes',
+            contains(FidelityAnchorViolationCode.unresolvableBoardId),
+          ),
+        ),
+      );
+    });
+
+    test('an UNORDERED but conforming anchor is stored canonically', () async {
+      final store = await createStore();
+
+      // §3.5.2's normalisation is applied ON WRITE, so the stored bytes are
+      // canonical and two encodings of one revision are byte-identical — the
+      // precondition for diffing at all. Written here in the WRONG order (lg
+      // after md, boards descending) and read back sorted, which is the whole
+      // of rule 2.
+      final unordered = _withColumn(
+        buildDesignRevision(),
+        'responsiveTargetsJson',
+        '[{"breakpoint":"md","minViewportWidthCss":768},'
+            '{"breakpoint":"lg","minViewportWidthCss":1024,"orientation":"landscape"}]',
+      );
+      final unorderedBoards = _withColumn(
+        unordered,
+        'boardIdsJson',
+        '[{"boardId":"board-2","boardName":"Board 2","provider":"penpot",'
+            '"providerFileId":"pf-1"},'
+            '{"boardId":"board-1","boardName":"Board 1","provider":"penpot",'
+            '"providerFileId":"pf-1"}]',
+      );
+
+      await store.saveDesignRevision(unorderedBoards);
+
+      final loaded = await store.readDesignRevision(kRevisionId);
+      // Compared to the CANONICAL fixture, not to the input: canonicalising
+      // must be a no-op on a value that is already canonical, which is what
+      // makes this an assertion about the stored bytes.
+      expect(loaded, buildDesignRevision());
+      expect(
+        loaded.responsiveTargetsJson,
+        startsWith('[{"breakpoint":"lg"'),
+        reason: 'lg sorts before md; the stored value must already be sorted',
+      );
+    });
+
+    test('a conforming anchor survives the round trip byte-for-byte', () async {
+      final store = await createStore();
+      final canonical = buildDesignRevision();
+
+      await store.saveDesignRevision(canonical);
+
+      // §3.5.2 rule 3: no insignificant whitespace, and rule 1: keys sorted at
+      // every level. The canonicaliser is a no-op on canonical input, so what
+      // comes back is the fixture's own bytes — the property that lets two
+      // encodings of one revision be compared with `==`.
+      final loaded = await store.readDesignRevision(kRevisionId);
+      expect(loaded.boardIdsJson, canonical.boardIdsJson);
+      expect(loaded.responsiveTargetsJson, canonical.responsiveTargetsJson);
+      expect(loaded.statesRepresentedJson, canonical.statesRepresentedJson);
+      expect(loaded.artifactRefsJson, canonical.artifactRefsJson);
+      expect(loaded.reviewExecutionIdsJson, canonical.reviewExecutionIdsJson);
+      expect(loaded, canonical);
+    });
   });
 }
+
+/// Returns [revision] with one anchor blob column replaced by [text].
+///
+/// A local reconstruction rather than a `copyWith` on [DesignRevision] on
+/// purpose: that type is a `final` value class with no `copyWith`, and adding
+/// one to production source to serve a test helper is a wider change than the
+/// finding justifies. Every other field is carried across unchanged, so a
+/// violation case here differs from `buildDesignRevision()` in exactly the one
+/// column named — a case that quietly drifted onto different board ids would
+/// still pass while testing a different row.
+DesignRevision _withColumn(
+  DesignRevision revision,
+  String column,
+  String text,
+) => DesignRevision(
+  revisionId: revision.revisionId,
+  workItemId: revision.workItemId,
+  productId: revision.productId,
+  parentRevisionId: revision.parentRevisionId,
+  designSystemRevision: revision.designSystemRevision,
+  provider: revision.provider,
+  penpotFileId: revision.penpotFileId,
+  penpotPageId: revision.penpotPageId,
+  boardIdsJson: column == 'boardIdsJson' ? text : revision.boardIdsJson,
+  responsiveTargetsJson: column == 'responsiveTargetsJson'
+      ? text
+      : revision.responsiveTargetsJson,
+  statesRepresentedJson: column == 'statesRepresentedJson'
+      ? text
+      : revision.statesRepresentedJson,
+  artifactRefsJson: column == 'artifactRefsJson'
+      ? text
+      : revision.artifactRefsJson,
+  designerExecutionId: revision.designerExecutionId,
+  reviewExecutionIdsJson: column == 'reviewExecutionIdsJson'
+      ? text
+      : revision.reviewExecutionIdsJson,
+  status: revision.status,
+  riskTier: revision.riskTier,
+  reviewScopeJson: revision.reviewScopeJson,
+  carriedForwardFromRevisionId: revision.carriedForwardFromRevisionId,
+  supersededByRevisionId: revision.supersededByRevisionId,
+  createdAt: revision.createdAt,
+  updatedAt: revision.updatedAt,
+  approvedAt: revision.approvedAt,
+  version: revision.version,
+);

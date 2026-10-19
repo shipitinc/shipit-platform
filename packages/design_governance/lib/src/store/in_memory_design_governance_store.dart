@@ -2,6 +2,7 @@ import 'package:platform_contracts/platform_contracts.dart';
 
 import 'design_governance_exceptions.dart';
 import 'design_governance_store.dart';
+import 'design_revision_anchor_gate.dart';
 
 /// A non-durable in-memory implementation of all design governance store interfaces.
 /// Suitable for unit tests and single-instance usage.
@@ -67,8 +68,17 @@ class InMemoryDesignGovernanceStore implements DesignGovernanceStore {
     DesignRevision revision, {
     int? expectedVersion,
   }) async {
-    _checkVersion(revision.revisionId, expectedVersion);
-    _revisions[revision.revisionId] = revision;
+    // §3.5.3: validated on write, failing closed. This is the same function
+    // `PostgresDesignGovernanceStore` calls, deliberately — see
+    // [gateDesignRevisionWrite] for why the rule is a shared function rather
+    // than something each implementation could omit. The in-memory store is not
+    // exempt on the grounds that it is a test double: it is the implementation
+    // the contract suite in `store_contract_tests` runs in CI without a
+    // database, so an exempt gate here would be a gate the default CI run never
+    // exercises at all.
+    final gated = gateDesignRevisionWrite(revision);
+    _checkVersion(gated.revisionId, expectedVersion);
+    _revisions[gated.revisionId] = gated;
   }
 
   @override

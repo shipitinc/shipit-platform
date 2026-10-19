@@ -78,6 +78,22 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
     DesignRevision revision, {
     int? expectedVersion,
   }) async {
+    // §3.5.3: validated on write, failing closed — a revision that does not
+    // conform is NOT persisted, not persisted-and-flagged.
+    //
+    // It runs FIRST, before any statement is issued, which is what "not
+    // persisted" has to mean: a gate placed after the CAS `UPDATE` would have
+    // already written the row, and one placed inside the `ON CONFLICT` branch
+    // would have already consumed a sequence value and held a transaction open
+    // for the length of a validation pass. Rejecting before the first round
+    // trip is also why this cannot half-apply — there is nothing to roll back.
+    //
+    // The same function `InMemoryDesignGovernanceStore` calls, so the two
+    // implementations of one interface cannot drift into accepting different
+    // things. See [gateDesignRevisionWrite] for why that is a shared function
+    // rather than a per-implementation override.
+    final gated = gateDesignRevisionWrite(revision);
+
     const bareInsert = '''INSERT INTO "design_revision" (
            "revisionId", "workItemId", "productId", "parentRevisionId",
            "designSystemRevision", "providerType", "penpotFileId", "penpotPageId",
@@ -121,8 +137,8 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
              "version" = @version
            WHERE "revisionId" = @revisionId AND "version" = @expected''',
         parameters: QueryParameters.named({
-          ..._designRevisionToParams(revision),
-          'version': revision.version,
+          ..._designRevisionToParams(gated),
+          'version': gated.version,
           'expected': expectedVersion,
         }),
       );
@@ -132,13 +148,13 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
 
       final rows = await _db.query(
         'SELECT "version" FROM "design_revision" WHERE "revisionId" = @revisionId',
-        parameters: QueryParameters.named({'revisionId': revision.revisionId}),
+        parameters: QueryParameters.named({'revisionId': gated.revisionId}),
       );
       final actual = rows.isEmpty ? 0 : rows[0].toColumnMap()['version'] as int;
       if (rows.isEmpty && expectedVersion == 0) {
         final inserted = await _db.execute(
           '$bareInsert ON CONFLICT ("revisionId") DO NOTHING',
-          parameters: QueryParameters.named(_designRevisionToParams(revision)),
+          parameters: QueryParameters.named(_designRevisionToParams(gated)),
         );
         if (inserted == 1) {
           return;
@@ -146,11 +162,11 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
         final current = await _db.query(
           'SELECT "version" FROM "design_revision" WHERE "revisionId" = @revisionId',
           parameters: QueryParameters.named({
-            'revisionId': revision.revisionId,
+            'revisionId': gated.revisionId,
           }),
         );
         throw DesignGovernanceConcurrentModificationException(
-          entityId: revision.revisionId,
+          entityId: gated.revisionId,
           expectedVersion: 0,
           actualVersion: current.isEmpty
               ? 0
@@ -158,7 +174,7 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
         );
       }
       throw DesignGovernanceConcurrentModificationException(
-        entityId: revision.revisionId,
+        entityId: gated.revisionId,
         expectedVersion: expectedVersion,
         actualVersion: actual,
       );
@@ -188,7 +204,7 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
              "updatedAt" = EXCLUDED."updatedAt",
              "approvedAt" = EXCLUDED."approvedAt",
              "version" = EXCLUDED."version"''',
-      parameters: QueryParameters.named(_designRevisionToParams(revision)),
+      parameters: QueryParameters.named(_designRevisionToParams(gated)),
     );
   }
 

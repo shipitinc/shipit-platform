@@ -482,6 +482,41 @@ const kRevisionId = 'DES-R001';
 const kReviewExecutionId = 'rev-exec-1';
 const kFindingId = 'FD-001';
 
+/// The six anchor blob columns, in the committed document's shapes.
+///
+/// ## WHY THESE LITERALS ARE WHAT THEY ARE
+///
+/// They used to be prose strings — `boardIdsJson: '["board-1", "board-2"]'`,
+/// `responsiveTargetsJson: '["mobile", "desktop"]'`, `reviewScopeJson:
+/// {'scope': 'full'}` — which is precisely what §3.3 identifies as the defect:
+/// six `type: string` columns that assert nothing anyone can check. Three
+/// separate rules made them non-conforming, and a fixture that violates the
+/// contract under test is not neutral scaffolding, it is the defect the gate
+/// exists to catch:
+///   * `boardSet` items are OBJECTS (`{boardId, provider, providerFileId, …}`),
+///     not bare strings, so a revision can name the provider file a human opens.
+///   * `responsiveSet`'s `breakpoint` is the CLOSED `xs…2xl` vocabulary; `mobile`
+///     and `desktop` are not in it, and an open string here is what makes "did
+///     the implementation render the mobile board" an opinion.
+///   * `reviewScope` is `{dimensions?, boardIds?}` with a closed dimension enum.
+///     `{'scope': 'full'}` is an unnamed key — a claim the platform cannot check.
+///
+/// They are also written in §3.5.2's CANONICAL form — keys sorted at every
+/// level, arrays in their declared sort-key order, no insignificant whitespace.
+/// That is not decoration. `saveDesignRevision` canonicalises on write, so a
+/// fixture that were merely conforming-but-unordered would come back from the
+/// store as a DIFFERENT object than it went in as, and the suite's
+/// `expect(loaded, revision)` round-trip assertion — the thing that makes this
+/// fixture worth having — would fail on ordering rather than on storage.
+///
+/// Every sort key is unambiguous here: no two members of any array share one, so
+/// the fixture does not depend on a tie-break rule the schema does not declare.
+/// `boardName` and `orientation` are present on one member each so the optional
+/// members survive the canonicaliser's round trip rather than being untested.
+///
+/// `designerExecutionId` is deliberately absent from `reviewExecutionIds` — the
+/// seventh rule, the one JSON Schema cannot express, is a property of this
+/// fixture whether or not a store ever checks it.
 DesignRevision buildDesignRevision({
   String revisionId = kRevisionId,
   String workItemId = kWorkItemId,
@@ -500,15 +535,36 @@ DesignRevision buildDesignRevision({
     provider: DesignProviderType.penpot,
     penpotFileId: 'pf-1',
     penpotPageId: 'pp-1',
-    boardIdsJson: '["board-1", "board-2"]',
-    responsiveTargetsJson: '["mobile", "desktop"]',
-    statesRepresentedJson: '["default", "hover", "focus"]',
-    artifactRefsJson: '["art-1", "art-2"]',
+    boardIdsJson:
+        '[{"boardId":"board-1","boardName":"Board 1","provider":"penpot",'
+        '"providerFileId":"pf-1"},'
+        '{"boardId":"board-2","boardName":"Board 2","provider":"penpot",'
+        '"providerFileId":"pf-1"}]',
+    responsiveTargetsJson:
+        '[{"breakpoint":"lg","minViewportWidthCss":1024,"orientation":"landscape"},'
+        '{"breakpoint":"md","minViewportWidthCss":768}]',
+    statesRepresentedJson:
+        '[{"boardId":"board-1","stateKey":"default","variant":"default"},'
+        '{"boardId":"board-2","stateKey":"disabled","variant":"disabled"},'
+        '{"boardId":"board-1","stateKey":"focus","variant":"focus"}]',
+    artifactRefsJson:
+        '[{"kind":"file","ref":"art-1"},{"kind":"file","ref":"art-2"}]',
     designerExecutionId: 'designer-exec-1',
-    reviewExecutionIdsJson: '["rev-exec-1", "rev-exec-2"]',
+    reviewExecutionIdsJson: '["rev-exec-1","rev-exec-2"]',
     status: status,
     riskTier: DesignRiskTier.medium,
-    reviewScopeJson: {'scope': 'full'},
+    reviewScopeJson: const {
+      // Canonical key order (`boardIds` < `dimensions`), and both arrays in
+      // lexicographic order — the same two rules the six string columns obey
+      // above, and the reason this Map survives the round trip unchanged
+      // instead of being reordered by the canonicaliser.
+      //
+      // ONLY `design_revision`'s scope is an anchor column. The identical field
+      // on `buildDesignReviewResult` below belongs to `design_review_result`,
+      // which the anchor does not cover, so it is deliberately left as-is.
+      'boardIds': ['board-1', 'board-2'],
+      'dimensions': ['a11y', 'color', 'layout', 'responsive', 'typography'],
+    },
     carriedForwardFromRevisionId: null,
     supersededByRevisionId: null,
     createdAt: now,
