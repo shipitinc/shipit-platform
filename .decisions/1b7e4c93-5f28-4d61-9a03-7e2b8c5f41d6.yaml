@@ -1,0 +1,38 @@
+# human-decision.yaml
+decision_id: 1b7e4c93-5f28-4d61-9a03-7e2b8c5f41d6
+type: ARCHITECTURE
+status: RESOLVED
+title: fidelityAnchorSchemaVersion is added by destructive drop-and-recreate, not by a default
+resolution:
+  selected: DROP_AND_RECREATE
+  label: Serverpod's destructive DROP TABLE design_revision CASCADE; CREATE TABLE … is accepted
+  decided_by: operator
+  decided_at: 2026-10-18T20:10:00Z
+  the_conflict: >-
+    design-revision.md §3.5.2 rule 4 mandates `fidelityAnchorSchemaVersion text NOT NULL` verbatim.
+    Serverpod 3.4.13's extensions.dart:114-117 computes
+    `canBeCreatedInTableMigration == (isNullable || columnDefault != null)`, so a NOT NULL column with no
+    default CANNOT be added by migration; migration.dart:359-372 returns null with `destructive: true`.
+    The dispatched instructions were therefore mutually exclusive — a `String` field and "additive
+    migrations only" cannot both hold.
+  alternatives_rejected:
+    - >-
+      Nullable column required by the write gate. Additive, no data destroyed, no version manufactured —
+      but it deviates from the design's literal NOT NULL.
+    - >-
+      default='1.0.0'. Additive and satisfies NOT NULL, but the default propagates into definition.sql on
+      the fresh-database path, so the database manufactures 1.0.0 for every row that never named the
+      column — laundering "never validated" into "validated", which §3.5.3 forbids.
+  rationale_given: >-
+    A default that the database supplies is a claim about validation that nobody performed. The design
+    exists precisely to make "full fidelity" decidable, so a column that silently asserts its own
+    satisfaction defeats it at the point of insertion. The destructive route is the only one that leaves
+    the NOT NULL guarantee true for every row.
+  precondition_the_operator_did_not_waive: >-
+    This is accepted CONDITIONAL on the table being empty. "Nothing writes DesignRevisionRow" is a CODE
+    fact; whether the live database holds rows is a RUNTIME fact and is not established by it. The
+    Manager verifies row count before the migration is allowed to run against any database, and the
+    decision is void if rows exist — the alternatives above are then re-opened rather than forced.
+  what_must_be_recorded: >-
+    The destructive migration is a permanent part of provenance. Any future reader must be able to see
+    that `design_revision` was dropped and recreated, and when.
