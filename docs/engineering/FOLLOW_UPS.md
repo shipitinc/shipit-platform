@@ -3182,3 +3182,64 @@ is unrelated to the 42P07 work. Pin to `version`, not `registry.last`.
 to report `schemaInvalid`. **`schemaInvalid` exists only in the design document** — no type, no field, no
 caller. The write half is delivered; the read half has no surface to land on, and inventing one is exactly the
 fabrication §3.5.3 forbids.
+
+## 41. §9 step 4 (fidelity anchor) landed; the CASCADE hazard is closed and runtime-verified
+
+**Landed:** the anchor schema in the root `schemas/` registered in `contract_schemas_test.dart` so the tree's
+own harness loads it; the Dart validator with its 29-case differential; the seventh rule as code, tested in five
+directions including the falsifying one; `gateDesignRevisionWrite` as a **top-level function** called before the
+first statement by both stores; anchor-conforming **canonical** fixtures; the erasure guard; and the
+`fidelityAnchorSchemaVersion` column via the authorised destructive route.
+
+**F-176 — the CASCADE restores are in the migration and runtime-VERIFIED, not asserted.**
+`20261019010044759/migration.sql` now recreates, after the `CREATE TABLE` and before the ledger stamp:
+`design_revision_approved_unique_per_work_item` (the partial unique index, `WHERE ("status" = 'approved')`) and
+`trigger_design_revision_immutability` (`BEFORE UPDATE … FOR EACH ROW EXECUTE FUNCTION`), together with the
+`CREATE OR REPLACE FUNCTION` body — **because a plpgsql body is not a recorded dependency of the tables it
+names**, so `CREATE OR REPLACE` is correct regardless of what the server's dependency tracking decided. Both
+blocks were extracted by absolute-path line range from `20260920232118956` and `diff`-verified **IDENTICAL**;
+that migration was not edited.
+
+**F-177 — my brief's premise that no gate can observe the chain path was WRONG, and measurement found it.**
+`product_credential_immutability_postgres_test.dart` already replays `migrations/*/migration.sql` into a scratch
+schema — the reusable harness already existed. `design_revision_chain_replay_postgres_test.dart` follows it and
+makes the database **try to violate each invariant**: a second `approved` row for one work item is **refused
+(23505)**, and a content `UPDATE` on an approved revision is **refused**, with controls proving each. **Its
+negative control reconstructs the pre-fix file and asserts objects absent, duplicates accepted, and the approved
+row tampered successfully** — so the test can fail. Honest limit: it replays the two `design_revision` migrations,
+not the full chain, and needs a minimal `job` scaffold.
+
+**F-178 — `verify:schema-deviations` would have been the WRONG place for the parity coverage, and adding these
+two names to it would have been actively wrong.** It greps `definition.sql`, and `verify_schema_bootstrap.sh`
+check 4 **fails** if a generated `definition.sql` mentions those objects — "the bootstrap is their only source".
+The parity went into `apps/server/test/**` following the `product_qa_contract_spec_migration_test.dart`
+precedent, and it **derives** the object set by scanning every earlier `migration.sql` rather than listing it —
+so a missing restore would drop out of the set instead of passing.
+
+**F-179 — a vacuous guard, caught by measurement and disclosed.** The first `_guardedColumns` matcher ran
+lazily to the first `$$` in the plpgsql body, which is the `AS $$` **opener** — so it read an **empty column list
+from both files**, two empty lists compared equal, and deleting guarded-column content left the suite 11/11.
+Fixed, with emptiness now asserted on both sides. **An empty-vs-empty comparison is green while reading nothing.**
+
+**F-180 — a bootstrap that fabricates a validated revision would have been the rejected laundering.** The
+probe fixture writes `'[]'` into all six anchor blob columns — exactly what §3.5.1 refuses (`minItems: 1` on
+three of them). Routing it through `gateDesignRevisionWrite` would make the row **unwritable**, leaving every
+probe vacuous. So it borrows the **version constant** (`designRevisionFidelityAnchorSchemaVersion`), not the
+validation — a deliberate choice with a stated reason, not an oversight.
+
+**F-181 — integration failure COUNTS are not stable per tree state.** Two baseline samples agreed at
+`+303 −11`, then the same tree produced `+308 −10`. Two tests flap in **both directions**: the known two-mint
+race, and `defect_backend … list defects paginates`, which pages an **unscoped global** `defect` list in a
+shared concurrently-mutated DB and tripped on another lane's defect id. **Anyone attributing an integration
+regression from one before/after pair is reasoning from noise** — this is the fifth time a count was the wrong
+instrument in this work.
+
+**F-182 — the F-160 blind spot is live in `make test-integration` too.** A fully passing file leaves only a
+loading and a `setUpAll` line; the new file was attributed by arithmetic and by absence of `[E]`, not by a printed
+filename. **Read names, not counts, and never infer a file's verdict from a reporter's silence.**
+
+**Still open, unchanged:** F-170/F-165 (`product_qa_contract_spec` erasure is 5/5 reproducible; the guard
+**detects** it, only a managed model or `schema_bootstrap.sql` **prevents** it — needs an owner); F-175
+(§3.5.3's read-half `schemaInvalid` exists only in the design document); F-174 (now fixed in-tree but the trap's
+scope is noted); F-156 (`_DesignContractUnderReviewGuard` still reads caller-supplied context).
+**Step 6 (the producer) is not started**, and the runtime remains OFF.
