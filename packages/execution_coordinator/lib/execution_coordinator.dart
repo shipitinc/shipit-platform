@@ -8,4 +8,6 @@ export 'src/verifier/workspace_verifier.dart';
 export 'src/coordinator/producer_execution.dart';
 export 'src/coordinator/success_artifact.dart';
 export 'src/coordinator/workspace_delta_probe.dart';
+export 'src/coordinator/workspace_head_reader.dart';
+export 'src/coordinator/committed_diff_path_collector.dart';
 export 'src/coordinator/execution_coordinator.dart';

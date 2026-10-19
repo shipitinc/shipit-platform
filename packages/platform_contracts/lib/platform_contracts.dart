@@ -89,6 +89,8 @@ export 'src/types/baseline_fact.dart';
 export 'src/types/product_baseline.dart';
 export 'src/types/baseline_verification.dart';
 export 'src/types/clarification_request.dart';
+export 'src/types/committed_diff_paths.dart';
+export 'src/types/workspace_head.dart';
 export 'src/types/onboarding_record.dart';
 export 'src/types/product_context.dart';
 export 'src/types/product_registry_audit.dart';
