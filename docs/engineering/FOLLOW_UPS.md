@@ -3116,3 +3116,69 @@ strengthens the claim.** 8 mutations total, 0 green reverts, none discarded as f
   test) blocks the **second** run, not the first.
 - **F-156** (`_DesignContractUnderReviewGuard` reading caller-supplied `context['designContractStatus']`) belongs
   on the runtime's ledger **before step 6** — same defect class step 2 closed on the adjacent edge.
+
+## 40. Step 4: the anchor's schema, gate and differential landed; B1 blocked three times on MY errors
+
+**Delivered and measured.** `schemas/design_revision_fidelity_anchor.schema.json` (placed in the root
+`schemas/`, **not** `docs/engineering/schemas/` — F-129) registered in `contract_schemas_test.dart`'s list so
+the tree's own harness loads it; `platform_contracts/.../design_revision_fidelity_anchor.dart` with
+`validate`/`requireValid`/`canonicalise`; and a **29-case differential** evaluating every case by `json_schema`
+against the committed `.json` **and** by the Dart validator, with vocabularies read *out of the document* so
+editing one without the other goes red. The seventh rule
+(`designerExecutionId ∉ reviewExecutionIdsJson`, inexpressible in JSON Schema) is code, tested in **five**
+directions including the falsifying one — the designer as one *extra* member among ordinary reviewers.
+
+**F-167 — the gate is a top-level FUNCTION, not a method, and that is structural.**
+`DesignGovernanceStore` is an `abstract interface class`, and Dart **forbids a default implementation** — so a
+gate written as an override is a gate each implementation can silently omit. As a shared function, a third
+implementation must call it or visibly choose not to. Both stores call it **before the first statement**; a
+gate after the `UPDATE` is the "persisted then flagged" shape §3.5.3 rules out. **Applies to `workflow_store`
+too, where the same shape could recur.**
+
+**F-168 — the FIXTURE was the defect, not an obstacle.** `store_contract_tests/lib/src/fixtures.dart`
+`buildDesignRevision()` wrote legacy-shaped blobs (`boardIdsJson: '["board-1","board-2"]'` as strings,
+`responsiveTargetsJson: '["mobile","desktop"]'` outside the closed vocabulary, `reviewScopeJson` with an unnamed
+key). Made anchor-conforming **and canonical**, with the suite asserting `expect(loaded, revision)` so a merely
+*ordered* fixture would fail. Three refusals assert an **absence** after the throw, because "not persisted" is
+the claim and a persist-then-flag implementation would satisfy `throwsA` while failing the read.
+
+**F-169 — one mutation stayed GREEN and is reported, not buried.** Removing the second `requireValid` re-assertion
+left the suite green: **nothing distinguishes `canonicalise()` alone from `canonicalise()` + `requireValid()`**.
+It is defence against a future validator bug and is **not claimed as tested**.
+
+**F-170 (supersedes the earlier F-170) — the erasure is 5/5 reproducible, and detection ≠ prevention.**
+`postgres.dart:58` renders `tables.where((t) => t.managed != false)`, so an unmanaged table **cannot** appear
+in a generated `definition.sql`. Every regeneration drops `product_qa_contract_spec` (55→54 tables,
+42→41). `fresh_definition_qa_spec_erasure_test.dart` **detects** it (falsified against the real generator:
+6 pass → 4 fail). **Only** a managed model, or moving the DDL into `tool/schema_bootstrap.sql` under
+`verify:schema-deviations`, **prevents** it. Both outside every grant granted so far. **Needs an owner.**
+
+**F-171 — B1 needed a human decision, and it is now made: `1b7e4c93` accepts the destructive
+DROP+CREATE.** The design mandates `text NOT NULL`; Serverpod cannot `ALTER` a NOT NULL no-default column, so
+my dispatch was **self-contradictory** (a `String` field *and* "additive migrations only"). The operator
+rejected `default='1.0.0'` because the default propagates into `definition.sql` and the database would
+manufacture `1.0.0` for rows that never named the column — laundering "never validated" into "validated".
+**The decision was conditional on the table being empty; I verified `design_revision` = 0 rows and no FK
+references it, so `CASCADE` destroys nothing.**
+
+**F-172 — I gave the operator a FALSE premise, and it is the fourth this session.** I asserted "nothing writes
+`DesignRevisionRow`" — a `git grep` result about the **ORM class**. **Raw SQL writes the row from two places:**
+`apps/server/tool/schema_bootstrap.dart:484` `_insertRevisionSql` (PROHIBITED) and
+`postgres_design_governance_store.dart` (unowned). The `NOT NULL` constraint fired at
+`23502 … violates not-null constraint`. **A code fact masked a runtime fact — the exact distinction
+`1b7e4c93` refused to waive, and the one that made the precondition look satisfied when the writers were live.**
+
+**F-173 — NO LANE CAN INDEPENDENTLY VERIFY A DATABASE FACT.** The `postgresql_query` MCP tool fails at
+connection level (`password authentication failed for user "spring"`), and lanes hold no `psql` grant. So
+**the decision's precondition rests on my single verification**, with no independent second source available.
+That is a real limit on the assurance, not a formality.
+
+**F-174 — a durable trap for every future migration author.**
+`apps/server/test/design_contract_migration_test.dart:380` derives `freshVersion = registry.last`, assuming the
+newest migration IS the `design_contract` one. Any new migration trips it. It fired on this lane's migration and
+is unrelated to the 42P07 work. Pin to `version`, not `registry.last`.
+
+**F-175 — §3.5.3 is only HALF delivered, by the design's silence.** It also requires a **read** of a legacy row
+to report `schemaInvalid`. **`schemaInvalid` exists only in the design document** — no type, no field, no
+caller. The write half is delivered; the read half has no surface to land on, and inventing one is exactly the
+fabrication §3.5.3 forbids.
