@@ -355,6 +355,21 @@ void run(List<String> args) async {
     modelExecutionRecordStore: PostgresModelExecutionRecordStore(db),
   );
 
+  // `OD-6`: the IMPLEMENTATION lane's coordinator. Same store, same engine,
+  // same runtime, same model-record store — it differs ONLY in which
+  // [VerificationPlan] it carries, because the plan is the entire difference.
+  //
+  // Built eagerly and unconditionally so the wiring is a fact a test can read,
+  // not a branch taken only when an implementation job happens to arrive. It is
+  // a coordinator, NOT a scheduler: nothing below mounts or re-points dispatch,
+  // and no runtime is enabled by its existence.
+  final implementationCoordinator = buildImplementationExecutionCoordinator(
+    store: agentExecutionStore(db),
+    workflowEngine: durableWorkflowEngine,
+    runtime: AgentRuntime(registry: agentAdapters),
+    modelExecutionRecordStore: PostgresModelExecutionRecordStore(db),
+  );
+
   // The REAL worker, in a REAL git worktree, pinned to the exact commit the
   // source repository was at when this process started. An empty
   // `WorkerRegistry` meant `WorkerDispatcher.select` returned no candidate, so
@@ -403,14 +418,21 @@ void run(List<String> args) async {
   // scheduler would defer for ever while reporting itself healthy — the same
   // silent no-dispatch the empty registry produced, one level down.
   //
-  // READER WARNING — this worker inherits the TRIAGE verification plan. All
-  // three roles share one coordinator, whose single `verificationPlan` is
-  // `git rev-parse --verify 'HEAD^{commit}'`: it cannot fail on a real
-  // checkout, so NOTHING here verifies an implementation. Design §7.8 / `OD-6`
-  // is open and awaits a role-scoped plan at the landing gate; the full
-  // argument, and why a green implementation run must not be read as coverage,
-  // is on [buildTriageExecutionCoordinator]. No second coordinator is created
-  // here on purpose — that choice is `OD-6`'s, not this lane's.
+  // READER WARNING — this worker now runs the IMPLEMENTATION verification plan,
+  // not the triage one. `OD-6` gave the implementation lane its own coordinator
+  // ([implementationCoordinator]) because [ExecutionCoordinator] carries one
+  // `verificationPlan` for every job it runs, and the triage plan is a
+  // `git rev-parse` liveness probe that cannot fail on a real checkout.
+  //
+  // What that buys: a real implementation execution now writes a verification
+  // row carrying a command this repository actually DECLARES, and one that can
+  // fail — design §9.3's verification-failure branch stops being unreachable
+  // for this role.
+  //
+  // What it does NOT buy: full coverage. The implementation plan expresses ONE
+  // of the four declared per-execution checks. The three it cannot express, and
+  // why, are named in [perExecutionChecksNotExpressibleAsOnePlan]; read it
+  // before treating a green implementation execution as the declared tier.
   final implementWorker = LocalWorker(
     workerId: 'w-impl-local',
     poolId: 'impl-pool',
@@ -418,7 +440,7 @@ void run(List<String> args) async {
     // Never the source repository itself: the agent runs in a detached
     // worktree, and cleanup only ever removes worktrees this platform created.
     workspaceManager: GitWorktreeWorkspaceManager(workspaceRoot: workspaceRoot),
-    executionDriver: CoordinatorAgentExecutionDriver(coordinator),
+    executionDriver: CoordinatorAgentExecutionDriver(implementationCoordinator),
     workerStore: workerStore,
     registrationStore: workerRegistrationStore,
     platform: Platform.operatingSystem,
@@ -1614,40 +1636,220 @@ const VerificationPlan triageVerificationPlan = VerificationPlan(
 /// [run] supplies a Postgres-backed [ModelExecutionRecordStore]; a test may
 /// omit it, exactly as a coordinator without one behaves in [run]'s absence.
 ///
-/// ## The implementer inherits this plan, and this plan cannot fail
+/// ## The implementer no longer inherits this plan — `OD-6` moved it
 ///
-/// [ExecutionCoordinator] carries ONE [VerificationPlan] for every job it runs,
-/// and all three roles in [run] — triage, review, implement — drive the same
-/// coordinator (`CoordinatorAgentExecutionDriver(coordinator)`, `:229-278`).
-/// So an implementation run is verified by
-/// `git rev-parse --verify 'HEAD^{commit}'`, which succeeds for any checkout
+/// This used to read: *"[ExecutionCoordinator] carries ONE [VerificationPlan]
+/// for every job it runs, and all three roles in [run] — triage, review,
+/// implement — drive the same coordinator. So an implementation run is verified
+/// by `git rev-parse --verify 'HEAD^{commit}'`, which succeeds for any checkout
 /// that has a commit. That is a liveness check on the worktree; it verifies
-/// nothing the implementer wrote.
+/// nothing the implementer wrote."*
 ///
-/// **This is a known, unfilled gap — not a plan that is working.** Design §7.8
-/// requires "a dedicated [VerificationPlan], pinned deliberately", and §9.3 row
-/// 7 requires that plan's FAILURE land at `agentFailed` with no
-/// `producerActorId` (`execution_coordinator.dart:782-812`; the failure branch
-/// omits the `metadataMerge` at `:796` while success sets it at `:838`).
-/// With this plan attached, that branch is UNREACHABLE for implementation jobs:
-/// no implementation execution can ever be settled `executedFail` by
-/// verification. §9.3's contract is therefore untested in production for the one
-/// role it is written about.
+/// **That is no longer true, and the correction is `OD-6` below.** [run] now
+/// builds a second coordinator for the implementation lane and attaches
+/// [implementationVerificationPlan] to it; triage and review keep this function
+/// and its plan. The gap was real — design §7.8 requires "a dedicated
+/// [VerificationPlan], pinned deliberately", and §9.3 row 7 requires that
+/// plan's FAILURE land at `agentFailed` with no `producerActorId`
+/// (`execution_coordinator.dart:782-812`; the failure branch omits the
+/// `metadataMerge` at `:796` while success sets it at `:838`) — and with the
+/// implementation plan attached, that branch is REACHABLE for implementation
+/// jobs for the first time.
 ///
-/// **Do not read a green implementation execution as evidence that verification
-/// ran.** Nothing here verifies it, and the absence of verification failures is
-/// the absence of a test, not a passing one. The independent gate it enables is
-/// §9.2 row 5 (`endingRevision` null ⇒ review fails closed), which is a real
-/// check on the artefact — not on the code's behaviour.
+/// **STILL DO NOT read a green implementation execution as full coverage.** It
+/// now proves one declared check ran and passed, not four. Read
+/// [perExecutionChecksNotExpressibleAsOnePlan] for the three it does not cover,
+/// and read §2 of the `OD-6` block for what that means for the gate. The
+/// independent gate the plan enables is §9.2 row 5 (`endingRevision` null ⇒
+/// review fails closed), which is a real check on the artefact — not on the
+/// code's behaviour.
 ///
-/// TODO(design §7.8 / `OD-6`, OPEN at the landing gate): give the implementation
-/// lane a verification plan of its own. HOW is an architecture decision this
-/// lane must not make on its own — `ExecutionCoordinator` exposes a single
-/// `verificationPlan` field for all roles, so a role-scoped plan needs either a
-/// per-role coordinator or a plan resolved from the job's role, and `OD-6` is
-/// where that decision belongs. Deliberately NOT chosen here: no second
-/// `ExecutionCoordinator` is added and nothing under
-/// `packages/execution_coordinator/` is touched.
+// ============================================================================
+// OD-6 — THE ROLE-SCOPED IMPLEMENTATION PLAN, AND WHAT IT DOES NOT COVER
+// ============================================================================
+//
+// `OD-6` decided, and this is the decision. `server.dart` is the only place it
+// could be made without changing `packages/execution_coordinator/`.
+//
+// ## 1. `VerificationPlan` CARRIES **ONE** CHECK. THAT IS MEASURED, NOT ASSUMED.
+//
+//   class VerificationPlan {
+//     final List<String> command;      // ONE command
+//     final List<String>? setupCommand;
+//     final String checkName;          // ONE name
+//   }                                        -- execution_coordinator.dart:115-127
+//
+// and [ExecutionCoordinator] runs that plan once per execution, persisting ONE
+// [PlatformVerification] whose id is `ver-${request.executionId}`
+// (`execution_coordinator.dart:905-933`). That id is deterministic per
+// execution, and every store keys verifications by it
+// (`in_memory_execution_store.dart:105`, `file_json_execution_store.dart:155`,
+// `postgres_execution_store.dart`). So:
+//
+//     ONE EXECUTION PRODUCES AT MOST ONE VERIFICATION ROW,
+//     CARRYING AT MOST ONE `checkName` AND ONE `command` STRING.
+//
+// This is a property of the record. It is not widened here, and nothing below
+// pretends otherwise.
+//
+// ## 2. THE GATE EXPECTS MORE ROWS THAN ONE ROW CAN SUPPLY
+//
+// `declared-validation-outcome` (design §3.1 F4, level-3 approved `c495e02f`)
+// is specified with `requireCheckNames` — REQUIRED, **non-empty** — and
+// `requireCommands`, a map of checkName -> EXACT command string, compared with
+// `commandMatchIsExact: true`. The per-execution tier declares FOUR checks.
+//
+//     4 declared checks  >  1 row a single plan can produce.
+//
+// **So F4 stays RED after this change, and that is the correct verdict.** This
+// slice does not open the gate. It makes F4 *evaluable*: it stops failing
+// because a `git rev-parse` liveness probe carried a command that matches no
+// declaration, and starts failing — if it still fails — because named declared
+// checks have no row. A gate that cannot fail is not a green gate; one that
+// fails for a true reason is worth more than one that passes.
+//
+// ## 3. WHAT ONE ROW *CAN* HONESTLY EXPRESS, AND WHY IT IS THE FORMAT CHECK
+//
+// Three of the four declared checks name a cwd that is not the repository
+// root: `dart analyze` and `dart test` run at **each package root** (16 of them,
+// per the root `pubspec.yaml`'s pub workspace), and `flutter test` runs at
+// `apps/control_plane`. The coordinator runs a plan in exactly one directory —
+// `request.workspace.path`, which is the agent's detached git worktree ROOT
+// (`git_worktree_workspace_manager.dart:92-98`), i.e. the repository root
+// (`execution_coordinator.dart:911-915`). A plan has no per-check cwd, and
+// reaching a package root inside one command would mean wrapping `cd` in a
+// shell — which REWRITES the command string and therefore breaks the exact
+// comparison the gate is built on.
+//
+// The repository-root format check is the only declared per-execution check
+// whose declared cwd IS the directory the verifier already uses. It is also
+// the only one that needs no network and no per-package sweep.
+//
+// Two further measured facts bound it:
+///
+/// * **It must resolve packages first.** Measured in a fresh detached worktree
+///   at this commit: `dart format --output=none --set-exit-if-changed .`
+///   without dependency resolution exits **1** and reports **163** files
+///   changed — the formatter falls back to the SDK's current default style
+///   because no package language version is available. After one
+///   `dart pub get` at the worktree root (the pub workspace resolves all 16
+///   members in one command, 0.76s warm) the same command exits **0** with 0
+///   changed. That is what [VerificationPlan.setupCommand] exists for, and
+///   omitting it would settle every implementation execution `executedFail`
+///   for a formatting artifact of the sandbox rather than of the code.
+/// * **It fits the verifier's budget.** [WorkspaceVerifier] allows 2 minutes
+///   each for setup and command, and `_completeSuccess` passes no override.
+///   Measured here: pub get 0.76s + format 2.81s.
+const VerificationPlan implementationVerificationPlan = VerificationPlan(
+  command: ['dart', 'format', '--output=none', '--set-exit-if-changed', '.'],
+  setupCommand: ['dart', 'pub', 'get'],
+  checkName: 'dart_format_repo_root',
+);
+
+/// One declared check, exactly as `AGENTS.md` -> "Required validation gates"
+/// declares it.
+///
+/// The [command] is stored as the single verbatim string the gate will compare
+/// by equality. It is never re-derived from an argv list: the comparison the
+/// gate performs is string equality, so the declared side must be the same
+/// string and not a re-spelling of it.
+///
+/// [workingDirectory] is load-bearing and is recorded for that reason — running
+/// a package suite from the repository root gives different results than
+/// running it from the package root, which `AGENTS.md` states as measured fact.
+class DeclaredValidationCheck {
+  const DeclaredValidationCheck({
+    required this.checkName,
+    required this.command,
+    required this.workingDirectory,
+  });
+
+  /// The key a gate's `requireCommands` map is written against.
+  final String checkName;
+
+  /// The declared command string, verbatim from `AGENTS.md`.
+  final String command;
+
+  /// The declared working directory, verbatim from `AGENTS.md`.
+  final String workingDirectory;
+}
+
+/// The **per-execution tier only**, verbatim from `AGENTS.md`'s table.
+///
+/// The merge/release tier — `make test-integration` — is deliberately absent.
+/// Decision `a0e6f31c` put it in a different tier, recorded at the gate that
+/// owns it, and this record must never be read as claiming that check ran.
+const List<DeclaredValidationCheck> perExecutionValidationChecks = [
+  DeclaredValidationCheck(
+    checkName: 'dart_format_repo_root',
+    command: 'dart format --output=none --set-exit-if-changed .',
+    workingDirectory: 'repo root',
+  ),
+  DeclaredValidationCheck(
+    checkName: 'dart_analyze_per_package_root',
+    command: 'dart analyze',
+    workingDirectory: 'each package root',
+  ),
+  DeclaredValidationCheck(
+    checkName: 'dart_test_per_package_root_per_file',
+    command: 'dart test',
+    workingDirectory: 'each package root, individually per file',
+  ),
+  DeclaredValidationCheck(
+    checkName: 'flutter_test_apps_control_plane',
+    command: 'flutter test',
+    workingDirectory: 'apps/control_plane',
+  ),
+];
+
+/// The declared per-execution checks that [implementationVerificationPlan]
+/// does **not** express, and the reason each one is unexpressible.
+///
+/// This map exists so the gap is a value in the tree rather than a paragraph
+/// in a review comment. A plan that reads as complete coverage while covering
+/// one check in four is exactly the laundering decision `1b7e4c93` rejected,
+/// and the only durable defence is to make the shortfall impossible to miss.
+const Map<String, String> perExecutionChecksNotExpressibleAsOnePlan = {
+  'dart_analyze_per_package_root':
+      'declared at "each package root" — 16 roots under the root pubspec '
+      'workspace; a plan runs in the worktree root only, has no per-check '
+      'cwd, and a `cd` wrapper would rewrite the command string that '
+      '"commandMatchIsExact" compares',
+  'dart_test_per_package_root_per_file':
+      'declared at "each package root, individually per file" — a sweep, not a '
+      'command; one plan runs one command once, and WorkspaceVerifier '
+      'allows 2 minutes against a multi-minute sweep',
+  'flutter_test_apps_control_plane':
+      'declared at "apps/control_plane" — a different root, needs the Flutter '
+      'SDK resolved there, and `dart test` cannot load `flutter_test`',
+};
+
+/// The plans this process can attach, by role.
+///
+/// The single source of truth for role -> plan. Both
+/// [buildTriageExecutionCoordinator] and
+/// [buildImplementationExecutionCoordinator] read their plan from here, so the
+/// routing cannot disagree between the two composition paths.
+///
+/// TRIAGE IS UNTOUCHED. Every role that is not an implementation role keeps
+/// [triageVerificationPlan], byte for byte.
+VerificationPlan verificationPlanForRole(AgentRole role) => switch (role) {
+  // The implementation roles write Dart into a worktree of THIS repository, so
+  // the declared check that can actually run there is the repository-root one.
+  // `correctionImplementer` is included because a correction is implementation
+  // work: it edits the same repository, in the same kind of worktree.
+  AgentRole.implementer ||
+  AgentRole.correctionImplementer => implementationVerificationPlan,
+  _ => triageVerificationPlan,
+};
+
+/// Composes the ONE [ExecutionCoordinator] the TRIAGE and REVIEW lanes drive
+/// work through.
+///
+/// Reads its plan from [verificationPlanForRole], which returns
+/// [triageVerificationPlan] for [AgentRole.triageDefect] — the same plan this
+/// function attached before role scoping existed, so this routing is what keeps
+/// triage provably unchanged rather than merely intended to be.
 ExecutionCoordinator buildTriageExecutionCoordinator({
   required ExecutionStore store,
   required DurableWorkflowEngine workflowEngine,
@@ -1657,7 +1859,35 @@ ExecutionCoordinator buildTriageExecutionCoordinator({
   store: store,
   workflowEngine: workflowEngine,
   runtime: runtime,
-  verificationPlan: triageVerificationPlan,
+  verificationPlan: verificationPlanForRole(AgentRole.triageDefect),
+  modelExecutionRecordStore: modelExecutionRecordStore,
+);
+
+/// Composes the [ExecutionCoordinator] the IMPLEMENTATION lane drives work
+/// through — `OD-6`'s answer to "a role-scoped plan needs either a per-role
+/// coordinator or a plan resolved from the job's role".
+///
+/// BOTH, deliberately: [verificationPlanForRole] resolves the plan from the
+/// role, and this is the coordinator that attaches it. The alternative half —
+/// one coordinator that looks the plan up per job — would need
+/// `ExecutionCoordinator` to accept a resolver function instead of a
+/// [VerificationPlan], which is a change under
+/// `packages/execution_coordinator/`. That package is out of scope for this
+/// slice, so the per-role coordinator is the shape that fits the ownership
+/// boundary, and the lookup keeps it to one source of truth.
+///
+/// It is a COORDINATOR, not a scheduler: nothing here mounts, re-points or
+/// enables any dispatch, and the scheduler stays exactly as `run()` leaves it.
+ExecutionCoordinator buildImplementationExecutionCoordinator({
+  required ExecutionStore store,
+  required DurableWorkflowEngine workflowEngine,
+  required AgentRuntime runtime,
+  ModelExecutionRecordStore? modelExecutionRecordStore,
+}) => ExecutionCoordinator(
+  store: store,
+  workflowEngine: workflowEngine,
+  runtime: runtime,
+  verificationPlan: verificationPlanForRole(AgentRole.implementer),
   modelExecutionRecordStore: modelExecutionRecordStore,
 );
 
