@@ -1,0 +1,37 @@
+# human-decision.yaml
+decision_id: 7b2c4e91-8a06-4d73-b5f2-9c1e0d3a7f48
+type: ARCHITECTURE
+status: RESOLVED
+title: One execution may carry several verification rows, so declared-validation-outcome can go green
+resolution:
+  selected: MULTI_CHECK_VERIFICATION_PLAN
+  label: VerificationPlan carries several checks; one PlatformVerification row per check with non-colliding ids
+  decided_by: operator
+  decided_at: 2026-10-19T00:05:00Z
+  the_blocker_this_resolves: >-
+    OD-6 landed and made `declared-validation-outcome` EVALUABLE but not green.
+    `VerificationPlan` holds a single `command` and `checkName`
+    (packages/execution_coordinator/lib/src/coordinator/execution_coordinator.dart:115-127), and
+    `_completeSuccess` (:905-933) writes ONE `PlatformVerification` keyed `ver-${executionId}` — so one
+    execution yields at most one row, one checkName, one command string. The per-execution tier declares
+    FOUR checks and only `dart format` at repo root matches the directory the verifier already uses;
+    `dart analyze` and `dart test` declare EACH PACKAGE ROOT (16), and `flutter test` declares
+    `apps/control_plane`, which `dart test` cannot load. The three uncovered checks were recorded as a
+    VALUE in the tree, not a comment, so the gap cannot be read as coverage.
+  what_must_change: >-
+    `VerificationPlan` carries several checks, each with its own command AND its own cwd; one
+    `PlatformVerification` row per check; verification ids must be non-colliding, replacing today's
+    single deterministic `ver-${executionId}` per execution.
+  why_this_and_not_the_alternatives:
+    - One execution per declared check was rejected: no record change at all, but several agent
+      invocations per item and work re-done if a later check fails.
+    - Narrowing the per-execution tier to one check was rejected: it weakens the automated bar for every
+      item until merge, and moves three declared checks rather than making the mechanism able to run them.
+  the_honesty_constraint_that_survives: >-
+    This decision changes what the MECHANISM can record. It must NOT be implemented by widening what the
+    gate asserts. `declared-validation-outcome` still asserts the PER-EXECUTION tier only (a0e6f31c) and
+    still must NOT claim the integration tier ran. A row per check makes coverage REAL; it does not make
+    the gate more lenient, and a check that did not run must remain absent rather than defaulted to passed.
+  scope_note: >-
+    Touches packages/execution_coordinator/ — a real architecture change on a governed path, so it goes
+    through independent focused review before any gate may depend on it.
