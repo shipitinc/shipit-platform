@@ -67,13 +67,22 @@ at runtime and is not generated content.
   string**. The QA gate requires each check to have run under the **exact declared command**, so every string
   below is pinned verbatim and is part of the contract:
 
-  | gate | exact command | cwd |
-  |---|---|---|
-  | format | `dart format --output=none --set-exit-if-changed .` | repo root |
-  | analyze | `dart analyze` | **each package root** |
-  | unit tests | `dart test` | **each package root, individually per file** |
-  | control-plane app | `flutter test` | `apps/control_plane` — `dart test` cannot load `flutter_test` here |
-  | integration | `SERVERPOD_DATABASE_PASSWORD=control_plane_test_pw make test-integration` | repo root |
+  **Two tiers, decided 2026-10-18 (`a0e6f31c`):** the *per-execution* tier runs on every implementation
+  execution and is what `declared-validation-outcome` asserts; the *merge/release* tier runs at merge, is
+  recorded at the gate that owns it, and is **not** claimed per execution.
+
+  | tier | gate | exact command | cwd |
+  |---|---|---|---|
+  | per-execution | format | `dart format --output=none --set-exit-if-changed .` | repo root |
+  | per-execution | analyze | `dart analyze` | **each package root** |
+  | per-execution | unit tests | `dart test` | **each package root, individually per file** |
+  | per-execution | control-plane app | `flutter test` | `apps/control_plane` — `dart test` cannot load `flutter_test` here |
+  | **merge/release** | integration | `SERVERPOD_DATABASE_PASSWORD=control_plane_test_pw make test-integration` | repo root |
+
+  Integration is a separate tier because it **creates a disposable Postgres and takes minutes** — paying that
+  on every agent execution would make capacity and the worker environment absorb it. Splitting the tiers is
+  what keeps the per-execution gate honest: it asserts what actually ran, and nothing claims an expensive
+  check that did not.
 
   **Running a package suite from the repo root produces different results — this is measured, not
   conventional.** `design_review_park_surface_test.dart` fails on its own relative-path guard from the root

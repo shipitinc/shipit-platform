@@ -1,0 +1,36 @@
+# human-decision.yaml
+decision_id: a0e6f31c-5d47-4b02-9e8a-6f31c7d40b95
+type: PRODUCT
+status: RESOLVED
+title: Declared validation gates are split into a per-execution tier and a merge/release tier
+resolution:
+  selected: TWO_TIERS
+  label: format/analyze/unit/control-plane run per execution; integration runs at merge and is recorded there
+  decided_by: operator
+  decided_at: 2026-10-18T23:10:00Z
+  why_this_decision_was_needed: >-
+    All ten items waiting on a human decision are `feature` category, so they need the feature lane's QA
+    pass. That pass depends on `declared-validation-outcome`, which requires every declared check to have
+    run under its EXACT declared command — and it is red today, because ONE `VerificationPlan` carrying
+    `git rev-parse --verify 'HEAD^{commit}'` (server.dart:1601-1602, checkName `git_worktree_head`) is
+    attached to every role (`server.dart:1600`), which string-equals no declared command. Closing that is
+    OD-6: a role-scoped plan for implementation work, now buildable because the commands are declared.
+  the_tiers:
+    per_execution: [format, analyze (per package root), unit tests (per package, own root), flutter test for apps/control_plane]
+    merge_release: [make test-integration with SERVERPOD_DATABASE_PASSWORD=control_plane_test_pw]
+  rationale_given: >-
+    Integration creates a disposable Postgres and takes minutes; paying that on every agent execution makes
+    capacity and the worker environment absorb it. Splitting the tiers is what keeps the per-execution gate
+    HONEST -- it asserts what actually ran, and nothing claims an expensive check that did not.
+  the_honesty_constraint_this_carries: >-
+    `declared-validation-outcome` must assert the PER-EXECUTION tier only. It must NOT be weakened to mean
+    "the cheap subset passed, which counts as all of them". The integration result belongs to the gate that
+    owns it -- merge/release -- and is recorded there. A gate that treats an unrun check as satisfied is the
+    same laundering 1b7e4c93 rejected when it rejected default='1.0.0'.
+  where_it_now_lives: >-
+    AGENTS.md product-specific policy, in the two-tier table. The decision file is provenance; the
+    AGENTS.md entry is the contract.
+  what_it_unblocks: >-
+    OD-6, and through it the feature lane's `declared-validation-outcome` -- one of the gates holding
+    qaPassed closed for the feature lane, and therefore one of the gates standing between all ten waiting
+    items and a QA pass.
