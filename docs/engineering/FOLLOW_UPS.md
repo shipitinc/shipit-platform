@@ -3243,3 +3243,79 @@ filename. **Read names, not counts, and never infer a file's verdict from a repo
 (§3.5.3's read-half `schemaInvalid` exists only in the design document); F-174 (now fixed in-tree but the trap's
 scope is noted); F-156 (`_DesignContractUnderReviewGuard` still reads caller-supplied context).
 **Step 6 (the producer) is not started**, and the runtime remains OFF.
+
+## 42. QA lane slice P1 (the two readers) landed — and a red gate was proven pre-existing, not absorbed
+
+**Why P1 first.** Ten items wait on an `engineering_review` decision; approving one reaches `reviewApproved`,
+whose **only** outgoing edge is `→ qaInProgress` (`work_item_transitions.dart:742`) and **no production code
+takes it**. The operator chose to build the QA lane so approved reviews flow. The design's §8 makes
+**P1 precede E2** an obligation, so the readers come first. Two policies the gates depend on were filled from
+TBD into `AGENTS.md` (`9c1d2e40` validation gates, `c2f8a713` path ownership).
+
+**F-183 — all three rejected readers were re-verified as inadequate, and a FOURTH defect was found.**
+`WorkspaceDelta.changedPaths` is capped at 5 (`reportedPathCap = 5`, `workspace_delta_probe.dart:160`,
+`:213-214`, documented *"May be a prefix of the full set"*) — **the sixth path is unexamined**; the same reader
+returns **`const []`** on `WorkspaceDelta.committed` (`:61-67`), an **empty set on exactly the run F1 passes**;
+`GitWorkspaceInspector.changedFiles` enumerates start-to-worktree and **never lists untracked files**, so for a
+confinement gate a brand-new prohibited file is **invisible and the gate passes**. **Bonus, not in the brief:**
+`_captureOrNull` (`git_workspace_inspector.dart:67`) already swallows a failed `git` into `[]`, so that reader
+**cannot distinguish "git failed" from "no changes"** either.
+
+**F-184 — the failure shape is STRUCTURAL, not a convention.** `CommittedDiffPathCollector` **throws** rather
+than returning a flagged value, because §8's "`null`-forcing a FAIL" left a way to express it. Throwing makes
+the vacuous pass **unconstructible**: there is no `CommittedDiffPaths` that can carry an empty list produced by
+a failure. A genuinely empty `paths` stays legal — a clean revert really does touch nothing — **which is exactly
+why "nothing changed" and "could not look" must not share a representation.**
+
+**F-185 — ordering is a total order by construction, not by convention.** `CommittedDiffPaths` **sorts and
+de-dupes in its constructor**. `String.compareTo` compares UTF-16 code units, is transitive, antisymmetric and
+total; two distinct paths never compare equal, so there is no tie for a tie-break to get wrong. The sort key is
+the value itself, so it **cannot be nullable in one store and present in another** — the exact way a
+database/in-memory comparator stops being a total order (F-148). Putting it in the constructor makes the
+invariant hold for **every** construction path, so no future in-memory caller can reintroduce it, and it removes
+dependence on git's emission order, which two stores would not agree on.
+
+**F-186 — the >5-path case is proven, and it is the case the old reader fails.** Seven committed paths return
+all seven with `contains('docs/forbidden.md')`; a hundred return a hundred. Under `reportedPathCap = 5` the
+prohibited path is **exactly the one cut**. Untracked files are enumerated (`.gitignore`d files correctly
+excluded), and the union of both sources is asserted. **"Either enumeration failing is a FAIL" is proven for
+each**, including **two stub-git binaries that fail only `diff` and only `ls-files`** — because every other
+input fails on the first enumeration, so fail-fast would never reach the second. **Without those two,
+"either" would have been unproven.**
+
+**F-187 — a SURVIVING mutant was diagnosed as EQUIVALENT, and followed up rather than dismissed.** H2 (a
+throwing `WorkspaceHeadReader`) **survived**: `_capture`'s enclosing `on Object` catch swallows the injected
+`StateError`, so the observable is `null` either way and **no input distinguishes them**. Rather than assume a
+test gap, the lane ran **H2b** — the exception escaping `read()` entirely, which is the exact defect the design
+names — and it was **killed by 4 tests**. No real gap. **A surviving mutant is a question, not a verdict.**
+
+**F-188 — a RED GATE was proven pre-existing instead of absorbed, and the lane refused to call it green.**
+`make test-integration` is `+307 −11`. The lane did **not** assert that was pre-existing: it built a throwaway
+worktree at the un-modified base `803ad3f`, ran the same gate there (**`+307 −11` twice**), and compared — HEAD
+gave `+308 −10` and `+307 −11`, inside the stated band, with one of the two known flapping tests differing. It
+reported `IMPLEMENTATION_BLOCKED` and `READY_FOR_INDEPENDENT_REVIEW: NO` **rather than launder a red gate it had
+proven it did not cause.** Accepted on that evidence.
+
+**F-189 — `git diff --name-only` reports a RENAME'S DESTINATION ONLY; the source path is absent.** A real limit
+of the command the design specifies. Pinned in a test rather than written as prose. **Deletions *are* reported**,
+so a path leaving `OWNED_PATHS` is not lost silently — but a rename *into* a prohibited path is caught while a
+rename *out of* one is not. The design should know this.
+
+**F-190 — two under-specified corners in `WorkspaceHeadReader`, resolved from an in-repo convention and
+FLAGGED rather than buried.** (1) `startingRevision == null` → `headMoved: null` ("not established"), following
+`WorkspaceDelta.headMoved`'s own documented rule — *"'not established' and 'established as no' are different
+claims"* (`workspace_delta_probe.dart:93-95`). **A judgement call a reviewer may overturn.** (2)
+`--no-optional-locks` on `rev-parse HEAD`, applied to match `GitWorkspaceDeltaProbe:219-225` (where
+`GitWorkspaceInspector:35` omits it).
+
+**Placement:** readers (`Process.run` spawners) in `packages/execution_coordinator` beside
+`workspace_delta_probe.dart`, whose `GitWorkspaceDeltaProbe` is the identical shape; value types pure in
+`platform_contracts`, which `qa_orchestration` already depends on, so **no dependency change** for the future
+evaluators. **`platform_contracts/lib` has zero `dart:io` imports today and this keeps it that way.**
+`ReadOnlyRepositoryReader` was deliberately **not** used — it is a read-only snapshot scanner with a hard
+capability boundary (no git, no execution), so a git-reading collector there would be a category error.
+
+**The integration redness is routed as follow-up, not fixed here.** Every failing file is under `apps/server/**`
+and migrations, all PROHIBITED for this lane and untouched. `apps/server/test/onboarding_test.dart` reports
+**0 tests with a non-zero exit** — **inconclusive, never green** — because it needs a live Postgres yet sits
+outside `test/integration/`. That is an **automation gap in the gate definition itself**, not a test failure.
