@@ -110,11 +110,27 @@ void main() {
     '',
   );
 
-  /// The definition a FRESH database is actually built from. Positional by
-  /// nature, and that is the mechanism rather than a proxy for it: Serverpod
-  /// applies exactly one artefact to a database with no recorded migration
-  /// version, and it is the newest `definition.sql`.
-  final freshVersion = registry.last;
+  /// The definition this migration's assertions are about.
+  ///
+  /// PINNED TO [version], NOT `registry.last`. This used to be `registry.last`
+  /// on the reasoning that a fresh database is built from the newest
+  /// `definition.sql`. That reasoning is true and it is the wrong conclusion
+  /// here: it silently asserts that the newest migration IS this one, so the
+  /// first migration anybody adds after this file was written made
+  /// `previous = registry[indexOf(freshVersion) - 1]` resolve to *this* migration
+  /// and demanded that the new snapshot "add exactly this table" — which it
+  /// cannot, because it adds a column. Every future migration author would hit
+  /// that, and the obvious fix (loosen the assertion) is how a real regression
+  /// gets deleted instead of fixed. That trap is F-174.
+  ///
+  /// Pinning keeps each assertion about the artefact it names. It does NOT
+  /// weaken the erasure guard: the newest `definition.sql` is still checked on
+  /// every run, by `fresh_definition_qa_spec_erasure_test.dart`, which
+  /// enumerates migration DIRECTORIES from the filesystem rather than trusting
+  /// this registry at all. Two guards over two different subjects — this file
+  /// asserts what `design_contract`'s snapshot contains, that one asserts what
+  /// the artifact a new database is actually built from contains.
+  final freshVersion = version;
   final freshDefinition = File(
     p.join(migrationsDir.path, freshVersion, 'definition.sql'),
   );
@@ -365,9 +381,9 @@ void main() {
         freshDefinition.existsSync(),
         isTrue,
         reason:
-            'the newest registered version is the artefact a fresh database is '
-            'actually built from, and it has to exist for the check below to '
-            'read anything rather than passing vacuously',
+            '$freshVersion is the migration this file is about, so its '
+            'definition.sql is what the two checks below read. It has to exist '
+            'for them to read anything rather than passing vacuously',
       );
       expect(
         sqlBody(
@@ -432,17 +448,28 @@ void main() {
         //
         // So the entry was restored, byte for byte, and this assertion is what
         // stops the next regeneration from doing it again unnoticed.
+        //
+        // It reads `$freshVersion`, which is now PINNED to [version] rather than
+        // to the newest migration — so on its own it would go stale and stop
+        // covering the artefact a fresh database is actually built from. It is
+        // not the only guard and must not be mistaken for one:
+        // `fresh_definition_qa_spec_erasure_test.dart` is. That file enumerates
+        // migration DIRECTORIES from the filesystem, so it follows every new
+        // migration automatically, and it checks the same table in all three
+        // artefacts (definition.sql, definition.json, definition_project.json).
         expect(
           sqlBody(
             freshDefinition.readAsStringSync(),
           ).contains('CREATE TABLE "$unmanagedSibling"'),
           isTrue,
           reason:
-              '$freshVersion is the artefact a fresh database is built from. '
-              'A definition.sql without $unmanagedSibling leaves every newly '
-              'created database — CI included — without a table the '
-              'product-QA-contract store writes to, while the chain-migrated '
-              'path works and every other assertion stays green.',
+              '$freshVersion is this migration\'s own snapshot, and the erasure '
+              'that hit it is the same one every regeneration causes. A '
+              'definition.sql without $unmanagedSibling leaves a database built '
+              'from THIS snapshot without a table the product-QA-contract store '
+              'writes to, while the chain-migrated path works and every other '
+              'assertion stays green. The newest snapshot is covered '
+              'independently by fresh_definition_qa_spec_erasure_test.dart.',
         );
       },
     );
@@ -456,9 +483,10 @@ void main() {
         reason:
             'Serverpod 3.4.13 `listVersions()` ignores the registry and '
             'enumerates migration DIRECTORIES, so an unregistered migration '
-            'still runs. Registering it is still required: the registry is what '
-            'the migration guard tests read to resolve `registry.last`, and that '
-            'is the artefact a fresh database is built from.',
+            'still runs. Registering it is still required: the registry is the '
+            'ordered record of what has been applied, this file resolves '
+            '`version` and its predecessor through it, and a chain that is '
+            'applied out of order stops one version short.',
       );
     });
 

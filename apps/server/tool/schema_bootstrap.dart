@@ -60,6 +60,7 @@ import 'dart:io';
 
 import 'package:control_plane_server/src/generated/endpoints.dart';
 import 'package:control_plane_server/src/generated/protocol.dart';
+import 'package:platform_contracts/platform_contracts.dart';
 import 'package:serverpod/serverpod.dart';
 
 /// Path of the hand-maintained SQL asset, relative to `apps/server`.
@@ -474,6 +475,35 @@ Future<void> _deleteProbeRows(Session session, {bool quietly = false}) async {
 }
 
 /// Builds the `design_revision` INSERT used by the probes.
+///
+/// ## WHY THIS NAMES THE ANCHOR VERSION RATHER THAN ROUTING THROUGH THE GATE
+///
+/// `fidelityAnchorSchemaVersion` is `text NOT NULL` with **no default**
+/// (decision `1b7e4c93`), so every writer must name it or Postgres refuses the
+/// row with `23502`. This is a writer, so it must name it.
+///
+/// It names it from [designRevisionFidelityAnchorSchemaVersion] rather than
+/// repeating the literal, so the probe and the store cannot drift into two
+/// different answers about which schema version a row claims.
+///
+/// What it deliberately does NOT do is call `gateDesignRevisionWrite`, and the
+/// reason is that the gate would make every probe impossible to run. This
+/// fixture writes `'[]'` into all six anchor blob columns, which is exactly the
+/// non-conforming document §3.5.1 refuses (`minItems: 1` on `boardIdsJson`,
+/// `responsiveTargetsJson` and `statesRepresentedJson`). `canonicalise` throws on
+/// a revision that violates any §3.5.1 rule, so a gated fixture could not be
+/// written at all — and the probes exist precisely to assert that the DATABASE
+/// refuses the mutations these rows invite (an `UPDATE` that moves an approved
+/// revision, a second approved revision for one work item). A gate that made the
+/// row unwritable would leave those assertions vacuous.
+///
+/// So the division of labour is: §3.5.3's gate is a rule about revisions a
+/// *product* path persists, and the two production writers call it; this is a
+/// raw-SQL enforcement prober whose subject is the database's own constraints,
+/// and its rows are disposable, prefix-tagged and deleted in a `finally`. What
+/// it borrows from the product path is the VERSION constant, not the validation.
+/// Naming the version here does not claim this row was validated — it claims
+/// which schema this probe is written against, which is a fact about the probe.
 String _insertRevisionSql({
   required String revisionId,
   required String workItemId,
@@ -485,11 +515,12 @@ String _insertRevisionSql({
     "revisionId", "workItemId", "productId", "designSystemRevision",
     "providerType", "boardIdsJson", "responsiveTargetsJson",
     "statesRepresentedJson", "artifactRefsJson", "designerExecutionId",
-    "reviewExecutionIdsJson", "status", "riskTier", "createdAt", "updatedAt",
-    "approvedAt", "version"
+    "reviewExecutionIdsJson", "fidelityAnchorSchemaVersion", "status",
+    "riskTier", "createdAt", "updatedAt", "approvedAt", "version"
   ) VALUES (
     '$revisionId', '$workItemId', '$_probeIdPrefix-product', 'dsr', 'penpot',
-    '[]', '[]', '[]', '[]', '$designerExecutionId', '[]', '$status', 'low',
+    '[]', '[]', '[]', '[]', '$designerExecutionId', '[]',
+    '$designRevisionFidelityAnchorSchemaVersion', '$status', 'low',
     now(), now(), ${status == 'approved' ? 'now()' : 'NULL'}, 1
   );
 """;

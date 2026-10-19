@@ -26,6 +26,11 @@ fields:
   artifactRefsJson: String
   designerExecutionId: String
   reviewExecutionIdsJson: String
+  # design-revision.md §3.5.2 rule 4. NOT NULL with NO default, deliberately:
+  # a default would propagate into definition.sql on the fresh-database path and
+  # the database would then manufacture a version for rows that never named the
+  # column — laundering "never validated" into "validated" (decision 1b7e4c93).
+  fidelityAnchorSchemaVersion: String
   status: String
   riskTier: String
   reviewScopeJson: String?

@@ -31,6 +31,7 @@ abstract class DesignRevisionRow
     required this.artifactRefsJson,
     required this.designerExecutionId,
     required this.reviewExecutionIdsJson,
+    required this.fidelityAnchorSchemaVersion,
     required this.status,
     required this.riskTier,
     this.reviewScopeJson,
@@ -58,6 +59,7 @@ abstract class DesignRevisionRow
     required String artifactRefsJson,
     required String designerExecutionId,
     required String reviewExecutionIdsJson,
+    required String fidelityAnchorSchemaVersion,
     required String status,
     required String riskTier,
     String? reviewScopeJson,
@@ -89,6 +91,8 @@ abstract class DesignRevisionRow
       designerExecutionId: jsonSerialization['designerExecutionId'] as String,
       reviewExecutionIdsJson:
           jsonSerialization['reviewExecutionIdsJson'] as String,
+      fidelityAnchorSchemaVersion:
+          jsonSerialization['fidelityAnchorSchemaVersion'] as String,
       status: jsonSerialization['status'] as String,
       riskTier: jsonSerialization['riskTier'] as String,
       reviewScopeJson: jsonSerialization['reviewScopeJson'] as String?,
@@ -144,6 +148,8 @@ abstract class DesignRevisionRow
 
   String reviewExecutionIdsJson;
 
+  String fidelityAnchorSchemaVersion;
+
   String status;
 
   String riskTier;
@@ -184,6 +190,7 @@ abstract class DesignRevisionRow
     String? artifactRefsJson,
     String? designerExecutionId,
     String? reviewExecutionIdsJson,
+    String? fidelityAnchorSchemaVersion,
     String? status,
     String? riskTier,
     String? reviewScopeJson,
@@ -213,6 +220,7 @@ abstract class DesignRevisionRow
       'artifactRefsJson': artifactRefsJson,
       'designerExecutionId': designerExecutionId,
       'reviewExecutionIdsJson': reviewExecutionIdsJson,
+      'fidelityAnchorSchemaVersion': fidelityAnchorSchemaVersion,
       'status': status,
       'riskTier': riskTier,
       if (reviewScopeJson != null) 'reviewScopeJson': reviewScopeJson,
@@ -281,6 +289,7 @@ class _DesignRevisionRowImpl extends DesignRevisionRow {
     required String artifactRefsJson,
     required String designerExecutionId,
     required String reviewExecutionIdsJson,
+    required String fidelityAnchorSchemaVersion,
     required String status,
     required String riskTier,
     String? reviewScopeJson,
@@ -306,6 +315,7 @@ class _DesignRevisionRowImpl extends DesignRevisionRow {
          artifactRefsJson: artifactRefsJson,
          designerExecutionId: designerExecutionId,
          reviewExecutionIdsJson: reviewExecutionIdsJson,
+         fidelityAnchorSchemaVersion: fidelityAnchorSchemaVersion,
          status: status,
          riskTier: riskTier,
          reviewScopeJson: reviewScopeJson,
@@ -337,6 +347,7 @@ class _DesignRevisionRowImpl extends DesignRevisionRow {
     String? artifactRefsJson,
     String? designerExecutionId,
     String? reviewExecutionIdsJson,
+    String? fidelityAnchorSchemaVersion,
     String? status,
     String? riskTier,
     Object? reviewScopeJson = _Undefined,
@@ -368,6 +379,8 @@ class _DesignRevisionRowImpl extends DesignRevisionRow {
       designerExecutionId: designerExecutionId ?? this.designerExecutionId,
       reviewExecutionIdsJson:
           reviewExecutionIdsJson ?? this.reviewExecutionIdsJson,
+      fidelityAnchorSchemaVersion:
+          fidelityAnchorSchemaVersion ?? this.fidelityAnchorSchemaVersion,
       status: status ?? this.status,
       riskTier: riskTier ?? this.riskTier,
       reviewScopeJson: reviewScopeJson is String?
@@ -467,6 +480,12 @@ class DesignRevisionRowUpdateTable
   _i1.ColumnValue<String, String> reviewExecutionIdsJson(String value) =>
       _i1.ColumnValue(
         table.reviewExecutionIdsJson,
+        value,
+      );
+
+  _i1.ColumnValue<String, String> fidelityAnchorSchemaVersion(String value) =>
+      _i1.ColumnValue(
+        table.fidelityAnchorSchemaVersion,
         value,
       );
 
@@ -582,6 +601,10 @@ class DesignRevisionRowTable extends _i1.Table<int?> {
       'reviewExecutionIdsJson',
       this,
     );
+    fidelityAnchorSchemaVersion = _i1.ColumnString(
+      'fidelityAnchorSchemaVersion',
+      this,
+    );
     status = _i1.ColumnString(
       'status',
       this,
@@ -650,6 +673,8 @@ class DesignRevisionRowTable extends _i1.Table<int?> {
 
   late final _i1.ColumnString reviewExecutionIdsJson;
 
+  late final _i1.ColumnString fidelityAnchorSchemaVersion;
+
   late final _i1.ColumnString status;
 
   late final _i1.ColumnString riskTier;
@@ -685,6 +710,7 @@ class DesignRevisionRowTable extends _i1.Table<int?> {
     artifactRefsJson,
     designerExecutionId,
     reviewExecutionIdsJson,
+    fidelityAnchorSchemaVersion,
     status,
     riskTier,
     reviewScopeJson,

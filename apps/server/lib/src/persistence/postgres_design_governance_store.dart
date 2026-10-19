@@ -94,19 +94,30 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
     // rather than a per-implementation override.
     final gated = gateDesignRevisionWrite(revision);
 
+    // The anchor version is written by `_designRevisionToParams`, never by a
+    // literal here, and never by a SQL `DEFAULT`: decision `1b7e4c93` rejected
+    // `default='1.0.0'` precisely because a database-supplied value asserts a
+    // validation nobody performed. A `NOT NULL` column with no default means
+    // every one of these writers has to name it, which is why the column appears
+    // in the insert, in the CAS `UPDATE` and in the `ON CONFLICT DO UPDATE`
+    // alike. Omitting it from the two `UPDATE`s would leave a revision's blobs
+    // rewritten while the row kept claiming the version they were validated
+    // under — the silent reinterpretation §3.5.2 rule 4 exists to prevent.
     const bareInsert = '''INSERT INTO "design_revision" (
            "revisionId", "workItemId", "productId", "parentRevisionId",
            "designSystemRevision", "providerType", "penpotFileId", "penpotPageId",
            "boardIdsJson", "responsiveTargetsJson", "statesRepresentedJson",
            "artifactRefsJson", "designerExecutionId", "reviewExecutionIdsJson",
-           "status", "riskTier", "reviewScopeJson", "carriedForwardFromRevisionId",
+           "fidelityAnchorSchemaVersion", "status", "riskTier", "reviewScopeJson",
+           "carriedForwardFromRevisionId",
            "supersededByRevisionId", "createdAt", "updatedAt", "approvedAt", "version"
          ) VALUES (
            @revisionId, @workItemId, @productId, @parentRevisionId,
            @designSystemRevision, @providerType, @penpotFileId, @penpotPageId,
            @boardIdsJson, @responsiveTargetsJson, @statesRepresentedJson,
            @artifactRefsJson, @designerExecutionId, @reviewExecutionIdsJson,
-           @status, @riskTier, @reviewScopeJson, @carriedForwardFromRevisionId,
+           @fidelityAnchorSchemaVersion, @status, @riskTier, @reviewScopeJson,
+           @carriedForwardFromRevisionId,
            @supersededByRevisionId, @createdAt, @updatedAt, @approvedAt, @version
          )''';
 
@@ -126,6 +137,7 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
              "artifactRefsJson" = @artifactRefsJson,
              "designerExecutionId" = @designerExecutionId,
              "reviewExecutionIdsJson" = @reviewExecutionIdsJson,
+             "fidelityAnchorSchemaVersion" = @fidelityAnchorSchemaVersion,
              "status" = @status,
              "riskTier" = @riskTier,
              "reviewScopeJson" = @reviewScopeJson,
@@ -195,6 +207,7 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
              "artifactRefsJson" = EXCLUDED."artifactRefsJson",
              "designerExecutionId" = EXCLUDED."designerExecutionId",
              "reviewExecutionIdsJson" = EXCLUDED."reviewExecutionIdsJson",
+             "fidelityAnchorSchemaVersion" = EXCLUDED."fidelityAnchorSchemaVersion",
              "status" = EXCLUDED."status",
              "riskTier" = EXCLUDED."riskTier",
              "reviewScopeJson" = EXCLUDED."reviewScopeJson",
@@ -589,6 +602,12 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
       'artifactRefsJson': json['artifactRefsJson'],
       'designerExecutionId': json['designerExecutionId'],
       'reviewExecutionIdsJson': json['reviewExecutionIdsJson'],
+      // NOT `json['fidelityAnchorSchemaVersion']`, because `DesignRevision` has
+      // no such field: the version a row records is the version the §3.5.3 gate
+      // just validated it against, which is the current constant and not
+      // anything the caller supplied. Reading it from the payload would let a
+      // caller assert a version nobody validated against.
+      'fidelityAnchorSchemaVersion': designRevisionFidelityAnchorSchemaVersion,
       'status': json['status'],
       'riskTier': json['riskTier'],
       'reviewScopeJson': PersistenceDatabase.encodeJson(
