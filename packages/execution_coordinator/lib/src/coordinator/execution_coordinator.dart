@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:agent_runtime/agent_runtime.dart';
 import 'package:meta/meta.dart';
@@ -110,20 +111,221 @@ class WorkItemSupersededException implements Exception {
       'and nothing was produced.';
 }
 
-/// How the platform independently verifies the agent's claimed result.
+/// ONE independent check inside a [VerificationPlan].
+///
+/// ## WHY A CHECK AND NOT A PLAN
+///
+/// The per-execution validation tier in `AGENTS.md` declares FOUR checks, and
+/// three of them name a working directory that is NOT the repository root:
+/// `dart analyze` and `dart test` run at **each package root**, `flutter test`
+/// runs at `apps/control_plane`. A plan used to carry a single `command`, and
+/// the coordinator ran every plan in exactly one directory —
+/// `request.workspace.path`, the agent's worktree root. So the other three
+/// declared checks could not be expressed at all: not because they are wrong,
+/// but because there was nowhere in the record to say *where* to run them.
+///
+/// [workingDirectory] is that somewhere. It is RELATIVE to the execution
+/// workspace, so a plan written against the repository's own layout runs in the
+/// agent's worktree of that same repository without carrying the worktree's
+/// absolute path — which differs on every execution.
 @immutable
-class VerificationPlan {
-  const VerificationPlan({
-    this.command = const ['dart', 'test'],
+class VerificationCheck {
+  const VerificationCheck({
+    required this.command,
+    required this.checkName,
+    this.workingDirectory = workspaceRootWorkingDirectory,
     this.setupCommand,
-    this.checkName = 'dart_test',
   });
 
+  /// The working directory value that means "the workspace root itself", which
+  /// is the directory the verifier has always used and the only one that
+  /// existed before this type.
+  static const String workspaceRootWorkingDirectory = '.';
+
+  /// Fixed prefix of every verification id this check produces.
+  ///
+  /// Consumers match on the prefix, not on the whole id — see
+  /// [verificationIdFor] for why the suffix is load-bearing.
+  static const String idPrefix = 'ver-';
+
+  /// e.g. `['dart', 'analyze']`. Spawned with `runInShell: false`, so this is
+  /// an argv, never a command line: the string the gate compares is
+  /// [command]'s `join(' ')`, produced by the verifier and never re-spelled.
   final List<String> command;
 
-  /// e.g. ['dart', 'pub', 'get'] run once before [command].
+  /// e.g. `['dart', 'pub', 'get']` run once before [command], in the same
+  /// [workingDirectory].
   final List<String>? setupCommand;
+
+  /// The key this check's row is recorded under.
+  ///
+  /// Constrained to `[a-z0-9_]` — see [VerificationPlan]'s constructor, which
+  /// enforces it, and [verificationIdFor], which depends on it.
   final String checkName;
+
+  /// Path RELATIVE to the execution workspace root.
+  ///
+  /// [workspaceRootWorkingDirectory] is the workspace root, which is the
+  /// behaviour of every plan written before this field existed. A named
+  /// subdirectory resolves inside the workspace: `packages/execution_coordinator`
+  /// means "that package, in whatever worktree this execution got".
+  final String workingDirectory;
+
+  /// [workingDirectory] resolved against [workspaceRoot].
+  String resolveAgainst(String workspaceRoot) =>
+      workingDirectory == workspaceRootWorkingDirectory
+      ? workspaceRoot
+      : '${workspaceRoot.endsWith('/') ? workspaceRoot.substring(0, workspaceRoot.length - 1) : workspaceRoot}/$workingDirectory';
+
+  /// The [PlatformVerification.verificationId] this check's row is written
+  /// under for [executionId].
+  ///
+  /// ## WHY THE SCHEME IS `ver-<executionId>-<checkName>` AND WHY IT CANNOT
+  /// COLLIDE
+  ///
+  /// The id is the store's primary key: `in_memory_execution_store.dart` and
+  /// `file_json_execution_store.dart` index a `Map` by it, and Postgres does
+  /// `INSERT … ON CONFLICT ("verificationId") DO UPDATE`. Two rows sharing an
+  /// id therefore do not both survive — the second silently overwrites the
+  /// first, and the evidence of a check that ran is lost with nothing to say
+  /// so. With one check per execution, `ver-<executionId>` was unique by
+  /// construction. With several, the check name has to be part of the id.
+  ///
+  /// Injectivity rests on ONE property, enforced by [VerificationPlan]'s
+  /// constructor: a `checkName` contains no `-`. Then in `ver-<executionId>-
+  /// <checkName>`, the LAST `-` in the string is always the separator — a
+  /// check name cannot supply one — so the pair `(executionId, checkName)` is
+  /// recoverable from the id and two distinct pairs cannot produce one string.
+  /// Both ids in `ver-a-b-c` would need a check name with a `-` to collide.
+  ///
+  /// ## REPEATED RUNS OF THE SAME EXECUTION
+  ///
+  /// The id depends on nothing but the execution and the check, so a second
+  /// completion of the same execution rewrites the same ids. That is
+  /// deliberate idempotence, not a collision: the latest verdict for a check
+  /// replaces the earlier one at the same key, exactly as `ver-<executionId>`
+  /// behaved when a completion was re-entered. A non-deterministic id (a
+  /// timestamp, a UUID, an attempt counter) would instead accumulate a second
+  /// row per re-run, and a gate reading `requireCommands` would find several
+  /// rows disagreeing about one check.
+  String verificationIdFor(String executionId) =>
+      '$idPrefix$executionId-$checkName';
+}
+
+/// How the platform independently verifies an agent's claimed result.
+///
+/// Carries SEVERAL [VerificationCheck]s, so one execution can carry several
+/// [PlatformVerification] rows.
+///
+/// ## SHAPE, AND WHY
+///
+/// A `List<VerificationCheck>` with the working directory ON THE CHECK, rather
+/// than a map keyed by check name, or a check carrying a list of directories.
+/// * The working directory belongs to the check, because that is the level the
+///   declared contract is written at: `AGENTS.md` gives each check its own cwd.
+/// * The list is ordered, so "the first failing check" is a fact about the
+///   plan rather than about a store's map iteration order.
+/// * It is UNMODIFIABLE ([List.unmodifiable]) and validated once, at
+///   construction, so a coordinator can trust every plan it is handed.
+///
+/// ## COMPATIBILITY
+///
+/// Constructing with [command], [setupCommand] and [checkName] — the whole
+/// pre-existing API — builds a plan of exactly ONE check, and produces exactly
+/// one row, with the same command, check name and working directory as before.
+/// The only observable difference is that the row's id gains the check-name
+/// suffix, which no reader depends on.
+///
+/// This type is NOT `const`, because a const constructor cannot build the
+/// `VerificationCheck` list from its own parameters: Dart does not treat a
+/// constructor parameter as a constant inside a const initializer list, so
+/// `const [Check(command: command)]` fails to compile. Measured, not assumed —
+/// see the `constprobe` note in the lane report.
+@immutable
+class VerificationPlan {
+  VerificationPlan({
+    List<VerificationCheck>? checks,
+    List<String> command = const ['dart', 'test'],
+    List<String>? setupCommand,
+    String checkName = 'dart_test',
+  }) : checks = List.unmodifiable(
+         checks ??
+             [
+               VerificationCheck(
+                 command: command,
+                 setupCommand: setupCommand,
+                 checkName: checkName,
+               ),
+             ],
+       ) {
+    if (this.checks.isEmpty) {
+      throw ArgumentError.value(
+        checks,
+        'checks',
+        'a VerificationPlan must carry at least one check; a plan that '
+            'verifies nothing is `verificationPlan: null`, which the '
+            'coordinator already treats as "no platform verification"',
+      );
+    }
+    final seen = <String>{};
+    for (final check in this.checks) {
+      if (!_checkNamePattern.hasMatch(check.checkName)) {
+        throw ArgumentError.value(
+          check.checkName,
+          'checkName',
+          'a check name must match ${_checkNamePattern.pattern}. It is part of '
+              'the verification id (${VerificationCheck.idPrefix}'
+              '<executionId>-<checkName>), and an id is only injective if the '
+              'name cannot contain the "-" that separates the two halves',
+        );
+      }
+      if (check.workingDirectory.startsWith('/')) {
+        throw ArgumentError.value(
+          check.workingDirectory,
+          'workingDirectory',
+          'must be RELATIVE to the execution workspace. An absolute path would '
+              'escape the worktree the execution actually ran in',
+        );
+      }
+      if (!seen.add(check.checkName)) {
+        throw ArgumentError.value(
+          check.checkName,
+          'checkName',
+          'duplicated in one plan. Two checks with one name would write two '
+              'rows under one verification id, and the second would overwrite '
+              'the first',
+        );
+      }
+    }
+  }
+
+  static final RegExp _checkNamePattern = RegExp(r'^[a-z0-9_]+$');
+
+  final List<VerificationCheck> checks;
+
+  /// The single check's argv — for a plan of exactly one check.
+  ///
+  /// Throws [StateError] otherwise. There is no honest answer for "the
+  /// command" of a plan with three: picking the first would let a caller read
+  /// one check's coverage as the plan's.
+  List<String> get command => _sole('command').command;
+
+  /// The single check's setup argv, or `null`. See [command].
+  List<String>? get setupCommand => _sole('setupCommand').setupCommand;
+
+  /// The single check's name. See [command].
+  String get checkName => _sole('checkName').checkName;
+
+  VerificationCheck _sole(String what) {
+    if (checks.length != 1) {
+      throw StateError(
+        'this VerificationPlan carries ${checks.length} checks, so there is no '
+        'single `$what`. Read `checks` — one entry per row this execution '
+        'persists.',
+      );
+    }
+    return checks.single;
+  }
 }
 
 /// Coordinates ONE durable agent execution per work item, glued to the durable
@@ -896,51 +1098,118 @@ class ExecutionCoordinator {
     };
   }
 
+  /// Runs ONE [VerificationCheck] and returns the row it produced, or `null`
+  /// when the check COULD NOT RUN.
+  ///
+  /// ## `null` MEANS "NOT OBSERVED", NEVER "PASSED"
+  ///
+  /// Two things stop a check before it observes anything: its working
+  /// directory is not in this workspace (a plan declaring
+  /// `apps/control_plane` in a worktree that has no Flutter app), and the tool
+  /// is not installed or the setup step failed first. Neither produced a
+  /// verdict, so neither may produce a row — a row is a claim that a check ran
+  /// and said something, and a passing row for a check that never ran is a
+  /// false claim that a gate reading `requireCheckNames` cannot detect.
+  ///
+  /// The absence is deliberate and observable: [PlatformVerification] rows are
+  /// the whole of the record, so a check that could not run is visible as a
+  /// MISSING row, which is exactly what a fail-closed gate needs to see.
+  Future<PlatformVerification?> _verifyCheck({
+    required VerificationCheck check,
+    required AgentExecutionRequest request,
+  }) async {
+    final workingDirectory = check.resolveAgainst(request.workspace.path);
+    // An explicit early-out, and deliberately NOT the load-bearing guard:
+    // `Process.start` with a missing `workingDirectory` throws, and the
+    // verifier turns that into `ran: false`, so the guard below would produce
+    // the same NO ROW on its own. Measured, not assumed: deleting THIS line
+    // leaves every test in `multi_check_verification_plan_test.dart` green
+    // (mutant M2), while inverting it fails seven of them (M3).
+    //
+    // It is kept because it is cheap, it avoids spawning a doomed process per
+    // absent directory — a 17-check plan against a worktree with no Flutter
+    // app would otherwise spawn sixteen of them — and it states the condition
+    // where it is understood. The HONESTY property rests on `ran` alone.
+    if (!Directory(workingDirectory).existsSync()) return null;
+
+    final outcome = await verifier.verify(
+      workingDirectory: workingDirectory,
+      command: check.command,
+      setupCommand: check.setupCommand,
+    );
+    if (!outcome.ran) return null;
+
+    return PlatformVerification(
+      verificationId: check.verificationIdFor(request.executionId),
+      executionId: request.executionId,
+      workItemId: request.workItemId,
+      checkName: check.checkName,
+      status: outcome.passed
+          ? AgentClaimStatus.passed
+          : AgentClaimStatus.failed,
+      mechanism: outcome.mechanism,
+      command: outcome.command,
+      capturedAt: DateTime.now(),
+      detail:
+          outcome.detail ??
+          (outcome.passed ? 'Verification passed' : 'Verification failed'),
+      outputRef: null,
+      // The directory THIS check ran in, not the workspace root. For a single
+      // check declaring the workspace root — every plan written before this
+      // field existed — the two are the same string, so this is unchanged.
+      resultPath: workingDirectory,
+    );
+  }
+
   Future<_Completion> _completeSuccess(
     AgentExecutionRequest request,
     AgentResult stamped, {
     required bool alreadySettled,
   }) async {
-    PlatformVerification? verification;
+    final verifications = <PlatformVerification>[];
     final plan = verificationPlan;
     // Verification spawns a real process in the workspace and runs BEFORE the
     // workflow transition. For an execution already declared failed, that is a
     // subprocess spawned to produce evidence nobody will read: the write that
     // would carry it is refused, and the transition is already decided.
     if (plan != null && !alreadySettled) {
-      final outcome = await verifier.verify(
-        workingDirectory: request.workspace.path,
-        command: plan.command,
-        setupCommand: plan.setupCommand,
-      );
-      verification = PlatformVerification(
-        verificationId: 'ver-${request.executionId}',
-        executionId: request.executionId,
-        workItemId: request.workItemId,
-        checkName: plan.checkName,
-        status: outcome.passed
-            ? AgentClaimStatus.passed
-            : AgentClaimStatus.failed,
-        mechanism: outcome.mechanism,
-        command: outcome.command,
-        capturedAt: DateTime.now(),
-        detail:
-            outcome.detail ??
-            (outcome.passed ? 'Verification passed' : 'Verification failed'),
-        outputRef: null,
-        resultPath: request.workspace.path,
-      );
-      await store.saveVerification(verification);
+      // In PLAN ORDER, so the rows below — and the failing one selected from
+      // them — are a property of the plan, not of a store's iteration order.
+      for (final check in plan.checks) {
+        final row = await _verifyCheck(check: check, request: request);
+        if (row != null) await store.saveVerification(row);
+        if (row != null) verifications.add(row);
+      }
     }
 
     final item = await workflowEngine.loadWorkItem(request.workItemId);
     // The gate reads the PERSISTED [PlatformVerification] rather than a local
     // outcome flag, so the row a reviewer or operator can read is the same row
-    // that decided the state. `null` — no plan configured, or `alreadySettled`,
-    // where verification is deliberately skipped — is NOT a failure: a check
-    // that never ran has no verdict, and inventing one would strand work items
-    // on a failure nothing observed.
-    final verificationFailed = verification?.status == AgentClaimStatus.failed;
+    // that decided the state.
+    //
+    // One check refuting the agent's claim is enough to refuse the completion:
+    // ANY failing row fails the execution, and "any" is the same rule the
+    // single-row plan applied to its one row.
+    //
+    // An EMPTY list — no plan configured, `alreadySettled`, or every check
+    // unable to run — is NOT a failure: a check that never ran has no verdict,
+    // and inventing one would strand work items on a failure nothing observed.
+    // Absence is the signal, and it is visible to the gate as a missing row.
+    final failedChecks = verifications
+        .where((v) => v.status == AgentClaimStatus.failed)
+        .toList();
+    final verificationFailed = failedChecks.isNotEmpty;
+    final verificationFailureDetail = verificationFailed
+        ? failedChecks.first.detail
+        : null;
+    // The aggregate over the rows this execution produced. `null` — not a
+    // status — when no check ran at all, so a reader of the event payload
+    // cannot mistake "nothing was observed" for "everything passed".
+    final aggregateVerificationStatus = verificationFailed
+        ? AgentClaimStatus.failed
+        : verifications.isEmpty
+        ? null
+        : AgentClaimStatus.passed;
 
     // ## THE ROLE-AWARE SUCCESS ARTIFACT
     //
@@ -996,7 +1265,8 @@ class ExecutionCoordinator {
       // guard is checked against; a refuted result is not a producer, and an
       // operator retry re-runs triage and claims a fresh execution that stamps
       // the identity on its own success.
-      final reason = verification?.detail ?? 'platform verification failed';
+      final reason =
+          verificationFailureDetail ?? 'platform verification failed';
       await workflowEngine.transition(
         workItemId: request.workItemId,
         to: WorkItemState.agentFailed,
@@ -1114,7 +1384,7 @@ class ExecutionCoordinator {
       artifactMissing
           ? missingArtifact?.reason
           : verificationFailed
-          ? verification?.detail ?? 'platform verification failed'
+          ? verificationFailureDetail ?? 'platform verification failed'
           : null,
     );
 
@@ -1146,7 +1416,12 @@ class ExecutionCoordinator {
           : AgentEventType.executionFailed,
       eventPayload: {
         'role': request.role.wire,
-        'verificationStatus': verification?.status.wire,
+        // The AGGREGATE over every check that produced a row, not one row's
+        // status: with several checks, reporting the first row's status would
+        // let a plan with one failing check out of several publish `passed`.
+        // Absent when no check produced a row — see
+        // [ExecutionCoordinator._verifyCheck].
+        'verificationStatus': aggregateVerificationStatus?.wire,
         // An artifact that could not be established is recorded rather than
         // silently dropped. It did NOT fail the execution — see
         // [RoleAwareSuccessArtifacts] — but "the platform could not look" must

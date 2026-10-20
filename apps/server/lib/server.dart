@@ -1619,7 +1619,7 @@ Future<ReviewLaneTickResult> runReviewLaneTick({
 /// different intended triage plan. The DESIGN lane, by contrast, verifies with
 /// `dart tool/verify.dart` over its own worktree — a different role with a
 /// different repository, which is why the plan is pinned to triage here.
-const VerificationPlan triageVerificationPlan = VerificationPlan(
+final VerificationPlan triageVerificationPlan = VerificationPlan(
   command: ['git', 'rev-parse', '--verify', 'HEAD^{commit}'],
   checkName: 'git_worktree_head',
 );
@@ -1671,7 +1671,7 @@ const VerificationPlan triageVerificationPlan = VerificationPlan(
 // `OD-6` decided, and this is the decision. `server.dart` is the only place it
 // could be made without changing `packages/execution_coordinator/`.
 //
-// ## 1. `VerificationPlan` CARRIES **ONE** CHECK. THAT IS MEASURED, NOT ASSUMED.
+// ## 1. `VerificationPlan` USED TO CARRY **ONE** CHECK. THAT WAS MEASURED.
 //
 //   class VerificationPlan {
 //     final List<String> command;      // ONE command
@@ -1679,51 +1679,81 @@ const VerificationPlan triageVerificationPlan = VerificationPlan(
 //     final String checkName;          // ONE name
 //   }                                        -- execution_coordinator.dart:115-127
 //
-// and [ExecutionCoordinator] runs that plan once per execution, persisting ONE
-// [PlatformVerification] whose id is `ver-${request.executionId}`
-// (`execution_coordinator.dart:905-933`). That id is deterministic per
+// and [ExecutionCoordinator] ran that plan once per execution, persisting ONE
+// [PlatformVerification] whose id was `ver-${request.executionId}`
+// (`execution_coordinator.dart:905-933`). That id was deterministic per
 // execution, and every store keys verifications by it
 // (`in_memory_execution_store.dart:105`, `file_json_execution_store.dart:155`,
-// `postgres_execution_store.dart`). So:
+// `postgres_execution_store.dart`). So, as of `OD-6`:
 //
-//     ONE EXECUTION PRODUCES AT MOST ONE VERIFICATION ROW,
+//     ONE EXECUTION PRODUCED AT MOST ONE VERIFICATION ROW,
 //     CARRYING AT MOST ONE `checkName` AND ONE `command` STRING.
 //
-// This is a property of the record. It is not widened here, and nothing below
-// pretends otherwise.
+// **THAT IS NO LONGER TRUE.** Human decision `7b2c4e91` widened the record.
+// `VerificationPlan` now carries a LIST of `VerificationCheck`, each with its
+// own `command` AND its own `workingDirectory` resolved against the execution
+// workspace, and `_completeSuccess` persists ONE row per check under
+// `ver-<executionId>-<checkName>`.
 //
-// ## 2. THE GATE EXPECTS MORE ROWS THAN ONE ROW CAN SUPPLY
+// ## 1a. WHAT WIDENING THE RECORD DID **NOT** DO
+//
+// It did not change what the gate asserts, and it did not make this plan
+// express more declared checks. `implementationVerificationPlan` below still
+// carries exactly ONE check, still the repository-root format one, for the
+// reason §3 gives. The residual in [perExecutionChecksNotExpressibleAsOnePlan]
+// is therefore unchanged in SIZE and is still accurate — read §3 before
+// reading it, because its reasons now name a mechanism that exists.
+//
+// The one thing the record can no longer do is LIE BY OMISSION: a plan may
+// declare a check per package root, and one that could not run leaves NO row
+// rather than a passing one. Absence is observable as absence, which is what
+// makes a fail-closed gate possible.
+//
+// ## 2. THE GATE EXPECTS FOUR ROWS; THE PLAN STILL SUPPLIES ONE
 //
 // `declared-validation-outcome` (design §3.1 F4, level-3 approved `c495e02f`)
 // is specified with `requireCheckNames` — REQUIRED, **non-empty** — and
 // `requireCommands`, a map of checkName -> EXACT command string, compared with
 // `commandMatchIsExact: true`. The per-execution tier declares FOUR checks.
 //
-//     4 declared checks  >  1 row a single plan can produce.
+//     4 declared checks  >  1 check [implementationVerificationPlan] declares.
 //
-// **So F4 stays RED after this change, and that is the correct verdict.** This
-// slice does not open the gate. It makes F4 *evaluable*: it stops failing
-// because a `git rev-parse` liveness probe carried a command that matches no
-// declaration, and starts failing — if it still fails — because named declared
-// checks have no row. A gate that cannot fail is not a green gate; one that
-// fails for a true reason is worth more than one that passes.
+// **So F4 stays RED after this change, and that is the correct verdict.** The
+// two changes are separable and this slice did only the first: the record can
+// now carry several rows (§1), and the plan still declares one check (§3). F4
+// remains *evaluable* — it stops failing because a `git rev-parse` liveness
+// probe carried a command matching no declaration, and fails, if it still
+// fails, because named declared checks have no row. A gate that cannot fail is
+// not a green gate; one that fails for a true reason is worth more.
 //
-// ## 3. WHAT ONE ROW *CAN* HONESTLY EXPRESS, AND WHY IT IS THE FORMAT CHECK
+// **What a later slice must still build, for F4 to be reachable green:**
+// declare the three residual checks on the plan, AND build the per-check
+// command-expansion the `dart test` sweep needs. The second is the blocker; the
+// first is not. See [perExecutionChecksNotExpressibleAsOnePlan].
+//
+// ## 3. WHAT THIS ONE CHECK *CAN* HONESTLY EXPRESS, AND WHY IT IS THE FORMAT CHECK
 //
 // Three of the four declared checks name a cwd that is not the repository
 // root: `dart analyze` and `dart test` run at **each package root** (16 of them,
 // per the root `pubspec.yaml`'s pub workspace), and `flutter test` runs at
-// `apps/control_plane`. The coordinator runs a plan in exactly one directory —
-// `request.workspace.path`, which is the agent's detached git worktree ROOT
-// (`git_worktree_workspace_manager.dart:92-98`), i.e. the repository root
-// (`execution_coordinator.dart:911-915`). A plan has no per-check cwd, and
-// reaching a package root inside one command would mean wrapping `cd` in a
-// shell — which REWRITES the command string and therefore breaks the exact
-// comparison the gate is built on.
+// `apps/control_plane`.
 //
-// The repository-root format check is the only declared per-execution check
-// whose declared cwd IS the directory the verifier already uses. It is also
-// the only one that needs no network and no per-package sweep.
+// **`7b2c4e91` REMOVED THE FIRST HALF OF THAT PROBLEM.** A `VerificationCheck`
+// now carries its own `workingDirectory`, resolved against the execution
+// workspace, so reaching `packages/execution_coordinator` needs no `cd` wrapper
+// — which is what mattered, because a wrapper REWRITES the command string and
+// therefore breaks the `commandMatchIsExact` comparison F4 is built on.
+//
+// What remains is a SCOPE decision, not a capability one: this plan declares
+// one check, so the three residuals produce no rows and F4 sees three missing
+// names. That is the honest reading, and it is why
+// [perExecutionChecksNotExpressibleAsOnePlan] names each one's ACTUAL blocker
+// rather than blaming the old record shape.
+//
+// The repository-root format check remains the right single check to start
+// with: it is the only declared per-execution check whose declared cwd IS the
+// directory the verifier has always used, and the only one that needs no
+// network and no per-package sweep.
 //
 // Two further measured facts bound it:
 ///
@@ -1740,7 +1770,15 @@ const VerificationPlan triageVerificationPlan = VerificationPlan(
 /// * **It fits the verifier's budget.** [WorkspaceVerifier] allows 2 minutes
 ///   each for setup and command, and `_completeSuccess` passes no override.
 ///   Measured here: pub get 0.76s + format 2.81s.
-const VerificationPlan implementationVerificationPlan = VerificationPlan(
+///
+/// ## WHY IT STILL DECLARES ONE CHECK AFTER `7b2c4e91`
+///
+/// The plan CAN now declare several, and one is still what it declares. This
+/// is a scope decision, not a limitation of the record: the mechanism is
+/// built, validated and independent-reviewable on its own, and turning it on
+/// for production is a separate slice that must carry its own evidence about
+/// runtime, budget and the operator experience of a 17-process gate.
+final VerificationPlan implementationVerificationPlan = VerificationPlan(
   command: ['dart', 'format', '--output=none', '--set-exit-if-changed', '.'],
   setupCommand: ['dart', 'pub', 'get'],
   checkName: 'dart_format_repo_root',
@@ -1809,19 +1847,51 @@ const List<DeclaredValidationCheck> perExecutionValidationChecks = [
 /// in a review comment. A plan that reads as complete coverage while covering
 /// one check in four is exactly the laundering decision `1b7e4c93` rejected,
 /// and the only durable defence is to make the shortfall impossible to miss.
+///
+/// ## WHY THE LIST DID NOT SHRINK WHEN THE RECORD WAS WIDENED
+///
+/// Decision `7b2c4e91` gave `VerificationPlan` a per-check working directory
+/// and one row per check. That makes `dart analyze` and `flutter test`
+/// expressible — each is one command at one directory — but it does NOT make
+/// them EXPRESSED here, because [implementationVerificationPlan] still declares
+/// one check, and it does not make `dart test` expressible at all.
+///
+/// **`dart test` is a SWEEP, not a command.** The declared cwd is "each package
+/// root, individually per file": N package roots × M test files, each its own
+/// process. One `VerificationCheck` is one argv run once in one directory.
+/// Expressing the sweep needs a per-check command EXPANSION — enumerate
+/// `test/**_test.dart` under the package root, run one process per file,
+/// aggregate partial failure into a single verdict — which is a materially
+/// different mechanism from the one this slice built, and which changes what
+/// "one row" means (one row per check would become one row per file, or a row
+/// whose `detail` has to carry which file failed).
+///
+/// It is named here rather than approximated. Emitting a row for
+/// `dart_test_per_package_root_per_file` from a single directory-wide
+/// `dart test` would be worse than no row: the gate compares `checkName` and
+/// `command` by string equality, so the row would claim per-file coverage it
+/// never had, and no reader could tell from the record that it did not.
 const Map<String, String> perExecutionChecksNotExpressibleAsOnePlan = {
   'dart_analyze_per_package_root':
       'declared at "each package root" — 16 roots under the root pubspec '
-      'workspace; a plan runs in the worktree root only, has no per-check '
-      'cwd, and a `cd` wrapper would rewrite the command string that '
-      '"commandMatchIsExact" compares',
+      'workspace. A VerificationCheck CAN now name one (`workingDirectory`), '
+      'so this is expressible as 16 checks; it is still not expressed because '
+      '[implementationVerificationPlan] deliberately declares one check (see '
+      'OD-6 §3), and declaring 16 would put 16 processes and ~16x the 2-minute '
+      'verifier budget on every implementation execution',
   'dart_test_per_package_root_per_file':
-      'declared at "each package root, individually per file" — a sweep, not a '
-      'command; one plan runs one command once, and WorkspaceVerifier '
-      'allows 2 minutes against a multi-minute sweep',
+      'declared at "each package root, individually per file" — a SWEEP, not a '
+      'command. Needs a per-check command expansion (enumerate the package\'s '
+      'test files, run one process per file, aggregate partial failure), which '
+      'is a materially different mechanism from one argv run once in one '
+      'directory. Approximating it with one directory-wide `dart test` would '
+      'write a row claiming per-file coverage it never had',
   'flutter_test_apps_control_plane':
-      'declared at "apps/control_plane" — a different root, needs the Flutter '
-      'SDK resolved there, and `dart test` cannot load `flutter_test`',
+      'declared at "apps/control_plane" — a different root, which a '
+      'VerificationCheck can now name, so this IS expressible; it is not '
+      'expressed because [implementationVerificationPlan] declares one check, '
+      'and it additionally needs the Flutter SDK resolved there, where '
+      '`dart pub get` does not reach it',
 };
 
 /// The plans this process can attach, by role.

@@ -954,7 +954,7 @@ Future<_TriageRun> _dispatchTriage({
     // Real, platform-runner verification executed inside the isolated
     // worktree. A failing check would turn this into an executedFail job, so
     // a green job is proof the verifier really ran and really passed.
-    verificationPlan: const VerificationPlan(
+    verificationPlan: VerificationPlan(
       command: ['git', 'rev-parse', '--verify', 'HEAD^{commit}'],
       checkName: 'git_worktree_head',
     ),

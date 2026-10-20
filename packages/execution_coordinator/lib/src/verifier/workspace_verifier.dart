@@ -35,8 +35,13 @@ class WorkspaceVerifier {
         buffer: buffer,
       );
       if (setup.exitCode != 0) {
+        // `ran: false` — the CHECK never started. A setup step that fails is
+        // an environment problem, not a verdict about the work, and the
+        // coordinator turns `ran == false` into NO ROW at all. See
+        // [VerificationOutcome.ran].
         return VerificationOutcome(
           passed: false,
+          ran: false,
           mechanism: 'process_${setupCommand.first}',
           command: setupCommand.join(' '),
           exitCode: setup.exitCode,
@@ -56,6 +61,10 @@ class WorkspaceVerifier {
     final passed = run.exitCode == 0;
     return VerificationOutcome(
       passed: passed,
+      // A command that STARTED and blew the verifier's timeout is `ran: true`:
+      // it was observed, and what it produced was not a pass. Only a process
+      // that never spawned is a check that did not run.
+      ran: run.spawned,
       mechanism: 'process_${command.first}',
       command: command.join(' '),
       exitCode: run.exitCode,
@@ -79,8 +88,12 @@ class WorkspaceVerifier {
         runInShell: false,
       );
     } catch (e) {
+      // `ran: false` — nothing was executed, so nothing was observed. The
+      // overwhelmingly common cause is that the tool is not installed in the
+      // sandbox at all.
       return _ProcessOutcome(
         exitCode: -1,
+        spawned: false,
         detail: 'Failed to spawn ${command.first}: $e',
       );
     }
@@ -137,6 +150,7 @@ class VerificationOutcome {
     required this.mechanism,
     required this.command,
     required this.exitCode,
+    this.ran = true,
     this.detail,
     this.outputTail = '',
   });
@@ -147,11 +161,30 @@ class VerificationOutcome {
   final int exitCode;
   final String? detail;
   final String outputTail;
+
+  /// Whether the check actually EXECUTED.
+  ///
+  /// `false` means the process was never spawned — the tool is not installed,
+  /// or the setup step failed first. It is the distinction that keeps an
+  /// absent check absent: [ExecutionCoordinator] writes NO row for an outcome
+  /// with `ran == false`, so a gate reading the persisted rows sees a missing
+  /// check rather than a check that silently passed.
+  ///
+  /// A timeout keeps `ran == true` — the process started and overran; it was
+  /// observed, and what it produced was not a pass.
+  final bool ran;
 }
 
 class _ProcessOutcome {
-  const _ProcessOutcome({required this.exitCode, this.detail});
+  const _ProcessOutcome({
+    required this.exitCode,
+    this.spawned = true,
+    this.detail,
+  });
 
   final int exitCode;
+
+  /// `false` when [WorkspaceVerifier._run] could not start a process at all.
+  final bool spawned;
   final String? detail;
 }

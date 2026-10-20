@@ -52,7 +52,7 @@ void main() {
         expect(plan.checkName, 'git_worktree_head');
 
         // And provably NOT the default that caused the defect.
-        expect(plan.command, isNot(const VerificationPlan().command));
+        expect(plan.command, isNot(VerificationPlan().command));
         expect(
           plan.command,
           isNot(contains('test')),
@@ -82,7 +82,14 @@ void main() {
           source,
           isNot(
             contains(
-              RegExp(r'verificationPlan\s*:\s*const VerificationPlan\(\s*\)'),
+              // `const?` is load-bearing. `VerificationPlan` stopped being a
+              // const constructor when it gained several checks — a const
+              // constructor cannot build the check list from its own
+              // parameters — so a guard that only matched the `const` spelling
+              // would pass on a re-introduced default plan forever after.
+              RegExp(
+                r'verificationPlan\s*:\s*(const\s+)?VerificationPlan\(\s*\)',
+              ),
             ),
           ),
           reason:
@@ -131,7 +138,7 @@ void main() {
         // The defect's default, run in the same worktree. If this ever starts
         // passing, this regression test has become meaningless and must be
         // revisited — the fixture would no longer model the triage worktree.
-        final defaultPlan = const VerificationPlan();
+        final defaultPlan = VerificationPlan();
         final failed = await _run(defaultPlan.command, cwd: repo.root);
         expect(
           failed.exitCode,

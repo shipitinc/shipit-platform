@@ -896,7 +896,7 @@ class _ProductionPipeline {
       ),
       workflowEngine: engine,
       runtime: runtime,
-      verificationPlan: const VerificationPlan(
+      verificationPlan: VerificationPlan(
         command: ['git', 'rev-parse', '--verify', 'HEAD^{commit}'],
         checkName: 'git_worktree_head',
       ),
