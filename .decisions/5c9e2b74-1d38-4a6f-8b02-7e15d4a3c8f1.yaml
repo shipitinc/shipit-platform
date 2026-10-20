@@ -1,0 +1,30 @@
+# human-decision.yaml
+decision_id: 5c9e2b74-1d38-4a6f-8b02-7e15d4a3c8f1
+type: ARCHITECTURE
+status: RESOLVED
+title: Raise the per-check verifier timeout so the full five-check per-execution tier runs
+resolution:
+  selected: RAISE_PER_CHECK_TIMEOUT
+  label: each check gets its own timeout; server runner ~4min, flutter ~4min; full tier runs per execution
+  decided_by: operator
+  decided_at: 2026-10-19T01:15:00Z
+  the_measured_fact: >-
+    Lane impl-DECLARE-PER-EXEC-CHECKS measured (not assumed) that the declared tier does not fit the
+    verifier's 2-minute per-command budget: the server runner takes 237s as a single sweep and 531s through
+    a 6-way pool (per-file `dart test` is COMPILE-BOUND -- 29% CPU under the pool, so parallelism barely
+    helps), and `flutter test` is 209s cold / 247s warm. Both were delivered CORRECT AND UNACTIVATED, with
+    the reasons recorded as measured facts.
+  chosen: >-
+    Give each check its own timeout so the full declared tier runs on every implementation execution.
+    Expected cost 8-10 minutes of validation per execution, absorbed by the worker.
+  alternatives_rejected:
+    - Moving the server runner and flutter test to the merge/release tier: faster executions and an honest
+      declaration, but the server's own unit tests and the control-plane suite would stop running on every
+      execution -- coverage lost where defects are cheapest to catch.
+    - Shared compilation to fit 2 minutes: attractive, but uncertain engineering, and it does not remove the
+      need to decide what runs per execution if it fails.
+  the_honesty_constraint_this_carries: >-
+    Raising a timeout does NOT weaken the check. The command still runs to completion and its exit code is
+    still authoritative; what changes is how long it is allowed to take. It must never be raised far enough
+    that a hung command is reported as anything other than a timeout -- a timeout is a FAILING check, never
+    a passing one and never an absent row.

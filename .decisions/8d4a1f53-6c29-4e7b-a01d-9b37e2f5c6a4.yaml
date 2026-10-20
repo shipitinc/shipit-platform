@@ -1,0 +1,33 @@
+# human-decision.yaml
+decision_id: 8d4a1f53-6c29-4e7b-a01d-9b37e2f5c6a4
+type: PRODUCT
+status: RESOLVED
+title: Reclassify onboarding_test as integration, and fix transition_copy_test as a real red
+resolution:
+  selected: RECLASSIFY_AND_FIX
+  label: onboarding_test moves under test/integration/; transition_copy_test gets a real workflow_engine fix
+  decided_by: operator
+  decided_at: 2026-10-19T01:15:00Z
+  the_two_reds: >-
+    Both sit INSIDE the per-execution tier's own directories, so activating the tier would make them red
+    forever. apps/server/test/onboarding_test.dart fails with "Serverpod did not start... cannot connect to
+    the database" -- it needs a live database, and it sits OUTSIDE test/integration/, so nothing runs it
+    today either. apps/control_plane/test/shared/transition_copy_test.dart asserts "every engine-accepted
+    pair has dedicated plain copy" and fails at base -- a genuine missing transition copy.
+  chosen:
+    - onboarding_test: moved under test/integration/. This is CLASSIFICATION, not hiding -- a test that
+      requires a live database is an integration test by definition, and the per-execution tier explicitly
+      excludes integration. It additionally makes the test run for the first time, at merge.
+    - transition_copy_test: routed to a lane that OWNS packages/workflow_engine, because the failure is a
+      real missing transition copy, not an environment artifact. The fix is engine work and must not be
+      smuggled into a lane that may not touch that package.
+  alternatives_rejected:
+    - Named permanent exclusions in the runner: nothing hidden, but the exclusion list becomes permanent
+      and every later red tends to be added to it.
+    - Blocking activation until both are fixed: no exclusions anywhere, but the workflow stays blocked for
+      however long an engine fix takes.
+  the_honesty_constraint_this_carries: >-
+    Reclassifying onboarding_test must not silently reduce coverage: it is added to the INTEGRATION tier so
+    it actually runs at merge. And transition_copy_test must be FIXED, not excluded -- an engine-accepted
+    transition pair with no dedicated plain copy is a real defect in the engine's copy layer, and routing
+    it to its owner is what makes it get fixed instead of argued about.
