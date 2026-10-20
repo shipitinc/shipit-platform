@@ -38,3 +38,5 @@ export 'src/lane_g_triage_qa_contract.dart';
 export 'src/product_qa_contract_spec_store.dart';
 export 'src/product_qa_contract.dart';
 export 'src/qa_orchestration.dart';
+export 'src/gates/evaluators/triage_evidence_grounding_gate.dart';
+export 'src/gates/evaluators/triage_classification_admitted_gate.dart';
