@@ -304,8 +304,22 @@ void main() {
         );
 
         final timer = Timer.periodic(period, (_) => unawaited(tick.trigger()));
-        // Long enough for the unguarded version to have accumulated hundreds.
-        await Future<void>.delayed(const Duration(milliseconds: 120));
+        // The number of fires this REAL timer gets is the event loop's, not
+        // ours: under load the isolate can be starved so badly that a 1 ms
+        // timer fires twice in 120 ms of WALL CLOCK (measured, F-199 —
+        // `Expected greater than <10>, Actual: <1>`). So this waits for the
+        // fires to HAVE HAPPENED — the same evidence the assertion below
+        // counts — instead of assuming they fit in a wall-clock window. The
+        // wait does not weaken anything: a wedged or unguarded world produces
+        // zero drops, so this then times out and the test FAILS with the
+        // reason naming exactly what never happened.
+        await _waitUntil(
+          () => log.eventsNamed('scheduler.tick.dropped_overlap').length > 10,
+          because:
+              'the real 1 ms Timer.periodic to fire at least 11 times while '
+              'the first tick holds the guard (one run + more than ten drops)',
+          timeout: const Duration(seconds: 20),
+        );
         timer.cancel();
         gate.open();
         await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -326,8 +340,8 @@ void main() {
           drops.length,
           greaterThan(10),
           reason:
-              'a 1 ms timer over 120 ms must have triggered a tick many times '
-              'over; every one after the first should have been dropped, and '
+              'the wait above let the 1 ms timer trigger many times over; '
+              'every one after the first should have been dropped, and '
               'only ${drops.length} were',
         );
         for (final line in drops) {
@@ -335,6 +349,7 @@ void main() {
           expect(line['overlappedTicks'], 1);
         }
       },
+      timeout: const Timeout(Duration(seconds: 60)),
     );
   });
 
@@ -394,10 +409,12 @@ void main() {
       () async {
         final log = _LogCapture();
         final gate = _Gate();
+        final timers = _LeaseTimers();
         var pass = 0;
         final tick = TickSingleFlight(
           log: log.record,
           maxHold: const Duration(milliseconds: 40),
+          leaseTimer: timers.create,
           runTick: () async {
             pass++;
             // ONLY the first pass parks. A later pass returning is what "the
@@ -416,7 +433,15 @@ void main() {
           reason: 'sanity: inside the lease this is still an ordinary drop',
         );
 
-        await _waitUntil(() => !tick.isRunning, because: 'the lease to expire');
+        // The lease fires when the TEST says so, not when the wall clock and
+        // the process scheduler happen to allow it: a real 40 ms timer racing
+        // real work is the load flake this seam exists to remove (F-199).
+        timers.advance(const Duration(milliseconds: 40));
+        expect(
+          tick.isRunning,
+          isFalse,
+          reason: 'the lease to expire',
+        );
         expect(
           (await tick.trigger()).ran,
           isTrue,
@@ -448,10 +473,12 @@ void main() {
       () async {
         final log = _LogCapture();
         final gate = _Gate();
+        final timers = _LeaseTimers();
         var bodyFinished = false;
         final tick = TickSingleFlight(
           log: log.record,
           maxHold: const Duration(milliseconds: 40),
+          leaseTimer: timers.create,
           runTick: () async {
             await gate.wait();
             bodyFinished = true;
@@ -460,7 +487,12 @@ void main() {
         );
 
         final stuck = tick.trigger();
-        await _waitUntil(() => !tick.isRunning, because: 'the lease to expire');
+        timers.advance(const Duration(milliseconds: 40));
+        expect(
+          tick.isRunning,
+          isFalse,
+          reason: 'the lease to expire',
+        );
         expect(
           bodyFinished,
           isFalse,
@@ -501,9 +533,11 @@ void main() {
         // derived default is what it is: a lease short enough to be useful
         // must not also abandon ticks that are legitimately still working.
         final log = _LogCapture();
+        final timers = _LeaseTimers();
         final tick = TickSingleFlight(
           log: log.record,
           maxHold: const Duration(seconds: 30),
+          leaseTimer: timers.create,
           runTick: () async => TickOutcome(),
         );
 
@@ -531,10 +565,12 @@ void main() {
         final log = _LogCapture();
         final firstGate = _Gate();
         final secondGate = _Gate();
+        final timers = _LeaseTimers();
         var pass = 0;
         final tick = TickSingleFlight(
           log: log.record,
           maxHold: const Duration(milliseconds: 40),
+          leaseTimer: timers.create,
           runTick: () async {
             pass++;
             await (pass == 1 ? firstGate.wait() : secondGate.wait());
@@ -543,7 +579,12 @@ void main() {
         );
 
         final first = tick.trigger();
-        await _waitUntil(() => !tick.isRunning, because: 'the lease to expire');
+        timers.advance(const Duration(milliseconds: 40));
+        expect(
+          tick.isRunning,
+          isFalse,
+          reason: 'the lease to expire',
+        );
 
         final second = tick.trigger();
         expect(tick.isRunning, isTrue);
@@ -764,10 +805,12 @@ void main() {
         host.dispatch.neverReleaseFor = <String>{'wi-stuck'};
 
         final log = _LogCapture();
+        final timers = _LeaseTimers();
         final scheduler = host.schedulers.first;
         final tick = TickSingleFlight(
           log: log.record,
           maxHold: const Duration(milliseconds: 40),
+          leaseTimer: timers.create,
           runTick: () async {
             final outcome = TickOutcome(failedSections: <String>[]);
             outcome.dispatched = (await scheduler.tick()).dispatched.length;
@@ -791,7 +834,11 @@ void main() {
         // and the test would be proving that a second wedged tick also wedges.
         host.dispatch.parkRuns = false;
 
-        await _waitUntil(() => !tick.isRunning, because: 'the lease to expire');
+        // The lease fires when the TEST says so. Waiting on a real 40 ms timer
+        // here was the measured load flake (F-199): under starvation the
+        // RECOVERED tick below arms its OWN 40 ms lease and can outlive it,
+        // firing the lease twice and failing `hasLength(1)` further down.
+        timers.advance(const Duration(milliseconds: 40));
         expect(
           tick.isRunning,
           isFalse,
@@ -1349,6 +1396,81 @@ class _Gate {
   }
 
   Future<void> wait() => _completer.future;
+}
+
+/// Deterministic hold-lease timers for [TickSingleFlight].
+///
+/// The lease timer is the one piece of the guard these tests must CONTROL
+/// rather than await. A real 40 ms timer is fine for "the lease eventually
+/// fires", but the RECOVERED tick in the recovery test arms its OWN lease,
+/// and under load that lease can expire before the recovered tick finishes —
+/// firing the lease twice and failing the exact `hasLength(1)` (measured,
+/// F-199: `Expected: an object with length of <1>, Actual: [.., ..]`).
+/// The injected factory makes lease firing an explicit act of the test:
+/// nothing fires until [advance] is called, so the counts these tests assert
+/// are exact under any load, while the production default — the real
+/// [Timer] — is untouched.
+///
+/// This is a CLOCK seam, not a weaker assertion: every `hold_expired`,
+/// `cancelled` and `completed_late` expectation below is unchanged, and a
+/// world where the lease never fires still fails them.
+class _LeaseTimers {
+  final List<_ManualTimer> _pending = <_ManualTimer>[];
+  int _nowMs = 0;
+
+  /// Matches the `Timer(Duration, void Function())` factory type the seam
+  /// takes, so a test passes it directly as `leaseTimer: timers.create`.
+  Timer create(Duration duration, void Function() callback) {
+    final timer = _ManualTimer(_nowMs + duration.inMilliseconds, callback);
+    _pending.add(timer);
+    return timer;
+  }
+
+  /// Fires every armed lease due at or before [elapsed] from now, in due
+  /// order, synchronously — the fake clock's only advancement mechanism.
+  void advance(Duration elapsed) {
+    _nowMs += elapsed.inMilliseconds;
+    // Loop, not a single pass: a fired callback may itself arm another timer
+    // that is already due. None does today; the loop keeps `advance` honest
+    /// if one ever does.
+    while (true) {
+      final due =
+          _pending.where((t) => !t.hasFired && t.dueAtMs <= _nowMs).toList()
+            ..sort((a, b) => a.dueAtMs.compareTo(b.dueAtMs));
+      if (due.isEmpty) break;
+      for (final timer in due) {
+        _pending.remove(timer);
+        timer.fire();
+      }
+    }
+  }
+}
+
+/// A [Timer] that only fires when [_LeaseTimers.advance] says so.
+class _ManualTimer implements Timer {
+  _ManualTimer(this.dueAtMs, this._callback);
+
+  final int dueAtMs;
+  final void Function() _callback;
+  var _fired = false;
+  var _cancelled = false;
+
+  bool get hasFired => _fired;
+
+  void fire() {
+    if (_cancelled || _fired) return;
+    _fired = true;
+    _callback();
+  }
+
+  @override
+  void cancel() => _cancelled = true;
+
+  @override
+  bool get isActive => !_fired && !_cancelled;
+
+  @override
+  int get tick => _fired ? 0 : -1;
 }
 
 /// A statement as it reached the database driver.

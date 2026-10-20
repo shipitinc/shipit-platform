@@ -2442,7 +2442,9 @@ class TickSingleFlight {
     this.log,
     this.maxHold,
     DateTime Function()? clock,
-  }) : _clock = clock ?? _systemUtcClock;
+    Timer Function(Duration duration, void Function() callback)? leaseTimer,
+  }) : _clock = clock ?? _systemUtcClock,
+       _leaseTimer = leaseTimer ?? Timer.new;
 
   /// The tick, invoked only after the guard has been taken. Public so the
   /// constructor can take it as an initializing formal, and so a test can hold
@@ -2461,6 +2463,17 @@ class TickSingleFlight {
   /// [holdSummary] says in words which of the two a running process is in, so a
   /// banner can never describe a lease the ticking object does not have.
   final Duration? maxHold;
+
+  /// How the hold-lease timer is scheduled.
+  ///
+  /// Injectable so a TEST can fire the lease at a moment it CHOOSES instead
+  /// of whenever the wall clock and the process scheduler permit: on a loaded
+  /// host a 40 ms lease can outlive the recovered tick it is racing, firing
+  /// the lease twice and turning an exact `hasLength(1)` into a load flake
+  /// (measured, F-199). The default is the real [Timer] and production passes
+  /// nothing, so the shipped behaviour is unchanged; only tests that opt in
+  /// get deterministic lease time.
+  final Timer Function(Duration, void Function()) _leaseTimer;
 
   /// The clock, injectable so a test can assert the LEASE fired at the
   /// configured elapsed time rather than whenever the machine scheduled it.
@@ -2570,7 +2583,7 @@ class TickSingleFlight {
     // force. It is cancelled in [_releaseHold] whichever way the tick ends.
     final lease = maxHold == null
         ? null
-        : Timer(maxHold!, () => _expireHold(token));
+        : _leaseTimer(maxHold!, () => _expireHold(token));
     return _runGuarded(token, heldSince).whenComplete(() {
       _releaseHold(token, lease);
     });
