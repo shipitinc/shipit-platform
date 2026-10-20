@@ -3405,3 +3405,20 @@ and was never introduced by the tier work. It is the **last red holding the per-
 uniformly green**, and a real fix needs a clock or timing seam in a package the activating lanes were not
 granted. Weakening or excluding the test was forbidden and was not done. Routed to a lane that owns the
 scheduler/worker timing code.
+
+**F-199 — RESOLVED at `f1bcde2` (reviewed `APPROVE_WITH_NON_BLOCKING_FOLLOWUP`).** The root cause was re-derived
+under controlled contention rather than guessed: at 1/6 under 16 burners the recovery test failed with
+`hold_expired` of **length 2**, because **the recovered tick's own 40 ms lease expired before the recovered
+`scheduler.tick()` finished**, firing the lease twice. The `drops > 10` shape is the same wall-clock-density
+defect class — a 1 ms `Timer.periodic` needing ≥11 fires in a 120 ms *wall-clock* window under starvation.
+Both were assumptions the design never promised. The fix is a **timing seam**, not a weakening: an optional
+`leaseTimer` factory on `TickSingleFlight` (production passes nothing, so production behaviour is unchanged),
+a deterministic clock for the lease-group and recovery tests, and a **bounded, loud** 20 s condition-driven
+wait on the real-timer test — which keeps its `greaterThan(10)` assertion and its real timer **verbatim**.
+Nothing was excluded, retried, or slept over. The reviewer independently reproduced the base flake at 1/12
+under 16 burners and measured **0/12, 0/10 and 0/6** across the same and harsher conditions at HEAD.
+
+**F-200 — `_ManualTimer.tick` returns `-1` before firing, `0` after.** `Timer.tick` is documented as `null`
+before a one-shot fires and `0` after. Nothing reads `tick` and nothing asserts on it, so it is inert today —
+but a future assertion on `tick` would silently be wrong. LOW; belongs with whoever next touches
+`apps/server/test/tick_single_flight_test.dart`.
