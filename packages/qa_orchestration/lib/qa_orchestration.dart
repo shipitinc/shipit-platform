@@ -18,9 +18,12 @@ export 'package:platform_contracts/platform_contracts.dart'
         AgentResult,
         PlatformVerification,
         WorkspaceHead,
+        CommittedDiffPaths,
         Defect;
 
+export 'src/gates/evaluators/change_scope_confinement_gate.dart';
 export 'src/gates/evaluators/declared_validation_outcome_gate.dart';
+export 'src/gates/evaluators/implementation_artifact_provenance_gate.dart';
 export 'src/gates/evaluators/remediation_defect_existence_gate.dart';
 export 'src/gates/evaluators/revision_identity_match_gate.dart';
 export 'src/gates/gate_evaluator.dart';
