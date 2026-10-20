@@ -75,9 +75,18 @@ at runtime and is not generated content.
   |---|---|---|---|
   | per-execution | format | `dart format --output=none --set-exit-if-changed .` | repo root |
   | per-execution | analyze | `dart analyze` | **each package root** |
-  | per-execution | unit tests | `dart test` | **each package root, individually per file** |
+  | per-execution | unit tests (packages) | `dart test` | **every package root except `apps/server`** |
+  | per-execution | unit tests (server) | `dart run tool/run_unit_tests.dart` | `apps/server` — runs each `test/*.dart` **individually** and **excludes `test/integration/`** |
   | per-execution | control-plane app | `flutter test` | `apps/control_plane` — `dart test` cannot load `flutter_test` here |
   | **merge/release** | integration | `SERVERPOD_DATABASE_PASSWORD=control_plane_test_pw make test-integration` | repo root |
+
+  **`apps/server` cannot be declared as a bare `dart test`.** There `dart test` also picks up
+  `test/integration/`, which needs a live database, so every per-execution run would go red for a reason that is
+  not a unit-test failure. Its unit tier is therefore declared as a **runner** (`dart run tool/run_unit_tests.dart`,
+  cwd `apps/server`) that enumerates `test/*.dart` itself, runs each file **individually** — which is what keeps a
+  single failing file from hiding behind the compact reporter — and excludes `test/integration/` by construction,
+  so a file added later is picked up without editing a pinned list. All 51 unit tests sit directly in `test/`;
+  its subdirectories are only `fixtures`, `integration` and `support`.
 
   Integration is a separate tier because it **creates a disposable Postgres and takes minutes** — paying that
   on every agent execution would make capacity and the worker environment absorb it. Splitting the tiers is

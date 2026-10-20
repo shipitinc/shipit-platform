@@ -1,0 +1,42 @@
+# human-decision.yaml
+decision_id: f3a81c27-2b54-4e6d-9c17-8e40b5a1d629
+type: PRODUCT
+status: RESOLVED
+title: The unit-test check is declared per package, with apps/server declared as a runner
+resolution:
+  selected: PER_PACKAGE_ROWS_APPSERVER_RUNNER
+  label: one row per package root with `dart test`; apps/server declared as `dart run tool/run_unit_tests.dart`
+  decided_by: operator
+  decided_at: 2026-10-19T00:40:00Z
+  why_this_decision_was_needed: >-
+    The two-tier declaration in AGENTS.md (a0e6f31c) did not fit together: the unit-tests row said command
+    `dart test`, cwd "each package root", qualified "individually per file". In 15 package roots a plain
+    `dart test` is fine and its exit code is authoritative. In apps/server it is NOT executable as declared,
+    because `dart test` there also picks up test/integration/, which needs a live database -- so every
+    per-execution run would go red for a reason that is not a unit-test failure. F4 (declared-validation-
+    outcome) asserts checkName + an EXACT command string + status, so whatever is declared is what every
+    execution must literally run. The E3 evaluator could not be written until this was resolved.
+  chosen_shape:
+    - command `dart test`, cwd each package root, EXCEPT apps/server
+    - command `dart run tool/run_unit_tests.dart`, cwd apps/server
+    - the runner enumerates test/*.dart itself, runs each file INDIVIDUALLY, and excludes test/integration/
+  why_a_runner_and_not_a_pinned_file_list: >-
+    A pinned list of 51 paths would be exact but would SILENTLY EXCLUDE any test file added later -- a coverage
+    hole that never fails anything. Enumerating at run time picks up new files without editing the contract,
+    and running each file individually is what keeps one failing file from hiding behind the compact reporter
+    (F-160). All 51 unit tests sit directly in apps/server/test/; its subdirectories are only fixtures,
+    integration and support, so "top-level test/*.dart" is a sound boundary.
+  alternatives_rejected:
+    - Per-file rows with the declared command restated as `dart test <file>`: strongest granularity, but it
+      changes the contract string for every package and produces roughly 200 verification rows per execution.
+    - Moving apps/server's unit tests to the merge/release tier: simplest declaration, but the server's own
+      unit tests would not run on every execution -- only at merge.
+  the_honesty_constraint_this_carries: >-
+    The runner is now a TRUSTED TRUTH for the gate -- the gate asserts the runner's exit code, not the
+    individual file commands. It must therefore be reviewed code that enumerates without filtering, fails
+    non-zero if ANY file fails, and never treats a missing/errored file as a pass. If it ever grows a filter,
+    the gate's completeness claim quietly becomes the runner's opinion.
+  where_it_lives: AGENTS.md product-specific policy, the two-tier table.
+  what_it_unblocks: >-
+    Declaring all per-execution checks on implementationVerificationPlan, then the E3 evaluator for
+    declared-validation-outcome -- one of the gates holding qaPassed closed for all ten waiting feature items.
