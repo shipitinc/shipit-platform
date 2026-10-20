@@ -3319,3 +3319,67 @@ capability boundary (no git, no execution), so a git-reading collector there wou
 and migrations, all PROHIBITED for this lane and untouched. `apps/server/test/onboarding_test.dart` reports
 **0 tests with a non-zero exit** — **inconclusive, never green** — because it needs a live Postgres yet sits
 outside `test/integration/`. That is an **automation gap in the gate definition itself**, not a test failure.
+
+---
+
+## 43. The per-execution validation tier — declared, measured, activated, reviewed; and the reds it exposed
+
+The feature lane's `declared-validation-outcome` (F4) was the single gate holding all ten pending
+feature-category items closed. Making it *evaluable* took four human decisions and two review cycles, and the
+work exposed that **the contract itself was wrong, not the code**.
+
+**The contract defect, decided twice.** `AGENTS.md`'s two-tier split (`a0e6f31c`) said the unit-tests row was
+command `dart test`, cwd "each package root", qualified "individually per file". Those three do not fit
+together: in 15 package roots a plain `dart test` is fine and its exit code is authoritative; in `apps/server`
+it also picks up `test/integration/`, which needs a live database, so **every per-execution run would have gone
+red for a reason that is not a unit-test failure** (`f3a81c27`). The declared command is what the gate
+string-compares, so a command that cannot be run as declared is not a documentation nit — it is a gate that can
+never pass. `apps/server` is now declared as a **runner** (`dart run tool/run_unit_tests.dart`) that enumerates
+`test/*.dart` itself and excludes `test/integration/` by construction, so a file added later is picked up
+without editing a pinned list.
+
+**The capacity fact, measured not assumed.** The declared tier did not fit the verifier's two-minute
+per-command budget: the runner took 237s as a single sweep and 531s through a 6-way pool — **per-file `dart
+test` is compile-bound, not CPU-bound** (29% CPU under the pool, so parallelism barely helps) — and `flutter
+test` was 209–247s (`5c9e2b74`). The lane delivered both **correct and deliberately unactivated** with the
+reasons recorded as measured facts rather than excuses, and the operator chose to raise the per-check timeout
+over narrowing the tier. **A timeout is a failing check, never a passing one and never an absent row.**
+
+**F-191 — `VerificationPlan` is no longer `const`; sweep for remaining call sites.** Decision `7b2c4e91`
+widened it to carry several checks, so the constructor builds an unmodifiable list. Touched call sites were
+updated; a `rg "const VerificationPlan\("` sweep is the cheap confirmation. Compile-time breakage will surface
+anything missed. LOW.
+
+**F-192 — a comment describing a guard is not the guard.** `server.dart` asserted in prose that "the test pins
+the directory's absence" and that "the test computes both sides independently" — **neither test existed**. Only
+count pins (`hasLength(16/13/32)`) and pubspec equality were real, so a `test/` directory appearing at an
+excluded member would have been **silently unrun per-execution forever**, and swapping one exclusion for another
+would have kept every test green. Both pins were added (set equality computed **both ways** from literals
+independent of the source, plus an absence pin via a cwd-independent `_repoRoot()`), and four mutations were
+shown to break exactly the right one. **Durable lesson: a pin claimed in a comment must be greppable in a
+test.** Caught by review, not by the suite.
+
+**F-193 — a test comment that was false, and a dead copy key that survived on it.** The copy↔engine guard was
+**one-directional** (`engine ⊆ copy` only), so a dead key `('planned', 'design_in_review')` — never an edge in
+*any* engine revision, pickaxe-verified — had survived since the file's first commit. Worse,
+`feature_park_way_out_test.dart` claimed in a comment that a reflow-lost pair "already had plain copy", which
+is **false at `84460a2^`**. Two things that should have caught it failed: the reverse-inclusion guard did not
+exist, and the enumeration test's regex matched only single-line arms, so **dart format's reflow silently hid a
+pair from the test's accounting** — a pair whose copy did not exist either. Now closed with a reflow-tolerant
+regex, explicit pair-count pins, and a separation test asserting `copy keys ⊆ live engine pairs`.
+
+**F-194 — the root-cause gap: a cross-package guard nobody runs.** This red lived in `apps/control_plane`'s
+flutter test, **which engine-package lanes never run** — which is exactly how two engine edges (`ddfbfff`,
+`44c8d0b`) merged without it. A change to `work_item_transitions.dart` should force `transition_copy_test`.
+`.github/**` is outside every lane granted so far, so the mechanism needs an owner with that path.
+
+**F-195 — SIGKILL reaches only the direct child.** The server runner's six `dart test` grandchildren are
+orphaned on timeout. Pre-existing `_run` semantics, but the consequence was widened by activating a 25-minute
+pooled runner. LOW, and it needs a decision about process-tree teardown before it is worth a lane.
+
+**What is now true.** The five-check per-execution tier — format, 16 analyses, 13 package suites, the server
+runner, `flutter test` — is fully activated at `b51c16d`, with 32 checks and per-check timeouts sized from
+measurement, and it is independently reviewed after one `DO_NOT_MERGE` correction cycle. `flutter test` went
+506/1 → **513/0** at `e72911b` once the six missing park-transition copies were written. The remaining
+per-execution red is `tick_single_flight_test.dart`, a **load flake** that fails ~1/6 under 6-way concurrent
+load and passes 7/7 standalone — **and fails at base too**, so it is being routed rather than weakened.
