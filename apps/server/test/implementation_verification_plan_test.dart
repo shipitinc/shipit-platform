@@ -205,6 +205,90 @@ void main() {
             'analyze check is a coverage hole the gate cannot see',
       );
     });
+
+    test(
+      'the dart-test sweep excludes exactly the three declared roots — '
+      'computed both ways from the source',
+      () {
+        // ## THE PIN THE COUNTS CANNOT BE.
+        //
+        // Counts (16 members / 13 swept / 32 checks) stay green when one
+        // exclusion is SWAPPED for another: the sweep shrinks by one root and
+        // grows by another, and every count is unchanged. Only the SET
+        // equality notices, so it is derived both ways here, from the source
+        // lists, with the three names supplied independently as literals:
+        //
+        // * way 1 derives the exclusions (members minus sweep) and demands
+        //   they are EXACTLY the three declared names — a fourth exclusion,
+        //   a swapped one, or one of the three vanishing fails it;
+        // * way 2 derives the sweep (members minus the declared names) and
+        //   demands the list equals it — this is the direction that also
+        //   rejects a sweep root that is not a workspace member at all,
+        //   which way 1 cannot see, and the direction
+        //   [dartTestSweepRoots]'s doc states ("must equal
+        //   [workspaceMemberRoots] minus exactly those three names").
+        const declaredExclusions = {
+          'apps/server',
+          'apps/control_plane',
+          'packages/control_plane_client',
+        };
+
+        // Way 1 — the exclusion set DERIVED from the two source lists.
+        expect(
+          workspaceMemberRoots.toSet().difference(dartTestSweepRoots.toSet()),
+          declaredExclusions,
+          reason:
+              'members minus sweep must be EXACTLY {apps/server, '
+              'apps/control_plane, packages/control_plane_client}. A fourth '
+              'root missing from the sweep is an exclusion nobody declared; '
+              'one of the three present in the sweep un-excludes a root whose '
+              'reason has not changed. Swapping one exclusion for another '
+              'keeps every count in this file green — only this set equality '
+              'breaks.',
+        );
+
+        // Way 2 — the sweep DERIVED from the members minus the names.
+        expect(
+          dartTestSweepRoots.toSet(),
+          workspaceMemberRoots.toSet().difference(declaredExclusions),
+          reason:
+              'the sweep must equal the workspace members minus exactly the '
+              'three declared exclusions. This direction also fails for a '
+              'sweep entry that is not a workspace member at all, which '
+              'leaves members-minus-sweep unchanged and would pass way 1.',
+        );
+      },
+    );
+
+    test(
+      'packages/control_plane_client has NO test/ directory — the absence '
+      'the sweep exclusion rests on',
+      () async {
+        // ## THE PIN THE EXCLUSION'S REASON RESTS ON.
+        //
+        // The stated reason that root is excluded from the sweep is that it
+        // has no `test/` directory (`dart test` there exits 65 for an
+        // absence). If a `test/` directory appears while the root stays
+        // excluded, every suite inside it is silently unrun on EVERY
+        // execution — the gate still reads green because no declared check
+        // names that root. `dartTestSweepRoots`'s doc claims this pin exists
+        // ("The test pins the directory's absence"); this is it, and it
+        // fails LOUDLY the moment the directory appears, instead of leaving
+        // the new suite dormant.
+        final repoRoot = await _repoRoot();
+        final testPath = '${repoRoot.path}/packages/control_plane_client/test';
+        expect(
+          FileSystemEntity.typeSync(testPath),
+          FileSystemEntityType.notFound,
+          reason:
+              'packages/control_plane_client/test now exists, but the root '
+              'is excluded from dartTestSweepRoots, so nothing in it runs on '
+              'any execution. Either move the tests to a swept root or '
+              'restore this root to the sweep (and drop the exclusion from '
+              'the plan doc) — the suite must not sit unrun.',
+        );
+      },
+    );
   });
 
   group('every check name is a valid verification-id component', () {
@@ -986,6 +1070,24 @@ Future<Directory> _packageDir() async {
     throw StateError('could not resolve the server composition source');
   }
   return File.fromUri(uri).parent;
+}
+
+/// The repository root — found by the same upward walk [_readAgentsMd] uses
+/// (the directory carrying `AGENTS.md` above the server library), so a path
+/// like `packages/control_plane_client/test` resolves identically no matter
+/// which working directory `dart test` ran from.
+Future<Directory> _repoRoot() async {
+  var dir = await _packageDir();
+  while (true) {
+    if (File('${dir.path}/AGENTS.md').existsSync()) return dir;
+    final parent = dir.parent;
+    if (parent.path == dir.path) {
+      throw StateError(
+        'could not locate the repository root above ${dir.path}',
+      );
+    }
+    dir = parent;
+  }
 }
 
 Future<String> _readServerSource() async {

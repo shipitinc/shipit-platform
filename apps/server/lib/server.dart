@@ -1661,8 +1661,12 @@ final VerificationPlan triageVerificationPlan = VerificationPlan(
 ///
 /// The last two were delivered correct and UNACTIVATED by `f3a81c27`, and
 /// [perExecutionValidationChecksNotActivated] — the map that recorded their
-/// measured blockers — is now EMPTY: decision `5c9e2b74` raised the per-check
-/// timeout so both fit, and decision `8d4a1f53` reclassified
+/// measured blockers — is now EMPTY: decision `5c9e2b74` authorized the
+/// per-check timeout MECHANISM (its record sized the two checks at ~4min /
+/// ~4min against the then-measured 237s/531s and 209s/247s — it names no
+/// final value for them, and no amendment exists), while the VALUES in the
+/// plan below were sized at THIS HEAD from this lane's own measurements, so
+/// both fit; decision `8d4a1f53` reclassified
 /// `onboarding_test.dart` (integration by definition — it needs a live
 /// database) out of the server unit tier's enumeration, which is what removed
 /// the base red that would otherwise fail every execution. Empty map, filled
@@ -1671,13 +1675,20 @@ final VerificationPlan triageVerificationPlan = VerificationPlan(
 /// drift alone. `make test-integration` is still NOT here — the merge/release
 /// tier stays recorded only at the gate that owns it (decision `a0e6f31c`).
 ///
-/// ## PER-CHECK TIMEOUTS (decision `5c9e2b74`), AND WHAT THEY COST
+/// ## PER-CHECK TIMEOUTS — MECHANISM AUTHORIZED BY DECISION `5c9e2b74`,
+/// VALUES SIZED AT THIS HEAD — AND WHAT THEY COST
 ///
 /// Every check carries its own [VerificationCheck.timeout]. Without one, a
 /// check inherits `WorkspaceVerifier.defaultTimeout` (2 minutes), and two of
 /// the five declared checks cannot finish inside that — being killed mid-run
-/// would write a FAILING verdict about work that was never judged. The values
-/// are sized from MEASURED runtimes with headroom, never invented:
+/// would write a FAILING verdict about work that was never judged. Decision
+/// `5c9e2b74` authorized this MECHANISM — one timeout per check — but
+/// recorded no final values: its own sizing was "~4min / ~4min" against the
+/// facts it measured (237s/531s, 209s/247s), and no amendment exists. The
+/// decision file is human-owned, so it is cited here, never edited; the
+/// VALUES below were sized at THIS HEAD from this lane's measurements with
+/// headroom, never invented — which is why they are larger than the
+/// decision's ~4min estimate.
 ///
 /// | check | cold runtime (timeout-sizing basis) | warm runtime (re-measured at this HEAD) | timeout | headroom (vs cold) |
 /// |---|---|---|---|---|
@@ -1687,16 +1698,34 @@ final VerificationPlan triageVerificationPlan = VerificationPlan(
 /// | `server_unit_tests_runner` | **959.67s cold in a system-TEMP worktree — the default execution location** (`_triageWorkspaceRoot()` → `Directory.systemTemp`); 531s cold in the main checkout at base (237s is the single-process sweep AGENTS.md rules out) | 117s | 25 min | 1.56× |
 /// | `flutter_test_apps_control_plane` | 209s at base | 43s | 10 min | 2.4× |
 ///
+/// The runner's 959.67s cold / 117s warm and the flutter 43s warm are
+/// OBSERVED-ONCE values from this lane, not independently reproducible
+/// benchmarks: independent review of this change re-measured the runner at
+/// 352s cold / 231–305s warm and `flutter test` at 99s. Both sets of
+/// observations are recorded here rather than reconciled, and the timeout
+/// column clears each of them — 1500s is 1.56× the lane's worst observation
+/// and 4.3× the reviewer's cold one (4.9× their warm), while 600s is 2.4×
+/// the base flutter figure and 6.1× the reviewer's 99s. No timeout is
+/// changed because the numbers differ; the bounds were conservative over
+/// every observation anyone took.
+///
 /// The timeout is sized from the COLD column, because an implementation
 /// execution runs in a FRESH detached worktree with no kernel cache; the warm
 /// column is recorded so the difference is visible rather than argued.
 ///
 /// Raising a bound does not weaken a check: the command still runs to
 /// completion and its exit code is still authoritative. What a timeout still
-/// guarantees is that a HUNG command fails — SIGKILLed, `ran == true`, a
-/// FAILING row — never a pass and never an absent row (decision
+/// guarantees is that a HUNG MAIN command fails — SIGKILLed, `ran == true`,
+/// a FAILING row — never a pass and never an absent row (decision
 /// `5c9e2b74`'s honesty constraint, pinned in
-/// `multi_check_verification_plan_test.dart`).
+/// `multi_check_verification_plan_test.dart`). The ONE carve-out is the
+/// SETUP path: a `setupCommand` failure is an environment problem, not a
+/// verdict, so it deliberately reports `ran == false`, which the coordinator
+/// turns into NO ROW at all (`workspace_verifier.dart`, the setup branch —
+/// "the CHECK never started"). That absence is a designed outcome outside
+/// the sentence above; the timeout guarantee binds the main command, which
+/// by then has started and therefore always writes a FAILING row when it
+/// hangs.
 ///
 /// ## HOW A SWEEP BECOMES ROWS (decision `f3a81c27`)
 ///
@@ -1739,9 +1768,10 @@ final VerificationPlan triageVerificationPlan = VerificationPlan(
 ///   implementation execution when warm (measured end-to-end at this HEAD:
 ///   445s for all 32 checks, 31 exiting 0 and the flutter check failing only
 ///   on `transition_copy_test`), and much more cold in a system-temp
-///   worktree — the runner alone measured 959.67s there, and at base the two
-///   newly activated checks were measured at 959.67s + 209s before any sweep
-///   root pays its cold recompile. Even a cold figure sits inside the
+///   worktree — the runner alone took 959.67s there on this lane's single
+///   observation (independent review re-measured 352s cold), and at base the
+///   two newly activated checks were observed at 959.67s + 209s before any
+///   sweep root pays its cold recompile. Even a cold figure sits inside the
 ///   4-hour execution budget
 ///   (`AgentExecutionBudgets.byRole['implement-feature']`, which bounds the
 ///   WHOLE dispatch path including verification), and it is stated here
@@ -1789,14 +1819,18 @@ final VerificationPlan implementationVerificationPlan = VerificationPlan(
         workingDirectory: root,
         timeout: const Duration(minutes: 5),
       ),
-    // MEASURED: 531s through this runner's 6-way per-file pool cold in the
-    // main checkout (base `54d440c`; 117s / 247.6s warm at this HEAD), and
-    // **959.67s cold in a system-TEMP worktree** — which is the REPRESENTATIVE
-    // figure for an execution, because `_triageWorkspaceRoot()` defaults to
+    // OBSERVED ONCE by this lane — not independently reproducible: 531s
+    // through this runner's 6-way per-file pool cold in the main checkout
+    // (base `54d440c`; 117s / 247.6s warm at this HEAD), and **959.67s cold
+    // in a system-TEMP worktree** — which is the REPRESENTATIVE figure for
+    // an execution, because `_triageWorkspaceRoot()` defaults to
     // `Directory.systemTemp/shipit_triage_workspaces`, so that is where the
-    // worker runs this command. (237s is the single-process sweep AGENTS.md
+    // worker runs this command. Independent review re-measured this runner at
+    // 352s cold / 231–305s warm — different numbers, same direction, all
+    // inside the bound. (237s is the single-process sweep AGENTS.md
     // rules out because one failing file must not hide behind the others.)
-    // 25 minutes is 1.56× the worst measured run — the slowest check in the
+    // 25 minutes is 1.56× the worst run this lane observed and 4.3× the
+    // reviewer's cold re-measurement — the slowest check in the
     // plan, which is why it carries the largest bound. The runner itself has
     // no internal timeout: a file that HANGS inside it is killed here, by
     // this bound, and fails — within 25 minutes, not within the 4-hour
@@ -1809,7 +1843,10 @@ final VerificationPlan implementationVerificationPlan = VerificationPlan(
       timeout: Duration(minutes: 25),
     ),
     // MEASURED: 209s cold / 247s warm at base `54d440c`, 43s warm at this
-    // HEAD → 10 minutes is 2.4× the slower base figure. This check was
+    // HEAD → 10 minutes is 2.4× the slower base figure. The 43s is this
+    // lane's single observation and is not independently reproducible —
+    // independent review re-measured 99s, which 600s also clears (6.1×).
+    // This check was
     // previously withheld partly for being base-red (`transition_copy_test`);
     // decision `8d4a1f53` routed that defect to the lane that owns
     // `packages/workflow_engine`, and it stays visible here as a real failing
@@ -1983,16 +2020,20 @@ const List<DeclaredValidationCheck> perExecutionValidationChecks = [
 ///
 /// It used to carry the two withheld checks with their measured blockers:
 /// the server unit-test runner (531s through its per-file pool in the main
-/// checkout, **959.67s cold in a system-temp worktree** — the default
-/// execution location — with 237s as the single-process sweep AGENTS.md
+/// checkout, **959.67s cold in a system-temp worktree on this lane's single
+/// observation** — the default execution location, re-measured at 352s cold
+/// by independent review — with 237s as the single-process sweep AGENTS.md
 /// rules out; all three over the verifier's 2-minute per-command budget —
 /// plus `onboarding_test.dart` needing a live database) and
 /// `flutter test` (209s cold / 247s warm, plus a base-red
 /// `transition_copy_test`). Both blockers were MEASURED, and both are now
 /// RESOLVED rather than deleted:
 ///
-/// * decision `5c9e2b74` raised the per-check timeout, so both checks fit —
-///   see the timeout table in [implementationVerificationPlan]'s doc;
+/// * decision `5c9e2b74` authorized the per-check timeout MECHANISM (its
+///   own sizing "~4min / ~4min"; no final values, no amendment), and the
+///   values now carried by the plan — 25 min and 10 min — were sized at THIS
+///   HEAD from this lane's measurements, so both checks fit — see the
+///   timeout table in [implementationVerificationPlan]'s doc;
 /// * decision `8d4a1f53` reclassified `onboarding_test.dart` to
 ///   `test/integration/` (it needs a live database; the per-execution tier
 ///   excludes integration BY CONSTRUCTION) and routed `transition_copy_test`
