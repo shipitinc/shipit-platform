@@ -15,8 +15,14 @@ export 'package:platform_contracts/platform_contracts.dart'
         QAWaiver,
         WorkItemCategory,
         QAEvidenceRow,
-        AgentResult;
+        AgentResult,
+        PlatformVerification,
+        WorkspaceHead,
+        Defect;
 
+export 'src/gates/evaluators/declared_validation_outcome_gate.dart';
+export 'src/gates/evaluators/remediation_defect_existence_gate.dart';
+export 'src/gates/evaluators/revision_identity_match_gate.dart';
 export 'src/gates/gate_evaluator.dart';
 export 'src/gates/gate_registry.dart';
 export 'src/gates/predefined/static_analysis_gate.dart';
