@@ -430,12 +430,12 @@ void run(List<String> args) async {
   // fail — design §9.3's verification-failure branch stops being unreachable
   // for this role.
   //
-  // What it does NOT buy: full declared-tier coverage. The implementation plan
-  // activates THREE of the five declared per-execution checks — as 30
-  // per-root checks — and does not activate the server unit-test runner or
-  // `flutter test`. The two withheld, and their measured blockers, are named
-  // in [perExecutionValidationChecksNotActivated]; read it before treating a
-  // green implementation execution as the declared tier.
+  // Since decisions `5c9e2b74` + `8d4a1f53` it buys the WHOLE declared tier:
+  // the implementation plan activates all five per-execution checks — as 32
+  // per-root/per-runner checks, each with its own timeout — and
+  // [perExecutionValidationChecksNotActivated] is empty. What it still does
+  // NOT claim is the merge/release tier (`make test-integration`), which
+  // belongs to the gate that owns it.
   final implementWorker = LocalWorker(
     workerId: 'w-impl-local',
     poolId: 'impl-pool',
@@ -1643,24 +1643,60 @@ final VerificationPlan triageVerificationPlan = VerificationPlan(
 /// expressed as one check PER ROOT, and `apps/server`'s unit tier gained its
 /// own runner (`tool/run_unit_tests.dart`).
 ///
-/// ## WHAT THIS DECLARES NOW — 30 CHECKS, AND WHAT THAT STILL ISN'T
+/// ## WHAT THIS DECLARES NOW — 32 CHECKS, AND WHAT THAT STILL ISN'T
 ///
 /// `AGENTS.md` -> "Required validation gates" declares FIVE per-execution
-/// checks. This plan ACTIVATES THREE of them, as
-/// 1 + 16 + 13 = 30 [VerificationCheck]s:
+/// checks. This plan ACTIVATES ALL FIVE of them, as
+/// 1 + 16 + 13 + 1 + 1 = 32 [VerificationCheck]s:
 ///
 /// * `dart_format_repo_root` — the repository-root format check, at `.`;
 /// * `dart_analyze_<slug>` × 16 — `dart analyze` at every workspace-member
 ///   root ([workspaceMemberRoots]);
 /// * `dart_test_<slug>` × 13 — `dart test` at the members whose unit tier is
-///   a package suite ([dartTestSweepRoots]).
+///   a package suite ([dartTestSweepRoots]);
+/// * `server_unit_tests_runner` — `dart run tool/run_unit_tests.dart` at
+///   `apps/server`, whose unit tier is a runner and never a bare `dart test`;
+/// * `flutter_test_apps_control_plane` — `flutter test` at
+///   `apps/control_plane`.
 ///
-/// The two NOT activated — the server unit-test runner and `flutter test` —
-/// are named with their MEASURED blockers in
-/// [perExecutionValidationChecksNotActivated]. Read that map before reading
-/// this plan as coverage: 30 green rows mean three of five declared checks
-/// ran, not five. A green implementation execution is still not the declared
-/// tier, and that is a fact of the tree, not a review comment.
+/// The last two were delivered correct and UNACTIVATED by `f3a81c27`, and
+/// [perExecutionValidationChecksNotActivated] — the map that recorded their
+/// measured blockers — is now EMPTY: decision `5c9e2b74` raised the per-check
+/// timeout so both fit, and decision `8d4a1f53` reclassified
+/// `onboarding_test.dart` (integration by definition — it needs a live
+/// database) out of the server unit tier's enumeration, which is what removed
+/// the base red that would otherwise fail every execution. Empty map, filled
+/// plan: `implementation_verification_plan_test.dart` derives BOTH sides
+/// independently and demands they agree in both directions, so neither can
+/// drift alone. `make test-integration` is still NOT here — the merge/release
+/// tier stays recorded only at the gate that owns it (decision `a0e6f31c`).
+///
+/// ## PER-CHECK TIMEOUTS (decision `5c9e2b74`), AND WHAT THEY COST
+///
+/// Every check carries its own [VerificationCheck.timeout]. Without one, a
+/// check inherits `WorkspaceVerifier.defaultTimeout` (2 minutes), and two of
+/// the five declared checks cannot finish inside that — being killed mid-run
+/// would write a FAILING verdict about work that was never judged. The values
+/// are sized from MEASURED runtimes with headroom, never invented:
+///
+/// | check | cold runtime (timeout-sizing basis) | warm runtime (re-measured at this HEAD) | timeout | headroom (vs cold) |
+/// |---|---|---|---|---|
+/// | `dart_format_repo_root` | 28s at base `54d440c` | 25s | 3 min | 6.4× |
+/// | `dart_analyze_*` (worst: `apps/control_plane`) | 67s at base | 17s | 5 min | 4.5× |
+/// | `dart_test_*` (worst at base: `packages/execution_coordinator`) | 80s at base | 32s (`packages/worker_runtime`) | 5 min | 3.75× |
+/// | `server_unit_tests_runner` | **959.67s cold in a system-TEMP worktree — the default execution location** (`_triageWorkspaceRoot()` → `Directory.systemTemp`); 531s cold in the main checkout at base (237s is the single-process sweep AGENTS.md rules out) | 117s | 25 min | 1.56× |
+/// | `flutter_test_apps_control_plane` | 209s at base | 43s | 10 min | 2.4× |
+///
+/// The timeout is sized from the COLD column, because an implementation
+/// execution runs in a FRESH detached worktree with no kernel cache; the warm
+/// column is recorded so the difference is visible rather than argued.
+///
+/// Raising a bound does not weaken a check: the command still runs to
+/// completion and its exit code is still authoritative. What a timeout still
+/// guarantees is that a HUNG command fails — SIGKILLed, `ran == true`, a
+/// FAILING row — never a pass and never an absent row (decision
+/// `5c9e2b74`'s honesty constraint, pinned in
+/// `multi_check_verification_plan_test.dart`).
 ///
 /// ## HOW A SWEEP BECOMES ROWS (decision `f3a81c27`)
 ///
@@ -1695,18 +1731,27 @@ final VerificationPlan triageVerificationPlan = VerificationPlan(
 ///   language version); after resolution the same command exits 0. Each check
 ///   therefore runs its own `dart pub get` in its own root, so each is
 ///   self-contained — measured member `dart pub get` is 1.6s.
-/// * **Every activated check fits the verifier's 2-minute per-command
-///   budget** ([WorkspaceVerifier.defaultTimeout], applied once to setup and
-///   once to the command): format 28s, `dart analyze` at worst 67s
-///   (`apps/control_plane`), `dart test` at worst 80s
-///   (`packages/execution_coordinator`), all measured cold at base.
+/// * **Every activated check fits its OWN declared timeout**, not the
+///   verifier's 2-minute default — the cold/warm/timeout/headroom table is
+///   in "PER-CHECK TIMEOUTS" above, sized from the cold column.
 /// * **The rows are produced serially** — `_completeSuccess` runs checks in
-///   plan order — so this plan adds roughly 15–20 minutes of wall-clock to an
-///   implementation execution. That is inside the 4-hour execution budget
-///   (`AgentExecutionBudgets.byRole['implement-feature']`), and it is stated
-///   here because it is what the operator should expect to see.
+///   plan order — so this plan adds roughly 7.5 minutes of validation to an
+///   implementation execution when warm (measured end-to-end at this HEAD:
+///   445s for all 32 checks, 31 exiting 0 and the flutter check failing only
+///   on `transition_copy_test`), and much more cold in a system-temp
+///   worktree — the runner alone measured 959.67s there, and at base the two
+///   newly activated checks were measured at 959.67s + 209s before any sweep
+///   root pays its cold recompile. Even a cold figure sits inside the
+///   4-hour execution budget
+///   (`AgentExecutionBudgets.byRole['implement-feature']`, which bounds the
+///   WHOLE dispatch path including verification), and it is stated here
+///   because it is what the operator should expect to see.
 final VerificationPlan implementationVerificationPlan = VerificationPlan(
   checks: [
+    // MEASURED: 28s cold at base `54d440c`, 25s warm at this HEAD →
+    // 3 minutes is 6.4× the cold measurement — headroom for a fresh
+    // worktree's cold formatter pass, while still failing a genuinely hung
+    // `dart format` within an operator-bounded time.
     const VerificationCheck(
       command: [
         'dart',
@@ -1717,21 +1762,66 @@ final VerificationPlan implementationVerificationPlan = VerificationPlan(
       ],
       setupCommand: ['dart', 'pub', 'get'],
       checkName: 'dart_format_repo_root',
+      timeout: Duration(minutes: 3),
     ),
+    // MEASURED worst root: `apps/control_plane` at 67s cold (17s warm at
+    // this HEAD) → 5 minutes is 4.5× the cold figure. The same value is used
+    // for every root because `dart analyze` is bounded by package size, and
+    // the slowest measured root is the one that sets the floor for all of
+    // them.
     for (final root in workspaceMemberRoots)
       VerificationCheck(
         command: const ['dart', 'analyze'],
         setupCommand: const ['dart', 'pub', 'get'],
         checkName: 'dart_analyze_${checkSlugFor(root)}',
         workingDirectory: root,
+        timeout: const Duration(minutes: 5),
       ),
+    // MEASURED worst root at base: `packages/execution_coordinator` at 80s
+    // cold (warm worst at this HEAD: 32s, `packages/worker_runtime`) →
+    // 5 minutes is 3.75× the cold figure, and every other suite measured
+    // below it.
     for (final root in dartTestSweepRoots)
       VerificationCheck(
         command: const ['dart', 'test'],
         setupCommand: const ['dart', 'pub', 'get'],
         checkName: 'dart_test_${checkSlugFor(root)}',
         workingDirectory: root,
+        timeout: const Duration(minutes: 5),
       ),
+    // MEASURED: 531s through this runner's 6-way per-file pool cold in the
+    // main checkout (base `54d440c`; 117s / 247.6s warm at this HEAD), and
+    // **959.67s cold in a system-TEMP worktree** — which is the REPRESENTATIVE
+    // figure for an execution, because `_triageWorkspaceRoot()` defaults to
+    // `Directory.systemTemp/shipit_triage_workspaces`, so that is where the
+    // worker runs this command. (237s is the single-process sweep AGENTS.md
+    // rules out because one failing file must not hide behind the others.)
+    // 25 minutes is 1.56× the worst measured run — the slowest check in the
+    // plan, which is why it carries the largest bound. The runner itself has
+    // no internal timeout: a file that HANGS inside it is killed here, by
+    // this bound, and fails — within 25 minutes, not within the 4-hour
+    // execution budget.
+    const VerificationCheck(
+      command: ['dart', 'run', 'tool/run_unit_tests.dart'],
+      setupCommand: ['dart', 'pub', 'get'],
+      checkName: 'server_unit_tests_runner',
+      workingDirectory: 'apps/server',
+      timeout: Duration(minutes: 25),
+    ),
+    // MEASURED: 209s cold / 247s warm at base `54d440c`, 43s warm at this
+    // HEAD → 10 minutes is 2.4× the slower base figure. This check was
+    // previously withheld partly for being base-red (`transition_copy_test`);
+    // decision `8d4a1f53` routed that defect to the lane that owns
+    // `packages/workflow_engine`, and it stays visible here as a real failing
+    // check rather than an excluded one — measured at this HEAD: 506 passed,
+    // 1 failed, the one failure being that test.
+    const VerificationCheck(
+      command: ['flutter', 'test'],
+      setupCommand: ['dart', 'pub', 'get'],
+      checkName: 'flutter_test_apps_control_plane',
+      workingDirectory: 'apps/control_plane',
+      timeout: Duration(minutes: 10),
+    ),
   ],
 );
 
@@ -1852,9 +1942,11 @@ class DeclaredValidationCheck {
 /// Decision `a0e6f31c` put it in a different tier, recorded at the gate that
 /// owns it, and this record must never be read as claiming that check ran.
 ///
-/// [implementationVerificationPlan] ACTIVATES the first three of these (as 30
-/// checks — see its doc) and does not activate the last two; the reasons are
-/// in [perExecutionValidationChecksNotActivated].
+/// [implementationVerificationPlan] ACTIVATES all five of these (as 32
+/// checks — see its doc, including the per-check timeout table), and
+/// [perExecutionValidationChecksNotActivated] — the record of anything
+/// withheld — is empty. The two are cross-checked in both directions by
+/// `implementation_verification_plan_test.dart`.
 const List<DeclaredValidationCheck> perExecutionValidationChecks = [
   DeclaredValidationCheck(
     checkName: 'dart_format_repo_root',
@@ -1884,53 +1976,45 @@ const List<DeclaredValidationCheck> perExecutionValidationChecks = [
 ];
 
 /// The declared per-execution checks that [implementationVerificationPlan]
-/// does **not** activate, and the MEASURED reason each one is not activated.
+/// does **not** activate — **EMPTY as of decisions `5c9e2b74` +
+/// `8d4a1f53`**, because the plan now activates all five.
 ///
-/// ## WHY THIS MAP RENAMED, AND WHAT CHANGED IN ITS SEMANTICS
+/// ## WHY THE MAP STILL EXISTS WHILE EMPTY
 ///
-/// It used to be `perExecutionChecksNotExpressibleAsOnePlan`, and every entry
-/// then said, in some form, "a single-command VerificationPlan cannot express
-/// this". That was true when the plan carried one check. It is no longer the
-/// reason: `7b2c4e91` gave the record a per-check working directory, and
-/// `f3a81c27` built the server runner, so both remaining entries are now
-/// expressible and are withheld for reasons OUTSIDE the mechanism — a base
-/// red and a budget violation, each measured. Renaming the map is how the
-/// tree stops telling the old story.
+/// It used to carry the two withheld checks with their measured blockers:
+/// the server unit-test runner (531s through its per-file pool in the main
+/// checkout, **959.67s cold in a system-temp worktree** — the default
+/// execution location — with 237s as the single-process sweep AGENTS.md
+/// rules out; all three over the verifier's 2-minute per-command budget —
+/// plus `onboarding_test.dart` needing a live database) and
+/// `flutter test` (209s cold / 247s warm, plus a base-red
+/// `transition_copy_test`). Both blockers were MEASURED, and both are now
+/// RESOLVED rather than deleted:
+///
+/// * decision `5c9e2b74` raised the per-check timeout, so both checks fit —
+///   see the timeout table in [implementationVerificationPlan]'s doc;
+/// * decision `8d4a1f53` reclassified `onboarding_test.dart` to
+///   `test/integration/` (it needs a live database; the per-execution tier
+///   excludes integration BY CONSTRUCTION) and routed `transition_copy_test`
+///   to the lane that owns `packages/workflow_engine`.
+///
+/// The map stays as a record of the ONE place a withheld check can be
+/// declared, so the honesty rule below keeps having a home. `null` or a
+/// removed map would make "withheld" unrecoverable as a concept; an empty map
+/// makes the current state a VALUE that a test compares against the plan.
 ///
 /// ## THE HONESTY RULE, UNCHANGED
 ///
-/// This map exists so the gap is a value in the tree rather than a paragraph
+/// This map exists so a gap is a value in the tree rather than a paragraph
 /// in a review comment. A plan that reads as full coverage while covering
 /// less is exactly the laundering decision `1b7e4c93` rejected, and the only
-/// durable defence is to make the shortfall impossible to miss:
-/// `implementation_verification_plan_test.dart` asserts that a declared
-/// check is activated if and only if it is absent from this map, so neither
-/// side can drift without a failing test.
-const Map<String, String> perExecutionValidationChecksNotActivated = {
-  'server_unit_tests_runner':
-      'MEASURED at this HEAD: apps/server/test/onboarding_test.dart requires a '
-      'live database and fails in a worktree without one, so activating the '
-      'runner would settle EVERY implementation execution executedFail for a '
-      'base defect the implementer did not write — the activation waits on '
-      'that base red, which is an operator decision. The runner is additionally '
-      'too slow for the verifier budget: 531s for 52 files through the '
-      'per-file pool, and 237s for one single-process sweep, against '
-      'WorkspaceVerifier.defaultTimeout (2 minutes per command). The pool does '
-      'NOT fix it, because each dart test process recompiles the package graph '
-      'and the work is compile-bound (29% CPU under a 6-way pool, measured). '
-      'Fitting the declared tier into one 2-minute command needs a raised '
-      'verifier timeout or a materially different mechanism — both operator '
-      'decisions. tool/run_unit_tests.dart lands correct and unactivated',
-  'flutter_test_apps_control_plane':
-      'MEASURED at base 54d440c: cold 209s, warm 247s — both exceed '
-      'WorkspaceVerifier.defaultTimeout (2 minutes per command), so the check '
-      'would be killed mid-run and its timeout recorded as a failed verdict '
-      'about work that was never judged. Independently base-red: '
-      'apps/control_plane/test/shared/transition_copy_test.dart fails at '
-      'base (506 passed, 1 failed), so activation would fail every execution '
-      'for that defect. Raising the per-command timeout and fixing the base '
-      'red are operator decisions outside this change',
-};
+/// durable defence is to make any shortfall impossible to miss:
+/// `implementation_verification_plan_test.dart` derives the activated set
+/// FROM THE PLAN itself and asserts it equals `perExecutionValidationChecks`
+/// minus this map's keys — a declared check withheld but still present in the
+/// plan, or activated but absent from it, fails the test. So does a NEW
+/// entry appearing here without the plan dropping its check.
+const Map<String, String> perExecutionValidationChecksNotActivated = {};
 
 /// The plans this process can attach, by role.
 ///

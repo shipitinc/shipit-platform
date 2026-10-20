@@ -128,6 +128,28 @@ class WorkItemSupersededException implements Exception {
 /// workspace, so a plan written against the repository's own layout runs in the
 /// agent's worktree of that same repository without carrying the worktree's
 /// absolute path — which differs on every execution.
+///
+/// ## [timeout], AND WHY IT IS PER CHECK (decision `5c9e2b74`)
+///
+/// Without one, every check is bounded by [WorkspaceVerifier.defaultTimeout]
+/// (2 minutes, applied once to setup and once to the command) — and two of the
+/// five declared per-execution checks cannot complete inside that: the server
+/// unit-test runner measures **531s** through its per-file pool cold in the
+/// main checkout and **959.67s** cold in a system-temp worktree (the default
+/// execution location), and `flutter test` measures **209s cold / 247s warm**.
+/// A check that is killed
+/// mid-run produces a FAILING verdict about work that was never judged, so
+/// raising the bound is what lets the full declared tier actually run rather
+/// than fail for the wrong reason.
+///
+/// The honesty rule is unchanged and is the reason this is a bound, not an
+/// exemption: **a timeout is a FAILING check** — `ran` stays `true` (the
+/// process started and overran), the row is written with
+/// [AgentClaimStatus.failed], and nothing about a timeout resembles a pass or
+/// an absent row. [WorkspaceVerifier] already enforces that; this field only
+/// chooses how long each check is allowed to take. A `null` keeps the
+/// verifier's default, so every plan written before this field existed behaves
+/// exactly as before.
 @immutable
 class VerificationCheck {
   const VerificationCheck({
@@ -135,6 +157,7 @@ class VerificationCheck {
     required this.checkName,
     this.workingDirectory = workspaceRootWorkingDirectory,
     this.setupCommand,
+    this.timeout,
   });
 
   /// The working directory value that means "the workspace root itself", which
@@ -170,6 +193,19 @@ class VerificationCheck {
   /// subdirectory resolves inside the workspace: `packages/execution_coordinator`
   /// means "that package, in whatever worktree this execution got".
   final String workingDirectory;
+
+  /// How long [command] — and then [setupCommand], each on its own — is
+  /// allowed to run before [WorkspaceVerifier] kills it and records a FAILING
+  /// verdict. `null` means the verifier's own default (2 minutes), which is
+  /// what every check of every plan written before this field existed got.
+  ///
+  /// Sized per check from MEASURED runtimes with headroom (decision
+  /// `5c9e2b74`), never invented: a value below the measured runtime would
+  /// kill healthy checks mid-run, and a value so high it can never fire would
+  /// turn a hang into an unbounded wait. See the class doc for the honesty
+  /// rule this field does NOT relax: a timeout is a failing row, never an
+  /// absent one and never a pass.
+  final Duration? timeout;
 
   /// [workingDirectory] resolved against [workspaceRoot].
   String resolveAgainst(String workspaceRoot) =>
@@ -294,6 +330,25 @@ class VerificationPlan {
           'duplicated in one plan. Two checks with one name would write two '
               'rows under one verification id, and the second would overwrite '
               'the first',
+        );
+      }
+      // Validated HERE rather than as an `assert` on [VerificationCheck]'s
+      // const constructor: a `>` over a [Duration] is a method call, and a
+      // const constructor's assert condition must be a potentially-constant
+      // expression, which built-in relational operators only are for int,
+      // double, string and bool. Measured, not assumed — a const
+      // `VerificationCheck(timeout: ...)` with a `Duration` assert in the
+      // constructor fails to compile. Every other check invariant already
+      // lives in this loop, and this constructor is not `const`.
+      if (check.timeout != null && check.timeout! <= Duration.zero) {
+        throw ArgumentError.value(
+          check.timeout,
+          'timeout',
+          'a verification timeout must be positive. Zero or a negative '
+              'duration would kill every check before it could observe '
+              'anything, which converts "allowed long enough" into '
+              '"never runs" — the one outcome a raised timeout exists to '
+              'prevent',
         );
       }
     }
@@ -1136,6 +1191,14 @@ class ExecutionCoordinator {
       workingDirectory: workingDirectory,
       command: check.command,
       setupCommand: check.setupCommand,
+      // The check's OWN timeout, applied here for the first time in this
+      // path — until `5c9e2b74` every check silently took the verifier's
+      // 2-minute default, which is what made the server unit-test runner and
+      // `flutter test` unexpressible as activated checks. `null` keeps the
+      // default, so single-check and pre-existing plans are byte-for-byte
+      // unchanged in behaviour. A check that overruns its own timeout is
+      // KILLED and recorded as failed (`ran == true`), never skipped.
+      timeout: check.timeout,
     );
     if (!outcome.ran) return null;
 

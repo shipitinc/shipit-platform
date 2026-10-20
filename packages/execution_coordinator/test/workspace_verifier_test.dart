@@ -63,6 +63,15 @@ void main() {
       timeout: const Duration(milliseconds: 500),
     );
     expect(outcome.passed, isFalse);
+    expect(
+      outcome.ran,
+      isTrue,
+      reason:
+          'the process was SPAWNED and then killed for exceeding its bound; '
+          'ran: true is what separates "started and overran" (a failing row) '
+          'from "never started" (no row at all) — decision 5c9e2b74 relies '
+          'on that distinction for every bounded check',
+    );
     expect(outcome.detail, contains('exceeded'));
   });
 

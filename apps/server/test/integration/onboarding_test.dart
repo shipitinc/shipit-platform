@@ -12,7 +12,7 @@ import 'package:serverpod/serverpod.dart';
 import 'package:serverpod_test/serverpod_test.dart';
 import 'package:test/test.dart';
 
-import 'support/baseline_proof.dart';
+import '../support/baseline_proof.dart';
 
 /// Test group name for the onboarding test
 const String _testGroupName = 'ShipIt Platform Onboarding (S-1)';

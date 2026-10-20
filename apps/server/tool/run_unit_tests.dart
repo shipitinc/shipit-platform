@@ -51,14 +51,32 @@
 // and compile overhead that has nothing to do with suite runtime — against the
 // verifier's 2-minute per-command budget (`WorkspaceVerifier.defaultTimeout`).
 //
-// **THE POOL IS NOT ENOUGH, AND THE REASON IS MEASURED.** At this HEAD the
-// 52-file suite through this runner takes **531s** cold: the pool overlaps the
-// processes but each one re-compiles the package graph, and on this
-// 8-core/16GB machine the work is compile- and I/O-bound (measured 29% CPU
-// under a 6-way pool), so six at once are barely faster than one. A single
+// **THE POOL IS NOT ENOUGH, AND THE REASON IS MEASURED.** With 51 files
+// (52 before decision `8d4a1f53` moved `onboarding_test.dart` into
+// `test/integration/`), the suite through this runner takes **531s** cold at
+// base `54d440c` — **117s** warm at the HEAD that activated it: the pool
+// overlaps the processes but each one re-compiles the package graph, and on
+// this 8-core/16GB machine the work is compile- and I/O-bound (measured 29%
+// CPU under a 6-way pool), so six at once are barely faster than one. A single
 // `dart test` process over all 51 files — which reuses one compilation but
 // which AGENTS.md rules out because one failing file must not hide behind the
-// others — takes **237s**. BOTH exceed the 2-minute per-command budget.
+// others — takes **237s**. BOTH exceed the 2-minute per-command budget, which
+// is why `f3a81c27` delivered this runner CORRECT AND UNACTIVATED.
+//
+// ## ACTIVATED, WITH A BOUND OF ITS OWN (decision `5c9e2b74`)
+//
+// The plan now runs this runner as the check `server_unit_tests_runner` with
+// a **25-minute** per-check timeout — sized from the WORST measured run:
+// **959.67s cold in a system-TEMP worktree**, which is the representative
+// figure because execution worktrees default to `Directory.systemTemp`
+// (`_triageWorkspaceRoot()` in `server.dart`), not from the 2-minute default
+// this file could never fit. (The main-checkout cold figure, 531s, would have
+// made a 15-minute bound look sufficient; the temp-worktree measurement is
+// what ruled that out.) Raising the bound changes nothing about what the
+// runner OBSERVES: it still enumerates every top-level `test/*.dart` file,
+// still runs each one in its own process, and still exits non-zero if ANY of
+// them fails. What the bound guarantees is that a HANGING file fails the
+// check on time instead of waiting for the whole execution budget.
 //
 // ## Why the warm-up exists, and who found the race
 //
@@ -136,14 +154,19 @@ Future<void> main() async {
 
 /// Maximum number of `dart test <file>` processes alive at once.
 ///
-/// MEASURED, and reported honestly: the pool overlaps processes, but at this
-/// HEAD the 52-file suite still takes **531s** because each process recompiles
-/// the package graph on an 8-core/16GB machine that is compile-bound, not
-/// CPU-bound. See the file header's "Concurrency, AND THE HONEST NUMBER" — the
-/// honest number is that NO form of this runner fits the verifier's 2-minute
-/// per-command budget, which is why the check is delivered correct and
-/// UNACTIVATED. The warm-up in [runUnitTests] exists because a cold 6-way
-/// start races the launcher precompile.
+/// MEASURED, and reported honestly: the pool overlaps processes, but the
+/// suite still takes **531s cold** (base `54d440c`; 117s warm at the HEAD
+/// that activated the check) because each process recompiles the package
+/// graph on an 8-core/16GB machine that is compile-bound, not
+/// CPU-bound. See the file header's "Concurrency, AND THE HONEST NUMBER" — and
+/// the header's "ACTIVATED, WITH A BOUND OF ITS OWN": the check no longer has
+/// to fit the verifier's 2-minute default, because decision `5c9e2b74` gives
+/// it a 25-minute timeout sized from the worst measured run (959.67s cold in
+/// a system-temp worktree). The honest number
+/// still stands: no form of per-file isolation fits 2 minutes cold, which is why
+/// the bound was raised rather than the isolation relaxed. The warm-up in
+/// [runUnitTests] exists because a cold 6-way start races the launcher
+/// precompile.
 const int maxParallelFiles = 6;
 
 /// Enumerates the unit-test files of [packageRoot]: every top-level

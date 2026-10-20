@@ -312,6 +312,46 @@ void main() {
       );
     });
 
+    test('a non-positive timeout is refused at construction', () {
+      // Decision `5c9e2b74` gave checks a timeout so the two formerly-withheld
+      // ones could carry bounds larger than the verifier's 2-minute default.
+      // A zero or negative bound would silently mean "kill immediately" — a
+      // check that can never produce a verdict while LOOKING configured — so
+      // the plan refuses it here, before any execution starts, rather than
+      // discovering it as a permanently-killed check.
+      for (final bad in const [Duration.zero, Duration(seconds: -1)]) {
+        expect(
+          () => VerificationPlan(
+            checks: [
+              VerificationCheck(
+                command: const ['a'],
+                checkName: 'non_positive',
+                timeout: bad,
+              ),
+            ],
+          ),
+          throwsA(isA<ArgumentError>()),
+          reason:
+              '"$bad" cannot bound a check that is meant to produce a '
+              'verdict',
+        );
+      }
+      // And the positive case still constructs: the validation refuses only
+      // the bad values, not the feature.
+      expect(
+        () => VerificationPlan(
+          checks: [
+            const VerificationCheck(
+              command: ['a'],
+              checkName: 'bounded',
+              timeout: Duration(minutes: 1),
+            ),
+          ],
+        ),
+        returnsNormally,
+      );
+    });
+
     test('reading the single-check accessors on a multi-check plan throws', () {
       final plan = VerificationPlan(
         checks: [
@@ -866,13 +906,72 @@ void main() {
       expect(rows.single.status, AgentClaimStatus.failed);
     });
 
+    test('a check that BLOWS its own timeout writes a FAILING row — never '
+        'absent, never passed (decision 5c9e2b74)', () async {
+      // ## THE TIMEOUT IS A BOUND ON FAILURE, NOT AN ESCAPE FROM VERDICT.
+      //
+      // The two activated checks that used to be withheld (the server runner
+      // and `flutter test`) now carry timeouts of 25 and 10 minutes. If a
+      // timeout wrote NO row, the record could not distinguish "the check was
+      // killed for taking too long" from "the check never started" — and a
+      // killed check is exactly a check that FAILED to demonstrate anything.
+      // `WorkspaceVerifier._run` kills with SIGKILL after the bound and
+      // reports `ran: true`, `passed: false`; this pins the coordinator's
+      // persistence of that outcome.
+      await readyItem();
+      fixture.implement();
+
+      final sleeper = File('${fixture.root.path}/tool/sleeper.dart')
+        ..writeAsStringSync(
+          "import 'dart:async';\n"
+          'void main() {\n'
+          "  Timer(const Duration(seconds: 30), () {});\n"
+          '}\n',
+        );
+
+      await coordinatorOf(
+        VerificationPlan(
+          checks: [
+            VerificationCheck(
+              command: [Platform.resolvedExecutable, sleeper.path],
+              checkName: 'hangs',
+              timeout: const Duration(seconds: 1),
+            ),
+          ],
+        ),
+      ).execute(request());
+
+      final rows = await executionStore.readVerifications('exec-1');
+      expect(
+        rows,
+        hasLength(1),
+        reason:
+            'a check that started and overran is a check that RAN and FAILED; '
+            'its row must exist so the gate can fail on it rather than read '
+            'silence as absence',
+      );
+      expect(
+        rows.single.status,
+        AgentClaimStatus.failed,
+        reason: 'a timeout must never be a passing verdict',
+      );
+      expect(
+        rows.single.detail,
+        contains('Command exceeded 1s and was killed.'),
+        reason:
+            'the persisted row must say the check was KILLED FOR TIME, not '
+            'merely fail — a bare failure is indistinguishable from a bad exit',
+      );
+    });
+
     test('a plan shaped like the per-root SWEEP (f3a81c27) writes one row per '
         'root that ran, in plan order', () async {
       // ## WHY THIS SHAPE, AND NOT THREE CHECKS
       //
       // `implementationVerificationPlan` expresses `dart analyze` and
-      // `dart test` as ONE CHECK PER PACKAGE ROOT (30 checks, decision
-      // `f3a81c27`), so the coordinator must behave with a plan whose
+      // `dart test` as ONE CHECK PER PACKAGE ROOT (32 checks since decisions
+      // `5c9e2b74` + `8d4a1f53`, was 30 under `f3a81c27`), so the coordinator
+      // must behave with a plan whose
       // checks differ only by working directory. This is that shape at
       // fixture scale: two roots that exist, one that does not, and a check
       // whose tool is absent. What it pins is that the store gains EXACTLY

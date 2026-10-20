@@ -12,6 +12,17 @@ class WorkspaceVerifier {
     this.outputCapCharacters = 8000,
   });
 
+  /// Fallback bound for a run that declares no `timeout` of its own.
+  ///
+  /// Applied once to the setup command and once to the command itself — each
+  /// gets the full duration, not a shared budget. A [VerificationCheck] may
+  /// override it per check (decision `5c9e2b74`: two of the five declared
+  /// per-execution checks need more than two minutes to complete, and being
+  /// killed mid-run would record a FAILING verdict about work never judged);
+  /// the override changes only HOW LONG a check may take. The result of
+  /// overrunning it is fixed here and is not caller-selectable: the process is
+  /// SIGKILLed and the outcome is `passed == false` with `ran == true` — a
+  /// failing row, never a pass and never an absent one.
   final Duration defaultTimeout;
   final int outputCapCharacters;
 

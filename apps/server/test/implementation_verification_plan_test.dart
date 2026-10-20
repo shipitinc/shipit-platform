@@ -32,12 +32,14 @@ import 'package:workflow_store/workflow_store.dart';
 ///
 /// ## WHAT IT DELIBERATELY DOES NOT CLAIM
 ///
-/// That the plan activates the per-execution tier. It activates THREE of the
-/// five declared checks (as 30 per-root checks) and withholds two. Group
-/// 'the residual is explicit, complete, and not laundered' exists to make
-/// that shortfall impossible to read as coverage — it asserts that a declared
-/// check is activated if and only if it is absent from
-/// [perExecutionValidationChecksNotActivated].
+/// That the plan activates the merge/release tier. It activates ALL FIVE
+/// declared per-execution checks (as 32 per-root/per-runner checks) and
+/// withholds none — group 'the residual is explicit, complete, and not
+/// laundered' derives BOTH sides independently (the activated set FROM THE
+/// PLAN, the withheld set from [perExecutionValidationChecksNotActivated]) and
+/// demands they agree in both directions, so a check added to the plan without
+/// being declared, a declared check dropped from the plan, or a withheld entry
+/// added without dropping the check all fail loudly.
 ///
 /// ## THE TWO DRIFT GUARDS
 ///
@@ -277,6 +279,39 @@ void main() {
       }
     });
 
+    test('the server runner check equals the AGENTS.md server row exactly', () {
+      // Decision `8d4a1f53`'s activation of the server unit tier has to land
+      // as THIS string — the one the gate compares a persisted row against —
+      // not a re-spelling of it. A bare `dart test` here would both fail F4
+      // and re-pick-up `test/integration/` by construction.
+      final declared = agentsMdPerExecution.firstWhere(
+        (r) => r.command.startsWith('dart run tool/run_unit_tests.dart'),
+      );
+      expect(
+        _checksNamed('server_unit_tests_runner').single.command.join(' '),
+        declared.command,
+        reason:
+            'F4 string equality: the activated server check must carry the '
+            'runner command AGENTS.md declares, character for character',
+      );
+    });
+
+    test(
+      'the flutter check equals the AGENTS.md control-plane row exactly',
+      () {
+        final declared = agentsMdPerExecution.firstWhere(
+          (r) => r.command == 'flutter test',
+        );
+        expect(
+          _checksNamed(
+            'flutter_test_apps_control_plane',
+          ).single.command.join(' '),
+          declared.command,
+          reason: 'F4 string equality, same as every other activated check',
+        );
+      },
+    );
+
     test('every activated check resolves packages first — measured, not '
         'assumed', () {
       // In a fresh detached worktree with no package resolution, the format
@@ -395,46 +430,112 @@ void main() {
   });
 
   group('the residual is explicit, complete, and not laundered', () {
+    /// The declared check each PLAN check activates, derived from the plan
+    /// alone.
+    ///
+    /// The two sweeps are many-to-one by design (decision `f3a81c27`: one
+    /// declared `dart analyze` / `dart test` row expands to one check PER
+    /// workspace root), so a per-root check maps back to its declared row by
+    /// prefix; everything else maps to its own name. Anything that maps to a
+    /// name AGENTS.md does not declare therefore shows up as an element the
+    /// declared set does not contain — which is the reverse direction the
+    /// equality below rejects.
+    String declaredNameFor(String checkName) => switch (checkName) {
+      _ when checkName.startsWith('dart_analyze_') =>
+        'dart_analyze_per_package_root',
+      _ when checkName.startsWith('dart_test_') => 'dart_test_per_package_root',
+      _ => checkName,
+    };
+
+    /// The activated set, computed FROM THE PLAN — never from a hand-written
+    /// list, which would only prove the list agrees with itself.
+    Set<String> activatedDeclaredNames() => implementationVerificationPlan
+        .checks
+        .map((c) => declaredNameFor(c.checkName))
+        .toSet();
+
     test('a declared check is activated if and only if it is not withheld', () {
       final declaredNames = perExecutionValidationChecks
           .map((c) => c.checkName)
           .toSet();
       final withheld = perExecutionValidationChecksNotActivated.keys.toSet();
 
-      expect(
-        withheld,
-        isNot(contains('dart_format_repo_root')),
-        reason:
-            'the format check IS activated; listing it as withheld would '
-            'understate what the plan does',
-      );
-      expect(
-        declaredNames.difference(withheld),
-        {
-          'dart_format_repo_root',
-          'dart_analyze_per_package_root',
-          'dart_test_per_package_root',
-        },
-        reason:
-            'exactly the three sweep/format checks are activated. If this is '
-            'not exactly the activated set, the plan is claiming coverage it '
-            'does not have',
-      );
+      // Every withheld name must be a declared one: an invented name would
+      // hide a real gap behind a fake reason.
       expect(
         withheld.difference(declaredNames),
         isEmpty,
         reason:
-            'every withheld entry must name a check AGENTS.md actually '
-            'declares; an invented name would hide a real gap behind a fake '
-            'reason',
+            'a withheld entry that AGENTS.md does not declare is a name no '
+            'gate ever asked about, so withholding it proves nothing',
       );
+      // Direction 1 — the plan must not activate anything undeclared.
       expect(
-        withheld,
-        {'server_unit_tests_runner', 'flutter_test_apps_control_plane'},
+        activatedDeclaredNames().difference(declaredNames),
+        isEmpty,
+        reason:
+            'a plan check that maps to no AGENTS.md row is coverage the '
+            'contract never declared; the sweep mapping above must account '
+            'for every check in the plan',
+      );
+      // Direction 2 — the iff itself: activated == declared - withheld.
+      // Set equality bites BOTH ways, so a declared check neither in the plan
+      // nor withheld fails, and so does one both in the plan and withheld.
+      expect(
+        activatedDeclaredNames(),
+        declaredNames.difference(withheld),
+        reason:
+            'the plan\'s own checks, mapped back to declared rows, must be '
+            'EXACTLY the declared set minus the withheld set. A mismatch in '
+            'either direction means one side moved alone: coverage claimed '
+            'without a check, or a check run without a declared contract',
       );
     });
 
+    test(
+      'the full five-check tier is activated — the withheld map is empty',
+      () {
+        // The end state decisions `5c9e2b74` + `8d4a1f53` produce. Replaced
+        // the previous pin (`exactly three activated`, `withheld == the two
+        // named checks`) — that one guarded against a map emptied WITHOUT the
+        // plan filling in; this one guards the same laundering shape with the
+        // activation now real, by requiring both sides to say five.
+        expect(
+          perExecutionValidationChecksNotActivated,
+          isEmpty,
+          reason:
+              'no per-execution check is withheld; if an entry reappears here, '
+              'the plan must drop that check too or the iff test above fails',
+        );
+        expect(
+          activatedDeclaredNames(),
+          {
+            'dart_format_repo_root',
+            'dart_analyze_per_package_root',
+            'dart_test_per_package_root',
+            'server_unit_tests_runner',
+            'flutter_test_apps_control_plane',
+          },
+          reason:
+              'all five declared rows must be derivable from the plan; a '
+              'missing one is a declared check nothing runs',
+        );
+        expect(
+          perExecutionValidationChecks.length -
+              perExecutionValidationChecksNotActivated.length,
+          activatedDeclaredNames().length,
+          reason:
+              'declared-minus-withheld and the plan-derived activated set are '
+              'the two independent counts of the same claim; they must agree',
+        );
+      },
+    );
+
     test('every withheld check carries a stated, measured reason', () {
+      // Vacuously true while the map is empty, and deliberately kept: the
+      // moment an entry returns, it must arrive with a MEASURED reason or
+      // this fails. A withheld check with no reason is the shape the
+      // laundering guard exists for.
       for (final entry in perExecutionValidationChecksNotActivated.entries) {
         expect(
           entry.value.trim(),
@@ -452,6 +553,9 @@ void main() {
     });
 
     test('no withheld command appears anywhere in the implementation plan', () {
+      // Also vacuous while empty, and kept for the same reason: a check that
+      // claims to be withheld while the plan carries its command is the
+      // exact contradiction this group exists to refuse.
       for (final withheld in perExecutionValidationChecksNotActivated.keys) {
         final check = perExecutionValidationChecks.firstWhere(
           (c) => c.checkName == withheld,
@@ -467,29 +571,138 @@ void main() {
     });
 
     test(
-      'the coverage claim cannot be widened by the map being emptied',
+      'the two checks that WERE withheld are activated, by name and cwd',
       () {
-        // Guards the laundering shape `1b7e4c93` rejected: a plan that reads
-        // as full coverage while covering less. Deleting the map's entries
-        // would make the "exactly three activated" test above fail — this
-        // names why.
+        // Pinned because their activation is the whole point of decisions
+        // `5c9e2b74` + `8d4a1f53`: silently dropping either from the plan —
+        // and thus re-withholding it, or worse, dropping it without adding
+        // it to the map — fails here.
+        final runner = _checksNamed('server_unit_tests_runner');
+        expect(runner, hasLength(1), reason: 'the server unit tier must run');
+        expect(runner.single.workingDirectory, 'apps/server');
         expect(
-          perExecutionValidationChecks.length -
-              perExecutionValidationChecksNotActivated.length,
-          3,
+          runner.single.command.join(' '),
+          'dart run tool/run_unit_tests.dart',
         );
+        expect(
+          runner.single.setupCommand,
+          ['dart', 'pub', 'get'],
+          reason: 'the runner resolves its own package first, like every check',
+        );
+
+        final flutter = _checksNamed('flutter_test_apps_control_plane');
+        expect(
+          flutter,
+          hasLength(1),
+          reason: 'the control-plane tier must run',
+        );
+        expect(flutter.single.workingDirectory, 'apps/control_plane');
+        expect(flutter.single.command.join(' '), 'flutter test');
+        expect(flutter.single.setupCommand, ['dart', 'pub', 'get']);
+      },
+    );
+  });
+
+  group('every activated check carries a timeout that fits its measurement', () {
+    // ## WHY THIS GROUP EXISTS (decision `5c9e2b74`)
+    //
+    // A per-check timeout is a BOUND, not an exemption: below the measured
+    // runtime it kills healthy checks mid-run and records a failing verdict
+    // about work never judged; so far above it that it can never fire, a hung
+    // command stops being a FAILING check. Both edges are pinned here against
+    // the MEASURED runtimes, so neither can be moved by editing a comment.
+    // The floors are the measurements themselves (from this plan's own
+    // timeout table); the ceiling is the operator's bound on how long a hang
+    // may wait before failing.
+    const Duration ceiling = Duration(minutes: 30);
+
+    test('no check falls back to the verifier default implicitly', () {
+      for (final check in implementationVerificationPlan.checks) {
+        expect(
+          check.timeout,
+          isNotNull,
+          reason:
+              '${check.checkName} declares no timeout, so it silently takes '
+              'WorkspaceVerifier.defaultTimeout (2 min) — the exact budget '
+              'that made two of the five declared checks unrunnable. Every '
+              'activated check must name its own bound',
+        );
+      }
+      expect(implementationVerificationPlan.checks, hasLength(32));
+    });
+
+    test(
+      'every timeout clears the measured runtime of the check it bounds',
+      () {
+        // MEASURED (this plan's timeout table): format 28s, worst analyze 67s
+        // (apps/control_plane), worst dart test 80s (execution_coordinator),
+        // server runner 959.67s cold in a system-TEMP worktree (the default
+        // execution location; 531s cold in the main checkout, 117s/247.6s
+        // warm), flutter test 209s at base. A timeout at or below its
+        // measurement would kill a healthy run.
+        Duration floorFor(VerificationCheck check) {
+          if (check.checkName == 'server_unit_tests_runner') {
+            return const Duration(seconds: 960); // 959.67s, rounded up
+          }
+          if (check.checkName == 'flutter_test_apps_control_plane') {
+            return const Duration(seconds: 247);
+          }
+          if (check.checkName.startsWith('dart_analyze_')) {
+            return const Duration(seconds: 67);
+          }
+          if (check.checkName.startsWith('dart_test_')) {
+            return const Duration(seconds: 80);
+          }
+          return const Duration(seconds: 28); // format, repo root
+        }
+
+        for (final check in implementationVerificationPlan.checks) {
+          expect(
+            check.timeout!,
+            greaterThan(floorFor(check)),
+            reason:
+                '${check.checkName} is bounded at ${check.timeout} but was '
+                'measured at ${floorFor(check)}; a shorter bound kills a '
+                'healthy run and records a failure about work never judged',
+          );
+        }
       },
     );
 
-    test('the two withheld checks are the two this plan cannot run green', () {
-      // The residual is not arbitrary: these are the two checks whose
-      // activation was measured and rejected in this change. Pinned so that
-      // silently dropping one from the map (and thus claiming it activated)
-      // fails here.
-      expect(
-        perExecutionValidationChecksNotActivated.keys.toSet(),
-        {'server_unit_tests_runner', 'flutter_test_apps_control_plane'},
-      );
+    test('the two formerly-withheld checks clear the 2-minute default that '
+        'blocked them', () {
+      const twoMinutes = Duration(minutes: 2);
+      for (final name in const [
+        'server_unit_tests_runner',
+        'flutter_test_apps_control_plane',
+      ]) {
+        final check = _checksNamed(name).single;
+        expect(
+          check.timeout,
+          greaterThan(twoMinutes),
+          reason:
+              '$name was withheld because 2 minutes could not hold it; a '
+              'timeout at or below that re-creates the exact blocker',
+        );
+      }
+    });
+
+    test('no timeout is so high a hung command can never fail', () {
+      // The honesty constraint of `5c9e2b74`: a timeout must still be a
+      // FAILING check. A bound beyond this ceiling would sit inside no
+      // operator's expectation of "bounded", and the execution budget itself
+      // (4h for implement-feature) would start deciding hangs instead of the
+      // check.
+      for (final check in implementationVerificationPlan.checks) {
+        expect(
+          check.timeout!,
+          lessThanOrEqualTo(ceiling),
+          reason:
+              '${check.checkName} is bounded at ${check.timeout}; a hang must '
+              'fail within an operator-bounded time, not ride the whole '
+              'execution budget',
+        );
+      }
     });
   });
 
