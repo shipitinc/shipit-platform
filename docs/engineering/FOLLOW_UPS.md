@@ -3422,3 +3422,13 @@ under 16 burners and measured **0/12, 0/10 and 0/6** across the same and harsher
 before a one-shot fires and `0` after. Nothing reads `tick` and nothing asserts on it, so it is inert today —
 but a future assertion on `tick` would silently be wrong. LOW; belongs with whoever next touches
 `apps/server/test/tick_single_flight_test.dart`.
+
+**F-201 — a duplicated id-prefix literal with no cross-package pin.**
+`packages/qa_orchestration/lib/src/gates/evaluators/remediation_defect_existence_gate.dart:50` carries its own
+copy of `'design-remediation-'`, while the id is actually produced by
+`apps/server/lib/src/triage/lane_e_design_remediation_work_item.dart:99-100`. Today both agree, but nothing
+ties them: a change to either desynchronizes silently, and a remediation item would stop resolving its own
+defect with **no test going red**. This is precisely F-192/F-196 — *a comment citing the other site is not a
+guard*. The fix is a cross-package pin: either a shared `const` in a contracts package, or an `apps/server`
+test asserting `designRemediationWorkItemId(id).startsWith(RemediationDefectExistenceGate.workItemIdPrefix)`.
+MEDIUM; worth doing alongside M1, where the id's meaning is already being wired.
