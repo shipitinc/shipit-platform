@@ -41,7 +41,19 @@ Set<(String, String)> _liveEnginePairs() {
   final wire = {
     for (final state in WorkItemState.values) state.name: state.wire,
   };
-  final entry = RegExp(r'\(WorkItemState\.(\w+), WorkItemState\.(\w+)\):\s*\[');
+  // `\s` between every token and an OPTIONAL trailing comma: entries whose
+  // key is too long for one line are reflowed by `dart format` into the
+  // three-line `(\n  WorkItemState.a,\n  WorkItemState.b,\n): [` form, and
+  // the previous single-line-only pattern silently dropped every pair that
+  // happened — `featureIntakeParked -> waitingForHumanDecision` vanished
+  // from the enumeration in exactly that way (the reflow is recorded in
+  // `packages/workflow_engine/test/feature_park_way_out_test.dart`), and a
+  // pair with no copy stayed invisible to this guard for as long as the
+  // format held. A guard whose coverage depends on line width guards
+  // nothing.
+  final entry = RegExp(
+    r'\(\s*WorkItemState\.(\w+)\s*,\s*WorkItemState\.(\w+)\s*,?\s*\)\s*:\s*\[',
+  );
 
   final pairs = <(String, String)>{};
   for (final match in entry.allMatches(source.readAsStringSync())) {
@@ -66,6 +78,38 @@ Set<(String, String)> _liveEnginePairs() {
     reason: 'the regex matched no table entries — it has gone stale',
   );
   return pairs;
+}
+
+const _copySource = 'lib/shared/transition_copy.dart';
+
+/// Every explicit `('from', 'to') =>` key of the copy table, parsed from
+/// source for the same reason the engine table is: a hand-maintained mirror
+/// of either side cannot guard the pair. The wildcard arms
+/// `(_, 'cancelled')` / `(_, 'terminated')` are deliberately NOT keys — they
+/// are the generic escapes, asserted directly in their own test below.
+Set<(String, String)> _liveCopyKeys() {
+  final source = File(_copySource);
+  expect(
+    source.existsSync(),
+    isTrue,
+    reason:
+        'cannot read the copy table at $_copySource — the separation '
+        'guard is worthless if it silently enumerates nothing',
+  );
+
+  final keys = <(String, String)>{
+    for (final match in RegExp(
+      r"\(\s*'(\w+)'\s*,\s*'(\w+)'\s*\)\s*=>",
+    ).allMatches(source.readAsStringSync()))
+      (match.group(1)!, match.group(2)!),
+  };
+
+  expect(
+    keys,
+    isNotEmpty,
+    reason: 'the copy-key regex matched no arms — it has gone stale',
+  );
+  return keys;
 }
 
 void main() {
@@ -96,10 +140,25 @@ void main() {
       expect(pairs, contains(('draft', 'planning')));
       expect(pairs, contains(('design_not_required', 'agent_executing')));
       expect(pairs, contains(('deployed', 'completed')));
+      // The longest key in the engine table, and the one a format run
+      // reflowed onto three lines — the pair the old single-line regex
+      // stopped watching without a sound. Pinned by name so a regex edit
+      // that only ever sees one-line keys fails here first.
+      expect(
+        pairs,
+        contains(('feature_intake_parked', 'waiting_for_human_decision')),
+        reason:
+            'multi-line table entries must be enumerated — this pair was '
+            'silently lost to a format reflow once already',
+      );
       expect(
         pairs.length,
-        greaterThanOrEqualTo(40),
-        reason: 'the engine table has ~46 explicit entries',
+        greaterThanOrEqualTo(57),
+        reason:
+            'the engine table has 57 explicit entries; the count is a FLOOR '
+            'so a regex that stops matching (a reflow, a pattern edit) fails '
+            'loudly, not a ceiling — an edge added without copy is named by '
+            'the enumeration test above, never by a count pin',
       );
     });
 
@@ -139,6 +198,97 @@ void main() {
       expect(
         plainTransitionMessage('weirdFuture', 'alsoFuture'),
         'The work moved to a new stage.',
+      );
+    });
+  });
+
+  group('copy and the transition table stay separate', () {
+    // Adding a MESSAGE must never be able to look like adding an EDGE. The
+    // table-enumeration test above pins engine ⊆ copy; this pins the other
+    // direction — a copy key for a pair the engine does not accept is a
+    // promise the engine will never keep, which is the same defect the
+    // `review_rejected -> agent_executing` assertions in the rework group
+    // name from the other side. One direction without the other is how
+    // `('planned', 'design_in_review')` survived: copy for a pair no engine
+    // table has ever contained, carried since the file's first commit.
+    test('no copy key claims an edge the engine does not accept', () {
+      final engine = _liveEnginePairs();
+      final copyKeys = _liveCopyKeys();
+      final impossible = copyKeys.difference(engine).toList()
+        ..sort((a, b) => '${a.$1}->${a.$2}'.compareTo('${b.$1}->${b.$2}'));
+
+      expect(
+        impossible,
+        isEmpty,
+        reason:
+            'copy may only describe transitions the engine already accepts — '
+            'a key here never makes a transition legal. Remove the key or '
+            'the impossible pair: $impossible',
+      );
+    });
+  });
+
+  group('the parks an operator will now see', () {
+    // The six park edges — feature intake (ddfbfff) and design (44c8d0b) —
+    // arrived in the engine table without any copy, which is the red this
+    // change closes. Each string is pinned so a later edit is a named
+    // failure rather than something only the table-enumeration test notices.
+    test('a feature intake request is accepted, never refused', () {
+      expect(
+        knownTransitionMessage('planned', 'feature_intake_parked'),
+        'Feature accepted and parked — not refused, not failed',
+        reason:
+            'no consumer runtime exists for feature work; the operator must '
+            'read "parked on purpose", not "something refused this"',
+      );
+    });
+
+    test('a feature recovered from the wrong lane says so', () {
+      expect(
+        knownTransitionMessage('agent_executing', 'feature_intake_parked'),
+        'Wrong lane — feature returned to its intake park',
+        reason:
+            'the interrupted run was a defect-lane dispatch of a feature — '
+            'the copy must not read as a build that finished or failed',
+      );
+    });
+
+    test('a design remediation parks instead of progressing', () {
+      expect(
+        knownTransitionMessage('planned', 'design_parked'),
+        'Design remediation parked — cannot start yet',
+      );
+    });
+
+    test(
+      'the release from the design park names the contract that freed it',
+      () {
+        expect(
+          knownTransitionMessage('design_parked', 'design_required'),
+          'Design contract in place, released from parking',
+          reason:
+              'the guard on this edge is designContractExists() over the '
+              'durable column and a store — the copy says why the item '
+              'moved without promising a design run that has not started',
+        );
+      },
+    );
+
+    test('both parks reach the human gate with their own copy', () {
+      expect(
+        knownTransitionMessage(
+          'feature_intake_parked',
+          'waiting_for_human_decision',
+        ),
+        'Parked feature sent to you for a decision',
+      );
+      expect(
+        knownTransitionMessage('design_parked', 'waiting_for_human_decision'),
+        'Parked design sent to you for a decision',
+        reason:
+            'the park is in no entry state, so this gate is the parks only '
+            'non-cancel exit — it must be visible on the timeline, not the '
+            'neutral default',
       );
     });
   });

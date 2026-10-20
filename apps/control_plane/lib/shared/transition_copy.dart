@@ -28,9 +28,53 @@ String? knownTransitionMessage(String from, String to) => switch ((from, to)) {
   ('planning', 'planned') => 'Work planned',
   ('planning', 'cancelled') => 'Work cancelled',
   ('planned', 'design_required') => 'Design needed before building',
-  // A plan that goes straight into review skips the `design_required` hop.
-  ('planned', 'design_in_review') => 'Design needed before building',
   ('planned', 'design_not_required') => 'No design needed, ready to build',
+  // ---- The parks (feature intake, design) and their ways out ----
+  //
+  // A park is a state in no lane's `entryStates`: an item resting in one is
+  // dispatchable by nobody, which is the point of parking it. These six arms
+  // are every engine-accepted pair into, out of and between the parks; each
+  // claim below comes from the engine table's own comment beside its edge
+  // (`packages/workflow_engine/lib/src/transitions/work_item_transitions.dart`)
+  // or from the code that takes the edge.
+  //
+  // Work entry walks a FEATURE request here and stops, because no consumer
+  // runtime exists for feature work: the request is accepted and parked —
+  // not refused, not failed (the exact words `work_entry.dart` records).
+  ('planned', 'feature_intake_parked') =>
+    'Feature accepted and parked — not refused, not failed',
+  // The sanctioned recovery for a feature that took the old bad hop: the
+  // category-blind scheduler once dispatched it as a defect and advanced it
+  // to `agentExecuting`. This moves it back to the park work entry should
+  // have left it in, and says "wrong lane" so the interrupted run is not
+  // read as a build that finished.
+  ('agent_executing', 'feature_intake_parked') =>
+    'Wrong lane — feature returned to its intake park',
+  // Lane E walks a design-remediation item here because triage may not
+  // produce design artifacts: the item rests where no scheduler can see it
+  // until a durable design contract can back its release, rather than
+  // sitting at `planned` where the category-blind triage lane would take it
+  // back out and redispatch it, forever.
+  ('planned', 'design_parked') =>
+    'Design remediation parked — cannot start yet',
+  // THE RELEASE (R2.3): the work item's durable `designContractId` resolves
+  // against a `DesignContractStore`, so the item leaves the park for
+  // design's entry state. The copy promises the contract and the release,
+  // not a design run — the design lane dispatching is the next hop's
+  // business, not this one's.
+  ('design_parked', 'design_required') =>
+    'Design contract in place, released from parking',
+  // The operator route out of the design park (R2.4): the parked item goes
+  // to the human gate, where a decision is pending and `evaluate` reports
+  // `blocked`, so nothing dispatches while it waits there.
+  ('design_parked', 'waiting_for_human_decision') =>
+    'Parked design sent to you for a decision',
+  // THE way out of the feature park — the table's own comment names it as
+  // the one non-cancel exit: the park is in no definition's `entryStates`,
+  // so without this edge a parked feature could only be cancelled or
+  // terminated. It lands at the same human gate as the design park's route.
+  ('feature_intake_parked', 'waiting_for_human_decision') =>
+    'Parked feature sent to you for a decision',
   ('design_required', 'design_in_review') => 'Design under review',
   ('design_required', 'agent_executing') => 'Agent started work',
   ('design_in_review', 'waiting_for_human_decision') =>

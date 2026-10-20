@@ -177,7 +177,11 @@ void main() {
         ),
         makeTransition(
           from: 'planned',
-          to: 'design_in_review',
+          // The real edge out of `planned` into design work. This fixture
+          // used `design_in_review` here — a pair no engine table has ever
+          // accepted; the rendered sentence is byte-identical either way
+          // ('Design needed before building'), so the goldens did not move.
+          to: 'design_required',
           at: asOf.subtract(const Duration(hours: 3)),
         ),
         makeTransition(
