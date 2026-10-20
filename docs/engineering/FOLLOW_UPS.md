@@ -3383,3 +3383,25 @@ measurement, and it is independently reviewed after one `DO_NOT_MERGE` correctio
 506/1 → **513/0** at `e72911b` once the six missing park-transition copies were written. The remaining
 per-execution red is `tick_single_flight_test.dart`, a **load flake** that fails ~1/6 under 6-way concurrent
 load and passes 7/7 standalone — **and fails at base too**, so it is being routed rather than weakened.
+
+**F-196 — a stale defect-report comment that outlived its defect.**
+`packages/workflow_engine/test/feature_park_way_out_test.dart` still carries prose describing the reflow-lost
+pair as already having plain copy, which is false at `84460a2^`. The copy fix landed; the comment did not
+follow it. A comment that misdescribes a defect is worse than no comment, because the next reader trusts it.
+LOW.
+
+**F-197 — a count pin is a ratchet, not a guard.** `hasLength(n)` pins stop silent drift in one direction and
+are blind in the other: adding an arm without updating the count fails, but **swapping one arm for another
+passes**. The copy fix added both-ways set equality for that reason. Anywhere else in the tree that relies on a
+count pin alone has the same blind side. LOW, and it should be found by grep rather than by a red suite.
+
+**F-198 — wildcard arms in an enumeration test are unaccounted.** The transition-copy enumeration now pins an
+explicit pair count, but a wildcard or generated arm would still escape the accounting. Worth a pin that fails
+if an arm form the regex cannot parse appears in the file. LOW.
+
+**F-199 — `tick_single_flight_test.dart` is a load flake in the per-execution tier.** It fails roughly 1 run in
+6 under 6-way concurrent load and passes 7/7 standalone — **and it fails at base too**, so it is pre-existing
+and was never introduced by the tier work. It is the **last red holding the per-execution tier from being
+uniformly green**, and a real fix needs a clock or timing seam in a package the activating lanes were not
+granted. Weakening or excluding the test was forbidden and was not done. Routed to a lane that owns the
+scheduler/worker timing code.
