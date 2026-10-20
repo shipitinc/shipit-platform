@@ -6,17 +6,20 @@ import 'package:control_plane_server/server.dart'
     show
         buildImplementationExecutionCoordinator,
         buildTriageExecutionCoordinator,
+        checkSlugFor,
+        dartTestSweepRoots,
         implementationVerificationPlan,
-        perExecutionChecksNotExpressibleAsOnePlan,
         perExecutionValidationChecks,
+        perExecutionValidationChecksNotActivated,
         triageVerificationPlan,
-        verificationPlanForRole;
+        verificationPlanForRole,
+        workspaceMemberRoots;
 import 'package:execution_coordinator/execution_coordinator.dart';
 import 'package:platform_contracts/platform_contracts.dart' show AgentRole;
 import 'package:test/test.dart';
 import 'package:workflow_store/workflow_store.dart';
 
-/// `OD-6` — the role-scoped IMPLEMENTATION [VerificationPlan].
+/// `OD-6` + `f3a81c27` — the role-scoped IMPLEMENTATION [VerificationPlan].
 ///
 /// ## WHAT THIS FILE PROVES, AND WHY IT READS AGENTS.md AS TEXT
 ///
@@ -29,12 +32,28 @@ import 'package:workflow_store/workflow_store.dart';
 ///
 /// ## WHAT IT DELIBERATELY DOES NOT CLAIM
 ///
-/// That the plan covers the per-execution tier. It covers ONE of the four
-/// declared checks. Group 'the residual is explicit, complete, and not
-/// laundered' exists to make that shortfall impossible to read as coverage.
+/// That the plan activates the per-execution tier. It activates THREE of the
+/// five declared checks (as 30 per-root checks) and withholds two. Group
+/// 'the residual is explicit, complete, and not laundered' exists to make
+/// that shortfall impossible to read as coverage — it asserts that a declared
+/// check is activated if and only if it is absent from
+/// [perExecutionValidationChecksNotActivated].
+///
+/// ## THE TWO DRIFT GUARDS
+///
+/// 1. **AGENTS.md ↔ the recorded list.** The declared checks are parsed out
+///    of AGENTS.md's table and compared to [perExecutionValidationChecks] as
+///    sets, so neither can be edited without the other failing.
+/// 2. **the plan ↔ the pub workspace.** [workspaceMemberRoots] is parsed out
+///    of the root `pubspec.yaml`'s `workspace:` block and compared for exact
+///    equality, so a member added to the pubspec without its checks here — or
+///    a check for a member that no longer exists — fails loudly. This is the
+///    anti-narrowing guard without which the gate's completeness claim would
+///    quietly become this list's opinion.
 void main() {
   late List<_Row> agentsMdPerExecution;
   late List<_Row> agentsMdMergeRelease;
+  late List<String> pubspecWorkspaceMembers;
 
   setUpAll(() async {
     final rows = _parseGateTable(await _readAgentsMd());
@@ -44,20 +63,23 @@ void main() {
     agentsMdMergeRelease = rows
         .where((r) => r.tier == 'merge/release')
         .toList(growable: false);
+    pubspecWorkspaceMembers = _parseWorkspaceMembers(
+      await _readRootPubspec(),
+    );
   });
 
   group('AGENTS.md is the contract, and the recorded checks are verbatim', () {
-    test('the per-execution tier is four checks, all present in the tree', () {
+    test('the per-execution tier is five checks, all present in the tree', () {
       // If AGENTS.md's tier ever changes shape, this fails loudly rather than
       // letting the recorded list drift away from the contract in silence.
       expect(
         agentsMdPerExecution.length,
-        4,
+        5,
         reason:
             'the recorded list must track the declared tier exactly; if the '
             'tier changed, re-read AGENTS.md before touching this file',
       );
-      expect(perExecutionValidationChecks, hasLength(4));
+      expect(perExecutionValidationChecks, hasLength(5));
     });
 
     test('every recorded check string-equals an AGENTS.md row', () {
@@ -117,21 +139,117 @@ void main() {
             'integration run that this slice never performs',
       );
     });
+
+    test('the server unit tier is the RUNNER, never a bare `dart test`', () {
+      // AGENTS.md states this as a correction with a reason: `dart test` in
+      // apps/server picks up test/integration/, which needs a live database.
+      // The runner is what makes the per-execution gate honest there.
+      final serverRow = agentsMdPerExecution.firstWhere(
+        (r) => r.workingDirectory.startsWith('apps/server'),
+      );
+      expect(serverRow.command, 'dart run tool/run_unit_tests.dart');
+    });
   });
 
-  group('the plan\'s command string-equals the declared command', () {
+  group('the anti-narrowing guard: the plan tracks the pub workspace', () {
+    test('the pubspec workspace block parsed as expected', () {
+      expect(
+        pubspecWorkspaceMembers,
+        hasLength(16),
+        reason:
+            'the root pubspec.yaml is the source of truth for the member set; '
+            'if its shape changed, re-read it before touching this file',
+      );
+    });
+
+    test('every workspace member appears in the expansion source', () {
+      expect(
+        workspaceMemberRoots.toSet(),
+        pubspecWorkspaceMembers.toSet(),
+        reason:
+            'a member in the pubspec and not in the plan means that member is '
+            'never analyzed or tested on any execution, and the gate would '
+            'still read green because no declared check names it',
+      );
+    });
+
+    test('the expansion source has no member the pubspec does not declare', () {
+      expect(
+        workspaceMemberRoots.where(
+          (r) => !pubspecWorkspaceMembers.contains(r),
+        ),
+        isEmpty,
+        reason:
+            'a root in the plan that the pubspec does not declare would spawn '
+            '`dart pub get` in a directory that is not a workspace member',
+      );
+    });
+
+    test('the two expansions are ordered the same way as the pubspec', () {
+      // Ordered lists, not just sets: the plan's checks carry ids derived from
+      // position-independent names, so order is not load-bearing for identity —
+      // but it makes the plan readable against the pubspec, and a reordering
+      // that is not a deliberate edit should fail.
+      expect(workspaceMemberRoots, pubspecWorkspaceMembers);
+    });
+
+    test('the analyze checks are exactly one per workspace member', () {
+      final analyzeSlugs = _analyzeCheckNames();
+      expect(
+        analyzeSlugs,
+        workspaceMemberRoots.map(checkSlugFor).toSet(),
+        reason:
+            'the analyze sweep is one check per member; a member with no '
+            'analyze check is a coverage hole the gate cannot see',
+      );
+    });
+  });
+
+  group('every check name is a valid verification-id component', () {
+    test(r'names match ^[a-z0-9_]+$ and are unique', () {
+      // `VerificationPlan` enforces this at construction, but asserting it here
+      // names WHY: the name is half of `ver-<executionId>-<checkName>`, and the
+      // id is only injective if the name cannot contain the `-` separator.
+      final names = implementationVerificationPlan.checks
+          .map((c) => c.checkName)
+          .toList();
+      expect(names.toSet(), hasLength(names.length));
+      for (final name in names) {
+        expect(
+          name,
+          matches(RegExp(r'^[a-z0-9_]+$')),
+          reason:
+              'check name "$name" would break the verification id scheme the '
+              'store keys rows by',
+        );
+      }
+    });
+
+    test('slugs use the FULL path, so two basenames cannot collide', () {
+      // `packages/foo/bar` and `apps/bar` slugify differently because the whole
+      // path is used; a basename-only slug would collide them.
+      expect(checkSlugFor('packages/scheduler'), 'packages_scheduler');
+      expect(checkSlugFor('apps/server'), 'apps_server');
+      expect(
+        checkSlugFor('packages/workflow_engine'),
+        isNot(checkSlugFor('apps/workflow_engine')),
+      );
+    });
+  });
+
+  group('the plan\'s command strings string-equal the declared commands', () {
     // ## THIS IS THE PROOF THE GATE ACTUALLY ASKS FOR.
     //
     // `WorkspaceVerifier` persists `command.join(' ')` as the row's `command`
     // (`workspace_verifier.dart` → `VerificationOutcome.command`), and F4
     // compares that string to the declared one. So the equality below is the
     // same comparison, on the same side of the same types.
-    test('the joined command equals the AGENTS.md format row exactly', () {
+    test('the format check equals the AGENTS.md format row exactly', () {
       final declared = agentsMdPerExecution.firstWhere(
         (r) => r.command.startsWith('dart format'),
       );
       expect(
-        implementationVerificationPlan.command.join(' '),
+        _checksNamed('dart_format_repo_root').single.command.join(' '),
         declared.command,
         reason:
             'F4 sets commandMatchIsExact: true. Substring, token overlap or a '
@@ -140,27 +258,57 @@ void main() {
       );
     });
 
-    test('the checkName is the key the recorded check is written under', () {
-      final covered = perExecutionValidationChecks.firstWhere(
-        (c) => c.command == implementationVerificationPlan.command.join(' '),
+    test('every analyze check carries the declared analyze command', () {
+      final declared = agentsMdPerExecution.firstWhere(
+        (r) => r.command == 'dart analyze',
       );
-      expect(implementationVerificationPlan.checkName, covered.checkName);
+      for (final check in _checksNamedPrefix('dart_analyze_')) {
+        expect(check.command.join(' '), declared.command);
+      }
     });
 
-    test(
-      'the plan resolves packages first — measured, not assumed',
-      () {
-        // In a fresh detached worktree with no package resolution, this exact
-        // command exits 1 and reports 163 files changed, because the formatter
-        // has no package language version and falls back to the SDK default
-        // style. Without this setup the plan would settle every implementation
-        // execution `executedFail` for a property of the sandbox.
+    test('every dart-test check carries the declared dart-test command', () {
+      final declared = agentsMdPerExecution.firstWhere(
+        (r) => r.workingDirectory.startsWith('every package root'),
+      );
+      expect(declared.command, 'dart test');
+      for (final check in _checksNamedPrefix('dart_test_')) {
+        expect(check.command.join(' '), declared.command);
+      }
+    });
+
+    test('every activated check resolves packages first — measured, not '
+        'assumed', () {
+      // In a fresh detached worktree with no package resolution, the format
+      // command exits 1 and reports 163 files changed, because the formatter
+      // has no package language version and falls back to the SDK default
+      // style. Each per-root check runs its own `dart pub get` so it is
+      // self-contained; a check missing it would be an artifact of the
+      // sandbox, not a verdict on the code.
+      for (final check in implementationVerificationPlan.checks) {
         expect(
-          implementationVerificationPlan.setupCommand,
+          check.setupCommand,
           ['dart', 'pub', 'get'],
+          reason: '${check.checkName} must resolve its own package first',
         );
-      },
-    );
+      }
+    });
+
+    test('each check runs in the root it names', () {
+      expect(
+        _checksNamed('dart_format_repo_root').single.workingDirectory,
+        '.',
+        reason: 'the format check is declared at the repository root',
+      );
+      for (final root in workspaceMemberRoots) {
+        final check = _checksNamed('dart_analyze_${checkSlugFor(root)}').single;
+        expect(check.workingDirectory, root);
+      }
+      for (final root in dartTestSweepRoots) {
+        final check = _checksNamed('dart_test_${checkSlugFor(root)}').single;
+        expect(check.workingDirectory, root);
+      }
+    });
   });
 
   group('role scoping', () {
@@ -217,103 +365,132 @@ void main() {
       );
 
       expect(
-        triage.verificationPlan!.command,
-        triageVerificationPlan.command,
+        triage.verificationPlan!.checks.map((c) => c.command).toList(),
+        [
+          triageVerificationPlan.command,
+        ],
         reason: 'OD-6 must not change what the triage lane is verified by',
       );
       expect(
-        implementation.verificationPlan!.command,
-        implementationVerificationPlan.command,
+        implementation.verificationPlan!.checks.length,
+        implementationVerificationPlan.checks.length,
       );
       expect(
-        implementation.verificationPlan!.setupCommand,
-        implementationVerificationPlan.setupCommand,
+        implementation.verificationPlan!.checks.first.command,
+        implementationVerificationPlan.checks.first.command,
       );
       expect(
-        implementation.verificationPlan!.command,
-        isNot(triageVerificationPlan.command),
+        implementation.verificationPlan!.checks.map((c) => c.checkName),
+        implementationVerificationPlan.checks.map((c) => c.checkName),
         reason:
-            'the live defect was one plan serving every role; if these are equal '
-            'again, role scoping has silently collapsed',
+            'the live defect was one plan serving every role; if these are '
+            'equal to the triage plan again, role scoping has silently '
+            'collapsed',
       );
+    });
+
+    test('the triage plan is still a SINGLE check', () {
+      expect(triageVerificationPlan.checks, hasLength(1));
     });
   });
 
   group('the residual is explicit, complete, and not laundered', () {
-    test('exactly one declared check is expressed, and three are not', () {
+    test('a declared check is activated if and only if it is not withheld', () {
       final declaredNames = perExecutionValidationChecks
           .map((c) => c.checkName)
           .toSet();
-      final uncovered = perExecutionChecksNotExpressibleAsOnePlan.keys.toSet();
+      final withheld = perExecutionValidationChecksNotActivated.keys.toSet();
 
       expect(
-        uncovered,
+        withheld,
         isNot(contains('dart_format_repo_root')),
         reason:
-            'the format check IS expressed; listing it as uncovered would '
+            'the format check IS activated; listing it as withheld would '
             'understate what the plan does',
       );
       expect(
-        declaredNames.difference(uncovered),
-        {'dart_format_repo_root'},
+        declaredNames.difference(withheld),
+        {
+          'dart_format_repo_root',
+          'dart_analyze_per_package_root',
+          'dart_test_per_package_root',
+        },
         reason:
-            'if this is not exactly the one check the plan expresses, the plan '
-            'is claiming coverage it does not have',
+            'exactly the three sweep/format checks are activated. If this is '
+            'not exactly the activated set, the plan is claiming coverage it '
+            'does not have',
       );
       expect(
-        uncovered.difference(declaredNames),
+        withheld.difference(declaredNames),
         isEmpty,
         reason:
-            'every uncovered entry must name a check AGENTS.md actually '
+            'every withheld entry must name a check AGENTS.md actually '
             'declares; an invented name would hide a real gap behind a fake '
             'reason',
       );
-      expect(uncovered, hasLength(3));
+      expect(
+        withheld,
+        {'server_unit_tests_runner', 'flutter_test_apps_control_plane'},
+      );
     });
 
-    test('every uncovered check carries a stated reason', () {
-      for (final entry in perExecutionChecksNotExpressibleAsOnePlan.entries) {
+    test('every withheld check carries a stated, measured reason', () {
+      for (final entry in perExecutionValidationChecksNotActivated.entries) {
         expect(
           entry.value.trim(),
           isNotEmpty,
-          reason: '${entry.key} is listed as uncovered with no explanation',
+          reason: '${entry.key} is listed as withheld with no explanation',
+        );
+        expect(
+          entry.value,
+          contains('MEASURED'),
+          reason:
+              'a withheld check must say what was measured; an unmeasured '
+              'reason is a guess wearing the shape of evidence',
         );
       }
     });
 
-    test(
-      'no uncovered command appears anywhere in the implementation plan',
-      () {
-        for (final uncovered
-            in perExecutionChecksNotExpressibleAsOnePlan.keys) {
-          final check = perExecutionValidationChecks.firstWhere(
-            (c) => c.checkName == uncovered,
-          );
-          expect(
-            implementationVerificationPlan.command,
-            isNot(contains(check.command)),
-            reason:
-                'the plan claims to express only the repository-root check; if '
-                'it also carries ${check.command} it is misrepresenting its '
-                'own coverage',
-          );
-        }
-      },
-    );
+    test('no withheld command appears anywhere in the implementation plan', () {
+      for (final withheld in perExecutionValidationChecksNotActivated.keys) {
+        final check = perExecutionValidationChecks.firstWhere(
+          (c) => c.checkName == withheld,
+        );
+        expect(
+          implementationVerificationPlan.checks.map((c) => c.command.join(' ')),
+          isNot(contains(check.command)),
+          reason:
+              'the plan claims to withhold ${check.command}; if it carries it, '
+              'it is misrepresenting its own coverage',
+        );
+      }
+    });
 
     test(
       'the coverage claim cannot be widened by the map being emptied',
       () {
         // Guards the laundering shape `1b7e4c93` rejected: a plan that reads
         // as full coverage while covering less. Deleting the map's entries
-        // would make the "exactly one" test above fail — this names why.
+        // would make the "exactly three activated" test above fail — this
+        // names why.
         expect(
           perExecutionValidationChecks.length -
-              perExecutionChecksNotExpressibleAsOnePlan.length,
-          1,
+              perExecutionValidationChecksNotActivated.length,
+          3,
         );
       },
     );
+
+    test('the two withheld checks are the two this plan cannot run green', () {
+      // The residual is not arbitrary: these are the two checks whose
+      // activation was measured and rejected in this change. Pinned so that
+      // silently dropping one from the map (and thus claiming it activated)
+      // fails here.
+      expect(
+        perExecutionValidationChecksNotActivated.keys.toSet(),
+        {'server_unit_tests_runner', 'flutter_test_apps_control_plane'},
+      );
+    });
   });
 
   group('the implementation check can FAIL — it is not a liveness probe', () {
@@ -322,9 +499,10 @@ void main() {
     // The plan this replaces was `git rev-parse --verify HEAD^{commit}`, which
     // succeeds for any checkout that has a commit — it could not fail on
     // anything an implementer wrote. This drives the REAL [WorkspaceVerifier]
-    // with the REAL plan, against a disposable fixture, and shows it reports
-    // `passed == false` for mis-formatted code. That is the difference between
-    // a check and a liveness probe, demonstrated rather than asserted.
+    // with the REAL commands, against a disposable fixture, and shows it
+    // reports `passed == false` for mis-formatted code and for an unresolved
+    // package. That is the difference between a check and a liveness probe,
+    // demonstrated rather than asserted.
     late Directory fixture;
 
     setUp(() {
@@ -343,17 +521,21 @@ void main() {
       if (fixture.existsSync()) fixture.deleteSync(recursive: true);
     });
 
-    Future<VerificationOutcome> verify() => const WorkspaceVerifier().verify(
-      workingDirectory: fixture.path,
-      command: implementationVerificationPlan.command,
-      setupCommand: implementationVerificationPlan.setupCommand,
-    );
+    Future<VerificationOutcome> verify(String command) =>
+        const WorkspaceVerifier().verify(
+          workingDirectory: fixture.path,
+          command: command.split(' '),
+          setupCommand: const ['dart', 'pub', 'get'],
+        );
 
     test('formatted code passes', () async {
       File('${fixture.path}/main.dart').writeAsStringSync(
         "void main() {\n  print('x');\n}\n",
       );
-      final outcome = await verify();
+      final outcome = await verify(
+        'dart format --output=none '
+        '--set-exit-if-changed .',
+      );
       expect(outcome.passed, isTrue, reason: outcome.detail ?? '');
     });
 
@@ -361,7 +543,10 @@ void main() {
       File('${fixture.path}/main.dart').writeAsStringSync(
         "void main(){print('x');}\n",
       );
-      final outcome = await verify();
+      final outcome = await verify(
+        'dart format --output=none '
+        '--set-exit-if-changed .',
+      );
       expect(
         outcome.passed,
         isFalse,
@@ -381,10 +566,14 @@ void main() {
         File('${fixture.path}/main.dart').writeAsStringSync(
           "void main() {\n  print('x');\n}\n",
         );
-        final outcome = await verify();
+        final outcome = await verify(
+          'dart format --output=none '
+          '--set-exit-if-changed .',
+        );
         expect(
           outcome.command,
-          implementationVerificationPlan.command.join(' '),
+          'dart format --output=none '
+          '--set-exit-if-changed .',
         );
       },
     );
@@ -462,6 +651,21 @@ void main() {
   });
 }
 
+List<VerificationCheck> _checksNamed(String name) =>
+    implementationVerificationPlan.checks
+        .where((c) => c.checkName == name)
+        .toList(growable: false);
+
+List<VerificationCheck> _checksNamedPrefix(String prefix) =>
+    implementationVerificationPlan.checks
+        .where((c) => c.checkName.startsWith(prefix))
+        .toList(growable: false);
+
+Set<String> _analyzeCheckNames() => implementationVerificationPlan.checks
+    .where((c) => c.checkName.startsWith('dart_analyze_'))
+    .map((c) => c.checkName.substring('dart_analyze_'.length))
+    .toSet();
+
 /// A parsed row of `AGENTS.md`'s required-validation-gates table.
 class _Row {
   _Row(this.tier, this.gate, this.command, this.workingDirectory);
@@ -497,6 +701,29 @@ List<_Row> _parseGateTable(String markdown) {
   return rows;
 }
 
+/// The member paths of the root `pubspec.yaml`'s `workspace:` block.
+///
+/// A deliberately small parser: it reads indented `- <path>` lines under the
+/// `workspace:` key and stops at the first non-indented line. It does not try
+/// to be a YAML parser — if the block's shape changes, the count assertion in
+/// the test fails and a human re-reads the file, which is the intended
+/// behaviour for a contract that must not drift silently.
+List<String> _parseWorkspaceMembers(String pubspec) {
+  final lines = pubspec.split('\n');
+  final start = lines.indexWhere((l) => l.trimRight() == 'workspace:');
+  if (start < 0) {
+    throw StateError('no top-level `workspace:` key in the root pubspec.yaml');
+  }
+  final members = <String>[];
+  for (var i = start + 1; i < lines.length; i++) {
+    final line = lines[i];
+    if (line.isEmpty) continue;
+    if (!RegExp(r'^\s+-\s+\S').hasMatch(line)) break;
+    members.add(line.trim().substring(1).trim());
+  }
+  return members;
+}
+
 String _strip(String cell) =>
     cell.replaceAll('`', '').replaceAll('*', '').trim();
 
@@ -507,13 +734,7 @@ String _strip(String cell) =>
 /// `triage_verification_plan_test.dart` uses: a `package:` URI cannot be turned
 /// into a file path by `File.fromUri` alone.
 Future<String> _readAgentsMd() async {
-  final uri = await Isolate.resolvePackageUri(
-    Uri.parse('package:control_plane_server/server.dart'),
-  );
-  if (uri == null) {
-    throw StateError('could not resolve the server composition source');
-  }
-  var dir = File.fromUri(uri).parent;
+  var dir = await _packageDir();
   while (true) {
     final candidate = File('${dir.path}/AGENTS.md');
     if (candidate.existsSync()) return candidate.readAsStringSync();
@@ -525,14 +746,38 @@ Future<String> _readAgentsMd() async {
   }
 }
 
-Future<String> _readServerSource() async {
+/// Reads the root `pubspec.yaml` — the same upward walk from the server
+/// library, so the workspace-member set is read from the real file.
+Future<String> _readRootPubspec() async {
+  var dir = await _packageDir();
+  while (true) {
+    final candidate = File('${dir.path}/pubspec.yaml');
+    // The root pubspec declares the pub workspace; a member pubspec does not.
+    if (candidate.existsSync() &&
+        candidate.readAsStringSync().contains('\nworkspace:')) {
+      return candidate.readAsStringSync();
+    }
+    final parent = dir.parent;
+    if (parent.path == dir.path) {
+      throw StateError('could not locate the root pubspec.yaml above $dir');
+    }
+    dir = parent;
+  }
+}
+
+Future<Directory> _packageDir() async {
   final uri = await Isolate.resolvePackageUri(
     Uri.parse('package:control_plane_server/server.dart'),
   );
   if (uri == null) {
     throw StateError('could not resolve the server composition source');
   }
-  return File.fromUri(uri).readAsStringSync();
+  return File.fromUri(uri).parent;
+}
+
+Future<String> _readServerSource() async {
+  final dir = await _packageDir();
+  return File('${dir.path}/server.dart').readAsStringSync();
 }
 
 /// The body of `run()`, the composition root.

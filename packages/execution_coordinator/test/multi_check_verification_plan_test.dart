@@ -866,6 +866,71 @@ void main() {
       expect(rows.single.status, AgentClaimStatus.failed);
     });
 
+    test('a plan shaped like the per-root SWEEP (f3a81c27) writes one row per '
+        'root that ran, in plan order', () async {
+      // ## WHY THIS SHAPE, AND NOT THREE CHECKS
+      //
+      // `implementationVerificationPlan` expresses `dart analyze` and
+      // `dart test` as ONE CHECK PER PACKAGE ROOT (30 checks, decision
+      // `f3a81c27`), so the coordinator must behave with a plan whose
+      // checks differ only by working directory. This is that shape at
+      // fixture scale: two roots that exist, one that does not, and a check
+      // whose tool is absent. What it pins is that the store gains EXACTLY
+      // one row per check that ran, NAMED by check name (so a reader can
+      // tell which root it was), and that the two that could not run leave
+      // nothing — the property the gate reads.
+      await readyItem();
+      fixture.implement();
+      Directory('${fixture.root.path}/packages/a').createSync(recursive: true);
+      Directory('${fixture.root.path}/packages/b').createSync(recursive: true);
+
+      await coordinatorOf(
+        VerificationPlan(
+          checks: [
+            VerificationCheck(
+              command: fixture.verifyCommand(),
+              checkName: 'dart_analyze_packages_a',
+              workingDirectory: 'packages/a',
+            ),
+            VerificationCheck(
+              command: fixture.verifyCommand(),
+              checkName: 'dart_analyze_packages_b',
+              workingDirectory: 'packages/b',
+            ),
+            const VerificationCheck(
+              command: ['dart', 'test'],
+              checkName: 'dart_test_packages_missing',
+              workingDirectory: 'packages/missing',
+            ),
+            VerificationCheck(
+              command: const [missingTool],
+              checkName: 'dart_test_absent_tool',
+              workingDirectory: 'packages/a',
+            ),
+          ],
+        ),
+      ).execute(request());
+
+      final rows = await executionStore.readVerifications('exec-1');
+      expect(
+        rows.map((r) => r.checkName),
+        ['dart_analyze_packages_a', 'dart_analyze_packages_b'],
+        reason:
+            'one row per root that ran, in plan order, named so a reader '
+            'knows WHICH root; the missing-directory and absent-tool checks '
+            'leave nothing',
+      );
+      expect(
+        rows.first.resultPath,
+        '${fixture.root.path}/packages/a',
+        reason:
+            'the row records the directory THIS check ran in, not the '
+            'workspace root — which is what makes a per-root sweep legible. '
+            'It is the UNRESOLVED path the workspace was addressed by (the '
+            'fixture root), not the process-resolved one',
+      );
+    });
+
     test('no check able to run is NOT a failure — and says nothing', () async {
       await readyItem();
       // Deliberately NOT implemented: nothing ran, so nothing has a verdict.
