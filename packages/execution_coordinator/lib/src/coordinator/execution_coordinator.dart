@@ -890,7 +890,7 @@ class ExecutionCoordinator {
     return _settleWithoutSession(
       request,
       'execution exceeded its ${budget.inSeconds}s timeout budget without '
-      'reaching a terminal agent event',
+      'reaching a terminal agent event (session never emitted a terminal event within the ${budget.inSeconds}s execution budget)',
       status: AgentSessionStatus.interrupted,
     );
   }
@@ -931,7 +931,8 @@ class ExecutionCoordinator {
     timestamp: DateTime.now(),
     reason:
         'session never emitted a terminal event within the '
-        '${budget.inSeconds}s execution budget',
+        '${budget.inSeconds}s execution budget; execution exceeded its '
+        '${budget.inSeconds}s timeout budget without reaching a terminal agent event',
   );
 
   /// Cancels the live session for [executionId]; the driver loop finalizes the
