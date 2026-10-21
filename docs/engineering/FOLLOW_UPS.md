@@ -3432,3 +3432,16 @@ defect with **no test going red**. This is precisely F-192/F-196 — *a comment 
 guard*. The fix is a cross-package pin: either a shared `const` in a contracts package, or an `apps/server`
 test asserting `designRemediationWorkItemId(id).startsWith(RemediationDefectExistenceGate.workItemIdPrefix)`.
 MEDIUM; worth doing alongside M1, where the id's meaning is already being wired.
+
+**F-202 — the merge/release integration tier is red on base `main` and non-deterministic.**
+Measured across four sanctioned runs, each self-cleaned, on two independent revisions (base `f8362c0` and
+`2cf3a1c`): base `+306 −13` then `+177 −44`; HEAD `+307 −12` then `+299 −20`. **Two runs at the *same* SHA
+produce disjoint failure sets**, and base shows the same failure classes HEAD does — `Bad state: dispatched job
+… is unreadable`, `scheduled retry REALLY RUNS` timeouts, 30 s `TimeoutException`,
+`PathNotFoundException` in `worker_runtime` cleanup. Every `triage_execution_test` failure is a scheduler/DB or
+workspace-tmp race, never a gate assertion.
+
+Consequence: **a single integration run cannot distinguish a lane regression from capacity contention** — the
+observed delta between revisions is inside the run-to-run band. Read *failing test names*, never counts, and
+prove redness at base before attributing anything. This predates the QA-gate work and belongs to the
+integration-tier owner.
