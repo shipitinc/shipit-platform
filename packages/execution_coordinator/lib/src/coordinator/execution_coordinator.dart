@@ -907,9 +907,8 @@ class ExecutionCoordinator {
   /// it describes the budget being exceeded without a terminal agent event,
   /// without presupposing a live session existed.
   String _budgetExpiryReason(Duration budget) =>
-      'execution exceeded its ${budget.inSeconds}s timeout budget without '
-      'reaching a terminal agent event; session never emitted a terminal event '
-      'within the ${budget.inSeconds}s execution budget';
+      'execution exceeded its ${budget.inSeconds}s timeout budget; the runtime '
+      'never emitted a terminal event within the execution budget';
 
   /// The honest terminal event for a session that stopped answering without
   /// ever reporting one. Routed through the ordinary terminal path, so it lands
