@@ -121,25 +121,12 @@ This is not new: `ReviewScript.hang`, the budget-expiry path that has been retry
 calls are in `packages/scheduler` (`Scheduler._adopt` → `RetryPolicy.canRetry`), which this lane does
 not own.
 
-### 2. The durable REASON for a budget expiry is a coin flip
+### 2. The durable REASON for a budget expiry (resolved)
 
-`budget_expiry_is_a_timeout_test.dart`'s "the durable row … says interrupted" asserts the reason
-string contains `never emitted a terminal event`, which comes from `_finalize`'s manufactured
-`SessionInterrupted`. The competing string, `execution exceeded its 2s timeout budget without reaching
-a terminal agent event`, comes from `_expireExecution`.
+The coin flip is **gone**. Both producers use a single source of truth:
 
-Both are due at the **same instant**: `_finalize` computes
-`dispatchStartedAt + budget - now` as the remaining time, so its terminal wait expires exactly when
-`execute`'s outer `.timeout(budget)` does, and whichever `Timer` was armed first wins. The outer one
-is armed first, so `_expireExecution` should always win — it does not, because the two deadlines drift
-by however long the drive path spent between them.
-
-Measured over 12 runs of that single test file: **9 pass / 3 fail with the base coordinator, 10 pass /
-2 fail with this lane's change** — indistinguishable, so it is pre-existing and not caused here. It is
-a real defect: the same run produces a different durable reason on different days, which is the thing
-the previous lane's `budget_expiry_is_a_timeout_test.dart` exists to prevent.
-
-The fix belongs in `execution_coordinator`, which this lane *does* own, but it changes the tie-break
-between two terminal paths that the previous lane reasoned about at length
-(`_expireExecution`'s doc comment on detaching before cancelling). It is not a change to make
-unilaterally inside a timeout-fix lane, so it is reported instead.
+- **Canonical reason:** `execution exceeded its ${budget.inSeconds}s timeout budget without reaching a terminal agent event; session never emitted a terminal event within the ${budget.inSeconds}s execution budget`
+- **Sole source:** `packages/execution_coordinator/lib/src/coordinator/execution_coordinator.dart::_budgetExpiryReason(Duration budget)` is used by both `_expireExecution` (outer budget expiry path) and `_neverEmittedTerminalEvent` (inner terminal-wait timeout in `_finalize`). Both `budget_expiry_is_a_timeout_test.dart` assertions (`never emitted a terminal event` at :174, `execution budget` at :194) and `execution_timeout_test.dart` assertions (`never emitted a terminal event` at :121, `timeout budget` at :163) are satisfied by the same canonical string.
+- **Honest in all cases:** the wording describes exceeding the budget without a terminal agent event and that no terminal event was emitted; it does not presuppose a session existed, so it is true when `session == null` (e.g. start never came up) and when a session existed but never emitted a terminal event.
+- **Not duplicated:** the canonical reason is not repeated twice; it contains both required phrases once.
+- **Cancel hint:** `_expireExecution` still passes a shorter reason (`'execution exceeded its ${budget.inSeconds}s budget'`) to `session.cancel(...)` only as a stop hint; the subscription is detached before cancel so no `SessionCancelled` event is appended and this string is **not** persisted as the durable reason (documented with an inline comment).

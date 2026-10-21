@@ -880,6 +880,10 @@ class ExecutionCoordinator {
 
     if (session != null) {
       try {
+        // Intentionally not the canonical durable reason: this is only passed to
+        // session.cancel() as a stop hint; the subscription is detached above so
+        // no SessionCancelled event is appended, and it is not persisted as the
+        // durable reason (the canonical reason comes from _budgetExpiryReason).
         await session.cancel(reason).timeout(_cancelGrace);
       } catch (_) {
         // The session is abandoned; only the durable record survives, and it
@@ -889,11 +893,23 @@ class ExecutionCoordinator {
 
     return _settleWithoutSession(
       request,
-      'execution exceeded its ${budget.inSeconds}s timeout budget without '
-      'reaching a terminal agent event (session never emitted a terminal event within the ${budget.inSeconds}s execution budget)',
+      _budgetExpiryReason(budget),
       status: AgentSessionStatus.interrupted,
     );
   }
+
+  /// Canonical durable reason for a budget expiry.
+  ///
+  /// Single source of truth for both producers ([ _expireExecution ] and
+  /// [_neverEmittedTerminalEvent]) so the coin flip is eliminated. The wording
+  /// is true whether a session existed but never emitted a terminal event, or
+  /// the dispatch path never produced a session at all (e.g. start timed out) —
+  /// it describes the budget being exceeded without a terminal agent event,
+  /// without presupposing a live session existed.
+  String _budgetExpiryReason(Duration budget) =>
+      'execution exceeded its ${budget.inSeconds}s timeout budget without '
+      'reaching a terminal agent event; session never emitted a terminal event '
+      'within the ${budget.inSeconds}s execution budget';
 
   /// The honest terminal event for a session that stopped answering without
   /// ever reporting one. Routed through the ordinary terminal path, so it lands
@@ -929,10 +945,7 @@ class ExecutionCoordinator {
   ) => SessionInterrupted(
     eventId: 'timeout-$executionId',
     timestamp: DateTime.now(),
-    reason:
-        'session never emitted a terminal event within the '
-        '${budget.inSeconds}s execution budget; execution exceeded its '
-        '${budget.inSeconds}s timeout budget without reaching a terminal agent event',
+    reason: _budgetExpiryReason(budget),
   );
 
   /// Cancels the live session for [executionId]; the driver loop finalizes the
