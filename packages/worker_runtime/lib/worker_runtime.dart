@@ -14,6 +14,7 @@ export 'src/store/worker_registration_store.dart';
 export 'src/worker/local_worker.dart';
 export 'src/worker/worker.dart';
 export 'src/workspace/artifact_committer.dart';
+export 'src/workspace/evaluation_retention.dart';
 export 'src/workspace/git_worktree_workspace_manager.dart';
 export 'src/workspace/git_workspace_inspector.dart';
 export 'src/workspace/workspace_manager.dart';

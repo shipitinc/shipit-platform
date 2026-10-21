@@ -59,6 +59,7 @@ import 'package:worker_runtime/worker_runtime.dart'
         CoordinatorAgentExecutionDriver,
         GitWorktreeWorkspaceManager,
         LocalWorker,
+        RetainingWorkspaceManager,
         WorkerDispatcher,
         WorkerRegistrationHeartbeat,
         WorkerRegistrationStore,
@@ -115,6 +116,7 @@ import 'src/persistence/postgres_qa_contract_store.dart';
 import 'src/qa/production_qa_sources.dart'
     show ProducerWorkspaceResolver, buildProductionGateRegistry;
 import 'src/qa/qa_drain.dart' show runQADrain;
+import 'src/qa/qa_workspace_retention.dart' show QaWorkspaceRetention;
 import 'package:scheduler/scheduler.dart'
     show
         engineeringReviewDefinition,
@@ -442,13 +444,46 @@ void run(List<String> args) async {
   // [perExecutionValidationChecksNotActivated] is empty. What it still does
   // NOT claim is the merge/release tier (`make test-integration`), which
   // belongs to the gate that owns it.
+  // THE IMPLEMENTER'S WORKSPACE MANAGER, AND THE ONE PLACE THE QA RETENTION
+  // IS WIRED.
+  //
+  // It wraps the same [GitWorktreeWorkspaceManager] the other two lanes use, and
+  // differs in exactly one behaviour: `cleanup` defers the removal instead of
+  // performing it. The base manager still does the removing, through the
+  // retention manager's `release` — so there is one implementation of "remove a
+  // worktree", not two.
+  final implementWorkspaceManager = RetainingWorkspaceManager(
+    GitWorktreeWorkspaceManager(workspaceRoot: workspaceRoot),
+  );
+  // The sweep that releases the retained workspaces once the evaluation that
+  // reads them is over. Built HERE, next to the manager it releases through,
+  // because the two are one mechanism: the deferral and the release are the
+  // same decision seen from its two ends.
+  final qaWorkspaceRetention = QaWorkspaceRetention(
+    workerStore: workerStore,
+    workflowStore: workflowStore,
+    workspaceManager: implementWorkspaceManager,
+  );
   final implementWorker = LocalWorker(
     workerId: 'w-impl-local',
     poolId: 'impl-pool',
     capabilities: implementFeatureDefinition.requiredCapabilities,
     // Never the source repository itself: the agent runs in a detached
     // worktree, and cleanup only ever removes worktrees this platform created.
-    workspaceManager: GitWorktreeWorkspaceManager(workspaceRoot: workspaceRoot),
+    //
+    // THE QA RETENTION. This is the ONE lane whose workspace is not removed
+    // when its run ends, because the QA gates re-read that checkout
+    // unconditionally and a checkout that is gone when the gate looks at it
+    // makes the gate say nothing about the work (decision `9b7e4c31`). The
+    // removal is DEFERRED, never cancelled: the QA lane's own sweep releases
+    // the workspace as soon as the evaluation that reads it is over, and the
+    // worker's row records `cleanupStatus: pending` meanwhile, which is the
+    // platform's own word for "this workspace is still on disk".
+    //
+    // Only the implementation lane retains. The triage lane's and the review
+    // lane's workspaces are read by nothing downstream, and the review lane
+    // reads the produced COMMIT rather than the implementer's worktree.
+    workspaceManager: implementWorkspaceManager,
     executionDriver: CoordinatorAgentExecutionDriver(implementationCoordinator),
     workerStore: workerStore,
     registrationStore: workerRegistrationStore,
@@ -1225,6 +1260,45 @@ void run(List<String> args) async {
           'stack': st.toString(),
           'action':
               'QA evaluation is retried on the next tick; other lanes unaffected',
+        });
+      }
+
+      // ---- The QA workspace retention sweep. ----
+      //
+      // AFTER the drain, so that a workspace the drain has just released — the
+      // evaluation is over, whatever its verdict was — is released in the same
+      // tick rather than the next one.
+      //
+      // It is the other half of decision `9b7e4c31`: the implementer's
+      // checkout survives its run so the QA gates can re-read it, and this
+      // sweep is what removes it once they are done. It is a SWEEP, not a
+      // hook: it finds the retained workspaces from the durable record
+      // (`cleanupStatus: pending`), so an interrupted release is simply
+      // released by the next pass, and a process that died between the
+      // evaluation and the removal leaves nothing behind.
+      //
+      // In its OWN try, like every other section: a sweep that fails must not
+      // take the lanes down with it, and the next tick retries it.
+      try {
+        final retention = await qaWorkspaceRetention.reclaim();
+        if (retention.releasedAnything || retention.failed > 0) {
+          _log('qa.workspace_retention.completed', {
+            'released': retention.released,
+            'kept': retention.kept,
+            'failed': retention.failed,
+            'releasedWorkspaceIds': retention.releasedWorkspaceIds,
+            'reasons': retention.reasons,
+          });
+        }
+      } catch (e, st) {
+        outcome.failedSections.add('qaRetention');
+        _log('qa.workspace_retention.failed', {
+          'error': '$e',
+          'stack': st.toString(),
+          'action':
+              'the retention sweep is retried on the next tick; the retained '
+              'workspaces stay until it succeeds, and other lanes are '
+              'unaffected',
         });
       }
 

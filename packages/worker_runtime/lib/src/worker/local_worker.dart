@@ -573,8 +573,26 @@ class LocalWorker implements Worker {
 
       await _event(
         terminal,
+        // `workspaceCleaned` is a CLAIM ABOUT THE FILESYSTEM: it says the
+        // workspace is gone. The retention makes that claim false in exactly
+        // one new case — a removal that was DEFERRED
+        // ([WorkerCleanupStatus.pending]), where the workspace is still on
+        // disk because the evaluation that reads it has not finished. So
+        // `pending` must not produce it.
+        //
+        // EVERY OTHER COMBINATION IS UNCHANGED, and that is deliberate. The
+        // failure path keeps saying `workerReleased` for a workspace that WAS
+        // removed. A run that never got a workspace at all reports
+        // `notApplicable`, and that combination never reaches `executedPass`
+        // — a run without a workspace either failed to prepare or was
+        // interrupted, and neither is a pass. This event is not the place to
+        // change any of those: doing it here would make a retention change
+        // look like a semantics change it is not, and the audit trail would
+        // move under lanes that did not sign up for it.
         cleanupStatus == WorkerCleanupStatus.cleanupFailed
             ? WorkerEventType.cleanupFailed
+            : cleanupStatus == WorkerCleanupStatus.pending
+            ? WorkerEventType.workerReleased
             : finalStatus == WorkerExecutionStatus.executedPass
             ? WorkerEventType.workspaceCleaned
             : WorkerEventType.workerReleased,
