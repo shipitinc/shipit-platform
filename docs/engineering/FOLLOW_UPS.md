@@ -3458,3 +3458,34 @@ Consequence: **F2 cannot pass for any feature item until the path-ownership map 
 known limitation, and note the related vacuity gap — the registration proof
 (`gate_registry_m1_test.dart:351`) exercises F2 with `['packages/**']`, a *valid* config, never the shipped
 empty one, so the proof does not cover what the manifest actually declares.
+
+**F-203 status: closed 2026-10-21.** The gap it named — that the registration proof never covered the
+shipped config — is closed by the shipped-manifest test added at `561d385`, which reads the real file from
+disk and asserts the designed `FormatException`. Its original `gate_registry_m1_test.dart:351` line reference
+is now stale (the assertion moved).
+
+**F-204 — an unwired gate's failure is distinguishable from a real evaluation only by its reason string.**
+`packages/qa_orchestration/lib/src/gates/unwired_sources.dart` wires seven registered evaluators to six
+non-production stubs. All six fail **closed** with readable reasons, so `DECLARED` cannot read as `PASSING` —
+but no *persisted* field separates "a stub said could-not-establish" from "an adapter read git and found bad
+state"; the separation rests entirely on free text. Accepted at M1 review rather than fixed, because the
+alternative (leaving the types unregistered) is no safer for the pass case and only loses the audit trail.
+**Closure condition: slice 3c replaces the stubs with real adapters and stamps provenance in a structured
+field**, not in the reason string.
+
+**F-205 — a production comment now asserts something false.**
+`packages/qa_orchestration/lib/src/product_qa_contract.dart` (~`:146-152`) still says *"no gate evaluator
+runtime exists for a product-declared gate type"* and that `QAOrchestration.evaluate` returns `notExecuted`
+for an unknown type. Post-M1 the shipped manifest's five gate types **are** registered, so the first clause is
+false. The **value** `'evaluatorRuntime': 'absent'` remains correct — `design-revision.md:1016` holds it until
+slice 3c is in place — only the *comment's* claim about registration is stale. Fix the comment when 3c lands.
+
+**F-206 — the integration reporter cannot attribute a single file's result, which is how a blocker escaped an
+"asserted, not measured" claim.**
+`make test-integration`'s default reporter collapses per-test lines under non-TTY capture, so a specific
+file's pass/fail is **not recoverable from stdout**. Per-file attribution requires intercepting the inner
+`dart test` with `--reporter expanded` plus `--file-reporter json:<path>` and reading `suite.path` /
+`testStart` / `testDone`. Two lanes now worked around this the same way. **This is the mechanism by which M1's
+first review left a known-failing integration assertion in place on a claim that had not been measured**: an
+absence in collapsed output reads as an absence of failure. The target should emit a machine-parseable report
+by default.
