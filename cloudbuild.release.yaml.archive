@@ -1,0 +1,108 @@
+steps:
+  # Install dependencies
+  - name: 'dart:3.12'
+    entrypoint: 'dart'
+    args: ['pub', 'global', 'activate', 'melos', '^8.0.0']
+    env:
+      - 'PUB_CACHE=/root/.pub-cache'
+
+  - name: 'dart:3.12'
+    entrypoint: 'dart'
+    args: ['pub', 'global', 'run', 'melos', 'bootstrap']
+    env:
+      - 'PUB_CACHE=/root/.pub-cache'
+
+  # Analyze and test
+  - name: 'dart:3.12'
+    entrypoint: 'dart'
+    args: ['pub', 'global', 'run', 'melos', 'run', 'analyze']
+    env:
+      - 'PUB_CACHE=/root/.pub-cache'
+
+  - name: 'dart:3.12'
+    entrypoint: 'dart'
+    args: ['pub', 'global', 'run', 'melos', 'run', 'format']
+    env:
+      - 'PUB_CACHE=/root/.pub-cache'
+
+  - name: 'dart:3.12'
+    entrypoint: 'dart'
+    args: ['pub', 'global', 'run', 'melos', 'run', 'test']
+    env:
+      - 'PUB_CACHE=/root/.pub-cache'
+
+  # Build and push server image with tag
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-f', 'docker/Dockerfile.server',
+      '-t', '${_ARTIFACTS_REPO}/server:$TAG_NAME',
+      '-t', '${_ARTIFACTS_REPO}/server:latest',
+      'apps/server'
+    ]
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_ARTIFACTS_REPO}/server:$TAG_NAME']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_ARTIFACTS_REPO}/server:latest']
+
+  # Build and push client image with tag
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-f', 'docker/Dockerfile.client',
+      '-t', '${_ARTIFACTS_REPO}/client:$TAG_NAME',
+      '-t', '${_ARTIFACTS_REPO}/client:latest',
+      'apps/control_plane'
+    ]
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_ARTIFACTS_REPO}/client:$TAG_NAME']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_ARTIFACTS_REPO}/client:latest']
+
+  # Build and push worker-linux image with tag
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-f', 'docker/Dockerfile.worker-linux',
+      '-t', '${_ARTIFACTS_REPO}/worker-linux:$TAG_NAME',
+      'tooling/workers'
+    ]
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_ARTIFACTS_REPO}/worker-linux:$TAG_NAME']
+
+  # Deploy to Cloud Run (production)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    entrypoint: 'gcloud'
+    args: [
+      'run', 'deploy', '${_NAME_PREFIX}-server',
+      '--image', '${_ARTIFACTS_REPO}/server:$TAG_NAME',
+      '--region', '${_REGION}',
+      '--platform', 'managed',
+      '--allow-unauthenticated'
+    ]
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    entrypoint: 'gcloud'
+    args: [
+      'run', 'deploy', '${_NAME_PREFIX}-client',
+      '--image', '${_ARTIFACTS_REPO}/client:$TAG_NAME',
+      '--region', '${_REGION}',
+      '--platform', 'managed',
+      '--allow-unauthenticated'
+    ]
+
+substitutions:
+  _ARTIFACTS_REPO: '${_ARTIFACTS_REPO}'
+  _NAME_PREFIX: 'shipit-production'
+  _REGION: 'us-central1'
+  TAG_NAME: 'latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  pool:
+    name: 'projects/${PROJECT_ID}/locations/${_REGION}/workerPools/cloudbuild'

@@ -1,0 +1,25 @@
+{
+  "task_id": "IMPL-WORKER-REGISTRATION",
+  "task_type": "implement",
+  "state": "IMPLEMENTATION_BLOCKED",
+  "worktree": "/Users/alkebut/.aef-lanes/worker-registration",
+  "branch": "fix/worker-registration-lifecycle",
+  "base_sha": "e8cd0ce",
+  "head_sha": "ecba50a",
+  "result": "IMPLEMENTATION_BLOCKED",
+  "routing_class": "STANDARD",
+  "manager_verified": {
+    "tests_rerun_by_manager": "dart test -> +18 All tests passed! (apps/server)",
+    "cross_lane_overlap": "EMPTY",
+    "prohibited_paths_touched": "none"
+  },
+  "acceptance_criteria_met": [1, 2, 3, 5],
+  "blockers": [
+    "apps/control_plane/lib/features/home/home_bloc.dart:249 returns the unconditional literal 'waiting for a free machine' for every queued job. It is a CLIENT-side constant; no server change can influence it, and neither JobSummary nor JobSummaryView carries a capacity field. apps/control_plane/** was READ_ONLY to this lane, so criterion 4 is half met: '0 of 0 machines busy' is fixed (server-side), the job label is not."
+  ],
+  "not_verified_without_postgres": [
+    "PostgresWorkerRegistrationStore.registerWorker ON CONFLICT DO UPDATE refreshes status/currentLoad/lastHeartbeat on second call",
+    "lastHeartbeat round-trips as an instant comparable to the sweeper clock"
+  ],
+  "next_actions": ["INDEPENDENT_ENGINEERING_REVIEW", "IMPL-HOME-MACHINE-LABEL for the client literal"]
+}

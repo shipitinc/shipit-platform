@@ -1,0 +1,24 @@
+-- Human claims exported from baseline bl-shipit-platform-2
+-- section | claim | maturity | evidenceRefsJson
+
+governance | ControlPlane writes: ProductRegistryEndpoints include governed mutations (requestBaselineApproval, resolveBaselineApproval, baselineApproval, answerClarification). Not limited to resolveHumanDecision. | implemented | ["lib/src/endpoints/product_registry_endpoints.dart"]
+
+governance | BaselineFact model now includes typed maturity field (implemented, policy, planned, deferred, notImplemented, unknown) independent of provenance. ARCHITECTURE_DECISION_REQUIRED resolved. | implemented | ["packages/platform_contracts/lib/src/enums/baseline_maturity.dart","packages/platform_contracts/lib/src/types/baseline_fact.dart"]
+
+governance | Baseline revisions must be complete standalone snapshots. V3 carries forward all valid v1 facts + corrections. v2 delta rejected. ContentHash binds complete fact set. | policy | ["AD-1 baseline revision semantics"]
+
+governance | Real-time session log streaming to Flutter UI: NOT_IMPLEMENTED. Original operator-UI scope excluded realtime behavior. | not_implemented | ["lib/features/","lib/data/control_plane_repository.dart"]
+
+governance | HumanDecision authority implemented for: workflow human decisions, ProductBaseline acceptance. Deployment/release/rollback/security/infra gates exist as contracts/policies, not implemented authority paths. | policy | ["packages/deployment_protocol/","packages/qa_orchestration/","packages/workflow_engine/"]
+
+deployment | Artifact storage: ArtifactReference/PlatformVerification use content hashes. AgentResult/worker artifacts reference files. Production GCS/Local ArtifactStore NOT_IMPLEMENTED. Do not generalize. | not_implemented | ["packages/deployment_protocol/","packages/agent_runtime/"]
+
+ci_cd | Byte-identical Serverpod regeneration executed as QA evidence (local). GitHub Actions CI pipeline NOT_IMPLEMENTED in repo. Distinguish QA evidence from CI enforcement. | not_implemented | ["melos.yaml",".github/ (absent)"]
+
+qa | QA governance: QAContract, independent verification, artifact validation exist as contracts/policies (packages/qa_orchestration). Full AEF implementation NOT_VERIFIED. Distinguish implemented from planned. | policy | ["packages/qa_orchestration/"]
+
+architecture | ProductState (draft/active/archived/deprecated) is distinct from WorkItemState workflow gates. Do not conflate Product lifecycle with WorkItem workflow lifecycle. | implemented | ["packages/platform_contracts/lib/src/enums/product_state.dart","packages/workflow_engine/lib/src/states/workflow_state.dart"]
+
+deployment | DeploymentProtocol models artifact promotion/rollback as domain types. Production deployment targets, OpenTofu IaC, GCS ArtifactStore NOT_IMPLEMENTED. ShipIt not production-deployable. | not_implemented | ["packages/deployment_protocol/","docs/adr/0009-opentofu-iac.md"]
+
+governance | Independent baseline review of v1 was insufficient — human review identified material overstatements. Review must explicitly check: OBSERVED vs DERIVED vs HUMAN_PROVIDED AND IMPLEMENTED vs PLANNED vs POLICY. Provenance alone is insufficient. | policy | ["this correction rationale"]

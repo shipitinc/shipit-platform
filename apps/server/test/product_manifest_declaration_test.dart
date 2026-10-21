@@ -56,6 +56,9 @@ void main() {
     jsonDecode(manifestFile.readAsStringSync()) as Map<String, dynamic>,
   );
   final gates = manifest.contracts.qaContract.gates;
+  final intake = gates.firstWhere(
+    (g) => g.gateId == 'intake-structured-result-admitted',
+  );
 
   group('the shipit-platform declaration names the product it is for', () {
     test('it is the manifest for shipit-platform, version 1.0.0', () {
@@ -84,32 +87,33 @@ void main() {
     });
 
     test('it declares exactly ONE gate, and that gate is required', () {
-      expect(gates, hasLength(1));
-      expect(gates.single.required, isTrue);
-      expect(gates.single.gateId, 'intake-structured-result-admitted');
+      expect(gates, hasLength(5));
+      final intake = gates.firstWhere(
+        (g) => g.gateId == 'intake-structured-result-admitted',
+      );
+      expect(intake.required, isTrue);
+      expect(intake.type, 'triage-classification-structure');
     });
   });
 
   group('the gate asserts something observable about the intake run', () {
-    final gate = gates.single;
-
     test('sourceColumn is the triage contract\'s, verbatim', () {
       expect(
-        gate.config['sourceColumn'],
+        intake.config['sourceColumn'],
         structuredClassificationAdmitted.config['sourceColumn'],
       );
       expect(
-        gate.config['sourceColumn'],
+        intake.config['sourceColumn'],
         'agent_result.structuredResultJson',
       );
     });
 
     test('requiredFields is the triage contract\'s, in order', () {
       expect(
-        gate.config['requiredFields'],
+        intake.config['requiredFields'],
         structuredClassificationAdmitted.config['requiredFields'],
       );
-      expect(gate.config['requiredFields'], <String>[
+      expect(intake.config['requiredFields'], <String>[
         'classification',
         'status',
         'confidence',
@@ -121,8 +125,8 @@ void main() {
       // `TriageProcessor._parseTriageResult` calls `DefectClassification
       // .fromWire` and `DefectStatus.fromWire` on these two, so a gate naming
       // any other enums would be asserting a check that does not exist.
-      expect(gate.config['classificationEnum'], 'DefectClassification');
-      expect(gate.config['statusEnum'], 'DefectStatus');
+      expect(intake.config['classificationEnum'], 'DefectClassification');
+      expect(intake.config['statusEnum'], 'DefectStatus');
       expect(
         structuredClassificationAdmitted.config['classificationEnum'],
         'DefectClassification',
@@ -140,11 +144,11 @@ void main() {
       // field while the derived `QAGateDefinition` does. Absent means `[]`,
       // which reads as "no evidence type is declared" — a real difference in
       // what the gate can be evaluated against once an evaluator exists.
-      expect(gate.config['evidenceTypes'], <String>[
+      expect(intake.config['evidenceTypes'], <String>[
         'triage_structured_result',
       ]);
       expect(
-        gate.config['evidenceTypes'],
+        intake.config['evidenceTypes'],
         structuredClassificationAdmitted.evidenceTypes,
         reason:
             'the two gates read the same document, so the evidence they name '
@@ -160,10 +164,10 @@ void main() {
       // type name would need a second `GateRegistry` entry for one assertion,
       // and the slice-3 evaluator would have to be written twice.
       expect(
-        gates.single.type,
+        intake.type,
         structuredClassificationAdmitted.type,
       );
-      expect(gates.single.type, 'triage-classification-structure');
+      expect(intake.type, 'triage-classification-structure');
     });
   });
 
@@ -183,14 +187,16 @@ void main() {
         now: DateTime.utc(2026, 10, 17),
       );
 
-      expect(contract.gates, hasLength(1));
-      final derived = contract.gates.single;
+      expect(contract.gates, hasLength(5));
+      final derived = contract.gates.firstWhere(
+        (g) => g.gateId == 'intake-structured-result-admitted',
+      );
       expect(derived.gateId, 'intake-structured-result-admitted');
       expect(derived.type, 'triage-classification-structure');
       expect(derived.required, isTrue);
       expect(
         derived.config['requiredFields'],
-        gates.single.config['requiredFields'],
+        intake.config['requiredFields'],
       );
       expect(
         derived.evidenceTypes,
@@ -202,7 +208,9 @@ void main() {
       );
       // Stated, not implied: nothing evaluates this type yet.
       expect(contract.metadata?['evaluatorRuntime'], 'absent');
-      expect(gateRegistry.get(derived.type), isNull);
+      // After M1, the reviewed evaluator is registered; the runtime drain
+      // (slice 3c) remains absent, and evaluatorRuntime stays 'absent' per Ruling 1.
+      expect(gateRegistry.get(derived.type), isNotNull);
     });
   });
 }

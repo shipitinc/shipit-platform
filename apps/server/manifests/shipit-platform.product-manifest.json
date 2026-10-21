@@ -59,6 +59,128 @@
               "triage_structured_result"
             ]
           }
+        },
+        {
+          "gateId": "feature-change-committed",
+          "type": "implementation-artifact-provenance",
+          "required": true,
+          "config": {
+            "evidenceTypes": [
+              "execution_delta",
+              "committed_revision"
+            ],
+            "requireReadableDelta": true,
+            "requireHeadMoved": true,
+            "recordProducedRevision": true
+          }
+        },
+        {
+          "gateId": "feature-change-scope-confined",
+          "type": "change-scope-confinement",
+          "required": true,
+          "config": {
+            "evidenceTypes": [
+              "committed_diff_paths"
+            ],
+            "ownedPathGlobs": [],
+            "forbiddenPathGlobs": [],
+            "pathSource": "git_diff_name_only"
+          }
+        },
+        {
+          "gateId": "feature-declared-checks-executed",
+          "type": "declared-validation-outcome",
+          "required": true,
+          "config": {
+            "evidenceTypes": [
+              "platform_verification"
+            ],
+            "requireCheckNames": [
+              "dart_format_repo_root",
+              "dart_analyze_packages_platform_contracts",
+              "dart_analyze_packages_workflow_engine",
+              "dart_analyze_packages_workflow_store",
+              "dart_analyze_packages_agent_runtime",
+              "dart_analyze_packages_worker_protocol",
+              "dart_analyze_packages_qa_orchestration",
+              "dart_analyze_packages_deployment_protocol",
+              "dart_analyze_packages_execution_coordinator",
+              "dart_analyze_packages_worker_runtime",
+              "dart_analyze_packages_scheduler",
+              "dart_analyze_packages_product_registry",
+              "dart_analyze_packages_store_contract_tests",
+              "dart_analyze_packages_control_plane_client",
+              "dart_analyze_packages_design_governance",
+              "dart_analyze_apps_server",
+              "dart_analyze_apps_control_plane",
+              "dart_test_packages_platform_contracts",
+              "dart_test_packages_workflow_engine",
+              "dart_test_packages_workflow_store",
+              "dart_test_packages_agent_runtime",
+              "dart_test_packages_worker_protocol",
+              "dart_test_packages_qa_orchestration",
+              "dart_test_packages_deployment_protocol",
+              "dart_test_packages_execution_coordinator",
+              "dart_test_packages_worker_runtime",
+              "dart_test_packages_scheduler",
+              "dart_test_packages_product_registry",
+              "dart_test_packages_store_contract_tests",
+              "dart_test_packages_design_governance",
+              "server_unit_tests_runner",
+              "flutter_test_apps_control_plane"
+            ],
+            "requireCommands": {
+              "dart_format_repo_root": "dart format --output=none --set-exit-if-changed .",
+              "dart_analyze_packages_platform_contracts": "dart analyze",
+              "dart_analyze_packages_workflow_engine": "dart analyze",
+              "dart_analyze_packages_workflow_store": "dart analyze",
+              "dart_analyze_packages_agent_runtime": "dart analyze",
+              "dart_analyze_packages_worker_protocol": "dart analyze",
+              "dart_analyze_packages_qa_orchestration": "dart analyze",
+              "dart_analyze_packages_deployment_protocol": "dart analyze",
+              "dart_analyze_packages_execution_coordinator": "dart analyze",
+              "dart_analyze_packages_worker_runtime": "dart analyze",
+              "dart_analyze_packages_scheduler": "dart analyze",
+              "dart_analyze_packages_product_registry": "dart analyze",
+              "dart_analyze_packages_store_contract_tests": "dart analyze",
+              "dart_analyze_packages_control_plane_client": "dart analyze",
+              "dart_analyze_packages_design_governance": "dart analyze",
+              "dart_analyze_apps_server": "dart analyze",
+              "dart_analyze_apps_control_plane": "dart analyze",
+              "dart_test_packages_platform_contracts": "dart test",
+              "dart_test_packages_workflow_engine": "dart test",
+              "dart_test_packages_workflow_store": "dart test",
+              "dart_test_packages_agent_runtime": "dart test",
+              "dart_test_packages_worker_protocol": "dart test",
+              "dart_test_packages_qa_orchestration": "dart test",
+              "dart_test_packages_deployment_protocol": "dart test",
+              "dart_test_packages_execution_coordinator": "dart test",
+              "dart_test_packages_worker_runtime": "dart test",
+              "dart_test_packages_scheduler": "dart test",
+              "dart_test_packages_product_registry": "dart test",
+              "dart_test_packages_store_contract_tests": "dart test",
+              "dart_test_packages_design_governance": "dart test",
+              "server_unit_tests_runner": "dart run tool/run_unit_tests.dart",
+              "flutter_test_apps_control_plane": "flutter test"
+            },
+            "requireStatus": "passed",
+            "commandMatchIsExact": true
+          }
+        },
+        {
+          "gateId": "feature-review-bound-to-revision",
+          "type": "revision-identity-match",
+          "required": true,
+          "config": {
+            "evidenceTypes": [
+              "review_verdict",
+              "committed_revision"
+            ],
+            "reviewedRevisionField": "endingRevision",
+            "producedRevisionField": "producedRevision",
+            "requireStringEquality": true,
+            "nullRevisionIsFailure": true
+          }
         }
       ]
     },

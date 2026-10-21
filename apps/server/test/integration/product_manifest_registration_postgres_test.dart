@@ -250,13 +250,17 @@ void _registrationTests() {
           );
 
       expect(contract.contractId, 'qa-product-${_prefix}WI-1');
-      expect(contract.gates.single.gateId, 'intake-structured-result-admitted');
+      final intake = contract.gates.firstWhere(
+        (g) => g.gateId == 'intake-structured-result-admitted',
+      );
+      expect(intake.type, 'triage-classification-structure');
       expect(contract.metadata?['productId'], _fixtureProductId);
       expect(contract.metadata?['manifestVersion'], '1.0.0');
       // Stated rather than implied: nothing evaluates this gate type yet, so a
       // passing evaluation here would be a fiction.
       expect(contract.metadata?['evaluatorRuntime'], 'absent');
-      expect(gateRegistry.get(contract.gates.single.type), isNull);
+      // M1: reviewed evaluators registered; runtime drain (3c) still absent.
+      expect(gateRegistry.get(intake.type), isNotNull);
     },
   );
 

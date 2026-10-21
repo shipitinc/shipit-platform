@@ -1,0 +1,21 @@
+{
+  "task_id": "IMPL-TRANSITION-ROW-500",
+  "task_type": "implement",
+  "state": "IMPLEMENTED",
+  "worktree": "/Users/alkebut/.aef-lanes/transition-row-500",
+  "branch": "fix/transition-row-malformed-guard",
+  "base_sha": "e8cd0ce",
+  "head_sha": "d8e0b0d",
+  "result": "IMPLEMENTED",
+  "routing_class": "PRECISION",
+  "manager_verified": {
+    "tests_rerun_by_manager": "dart test -> +42 All tests passed! (apps/server)",
+    "cross_lane_overlap": "EMPTY",
+    "prohibited_paths_touched": "none"
+  },
+  "blockers": [
+    "B1: new migration 20261015120000000 wraps guardEvaluationsJson in an array, which makes 20261014210000000's own `down` (which reads ->>'priorDecisionStatus' on what becomes an array) return NULL silently and restore nothing while reporting success. Not fixable; rollback ORDER is documented and test-pinned. 20261014210000000/migration.sql is outside this lane's ownership.",
+    "B2: migration authored and committed but NEVER EXECUTED - its SQL has never been parsed by PostgreSQL. Applying to QA is a human action with infrastructure authority."
+  ],
+  "next_actions": ["INDEPENDENT_ENGINEERING_REVIEW", "HUMAN_APPLY_MIGRATION_TO_QA"]
+}

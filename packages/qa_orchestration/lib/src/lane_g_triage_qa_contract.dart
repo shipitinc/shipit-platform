@@ -106,16 +106,23 @@ String triageQAContractIdForDefect(String defectId) => 'qa-triage-$defectId';
 ///
 /// ## On `gate.type`
 ///
-/// These gate types have no entry in `GateRegistry` — the four registered
-/// evaluators are all implementation gates, and none of them can say anything
-/// about a classification. That is deliberate and it is not silently passing:
-/// `QAOrchestration.evaluate` returns `QAGateStatus.notExecuted` for an
-/// unknown type, `isGateSatisfied(notExecuted)` is `false`, and
-/// `QAOrchestration.requiresFormalDetermination` names both required gates as
-/// needing a formal determination. The contract is a durable declaration of
-/// what must be true; the evaluator runtime that will enforce it does not exist
-/// yet, and the contract says `evaluatorRuntime: absent` in its metadata
-/// rather than implying otherwise.
+/// These three gate types ARE registered in `GateRegistry` as of M1
+/// (`substantive-qa-gates.md` §8): `triage-classification-structure`
+/// (`TriageClassificationAdmittedGate`, source-free), `triage-evidence-grounding`
+/// (`TriageEvidenceGroundingGate`), and — the type `remediationDefectResolvable`
+/// declares — `triage-defect-existence` (`RemediationDefectExistenceGate`).
+/// Registration is what stops `QAOrchestration.evaluate` from answering
+/// `QAGateStatus.notExecuted` for a declared type, which reads as "no evaluator
+/// exists" rather than "the gate ran and failed".
+///
+/// The two source-backed types are wired to **fail-closed** sources
+/// (`unwired_sources.dart`) until slice 3c supplies their production adapters,
+/// so a triage or remediation run fails these gates honestly rather than passing
+/// vacuously. `isGateSatisfied` treats a failure as unsatisfied, and
+/// `QAOrchestration.requiresFormalDetermination` names a required gate that is
+/// not satisfied as needing a formal determination — this contract is a durable
+/// declaration of what must be true, and its evaluators exist while their
+/// production data sources do not yet.
 QAContract buildAdvisoryTriageQAContract({
   required String defectId,
   required String workItemId,
@@ -205,6 +212,32 @@ const QAGateDefinition evidenceGrounded = QAGateDefinition(
     'sourceColumn': 'defect_evidence.evidenceId',
     'everyCitedEvidenceMustExist': true,
     'mustBelongToReportedDefect': true,
+  },
+);
+
+/// The defect a remediation work item names must actually resolve.
+///
+/// Design §3.2 **R1** (`remediation-defect-resolvable`), the one NEW declaration
+/// the remediation lane adds. Evidence: the `defect` row for the id the item
+/// itself names. `sourceColumn` is a **label only** and is never interpolated
+/// into a query; the reader is `DefectRowReader` (slice 3c wires the production
+/// adapter), called with the id derived from the work item's documented
+/// `design-remediation-<defectId>` shape.
+///
+/// Required, and it turns a live logged-and-dropped condition into a recorded
+/// gate outcome: `triage_processor.dart` catches `DefectNotFoundException`,
+/// logs `triage.processed.defect_missing`, and returns success with the
+/// classification discarded — leaving the job `succeeded` for an item whose
+/// defect does not exist.
+const QAGateDefinition remediationDefectResolvable = QAGateDefinition(
+  gateId: 'remediation-defect-resolvable',
+  type: 'triage-defect-existence',
+  required: true,
+  evidenceTypes: ['defect_row'],
+  config: <String, dynamic>{
+    'sourceColumn': 'defect.defectId',
+    'requireResolvable': true,
+    'idSource': 'workItemDefectReference',
   },
 );
 

@@ -26,6 +26,35 @@ AgentResult agentResultFor({
   );
 }
 
+/// The same shape as [agentResultFor], with an explicit `structuredResult`.
+///
+/// R3 (`triage-classification-structure`) is source-free and reads the agent's
+/// own structured output, so a test that drives it both ways needs to vary this
+/// map and nothing else. Kept separate from [agentResultFor] so the shared
+/// fixture stays boring and a caller opts in to a populated payload.
+AgentResult agentResultWithStructuredResult(
+  Map<String, dynamic> structuredResult, {
+  String workItemId = 'work-1',
+}) {
+  return AgentResult(
+    resultId: 'result-1',
+    sessionId: 'session-1',
+    workItemId: workItemId,
+    status: AgentResultStatus.completed,
+    artifacts: const [],
+    diagnostics: const AgentDiagnostics(
+      exitCode: 0,
+      durationMs: 1000,
+      toolCalls: 0,
+      errors: [],
+      warnings: [],
+    ),
+    structuredResult: structuredResult,
+    executionId: 'exec-1',
+    completedAt: DateTime.utc(2026, 10, 20),
+  );
+}
+
 QAGateDefinition gateFor({
   required String gateId,
   required String type,

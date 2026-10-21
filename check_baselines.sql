@@ -1,0 +1,1 @@
+SELECT "baselineId", revision, "contentHash", status, version FROM product_baseline WHERE "productId"='shipit-platform' ORDER BY revision;

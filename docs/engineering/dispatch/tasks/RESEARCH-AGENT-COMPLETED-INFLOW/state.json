@@ -1,0 +1,29 @@
+{
+  "task_id": "RESEARCH-AGENT-COMPLETED-INFLOW",
+  "task_type": "research",
+  "state": "RESEARCH_COMPLETE",
+  "base_sha": "e8cd0ce",
+  "head_sha": "e8cd0ce",
+  "committed": false,
+  "wrote_nothing": true,
+  "result": "RESEARCH_COMPLETE",
+  "routing_class": "STANDARD",
+  "contract_deviation": "TASK_TYPE research has no RESULT token in subtask-report.md's normalization table and no research agent type is defined. Lane emitted RESEARCH_COMPLETE rather than borrow another lane's token. Manager must extend the table or record this as a Manager-self research entry.",
+  "manager_verified": {
+    "stale_build_claim": "VERIFIED INDEPENDENTLY. Live job jb-hn8rwr8iwi-n2rynt instruction is the one-line pre-2b29bdd text; HEAD e8cd0ce emits a multi-line block beginning 'WHAT EACH VERDICT MEANS:'. Running build predates 2b29bdd (2026-10-15 17:22)."
+  },
+  "root_causes": {
+    "Q1_agent_completed": "DurableWorkflowEngine.readTriageAttempt(item) >= maxImplementationInflows (3). The bound is checked before the write for BOTH routes (scheduler.dart:1582), so it also suppresses the reviewInProgress route, which is not an entry into the implementation lane at all. triageAttempt: 3,4,3,4 stalled vs 2 routed.",
+    "Q1b_unreachable_park": "3 of the 4 items have ZERO agent_execution rows (producers ran before 254dbec wired PostgresExecutionStore), so agentResultValid() cannot be satisfied and engineering-review-missing-artifact-no-implementer-result returns silently every tick. Backfilling is explicitly rejected by docs/engineering/learning/the-writer-and-the-reader-were-different-stores.md:119-136. Genuine architectural dead end; only operator action or a decision record exits it.",
+    "Q2_review_in_progress": "Terminal-by-omission for exactly one failure class: a PERMANENT review-job failure. All three candidate producers refuse (retry-return edge requires failure.kind.isRetryable; verdict path needs a ReviewVerdict; raiseVerdictAbsentDecision gates on execution.status == completed, which a permanent failure never reaches). ~5-line fix at engineering_review_gate.dart:1016/1020: condition should be 'no retry still owed', not 'the review completed'.",
+    "Q3_870_cancelled": "Not duplicates. Scheduler.tick reads the clock once (scheduler.dart:742) and stamps every job minted in that tick identically; 435 jobs each for two work items, one per 30s tick. Cancelled by _adoptSupersession's _maxSupersessionDeferrals cap, reached because the agentCompleted->reviewInProgress guard read a failed REVIEWER's result instead of the producer's (fixed in 67a738b via resolveProducerExecution). ce20f88 added the producer stall; NEITHER was in the running build. Stopped at 19:25:35. Already fixed at HEAD - needs a deploy, not code."
+  },
+  "premises_corrected_by_lane": [
+    "Q1 is not producedCommitFor - it is the maxImplementationInflows bound",
+    "defect-DEF-1791684557133597 was pulled back by migration 20261014210000000 voiding dec-hn7h7d9j8i-1oh8pgm at 2026-10-15 14:41:31, not by any lane",
+    "reviewInProgress -> agentCompleted DOES exist and fired at 2026-10-15 20:56:31 - for transient failures only"
+  ],
+  "hd6_not_load_bearing": "0 of 14 work items have ever taken design_approved, so triageAttempt is identical under either answer and the stand-down fires on the same four. HD-6 should NOT be escalated to unblock this.",
+  "material_finding_not_asked_about": "All lanes share ONE TickSingleFlight (server.dart:939) and a tick is held for sum(N x budget). jb-hn8rwrb94j-1hwtr72 was created 19:27:38 and claimed 20:54:55 - 87 minutes - because a sibling reviewer's execution held the tick. For those 87 minutes nothing ticked at all. Lives in server.dart, which IMPL-WORKER-REGISTRATION owned.",
+  "next_actions": ["DEPLOY e8cd0ce to QA", "IMPL-INFLOW-BOUND-SCOPE", "IMPL-REVIEW-GATE-PARK"]
+}
