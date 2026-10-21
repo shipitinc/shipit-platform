@@ -3580,3 +3580,39 @@ commit as its own `HEAD` for work that was **not in the tree**, with `tests=pass
 red (I re-ran it and it failed). Common shape: **a report that asserts a measurement the reporter did not take.**
 The durable countermeasure is that every reported SHA and exit code is re-derived by the reviewer or the
 Manager before the claim is used.
+
+**F-211 — the retention's leak bound is process availability, not a time bound.**
+`packages/worker_runtime/lib/src/workspace/evaluation_retention.dart:100-104`. Decision `9b7e4c31` requires
+removal to be unconditional — *"This decision changes when removal happens, never whether it happens"* — and
+the implementation achieves the *whether* only via a sweep that runs **on the next process's tick**. A
+workspace whose platform process never runs again stays on disk: there is no external timer, no reaper, and no
+in-process shutdown hook. The 7-day stall window reclaims **machine-paced stuck items in QA-bound states**; it
+does **not** guarantee cleanup when the process is gone. The bound is stated honestly in code, comments and
+tests — it is simply not a bound a human can read at runtime, and not a bound the decision named.
+
+**F-212 — F2's forbidden set is declared and not enforced, which is the decision's own measured residual.**
+`apps/server/manifests/shipit-platform.product-manifest.json:90-104`. The seven AGENTS.md prohibited globs are
+now declared, and the manifest's own `f2PathOwnership` metadata states the residual in place. But
+`_ChangeScopeConfig.from` (`change_scope_confinement_gate.dart:356`) **requires a non-empty `ownedPathGlobs`**
+and throws `FormatException` at config parse — *before any path is examined*. So the static forbidden set is
+**declared but not enforced**, because no per-lane ownership source exists at runtime: `WorkerExecution`
+carries no owned-path declaration and nothing persists dispatch-time `OWNED_PATHS`. The gate still fails
+closed and **no pass path was carved** — which is what the decision required. **Decision `c3f81b04`'s own open
+question ("is a per-lane dynamic ownership source available at runtime?") is answered: no.** F2 cannot be
+satisfied by a static manifest alone.
+
+**F-213 — `WorkerExecution.workspaceId` is never populated in production.**
+`packages/worker_runtime/lib/src/worker/local_worker.dart:538` writes `workspaceId: current.workspaceId ?? ''`
+and nothing sets `current.workspaceId`. The retention sweep had to join on `WorkspaceDescriptor.workerExecutionId`
+instead — that join-key defect was the single most dangerous thing in the cancelled lane's inherited work: it
+would have marked **every** retained workspace "removed" while leaving the worktree on disk, a total silent
+leak **plus a lie in the durable row**, and the inherited test hid it by hand-building a real `workspaceId`.
+The same emptiness makes `apps/server/lib/src/services/control_plane_service.dart:2687-2696`
+(`result.workspaceId.isNotEmpty`) a condition that is **never true** — a dead branch reading as a live check.
+An unset-but-persisted identity column that two consumers believe is filled is a join-key trap: the column
+looks authoritative and answers `''`, and `''` is not "no row", it is "a row that claims no workspace".
+
+**F-214 — a crash between `git worktree add` and the descriptor write leaves an unattributable worktree.**
+`GitWorktreeWorkspaceManager.prepare` has a window where the worktree exists with no ownership metadata
+beside it, so the retention sweep cannot attribute it to an execution and will never release it. Out of scope
+for the retention change; pre-existing.
