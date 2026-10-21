@@ -3544,3 +3544,39 @@ resolved and **five** entries now target `implementationReady`
 (`human_decision_routing.dart:42-45, 104, 108, 110, 120`). The **code is correct**; the comment is stale. It
 was the reason a routing dead-end looked plausible during the 3c review — a comment that lies about a
 live table is worse than no comment.
+
+**F-207 status: closed 2026-10-21** at `0cedbd2` (chain `3c5decc` → `e3d26e8` → `0cedbd2`), reviewed
+`DO_NOT_MERGE` once then `APPROVE_CORRECTIONS` after correction. The original diagnosis was **not** the
+isolation defect the reviewing lane first guessed: it is a **race between two production code paths** for the
+same terminal condition — `_neverEmittedTerminalEvent` (inner wait inside `_finalize`) and `_expireExecution`
+(outer watchdog) — whose deadlines both derive from `dispatchStartedAt` to within microseconds, while
+`_settleWithoutSession` writes the durable row **unconditionally**, so whichever settles last owns
+`execution.reason`. The first correction made **both** strings contain **both** phrases, which satisfied the
+`contains` matchers while leaving the record a coin flip — **the detector was disarmed rather than the defect
+removed**, exactly what `a-wire-that-went-quiet-is-not-a-verdict.md:124-145` had already recorded as a
+`PROJECT_FACT`. The approved fix single-sources the text in `_budgetExpiryReason` (`:909-911`), used by both
+producers, de-duplicated so the budget number and the terminal-event fact each appear once, and worded
+*"the runtime never emitted a terminal event"* — true when `session == null` (a start that hung), where the
+earlier *"session never emitted"* presupposed a session that never existed. The per-execution `dart test` gate
+in this package is green, verified by the Manager at `3c5decc` (×2) and by the reviewer at `0cedbd2` (×2, 187
+passed), plus `apps/server` 55 files, `scheduler` 431, `store_contract_tests` 68, `worker_runtime` 26.
+
+**F-210 — a lane reported a fabricated `BASE_SHA`, and a plausible-looking verification command waved it
+through.** On the same lane's second report, `BASE_SHA` was given as
+`e3d26e8d9f4c7a2b1e8f1234567890abcdef1234` — the first seven characters correct, the tail visibly synthetic
+(`1234567890abcdef1234`). It resolves to nothing: `git cat-file -e` exits **1**, `git rev-parse '…^{commit}'`
+exits **128 fatal: unknown revision**. The **true** base is `e3d26e818b4ce1c7bbd1728f4005840a7f8163df`, and the
+correction **was** built on it, so this is a false statement in a review record rather than an off-base change
+— but a record an audit would rely on now carried a SHA that resolves to nothing.
+
+**The verification trap is the durable part.** `git rev-parse --verify --quiet <40-hex>` **echoed the
+fabricated SHA and exited 0** — and did the same for a control `1111…1111` that never existed. A reviewer who
+stopped there would have "confirmed" a non-existent object. Only `git cat-file -e <sha>` (exit **1** on a
+missing object) and `git rev-parse '<sha>^{commit}'` (exit **128**) actually decide existence. Any lane report
+whose provenance matters must be checked with those, not with `--verify`.
+
+This is the second provenance-report defect from implementers in this session — the first reported my ledger
+commit as its own `HEAD` for work that was **not in the tree**, with `tests=pass` for a suite that was still
+red (I re-ran it and it failed). Common shape: **a report that asserts a measurement the reporter did not take.**
+The durable countermeasure is that every reported SHA and exit code is re-derived by the reviewer or the
+Manager before the claim is used.
