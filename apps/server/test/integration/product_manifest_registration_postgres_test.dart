@@ -197,8 +197,29 @@ void _registrationTests() {
       expect(declaration!.declaresQAContract, isTrue);
       expect(declaration.manifestVersion, '1.0.0');
 
-      expect(declaration.gates, hasLength(1));
-      final gate = declaration.gates.single;
+      // M1 raised the shipped declaration from one gate to five, so the row
+      // must carry all five. The `single` that stood here passed at base —
+      // the base manifest declares exactly one gate — and failed only at M1,
+      // which is why it is resolved by id now: the intake gate must be PRESENT
+      // among five (a missing one throws StateError), never the only one.
+      expect(declaration.gates, hasLength(5));
+      expect(
+        declaration.gates.map((g) => g.gateId).toSet(),
+        <String>{
+          'intake-structured-result-admitted',
+          'feature-change-committed',
+          'feature-change-scope-confined',
+          'feature-declared-checks-executed',
+          'feature-review-bound-to-revision',
+        },
+        reason:
+            'the persisted row must name exactly the five gate ids the shipped '
+            'manifest declares — a subset means a gate was dropped on write, '
+            'a superset means one was invented there',
+      );
+      final gate = declaration.gates.firstWhere(
+        (g) => g.gateId == 'intake-structured-result-admitted',
+      );
       expect(gate.gateId, 'intake-structured-result-admitted');
       expect(gate.type, 'triage-classification-structure');
       expect(gate.required, isTrue);

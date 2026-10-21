@@ -38,12 +38,16 @@ import 'package:test/test.dart';
 ///
 /// ## WHAT IS DELIBERATELY NOT ASSERTED
 ///
-/// That the gate can be EVALUATED. It cannot: `triage-classification-structure`
-/// has no `GateRegistry` entry, `QAOrchestration.evaluate` answers
-/// `notExecuted`, and `isGateSatisfied(notExecuted)` is false. That is the
-/// unbuilt slice-3 evaluator, it is stated in the manifest's `metadata`, and a
-/// test asserting the gate "passes" would be asserting a runtime that does not
-/// exist.
+/// That the gate is EVALUATED by a production runtime. After M1 the type
+/// `triage-classification-structure` DOES have a `GateRegistry` entry — that
+/// is asserted below (`gateRegistry.get(derived.type)` is `isNotNull`) — so
+/// `QAOrchestration.evaluate` would no longer answer `notExecuted` for it.
+/// What remains unbuilt is the evaluator drain (slice 3c): the derived
+/// contract's metadata carries `evaluatorRuntime == 'absent'` (asserted
+/// below), so no production run drives this gate end to end, and a test
+/// asserting the gate "passes" would still be asserting a runtime that does
+/// not exist. What is asserted instead is registration plus the explicit
+/// `absent` marker, which keeps "registered" from being read as "running".
 void main() {
   final repoRoot = _findRepoRoot();
   final manifestPath = p.join(
@@ -86,7 +90,7 @@ void main() {
       );
     });
 
-    test('it declares exactly ONE gate, and that gate is required', () {
+    test('it declares exactly FIVE gates, and the intake gate is required', () {
       expect(gates, hasLength(5));
       final intake = gates.firstWhere(
         (g) => g.gateId == 'intake-structured-result-admitted',

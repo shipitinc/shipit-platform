@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:platform_contracts/platform_contracts.dart';
 import 'package:qa_orchestration/qa_orchestration.dart';
 import 'package:test/test.dart';
 
@@ -48,6 +52,13 @@ import 'support/e3_fixtures.dart';
 /// proves the three declarations the shipped contract carries are accepted —
 /// `evaluate` is awaited, and a `FormatException` would fail the test rather
 /// than returning a verdict.
+///
+/// The ONE shipped declaration that is refused is F2's `"ownedPathGlobs": []`
+/// — the design-mandated fail-closed placeholder (§9 gap 3, ledger F-203).
+/// Because a proof that only ever drove a friendlier config could not notice
+/// the shipped one, its own group below loads the config the manifest ACTUALLY
+/// ships, verbatim, and asserts the refusal rather than papering over it. That
+/// refusal is the designed outcome, not a regression.
 void main() {
   // §8 3a: the four fabricating evaluators, by the `type` they registered.
   const fabricatingTypes = <String>[
@@ -327,6 +338,102 @@ void main() {
       expect(r1.status, QAGateStatus.failed);
     });
   });
+
+  group(
+    'provision proof — the SHIPPED F2 config is refused, by design (F-203)',
+    () {
+      test(
+        'the manifest\'s verbatim "ownedPathGlobs": [] throws FormatException',
+        () async {
+          // The groups above drive F2 with `'ownedPathGlobs': ['packages/**']`
+          // — a VALID config the shipped manifest does NOT declare. This test
+          // closes that gap: it loads the config the operator actually
+          // registers, from disk, verbatim, and asserts what really happens.
+          final manifest = ProductManifest.fromJson(
+            jsonDecode(_shippedManifestJson()) as Map<String, dynamic>,
+          );
+          final contract = buildProductQAContract(
+            spec: manifest.contracts.qaContract,
+            productId: manifest.productId,
+            workItemCategory: WorkItemCategory.feature,
+            workItemId: 'WI-shipped-f2',
+            manifestVersion: manifest.version,
+            now: DateTime.utc(2026, 10, 20),
+          );
+          final gate = contract.gates.firstWhere(
+            (g) => g.gateId == 'feature-change-scope-confined',
+          );
+          expect(gate.type, 'change-scope-confinement');
+
+          // Pin the shipped VALUE this test exists to cover. If the manifest
+          // ever starts shipping a non-empty owned set, this fails and the
+          // test must be rewritten as an acceptance test — never kept green by
+          // silently covering a config the operator will not register.
+          expect(
+            gate.config['ownedPathGlobs'],
+            isEmpty,
+            reason:
+                'this test exists to pin the SHIPPED F2 config; a non-empty '
+                'ownedPathGlobs means the manifest changed and the refusal '
+                'assertion below no longer describes the artefact',
+          );
+
+          // AWAITED rather than swallowed: F2's `_ChangeScopeConfig.from`
+          // parses BEFORE any source read, so the refusal is at provision of
+          // the verdict — a FormatException reaching this expect is the
+          // designed fail-closed outcome (§9 gap 3 / F-203), not a crash.
+          // A registry that lost `change-scope-confinement` would instead
+          // return `notExecuted` and fail this expect for the right reason.
+          await expectLater(
+            evaluate(gate),
+            throwsA(
+              isA<FormatException>().having(
+                (e) => e.message,
+                'message',
+                contains('ownedPathGlobs'),
+              ),
+            ),
+            reason:
+                'the shipped F2 declaration must be REFUSED at its config '
+                'parse with FormatException naming "ownedPathGlobs" — the '
+                'fail-closed placeholder is by design (F-203), so a verdict of '
+                'any kind here would mean an empty owned set was evaluated '
+                'instead of refused',
+          );
+        },
+      );
+    },
+  );
+}
+
+/// The checked-in `shipit-platform` manifest, as the operator registers it.
+///
+/// Read from disk rather than inlined: a copy here would let this proof pass
+/// while the shipped file declared something else.
+String _shippedManifestJson() {
+  final repoRoot = _findRepoRoot();
+  return File(
+    '$repoRoot${Platform.pathSeparator}apps${Platform.pathSeparator}server'
+    '${Platform.pathSeparator}manifests${Platform.pathSeparator}'
+    'shipit-platform.product-manifest.json',
+  ).readAsStringSync();
+}
+
+String _findRepoRoot() {
+  var dir = Directory.current.absolute;
+  while (true) {
+    if (Directory(
+          '${dir.path}${Platform.pathSeparator}packages',
+        ).existsSync() &&
+        Directory('${dir.path}${Platform.pathSeparator}apps').existsSync()) {
+      return dir.path;
+    }
+    final parent = dir.parent;
+    if (parent.path == dir.path) {
+      throw StateError('repository root not found from ${Directory.current}');
+    }
+    dir = parent;
+  }
 }
 
 /// The six reviewed source-backed gate declarations, exactly as the shipped
