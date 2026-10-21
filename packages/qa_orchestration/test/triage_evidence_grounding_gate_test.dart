@@ -29,6 +29,10 @@ class _FakeEvidenceReader implements DefectEvidenceReader {
   final List<String> calls = [];
 
   @override
+  QASourceProvenance get provenance =>
+      const QASourceProvenance.fixture('test/_FakeEvidenceReader');
+
+  @override
   Future<List<DefectEvidence>> readDefectEvidence(String defectId) async {
     calls.add(defectId);
     return rows.where((r) => r.defectId == defectId).toList();
@@ -43,6 +47,10 @@ class _UnfilteredEvidenceReader implements DefectEvidenceReader {
   _UnfilteredEvidenceReader(this.rows);
 
   final List<DefectEvidence> rows;
+
+  @override
+  QASourceProvenance get provenance =>
+      const QASourceProvenance.fixture('test/_UnfilteredEvidenceReader');
 
   @override
   Future<List<DefectEvidence>> readDefectEvidence(String defectId) async =>

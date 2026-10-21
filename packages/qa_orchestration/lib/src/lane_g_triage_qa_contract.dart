@@ -115,14 +115,16 @@ String triageQAContractIdForDefect(String defectId) => 'qa-triage-$defectId';
 /// `QAGateStatus.notExecuted` for a declared type, which reads as "no evaluator
 /// exists" rather than "the gate ran and failed".
 ///
-/// The two source-backed types are wired to **fail-closed** sources
-/// (`unwired_sources.dart`) until slice 3c supplies their production adapters,
-/// so a triage or remediation run fails these gates honestly rather than passing
-/// vacuously. `isGateSatisfied` treats a failure as unsatisfied, and
-/// `QAOrchestration.requiresFormalDetermination` names a required gate that is
-/// not satisfied as needing a formal determination — this contract is a durable
-/// declaration of what must be true, and its evaluators exist while their
-/// production data sources do not yet.
+/// The two source-backed types are registered over whichever sources the
+/// composition root supplies. Since slice 3c those are the **production
+/// adapters** in `apps/server/lib/src/qa/`; the fail-closed doubles live in the
+/// package's test tree, where a test reaches for them on purpose. A triage or
+/// remediation run therefore fails these gates on the platform's own facts
+/// rather than passing vacuously. `isGateSatisfied` treats a failure as
+/// unsatisfied, and `QAOrchestration.requiresFormalDetermination` names a
+/// required gate that is not satisfied as needing a formal determination — this
+/// contract is a durable declaration of what must be true, and its evaluators
+/// exist over the platform's own data.
 QAContract buildAdvisoryTriageQAContract({
   required String defectId,
   required String workItemId,
@@ -160,7 +162,6 @@ QAContract buildAdvisoryTriageQAContract({
       // be recorded, never whether code may ship.
       'advisory': true,
       'authoring': 'lane_g_triage_qa_contract',
-      'evaluatorRuntime': 'absent',
     },
   );
 }

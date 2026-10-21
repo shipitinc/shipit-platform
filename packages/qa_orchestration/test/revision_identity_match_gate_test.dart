@@ -18,6 +18,10 @@ class _FakeRevisionSource implements RevisionIdentitySource {
   final List<String> calls = [];
 
   @override
+  QASourceProvenance get provenance =>
+      const QASourceProvenance.fixture('test/_FakeRevisionSource');
+
+  @override
   Future<String?> readReviewedRevision(String workItemId) async {
     calls.add('reviewed:$workItemId');
     return reviewed;

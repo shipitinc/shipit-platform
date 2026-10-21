@@ -1,6 +1,7 @@
 import 'package:platform_contracts/platform_contracts.dart';
 
 import '../gate_evaluator.dart';
+import '../source_provenance.dart';
 
 /// The two facts F5 compares, each obtained from the source the design names.
 ///
@@ -23,7 +24,8 @@ import '../gate_evaluator.dart';
 /// `qa_orchestration` does not depend on `execution_coordinator`, and the
 /// reader's inputs — the execution's workspace path and the delta's
 /// `startingRevision` — are execution facts this package cannot reach.
-abstract interface class RevisionIdentitySource {
+abstract interface class RevisionIdentitySource
+    implements QASourceProvenanceAware {
   /// The revision the engineering review verdict recorded for [workItemId].
   ///
   /// `null` when no verdict exists or the verdict recorded none. Both are
@@ -146,6 +148,12 @@ class RevisionIdentityMatchGate implements GateEvaluator {
       metadata: <String, dynamic>{
         'reviewedRevision': reviewedRevision,
         'producedRevision': producedRevision,
+        // WHERE the two revisions came from. `artifactRef` names the READER
+        // (`engineering_review_result`, `workspace_head_reader`), and those
+        // names are the same for the production adapter and for a fail-closed
+        // stand-in — so without this key a persisted result cannot say which
+        // one produced it (F-204).
+        qaSourceProvenanceMetadataKey: source.provenance.toJson(),
         if (!passed) 'reason': failures.join('; '),
       },
     );

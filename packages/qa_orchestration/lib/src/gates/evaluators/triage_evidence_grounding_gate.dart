@@ -1,9 +1,11 @@
 import 'package:platform_contracts/platform_contracts.dart';
 
 import '../gate_evaluator.dart';
+import '../source_provenance.dart';
 
 /// Reads defect evidence rows for a given defect id.
-abstract interface class DefectEvidenceReader {
+abstract interface class DefectEvidenceReader
+    implements QASourceProvenanceAware {
   Future<List<DefectEvidence>> readDefectEvidence(String defectId);
 }
 
@@ -122,6 +124,12 @@ class TriageEvidenceGroundingGate implements GateEvaluator {
       metadata: <String, dynamic>{
         'defectId': defectId,
         'citedCount': citedEvidenceIds.length,
+        // WHERE the evidence rows came from. `artifactRef` here is a COLUMN
+        // LABEL, not a reader's name — so it says nothing about which reader
+        // answered, and without this key a persisted result produced by a
+        // fail-closed stand-in is indistinguishable from one produced by the
+        // production store (F-204).
+        qaSourceProvenanceMetadataKey: defectEvidenceReader.provenance.toJson(),
         if (!passed) 'reason': failures.join('; '),
       },
     );

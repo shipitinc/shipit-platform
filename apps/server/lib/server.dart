@@ -109,6 +109,12 @@ import 'src/triage/stalled_work_item_gate.dart'
 import 'src/triage/triage_processor.dart';
 import 'src/triage/work_entry.dart' show WorkEntryTrigger;
 import 'src/review/engineering_review_gate.dart';
+import 'package:qa_orchestration/qa_orchestration.dart'
+    show QAGateEvaluationService, QAOrchestration;
+import 'src/persistence/postgres_qa_contract_store.dart';
+import 'src/qa/production_qa_sources.dart'
+    show ProducerWorkspaceResolver, buildProductionGateRegistry;
+import 'src/qa/qa_drain.dart' show runQADrain;
 import 'package:scheduler/scheduler.dart'
     show
         engineeringReviewDefinition,
@@ -932,6 +938,51 @@ void run(List<String> args) async {
   // so this is not one of the three composition changes above smuggled in, and
   // concurrent agent executions stay hard-bounded by the capacity cap, which is
   // enforced durably at claim time rather than by this guard.
+  // ---- THE QA LANE. ----
+  //
+  // An item a human approved reaches `reviewApproved` and stopped there. The
+  // edge out of it — `reviewApproved -> qaInProgress` — existed, was guarded
+  // by `actorAllowed([orchestrator])` and `qaContractExists()`, and had NO
+  // CALLER: nothing in the platform took an item through it, so a review a
+  // human approved was followed by silence. Everything below is that caller.
+  //
+  // It is a DRAIN, not a scheduler. Nothing here dispatches an agent, mounts a
+  // queue or re-points a lane. It reads the work items a human already
+  // approved, evaluates each one's QA contract against the platform's own
+  // durable state, and moves the item to `qaPassed` or `qaFailed`.
+  //
+  // ## WHY THE READERS ARE BUILT HERE AND NOT REACHED FOR
+  //
+  // `qa_orchestration` has no global registry, and that is deliberate: the
+  // global it used to export was wired to six fail-closed STAND-INS whose
+  // evidence rows named the same `artifactRef` as the production adapters',
+  // because `artifactRef` names the READER and not the READER'S BINDING. A
+  // persisted gate result therefore could not say whether the platform or a
+  // stand-in had produced it (F-204). The stand-ins now live in the test
+  // tree, and this composition builds the ONE registry production uses, over
+  // readers that read the same durable rows the rest of the platform reads.
+  //
+  // The execution store is built HERE rather than taken from a coordinator,
+  // because the QA lane must see the executions of EVERY lane — triage,
+  // implementation and review all write to the same table, and a view scoped
+  // to one coordinator's lane would resolve a producer that is not there.
+  final qaProducerResolver = ProducerWorkspaceResolver(
+    executionStore: agentExecutionStore(db),
+    workflowStore: workflowStore,
+  );
+  final qaEvaluationService = QAGateEvaluationService(
+    orchestration: QAOrchestration(
+      registry: buildProductionGateRegistry(
+        resolver: qaProducerResolver,
+        executionStore: agentExecutionStore(db),
+        workerStore: workerStore,
+        workflowStore: workflowStore,
+        defectStore: defectStore,
+      ),
+    ),
+    contractStore: PostgresQAContractStore(db),
+  );
+
   final tick = TickSingleFlight(
     log: _log,
     maxHold: tickHoldBound,
@@ -1125,6 +1176,55 @@ void run(List<String> args) async {
           'stack': st.toString(),
           'action':
               'review dispatch is retried on the next tick; other lanes unaffected',
+        });
+      }
+
+      // The QA drain, in its OWN try, AFTER the review section.
+      //
+      // AFTER, because the QA lane's input is an item a human APPROVED, and
+      // the review section is what raises that approval. Before, the drain
+      // would read a `reviewApproved` item the review section was about to
+      // move — or, on the tick where the human's decision was resolved, one
+      // the review section had not yet moved — and the two would compete for
+      // the same item.
+      //
+      // Its own try, like every other section in this tick: a QA evaluation
+      // that throws must not take the triage, implementation, review, baseline
+      // or work-entry sections down with it. They read the same stores and
+      // answer different questions.
+      //
+      // It is a DRAIN, not a dispatch: it moves items the review section's
+      // approval produced, and it dispatches nothing.
+      //
+      // A failed QA raises a blocking human decision against the item, which
+      // is what moves it to `waitingForHumanDecision`: `qaFailed` has no
+      // other edge out, so a failure with no decision is an item nothing can
+      // move again.
+      try {
+        final qaResult = await runQADrain(
+          workflowEngine: durableWorkflowEngine,
+          workflowStore: workflowStore,
+          evaluationService: qaEvaluationService,
+          producerResolver: qaProducerResolver,
+          log: _log,
+        );
+        if (qaResult.movedAnything) {
+          _log('qa.drain.completed', {
+            'considered': qaResult.considered,
+            'passed': qaResult.passed,
+            'failed': qaResult.failed,
+            'faulted': qaResult.faulted,
+            'skipped': qaResult.skipped,
+            'awaitingHuman': qaResult.awaitingHuman,
+          });
+        }
+      } catch (e, st) {
+        outcome.failedSections.add('qa');
+        _log('qa.drain.failed', {
+          'error': '$e',
+          'stack': st.toString(),
+          'action':
+              'QA evaluation is retried on the next tick; other lanes unaffected',
         });
       }
 

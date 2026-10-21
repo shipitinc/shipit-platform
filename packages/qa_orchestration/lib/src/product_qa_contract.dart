@@ -146,14 +146,6 @@ QAContract buildProductQAContract({
       if (manifestVersion != null)
         qaContractManifestVersionMetadataKey: manifestVersion,
       'authoring': 'product_qa_contract_provisioner',
-      // Stated, not implied: no gate evaluator runtime exists for a
-      // product-declared gate type. `QAOrchestration.evaluate` returns
-      // `QAGateStatus.notExecuted` for an unknown type and
-      // `isGateSatisfied(notExecuted)` is false, so this is not a silent pass —
-      // it is a durable declaration of what must be true, whose enforcement
-      // runtime has yet to be written. See `lane_g_triage_qa_contract.dart` for
-      // the same statement made about the triage contract.
-      'evaluatorRuntime': 'absent',
     },
   );
 }

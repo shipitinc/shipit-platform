@@ -1,6 +1,7 @@
 import 'package:platform_contracts/platform_contracts.dart';
 
 import '../gate_evaluator.dart';
+import '../source_provenance.dart';
 
 /// The platform's answer about one execution's workspace, in the three-valued
 /// shape F1 judges.
@@ -116,7 +117,8 @@ class ExecutionDelta {
 /// `workspace_head_reader.dart:38`). The production implementation is those
 /// two readers behind one adapter (slice 3c); a gate must be evaluable in a
 /// test without a worktree.
-abstract interface class ArtifactProvenanceSource {
+abstract interface class ArtifactProvenanceSource
+    implements QASourceProvenanceAware {
   /// The platform's probe answer for the lane's execution — the
   /// `WorkspaceDelta` mapped field-for-field into [ExecutionDelta].
   Future<ExecutionDelta> readDelta(String workItemId);
@@ -287,6 +289,13 @@ class ImplementationArtifactProvenanceGate implements GateEvaluator {
         'deltaIsReadable': delta.isReadable,
         'reReadHeadMoved': establishedHead?.headMoved,
         if (config.recordProducedRevision) 'producedRevision': producedRevision,
+        // WHERE the two facts above came from. The evidence rows name the
+        // READER (`workspace_delta_probe`, `workspace_head_reader`), and a
+        // reader's name is the same for the production adapter and for a
+        // fail-closed stand-in — so without this key a persisted result
+        // produced by a stand-in is indistinguishable from one produced by the
+        // platform (F-204).
+        qaSourceProvenanceMetadataKey: source.provenance.toJson(),
         if (!passed) 'reason': failures.join('; '),
       },
     );

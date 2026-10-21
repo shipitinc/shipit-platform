@@ -1,6 +1,7 @@
 import 'package:platform_contracts/platform_contracts.dart';
 
 import '../gate_evaluator.dart';
+import '../source_provenance.dart';
 
 /// Where the collector runs git and the left edge of the range it enumerates.
 class CommittedDiffScopeBaseline {
@@ -45,7 +46,7 @@ class CommittedDiffScopeBaseline {
 /// itself. Sharing a single re-read across F1/F2/F5 per run — instead of each
 /// gate's adapter reading it — is wiring for M1/3c, not a value this interface
 /// may fabricate.
-abstract interface class ChangeScopeSource {
+abstract interface class ChangeScopeSource implements QASourceProvenanceAware {
   /// The workspace and starting revision of the lane's execution, or `null`
   /// when either could not be established ("I could not look").
   Future<CommittedDiffScopeBaseline?> readBaseline(String workItemId);
@@ -243,6 +244,12 @@ class ChangeScopeConfinementGate implements GateEvaluator {
         'producedRevision': producedHead?.headRevision,
         'pathCount': paths.length,
         'pathSource': config.pathSource,
+        // WHERE the enumerated path set came from. `artifactRef` names the
+        // READER (`git_diff_name_only`), and that name is the same for the
+        // production collector and for a fail-closed stand-in — so without
+        // this key a persisted result cannot say which one produced it
+        // (F-204).
+        qaSourceProvenanceMetadataKey: source.provenance.toJson(),
         if (!passed) 'reason': failures.join('; '),
       },
     );

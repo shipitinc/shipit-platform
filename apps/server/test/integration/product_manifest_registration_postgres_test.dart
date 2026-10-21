@@ -3,8 +3,13 @@ import 'dart:io';
 
 import 'package:control_plane_server/src/endpoints/product_registry_endpoints.dart';
 import 'package:control_plane_server/src/persistence/persistence_database.dart';
+import 'package:control_plane_server/src/persistence/postgres_defect_store.dart';
+import 'package:control_plane_server/src/persistence/postgres_execution_store.dart';
 import 'package:control_plane_server/src/persistence/postgres_product_qa_contract_spec_store.dart';
 import 'package:control_plane_server/src/persistence/postgres_qa_contract_store.dart';
+import 'package:control_plane_server/src/persistence/postgres_worker_store.dart';
+import 'package:control_plane_server/src/persistence/postgres_workflow_store.dart';
+import 'package:control_plane_server/src/qa/production_qa_sources.dart';
 import 'package:qa_orchestration/qa_orchestration.dart';
 import 'package:serverpod/serverpod.dart';
 import 'package:test/test.dart';
@@ -277,11 +282,41 @@ void _registrationTests() {
       expect(intake.type, 'triage-classification-structure');
       expect(contract.metadata?['productId'], _fixtureProductId);
       expect(contract.metadata?['manifestVersion'], '1.0.0');
-      // Stated rather than implied: nothing evaluates this gate type yet, so a
-      // passing evaluation here would be a fiction.
-      expect(contract.metadata?['evaluatorRuntime'], 'absent');
-      // M1: reviewed evaluators registered; runtime drain (3c) still absent.
-      expect(gateRegistry.get(intake.type), isNotNull);
+      // The `evaluatorRuntime: 'absent'` marker is GONE, and its absence is
+      // the point: `design-revision.md:1016` requires that marker only until
+      // slice 3c is in place and the gate's type has an evaluator. Both hold
+      // now, so a contract still carrying it would be a durable claim that
+      // nothing enforces the gate.
+      expect(
+        contract.metadata,
+        isNot(contains('evaluatorRuntime')),
+        reason:
+            'the derived contract still carries the evaluatorRuntime marker; it '
+            'is required only while there is no enforcement runtime.',
+      );
+      // The gate type is registered in the registry PRODUCTION builds — the
+      // one the QA drain evaluates against
+      // (`apps/server/lib/src/qa/production_qa_sources.dart`). This is the
+      // production composition function itself, over the production stores,
+      // not a stand-in registry: a registration that only exists in a test's
+      // registry would be a registration nothing runs.
+      final registry = buildProductionGateRegistry(
+        resolver: ProducerWorkspaceResolver(
+          executionStore: PostgresExecutionStore(db),
+          workflowStore: PostgresWorkflowStore(db),
+        ),
+        executionStore: PostgresExecutionStore(db),
+        workerStore: PostgresWorkerStore(db),
+        workflowStore: PostgresWorkflowStore(db),
+        defectStore: PostgresDefectStore(db),
+      );
+      expect(
+        registry.get(intake.type),
+        isNotNull,
+        reason:
+            'the production gate registry has no evaluator for '
+            '${intake.type}, so the declared gate could never be evaluated.',
+      );
     },
   );
 

@@ -6,6 +6,7 @@ import 'package:qa_orchestration/qa_orchestration.dart';
 import 'package:test/test.dart';
 
 import 'support/e3_fixtures.dart';
+import 'support/fail_closed_sources.dart';
 
 /// M1 — the `GateRegistry` registration contract (`substantive-qa-gates.md`
 /// §8 M1, §4, §6.4 N1).
@@ -40,10 +41,12 @@ import 'support/e3_fixtures.dart';
 ///
 /// ## Fail-closed, stated so the registration is not mistaken for a pass
 ///
-/// The six source-backed evaluators are wired to the **unwired** sources in
-/// `unwired_sources.dart`. This file asserts the property that makes that honest:
-/// **no unwired source can produce a `passed` verdict.** A "registration done,
-/// gates green" reading is what this assertion refuses.
+/// The six source-backed evaluators are wired to the **fail-closed doubles** in
+/// `support/fail_closed_sources.dart` (slice 3c moved them out of `lib/`, where
+/// a global registry made every consumer inherit them). This file asserts the
+/// property that makes that honest: **no fail-closed double can produce a
+/// `passed` verdict.** A "registration done, gates green" reading is what this
+/// assertion refuses.
 ///
 /// ## Provision proof
 ///
@@ -80,9 +83,16 @@ void main() {
   ];
 
   late QAOrchestration orchestration;
+  late GateRegistry registry;
 
   setUp(() {
-    orchestration = QAOrchestration();
+    // The registry is BUILT, over the six fail-closed doubles, and handed to
+    // the orchestration explicitly. There is no global registry to inherit
+    // (slice 3c removed it), so a test that wants the seven reviewed types
+    // registered says so — and the doubles it registers declare themselves
+    // `failClosed`, so a result they produce says so too.
+    registry = buildFailClosedTestRegistry();
+    orchestration = QAOrchestration(registry: registry);
   });
 
   Future<QAGateResult> evaluate(
@@ -110,7 +120,7 @@ void main() {
     for (final type in fabricatingTypes) {
       test('no evaluator resolves for "$type"', () {
         expect(
-          gateRegistry.get(type),
+          registry.get(type),
           isNull,
           reason:
               '"$type" was de-registered by §8 3a because its evaluator '
@@ -124,7 +134,7 @@ void main() {
     test('the registry still holds the other evaluators', () {
       // Anti-vacuity for the loop above: if the registry were empty, every
       // `isNull` would pass for the wrong reason.
-      expect(gateRegistry.all, isNotEmpty);
+      expect(registry.all, isNotEmpty);
     });
   });
 
@@ -132,7 +142,7 @@ void main() {
     for (final type in reviewedTypes) {
       test('an evaluator resolves for "$type"', () {
         expect(
-          gateRegistry.get(type),
+          registry.get(type),
           isNotNull,
           reason:
               '"$type" is declared by a reviewed gate (§3.1/§3.2) but has no '
@@ -148,7 +158,7 @@ void main() {
       // present. The second half is the de-registration assertion expressed as
       // an equality, so re-adding a fabricating evaluator fails here too.
       expect(
-        gateRegistry.all.map((e) => e.gateType).toSet(),
+        registry.all.map((e) => e.gateType).toSet(),
         reviewedTypes.toSet(),
         reason:
             'the registry diverges from the reviewed gate set. A type in the '
@@ -162,7 +172,7 @@ void main() {
     // R3 (`triage-classification-structure`) is source-free, so it is the one
     // registered type whose verdict a test can move both ways through the
     // public evaluation path with no source at all. The other six read through
-    // sources the registry wires to the unwired fail-closed implementations, so
+    // sources the registry wires to the fail-closed doubles, so
     // their non-vacuity is asserted as "config alone cannot make it pass" plus
     // the explicit fail-closed group below.
     test('R3 differs on a well-formed vs an enum-invalid payload', () async {
@@ -208,7 +218,7 @@ void main() {
     test('the six source-backed types cannot pass on config alone', () async {
       // The strongest N1 statement available without a production source: for
       // every registered source-backed type, a perfectly well-formed *config*
-      // still yields a non-`passed` verdict, because the unwired source can
+      // still yields a non-`passed` verdict, because the fail-closed source can
       // only deny. A registration that resolved to a constant `passed`
       // evaluator fails here.
       for (final gate in sourceBackedGates()) {
@@ -222,7 +232,7 @@ void main() {
           isNot(QAGateStatus.passed),
           reason:
               'type "${gate.type}" passed with a fully-declared config and the '
-              'unwired fail-closed source. A source that cannot read its facts '
+              'fail-closed source. A source that cannot read its facts '
               'must never grant a pass — this is the fabricated-pass shape M1 '
               'exists to end.',
         );
@@ -231,12 +241,12 @@ void main() {
     });
   });
 
-  group('the unwired sources fail closed, stated per source', () {
-    // The unwired sources live in `lib/src/gates/unwired_sources.dart` and are
-    // deliberately NOT exported from the package barrel: they are a
-    // registration-internal placeholder slice 3c deletes, not part of the
-    // package's public surface. So fail-closed is asserted through the registry
-    // — the way production reaches them — by driving each source-backed gate.
+  group('the fail-closed doubles fail closed, stated per source', () {
+    // The fail-closed doubles live in `test/support/fail_closed_sources.dart`
+    // and are deliberately NOT exported from the package barrel: they are a
+    // test's own stand-ins, not part of the package's public surface. So
+    // fail-closed is asserted through the registry — the way a caller reaches
+    // them — by driving each source-backed gate.
     test(
       'F1 reports "I could not look", never "nothing was produced"',
       () async {
@@ -330,7 +340,7 @@ void main() {
           'evidenceUsed': <String>['E-1'],
         }),
       );
-      // R2 with the unwired evidence reader has no rows to ground `E-1`, so it
+      // R2 with the fail-closed evidence reader has no rows to ground `E-1`, so it
       // FAILS — but it EVALUATED, which is the provision proof.
       expect(r2.status, QAGateStatus.failed);
 

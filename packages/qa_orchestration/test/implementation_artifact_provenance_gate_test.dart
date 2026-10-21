@@ -22,6 +22,10 @@ class _FakeProvenanceSource implements ArtifactProvenanceSource {
   final List<String> calls = [];
 
   @override
+  QASourceProvenance get provenance =>
+      const QASourceProvenance.fixture('test/_FakeProvenanceSource');
+
+  @override
   Future<ExecutionDelta> readDelta(String workItemId) async {
     calls.add('delta:$workItemId');
     return delta;

@@ -6,6 +6,8 @@ import 'package:platform_contracts/platform_contracts.dart';
 import 'package:qa_orchestration/qa_orchestration.dart';
 import 'package:test/test.dart';
 
+import 'support/gate_registry_over_doubles.dart';
+
 /// The `shipit-platform` QA-contract DECLARATION, held to what it must assert.
 ///
 /// ## Why a file on disk needs a test at all
@@ -38,16 +40,21 @@ import 'package:test/test.dart';
 ///
 /// ## WHAT IS DELIBERATELY NOT ASSERTED
 ///
-/// That the gate is EVALUATED by a production runtime. After M1 the type
-/// `triage-classification-structure` DOES have a `GateRegistry` entry — that
-/// is asserted below (`gateRegistry.get(derived.type)` is `isNotNull`) — so
-/// `QAOrchestration.evaluate` would no longer answer `notExecuted` for it.
-/// What remains unbuilt is the evaluator drain (slice 3c): the derived
-/// contract's metadata carries `evaluatorRuntime == 'absent'` (asserted
-/// below), so no production run drives this gate end to end, and a test
-/// asserting the gate "passes" would still be asserting a runtime that does
-/// not exist. What is asserted instead is registration plus the explicit
-/// `absent` marker, which keeps "registered" from being read as "running".
+/// That the gate is EVALUATED by a production runtime. The type
+/// `triage-classification-structure` has a `GateRegistry` entry — that is
+/// asserted below (`registry.get(derived.type)` is `isNotNull`) — and since
+/// slice 3c it has a PRODUCTION runtime too: the QA drain
+/// (`apps/server/lib/src/qa/qa_drain.dart`) evaluates a work item's contract
+/// once a human has approved its review, over the production adapters in
+/// `apps/server/lib/src/qa/production_qa_sources.dart`.
+///
+/// What is asserted is therefore REGISTERATION and the ABSENCE of the
+/// `evaluatorRuntime: 'absent'` marker, which is what the design made
+/// conditional: `design-revision.md:1016` requires that marker "until slice 3c
+/// is in place and the gate's type has an evaluator", and both conditions now
+/// hold, so a contract still carrying it would be claiming a runtime that
+/// exists. A marker that outlives the thing it describes is worse than no
+/// marker: it is a durable statement that the platform cannot act on.
 void main() {
   final repoRoot = _findRepoRoot();
   final manifestPath = p.join(
@@ -210,11 +217,35 @@ void main() {
             'config. An empty list here would mean the gate declares no '
             'evidence it can ever be evaluated against.',
       );
-      // Stated, not implied: nothing evaluates this type yet.
-      expect(contract.metadata?['evaluatorRuntime'], 'absent');
-      // After M1, the reviewed evaluator is registered; the runtime drain
-      // (slice 3c) remains absent, and evaluatorRuntime stays 'absent' per Ruling 1.
-      expect(gateRegistry.get(derived.type), isNotNull);
+      // The marker is GONE, and its absence is the point.
+      //
+      // `design-revision.md:1016` requires `'evaluatorRuntime': 'absent'` on
+      // a path's contract "until slice 3c is in place and the gate's type has
+      // an evaluator". Both are true now: the QA drain evaluates a work
+      // item's contract in production, and the type is registered. A contract
+      // that still carried the marker would be a durable claim that nothing
+      // enforces the gate — which is false, and false in the direction that
+      // makes a reader distrust the platform's own records.
+      expect(
+        contract.metadata,
+        isNot(contains('evaluatorRuntime')),
+        reason:
+            'the derived contract still carries the evaluatorRuntime marker. It '
+            'is required only while there is no enforcement runtime, and the '
+            'production drain (apps/server/lib/src/qa/qa_drain.dart) is one.',
+      );
+      // The gate type IS registered, in the registry the production
+      // composition root builds. The registry is no longer a global, so this
+      // asks the factory the composition root asks.
+      final registry = buildGateRegistryOverDoubles();
+      expect(
+        registry.get(derived.type),
+        isNotNull,
+        reason:
+            'no evaluator is registered for ${derived.type}, so '
+            'QAOrchestration.evaluate answers notExecuted for it and the '
+            'declared gate could never be satisfied.',
+      );
     });
   });
 }

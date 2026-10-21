@@ -31,6 +31,10 @@ class _FakeVerificationReader implements PlatformVerificationReader {
   final List<String> calls = [];
 
   @override
+  QASourceProvenance get provenance =>
+      const QASourceProvenance.fixture('test/_FakeVerificationReader');
+
+  @override
   Future<List<PlatformVerification>> readVerifications(
     String executionId,
   ) async {

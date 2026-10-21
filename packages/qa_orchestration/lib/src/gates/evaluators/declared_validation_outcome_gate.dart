@@ -1,6 +1,7 @@
 import 'package:platform_contracts/platform_contracts.dart';
 
 import '../gate_evaluator.dart';
+import '../source_provenance.dart';
 
 /// Reads the platform-written [PlatformVerification] rows for one execution.
 ///
@@ -16,7 +17,8 @@ import '../gate_evaluator.dart';
 /// (`postgres_execution_store.dart` `WHERE "executionId" = @executionId`), so a
 /// row belonging to a different execution cannot be returned. That binding is
 /// structural and is not part of the gate's configurable surface.
-abstract interface class PlatformVerificationReader {
+abstract interface class PlatformVerificationReader
+    implements QASourceProvenanceAware {
   Future<List<PlatformVerification>> readVerifications(String executionId);
 }
 
@@ -191,6 +193,11 @@ class DeclaredValidationOutcomeGate implements GateEvaluator {
       metadata: <String, dynamic>{
         'executionId': executionId,
         'requireCheckNames': config.checkNames,
+        // WHERE the verification rows came from. `artifactRef` names the
+        // READER (`platform_verification`), and that name is the same for the
+        // production store and for a fail-closed stand-in — so without this
+        // key a persisted result cannot say which one produced it (F-204).
+        qaSourceProvenanceMetadataKey: verificationReader.provenance.toJson(),
         if (!passed) 'reason': failures.join('; '),
       },
     );

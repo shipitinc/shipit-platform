@@ -16,6 +16,10 @@ class _FakeDefectReader implements DefectRowReader {
   final List<String> calls = [];
 
   @override
+  QASourceProvenance get provenance =>
+      const QASourceProvenance.fixture('test/_FakeDefectReader');
+
+  @override
   Future<Defect?> readDefect(String defectId) async {
     calls.add(defectId);
     return defects[defectId];

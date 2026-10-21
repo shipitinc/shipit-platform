@@ -3,8 +3,29 @@ import 'package:platform_contracts/platform_contracts.dart';
 import 'gates/gate_registry.dart';
 
 class QAOrchestration {
+  /// Creates an evaluator over [registry].
+  ///
+  /// ## THE DEFAULT IS EMPTY, AND THAT IS THE POINT
+  ///
+  /// A `QAOrchestration` with no registry has **no evaluators at all**, so
+  /// every declared gate answers [QAGateStatus.notExecuted] — "no evaluator
+  /// exists" rather than "the gate ran and failed". That is the honest answer
+  /// for an orchestrator that was not told how to read anything, and it is
+  /// fail-closed: [isOverallPass] requires a result for every required gate
+  /// and a `notExecuted` result is not satisfied, so an orchestration built
+  /// without a registry can never report a pass.
+  ///
+  /// The alternative — a global registry — was removed in slice 3c, and the
+  /// reason is F-204. The global held the six fail-closed stand-ins, and their
+  /// evidence rows named the SAME `artifactRef` as the production adapters'
+  /// (`workspace_delta_probe`, `workspace_head_reader`,
+  /// `platform_verification`, `engineering_review_result`), because the
+  /// `artifactRef` names the READER and not the READER'S BINDING. A persisted
+  /// `QAGateResult` therefore could not say whether the platform or a
+  /// stand-in had produced it. The stand-ins now live in the test tree, and
+  /// [buildGateRegistry] makes every source an explicit argument.
   QAOrchestration({GateRegistry? registry})
-    : _registry = registry ?? gateRegistry;
+    : _registry = registry ?? GateRegistry();
 
   final GateRegistry _registry;
 

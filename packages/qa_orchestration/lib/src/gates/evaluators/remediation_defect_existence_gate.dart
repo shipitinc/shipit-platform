@@ -1,6 +1,7 @@
 import 'package:platform_contracts/platform_contracts.dart';
 
 import '../gate_evaluator.dart';
+import '../source_provenance.dart';
 
 /// Reads the durability row for one defect id.
 ///
@@ -17,7 +18,7 @@ import '../gate_evaluator.dart';
 /// A reader that throws any other exception propagates it: "I could not look"
 /// is not "the row is missing", and a gate must not turn an infrastructure
 /// failure into a triage finding.
-abstract interface class DefectRowReader {
+abstract interface class DefectRowReader implements QASourceProvenanceAware {
   Future<Defect?> readDefect(String defectId);
 }
 
@@ -120,6 +121,12 @@ class RemediationDefectExistenceGate implements GateEvaluator {
       metadata: <String, dynamic>{
         'referencedDefectId': referencedDefectId,
         'sourceColumn': config.sourceColumn,
+        // WHERE the defect row came from. `artifactRef` here is a COLUMN
+        // LABEL (`defect.defectId`), not a reader's name — so it says nothing
+        // about which reader answered, and without this key a persisted result
+        // produced by a fail-closed stand-in is indistinguishable from one
+        // produced by the production store (F-204).
+        qaSourceProvenanceMetadataKey: defectReader.provenance.toJson(),
         if (!passed) 'reason': failures.join('; '),
       },
     );

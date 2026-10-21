@@ -62,6 +62,10 @@ class _FakeScopeSource implements ChangeScopeSource {
   final List<String> calls = [];
 
   @override
+  QASourceProvenance get provenance =>
+      const QASourceProvenance.fixture('test/_FakeScopeSource');
+
+  @override
   Future<CommittedDiffScopeBaseline?> readBaseline(String workItemId) async {
     calls.add('baseline:$workItemId');
     return baseline;
