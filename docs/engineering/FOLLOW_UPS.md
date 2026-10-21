@@ -3505,3 +3505,42 @@ real evaluator. The lane also changed the shipped
 `apps/server/manifests/shipit-platform.product-manifest.json` one line to match — **a path outside its
 declared `OWNED_PATHS`**. That is disclosed and left to the independent reviewer to accept or revert;
 until it rules, this closure is provisional.
+
+**F-205 closure confirmed 2026-10-21.** The independent review of `a7931a4` ruled the one-line
+`apps/server/manifests/shipit-platform.product-manifest.json:207` change **ACCEPT** — the old `'absent'` prose
+was false after 3c, `evaluatorRuntime` is read by **no** production code (only two test assertions that it is
+absent from the derived contract), so the edit is inert and necessary. The ownership breach is a **process
+defect only**: the lane should have declared `apps/server/manifests/**` in `OWNED_PATHS` or escalated.
+F-204's closure is likewise confirmed — all six adapters stamp `QASourceProvenance.production(...)` and
+`qa_production_sources_test.dart:51-76` asserts it, with no production import of the deleted stub path.
+
+**F-207 — `packages/execution_coordinator`'s unit gate is red at `a7931a4`, and the finding was recorded
+nowhere.** `dart test` from that package root exits **1 on 2 of 2 isolated full-suite runs** on
+`test/budget_expiry_is_a_timeout_test.dart` ("a budget expiry settles as a TIMEOUT … the durable row, not just
+the returned value, says interrupted"), while **the same file alone passes (exit 0)** — so this is a
+test-isolation/ordering defect, not a load flake (the load hypothesis was disproved by an isolated rerun).
+The package is byte-identical across `e78a383..dbe64df`, so the defect **predates** slice 3c and 3c did not
+cause it. Two consequences the review named: (a) AGENTS.md pins `dart test` at every package root for the
+per-execution tier, so **that tier is not green at this revision and no merge record may claim otherwise**;
+(b) the finding was persisted nowhere — no ledger entry, no learning file — which is itself a
+learning-completeness gap for a verified, reproducible result. The cross-file leak is likely a process-wide
+singleton, a shared temp root, or a clock/timer racing under suite parallelism: the test constructs
+`InMemoryWorkflowStore` / `InMemoryExecutionStore` / `FixtureWorkspace` per-test
+(`test/budget_expiry_is_a_timeout_test.dart:41-60`) and asserts on a durable row.
+
+**F-208 — the generic contract builders now remove the marker unconditionally.**
+`packages/qa_orchestration/lib/src/product_qa_contract.dart` and the triage builder no longer emit
+`evaluatorRuntime` for *any* required gate type — including one with **no** registered evaluator, for which
+the old marker was the truthful statement "absent". Today's shipped contracts are truthful (every required
+type has a real evaluator), and a future unregistered type still cannot reach `qaPassed` — `notExecuted` is
+unsatisfied in both `isGateSatisfied` (`qa_orchestration.dart:74-79`) and `allRequiredGatesPassed`
+(`guard_conditions.dart:33`) — so this is **not reachable to a false pass**. The correct shape is to
+**derive the marker from the registry** rather than delete it.
+
+**F-209 — a false production comment in `workflow_engine` contradicts the live table 100 lines below it.**
+`packages/workflow_engine/lib/src/transitions/work_item_transitions.dart:679-683` still says *"no
+`HumanDecisionRouting` entry targets `implementationReady` yet… `OD-3` is an open product decision."* OD-3 was
+resolved and **five** entries now target `implementationReady`
+(`human_decision_routing.dart:42-45, 104, 108, 110, 120`). The **code is correct**; the comment is stale. It
+was the reason a routing dead-end looked plausible during the 3c review — a comment that lies about a
+live table is worse than no comment.
