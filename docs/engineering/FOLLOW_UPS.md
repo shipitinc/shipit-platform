@@ -3445,3 +3445,16 @@ Consequence: **a single integration run cannot distinguish a lane regression fro
 observed delta between revisions is inside the run-to-run band. Read *failing test names*, never counts, and
 prove redness at base before attributing anything. This predates the QA-gate work and belongs to the
 integration-tier owner.
+
+**F-203 — `feature-change-scope-confined` ships with an empty owned-path set, so every feature item fails
+closed at provision until the ownership map is filled.**
+`shipit-platform.product-manifest.json:85` declares `"ownedPathGlobs": []` for a **required** gate whose
+evaluator throws `FormatException` on an empty owned set (`change_scope_confinement_gate.dart:398-408`). This is
+**design-mandated, not a defect**: §9 requirement gap 3 and `substantive-qa-gates.md:1166-1169` specify that F2
+ships with the config keys and a `FormatException` on an empty `ownedPathGlobs` **rather than with a guessed
+glob**, because `AGENTS.md`'s path-ownership map was `TBD`. Declining to guess is the stated choice.
+
+Consequence: **F2 cannot pass for any feature item until the path-ownership map is populated.** Track it as a
+known limitation, and note the related vacuity gap — the registration proof
+(`gate_registry_m1_test.dart:351`) exercises F2 with `['packages/**']`, a *valid* config, never the shipped
+empty one, so the proof does not cover what the manifest actually declares.
