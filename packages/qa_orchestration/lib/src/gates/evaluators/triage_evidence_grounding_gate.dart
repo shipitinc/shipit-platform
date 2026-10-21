@@ -30,13 +30,13 @@ class TriageEvidenceGroundingGate implements GateEvaluator {
     var citedEvidenceIds = <String>[];
     var defectEvidenceRows = <DefectEvidence>[];
 
-    // Extract cited evidence from structured result
-    final structured = agentResult.structuredResult;
-    if (structured is Map<String, dynamic>) {
-      final evidenceUsed = structured['evidenceUsed'];
-      if (evidenceUsed is List) {
-        citedEvidenceIds = evidenceUsed.whereType<String>().toList();
-      }
+    // Extract cited evidence from the structured result.
+    // `AgentResult.structuredResult` is a non-nullable `Map<String, dynamic>`
+    // (platform_contracts `types/agent_result.dart:43`), so there is no "not a
+    // map" state to defend against.
+    final evidenceUsed = agentResult.structuredResult['evidenceUsed'];
+    if (evidenceUsed is List) {
+      citedEvidenceIds = evidenceUsed.whereType<String>().toList();
     }
 
     // Enforce >= 1 citation as per requirement (non-vacuity)
@@ -55,13 +55,30 @@ class TriageEvidenceGroundingGate implements GateEvaluator {
       failures.add('cannot determine defect id from agent result or work item');
     }
 
-    // Build lookup of evidence ids that exist and belong to this defect
+    // Both flags are required `true` at provision (see
+    // `_TriageEvidenceGroundingConfig.from`), so both checks below always run.
+    //
+    // Every returned row is re-verified HERE — `row.defectId == defectId` —
+    // exactly as `remediation_defect_existence_gate.dart:81-86` re-verifies
+    // the defect row the reader returned. A reader that ignores its defect
+    // argument (reviewer falsifier F1) must not be able to hand this gate
+    // another defect's row and have it count as this defect's evidence; that
+    // row identity is the gate's own check, not a courtesy of the reader.
     final existingEvidenceIds = <String>{};
     for (final row in defectEvidenceRows) {
+      if (row.defectId != defectId) {
+        failures.add(
+          'evidence row "${row.evidenceId}" belongs to defect '
+          '"${row.defectId}" rather than the reported defect "$defectId"; a '
+          'row for another defect is not evidence about this one',
+        );
+        continue;
+      }
       existingEvidenceIds.add(row.evidenceId);
     }
 
-    // Check each cited evidence
+    // `everyCitedEvidenceMustExist`: each cited id must resolve to a row that
+    // both exists and belongs to the reported defect.
     for (final citedId in citedEvidenceIds) {
       if (!existingEvidenceIds.contains(citedId)) {
         failures.add(
@@ -111,11 +128,8 @@ class TriageEvidenceGroundingGate implements GateEvaluator {
   }
 
   String? _extractDefectId(AgentResult agentResult, String workItemId) {
-    final structured = agentResult.structuredResult;
-    if (structured is Map<String, dynamic>) {
-      final defectId = structured['defectId'];
-      if (defectId is String && defectId.isNotEmpty) return defectId;
-    }
+    final defectId = agentResult.structuredResult['defectId'];
+    if (defectId is String && defectId.isNotEmpty) return defectId;
     if (workItemId.contains('DEF-')) {
       final match = RegExp(r'DEF-\d+').firstMatch(workItemId);
       if (match != null) return match.group(0);
@@ -124,6 +138,15 @@ class TriageEvidenceGroundingGate implements GateEvaluator {
   }
 }
 
+/// The declared half of R2, read once and validated.
+///
+/// Both flags are **required `true`**: a gate that does not require every
+/// citation to resolve asserts nothing, and a gate that does not require the
+/// row to belong to the reported defect silently degrades into the mere
+/// existence gate that the contract's own second falsifier row exists to
+/// forbid. A missing or `false` flag is therefore a [FormatException] naming
+/// the gate — the same refusal `_RemediationDefectConfig` makes for a missing
+/// `requireResolvable` — never a weaker gate.
 class _TriageEvidenceGroundingConfig {
   const _TriageEvidenceGroundingConfig({
     required this.sourceColumn,
@@ -139,15 +162,29 @@ class _TriageEvidenceGroundingConfig {
     final sourceColumn = gate.config['sourceColumn'];
     if (sourceColumn is! String || sourceColumn.trim().isEmpty) {
       throw FormatException(
-        'gate ${gate.gateId} declares "sourceColumn" as $sourceColumn; it is a non-empty label',
+        'gate ${gate.gateId} declares "sourceColumn" as $sourceColumn; it is a '
+        'non-empty label, not a query',
       );
     }
-    final every = gate.config['everyCitedEvidenceMustExist'];
-    final mustBelong = gate.config['mustBelongToReportedDefect'];
+    if (gate.config['everyCitedEvidenceMustExist'] != true) {
+      throw FormatException(
+        'gate ${gate.gateId} must declare "everyCitedEvidenceMustExist": '
+        'true; a gate that may accept a citation naming no row asserts '
+        'nothing',
+      );
+    }
+    if (gate.config['mustBelongToReportedDefect'] != true) {
+      throw FormatException(
+        'gate ${gate.gateId} must declare "mustBelongToReportedDefect": '
+        'true; a gate that does not require the row to belong to the reported '
+        'defect degrades to a mere existence gate, which the contract\'s own '
+        'second falsifier forbids',
+      );
+    }
     return _TriageEvidenceGroundingConfig(
       sourceColumn: sourceColumn,
-      everyCitedEvidenceMustExist: every == true,
-      mustBelongToReportedDefect: mustBelong == true,
+      everyCitedEvidenceMustExist: true,
+      mustBelongToReportedDefect: true,
     );
   }
 }

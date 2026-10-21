@@ -4,12 +4,24 @@ import 'package:test/test.dart';
 
 import 'support/e3_fixtures.dart';
 
-const _r2Config = {
-  'sourceColumn': 'defect_evidence.evidenceId',
-  'everyCitedEvidenceMustExist': true,
-  'mustBelongToReportedDefect': true,
-};
+/// The gate is exercised against **the declared gate itself**
+/// (`evidenceGrounded` from `lane_g_triage_qa_contract.dart`), not a
+/// duplicated copy of its config map — a copy is the F-197 drift pattern,
+/// where the declaration and the test's mirror of it can disagree silently.
+Map<String, dynamic> _r2Config() =>
+    Map<String, dynamic>.of(evidenceGrounded.config);
 
+QAGateDefinition _gateWithConfig(Map<String, dynamic> config) =>
+    QAGateDefinition(
+      gateId: evidenceGrounded.gateId,
+      type: evidenceGrounded.type,
+      required: evidenceGrounded.required,
+      evidenceTypes: evidenceGrounded.evidenceTypes,
+      config: config,
+    );
+
+/// A reader that honors the contract: it returns only the rows that actually
+/// belong to the requested defect.
 class _FakeEvidenceReader implements DefectEvidenceReader {
   _FakeEvidenceReader(this.rows);
 
@@ -21,6 +33,20 @@ class _FakeEvidenceReader implements DefectEvidenceReader {
     calls.add(defectId);
     return rows.where((r) => r.defectId == defectId).toList();
   }
+}
+
+/// A reader that **ignores its defect argument** and returns every row it
+/// holds — reviewer falsifier F1's misbehaving reader. If row identity is the
+/// reader's courtesy rather than the gate's own check, this reader hands the
+/// gate another defect's row and the gate passes.
+class _UnfilteredEvidenceReader implements DefectEvidenceReader {
+  _UnfilteredEvidenceReader(this.rows);
+
+  final List<DefectEvidence> rows;
+
+  @override
+  Future<List<DefectEvidence>> readDefectEvidence(String defectId) async =>
+      rows;
 }
 
 DefectEvidence evidence({
@@ -35,6 +61,25 @@ DefectEvidence evidence({
     createdAt: DateTime.utc(2026, 10, 20),
   );
 }
+
+Future<QAGateResult> evaluateGate(TriageEvidenceGroundingGate gate) {
+  return gate.evaluate(
+    'work-1',
+    agentResultFor().copyWith(
+      structuredResult: {
+        'defectId': 'DEF-1',
+        'evidenceUsed': ['E-7'],
+      },
+    ),
+    evidenceGrounded,
+  );
+}
+
+Matcher _formatExceptionNaming(String key) => isA<FormatException>().having(
+  (e) => e.message,
+  'message',
+  allOf(contains('triage-evidence-grounded'), contains(key)),
+);
 
 void main() {
   group('TriageEvidenceGroundingGate (R2)', () {
@@ -53,11 +98,7 @@ void main() {
               'evidenceUsed': ['E-99'],
             },
           ),
-          gateFor(
-            gateId: 'triage-evidence-grounded',
-            type: 'triage-evidence-grounding',
-            config: _r2Config,
-          ),
+          evidenceGrounded,
         );
         expect(result.status, QAGateStatus.failed);
         expect(result.metadata!['reason'], contains('E-99'));
@@ -77,15 +118,40 @@ void main() {
             'evidenceUsed': ['E-7'],
           },
         ),
-        gateFor(
-          gateId: 'triage-evidence-grounded',
-          type: 'triage-evidence-grounding',
-          config: _r2Config,
-        ),
+        evidenceGrounded,
       );
       expect(result.status, QAGateStatus.failed);
       expect(result.metadata!['reason'], contains('does not exist for defect'));
     });
+
+    test(
+      'F1 falsifier: a reader that ignores its defect argument cannot smuggle '
+      'another defect\'s row past the gate',
+      () async {
+        // DEF-2's row E-7, returned for a request about DEF-1, cited for
+        // DEF-1. The gate must re-check `row.defectId == defectId` itself; if
+        // it only trusts the reader's filtering, this passes.
+        final reader = _UnfilteredEvidenceReader([
+          evidence(evidenceId: 'E-7', defectId: 'DEF-2'),
+        ]);
+        final gate = TriageEvidenceGroundingGate(defectEvidenceReader: reader);
+        final result = await gate.evaluate(
+          'work-1',
+          agentResultFor().copyWith(
+            structuredResult: {
+              'defectId': 'DEF-1',
+              'evidenceUsed': ['E-7'],
+            },
+          ),
+          evidenceGrounded,
+        );
+        expect(result.status, QAGateStatus.failed);
+        final reason = result.metadata!['reason'] as String;
+        expect(reason, contains('belongs to defect'));
+        expect(reason, contains('DEF-2'));
+        expect(reason, contains('DEF-1'));
+      },
+    );
 
     test('fails when classification cites nothing at all', () async {
       final reader = _FakeEvidenceReader([
@@ -97,11 +163,7 @@ void main() {
         agentResultFor().copyWith(
           structuredResult: {'defectId': 'DEF-1', 'evidenceUsed': []},
         ),
-        gateFor(
-          gateId: 'triage-evidence-grounded',
-          type: 'triage-evidence-grounding',
-          config: _r2Config,
-        ),
+        evidenceGrounded,
       );
       expect(result.status, QAGateStatus.failed);
       expect(result.metadata!['reason'], contains('empty evidenceUsed'));
@@ -112,28 +174,106 @@ void main() {
         evidence(evidenceId: 'E-7', defectId: 'DEF-1'),
       ]);
       final gate = TriageEvidenceGroundingGate(defectEvidenceReader: reader);
-      final result = await evaluateGate(gate, reader);
+      final result = await evaluateGate(gate);
       expect(result.status, QAGateStatus.passed);
+      expect(result.gateId, 'triage-evidence-grounded');
+    });
+
+    group('rejects malformed declarations with FormatException', () {
+      test('everyCitedEvidenceMustExist absent', () async {
+        final config = _r2Config()..remove('everyCitedEvidenceMustExist');
+        await expectLater(
+          TriageEvidenceGroundingGate(
+            defectEvidenceReader: _FakeEvidenceReader([]),
+          ).evaluate(
+            'work-1',
+            agentResultFor().copyWith(
+              structuredResult: {
+                'defectId': 'DEF-1',
+                'evidenceUsed': ['E-7'],
+              },
+            ),
+            _gateWithConfig(config),
+          ),
+          throwsA(_formatExceptionNaming('everyCitedEvidenceMustExist')),
+        );
+      });
+
+      test('everyCitedEvidenceMustExist false', () async {
+        final config = _r2Config()..['everyCitedEvidenceMustExist'] = false;
+        await expectLater(
+          TriageEvidenceGroundingGate(
+            defectEvidenceReader: _FakeEvidenceReader([]),
+          ).evaluate(
+            'work-1',
+            agentResultFor().copyWith(
+              structuredResult: {
+                'defectId': 'DEF-1',
+                'evidenceUsed': ['E-7'],
+              },
+            ),
+            _gateWithConfig(config),
+          ),
+          throwsA(_formatExceptionNaming('everyCitedEvidenceMustExist')),
+        );
+      });
+
+      test('mustBelongToReportedDefect absent', () async {
+        final config = _r2Config()..remove('mustBelongToReportedDefect');
+        await expectLater(
+          TriageEvidenceGroundingGate(
+            defectEvidenceReader: _FakeEvidenceReader([]),
+          ).evaluate(
+            'work-1',
+            agentResultFor().copyWith(
+              structuredResult: {
+                'defectId': 'DEF-1',
+                'evidenceUsed': ['E-7'],
+              },
+            ),
+            _gateWithConfig(config),
+          ),
+          throwsA(_formatExceptionNaming('mustBelongToReportedDefect')),
+        );
+      });
+
+      test('mustBelongToReportedDefect false', () async {
+        final config = _r2Config()..['mustBelongToReportedDefect'] = false;
+        await expectLater(
+          TriageEvidenceGroundingGate(
+            defectEvidenceReader: _FakeEvidenceReader([]),
+          ).evaluate(
+            'work-1',
+            agentResultFor().copyWith(
+              structuredResult: {
+                'defectId': 'DEF-1',
+                'evidenceUsed': ['E-7'],
+              },
+            ),
+            _gateWithConfig(config),
+          ),
+          throwsA(_formatExceptionNaming('mustBelongToReportedDefect')),
+        );
+      });
+
+      test('non-string sourceColumn', () async {
+        final config = _r2Config()..['sourceColumn'] = 42;
+        await expectLater(
+          TriageEvidenceGroundingGate(
+            defectEvidenceReader: _FakeEvidenceReader([]),
+          ).evaluate(
+            'work-1',
+            agentResultFor().copyWith(
+              structuredResult: {
+                'defectId': 'DEF-1',
+                'evidenceUsed': ['E-7'],
+              },
+            ),
+            _gateWithConfig(config),
+          ),
+          throwsA(_formatExceptionNaming('sourceColumn')),
+        );
+      });
     });
   });
-}
-
-Future<QAGateResult> evaluateGate(
-  TriageEvidenceGroundingGate gate,
-  _FakeEvidenceReader reader,
-) async {
-  return gate.evaluate(
-    'work-1',
-    agentResultFor().copyWith(
-      structuredResult: {
-        'defectId': 'DEF-1',
-        'evidenceUsed': ['E-7'],
-      },
-    ),
-    gateFor(
-      gateId: 'triage-evidence-grounded',
-      type: 'triage-evidence-grounding',
-      config: _r2Config,
-    ),
-  );
 }
