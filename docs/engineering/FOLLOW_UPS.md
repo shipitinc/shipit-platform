@@ -3489,3 +3489,19 @@ file's pass/fail is **not recoverable from stdout**. Per-file attribution requir
 first review left a known-failing integration assertion in place on a claim that had not been measured**: an
 absence in collapsed output reads as an absence of failure. The target should emit a machine-parseable report
 by default.
+
+**F-204 status: closed 2026-10-21** at `a7931a4`. The closure condition the review set — *"slice 3c replaces
+the stubs with real adapters and stamps provenance in a structured field"* — is met:
+`packages/qa_orchestration/lib/src/gates/source_provenance.dart` is the structured field, the six production
+adapters live in `apps/server/lib/src/qa/production_qa_sources.dart`, and
+`packages/qa_orchestration/lib/src/gates/unwired_sources.dart` is deleted (172 lines).
+Independent review of that commit is the acceptance test for this closure, not the implementer's claim.
+
+**F-205 status: closed 2026-10-21** at `a7931a4`. The stale production comment in
+`packages/qa_orchestration/lib/src/product_qa_contract.dart` (~`:146-152`) is corrected and the
+`'evaluatorRuntime': 'absent'` marker removed from both contracts, which is what `design-revision.md:1016`
+and `evaluator-spec.md:652` jointly authorize once slice 3c is in place and every required gate type has a
+real evaluator. The lane also changed the shipped
+`apps/server/manifests/shipit-platform.product-manifest.json` one line to match — **a path outside its
+declared `OWNED_PATHS`**. That is disclosed and left to the independent reviewer to accept or revert;
+until it rules, this closure is provisional.
