@@ -22,6 +22,7 @@ export 'package:platform_contracts/platform_contracts.dart'
         Defect,
         DefectEvidence;
 
+export 'src/gates/declared_owned_paths_source.dart';
 export 'src/gates/evaluators/change_scope_confinement_gate.dart';
 export 'src/gates/evaluators/declared_validation_outcome_gate.dart';
 export 'src/gates/evaluators/implementation_artifact_provenance_gate.dart';

@@ -48,6 +48,11 @@ WorkerExecutionRequest _$WorkerExecutionRequestFromJson(
           ?.map((e) => e as String)
           .toList() ??
       const [],
+  declaredOwnedPaths:
+      (json['declaredOwnedPaths'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList() ??
+      const [],
 );
 
 Map<String, dynamic> _$WorkerExecutionRequestToJson(
@@ -73,6 +78,7 @@ Map<String, dynamic> _$WorkerExecutionRequestToJson(
   'runtimeConfig': ?instance.runtimeConfig,
   'createdAt': ?instance.createdAt?.toIso8601String(),
   'excludedExecutionIds': instance.excludedExecutionIds,
+  'declaredOwnedPaths': instance.declaredOwnedPaths,
 };
 
 const _$WorkerCleanupPolicyEnumMap = {

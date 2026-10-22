@@ -29,6 +29,21 @@ class QAOrchestration {
 
   final GateRegistry _registry;
 
+  /// The registry gate types resolve through.
+  ///
+  /// ## WHY IT IS EXPOSED
+  ///
+  /// A caller that must supply an input to ONE gate — the change-scope gate
+  /// needs the lane's declared owned paths — has to know which gate type
+  /// resolves to that evaluator. Asking the registry is how it finds out, and
+  /// it is the same registry the evaluation itself uses, so the answer cannot
+  /// drift from the one that matters.
+  ///
+  /// Matching a gate id or a type string instead would be a second, parallel
+  /// statement of "which gate is this" — the kind of statement that is right
+  /// until a product renames a gate.
+  GateRegistry get registry => _registry;
+
   Future<List<QAGateResult>> evaluate(
     String workItemId,
     AgentResult agentResult,

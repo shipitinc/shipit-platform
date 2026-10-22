@@ -29,7 +29,6 @@ import 'package:scheduler/scheduler.dart'
         implementFeatureDefinition,
         implementFeatureDedupeKey,
         implementFeatureInstruction,
-        implementFeatureRequest,
         SchedulerWorkload,
         WorkerDispatch,
         WorkerDispatcherAdapter,
@@ -102,6 +101,8 @@ import 'src/services/control_plane_service.dart'
 // meant editing a test this lane does not own.
 import 'src/implementation/implementation_readiness_probe.dart'
     show ImplementationReadinessProbe, toWorkloadResolver;
+import 'src/implementation/implementation_path_ownership.dart'
+    show implementationRequestWithPathOwnership;
 import 'src/triage/defect_triage_sweep.dart';
 import 'src/triage/lane_i_tick_hook.dart'
     show TriageTickDrainResult, drainTriageOutcomesFromTick;
@@ -114,7 +115,10 @@ import 'package:qa_orchestration/qa_orchestration.dart'
     show QAGateEvaluationService, QAOrchestration;
 import 'src/persistence/postgres_qa_contract_store.dart';
 import 'src/qa/production_qa_sources.dart'
-    show ProducerWorkspaceResolver, buildProductionGateRegistry;
+    show
+        ProducerWorkspaceResolver,
+        ProductionDeclaredOwnedPathsSource,
+        buildProductionGateRegistry;
 import 'src/qa/qa_drain.dart' show runQADrain;
 import 'src/qa/qa_workspace_retention.dart' show QaWorkspaceRetention;
 import 'package:scheduler/scheduler.dart'
@@ -811,7 +815,7 @@ void run(List<String> args) async {
     executionLiveness: executionLiveness,
     dedupeKeyBuilder: implementFeatureDedupeKey,
     instructionBuilder: implementFeatureInstruction,
-    requestBuilder: implementFeatureRequest,
+    requestBuilder: implementationRequestWithPathOwnership,
     capacityGuard: capacityGuard,
     workloadResolver: toWorkloadResolver(
       implementationProbe,
@@ -1016,6 +1020,24 @@ void run(List<String> args) async {
       ),
     ),
     contractStore: PostgresQAContractStore(db),
+    // THE LANE'S PATH-OWNERSHIP DECLARATION.
+    //
+    // The F2 gate compares a change's paths against the owned set the lane was
+    // GRANTED, and the grant is captured into the producing execution's
+    // durable record at dispatch time. This reader supplies that captured
+    // grant to the gate.
+    //
+    // It is wired here, in the composition root, and not inside
+    // `qa_orchestration` — that package does not depend on the execution store
+    // the record lives in. With the reader absent the gate falls back to the
+    // contract's own declaration, which for the shipped manifest is empty, and
+    // an empty owned set is REFUSED by the gate. That is the fail-closed
+    // direction, and it is why this wiring is what turns the gate from
+    // "always refuses" into "judges the grant the lane was dispatched with".
+    declaredOwnedPathsSource: ProductionDeclaredOwnedPathsSource(
+      resolver: qaProducerResolver,
+      executionStore: agentExecutionStore(db),
+    ),
   );
 
   final tick = TickSingleFlight(
@@ -3069,6 +3091,12 @@ Duration resolveTickHoldBound(
 void _log(String event, Map<String, dynamic> data) {
   stdout.writeln('[$event] $data');
 }
+
+/// The implementation lane's request builder, with the lane's path-ownership
+/// grant attached, lives in
+/// `src/implementation/implementation_path_ownership.dart` — it is a seam with
+/// a behaviour of its own (the dispatch-time capture of the grant), so it is
+/// tested on its own rather than only through the composition root.
 
 /// Seeds `model_policy` from the operator-configured default, and reports what
 /// actually happened.

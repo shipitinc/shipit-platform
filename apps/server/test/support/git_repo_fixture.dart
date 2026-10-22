@@ -51,6 +51,24 @@ class GitRepoFixture {
   String get startingRevision =>
       _run(['rev-parse', 'HEAD']).stdout.toString().trim();
 
+  /// Writes [content] to [relativePath], commits it, and returns the new HEAD.
+  ///
+  /// The commit is what the change-scope gate enumerates: `git diff --name-only`
+  /// over a revision range reads COMMITTED changes, so a demonstration of the
+  /// gate has to produce a commit rather than a dirty worktree.
+  String commitFile(
+    String relativePath,
+    String content, {
+    String message = 'change',
+  }) {
+    final file = File('${root.path}/$relativePath');
+    file.parent.createSync(recursive: true);
+    file.writeAsStringSync(content);
+    _run(['add', '.']);
+    _run(['commit', '-m', message]);
+    return _run(['rev-parse', 'HEAD']).stdout.toString().trim();
+  }
+
   void _writeCalculator({required bool implemented}) {
     final file = File('${root.path}/lib/calculator.dart');
     file.parent.createSync(recursive: true);

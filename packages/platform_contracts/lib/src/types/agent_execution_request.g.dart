@@ -64,6 +64,11 @@ AgentExecutionRequest _$AgentExecutionRequestFromJson(
   createdAt: json['createdAt'] == null
       ? null
       : DateTime.parse(json['createdAt'] as String),
+  declaredOwnedPaths:
+      (json['declaredOwnedPaths'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList() ??
+      const [],
 );
 
 Map<String, dynamic> _$AgentExecutionRequestToJson(
@@ -84,4 +89,5 @@ Map<String, dynamic> _$AgentExecutionRequestToJson(
   'runtimeConfig': ?instance.runtimeConfig,
   'environment': ?instance.environment,
   'createdAt': ?instance.createdAt?.toIso8601String(),
+  'declaredOwnedPaths': instance.declaredOwnedPaths,
 };

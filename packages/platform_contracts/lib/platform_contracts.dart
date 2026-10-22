@@ -68,6 +68,7 @@ export 'src/types/artifact_reference.dart';
 export 'src/types/workflow_actor.dart';
 export 'src/types/workflow_transition_record.dart';
 export 'src/types/agent_execution_request.dart';
+export 'src/lane_path_ownership.dart';
 export 'src/types/agent_execution.dart';
 export 'src/types/agent_event_record.dart';
 export 'src/types/design_remediation_request.dart';

@@ -596,6 +596,21 @@ class ExecutionCoordinator {
         status: AgentSessionStatus.starting,
         workspace: request.workspace,
         startedAt: startedAt,
+        // THE DISPATCH-TIME CAPTURE OF THE LANE'S PATH-OWNERSHIP GRANT.
+        //
+        // The QA gate F2 judges a change against the owned set the lane was
+        // GRANTED, and the grant only means something if it was captured
+        // before the work was known. This row is written in the same
+        // transaction that creates the execution, so the capture and the
+        // dispatch are one durable fact: there is no window in which an
+        // execution exists without its declaration, and no later writer can
+        // widen it — the record is written once and only ever finalised.
+        //
+        // The key is written even when the lane declared nothing. "Dispatched
+        // and declared nothing" and "no capture was made" are different
+        // records, and both refuse — but only one of them is a statement
+        // about the lane.
+        metadata: declaredOwnedPathsMetadata(request.declaredOwnedPaths),
         version: 1,
       );
       await tx.saveExecution(execution);

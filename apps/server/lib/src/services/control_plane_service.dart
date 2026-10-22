@@ -932,11 +932,27 @@ class ControlPlaneService {
   /// deliberately not taken here: it would make the platform's missing
   /// configuration a veto over a human's request, which is the thing
   /// `58bad3d1` forbids. It is a governance call and is flagged as one.
+  ///
+  /// ## THE LANE'S PATH-OWNERSHIP GRANT
+  ///
+  /// [declaredOwnedPaths] is the set of repository-relative path globs the
+  /// implementation lane that produces this item is GRANTED — the paths it may
+  /// touch. The grant is a decision about the work, made BEFORE the work is
+  /// known, and the QA gate judges the change against the grant. It therefore
+  /// has to be a durable fact of the item, recorded when the item is created —
+  /// not something reconstructed from the diff afterwards, which would be a
+  /// claim made by the change itself.
+  ///
+  /// Empty is not "owns everything": an item with no grant grants nothing, and
+  /// the gate that judges the grant refuses an empty owned set. The key is
+  /// written either way, so a reader can tell "this item's lane was granted
+  /// nothing" from "this item's record never carried a grant".
   Future<WorkItem> createFeatureWorkItem({
     required String title,
     required String description,
     required String productId,
     required String reporter,
+    List<String> declaredOwnedPaths = const [],
   }) async {
     await _requireRegisteredProduct(productId);
     final now = DateTime.now().toUtc();
@@ -973,7 +989,13 @@ class ControlPlaneService {
         // `NO_PLANNING_EVIDENCE` — the request would be accepted and then sit
         // at `planning` with no recorded reason for having stopped.
         featureRef: workItemId,
-        metadata: provisioned.metadata,
+        // The QA-contract refusal keys (when there was one) and the lane's
+        // path-ownership grant travel together: they are two facts about the
+        // item that the rest of the platform reads off its metadata.
+        metadata: {
+          ...?provisioned.metadata,
+          ...declaredOwnedPathsMetadata(declaredOwnedPaths),
+        },
       );
 
       await humanDirectionStore.createDirection(

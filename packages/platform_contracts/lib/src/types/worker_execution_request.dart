@@ -33,6 +33,7 @@ class WorkerExecutionRequest extends Equatable {
     this.runtimeConfig,
     this.createdAt,
     this.excludedExecutionIds = const [],
+    this.declaredOwnedPaths = const [],
   });
 
   final String workerExecutionId;
@@ -85,10 +86,93 @@ class WorkerExecutionRequest extends Equatable {
   /// dispatch for design reviews: exclude the designer's execution).
   final List<String> excludedExecutionIds;
 
+  /// The repository-relative path globs the dispatched lane was GRANTED.
+  ///
+  /// ## WHAT IT IS, AND WHY IT IS NOT THE WORK'S CLAIM
+  ///
+  /// A grant, made before the work is known: the paths this lane may touch.
+  /// It is not what the work item says it will touch — a claim the lane could
+  /// make in its own favour is not a confinement, and judging a lane against
+  /// its own claim would let a lane that lies in the claim pass its own gate.
+  ///
+  /// ## WHY IT TRAVELS ON THE REQUEST
+  ///
+  /// The capture happens at dispatch, and the dispatch request is the one thing
+  /// that is in hand at that moment. From here the worker copies it onto the
+  /// agent execution request (the worker's own production write path) and the
+  /// execution coordinator captures it into the durable execution record, so
+  /// the QA gate can read what the lane was dispatched with.
+  ///
+  /// ## EMPTY IS NOT "OWNS EVERYTHING"
+  ///
+  /// An empty list means the lane declared nothing, and the gate that judges
+  /// the declaration refuses an empty owned set. This field never widens a
+  /// gate.
+  final List<String> declaredOwnedPaths;
+
   factory WorkerExecutionRequest.fromJson(Map<String, dynamic> json) =>
       _$WorkerExecutionRequestFromJson(json);
 
   Map<String, dynamic> toJson() => _$WorkerExecutionRequestToJson(this);
+
+  /// A copy of this request with the named fields replaced.
+  ///
+  /// ## WHY IT EXISTS
+  ///
+  /// A caller that must ADD one field to a request somebody else built — the
+  /// composition root attaching the lane's path-ownership grant to the
+  /// scheduler's request — cannot edit the builder, and rebuilding the request
+  /// field by field would be a second, hand-maintained copy of the type: a
+  /// field added to this class later would be silently dropped by that copy.
+  /// One method, listing every field, is the copy that cannot drift.
+  ///
+  /// ## THE NULLABLE FIELDS
+  ///
+  /// A `null` argument means "keep what this request already has", so a
+  /// nullable field cannot be CLEARED through `copyWith`. Nothing needs to clear
+  /// one — the fields are `envAllowlist`, `environment`, `runtimeConfig` and
+  /// `createdAt`, and the request they belong to is built once — and the
+  /// alternative (a sentinel object per nullable field) would be four sentinels
+  /// to carry for a case that does not occur.
+  WorkerExecutionRequest copyWith({
+    String? workerExecutionId,
+    String? workItemId,
+    String? repositoryPath,
+    String? startingRevision,
+    Set<WorkerCapability>? requiredCapabilities,
+    AgentRole? role,
+    String? instruction,
+    int? timeoutSeconds,
+    String? runtimeTypeId,
+    List<ExpectedArtifact>? expectedArtifacts,
+    WorkerCleanupPolicy? cleanupPolicy,
+    List<String>? envAllowlist,
+    Map<String, String>? environment,
+    Map<String, String>? runtimeConfig,
+    DateTime? createdAt,
+    List<String>? excludedExecutionIds,
+    List<String>? declaredOwnedPaths,
+  }) {
+    return WorkerExecutionRequest(
+      workerExecutionId: workerExecutionId ?? this.workerExecutionId,
+      workItemId: workItemId ?? this.workItemId,
+      repositoryPath: repositoryPath ?? this.repositoryPath,
+      startingRevision: startingRevision ?? this.startingRevision,
+      requiredCapabilities: requiredCapabilities ?? this.requiredCapabilities,
+      role: role ?? this.role,
+      instruction: instruction ?? this.instruction,
+      timeoutSeconds: timeoutSeconds ?? this.timeoutSeconds,
+      runtimeTypeId: runtimeTypeId ?? this.runtimeTypeId,
+      expectedArtifacts: expectedArtifacts ?? this.expectedArtifacts,
+      cleanupPolicy: cleanupPolicy ?? this.cleanupPolicy,
+      envAllowlist: envAllowlist ?? this.envAllowlist,
+      environment: environment ?? this.environment,
+      runtimeConfig: runtimeConfig ?? this.runtimeConfig,
+      createdAt: createdAt ?? this.createdAt,
+      excludedExecutionIds: excludedExecutionIds ?? this.excludedExecutionIds,
+      declaredOwnedPaths: declaredOwnedPaths ?? this.declaredOwnedPaths,
+    );
+  }
 
   @override
   List<Object?> get props => [
@@ -108,6 +192,7 @@ class WorkerExecutionRequest extends Equatable {
     runtimeConfig,
     createdAt,
     excludedExecutionIds,
+    declaredOwnedPaths,
   ];
 }
 

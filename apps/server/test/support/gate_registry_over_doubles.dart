@@ -48,10 +48,21 @@ import 'package:qa_orchestration/qa_orchestration.dart';
 /// Use it to assert that a gate TYPE is registered. Do not use it to assert
 /// that a gate PASSES: a pass asserted here would be a pass asserted about a
 /// double, not about the platform.
-GateRegistry buildGateRegistryOverDoubles() {
+///
+/// [changeScopeSource] may be supplied to replace the fail-closed
+/// change-scope double with a real reader. That is the one seam a
+/// demonstration needs: the change-scope gate's verdict depends on what is
+/// actually in a repository, so a demonstration of that verdict cannot be
+/// asserted over a double that refuses to look. Every other source stays
+/// fail-closed, because a demonstration of ONE gate's verdict must not be
+/// able to pass because of another gate's.
+GateRegistry buildGateRegistryOverDoubles({
+  ChangeScopeSource? changeScopeSource,
+}) {
   return buildGateRegistry(
     artifactProvenanceSource: const _FailClosedArtifactProvenanceSource(),
-    changeScopeSource: const _FailClosedChangeScopeSource(),
+    changeScopeSource:
+        changeScopeSource ?? const _FailClosedChangeScopeSource(),
     platformVerificationReader: const _FailClosedVerificationReader(),
     revisionIdentitySource: const _FailClosedRevisionIdentitySource(),
     defectRowReader: const _FailClosedDefectRowReader(),

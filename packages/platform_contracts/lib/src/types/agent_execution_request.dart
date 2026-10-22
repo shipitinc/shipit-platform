@@ -81,6 +81,7 @@ class AgentExecutionRequest extends Equatable {
     this.runtimeConfig,
     this.environment,
     this.createdAt,
+    this.declaredOwnedPaths = const [],
   });
 
   final String executionId;
@@ -110,6 +111,18 @@ class AgentExecutionRequest extends Equatable {
   final Map<String, String>? environment;
   final DateTime? createdAt;
 
+  /// The repository-relative path globs the dispatched lane was granted.
+  ///
+  /// Carried from the worker execution request, unchanged and unabridged: the
+  /// execution coordinator captures it into the durable execution record as
+  /// the execution row is created, and that capture is what a QA gate reads.
+  ///
+  /// It is a GRANT — made before the work was known — and not the work's own
+  /// claim about what it would touch. An empty list means the lane declared
+  /// nothing, which the gate that judges it refuses; it never means "owns
+  /// everything".
+  final List<String> declaredOwnedPaths;
+
   factory AgentExecutionRequest.fromJson(Map<String, dynamic> json) =>
       _$AgentExecutionRequestFromJson(json);
 
@@ -130,6 +143,7 @@ class AgentExecutionRequest extends Equatable {
     runtimeConfig,
     environment,
     createdAt,
+    declaredOwnedPaths,
   ];
 }
 

@@ -20,13 +20,15 @@ import 'package:platform_contracts/platform_contracts.dart'
         PlatformVerification,
         WorkerCapability,
         WorkItem,
-        WorkspaceHead;
+        WorkspaceHead,
+        declaredOwnedPathsFromMetadata;
 import 'package:product_registry/product_registry.dart' show DefectStore;
 import 'package:qa_orchestration/qa_orchestration.dart'
     show
         ArtifactProvenanceSource,
         ChangeScopeSource,
         CommittedDiffScopeBaseline,
+        DeclaredOwnedPathsSource,
         DefectEvidenceReader,
         DefectRowReader,
         ExecutionDelta,
@@ -343,6 +345,60 @@ class ProductionChangeScopeSource implements ChangeScopeSource {
     startingRevision: startingRevision,
     producedRevision: producedRevision,
   );
+}
+
+/// F2's DECLARATION source: the owned paths the producing lane was dispatched
+/// with.
+///
+/// ## WHERE THE ANSWER COMES FROM
+///
+/// The grant is captured into the agent execution's own metadata at DISPATCH
+/// time, by the execution coordinator, in the same transaction that creates
+/// the execution row. So the answer is read from the producing execution's
+/// durable record — the same record F1, F2 and F5 already resolve the
+/// producer through.
+///
+/// This is the dispatch-time capture the decision asked for, and it is what
+/// makes the gate judge the change against what the lane WAS GRANTED rather
+/// than against what the change turned out to touch.
+///
+/// ## WHY IT IS NOT THE WORK ITEM'S OWN CLAIM
+///
+/// A work item can say what it is about to touch. That is a CLAIM, made by the
+/// lane itself, and a lane that lied in its claim would be judged against its
+/// own lie. The grant is made by whoever dispatched the lane, which is why it
+/// is captured at dispatch and read back from the execution record.
+///
+/// ## WHY IT ANSWERS WITH AN EMPTY LIST RATHER THAN AN ERROR
+///
+/// "No lane produced this item", "the producing execution has no captured
+/// declaration" and "the declaration is unreadable" all read as "declared
+/// nothing". The gate refuses an empty owned set, so all three fail closed —
+/// and they fail closed for the same reason and with the same shape, so the
+/// refusal is not a special case that has to be maintained separately.
+class ProductionDeclaredOwnedPathsSource implements DeclaredOwnedPathsSource {
+  const ProductionDeclaredOwnedPathsSource({
+    required this.resolver,
+    required this.executionStore,
+  });
+
+  final ProducerWorkspaceResolver resolver;
+  final ExecutionStore executionStore;
+
+  @override
+  QASourceProvenance get provenance =>
+      const QASourceProvenance.production('declared_owned_paths');
+
+  @override
+  Future<List<String>> readDeclaredOwnedPaths(String workItemId) async {
+    final producer = await resolver.resolve(workItemId);
+    if (producer == null) return const [];
+    final execution = await executionStore.readExecutionOrNull(
+      producer.executionId,
+    );
+    if (execution == null) return const [];
+    return declaredOwnedPathsFromMetadata(execution.metadata);
+  }
 }
 
 /// F4's source: the verification rows the platform itself recorded.

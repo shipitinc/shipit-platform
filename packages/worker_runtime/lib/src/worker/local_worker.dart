@@ -451,6 +451,14 @@ class LocalWorker implements Worker {
       timeoutSeconds: request.timeoutSeconds,
       runtimeTypeId: request.runtimeTypeId,
       expectedArtifacts: request.expectedArtifacts,
+      // The lane's path-ownership GRANT, carried verbatim from the dispatch
+      // request. This is the worker's own production write path: the
+      // declaration reaches the durable execution record through this copy and
+      // through the coordinator's capture, and a copy that dropped it would
+      // leave every lane's declaration unreadable — which reads as "declared
+      // nothing", the fail-closed direction, so the defect would be invisible
+      // except as a gate that refuses everything.
+      declaredOwnedPaths: request.declaredOwnedPaths,
       runtimeConfig: request.runtimeConfig,
       environment: environmentPolicy.resolve(
         request,

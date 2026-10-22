@@ -117,6 +117,7 @@ class WorkerHost {
     List<String>? envAllowlist,
     Map<String, String>? environment,
     String instruction = 'Implement add(2,3)==5 inside the worktree.',
+    List<String> declaredOwnedPaths = const [],
   }) => WorkerExecutionRequest(
     workerExecutionId: workerExecutionId,
     workItemId: workItemId,
@@ -130,5 +131,6 @@ class WorkerHost {
     cleanupPolicy: cleanupPolicy,
     envAllowlist: envAllowlist,
     environment: environment,
+    declaredOwnedPaths: declaredOwnedPaths,
   );
 }

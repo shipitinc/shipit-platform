@@ -66,6 +66,11 @@
       "type": "array",
       "items": { "type": "string" },
       "description": "Worker execution IDs that must not be assigned this work (independence at dispatch for design reviews)"
+    },
+    "declaredOwnedPaths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Repository-relative path globs the dispatched lane was GRANTED. A grant captured at dispatch, never the work's own claim; an empty list means the lane declared nothing, which the gate that judges it refuses — it never means owns everything."
     }
   },
   "definitions": {

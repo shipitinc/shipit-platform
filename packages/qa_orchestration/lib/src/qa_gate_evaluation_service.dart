@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:platform_contracts/platform_contracts.dart';
 
+import 'gates/declared_owned_paths_source.dart';
+import 'gates/evaluators/change_scope_confinement_gate.dart';
 import 'gates/source_provenance.dart';
 import 'lane_g_qa_contract_store.dart';
 import 'qa_orchestration.dart';
@@ -53,6 +55,7 @@ class QAGateEvaluationOutcome {
     required this.isOverallPass,
     required this.requiresFormalDetermination,
     required this.evaluatedAt,
+    this.lanePathOwnership,
   });
 
   /// The contract that was evaluated.
@@ -70,6 +73,24 @@ class QAGateEvaluationOutcome {
 
   /// When the evaluation ran.
   final DateTime evaluatedAt;
+
+  /// The lane path-ownership declaration this evaluation judged, and where it
+  /// came from — null when no declaration source was wired, which is the
+  /// shape of a service assembled without one.
+  ///
+  /// ## WHY IT IS IN THE RECORD
+  ///
+  /// A record that says "the change-scope gate passed" but not "against which
+  /// owned set" cannot be audited later: the set is the thing that decides
+  /// whether a path was allowed. The record therefore carries the set the gate
+  /// judged and the provenance of the reader that supplied it, so "was this
+  /// produced by the platform, and against what?" has one answer at the top
+  /// of the record.
+  ///
+  /// An EMPTY set is recorded as an empty set, not omitted: "the lane
+  /// declared nothing" is a fact about the run, and the gate's refusal of it
+  /// is the fail-closed direction.
+  final Map<String, dynamic>? lanePathOwnership;
 
   /// The transition context the `qaPassed` edge's guard reads.
   ///
@@ -120,6 +141,7 @@ class QAGateEvaluationOutcome {
     'requiresFormalDetermination': requiresFormalDetermination,
     'outcomeKind': isOverallPass ? 'pass' : 'not_pass',
     'sourceProvenance': sourceProvenance,
+    if (lanePathOwnership != null) 'lanePathOwnership': lanePathOwnership,
     'gateResults': [for (final result in results) result.toJson()],
   };
 
@@ -159,6 +181,7 @@ class QAGateEvaluationService {
   QAGateEvaluationService({
     required this.orchestration,
     required this.contractStore,
+    this.declaredOwnedPathsSource,
   });
 
   /// The evaluation path. Its registry decides which reader answers each gate.
@@ -166,6 +189,23 @@ class QAGateEvaluationService {
 
   /// Where the contract is read from.
   final QAContractStore contractStore;
+
+  /// Where the lane's declared owned paths are read from, when the platform
+  /// has a durable record of them.
+  ///
+  /// ## WHY IT IS OPTIONAL
+  ///
+  /// It is optional so that a service assembled without one behaves EXACTLY as
+  /// it behaved before this lane existed: the contract's own declaration is
+  /// judged, and a contract whose owned set is empty is refused by the gate
+  /// that reads it. That refusal is the shipped behaviour and it is measured
+  /// by a test that must keep passing
+  /// (`apps/server/test/product_contract_f2_ownership_glob_test.dart`).
+  ///
+  /// A service with a source wired is the production shape: the source reads
+  /// the dispatch-time capture of the lane's grant, and the gate judges the
+  /// change against what the lane was dispatched with.
+  final DeclaredOwnedPathsSource? declaredOwnedPathsSource;
 
   /// Evaluates the contract named by [qaContractId] against [agentResult].
   ///
@@ -216,36 +256,154 @@ class QAGateEvaluationService {
       );
     }
 
+    // THE LANE'S PATH-OWNERSHIP DECLARATION — the input the change-scope
+    // gate was missing, read from the durable record the lane was dispatched
+    // with. It is read BEFORE the evaluation and supplied to the gate that
+    // judges it; the gate's own semantics, config schema and fail-closed
+    // direction are untouched.
+    final declaration = await _readDeclaredOwnedPaths(workItemId);
+    final evaluatedContract = _withDeclaredOwnedPaths(contract, declaration);
+
     final List<QAGateResult> results;
     try {
-      results = await orchestration.evaluate(workItemId, agentResult, contract);
+      results = await orchestration.evaluate(
+        workItemId,
+        agentResult,
+        evaluatedContract,
+      );
     } catch (error) {
       // A gate evaluator that REFUSES its own declaration (a
       // `FormatException` from the config parse) lands here. That is a
       // fault, not a verdict: the shipped F2 declaration carries an empty
       // `ownedPathGlobs`, which is refused by design, and the refusal must
       // not be recorded as "the change scope gate failed".
+      //
+      // When a declaration source WAS wired and the lane declared nothing,
+      // the reason says so: the two refusals are different facts — a lane
+      // that was dispatched and granted nothing, and a contract nobody
+      // supplied a declaration for — and a reader who cannot tell them apart
+      // cannot tell whether the platform is wired.
       throw QAGateEvaluationFault(
         'the QA evaluation for work item "$workItemId" could not be completed '
-        'against contract "${contract.contractId}"',
+        'against contract "${contract.contractId}"'
+        '${declaration != null && declaration.globs.isEmpty ? ' — the lane '
+                  'that produced this item declared no owned paths, and the '
+                  'change-scope gate refuses an empty owned set' : ''}',
         cause: error,
       );
     }
 
     final outcome = QAGateEvaluationOutcome(
-      contract: contract,
+      contract: evaluatedContract,
       results: results,
-      isOverallPass: orchestration.isOverallPass(results, contract),
+      isOverallPass: orchestration.isOverallPass(results, evaluatedContract),
       requiresFormalDetermination: orchestration.requiresFormalDetermination(
         results,
-        contract,
+        evaluatedContract,
       ),
       evaluatedAt: DateTime.now(),
+      lanePathOwnership: declaration?.toJson(),
     );
 
     _assertEncodable(outcome, workItemId);
 
     return outcome;
+  }
+
+  /// Reads the lane's declared owned paths, when a source is wired.
+  ///
+  /// A source that FAILS is a fault, not an empty declaration: the platform
+  /// could not look, and "could not look" is not the same answer as "the lane
+  /// declared nothing". Both refuse the gate, but only one of them is a
+  /// statement about the lane, and the record has to be able to tell them
+  /// apart.
+  Future<_LanePathOwnership?> _readDeclaredOwnedPaths(String workItemId) async {
+    final source = declaredOwnedPathsSource;
+    if (source == null) return null;
+
+    final List<String> globs;
+    try {
+      globs = await source.readDeclaredOwnedPaths(workItemId);
+    } catch (error) {
+      throw QAGateEvaluationFault(
+        'the lane path-ownership declaration for work item "$workItemId" could '
+        'not be read, so the change-scope gate has no declared owned set to '
+        'judge the change against',
+        cause: error,
+      );
+    }
+
+    return _LanePathOwnership(globs: globs, source: source.provenance);
+  }
+
+  /// Supplies the lane's declaration to the gate that judges it.
+  ///
+  /// ## WHAT IT CHANGES, AND WHAT IT DOES NOT
+  ///
+  /// It supplies ONE value — the owned set the change-scope gate compares the
+  /// diff's paths against — and it changes nothing else: the gate's
+  /// comparison, its config schema, its forbidden half and its refusal of an
+  /// empty owned set are all exactly as they were.
+  ///
+  /// ## WHICH GATE IT SUPPLIES
+  ///
+  /// The gate that is REGISTERED as the change-scope evaluator, found through
+  /// the same registry the evaluation itself uses. Asking the registry — rather
+  /// than matching a gate id or a type string — means the value goes to the
+  /// gate that will actually judge it, and a contract that declares some
+  /// other gate with a similar name is left alone.
+  ///
+  /// ## THE LANE'S DECLARATION REPLACES THE CONTRACT'S OWN
+  ///
+  /// The owned half of the gate's declaration is the PER-LANE half: the
+  /// contract's copy is empty because the input was missing, and supplying the
+  /// input fills it. When the lane declared nothing, the contract's own
+  /// declaration stands — and the shipped contract declares none, so the gate
+  /// refuses, which is the fail-closed direction the decision preserved.
+  QAContract _withDeclaredOwnedPaths(
+    QAContract contract,
+    _LanePathOwnership? declaration,
+  ) {
+    if (declaration == null || declaration.globs.isEmpty) return contract;
+
+    var supplied = false;
+    final gates = <QAGateDefinition>[];
+    for (final gate in contract.gates) {
+      final evaluator = orchestration.registry.get(gate.type);
+      if (evaluator is! ChangeScopeConfinementGate) {
+        gates.add(gate);
+        continue;
+      }
+      supplied = true;
+      gates.add(
+        QAGateDefinition(
+          gateId: gate.gateId,
+          type: gate.type,
+          required: gate.required,
+          config: <String, dynamic>{
+            ...gate.config,
+            ownedPathGlobsConfigKey: List<String>.unmodifiable(
+              declaration.globs,
+            ),
+          },
+          evidenceTypes: gate.evidenceTypes,
+          workerCapabilities: gate.workerCapabilities,
+        ),
+      );
+    }
+    if (!supplied) return contract;
+
+    return QAContract(
+      contractId: contract.contractId,
+      workItemCategory: contract.workItemCategory,
+      gates: gates,
+      version: contract.version,
+      passCriteria: contract.passCriteria,
+      createdAt: contract.createdAt,
+      updatedAt: contract.updatedAt,
+      evidenceRows: contract.evidenceRows,
+      metadata: contract.metadata,
+    );
   }
 
   /// Proves the durable record can be written as JSON.
@@ -266,4 +424,26 @@ class QAGateEvaluationService {
       );
     }
   }
+}
+
+/// The lane's declared owned paths, and the reader that supplied them.
+///
+/// Private to this library: it is the service's own working material, and the
+/// durable shape it produces is a plain JSON map rather than a type other
+/// packages would have to understand.
+class _LanePathOwnership {
+  _LanePathOwnership({required this.globs, required this.source});
+
+  /// The globs the lane was granted. Empty when the lane declared nothing.
+  final List<String> globs;
+
+  /// What the reader says about itself, recorded so a reader of the durable
+  /// record can tell the platform's reader from a stand-in (F-204).
+  final QASourceProvenance source;
+
+  /// The JSON-safe shape written into the durable record.
+  Map<String, dynamic> toJson() => {
+    'declaredOwnedPaths': globs,
+    'source': source.toJson(),
+  };
 }
