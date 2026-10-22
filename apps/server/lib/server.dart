@@ -76,6 +76,7 @@ import 'package:worker_runtime/worker_runtime.dart'
 import 'src/generated/endpoints.dart';
 import 'src/generated/protocol.dart';
 import 'src/design/design_review_observer.dart';
+import 'src/design/design_review_recorder.dart';
 import 'src/design/design_review_workload_resolver.dart';
 import 'src/design/design_revision_producer.dart';
 import 'src/persistence/persistence_database.dart';
@@ -759,6 +760,14 @@ void run(List<String> args) async {
   // after a redeploy, and a review lane reading it back would find nothing.
   final designGovernanceStore = PostgresDesignGovernanceStore(db);
 
+  // ---- The DESIGN review RECORDER (design step 9, gap G-C). ----
+  final designReviewRecorder = DesignReviewRecorder(
+    workflowEngine: durableWorkflowEngine,
+    executionStore: coordinator.store,
+    designGovernanceStore: designGovernanceStore,
+    logger: _log,
+  );
+
   // ---- The DESIGN lane's two schedulers (design step 8, gap G-A). ----
   //
   // They are constructed AFTER the stores they read and BEFORE the producer
@@ -1262,6 +1271,7 @@ void run(List<String> args) async {
             executionStore: coordinator.store,
             workerStore: workerStore,
             logger: _log,
+            designReviewRecorder: designReviewRecorder,
           ),
           logger: _log,
         );
@@ -1333,6 +1343,7 @@ void run(List<String> args) async {
           workflowEngine: durableWorkflowEngine,
           executionStore: coordinator.store,
           workerStore: workerStore,
+          designReviewRecorder: designReviewRecorder,
           foldStalls: outcome.foldStalls,
           log: _log,
         );
@@ -1831,6 +1842,7 @@ Map<JobType, TickJobHandler> triageSectionDrainHandlers({
   required ExecutionStore executionStore,
   required WorkerStore workerStore,
   required void Function(String event, Map<String, dynamic> data) logger,
+  DesignReviewRecorder? designReviewRecorder,
 }) => {
   // `onboardProduct` is registered so the dispatch table is COMPLETE.
   // Onboarding jobs are product-scoped and are claimed and run by
@@ -1858,11 +1870,9 @@ Map<JobType, TickJobHandler> triageSectionDrainHandlers({
     workerStore: workerStore,
     logger: logger,
   ),
-  // Step 8 mounts `sched-design-review`, whose jobs are reconciled by EVERY
-  // scheduler sharing the job store. Absent here, a terminal design-review job
-  // reaches this drain first and fails the whole triage section (B1).
-  JobType.designReview: (job) =>
-      observeCompletedDesignReviewJob(job: job, logger: logger),
+  JobType.designReview: designReviewRecorder != null
+      ? designReviewRecorderHandler(recorder: designReviewRecorder)
+      : (job) => observeCompletedDesignReviewJob(job: job, logger: logger),
 };
 
 /// What one [runReviewLaneTick] concluded, for the composition root to report.
@@ -1931,6 +1941,7 @@ Future<ReviewLaneTickResult> runReviewLaneTick({
   required WorkerStore workerStore,
   required void Function(StallGateResult stalls) foldStalls,
   required void Function(String event, Map<String, dynamic> data) log,
+  DesignReviewRecorder? designReviewRecorder,
 }) async {
   final reviewTick = await reviewScheduler.tick();
 
@@ -1982,14 +1993,9 @@ Future<ReviewLaneTickResult> runReviewLaneTick({
         workerStore: workerStore,
         logger: log,
       ),
-      // THIRD type step 8 mounts, and the same shared-job-store reason: a
-      // terminal `designReview` job can be reconciled by ANY scheduler's tick,
-      // including this one. Without a handler the review section itself fails
-      // before the design section ever sees the job. This drain has no
-      // unconsumed-review list, so the observation is the log line
-      // `observeCompletedDesignReviewJob` writes; step 9 owns the consumer.
-      JobType.designReview: (job) =>
-          observeCompletedDesignReviewJob(job: job, logger: log),
+      JobType.designReview: designReviewRecorder != null
+          ? designReviewRecorderHandler(recorder: designReviewRecorder)
+          : (job) => observeCompletedDesignReviewJob(job: job, logger: log),
     },
     logger: log,
   );
@@ -2251,6 +2257,7 @@ Future<DesignLaneTickResult> runDesignLaneTick({
   required DurableWorkflowEngine workflowEngine,
   required ExecutionStore executionStore,
   required WorkerStore workerStore,
+  required DesignReviewRecorder designReviewRecorder,
   required void Function(StallGateResult stalls) foldStalls,
   required void Function(String event, Map<String, dynamic> data) log,
 }) async {
@@ -2276,10 +2283,6 @@ Future<DesignLaneTickResult> runDesignLaneTick({
     triageProcessor: triageProcessor,
     designRevisionProducer: designRevisionProducer,
     designRevisionOutcomeSink: refusalSink.sink,
-    // The table must be as complete as every other drain's, for the same
-    // measured reason: `drainTriageOutcomesFromTick` dispatches by TYPE and
-    // throws for a considered job with no handler. The types below are the ones
-    // this scheduler can see via step 1's cross-lane reconcile.
     handlers: {
       JobType.onboardProduct: (job) =>
           observeCompletedOnboardingJob(job: job, logger: log),
@@ -2293,10 +2296,10 @@ Future<DesignLaneTickResult> runDesignLaneTick({
         workerStore: workerStore,
         logger: log,
       ),
-      JobType.designReview: (job) async {
-        await observeCompletedDesignReviewJob(job: job, logger: log);
-        unconsumedReviewJobIds.add(job.jobId);
-      },
+      JobType.designReview: designReviewRecorderHandler(
+        recorder: designReviewRecorder,
+        unconsumedJobIds: unconsumedReviewJobIds,
+      ),
     },
     logger: log,
   );
@@ -2337,10 +2340,10 @@ Future<DesignLaneTickResult> runDesignLaneTick({
         workerStore: workerStore,
         logger: log,
       ),
-      JobType.designReview: (job) async {
-        await observeCompletedDesignReviewJob(job: job, logger: log);
-        unconsumedReviewJobIds.add(job.jobId);
-      },
+      JobType.designReview: designReviewRecorderHandler(
+        recorder: designReviewRecorder,
+        unconsumedJobIds: unconsumedReviewJobIds,
+      ),
     },
     logger: log,
   );
