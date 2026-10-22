@@ -67,6 +67,7 @@ import 'package:worker_runtime/worker_runtime.dart'
 
 import 'src/generated/endpoints.dart';
 import 'src/generated/protocol.dart';
+import 'src/design/design_revision_producer.dart';
 import 'src/persistence/persistence_database.dart';
 import 'src/persistence/postgres_execution_store.dart';
 import 'src/persistence/postgres_workflow_store.dart';
@@ -75,6 +76,7 @@ import 'src/persistence/postgres_worker_store.dart';
 import 'src/persistence/postgres_worker_registration_store.dart';
 import 'src/persistence/postgres_defect_store.dart';
 import 'src/persistence/postgres_design_contract_store.dart';
+import 'src/persistence/postgres_design_governance_store.dart';
 import 'src/persistence/postgres_triage_store.dart';
 import 'src/persistence/postgres_model_execution_record_store.dart';
 import 'src/persistence/postgres_model_policy_store.dart';
@@ -679,6 +681,29 @@ void run(List<String> args) async {
     logger: _log,
   );
 
+  // The design step-6 producer: the writer `saveDesignRevision` never had.
+  //
+  // It is constructed ONCE and registered in `drainTriageOutcomesFromTick`'s
+  // type table, but it is INERT in this composition: no design scheduler is
+  // mounted yet (step 8), so no `JobType.designRevision` job is ever enqueued
+  // or drained. Mounting the scheduler is step 8; writing the producer now is
+  // what makes that mount a scheduler-only change.
+  //
+  // The revision store is the PostgreSQL one, for the same reason the contract
+  // store above is: a revision written to an in-memory store would not exist
+  // after a redeploy, and a review lane reading it back would find nothing.
+  final designGovernanceStore = PostgresDesignGovernanceStore(db);
+  final designRevisionProducer = DesignRevisionProducer(
+    workflowStore: workflowStore,
+    workflowEngine: durableWorkflowEngine,
+    executionStore: coordinator.store,
+    jobStore: jobStore,
+    designRevisionStore: designGovernanceStore,
+    designContractStore: designContractStore,
+    defectStore: defectStore,
+    logger: _log,
+  );
+
   // ---- Baseline production: a PRODUCT-SCOPED path, not a second triage loop. ----
   //
   // `JobType.onboardProduct` jobs were enqueued, stored, displayed by
@@ -1060,6 +1085,7 @@ void run(List<String> args) async {
           tickResult: tickResult,
           jobStore: jobStore,
           triageProcessor: triageProcessor,
+          designRevisionProducer: designRevisionProducer,
           // `onboardProduct` is registered so the dispatch table is COMPLETE.
           // Onboarding jobs are product-scoped and are claimed and run by
           // `BaselineProductDispatcher` below, so they never appear in a triage

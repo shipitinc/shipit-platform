@@ -1,6 +1,7 @@
 import 'package:platform_contracts/platform_contracts.dart' show Job, JobType;
 import 'package:scheduler/scheduler.dart' show JobStore, SchedulerTickResult;
 
+import '../design/design_revision_producer.dart';
 import 'triage_processor.dart';
 
 /// Consumes one job's durable outcome, for one [JobType].
@@ -178,6 +179,12 @@ Future<TriageTickDrainResult> drainTriageOutcomesFromTick({
   required SchedulerTickResult tickResult,
   required JobStore jobStore,
   TriageProcessor? triageProcessor,
+  // The design step-6 producer. It is registered HERE rather than in a
+  // caller-supplied `handlers` map so that `JobType.designRevision` is a
+  // property of the dispatch table itself: step 8 mounts the design scheduler
+  // and already finds the type handled. It stays inert until then, because no
+  // design job is enqueued in this composition.
+  DesignRevisionProducer? designRevisionProducer,
   Map<JobType, TickJobHandler>? handlers,
   required void Function(String event, Map<String, dynamic> data) logger,
 }) async {
@@ -187,6 +194,10 @@ Future<TriageTickDrainResult> drainTriageOutcomesFromTick({
   final table = <JobType, TickJobHandler>{
     if (triageProcessor != null)
       ...triageOnlyTickHandlers(triageProcessor: triageProcessor),
+    if (designRevisionProducer != null)
+      JobType.designRevision: (job) async {
+        await designRevisionProducer.processCompletedDesignRevisionJob(job);
+      },
     ...?handlers,
   };
   assert(
@@ -197,9 +208,9 @@ Future<TriageTickDrainResult> drainTriageOutcomesFromTick({
   );
   assert(
     table.isNotEmpty,
-    'drainTriageOutcomesFromTick was given neither a TriageProcessor nor any '
-    'handlers, so every job it considers would raise '
-    'UnhandledJobTypeException',
+    'drainTriageOutcomesFromTick was given neither a TriageProcessor, a '
+    'DesignRevisionProducer nor any handlers, so every job it considers would '
+    'raise UnhandledJobTypeException',
   );
 
   final touched = <String>{
