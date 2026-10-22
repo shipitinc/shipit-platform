@@ -36,6 +36,7 @@ import 'package:worker_protocol/worker_protocol.dart' show WorkerRegistration;
 import '../baseline/durable_workspace_runtime.dart'
     show DurableWorkspaceRuntime;
 import '../generated/feature_request_summary_view.dart';
+import '../implementation/design_scope_grant.dart';
 import '../persistence/persistence_database.dart';
 import '../persistence/postgres_defect_store.dart'
         // See the note on the `product_registry` import: a same-named exception
@@ -2058,6 +2059,90 @@ class ControlPlaneService {
   }
 
   // ---------------------------------------------------------------------
+  // The design/plan submission (the producer of the lane's path grant)
+  // ---------------------------------------------------------------------
+
+  /// Submits a design/plan for approval, carrying the SCOPING LANE's declared
+  /// owned-path grant.
+  ///
+  /// ## WHY THIS EXISTS
+  ///
+  /// Decision `7d2a81f0` settled that the grant is made by whoever scoped the
+  /// work: *"the work item's planner or designer records the owned globs when
+  /// the item is scoped"*, and that it is *"recorded as a durable fact of the
+  /// work item and read at dispatch"*.
+  ///
+  /// The READ half already existed; the WRITE half did not, and the consequence
+  /// was that every production F2 evaluation refused with an empty owned set
+  /// (ledger F-215). This method is that write half: it is the seam through
+  /// which a plan is submitted for approval, and it carries the declared paths
+  /// into the durable decision record as the DECLARATION.
+  ///
+  /// The declaration is promoted onto the work item by
+  /// [resolveHumanDecision] when the plan is ACCEPTED — not here. A
+  /// declaration is a proposal; a grant is an accepted fact, and the step that
+  /// turns one into the other is the human-governed one.
+  ///
+  /// ## WHY THE DECLARATION IS NOT TAKEN FROM THE INTAKE REQUEST
+  ///
+  /// Because the requester of an intake form does not know the path layout.
+  /// That is the decision's own words, and it is why the grant cannot be
+  /// widened by a field on the intake form: it would be empty for most items,
+  /// and empty still refuses, so most items would still queue. The scoping
+  /// lane is the one actor in the lifecycle that both knows the layout and is
+  /// accountable for the scope.
+  ///
+  /// ## WHY [declaredBy] IS REQUIRED
+  ///
+  /// A grant whose author is unknown is a grant nobody is accountable for.
+  /// The platform has no business inventing an author, so it does not offer a
+  /// default: the caller names the scoping lane, and an empty name is refused
+  /// rather than recorded.
+  Future<HumanDecision> requestDesignApproval({
+    required String workItemId,
+    required List<String> declaredOwnedPaths,
+    required String question,
+    required String declaredBy,
+    List<HumanDecisionOption>? options,
+    String? recommendation,
+    HumanDecisionType decisionType = HumanDecisionType.designApproval,
+    bool blocking = true,
+    DateTime? declaredAt,
+  }) async {
+    if (declaredBy.trim().isEmpty) {
+      throw ArgumentError.value(
+        declaredBy,
+        'declaredBy',
+        'A design/plan submission must name the lane that scoped the work. '
+            'The platform does not invent an author for a grant.',
+      );
+    }
+    final now = declaredAt ?? clock();
+    final decision = await workflowEngine.requestHumanDecision(
+      workItemId: workItemId,
+      decisionType: decisionType,
+      question: question,
+      options: options ?? designApprovalOptions,
+      recommendation: recommendation,
+      blocking: blocking,
+      metadata: designScopeDeclarationMetadata(
+        declaredOwnedPaths: declaredOwnedPaths,
+        decisionType: decisionType,
+        declaredBy: declaredBy.trim(),
+        declaredAt: now,
+      ),
+    );
+    logger.info('workflow.design_scope_declared', {
+      'workItemId': workItemId,
+      'decisionId': decision.decisionId,
+      'decisionType': decisionType.wire,
+      'declaredBy': declaredBy.trim(),
+      'declaredPathCount': declaredOwnedPaths.length,
+    });
+    return decision;
+  }
+
+  // ---------------------------------------------------------------------
   // Human decision resolution (the only legal request-side write path)
   // ---------------------------------------------------------------------
 
@@ -2119,6 +2204,25 @@ class ControlPlaneService {
       );
     }
 
+    // THE DESIGN/PLAN ACCEPTANCE — the lane's path grant becomes a durable
+    // fact of the work item HERE, before the engine moves the item.
+    //
+    // Before the engine call, and that order is the whole point: the engine's
+    // transition RELEASES the item, and the released item is dispatchable. A
+    // grant written after the release would be read by a dispatch that had
+    // already gone out without it, and the QA gate would judge the change
+    // against an empty owned set — the exact defect this lane exists to close.
+    //
+    // It is a SEPARATE write from the engine's, and it cannot be folded into
+    // it: `DurableWorkflowEngine.transition` takes the metadata merge as an
+    // argument, and the engine is not this lane's to edit. `PersistenceDatabase
+    // .inTransaction` refuses a nested transaction, so the two cannot share one
+    // commit either. The consequence is stated rather than hidden: if the
+    // engine then refuses the transition, the grant is already recorded and the
+    // item has NOT moved. That is the safe order — the grant is a fact about
+    // the plan, and an item still parked at its gate dispatches nothing.
+    await _recordDesignScopeGrant(decision: decision, choice: choice);
+
     final workItem = await workflowEngine.resolveHumanDecision(
       decisionId: decisionId,
       choice: choice,
@@ -2135,6 +2239,125 @@ class ControlPlaneService {
       'version': workItem.version,
     });
     return workItem;
+  }
+
+  /// Records the scoping lane's owned-path grant on the work item, at the
+  /// design/plan acceptance.
+  ///
+  /// ## THE FOUR PRECONDITIONS, AND WHY EACH IS ONE
+  ///
+  ///  1. **The resolution is an acceptance.** [isDesignPlanAcceptance] asks
+  ///     the routing table, so this cannot drift from where the engine will
+  ///     actually put the item. A rejected plan records nothing.
+  ///  2. **The item is at the gate.** `waitingForHumanDecision` is where the
+  ///     acceptance happens. An item that has already moved on is not being
+  ///     accepted now, and re-recording a grant on it would be the post-hoc
+  ///     widening decision `7d2a81f0` refused.
+  ///  3. **This decision is the item's blocking decision.** A decision that is
+  ///     not the one holding the item at the gate moves nothing, and a grant
+  ///     recorded for it would be a grant for a question nobody asked.
+  ///  4. **The declaration is read from THIS decision.** A grant is recorded
+  ///     for the plan that was accepted, not for another plan and not for the
+  ///     diff. An empty declaration records an EMPTY scope — which replaces
+  ///     whatever an earlier step recorded — and the item stays refused.
+  ///
+  /// ## WHY THE SCOPE IS REPLACED RATHER THAN ADDED TO
+  ///
+  /// The design/plan acceptance is where the scope is AUTHORED, so its value
+  /// is the authoritative one. An item that arrived carrying a scope from an
+  /// earlier step — an intake form, whose requester does not know the path
+  /// layout — has that scope replaced here. Leaving it would mean the
+  /// effective grant still originates at intake, and decision `7d2a81f0` would
+  /// not have been implemented at all. Replacing a wide scope with a narrow
+  /// one cannot widen anything; leaving it could.
+  ///
+  /// ## WHY THE WRITE IS A COMPARE-AND-SWAP
+  ///
+  /// The work item's metadata carries the plan, the producer identity, the
+  /// triage marker and the escalation index, and two writers touching it at
+  /// once must not silently overwrite each other. `saveWorkItem`'s
+  /// `expectedVersion` is the mechanism, and a refusal is surfaced rather than
+  /// swallowed: if the grant cannot be recorded durably, the acceptance must
+  /// not proceed, because an item released without its grant is exactly the
+  /// state this lane exists to prevent.
+  Future<void> _recordDesignScopeGrant({
+    required HumanDecision decision,
+    required HumanDecisionChoice choice,
+  }) async {
+    final decisionId = decision.decisionId;
+    if (!isDesignPlanAcceptance(
+      decisionType: decision.decisionType,
+      choice: choice,
+    )) {
+      return;
+    }
+
+    final item = await workflowStore.readWorkItem(decision.workItemId);
+    if (item.state != WorkItemState.waitingForHumanDecision) return;
+    if (item.blockingHumanDecisionId != decisionId) return;
+
+    final declared = declaredOwnedPathsFromDesignDecision(decision);
+    final declaration = decision.metadata?[designScopeDeclarationProvenanceKey];
+    final declaredBy = declaration is Map
+        ? (declaration['declaredBy'] as String? ?? '')
+        : '';
+    final grant = designScopeGrantMetadata(
+      declaredOwnedPaths: declared,
+      decisionType: decision.decisionType,
+      decisionId: decisionId,
+      declaredBy: declaredBy,
+      grantedAt: clock(),
+    );
+
+    if (declared.isEmpty) {
+      // Fail closed, and say so in the log: an accepted plan that declared no
+      // paths leaves the item with an EMPTY scope — which REPLACES any scope
+      // an earlier step recorded — so the item carries no grant and the gate
+      // will refuse it.
+      logger.warning('workflow.design_scope_grant_absent', {
+        'decisionId': decisionId,
+        'workItemId': item.workItemId,
+        'decisionType': decision.decisionType.wire,
+        'reason':
+            'the accepted design/plan declared no owned paths, so the scope on '
+            'the work item is empty and the item carries no grant. The '
+            'scope gate will refuse it',
+      });
+    }
+
+    try {
+      await workflowStore.saveWorkItem(
+        item.copyWith(
+          metadata: mergeDesignScopeGrant(item.metadata, grant),
+          updatedAt: clock(),
+          version: item.version + 1,
+        ),
+        expectedVersion: item.version,
+      );
+    } on ConcurrentModificationException catch (e) {
+      logger.warning('workflow.design_scope_grant_conflict', {
+        'decisionId': decisionId,
+        'workItemId': item.workItemId,
+        'error': e.toString(),
+        'reason':
+            'the work item changed while the grant was being recorded, so the '
+            'grant was NOT recorded and the acceptance is refused. Nothing '
+            'was written',
+      });
+      throw StateError(
+        'The design/plan grant for work item ${item.workItemId} could not be '
+        'recorded: the work item changed concurrently ($e). Nothing was '
+        'written, and the plan was not accepted.',
+      );
+    }
+
+    logger.info('workflow.design_scope_grant_recorded', {
+      'decisionId': decisionId,
+      'workItemId': item.workItemId,
+      'decisionType': decision.decisionType.wire,
+      'declaredBy': declaredBy,
+      'declaredPathCount': declared.length,
+    });
   }
 
   // ---------------------------------------------------------------------
