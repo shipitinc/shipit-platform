@@ -89,6 +89,8 @@ String? knownTransitionMessage(String from, String to) => switch ((from, to)) {
   ('design_approved', 'agent_executing') => 'Agent started work',
   ('design_rejected', 'design_in_review') =>
     'Design updated, waiting on review',
+  ('design_rejected', 'design_required') =>
+    'Design rejected — sending it back for redesign',
   ('design_not_required', 'agent_executing') => 'Agent started work',
   // The implementation lane's own entry and exit. Two pairs, both spelled out,
   // because both would otherwise fall through to `_ => null` and render as
