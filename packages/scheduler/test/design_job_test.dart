@@ -9,6 +9,7 @@ import 'package:workflow_engine/workflow_engine.dart';
 import 'package:workflow_store/workflow_store.dart';
 import 'package:worker_runtime/worker_runtime.dart';
 
+import 'support/design_contract_fixtures.dart';
 import 'support/gate_fake_agent.dart';
 import 'support/git_repo_fixture.dart';
 import 'support/scheduler_host.dart';
@@ -109,15 +110,23 @@ class DesignJobHost {
   late InMemoryWorkflowStore workflowStore;
   late InMemoryDesignContractStore designContractStore;
 
-  /// A design contract row written and READ BACK for [workItemId].
+  /// A design contract row written, READ BACK, and moved under review for
+  /// [workItemId].
   ///
   /// Returns the store's read-back id rather than the submitted one, so no
-  /// fixture stamps a work item with an id it has not seen resolve.
-  Future<String> provisionDesignContractFor(String workItemId) async =>
-      (await DesignContractProvisioner(
-            contractStore: designContractStore,
-          ).provisionForWorkItem(workItemId: workItemId, productId: 'prod-1'))
-          .contractId;
+  /// fixture stamps a work item with an id it has not seen resolve. The row is
+  /// under review because `designContractUnderReview()` reads that status from
+  /// the store, never from a transition's context.
+  Future<String> provisionDesignContractFor(String workItemId) async {
+    final contractId =
+        (await DesignContractProvisioner(
+              contractStore: designContractStore,
+            ).provisionForWorkItem(workItemId: workItemId, productId: 'prod-1'))
+            .contractId;
+    await markDesignContractUnderReview(designContractStore, contractId);
+    return contractId;
+  }
+
   late DurableWorkflowEngine workflowEngine;
   late InMemoryExecutionStore executionStore;
   late GateFakeAgentSession session;
@@ -349,7 +358,6 @@ void main() {
         to: WorkItemState.designInReview,
         trigger: TransitionTrigger.systemEvent,
         context: {
-          'designContractStatus': DesignContractStatus.underReview,
           'designRevisionId': 'dr-1',
           'designerExecutionId': 'wx-designer-1',
         },
@@ -418,7 +426,6 @@ void main() {
           to: WorkItemState.designInReview,
           trigger: TransitionTrigger.systemEvent,
           context: {
-            'designContractStatus': DesignContractStatus.underReview,
             'designRevisionId': 'dr-2',
             'designerExecutionId': 'wx-designer-2',
           },
@@ -581,7 +588,6 @@ void main() {
           to: WorkItemState.designInReview,
           trigger: TransitionTrigger.systemEvent,
           context: {
-            'designContractStatus': DesignContractStatus.underReview,
             'designRevisionId': 'dr-dedupe-1',
             'designerExecutionId': 'wx-designer-dedupe',
           },

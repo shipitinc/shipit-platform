@@ -352,7 +352,14 @@ class DesignRemediationWorkItemProvisioner {
         'defectDerivedProductId': productId,
       });
       return _advanceToDesignParked(
-        await _attachQAContract(existing, governing.productId),
+        await _attachDesignContract(
+          await _attachQAContract(existing, governing.productId),
+          productId: governing.productId,
+          defectId: defect.defectId,
+          triageResultId:
+              existing.metadata?['triageResultId'] as String? ??
+              triageResult.resultId,
+        ),
         defectId: defect.defectId,
         featureRef: defect.defectId,
       );
@@ -666,6 +673,77 @@ class DesignRemediationWorkItemProvisioner {
     if (updated.qaContractId != contractId) {
       throw StateError(
         'work item ${item.workItemId} did not retain the QA contract id '
+        '$contractId after the CAS write',
+      );
+    }
+    return updated;
+  }
+
+  /// Backfills the design contract on a remediation row that was created
+  /// BEFORE the row named one.
+  ///
+  /// ## WHY A REPLAY IS THE ONLY PLACE THIS CAN BE FIXED
+  ///
+  /// Rows created by the pre-F-170 lane carry `designContractId = NULL`; the
+  /// contract was never provisioned, so `designParked -> designRequired` — which
+  /// is guarded on that column AND a store confirmation — refuses to release
+  /// them for ever. The creation path below already provisions a contract, but
+  /// the replay path took the early return above and never reached it. Retrying
+  /// the SAME operation is what a replayed remediation request is, so it is also
+  /// the only moment at which the missing row can be supplied without inventing
+  /// a second operation.
+  ///
+  /// ## SCOPE, DELIBERATELY NARROW
+  ///
+  /// Runs ONLY when [WorkItem.designContractId] is null. A stamped row is left
+  /// byte-identical: re-provisioning it would churn `updatedAt` and could
+  /// overwrite a contract an operator is already reviewing. It uses the SAME
+  /// `_provisionDesignContract` helper the creation path uses, so the id is a
+  /// pure function of the work item id and a replay converges on the one row
+  /// rather than minting a second. No new state, disposition or disposition-like
+  /// flag is introduced — the item simply acquires the contract it should have
+  /// had.
+  ///
+  /// A missing provisioner is a REFUSAL, not a throw: `_provisionDesignContract`
+  /// records that reason and writes nothing, exactly as it does on creation, and
+  /// the item is returned as it was. A store outage still propagates, because a
+  /// store that cannot be reached is not "no contract".
+  Future<WorkItem> _attachDesignContract(
+    WorkItem item, {
+    required String productId,
+    required String defectId,
+    required String triageResultId,
+  }) async {
+    if (item.designContractId != null) return item;
+    final provisioned = await _provisionDesignContract(
+      productId: productId,
+      workItemId: item.workItemId,
+      defectId: defectId,
+      triageResultId: triageResultId,
+      // Read out of the row, not the clock: a replay writes the same bytes and
+      // does not re-date a contract that was due at creation time.
+      now: item.createdAt.toUtc(),
+    );
+    final contractId = provisioned.contractId;
+    if (contractId == null) return item;
+
+    log?.call('design_remediation.design_contract.backfilled', {
+      'workItemId': item.workItemId,
+      'defectId': defectId,
+      'contractId': contractId,
+      'fromVersion': item.version,
+    });
+    // The same CAS discipline as the QA backfill beside it: the row's version is
+    // the concurrency token, and the read-back confirms the id landed rather
+    // than trusting a write that returns nothing.
+    await workflowStore.saveWorkItem(
+      item.copyWith(designContractId: contractId),
+      expectedVersion: item.version,
+    );
+    final updated = await workflowStore.readWorkItem(item.workItemId);
+    if (updated.designContractId != contractId) {
+      throw StateError(
+        'work item ${item.workItemId} did not retain the design contract id '
         '$contractId after the CAS write',
       );
     }

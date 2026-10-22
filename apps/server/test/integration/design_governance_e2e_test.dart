@@ -174,6 +174,17 @@ class DesignGovernanceE2EHost {
           workItemId: workItemId,
           productId: productId,
         );
+    // `designContractUnderReview()` reads the row's STATUS from the store. The
+    // design-submission step that would move a draft contract under review is
+    // not wired yet, so this full-stack fixture performs that one write rather
+    // than passing a status in a transition's context — which the guard no
+    // longer reads.
+    await designContractStore.saveDesignContract(
+      DesignContract.fromJson({
+        ...contract.toJson(),
+        'status': 'under_review',
+      }),
+    );
     await workflowEngine.createWorkItem(
       workItemId: workItemId,
       productId: productId,
@@ -248,7 +259,6 @@ class DesignGovernanceE2EHost {
       to: WorkItemState.designInReview,
       trigger: TransitionTrigger.systemEvent,
       context: {
-        'designContractStatus': DesignContractStatus.underReview,
         'designRevisionId': designRevisionId,
         'designerExecutionId': designerExecutionId,
       },

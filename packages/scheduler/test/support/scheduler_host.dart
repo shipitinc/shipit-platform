@@ -8,6 +8,7 @@ import 'package:workflow_engine/workflow_engine.dart';
 import 'package:workflow_store/workflow_store.dart';
 import 'package:worker_runtime/worker_runtime.dart';
 
+import 'design_contract_fixtures.dart';
 import 'gate_fake_agent.dart';
 import 'git_repo_fixture.dart';
 import 'hooked_workspace_manager.dart';
@@ -207,6 +208,10 @@ class SchedulerHost {
       workItemId,
       productId: productId,
     );
+    // `designContractUnderReview()` reads the STATUS of the stored row, so the
+    // walk below cannot be satisfied by a context map. The provisioner writes a
+    // draft; a design review needs the row under review.
+    await markDesignContractUnderReview(designContractStore, contractId);
     await workflowEngine.createWorkItem(
       workItemId: workItemId,
       productId: productId,
@@ -237,7 +242,6 @@ class SchedulerHost {
       workItemId: workItemId,
       to: WorkItemState.designInReview,
       trigger: TransitionTrigger.systemEvent,
-      context: const {'designContractStatus': DesignContractStatus.underReview},
     );
     await workflowEngine.requestHumanDecision(
       workItemId: workItemId,

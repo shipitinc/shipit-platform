@@ -76,6 +76,14 @@ void main() {
     final contract = await DesignContractProvisioner(
       contractStore: designContracts,
     ).provisionForWorkItem(workItemId: workItemId, productId: 'prod-1');
+    // `designContractUnderReview()` reads the stored row's STATUS, so the walk
+    // below needs the row under review rather than a status in context.
+    await designContracts.saveDesignContract(
+      DesignContract.fromJson({
+        ...contract.toJson(),
+        'status': 'under_review',
+      }),
+    );
     await engine.createWorkItem(
       productId: 'prod-1',
       category: WorkItemCategory.feature,
@@ -117,7 +125,6 @@ void main() {
       to: WorkItemState.designInReview,
       trigger: TransitionTrigger.systemEvent,
       actor: _orch,
-      context: const {'designContractStatus': DesignContractStatus.underReview},
     );
     final decision = await engine.requestHumanDecision(
       workItemId: workItemId,

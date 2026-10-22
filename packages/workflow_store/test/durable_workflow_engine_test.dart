@@ -86,16 +86,28 @@ DecisionSignature _sig() => DecisionSignature(
 );
 
 /// The design contract governing [_workItemId], provisioned through the real
-/// [DesignContractProvisioner] and read back — so the `designContractId` these
-/// tests put on the work item is an id they have SEEN RESOLVE, which is the
-/// only kind `designContractExists()` accepts.
+/// [DesignContractProvisioner], read back, and moved to
+/// [DesignContractStatus.underReview] — so the `designContractId` these tests
+/// put on the work item is an id they have SEEN RESOLVE, which is the only kind
+/// `designContractExists()` accepts, and the status is one the STORE holds,
+/// which is the only kind `designContractUnderReview()` accepts.
 Future<String> provisionContractForTest(
   DesignContractStore contractStore,
-) async =>
-    (await DesignContractProvisioner(
-          contractStore: contractStore,
-        ).provisionForWorkItem(workItemId: _workItemId, productId: 'prod-1'))
-        .contractId;
+) async {
+  final contractId =
+      (await DesignContractProvisioner(
+            contractStore: contractStore,
+          ).provisionForWorkItem(workItemId: _workItemId, productId: 'prod-1'))
+          .contractId;
+  // The provisioner writes a DRAFT. `designContractUnderReview()` reads the
+  // stored row's status, so every fixture that walks to `designInReview` needs
+  // this row under review — and none of them may state that in a context map.
+  final draft = await contractStore.readDesignContract(contractId);
+  await contractStore.saveDesignContract(
+    DesignContract.fromJson({...draft!.toJson(), 'status': 'under_review'}),
+  );
+  return contractId;
+}
 
 /// The `designContractId` a work item for [_workItemId] must carry to enter
 /// `designRequired` now that the guard reads the COLUMN.
@@ -139,7 +151,6 @@ Future<void> pushToDesignInReview(DurableWorkflowEngine engine) async {
     to: WorkItemState.designInReview,
     trigger: TransitionTrigger.systemEvent,
     actor: _orch,
-    context: {'designContractStatus': DesignContractStatus.underReview},
   );
   expect(
     (await engine.loadWorkItem(_workItemId)).state,
@@ -782,6 +793,165 @@ void main() {
               'a planted resolution must be OVERWRITTEN by the engine\'s own '
               'reading, not honoured',
         );
+      },
+    );
+  });
+
+  // F-156. The under-review guard used to read `context['designContractStatus']`
+  // — a string any caller could type, on an item with nothing behind it. These
+  // are the falsifiers for both halves: the absent contract, and the contract
+  // whose STORED status is not `underReview`.
+  group('designContractUnderReview is confirmed against the store', () {
+    Future<DurableWorkflowEngine> atPlanned(
+      WorkflowStore store,
+      DesignContractStore? contractStore, {
+      String? designContractId,
+    }) async {
+      final engine = DurableWorkflowEngine(
+        store: store,
+        designContractStore: contractStore,
+      );
+      await engine.createWorkItem(
+        productId: 'prod-1',
+        category: WorkItemCategory.feature,
+        title: 'Under-review probe',
+        description: 'The falsifier for a guard satisfied by any status string',
+        workItemId: _workItemId,
+        featureRef: 'FEAT-001',
+        designContractId: designContractId,
+      );
+      await engine.transition(
+        workItemId: _workItemId,
+        to: WorkItemState.planning,
+        trigger: TransitionTrigger.systemEvent,
+        actor: _orch,
+      );
+      await engine.transition(
+        workItemId: _workItemId,
+        to: WorkItemState.planned,
+        trigger: TransitionTrigger.systemEvent,
+        actor: _orch,
+        context: const {'featureRef': 'FEAT-001'},
+      );
+      return engine;
+    }
+
+    Future<WorkflowTransitionRecord> attemptDesignReview(
+      DurableWorkflowEngine engine, {
+      Map<String, dynamic> context = const {},
+    }) async {
+      try {
+        await engine.transition(
+          workItemId: _workItemId,
+          to: WorkItemState.designInReview,
+          trigger: TransitionTrigger.systemEvent,
+          actor: _orch,
+          context: context,
+        );
+        fail('designRequired -> designInReview was ACCEPTED');
+      } on WorkflowTransitionRejectedException catch (e) {
+        return e.record;
+      }
+    }
+
+    test(
+      "a caller's designContractStatus on an item with NO contract is refused",
+      () async {
+        // THE FALSIFIER, verbatim. The old guard read this key and passed on an
+        // item with nothing behind it. The item is placed at `designRequired`
+        // through the store so the transition is reached with a NULL column —
+        // entering that state via the engine would now be refused first.
+        final store = InMemoryWorkflowStore();
+        final engine = await atPlanned(store, InMemoryDesignContractStore());
+        final planned = await store.readWorkItem(_workItemId);
+        await store.saveWorkItem(
+          planned.copyWith(state: WorkItemState.designRequired),
+        );
+
+        final record = await attemptDesignReview(
+          engine,
+          context: const {
+            'designContractStatus': DesignContractStatus.underReview,
+          },
+        );
+
+        expect(record.outcome, TransitionOutcome.rejected);
+        expect(record.reason, contains('no designContractId'));
+        expect(
+          (await store.readWorkItem(_workItemId)).state,
+          WorkItemState.designRequired,
+          reason: 'a refused transition must not move the item',
+        );
+      },
+    );
+
+    test(
+      'a store-confirmed contract that is NOT under review is refused',
+      () async {
+        // The row exists and the store confirms it; the STATUS is the fact under
+        // test. The caller says `under_review` and the row says `draft` — the
+        // row wins, because it is the only one of the two that was read.
+        final contractStore = InMemoryDesignContractStore();
+        final draft = await DesignContractProvisioner(
+          contractStore: contractStore,
+        ).provisionForWorkItem(workItemId: _workItemId, productId: 'prod-1');
+        expect(draft.status, DesignContractStatus.draft);
+
+        final store = InMemoryWorkflowStore();
+        final engine = await atPlanned(
+          store,
+          contractStore,
+          designContractId: draft.contractId,
+        );
+        await engine.transition(
+          workItemId: _workItemId,
+          to: WorkItemState.designRequired,
+          trigger: TransitionTrigger.systemEvent,
+          actor: _orch,
+        );
+
+        final record = await attemptDesignReview(
+          engine,
+          context: const {
+            'designContractStatus': DesignContractStatus.underReview,
+          },
+        );
+
+        expect(record.outcome, TransitionOutcome.rejected);
+        expect(record.reason, contains('not under review'));
+        expect(
+          (await store.readWorkItem(_workItemId)).state,
+          WorkItemState.designRequired,
+        );
+      },
+    );
+
+    test(
+      'the STORE row under review opens the edge with nothing in context',
+      () async {
+        final contractStore = InMemoryDesignContractStore();
+        final contractId = await provisionContractForTest(contractStore);
+        final store = InMemoryWorkflowStore();
+        final engine = await atPlanned(
+          store,
+          contractStore,
+          designContractId: contractId,
+        );
+        await engine.transition(
+          workItemId: _workItemId,
+          to: WorkItemState.designRequired,
+          trigger: TransitionTrigger.systemEvent,
+          actor: _orch,
+        );
+
+        final moved = await engine.transition(
+          workItemId: _workItemId,
+          to: WorkItemState.designInReview,
+          trigger: TransitionTrigger.systemEvent,
+          actor: _orch,
+        );
+
+        expect(moved.state, WorkItemState.designInReview);
       },
     );
   });

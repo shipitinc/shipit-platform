@@ -1,4 +1,5 @@
 import 'package:meta/meta.dart';
+import 'package:platform_contracts/platform_contracts.dart';
 
 /// The context key `GuardConditions.designContractExists()` reads its answer
 /// from.
@@ -34,8 +35,8 @@ const String designContractResolutionContextKey =
     'durableDesignContractResolution';
 
 /// The durable, store-confirmed answer to "does this work item have a design
-/// contract?", carried into the guards through
-/// [designContractResolutionContextKey].
+/// contract, and what does the store say its status is?", carried into the
+/// guards through [designContractResolutionContextKey].
 ///
 /// ## WHAT IT IS NOT
 ///
@@ -58,28 +59,53 @@ class DesignContractResolution {
   const DesignContractResolution({
     required this.contractId,
     required this.storeConfirmed,
+    this.status,
   });
 
   /// The work item's `designContractId` column is NULL: there is nothing to
   /// confirm and nothing was asked.
   const DesignContractResolution.noContract()
     : contractId = null,
-      storeConfirmed = false;
+      storeConfirmed = false,
+      status = null;
 
   /// `WorkItem.designContractId`, verbatim — including when it is null.
   final String? contractId;
 
-  /// Whether a [DesignContractStore.hasDesignContract] lookup for [contractId]
-  /// returned true. `false` covers BOTH "no store is mounted to ask" and "the
-  /// store was asked and holds no such row", because a caller that cannot
-  /// distinguish them must not be able to act on the difference.
+  /// Whether a `DesignContractStore` lookup for [contractId] returned a row.
+  /// `false` covers BOTH "no store is mounted to ask" and "the store was asked
+  /// and holds no such row", because a caller that cannot distinguish them must
+  /// not be able to act on the difference.
   final bool storeConfirmed;
 
-  /// The only value the guard treats as a design contract existing.
+  /// The status of the store's row for [contractId], or `null` when no row was
+  /// read.
+  ///
+  /// This is a SECOND fact read from the SAME lookup as [storeConfirmed], not a
+  /// restatement of it. `designContractUnderReview()` needs the status; deriving
+  /// it from anything other than the store would re-introduce the
+  /// caller-supplied-status defect this resolution exists to close, and asking
+  /// the store twice would let the two answers come from different rows.
+  ///
+  /// Defaulted to `null` rather than to any status: a resolution built without
+  /// a store read has no business asserting what the row says, and the guard
+  /// fails closed on the absence.
+  final DesignContractStatus? status;
+
+  /// The only value `designContractExists()` treats as a design contract
+  /// existing.
   bool get isConfirmed => contractId != null && storeConfirmed;
+
+  /// The only value `designContractUnderReview()` treats as "review may start".
+  ///
+  /// Confirmation and status are a conjunction for the same reason the two
+  /// halves of [isConfirmed] are: a status is a claim about a row, and there is
+  /// no row unless the store produced one.
+  bool get isConfirmedUnderReview =>
+      isConfirmed && status == DesignContractStatus.underReview;
 
   @override
   String toString() =>
       'DesignContractResolution(contractId: $contractId, '
-      'storeConfirmed: $storeConfirmed)';
+      'storeConfirmed: $storeConfirmed, status: $status)';
 }

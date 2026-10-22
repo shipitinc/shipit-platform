@@ -407,12 +407,132 @@ void main() {
         ),
         hasLength(1),
         reason:
-            'a replay takes the existing-row branch, which does not provision '
-            'a second contract. The design contract id is a pure function of '
-            'the work item id, so even a second write would converge on one '
-            'row — but there is no second write to converge.',
+            'a replay takes the existing-row branch, which provisions nothing '
+            'for a row whose `designContractId` is already set. The design '
+            'contract id is a pure function of the work item id, so even a '
+            'second write would converge on one row — but there is no second '
+            'write to converge.',
       );
     });
+  });
+
+  group('a replayed row written before F-170 gets the contract it lacked', () {
+    test(
+      'a legacy row with NO contract is BACKFILLED on replay, and the release '
+      'edge then accepts',
+      () async {
+        // The measured defect: rows created by the pre-F-170 lane carry
+        // `designContractId = NULL` and the contract was never written, so
+        // `designParked -> designRequired` refuses them for ever — the park is a
+        // dead end. A replay is the same operation retried, so it is where the
+        // missing artifact is supplied.
+        final host = _Host();
+        final seeded = await host.seedExistingRemediationRow(
+          defectId: kDefectId,
+          productId: kProduct,
+          state: WorkItemState.designParked,
+        );
+        expect(seeded.designContractId, isNull);
+        expect(
+          await host.designContracts.listDesignContractsForWorkItem(
+            seeded.workItemId,
+          ),
+          isEmpty,
+          reason:
+              'the seeded row is the legacy shape: id null, no row behind it',
+        );
+
+        final replayed = await host.run(productId: kProduct);
+
+        expect(
+          replayed!.designContractId,
+          isNotNull,
+          reason:
+              'the column is what the release guard null-checks, so a backfill '
+              'that wrote only the contract row would still be refused.',
+        );
+        final contract = await host.designContracts.readDesignContract(
+          replayed.designContractId!,
+        );
+        expect(contract, isNotNull, reason: 'the id must name a real row');
+        expect(contract!.workItemId, seeded.workItemId);
+        expect(
+          contract.status,
+          DesignContractStatus.draft,
+          reason:
+              'the creation path provisions a draft; a backfill must not '
+              'invent a different lifecycle position for the same artifact.',
+        );
+        final backfilled = host.payloadsOf(
+          'design_remediation.design_contract.backfilled',
+        );
+        expect(backfilled, hasLength(1));
+        expect(backfilled.single['contractId'], replayed.designContractId);
+        expect(
+          backfilled.single['fromVersion'],
+          seeded.version,
+          reason:
+              'the CAS token the write used is recorded, so a concurrent '
+              'repair that lost the race is visible rather than silent.',
+        );
+
+        // The point of the backfill, proved on the real durable engine: before
+        // it the row had no contract and the edge refused; now it does and the
+        // edge accepts.
+        final released = await host.workflowEngine.transition(
+          workItemId: replayed.workItemId,
+          to: WorkItemState.designRequired,
+          trigger: TransitionTrigger.systemEvent,
+        );
+        expect(released.state, WorkItemState.designRequired);
+      },
+    );
+
+    test(
+      'a row that already names a contract is left untouched — no second '
+      'write and no re-dating',
+      () async {
+        final host = _Host();
+        final created = await host.run(productId: kProduct);
+        final before = await host.workflowStore.readWorkItem(
+          created!.workItemId,
+        );
+        final contractId = before.designContractId!;
+        final contractBefore = await host.designContracts.readDesignContract(
+          contractId,
+        );
+
+        final replayed = await host.run(productId: kProduct);
+
+        expect(replayed!.designContractId, contractId);
+        expect(
+          replayed.version,
+          before.version,
+          reason:
+              'a stamped row needs no CAS write, so replay must not bump the '
+              'version an operator may be holding.',
+        );
+        expect(replayed.updatedAt, before.updatedAt);
+        expect(
+          await host.designContracts.listDesignContractsForWorkItem(
+            before.workItemId,
+          ),
+          hasLength(1),
+          reason: 're-provisioning would churn the row a reviewer is reading.',
+        );
+        final contractAfter = await host.designContracts.readDesignContract(
+          contractId,
+        );
+        expect(contractAfter!.createdAt, contractBefore!.createdAt);
+        expect(contractAfter.updatedAt, contractBefore.updatedAt);
+        expect(contractAfter.status, contractBefore.status);
+        expect(
+          host.payloadsOf('design_remediation.design_contract.backfilled'),
+          isEmpty,
+          reason: 'the backfill event is the record of a write; none happened.',
+        );
+      },
+    );
   });
 
   group('the item is governed by a REAL design contract (F-143)', () {

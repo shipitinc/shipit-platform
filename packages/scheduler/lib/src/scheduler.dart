@@ -3236,41 +3236,42 @@ const JobDefinition defaultImplementFeatureDefinition = JobDefinition(
 /// definition declared a route the graph does not have, and the bypass is how a
 /// declaration can disagree with the graph without anything noticing.
 ///
-/// With the probe live the disagreement cannot be expressed: `designRequired`
-/// still probes `designRequired -> agentExecuting`, which the policy accepts,
-/// and `designRejected` probes `designRejected -> agentExecuting`, which it
-/// refuses — so a rejected design is `noAction` and is never enqueued at all.
+/// With the probe live the disagreement cannot be expressed. `designRequired`
+/// probes `designRequired -> agentExecuting`, which the policy accepts.
+/// `designRejected` probes the DECLARED hop below — `designRejected ->
+/// designRequired` — which the policy accepts and [EntryHopper] performs.
 ///
-/// ## And `designRejected` stays an entry state, but the probe is live
+/// ## `designRejected` re-enters DESIGN, and the hop is half the pair
 ///
-/// `designRejected` is named and unreachable at once: the table gives it
-/// exactly one out-edge, to `designInReview`, which is the design REVIEWER's
-/// entry state, so there is no route from a rejected design to an execution
-/// this job type could dispatch. Under the old `skipWorkflowPolicyCheck` the
-/// probe answered "runnable" regardless and that contradiction reached the
-/// coordinator on every tick — five jobs and five worker executions for one
-/// item, measured.
+/// `designRejected` means "redo the design", and the design agent's entry
+/// state is `designRequired`. `workflow_engine` gives that edge an
+/// orchestrator-only guard set (`design-revision.md` §5.4 (a)). Declaring
+/// `entryProbeTargets[designRejected] = designRequired` is the other half of
+/// the same decision:
 ///
-/// With the probe live the contradiction is inert: `RunnableWorkEvaluator`
-/// asks the policy about `designRejected -> agentExecuting`, the policy
-/// refuses, and the state is `noAction`. Nothing is enqueued, nothing is
-/// dispatched, nothing is burned.
+///   * `RunnableWorkEvaluator` probes the EDGE THE HOP USES, not the direct
+///     `designRejected -> agentExecuting` edge, which no lane needs and the
+///     policy refuses;
+///   * [EntryHopper] moves a runnable `designRejected` item to
+///     `designRequired`, whose own dispatch edge (`designRequired ->
+///     agentExecuting`) exists;
+///   * the item then dispatches from `designRequired` exactly as any other
+///     design-revision job.
 ///
-/// The state is KEPT rather than deleted on purpose. It is a declared route
-/// waiting for its edge: the moment `workflow_engine` grows a
-/// `designRejected -> designRequired` edge — the design agent's own entry
-/// state, which is where a re-design belongs — the probe accepts it and design
-/// revision resumes with no change here. Deleting it would take that with it.
+/// BOTH HALVES ARE LOAD-BEARING AND NEITHER IS OPTIONAL:
 ///
-/// ## And it is not made dispatchable by declaring a hop
+///   * the EDGE without this declaration leaves the probe asking the refused
+///     direct edge — `noAction`, and the rejected design is inert again;
+///   * this DECLARATION without the EDGE is a hop [EntryHopper] refuses, and
+///     `entry_hop_drift_guard_test.dart` fails on it by name.
 ///
-/// The only edge `designRejected` has leads to `designInReview`, which is in no
-/// entry set of THIS definition. Declaring that hop would leave the item in a
-/// state nothing dispatches, so the next tick would retire the job as
-/// superseded and the work would be stranded having moved for nothing.
-/// [EntryHopper] refuses such a hop by construction rather than by this
-/// definition's restraint, and `entry_hop_drift_guard_test.dart` fails on the
-/// declaration by name.
+/// The state is KEPT rather than deleted because it is a real lifecycle state:
+/// a human rejected a design and the work returns to the design agent.
+///
+/// The direct `designRejected -> designInReview` edge in `workflow_engine` is
+/// deliberately NOT used as the hop target: `designInReview` is in no entry set
+/// of THIS definition, so declaring it would move the item into a state nothing
+/// dispatches and the next tick would retire the job as superseded.
 const JobDefinition designRevisionDefinition = JobDefinition(
   jobType: JobType.designRevision,
   requiredRole: AgentRole.designAgent,
@@ -3279,6 +3280,9 @@ const JobDefinition designRevisionDefinition = JobDefinition(
     WorkerCapability.visualDesign,
   },
   entryStates: {WorkItemState.designRequired, WorkItemState.designRejected},
+  entryProbeTargets: {
+    WorkItemState.designRejected: WorkItemState.designRequired,
+  },
   priority: JobPriority.normal,
   maxAttempts: 3,
 );

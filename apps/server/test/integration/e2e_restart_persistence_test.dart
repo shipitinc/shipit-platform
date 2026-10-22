@@ -522,24 +522,27 @@ void main() {
       test('human decision durability: a pending decision and its gate '
           'survive a process restart and are idempotently resolved', () async {
         _first = await Harness.open(clock: () => t0);
+        // A contract that was PROVISIONED, not one named inline, and moved
+        // under review in the FIRST process: the guard confirms the id and
+        // reads the STATUS from the store, and the store is what the SECOND
+        // process below asks — which is the whole point of the test.
+        final designContracts = PostgresDesignContractStore(_first!._db);
+        final contract = await DesignContractProvisioner(
+          contractStore: designContracts,
+        ).provisionForWorkItem(workItemId: 'wi-hd', productId: 'prod-1');
+        await designContracts.saveDesignContract(
+          DesignContract.fromJson({
+            ...contract.toJson(),
+            'status': 'under_review',
+          }),
+        );
         await _first!.workflowEngine.createWorkItem(
           workItemId: 'wi-hd',
           productId: 'prod-1',
           category: WorkItemCategory.feature,
           title: 'Human decision durability',
           description: 'Human decision durability across restart',
-          // A contract that was PROVISIONED, not one named inline: the guard
-          // confirms this id against the store, and the store is what the
-          // SECOND process below asks, which is the whole point of the test.
-          designContractId:
-              await DesignContractProvisioner(
-                    contractStore: PostgresDesignContractStore(_first!._db),
-                  )
-                  .provisionForWorkItem(
-                    workItemId: 'wi-hd',
-                    productId: 'prod-1',
-                  )
-                  .then((c) => c.contractId),
+          designContractId: contract.contractId,
           featureRef: 'feature/hd',
         );
         await _first!.workflowEngine.transition(
@@ -562,9 +565,6 @@ void main() {
           workItemId: 'wi-hd',
           to: WorkItemState.designInReview,
           trigger: TransitionTrigger.systemEvent,
-          context: const {
-            'designContractStatus': DesignContractStatus.underReview,
-          },
         );
         final pending = await _first!.workflowEngine.requestHumanDecision(
           workItemId: 'wi-hd',

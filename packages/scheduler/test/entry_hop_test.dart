@@ -8,6 +8,7 @@ import 'package:workflow_engine/workflow_engine.dart';
 import 'package:workflow_store/workflow_store.dart';
 
 import 'support/controlled_dispatcher.dart';
+import 'support/design_contract_fixtures.dart';
 import 'support/gate_fake_agent.dart';
 import 'support/file_host.dart';
 import 'support/git_repo_fixture.dart';
@@ -269,12 +270,17 @@ void main() {
   });
 
   group('the whole class, not the instance', () {
-    test('a design-rejected item is never enqueued, never dispatched and never '
-        'burns a worker execution — across many ticks', () async {
+    test('a design-rejected item HOPS to `designRequired` and runs a design '
+        'revision exactly once — across many ticks', () async {
       // The second instance the review measured: five jobs and five executions
       // for one item, because `designRevisionDefinition` skipped the workflow
       // policy check and so answered "runnable" for an entry state the
-      // coordinator can never act on.
+      // coordinator could never act on.
+      //
+      // Step 7 closes it from the other side: `designRejected` is a real
+      // re-design request, `workflow_engine` gives it an `orchestrator ->
+      // designRequired` edge, and this definition declares the matching hop.
+      // The item therefore runs ONCE, not zero times and not five.
       final host = realHost(
         definition: designRevisionDefinition,
         capabilities: const {
@@ -284,22 +290,30 @@ void main() {
         },
       );
       await itemDesignRejected(host);
+      host.session.release();
+
+      final first = await host.scheduler.tick();
+      expect(first.enqueued, hasLength(1));
+      expect(first.dispatched, hasLength(1));
 
       for (var i = 0; i < 25; i++) {
         await host.scheduler.tick();
       }
 
+      final jobs = await host.jobStore.listJobs();
+      expect(jobs, hasLength(1), reason: 'the dedupe key holds across ticks');
+      expect(jobs.single.state, JobState.succeeded);
       expect(
-        await host.jobStore.listJobs(),
-        isEmpty,
-        reason: 'no legal route to execution exists, so no job is minted',
+        await host.executionStore.listExecutions(),
+        hasLength(1),
+        reason: 'exactly one real design revision, not one per tick',
       );
-      expect(await host.workerStore.listWorkerExecutions(), isEmpty);
-      expect(await host.executionStore.listExecutions(), isEmpty);
       expect(
         (await host.workflowStore.readWorkItem('wi-1')).state,
-        WorkItemState.designRejected,
-        reason: 'and the scheduler did not move it either',
+        WorkItemState.agentCompleted,
+        reason:
+            'the hop put the re-design where the design agent starts, and the '
+            'design revision really completed — not five refusals',
       );
     });
 
@@ -817,10 +831,7 @@ Future<void> itemRejectedAtEngineeringReviewGate(
   await step(WorkItemState.planning);
   await step(WorkItemState.planned, context: const {'featureRef': 'f-1'});
   await step(WorkItemState.designRequired);
-  await step(
-    WorkItemState.designInReview,
-    context: const {'designContractStatus': DesignContractStatus.underReview},
-  );
+  await step(WorkItemState.designInReview);
   await engine.resolveHumanDecision(
     decisionId: (await engine.requestHumanDecision(
       workItemId: workItemId,
@@ -918,12 +929,22 @@ Future<void> itemDesignRejected(SchedulerHost host) async {
 /// stopped passing `context: {'designContractId': …}`: that string was the
 /// defect, and a fixture still passing one would keep working while asserting
 /// nothing.
+///
+/// The row is also moved under review, because
+/// `designContractUnderReview()` reads that status FROM THE STORE — so the
+/// walks below no longer pass a `designContractStatus` context key either.
 Future<String> _contractIdFor(
   DesignContractStore contractStore,
   String workItemId,
-) async => (await DesignContractProvisioner(
-  contractStore: contractStore,
-).provisionForWorkItem(workItemId: workItemId, productId: 'prod-1')).contractId;
+) async {
+  final contractId =
+      (await DesignContractProvisioner(
+            contractStore: contractStore,
+          ).provisionForWorkItem(workItemId: workItemId, productId: 'prod-1'))
+          .contractId;
+  await markDesignContractUnderReview(contractStore, contractId);
+  return contractId;
+}
 
 Future<void> itemAtDesignRequired(
   DurableWorkflowEngine engine,
@@ -1049,7 +1070,6 @@ Future<void> itemAtDesignRejected(
     workItemId: workItemId,
     to: WorkItemState.designInReview,
     trigger: TransitionTrigger.systemEvent,
-    context: const {'designContractStatus': DesignContractStatus.underReview},
   );
   final decision = await engine.requestHumanDecision(
     workItemId: workItemId,

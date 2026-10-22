@@ -4,6 +4,7 @@ import 'package:platform_contracts/platform_contracts.dart';
 import 'package:test/test.dart';
 
 import 'support/controlled_dispatcher.dart';
+import 'support/design_contract_fixtures.dart';
 import 'support/file_host.dart';
 
 void main() {
@@ -161,15 +162,18 @@ void main() {
   test('a blocked item leaves its (never-created) queue completely empty even '
       'after a process restart', () async {
     final first = FileRestartHarness(dir, clock: () => t0);
+    // Confirmed against the store by `designContractExists()`, and READ for its
+    // status by `designContractUnderReview()` — so the walk below supplies
+    // neither fact in context.
+    final contractId = await first.provisionDesignContractFor('wi-1');
+    await markDesignContractUnderReview(first.designContractStore, contractId);
     await first.workflowEngine.createWorkItem(
       workItemId: 'wi-1',
       productId: 'prod-1',
       category: WorkItemCategory.feature,
       title: 'Blocked',
       description: 'Blocked work item for restart durability',
-      // Read by `designContractExists()` from the durable column and confirmed
-      // against a store — so the walk below supplies no contract in context.
-      designContractId: await first.provisionDesignContractFor('wi-1'),
+      designContractId: contractId,
       featureRef: 'feature/blocked',
     );
     await first.workflowEngine.transition(
@@ -192,7 +196,6 @@ void main() {
       workItemId: 'wi-1',
       to: WorkItemState.designInReview,
       trigger: TransitionTrigger.systemEvent,
-      context: const {'designContractStatus': DesignContractStatus.underReview},
     );
     await first.workflowEngine.requestHumanDecision(
       workItemId: 'wi-1',

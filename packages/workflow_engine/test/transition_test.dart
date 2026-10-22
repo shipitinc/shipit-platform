@@ -184,20 +184,107 @@ void main() {
       expect(withContract.isValid, isTrue);
     });
 
-    test('designRequired -> designInReview requires contract under review', () {
-      final notReviewed = eval(
+    test('designRequired -> designInReview requires a STORE-CONFIRMED '
+        'under-review contract', () {
+      // A caller-supplied status is not evidence. The old guard read this
+      // exact key and passed; the resolution under
+      // `designContractResolutionContextKey` is the only thing consulted now,
+      // and it is written by `DurableWorkflowEngine.transition`, not by the
+      // caller.
+      final callerSuppliedStatus = eval(
         WorkItemState.designRequired,
         WorkItemState.designInReview,
-        context: {'designContractStatus': DesignContractStatus.draft},
+        context: const {
+          'designContractStatus': DesignContractStatus.underReview,
+        },
       );
-      expect(notReviewed.isValid, isFalse);
+      expect(callerSuppliedStatus.isValid, isFalse);
 
-      final reviewed = eval(
+      final noResolution = eval(
         WorkItemState.designRequired,
         WorkItemState.designInReview,
-        context: {'designContractStatus': DesignContractStatus.underReview},
       );
-      expect(reviewed.isValid, isTrue);
+      expect(noResolution.isValid, isFalse);
+      expect(noResolution.rejectionReason, contains('No durable'));
+
+      final noContract = eval(
+        WorkItemState.designRequired,
+        WorkItemState.designInReview,
+        context: const {
+          designContractResolutionContextKey:
+              DesignContractResolution.noContract(),
+        },
+      );
+      expect(noContract.isValid, isFalse);
+      expect(noContract.rejectionReason, contains('no designContractId'));
+
+      final unconfirmed = eval(
+        WorkItemState.designRequired,
+        WorkItemState.designInReview,
+        context: const {
+          designContractResolutionContextKey: DesignContractResolution(
+            contractId: 'contract-123',
+            storeConfirmed: false,
+            status: DesignContractStatus.underReview,
+          ),
+        },
+      );
+      expect(unconfirmed.isValid, isFalse);
+      expect(unconfirmed.rejectionReason, contains('contract-123'));
+
+      // The status is the STORE's answer, carried alongside the confirmed id.
+      // A confirmed draft contract is not reviewable, whatever the caller
+      // says.
+      final draft = eval(
+        WorkItemState.designRequired,
+        WorkItemState.designInReview,
+        context: const {
+          designContractResolutionContextKey: DesignContractResolution(
+            contractId: 'contract-123',
+            storeConfirmed: true,
+            status: DesignContractStatus.draft,
+          ),
+        },
+      );
+      expect(draft.isValid, isFalse);
+      expect(draft.rejectionReason, contains('not under review'));
+
+      final confirmedUnderReview = eval(
+        WorkItemState.designRequired,
+        WorkItemState.designInReview,
+        context: const {
+          designContractResolutionContextKey: DesignContractResolution(
+            contractId: 'contract-123',
+            storeConfirmed: true,
+            status: DesignContractStatus.underReview,
+          ),
+        },
+      );
+      expect(confirmedUnderReview.isValid, isTrue);
+    });
+
+    test('designRejected -> designRequired carries actorAllowed ALONE', () {
+      // `design-revision.md` §5.4 (a). The scheduler's probe runs THIS pure
+      // policy with no store and no work item, so it can supply no
+      // `DesignContractResolution`; a `designContractExists()` guard here
+      // would fail closed and make `designRevisionDefinition`'s declared hop
+      // unreachable. The item already carried a confirmed contract to reach
+      // `designRequired` the first time, and a re-design does not need a
+      // second one minted.
+      final legal = eval(
+        WorkItemState.designRejected,
+        WorkItemState.designRequired,
+      );
+      expect(legal.isValid, isTrue);
+      expect(legal.failedGuards, isEmpty);
+
+      final agent = eval(
+        WorkItemState.designRejected,
+        WorkItemState.designRequired,
+        actor: _agent('agent-1'),
+      );
+      expect(agent.isValid, isFalse);
+      expect(agent.failedGuards, contains('actor_allowed'));
     });
 
     test('illegal transition returns invalid result instead of throwing', () {

@@ -87,6 +87,7 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
       WorkItemWorkflowState.terminated,
     ],
     WorkItemState.designRejected => [
+      WorkItemWorkflowState.designRequired,
       WorkItemWorkflowState.designInReview,
       WorkItemWorkflowState.cancelled,
       WorkItemWorkflowState.terminated,

@@ -10,6 +10,8 @@ import 'package:worker_protocol/worker_protocol.dart';
 import 'package:worker_runtime/worker_runtime.dart';
 import 'package:workflow_store/workflow_store.dart';
 
+import 'support/design_contract_fixtures.dart';
+
 /// AC-17 / §16.3 — Lane S is NOT complete until a retried work item is
 /// observed DISPATCHING BY A REAL `Scheduler.tick()`.
 ///
@@ -1362,6 +1364,11 @@ Future<String> _seedDefectAtEngineeringReviewGate(
   DesignContractStore contractStore,
 ) async {
   const id = _Host.seededWorkItemId;
+  final contractId = (await DesignContractProvisioner(
+    contractStore: contractStore,
+  ).provisionForWorkItem(workItemId: id, productId: 'prod-1')).contractId;
+  // `designContractUnderReview()` reads the row's status from the store.
+  await markDesignContractUnderReview(contractStore, contractId);
   await engine.createWorkItem(
     workItemId: id,
     productId: 'prod-1',
@@ -1370,9 +1377,7 @@ Future<String> _seedDefectAtEngineeringReviewGate(
     description:
         'A customer reported that the checkout total is wrong when a cart '
         'holds more than one item. Triage it and classify the defect.',
-    designContractId: (await DesignContractProvisioner(
-      contractStore: contractStore,
-    ).provisionForWorkItem(workItemId: id, productId: 'prod-1')).contractId,
+    designContractId: contractId,
     metadata: {
       'defectId': 'DEF-1791686704991884',
       'defectSeverity': 'high',
@@ -1396,10 +1401,7 @@ Future<String> _seedDefectAtEngineeringReviewGate(
   await step(WorkItemState.planning);
   await step(WorkItemState.planned, context: const {'featureRef': 'f-1'});
   await step(WorkItemState.designRequired);
-  await step(
-    WorkItemState.designInReview,
-    context: const {'designContractStatus': DesignContractStatus.underReview},
-  );
+  await step(WorkItemState.designInReview);
   await engine.resolveHumanDecision(
     decisionId: (await engine.requestHumanDecision(
       workItemId: id,

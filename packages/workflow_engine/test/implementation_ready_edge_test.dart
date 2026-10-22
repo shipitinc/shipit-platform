@@ -461,6 +461,14 @@ Future<WorkItem> _resolveEngineeringRework() async {
             contractStore: contractStore,
           ).provisionForWorkItem(workItemId: 'wi-edge', productId: 'prod-1'))
           .contractId;
+  // `designContractUnderReview()` reads the row's status from the STORE, so the
+  // walk below moves the row rather than stating the status in context.
+  await contractStore.saveDesignContract(
+    DesignContract.fromJson({
+      ...(await contractStore.readDesignContract(contractId))!.toJson(),
+      'status': 'under_review',
+    }),
+  );
   final workflow = DurableWorkflowEngine(
     store: store,
     designContractStore: contractStore,
@@ -522,10 +530,7 @@ Future<WorkItem> _resolveEngineeringRework() async {
   await step(WorkItemState.planning);
   await step(WorkItemState.planned, context: const {'featureRef': 'f-1'});
   await step(WorkItemState.designRequired);
-  await step(
-    WorkItemState.designInReview,
-    context: const {'designContractStatus': DesignContractStatus.underReview},
-  );
+  await step(WorkItemState.designInReview);
   final designGate = await workflow.requestHumanDecision(
     workItemId: 'wi-edge',
     decisionType: HumanDecisionType.designApproval,

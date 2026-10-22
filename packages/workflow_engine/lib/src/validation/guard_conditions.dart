@@ -199,6 +199,22 @@ class _DesignContractExistsGuard extends GuardCondition<WorkItemState> {
   }
 }
 
+/// ## This guard reads a DURABLE, STORE-CONFIRMED status
+///
+/// It used to read `context['designContractStatus']` — a caller-supplied value.
+/// A status is a claim about a contract row; a value in a context map is a
+/// claim about nothing, and `DurableWorkflowEngine.transition` spread the
+/// caller's map into the guards unchanged. So `designRequired -> designInReview`
+/// was satisfiable by any caller that typed `under_review`, on an item with no
+/// contract at all — the same defect class as the `designContractId` string
+/// `designContractExists()` was repaired from.
+///
+/// It now reads the status from the SAME [DesignContractResolution] the
+/// existence guard reads: the work item's persisted `designContractId` column,
+/// confirmed against a `DesignContractStore` read, with the row's status
+/// carried alongside. The absence of a resolution is a refusal, an unconfirmed
+/// id is a refusal, and so is a confirmed row whose status is not
+/// [DesignContractStatus.underReview] — a draft contract is not reviewable.
 class _DesignContractUnderReviewGuard extends GuardCondition<WorkItemState> {
   @override
   String get name => 'design_contract_under_review';
@@ -209,13 +225,46 @@ class _DesignContractUnderReviewGuard extends GuardCondition<WorkItemState> {
     WorkflowState<WorkItemState> to,
     Map<String, dynamic>? context,
   ) {
-    final status = context?['designContractStatus'] as DesignContractStatus?;
-    return status == DesignContractStatus.underReview
-        ? GuardResult.pass(name)
-        : GuardResult.fail(
-            name,
-            'Design contract must be under review before design review starts',
-          );
+    final resolution =
+        context?[designContractResolutionContextKey]
+            as DesignContractResolution?;
+
+    if (resolution == null) {
+      return GuardResult.fail(
+        name,
+        'No durable design contract resolution was supplied for '
+        '${from.value} -> ${to.value}. This guard reads the design contract '
+        'the work item\'s persisted designContractId column names and the '
+        'STATUS of that stored row; only DurableWorkflowEngine.transition can '
+        'supply that, and a caller-supplied context value is not a substitute '
+        'for it.',
+      );
+    }
+
+    if (!resolution.isConfirmed) {
+      final contractId = resolution.contractId;
+      return GuardResult.fail(
+        name,
+        contractId == null
+            ? 'The work item carries no designContractId, so no design '
+                  'contract can be under review'
+            : 'The work item names design contract $contractId, and that id '
+                  'was not confirmed against a design contract store: either '
+                  'no store is mounted to ask or the id resolves to no row',
+      );
+    }
+
+    final status = resolution.status;
+    if (status != DesignContractStatus.underReview) {
+      return GuardResult.fail(
+        name,
+        'Design contract ${resolution.contractId} is '
+        '${status == null ? 'of unknown status' : status.name}, not under '
+        'review, so design review cannot start',
+      );
+    }
+
+    return GuardResult.pass(name);
   }
 }
 

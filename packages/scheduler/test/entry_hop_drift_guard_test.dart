@@ -4,6 +4,8 @@ import 'package:test/test.dart';
 import 'package:workflow_engine/workflow_engine.dart';
 import 'package:workflow_store/workflow_store.dart';
 
+import 'support/design_contract_fixtures.dart';
+
 /// No production [JobDefinition] may declare an entry state the coordinator
 /// cannot act on.
 ///
@@ -238,6 +240,17 @@ void main() {
           // refused, and this guard would be measuring a fixture that cannot
           // be built rather than the graph it exists to check.
           final contractStore = InMemoryDesignContractStore();
+          final contractId =
+              (await DesignContractProvisioner(
+                    contractStore: contractStore,
+                  ).provisionForWorkItem(
+                    workItemId: 'wi-1',
+                    productId: 'prod-1',
+                  ))
+                  .contractId;
+          // `designContractUnderReview()` reads this status from the STORE, so
+          // the walks below can reach `designInReview` without a context key.
+          await markDesignContractUnderReview(contractStore, contractId);
           final workflow = DurableWorkflowEngine(
             store: store,
             designContractStore: contractStore,
@@ -252,14 +265,7 @@ void main() {
                 'entry state so the live evaluator and the live transition '
                 'table can be asked about it.',
             qaContractId: 'qa-1',
-            designContractId:
-                (await DesignContractProvisioner(
-                      contractStore: contractStore,
-                    ).provisionForWorkItem(
-                      workItemId: 'wi-1',
-                      productId: 'prod-1',
-                    ))
-                    .contractId,
+            designContractId: contractId,
           );
           final item = await placeIn(workflow, entry);
 
@@ -317,9 +323,6 @@ Future<WorkItem> placeIn(
   // context at all — which is the honest shape of it, and a context string
   // here would have kept this file green while the guard it exercises no longer
   // read one.
-  const underReview = {
-    'designContractStatus': DesignContractStatus.underReview,
-  };
   const executing = {'agentAvailable': true, 'capabilitiesMatch': true};
   final agentResult = AgentResult(
     resultId: 'res-1',
@@ -369,7 +372,7 @@ Future<WorkItem> placeIn(
     // asserting against a transition the engine would refuse.
     case WorkItemState.implementationReady:
       await step(WorkItemState.designRequired);
-      await step(WorkItemState.designInReview, context: underReview);
+      await step(WorkItemState.designInReview);
       await _resolveDesign(workflow, HumanDecisionChoice.approve);
       await step(WorkItemState.agentExecuting, context: executing);
       await step(
@@ -405,18 +408,18 @@ Future<WorkItem> placeIn(
     case WorkItemState.designInReview:
     case WorkItemState.designRejected:
       await step(WorkItemState.designRequired);
-      await step(WorkItemState.designInReview, context: underReview);
+      await step(WorkItemState.designInReview);
       if (state == WorkItemState.designRejected) {
         await _resolveDesign(workflow, HumanDecisionChoice.reject);
       }
     case WorkItemState.designApproved:
       await step(WorkItemState.designRequired);
-      await step(WorkItemState.designInReview, context: underReview);
+      await step(WorkItemState.designInReview);
       await _resolveDesign(workflow, HumanDecisionChoice.approve);
     case WorkItemState.agentCompleted:
     case WorkItemState.reviewRejected:
       await step(WorkItemState.designRequired);
-      await step(WorkItemState.designInReview, context: underReview);
+      await step(WorkItemState.designInReview);
       await _resolveDesign(workflow, HumanDecisionChoice.approve);
       await step(WorkItemState.agentExecuting, context: executing);
       await step(

@@ -299,16 +299,25 @@ class DurableWorkflowEngine {
     return finalItem;
   }
 
-  /// The durable answer to "does [item] have a design contract?", for
-  /// `designContractExists()`.
+  /// The durable answer to "does [item] have a design contract, and is it under
+  /// review?", for `designContractExists()` and
+  /// `designContractUnderReview()`.
   ///
   /// ## BOTH HALVES ARE LOAD-BEARING
   ///
   /// [WorkItem.designContractId] is the column `design-revision.md` §4.3 names,
-  /// and [DesignContractStore.hasDesignContract] is the store confirmation it
-  /// also names. Either alone is the old defect wearing a new name: the column
-  /// alone is a string that resolves to nothing, and a store lookup alone has
-  /// no work item to be about.
+  /// and a `DesignContractStore` read is the store confirmation it also names.
+  /// Either alone is the old defect wearing a new name: the column alone is a
+  /// string that resolves to nothing, and a store lookup alone has no work item
+  /// to be about.
+  ///
+  /// ## ONE LOOKUP, TWO FACTS
+  ///
+  /// Existence and status come from the SAME `readDesignContract` call, not
+  /// from `hasDesignContract` plus a separate read. Two calls could answer
+  /// about two different things if the row changed between them, and the status
+  /// is exactly the kind of fact a caller must not be able to supply itself —
+  /// it is read here, from the row the id names, and nowhere else.
   ///
   /// ## WHY IT RUNS ON EVERY TRANSITION
   ///
@@ -338,9 +347,11 @@ class DurableWorkflowEngine {
         storeConfirmed: false,
       );
     }
+    final contract = await store.readDesignContract(contractId);
     return DesignContractResolution(
       contractId: contractId,
-      storeConfirmed: await store.hasDesignContract(contractId),
+      storeConfirmed: contract != null,
+      status: contract?.status,
     );
   }
 

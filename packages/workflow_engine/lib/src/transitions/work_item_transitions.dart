@@ -176,6 +176,30 @@ class WorkItemTransitions {
     (WorkItemState.designRejected, WorkItemState.designInReview): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
     ],
+    // THE DESIGN REVISION LANE'S RE-ENTRY EDGE.
+    //
+    // A rejected design is redesign work, and redesign is what a design agent
+    // does from `designRequired` — not what a REVIEWER does from
+    // `designInReview`. Without this edge a `designRejected` item was inert:
+    // `designRevisionDefinition` declares it as an entry state, the probe
+    // refused `designRejected -> agentExecuting`, and the state had exactly one
+    // out-edge leading to another lane's entry state.
+    //
+    // This edge and `designRevisionDefinition.entryProbeTargets[designRejected]
+    // = designRequired` are a PAIR. The scheduler's probe (`RunnableWorkEvaluator`)
+    // runs the pure `WorkflowEngine` with no store and no work item, so it
+    // cannot supply a `DesignContractResolution`; `designContractExists()` is
+    // therefore deliberately ABSENT here, exactly as it is absent from the
+    // `implementationReady -> agentExecuting` edge for the same reason. Adding
+    // it would make the probe fail closed and the hop unreachable. The item
+    // already carried a confirmed contract to reach `designRequired` in the
+    // first place; dispatch-time capacity is `JobCapacityGuard`'s concern.
+    //
+    // `design-revision.md` §5.4 (a): this guard set is the EXACT set the design
+    // names — no extra guard is a silent narrowing of a reviewed decision.
+    (WorkItemState.designRejected, WorkItemState.designRequired): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+    ],
     /*** Execution ***/
     // THE IMPLEMENTATION LANE'S ENTRY EDGE.
     //

@@ -6,6 +6,8 @@ import 'package:worker_runtime/worker_runtime.dart' show InMemoryWorkerStore;
 import 'package:workflow_engine/workflow_engine.dart';
 import 'package:workflow_store/workflow_store.dart';
 
+import 'support/design_contract_fixtures.dart';
+
 /// A deferring readiness probe NEVER dispatches — and never falls through to the
 /// construction-time workload.
 ///
@@ -40,8 +42,11 @@ import 'package:workflow_store/workflow_store.dart';
 /// `designContractExists()` reads the work item's durable `designContractId`
 /// column and confirms it against a store, so an engine with neither cannot
 /// walk an item to `designRequired` at all — which is what `walkToReviewGate`
-/// below needs. Returning the READ-BACK id (not the submitted one) keeps the
-/// fixture to the discipline [DesignContractProvisioner] exists to enforce.
+/// below needs. `designContractUnderReview()` then reads the stored row's
+/// STATUS, so the row is moved under review here rather than stated in a
+/// transition's context. Returning the READ-BACK id (not the submitted one)
+/// keeps the fixture to the discipline [DesignContractProvisioner] exists to
+/// enforce.
 Future<({DurableWorkflowEngine engine, String contractId})>
 engineWithDesignContract(WorkflowStore store, String workItemId) async {
   final contractStore = InMemoryDesignContractStore();
@@ -50,6 +55,7 @@ engineWithDesignContract(WorkflowStore store, String workItemId) async {
             contractStore: contractStore,
           ).provisionForWorkItem(workItemId: workItemId, productId: 'prod-1'))
           .contractId;
+  await markDesignContractUnderReview(contractStore, contractId);
   return (
     engine: DurableWorkflowEngine(
       store: store,
@@ -466,10 +472,7 @@ Future<void> walkToReviewGate(DurableWorkflowEngine engine) async {
   await step(WorkItemState.planning);
   await step(WorkItemState.planned, context: const {'featureRef': 'f-1'});
   await step(WorkItemState.designRequired);
-  await step(
-    WorkItemState.designInReview,
-    context: const {'designContractStatus': DesignContractStatus.underReview},
-  );
+  await step(WorkItemState.designInReview);
 
   final designGate = await engine.requestHumanDecision(
     workItemId: 'wi-impl',

@@ -136,6 +136,12 @@ Future<DurableWorkflowEngine> _engine() async {
   final contractId = (await DesignContractProvisioner(
     contractStore: contractStore,
   ).provisionForWorkItem(workItemId: _id, productId: 'prod-1')).contractId;
+  // `designContractUnderReview()` reads the stored row's STATUS. The walks
+  // below therefore move the row, rather than passing a status in context.
+  final draft = await contractStore.readDesignContract(contractId);
+  await contractStore.saveDesignContract(
+    DesignContract.fromJson({...draft!.toJson(), 'status': 'under_review'}),
+  );
   final engine = DurableWorkflowEngine(
     store: store,
     designContractStore: contractStore,
@@ -191,7 +197,6 @@ Future<void> _designApproved(DurableWorkflowEngine engine) async {
     to: WorkItemState.designInReview,
     trigger: TransitionTrigger.systemEvent,
     actor: _orch,
-    context: const {'designContractStatus': DesignContractStatus.underReview},
   );
   await engine.resolveHumanDecision(
     decisionId: (await engine.requestHumanDecision(
@@ -689,9 +694,6 @@ void main() {
         to: WorkItemState.designInReview,
         trigger: TransitionTrigger.systemEvent,
         actor: _orch,
-        context: const {
-          'designContractStatus': DesignContractStatus.underReview,
-        },
       );
       final gate = await engine.requestHumanDecision(
         workItemId: _id,
