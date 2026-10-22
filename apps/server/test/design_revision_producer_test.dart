@@ -104,6 +104,8 @@ Future<_Host> _host({
   AgentSessionStatus executionStatus = AgentSessionStatus.completed,
   AgentResultStatus resultStatus = AgentResultStatus.completed,
   bool vanishRevisionWrites = false,
+  bool misreadRevisionWrites = false,
+  bool dropTransitionMetadata = false,
   List<HumanDecision> decisions = const [],
   List<Job> extraJobs = const [],
   Map<String, Defect> defects = const {},
@@ -111,7 +113,13 @@ Future<_Host> _host({
   final host = _Host();
   final structured = payload ?? _validPayload();
 
-  host.workflowStore = InMemoryWorkflowStore();
+  host.workflowStore = dropTransitionMetadata
+      // A store that accepts the state change but drops `metadataMerge` is the
+      // exact G-E failure the Q3 postcondition exists to catch. It is a test
+      // double over the real store, not a production seam: `WorkflowStore` is
+      // the producer's injected dependency.
+      ? _MetadataDroppingWorkflowStore()
+      : InMemoryWorkflowStore();
   host.contractStore = InMemoryDesignContractStore();
   host.governanceStore = InMemoryDesignGovernanceStore();
   host.executionStore = InMemoryExecutionStore();
@@ -119,6 +127,8 @@ Future<_Host> _host({
   host.defectStore = _FakeDefectStore(defects);
   host.revisionStore = vanishRevisionWrites
       ? _VanishingDesignRevisionStore(host.governanceStore)
+      : misreadRevisionWrites
+      ? _MisreadingDesignRevisionStore(host.governanceStore)
       : host.governanceStore;
   host.engine = DurableWorkflowEngine(
     store: host.workflowStore,
@@ -657,6 +667,32 @@ void main() {
       expect(result.refusalCode, 'q1.revision-not-readable-after-write');
     });
 
+    test(
+      'refuses a read-back that names a DIFFERENT revision id',
+      () async {
+        // Q1 is a read-back, not a write-and-hope. A store that returns a row
+        // other than the one just written must be a named refusal, never a
+        // success built from the id the producer passed in.
+        final host = await _host(misreadRevisionWrites: true);
+
+        final result = await _run(host);
+
+        expect(result.outcome, DesignRevisionProducerOutcome.refused);
+        expect(result.refusalCode, 'q1.read-back-revision-id-mismatch');
+        expect(result.detail, contains('wrote'));
+        expect(result.detail, contains('read'));
+
+        // The refusal happens at the read-back, before submission and before
+        // the item moves: nothing downstream may look like progress.
+        final contract = await host.contractStore.readDesignContract(
+          _contractId,
+        );
+        expect(contract!.status, DesignContractStatus.draft);
+        final item = await host.workflowStore.readWorkItem(_workItemId);
+        expect(item.state, WorkItemState.agentCompleted);
+      },
+    );
+
     test('refuses an execution that belongs to another work item', () async {
       final host = await _host();
       await host.executionStore.saveExecution(
@@ -667,6 +703,38 @@ void main() {
 
       expect(result.refusalCode, 'q2.execution-work-item-mismatch');
     });
+  });
+
+  group('Q3 — the metadata stamp is a postcondition', () {
+    test(
+      'refuses when the transition accepts the move but drops the metadata '
+      'MERGE',
+      () async {
+        // G-E: the store records `designInReview` but discards the two keys the
+        // design-review scheduler reads. Without a read-back of the transition
+        // this would look like success while the next lane had nothing to act
+        // on. The refusal must be named and surfaced as the producer's verdict.
+        final host = await _host(dropTransitionMetadata: true);
+
+        final result = await _run(host);
+
+        expect(result.outcome, DesignRevisionProducerOutcome.refused);
+        expect(result.refusalCode, 'q3.metadata-not-stamped');
+        expect(
+          result.detail,
+          contains(designRevisionIdMetadataKey),
+          reason: 'the refusal must name the key that was not stamped',
+        );
+
+        // The transition did happen, which is why silence would have been so
+        // costly: the state moved but the durable metadata the next lane reads
+        // is absent. The producer must say so rather than return `produced`.
+        final item = await host.workflowStore.readWorkItem(_workItemId);
+        expect(item.state, WorkItemState.designInReview);
+        expect(item.metadata?[designRevisionIdMetadataKey], isNull);
+        expect(item.metadata?[designerExecutionIdMetadataKey], isNull);
+      },
+    );
   });
 
   group('Q5 / Q6', () {
@@ -866,6 +934,97 @@ class _VanishingDesignRevisionStore implements DesignRevisionStore {
   @override
   Future<DesignRevision> readDesignRevision(String revisionId) =>
       _delegate.readDesignRevision(revisionId);
+
+  @override
+  Future<List<DesignRevision>> readDesignRevisionsForWorkItem(
+    String workItemId,
+  ) => _delegate.readDesignRevisionsForWorkItem(workItemId);
+
+  @override
+  Future<DesignRevision?> readApprovedDesignRevisionForWorkItem(
+    String workItemId,
+  ) => _delegate.readApprovedDesignRevisionForWorkItem(workItemId);
+
+  @override
+  Future<DesignRevision?> readLatestDesignRevisionForWorkItem(
+    String workItemId,
+  ) => _delegate.readLatestDesignRevisionForWorkItem(workItemId);
+
+  @override
+  Future<List<DesignRevision>> getLineage(String revisionId) =>
+      _delegate.getLineage(revisionId);
+
+  @override
+  Future<DesignRevision?> findDesignRevisionByIdempotencyKey(
+    String workItemId,
+    String idempotencyKey,
+  ) => _delegate.findDesignRevisionByIdempotencyKey(
+    workItemId,
+    idempotencyKey,
+  );
+
+  @override
+  Future<T> inTransaction<T>(
+    Future<T> Function(DesignGovernanceStore store) body,
+  ) => _delegate.inTransaction(body);
+}
+
+/// A workflow store that ACCEPTS the state change and then silently discards
+/// the two design-revision metadata keys the transition's `metadataMerge`
+/// carries.
+///
+/// Q3 exists because `metadataMerge` is applied inside
+/// `DurableWorkflowEngine.transition`, so a store (or a database trigger) that
+/// drops it turns a successful-looking `agentCompleted -> designInReview` move
+/// into an item the design-review scheduler cannot dedupe or route. Overriding
+/// the in-memory store keeps every other store behaviour real; only the one
+/// write the postcondition is about is degraded.
+class _MetadataDroppingWorkflowStore extends InMemoryWorkflowStore {
+  @override
+  Future<void> saveWorkItem(WorkItem item, {int? expectedVersion}) {
+    final metadata = item.metadata;
+    if (metadata == null) {
+      return super.saveWorkItem(item, expectedVersion: expectedVersion);
+    }
+    final stripped = Map<String, dynamic>.of(metadata)
+      ..remove(designRevisionIdMetadataKey)
+      ..remove(designerExecutionIdMetadataKey);
+    return super.saveWorkItem(
+      item.copyWith(metadata: stripped),
+      expectedVersion: expectedVersion,
+    );
+  }
+}
+
+/// A revision store that saves faithfully but READS BACK a row with a different
+/// revision id.
+///
+/// Q1's read-back must compare what was written with what is now readable, not
+/// trust the id it just passed to `saveDesignRevision`. This store makes that
+/// difference observable without adding any production seam: the producer
+/// already depends on the [DesignRevisionStore] interface.
+class _MisreadingDesignRevisionStore implements DesignRevisionStore {
+  _MisreadingDesignRevisionStore(this._delegate);
+
+  final DesignRevisionStore _delegate;
+
+  @override
+  Future<void> saveDesignRevision(
+    DesignRevision revision, {
+    int? expectedVersion,
+  }) =>
+      _delegate.saveDesignRevision(revision, expectedVersion: expectedVersion);
+
+  @override
+  Future<DesignRevision> readDesignRevision(String revisionId) async {
+    final actual = await _delegate.readDesignRevision(revisionId);
+    return DesignRevision.fromJson(
+      <String, dynamic>{
+        ...actual.toJson(),
+        'revisionId': 'rev-not-the-one-that-was-written',
+      },
+    );
+  }
 
   @override
   Future<List<DesignRevision>> readDesignRevisionsForWorkItem(
