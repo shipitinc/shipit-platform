@@ -3623,3 +3623,60 @@ looks authoritative and answers `''`, and `''` is not "no row", it is "a row tha
 `GitWorktreeWorkspaceManager.prepare` has a window where the worktree exists with no ownership metadata
 beside it, so the retention sweep cannot attribute it to an execution and will never release it. Out of scope
 for the retention change; pre-existing.
+
+**F-215 — the F2 grant mechanism exists and is complete, but no production writer supplies a grant.**
+`apps/server/lib/src/endpoints/intake_endpoints.dart:29-34` is the only production caller of
+`createFeatureWorkItem` and passes no `declaredOwnedPaths`, so the grant is written as an empty list
+(`control_plane_service.dart:955,997`). **Amended by review of `c2a2185`:** decision `7d2a81f0` moved the
+grant's origin to design/plan acceptance and `ControlPlaneService.requestDesignApproval`
+(`control_plane_service.dart:2101`) is the write half — but it has **zero production callers**, and no
+production code raises a `designApproval`/`designReviewRequest` decision at all (the only production
+`requestHumanDecision` sites are `qa_drain.dart:604` `qaFailure`, `stalled_work_item_gate.dart:195`
+`stalledWorkItem`, and `engineering_review_gate.dart:932,1642,2983` `engineeringReview` — none routes to
+`designApproved`). So `_recordDesignScopeGrant` is never reached in production and **F2 still refuses every
+production evaluation**. Closing it needs (a) a design-lane plan submission calling `requestDesignApproval`
+and (b) production creation of the `designApproval` decision, which needs the design-governance runtime
+that `packages/workflow_store/lib/src/design_contract_provisioner.dart:86-89` documents as absent
+("`DesignRiskPolicy` does not exist"). Also untested: the production writer hop and the blank-`declaredBy`
+ArgumentError, precondition and CAS-conflict paths (review LOW-5).
+
+**F-216 — the Postgres request store silently drops `declaredOwnedPaths`, and the store-contract suite
+structurally cannot see it.**
+`postgres_execution_store.dart:45-80` writes a fixed column list with no grant column, so `readRequest`
+returns an empty declaration while the in-memory and file stores round-trip it — three stores now disagree.
+The contract suite compares whole objects but its fixture (`packages/store_contract_tests/lib/src/fixtures.dart:314-336`)
+leaves the field empty, so the loss is invisible. Inert today (`readRequest` has no production caller; the
+grant's home is the **execution** row), but latent: any future re-dispatch rebuilding a request from the
+stored request would lose the grant. Fix: put a non-empty value in the fixture so the suite fails, then add
+the column or document that the request row is not the grant's home. Review M-1 on `88cc25a`.
+
+**F-217 — replace-vs-intersect for the lane's owned set is one-directionally justified.**
+`qa_gate_evaluation_service.dart:363-405` (override at `:385`) lets a lane's declaration REPLACE the
+contract's own `ownedPathGlobs`, and `design_scope_grant.dart:260-267` (`mergeDesignScopeGrant`) replaces
+an earlier grant's keys unconditionally — so an acceptance can **widen** a narrower earlier scope, while the
+stated reason (`design_scope_grant.dart:219-223`) only covers narrowing. Behaviour is what decision
+`7d2a81f0` intends (the designer is authoritative) and is unreachable in production today
+(`intake_endpoints.dart:29` never passes `declaredOwnedPaths`), but the rationale must state both
+directions, and the replace-vs-intersect rule for a future contract that declares its own non-empty owned
+set must be settled before one does. Review L-2/L-6.
+
+**F-218 — stale F2 comment, `declaredBy` unvalidated at promotion, and doc drift.**
+(a) `qa_drain.dart:361-363` still attributes the F2 refusal to the shipped manifest's empty
+`ownedPathGlobs`; the effective declaration is now the lane's captured grant. (b) `declaredBy` is refused
+when blank at submission (`control_plane_service.dart:2112-2120`) but **not re-validated at promotion**
+(`:2301-2303` defaults it to `''` when the declaration map is absent, and `designScopeGrantMetadata` at
+`design_scope_grant.dart:231-250` does not validate it) — unreachable today, but the helper is public API.
+(c) `AGENTS.md` and `apps/server/tool/run_unit_tests.dart`'s header both say "51" unit-test files; the
+runner enumerates 59. (d) The manifest's `f2PathOwnership` note (`manifests/shipit-platform.product-manifest.json:85`)
+is partly stale and is Manager-owned because the pinned test reads it. Review L-1/L-3/L-4.
+
+**F-219 — the merge/release integration tier is red, and the F2 lane's own unit tier has a timeout-class flake.**
+`SERVERPOD_DATABASE_PASSWORD=control_plane_test_pw make test-integration` at `c2a2185` → **307 passed /
+12 failed**. Every failing file is outside the F2 diffs and none calls `resolveHumanDecision` or any new
+API (verified by grep); `feature_request_intake_test.dart:121` is definitively base-red (expects `draft`,
+gets `feature_intake_parked`, introduced by `ddfbfff` — an ancestor of the base). Separately,
+`apps/server/test/unit_tests_runner_test.dart` fails with `PathNotFoundException: … .snapshot.incremental.temp`,
+a signature `apps/server/tool/run_unit_tests.dart` itself documents as a known race; measured cold
+`dart pub get --offline` on this machine is ~2 min, so the test's own 3-minute `@Timeout` is unsatisfiable
+under ambient load. Neither is caused by the F2 work; both must be resolved or re-measured on a quiet
+machine before the merge gate can be trusted.
