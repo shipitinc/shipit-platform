@@ -3590,7 +3590,14 @@ in-process shutdown hook. The 7-day stall window reclaims **machine-paced stuck 
 does **not** guarantee cleanup when the process is gone. The bound is stated honestly in code, comments and
 tests — it is simply not a bound a human can read at runtime, and not a bound the decision named.
 
-**F-212 — F2's forbidden set is declared and not enforced, which is the decision's own measured residual.**
+**F-212 — SUPERSEDED 2026-10-21 by `88cc25a`.** Every clause below about the *absence* of a runtime
+ownership source is now false: the declaration travels on `WorkerExecutionRequest.declaredOwnedPaths`, is
+captured into the execution row's metadata by the coordinator in the same transaction that creates it
+(`execution_coordinator.dart:613`), and is read back by `ProductionDeclaredOwnedPathsSource`. What remains
+true is the residual at the end: the static forbidden set is still not *enforced* while the grant itself is
+empty, because no production writer supplies one — see **F-215**.
+
+**F-212 (original text, retained for provenance) — F2's forbidden set is declared and not enforced, which is the decision's own measured residual.**
 `apps/server/manifests/shipit-platform.product-manifest.json:90-104`. The seven AGENTS.md prohibited globs are
 now declared, and the manifest's own `f2PathOwnership` metadata states the residual in place. But
 `_ChangeScopeConfig.from` (`change_scope_confinement_gate.dart:356`) **requires a non-empty `ownedPathGlobs`**
