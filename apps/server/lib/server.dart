@@ -14,7 +14,7 @@ import 'package:execution_coordinator/execution_coordinator.dart'
         VerificationPlan;
 import 'package:workflow_store/workflow_store.dart' show DurableWorkflowEngine;
 import 'package:platform_contracts/platform_contracts.dart'
-    show AgentRole, JobType;
+    show AgentRole, Job, JobType;
 import 'package:product_registry/product_registry.dart'
     show ProductRegistryEngine, ProductRegistryStore;
 import 'package:scheduler/scheduler.dart'
@@ -29,6 +29,14 @@ import 'package:scheduler/scheduler.dart'
         implementFeatureDefinition,
         implementFeatureDedupeKey,
         implementFeatureInstruction,
+        designRevisionDefinition,
+        designRevisionDedupeKey,
+        designRevisionInstruction,
+        designRevisionRequest,
+        designReviewDefinition,
+        designReviewDedupeKey,
+        designReviewInstruction,
+        designReviewRequest,
         SchedulerWorkload,
         WorkerDispatch,
         WorkerDispatcherAdapter,
@@ -67,6 +75,8 @@ import 'package:worker_runtime/worker_runtime.dart'
 
 import 'src/generated/endpoints.dart';
 import 'src/generated/protocol.dart';
+import 'src/design/design_review_observer.dart';
+import 'src/design/design_review_workload_resolver.dart';
 import 'src/design/design_revision_producer.dart';
 import 'src/persistence/persistence_database.dart';
 import 'src/persistence/postgres_execution_store.dart';
@@ -107,9 +117,16 @@ import 'src/implementation/implementation_path_ownership.dart'
     show implementationRequestWithPathOwnership;
 import 'src/triage/defect_triage_sweep.dart';
 import 'src/triage/lane_i_tick_hook.dart'
-    show TriageTickDrainResult, drainTriageOutcomesFromTick;
+    show
+        DesignRevisionOutcomeSink,
+        TriageTickDrainResult,
+        drainTriageOutcomesFromTick;
 import 'src/triage/stalled_work_item_gate.dart'
-    show StallGateResult, raiseStallDecisions;
+    show
+        StallGateOutcome,
+        StallGateResult,
+        raiseDesignProducerRefusalDecision,
+        raiseStallDecisions;
 import 'src/triage/triage_processor.dart';
 import 'src/triage/work_entry.dart' show WorkEntryTrigger;
 import 'src/review/engineering_review_gate.dart';
@@ -495,10 +512,51 @@ void run(List<String> args) async {
     registrationStore: workerRegistrationStore,
     platform: Platform.operatingSystem,
   );
+  // ---- The DESIGN lane's two workers. ----
+  //
+  // Mounting a scheduler without a worker whose capabilities cover its
+  // definition is the empty-registry defect one level down: the scheduler
+  // enqueues, `WorkerDispatcher.select` finds no candidate, and every job
+  // defers for ever while the lane reports itself healthy. Capabilities come
+  // from the definitions, exactly as the three lanes above do, so "the worker
+  // can be selected for every job this lane enqueues" is true by construction.
+  //
+  // The designer and the reviewer are DISTINCT workers with distinct ids and
+  // pools. Independence is enforced by `designReviewRequest` excluding the
+  // designer's execution, and a shared worker id would also make the two lanes
+  // contend for one lease slot — the same reason the implementer has its own id.
+  //
+  // Both run through the TRIAGE coordinator: the designer writes to Penpot
+  // rather than committing code, and the reviewer reads a revision rather than
+  // a diff, so neither should carry the implementation lane's validation plan.
+  // The workspace is a real detached worktree, exactly like triage and review.
+  final designRevisionWorker = LocalWorker(
+    workerId: 'w-design-revision-local',
+    poolId: 'design-revision-pool',
+    capabilities: designRevisionDefinition.requiredCapabilities,
+    workspaceManager: GitWorktreeWorkspaceManager(workspaceRoot: workspaceRoot),
+    executionDriver: CoordinatorAgentExecutionDriver(coordinator),
+    workerStore: workerStore,
+    registrationStore: workerRegistrationStore,
+    platform: Platform.operatingSystem,
+  );
+  final designReviewWorker = LocalWorker(
+    workerId: 'w-design-review-local',
+    poolId: 'design-review-pool',
+    capabilities: designReviewDefinition.requiredCapabilities,
+    workspaceManager: GitWorktreeWorkspaceManager(workspaceRoot: workspaceRoot),
+    executionDriver: CoordinatorAgentExecutionDriver(coordinator),
+    workerStore: workerStore,
+    registrationStore: workerRegistrationStore,
+    platform: Platform.operatingSystem,
+  );
+
   final workerRegistry = WorkerRegistry()
     ..register(triageWorker)
     ..register(reviewWorker)
-    ..register(implementWorker);
+    ..register(implementWorker)
+    ..register(designRevisionWorker)
+    ..register(designReviewWorker);
   final WorkerDispatch dispatch = WorkerDispatcherAdapter(
     WorkerDispatcher(registry: workerRegistry),
   );
@@ -511,7 +569,13 @@ void run(List<String> args) async {
   // exact defect this closes. It runs before the composition banner so the
   // banner can report the registration outcome instead of assuming it.
   final workerRegistration = await startWorkerRegistrationHeartbeat(
-    workers: <LocalWorker>[triageWorker, reviewWorker, implementWorker],
+    workers: <LocalWorker>[
+      triageWorker,
+      reviewWorker,
+      implementWorker,
+      designRevisionWorker,
+      designReviewWorker,
+    ],
     store: workerRegistrationStore,
     log: _log,
   );
@@ -693,6 +757,97 @@ void run(List<String> args) async {
   // store above is: a revision written to an in-memory store would not exist
   // after a redeploy, and a review lane reading it back would find nothing.
   final designGovernanceStore = PostgresDesignGovernanceStore(db);
+
+  // ---- The DESIGN lane's two schedulers (design step 8, gap G-A). ----
+  //
+  // They are constructed AFTER the stores they read and BEFORE the producer
+  // that consumes their terminal jobs. Mounting them is what turns the
+  // definitions, dedupe/instruction/request builders and the step-6 producer
+  // from a reviewed library into a running lane.
+  //
+  // ## ORDER INSIDE THE LANE
+  //
+  // `sched-design-revision` runs first: a designer produces a revision and the
+  // producer advances `agentCompleted -> designInReview`. `sched-design-review`
+  // then sees that state in the same tick and dispatches the reviewer. The
+  // reverse order would add a full tick (30s) to every design review and, worse,
+  // would let the engineering-review scheduler — whose entry set is
+  // `{agentCompleted}` — claim the item before the producer moved it.
+  //
+  // ## THE DESIGNER'S WORKLOAD IS STATIC, LIKE TRIAGE'S
+  //
+  // The designer's workspace is the repository itself (it writes to Penpot, not
+  // to a commit), so there is no per-item artifact to resolve. The budget comes
+  // from `AgentExecutionBudgets`, never a literal.
+  //
+  // ## THE REVIEWER'S WORKLOAD IS NOT STATIC
+  //
+  // A reviewer must be pointed at a durable revision, not at the construction-
+  // time default. `designReviewWorkloadResolver` returns null when the revision
+  // or its Penpot file/page cannot be resolved; the scheduler then does not
+  // dispatch and reports `blockedArtifactMissing`, which the design tick below
+  // surfaces. The static workload is a required constructor argument and is
+  // inert for exactly the reason the engineering-review one is.
+  final designRevisionScheduler = Scheduler(
+    schedulerId: 'sched-design-revision',
+    workflowStore: workflowStore,
+    jobStore: jobStore,
+    workerStore: workerStore,
+    dispatch: dispatch,
+    definition: designRevisionDefinition,
+    modelSelection: modelSelection,
+    executionLiveness: executionLiveness,
+    dedupeKeyBuilder: designRevisionDedupeKey,
+    instructionBuilder: designRevisionInstruction,
+    requestBuilder: designRevisionRequest,
+    capacityGuard: capacityGuard,
+    workload: SchedulerWorkload(
+      repositoryPath: triageSource.path,
+      startingRevision: triageSource.startingRevision,
+      timeoutSeconds: AgentExecutionBudgets.designAgentSeconds,
+      runtimeTypeId: triageRuntimeTypeId,
+    ),
+    zombieStalenessAfter: AgentExecutionBudgets.zombieStalenessFor(
+      AgentExecutionBudgets.byRole['design-agent']!,
+    ),
+    clock: () => DateTime.now().toUtc(),
+    providerHealthMonitor: providerHealthMonitor,
+  );
+
+  final designReviewScheduler = Scheduler(
+    schedulerId: 'sched-design-review',
+    workflowStore: workflowStore,
+    jobStore: jobStore,
+    workerStore: workerStore,
+    dispatch: dispatch,
+    definition: designReviewDefinition,
+    modelSelection: modelSelection,
+    executionLiveness: executionLiveness,
+    dedupeKeyBuilder: designReviewDedupeKey,
+    instructionBuilder: designReviewInstruction,
+    requestBuilder: designReviewRequest,
+    capacityGuard: capacityGuard,
+    workloadResolver: designReviewWorkloadResolver(
+      designRevisionStore: designGovernanceStore,
+      repositoryPath: triageSource.path,
+      startingRevision: triageSource.startingRevision,
+      runtimeTypeId: triageRuntimeTypeId,
+      timeoutSeconds: AgentExecutionBudgets.designReviewerSeconds,
+      logger: _log,
+    ),
+    workload: SchedulerWorkload(
+      repositoryPath: triageSource.path,
+      startingRevision: triageSource.startingRevision,
+      timeoutSeconds: AgentExecutionBudgets.designReviewerSeconds,
+      runtimeTypeId: triageRuntimeTypeId,
+    ),
+    zombieStalenessAfter: AgentExecutionBudgets.zombieStalenessFor(
+      AgentExecutionBudgets.byRole['design-reviewer']!,
+    ),
+    clock: () => DateTime.now().toUtc(),
+    providerHealthMonitor: providerHealthMonitor,
+  );
+
   final designRevisionProducer = DesignRevisionProducer(
     workflowStore: workflowStore,
     workflowEngine: durableWorkflowEngine,
@@ -1071,6 +1226,20 @@ void run(List<String> args) async {
     runTick: () async {
       final outcome = TickOutcome(failedSections: <String>[]);
 
+      // ---- The refusal sink for EVERY drain this tick runs. ----
+      //
+      // Built ONCE here so the triage, design and review drains share one and
+      // cannot describe different behaviour for the same job. Any scheduler's
+      // step 1 reconciles every held job in the shared `JobStore`, so a
+      // `designRevision` refusal can surface in any of the three ticks; a drain
+      // with the producer but no sink counts it as a success and surfaces
+      // nothing (F-222).
+      final designRefusalSink = buildDesignRefusalSink(
+        workflowEngine: durableWorkflowEngine,
+        executionStore: coordinator.store,
+        log: _log,
+      );
+
       try {
         final tickResult = await scheduler.tick();
 
@@ -1086,6 +1255,7 @@ void run(List<String> args) async {
           jobStore: jobStore,
           triageProcessor: triageProcessor,
           designRevisionProducer: designRevisionProducer,
+          designRevisionOutcomeSink: designRefusalSink.sink,
           // `onboardProduct` is registered so the dispatch table is COMPLETE.
           // Onboarding jobs are product-scoped and are claimed and run by
           // `BaselineProductDispatcher` below, so they never appear in a triage
@@ -1098,6 +1268,12 @@ void run(List<String> args) async {
               job: job,
               logger: _log,
             ),
+            // The shared job store means this tick can reconcile an
+            // `implementFeature` job. The implementation lane owns it; this
+            // registration keeps the table complete so the drain does not throw
+            // `UnhandledJobTypeException` for another lane's job.
+            JobType.implementFeature: (job) =>
+                observeReconciledImplementationJob(job: job, logger: _log),
             JobType.engineeringReview: engineeringReviewTickHandler(
               workflowEngine: durableWorkflowEngine,
               executionStore: coordinator.store,
@@ -1152,9 +1328,64 @@ void run(List<String> args) async {
         _log('scheduler.tick.failed', {'error': '$e', 'stack': st.toString()});
       }
 
+      // ---- The DESIGN lane's tick (design step 8). ----
+      //
+      // THIRD section, and BEFORE implementation/review by construction, not by
+      // taste. `engineeringReviewDefinition` enters on `{agentCompleted}`, and a
+      // design item is at exactly that state when its producer runs. If the
+      // implementation/review sections ran first, the engineering reviewer would
+      // claim a design item before `runDesignLaneTick` had the chance to advance
+      // it to `designInReview` — a review of a design artifact by the code
+      // reviewer, raised and then retired. Running the design section first
+      // closes that window on every pass, not just the first.
+      //
+      // Its own try, like every other section: a design tick that throws must
+      // not take triage, implementation, review or QA down with it. They read the
+      // same job store and answer different questions.
+      //
+      // Refusals are reported by JOB ID as well as converted to a decision, so a
+      // lane whose decision could not be raised still appears in the tick line
+      // rather than only in the stall gate's own log.
+      try {
+        final designLane = await runDesignLaneTick(
+          designRevisionScheduler: designRevisionScheduler,
+          designReviewScheduler: designReviewScheduler,
+          jobStore: jobStore,
+          triageProcessor: triageProcessor,
+          designRevisionProducer: designRevisionProducer,
+          refusalSink: designRefusalSink,
+          workflowEngine: durableWorkflowEngine,
+          executionStore: coordinator.store,
+          workerStore: workerStore,
+          foldStalls: outcome.foldStalls,
+          log: _log,
+        );
+        if (designLane.refusalJobIds.isNotEmpty) {
+          _log('design.revision.refusals', {
+            'jobIds': designLane.refusalJobIds,
+            'outcomes': [
+              for (final outcome in designLane.refusalOutcomes) outcome.name,
+            ],
+            'action':
+                'each refusal is intended to raise a blocking human decision; '
+                'an outcome other than raised/alreadyPending is reported by the '
+                'gate as design.refusal.not-surfaced',
+          });
+        }
+      } catch (e, st) {
+        outcome.failedSections.add('design');
+        _log('design.tick.failed', {
+          'error': '$e',
+          'stack': st.toString(),
+          'action':
+              'design dispatch is retried on the next tick; other lanes unaffected',
+        });
+      }
+
       // ---- The implementation lane's tick. ----
       //
-      // FIRST of the two lanes that share `agentCompleted`, and that placement
+      // FIRST of the two CODE lanes that share `agentCompleted` (the design
+      // section above already moved any design item out of it), and that placement
       // is load-bearing rather than cosmetic. `sched-impl` declares a
       // `completionInflowFrom`, so its tick ROUTES items out of `agentCompleted`
       // before it asks what is runnable; `sched-review`'s entry set is exactly
@@ -1246,6 +1477,8 @@ void run(List<String> args) async {
           reviewScheduler: reviewScheduler,
           jobStore: jobStore,
           triageProcessor: triageProcessor,
+          designRevisionProducer: designRevisionProducer,
+          designRevisionOutcomeSink: designRefusalSink.sink,
           workflowEngine: durableWorkflowEngine,
           executionStore: coordinator.store,
           workerStore: workerStore,
@@ -1653,6 +1886,14 @@ Future<ReviewLaneTickResult> runReviewLaneTick({
   required Scheduler reviewScheduler,
   required JobStore jobStore,
   required TriageProcessor? triageProcessor,
+  // OPTIONAL, for the same reason the triage drain's producer is optional:
+  // this function is a dispatcher and must remain testable without a live
+  // design store. PRODUCTION always passes both (see `run`), so a real
+  // designRevision job is always handled and a refusal always surfaces (F-222).
+  // A test that passes neither simply cannot reconcile a design revision job,
+  // which is correct: it never has one.
+  DesignRevisionProducer? designRevisionProducer,
+  DesignRevisionOutcomeSink? designRevisionOutcomeSink,
   required DurableWorkflowEngine workflowEngine,
   required ExecutionStore executionStore,
   required WorkerStore workerStore,
@@ -1685,6 +1926,8 @@ Future<ReviewLaneTickResult> runReviewLaneTick({
     tickResult: reviewTick,
     jobStore: jobStore,
     triageProcessor: triageProcessor,
+    designRevisionProducer: designRevisionProducer,
+    designRevisionOutcomeSink: designRevisionOutcomeSink,
     // The dispatch table must be as COMPLETE as the triage drain's above.
     // `onboardProduct` jobs are product-scoped and claimed by
     // `BaselineProductDispatcher`, so they never appear in this tick's
@@ -1697,6 +1940,10 @@ Future<ReviewLaneTickResult> runReviewLaneTick({
     handlers: {
       JobType.onboardProduct: (job) =>
           observeCompletedOnboardingJob(job: job, logger: log),
+      // See the triage drain: a shared job store means any tick can reconcile
+      // any lane's job, so every table must name every type.
+      JobType.implementFeature: (job) =>
+          observeReconciledImplementationJob(job: job, logger: log),
       JobType.engineeringReview: engineeringReviewTickHandler(
         workflowEngine: workflowEngine,
         executionStore: executionStore,
@@ -1815,6 +2062,286 @@ Future<ReviewLaneTickResult> runReviewLaneTick({
     drain: reviewDrain,
     missingArtifactJobIds: List.unmodifiable(handled),
     settledRedrive: settledRedrive,
+  );
+}
+
+/// What one pass of the DESIGN section concluded, for the caller to report.
+///
+/// Deliberately narrow. The three lists are separate because they mean
+/// different things: a refusal outcome is a decision this section raised
+/// (`raised`/`alreadyPending`) or visibly could not raise; a blocked review is
+/// a job the scheduler could not dispatch for want of a resolvable artifact; an
+/// unconsumed review is a completed reviewer run whose verdict has no consumer
+/// in this step. Collapsing them would let "nothing happened" and "a decision
+/// was raised" read the same.
+class DesignLaneTickResult {
+  const DesignLaneTickResult({
+    required this.revisionDrain,
+    required this.reviewDrain,
+    required this.refusalOutcomes,
+    required this.refusalJobIds,
+    required this.blockedReviewJobIds,
+    required this.unconsumedReviewJobIds,
+  });
+
+  final TriageTickDrainResult revisionDrain;
+  final TriageTickDrainResult reviewDrain;
+  final List<StallGateOutcome> refusalOutcomes;
+  final List<String> refusalJobIds;
+  final List<String> blockedReviewJobIds;
+  final List<String> unconsumedReviewJobIds;
+}
+
+/// The composition root's DESIGN section (design step 8).
+///
+/// ## WHY IT IS A NAMED FUNCTION
+///
+/// The same reason [runReviewLaneTick] is: the order of these `await`s is a
+/// contract, and a test can only assert what it can call.
+///
+/// ## THE ORDER, AND WHY IT IS THIS WAY
+///
+/// 1. `sched-design-revision` first. It enqueues/dispatches a designer and, on a
+///    terminal job, the producer advances `agentCompleted -> designInReview`.
+/// 2. `sched-design-review` second, in the SAME pass, so a revision produced a
+///    moment ago is reviewed now rather than one scheduler interval later. Its
+///    entry probe therefore observes `designInReview` on the first tick it is
+///    available.
+///
+/// The reverse order is not merely slower. `engineeringReviewDefinition`'s entry
+/// set is `{agentCompleted}`; the implementation/review section runs after this
+/// one. A reviewer that reached `agentCompleted` in a previous pass would be
+/// claimed by the ENGINEERING review scheduler before this section ever moved it
+/// to `designInReview` — a redundant (and capability-incompatible) review job,
+/// raised and then retired. Revision-before-review closes that window in the one
+/// pass that matters and in every later one.
+///
+/// ## THE REFUSAL SINK IS THE POINT OF THE SECTION
+///
+/// A `DesignRevisionProducer` refusal is a NORMAL return. Without the sink the
+/// drain counts the job as handled, the item stays at `agentCompleted`, and no
+/// operator ever sees it (F-222, decision `e2c7a05b`). Every refusal is therefore
+/// handed to [raiseDesignProducerRefusalDecision] here. The producer still logs
+/// its own `design_revision.refused` line; the decision is the durable,
+/// actionable signal beside it.
+///
+/// ## WHAT THIS SECTION DOES NOT DO
+///
+/// It raises no `designApproval` (step 9), runs no risk policy (step 5), and
+/// does not change the producer. A completed design REVIEW has no consumer yet,
+/// so its job is observed and reported as unconsumed rather than silently
+/// dropped or pretended to be approved.
+/// The shared refusal sink, and the two lists it fills, for EVERY drain that
+/// can see a design revision job.
+///
+/// ## WHY IT IS BUILT ONCE AND SHARED, NOT PER-DRAIN
+///
+/// `Scheduler.tick()`'s step 1 reconciles every held job in the shared
+/// `JobStore`, so a `designRevision` job can appear in the triage tick's or the
+/// review tick's result as readily as the design tick's. A drain that registers
+/// the producer but no sink counts a refusal as a success and surfaces nothing
+/// (F-222); a drain that sees the job with NO producer registered throws
+/// `UnhandledJobTypeException` and fails the whole section. Every drain that can
+/// see the type therefore needs the SAME sink, and the composition builds it
+/// once so the three registrations cannot drift into describing different
+/// behaviour.
+class DesignRefusalSink {
+  DesignRefusalSink({
+    required this.sink,
+    required this.refusedJobIds,
+    required this.outcomes,
+  });
+
+  final DesignRevisionOutcomeSink sink;
+  final List<String> refusedJobIds;
+  final List<StallGateOutcome> outcomes;
+}
+
+DesignRefusalSink buildDesignRefusalSink({
+  required DurableWorkflowEngine workflowEngine,
+  required ExecutionStore executionStore,
+  required void Function(String event, Map<String, dynamic> data) log,
+}) {
+  final refusedJobIds = <String>[];
+  final outcomes = <StallGateOutcome>[];
+  Future<void> sink(Job job, DesignRevisionProducerResult result) async {
+    if (!result.isRefused) return;
+    refusedJobIds.add(job.jobId);
+    // A refusal with no code contradicts the producer's own contract. Treat it
+    // as a refusal anyway rather than as success: the item is still finished
+    // with no revision, and the log says exactly what was observed.
+    final outcome = await raiseDesignProducerRefusalDecision(
+      workflowEngine: workflowEngine,
+      executionStore: executionStore,
+      job: job,
+      refusal: result,
+      logger: log,
+    );
+    outcomes.add(outcome);
+    if (outcome != StallGateOutcome.raised &&
+        outcome != StallGateOutcome.alreadyPending) {
+      // Never quiet. Every arm here wrote nothing, and a refusal that surfaces
+      // nowhere is the defect this section exists to fix.
+      log('design.refusal.not-surfaced', {
+        'jobId': job.jobId,
+        'workItemId': job.workItemId,
+        'refusalCode': result.refusalCode,
+        'outcome': outcome.name,
+        'action':
+            'the refusal is recorded on the job and producer log, but no work '
+            'item decision was raised. The item still needs a person',
+      });
+    }
+  }
+
+  return DesignRefusalSink(
+    sink: sink,
+    refusedJobIds: refusedJobIds,
+    outcomes: outcomes,
+  );
+}
+
+Future<DesignLaneTickResult> runDesignLaneTick({
+  required Scheduler designRevisionScheduler,
+  required Scheduler designReviewScheduler,
+  required JobStore jobStore,
+  required TriageProcessor? triageProcessor,
+  required DesignRevisionProducer designRevisionProducer,
+  required DesignRefusalSink refusalSink,
+  required DurableWorkflowEngine workflowEngine,
+  required ExecutionStore executionStore,
+  required WorkerStore workerStore,
+  required void Function(StallGateResult stalls) foldStalls,
+  required void Function(String event, Map<String, dynamic> data) log,
+}) async {
+  // ---- Pass 1: revision, then review. ----
+  //
+  // The revision scheduler's OWN stall drain runs before anything else touches
+  // the jobs it settled, for the reason recorded on the review section: a stall
+  // conclusion must survive a later failure in this section.
+  final revisionTick = await designRevisionScheduler.tick();
+  foldStalls(
+    await raiseStallDecisions(
+      workflowEngine: workflowEngine,
+      executionStore: executionStore,
+      stalls: revisionTick.stalled,
+      logger: log,
+    ),
+  );
+
+  final unconsumedReviewJobIds = <String>[];
+  final revisionDrain = await drainTriageOutcomesFromTick(
+    tickResult: revisionTick,
+    jobStore: jobStore,
+    triageProcessor: triageProcessor,
+    designRevisionProducer: designRevisionProducer,
+    designRevisionOutcomeSink: refusalSink.sink,
+    // The table must be as complete as every other drain's, for the same
+    // measured reason: `drainTriageOutcomesFromTick` dispatches by TYPE and
+    // throws for a considered job with no handler. The types below are the ones
+    // this scheduler can see via step 1's cross-lane reconcile.
+    handlers: {
+      JobType.onboardProduct: (job) =>
+          observeCompletedOnboardingJob(job: job, logger: log),
+      // See the triage drain: a shared job store means any tick can reconcile
+      // any lane's job, so every table must name every type.
+      JobType.implementFeature: (job) =>
+          observeReconciledImplementationJob(job: job, logger: log),
+      JobType.engineeringReview: engineeringReviewTickHandler(
+        workflowEngine: workflowEngine,
+        executionStore: executionStore,
+        workerStore: workerStore,
+        logger: log,
+      ),
+      JobType.designReview: (job) async {
+        await observeCompletedDesignReviewJob(job: job, logger: log);
+        unconsumedReviewJobIds.add(job.jobId);
+      },
+    },
+    logger: log,
+  );
+  if (revisionDrain.handedOff > 0) {
+    log('design.revision.tick.drained', {
+      'considered': revisionDrain.considered,
+      'skipped': revisionDrain.skipped,
+      'handedOff': revisionDrain.handedOff,
+    });
+  }
+
+  final reviewTick = await designReviewScheduler.tick();
+  foldStalls(
+    await raiseStallDecisions(
+      workflowEngine: workflowEngine,
+      executionStore: executionStore,
+      stalls: reviewTick.stalled,
+      logger: log,
+    ),
+  );
+
+  final reviewDrain = await drainTriageOutcomesFromTick(
+    tickResult: reviewTick,
+    jobStore: jobStore,
+    triageProcessor: triageProcessor,
+    designRevisionProducer: designRevisionProducer,
+    designRevisionOutcomeSink: refusalSink.sink,
+    handlers: {
+      JobType.onboardProduct: (job) =>
+          observeCompletedOnboardingJob(job: job, logger: log),
+      // See the triage drain: a shared job store means any tick can reconcile
+      // any lane's job, so every table must name every type.
+      JobType.implementFeature: (job) =>
+          observeReconciledImplementationJob(job: job, logger: log),
+      JobType.engineeringReview: engineeringReviewTickHandler(
+        workflowEngine: workflowEngine,
+        executionStore: executionStore,
+        workerStore: workerStore,
+        logger: log,
+      ),
+      JobType.designReview: (job) async {
+        await observeCompletedDesignReviewJob(job: job, logger: log);
+        unconsumedReviewJobIds.add(job.jobId);
+      },
+    },
+    logger: log,
+  );
+  if (reviewDrain.handedOff > 0) {
+    log('design.review.tick.drained', {
+      'considered': reviewDrain.considered,
+      'skipped': reviewDrain.skipped,
+      'handedOff': reviewDrain.handedOff,
+    });
+  }
+
+  // ---- Fail closed, visibly, on a review with no resolvable artifact. ----
+  //
+  // The resolver returned null, so no reviewer was dispatched and the item is
+  // still at `designInReview`. Step 8 has no route for that (step 9 owns the
+  // approval decision), so it is reported by job id on every pass rather than
+  // invented into a decision type this step does not own. The scheduler
+  // re-surfaces the same job until the item leaves the state, so this is
+  // deliberately not one-shot.
+  final blockedReviewJobIds = List<String>.unmodifiable(
+    reviewTick.blockedArtifactMissing,
+  );
+  for (final jobId in blockedReviewJobIds) {
+    log('design.review.blocked-artifact-missing', {
+      'jobId': jobId,
+      'reason':
+          'no durable design revision with a Penpot file/page could be '
+          'resolved for this item, so no reviewer was dispatched',
+      'action':
+          'the item stays at designInReview; no decision was raised by design '
+          'step 8. This repeats each tick until the artifact exists',
+    });
+  }
+
+  return DesignLaneTickResult(
+    revisionDrain: revisionDrain,
+    reviewDrain: reviewDrain,
+    refusalOutcomes: List.unmodifiable(refusalSink.outcomes),
+    refusalJobIds: List.unmodifiable(refusalSink.refusedJobIds),
+    blockedReviewJobIds: blockedReviewJobIds,
+    unconsumedReviewJobIds: List.unmodifiable(unconsumedReviewJobIds),
   );
 }
 
@@ -4029,6 +4556,27 @@ class AgentExecutionBudgets {
     // below the observed floor is not a ceiling; it is a coin toss that always
     // lands on killed.
     'engineering-review': Duration(hours: 1),
+
+    // DESIGN REVISION — 2 hours. PROVISIONAL.
+    //
+    // NO OPERATOR-STATED RANGE EXISTS FOR THIS ROLE; this is a named gap, not a
+    // measured value. What exists is the shape of the work: a designer run makes
+    // multiple Penpot writes (boards, states, responsive targets) and then
+    // reads them back, so it is longer than a review but does not commit or run
+    // the validation tier an implementation does. 2 hours is twice the
+    // operator-stated maximum for a review (15–30 min) and half the
+    // implementation ceiling. Replace it from the Models → Stats "Run duration"
+    // measurement per role, like every other entry here.
+    'design-agent': Duration(hours: 2),
+
+    // DESIGN REVIEW — 1 hour. PROVISIONAL.
+    //
+    // OPERATOR-STATED, by role shape: a review run HERE, THROUGH OPENCODE, TAKES
+    // 15–30 MINUTES. This is the same kind of run as `engineering-review`, so it
+    // takes the same 2× margin. The design reviewer reads a Penpot document
+    // rather than a diff; that can add tool round-trips, but not an order of
+    // magnitude, and a wedged run must not hold a claim for hours.
+    'design-reviewer': Duration(hours: 1),
   };
 
   /// Triage's budget, in the seconds every workload field wants.
@@ -4049,6 +4597,12 @@ class AgentExecutionBudgets {
   /// literal `300` of its own.
   static int get engineeringReviewSeconds =>
       byRole['engineering-review']!.inSeconds;
+
+  /// The design revision lane's budget, in seconds.
+  static int get designAgentSeconds => byRole['design-agent']!.inSeconds;
+
+  /// The design review lane's budget, in seconds.
+  static int get designReviewerSeconds => byRole['design-reviewer']!.inSeconds;
 
   /// How long a non-terminal execution may go unobserved before the scheduler
   /// declares it a zombie and reclaims it.

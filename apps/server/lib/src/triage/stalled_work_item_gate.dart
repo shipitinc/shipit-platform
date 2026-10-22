@@ -5,10 +5,20 @@ import 'package:scheduler/scheduler.dart' show SchedulerStall;
 import 'package:workflow_store/workflow_store.dart'
     show DurableWorkflowEngine, WorkflowTransitionRejectedException;
 
+import '../design/design_revision_producer.dart'
+    show DesignRevisionProducerResult;
+
 /// The `metadata` key under which every stall raised for one work item is
 /// recorded on its decision, so a second lane's stall cannot displace the
 /// first and an operator can see that more than one lane stopped.
 const String stalledWorkItemMetadataKey = 'schedulerStall';
+
+/// The `metadata` key under which a `DesignRevisionProducer` refusal is
+/// recorded on the decision it raises. Separate from
+/// [stalledWorkItemMetadataKey] on purpose: a refusal is not a supersession
+/// stall, and an operator reading a decision should not have to guess which
+/// lane produced it.
+const String designProducerRefusalMetadataKey = 'designProducerRefusal';
 
 /// The operator-facing conclusion of one [SchedulerStall], as it will be
 /// recorded on the work item's blocking decision.
@@ -122,13 +132,172 @@ Future<StallGateOutcome> raiseStallDecision({
   required SchedulerStall stall,
   void Function(String message, Map<String, dynamic> context)? logger,
 }) async {
-  final workItemId = stall.workItemId;
-  final item = await workflowEngine.loadWorkItem(workItemId);
+  final item = await workflowEngine.loadWorkItem(stall.workItemId);
+  return _parkAndAsk(
+    workflowEngine: workflowEngine,
+    executionStore: executionStore,
+    item: item,
+    question: stallQuestion(stall),
+    options: _stallOptions,
+    recommendation: 'REWORK',
+    metadata: stallMetadata(stall),
+    eventPrefix: 'stall',
+    logContext: {
+      'jobType': stall.jobType.wire,
+      'deferrals': stall.deferrals,
+    },
+    notParkableAction:
+        'this lane has stopped launching work for this item, but the item is '
+        'not at a state this gate may park from. Nothing was written',
+    producerEvidenceAction:
+        'no work item decision was raised. The stall stands and the item '
+        'still needs a person; nothing was fabricated to unblock it',
+    logger: logger,
+  );
+}
+
+/// Turns a named `DesignRevisionProducer` refusal into a blocking human
+/// decision through the SAME parking path the scheduler stall gate uses.
+///
+/// ## WHY THE PRODUCER'S VERDICT NEEDS THIS SECOND STEP
+///
+/// A refusal is a normal return, not a throw, and the job is terminal. The item
+/// stays at `agentCompleted`, which is not an entry state of
+/// `designRevisionDefinition`, so nothing re-enqueues it. Without a decision the
+/// refusal is indistinguishable from a finished revision to every reader except
+/// the log (F-222, decision `e2c7a05b`).
+///
+/// ## WHAT IT MAY AND MAY NOT DO
+///
+/// It may park the item at `reviewInProgress` and ask the question, exactly as
+/// [raiseStallDecision] does — `agentCompleted -> reviewInProgress` is the only
+/// route from that state to the human gate, and it is guarded by real producer
+/// evidence. It may NOT fabricate that evidence: when the refusal is "there is
+/// no completed result to read", the gate returns
+/// [StallGateOutcome.producerEvidenceUnreadable] and writes nothing. The refusal
+/// is still logged by the producer; the item still needs a person.
+///
+/// A job whose work item cannot be loaded is logged by name and no item id is
+/// invented. That is the malformed-job/execution arm of the same decision.
+///
+/// ## IDEMPOTENCE
+///
+/// The item state is the dedupe: once parked at `waitingForHumanDecision`, a
+/// re-drain returns [StallGateOutcome.alreadyPending] without minting a second
+/// decision. The job/execution identity is still recorded on the decision
+/// metadata so an operator can tell which refused run it belongs to.
+///
+/// ## KNOWN BOUNDARY (reported, not worked around)
+///
+/// The gate reuses [stalledWorkItemDecisionType] because the state machine
+/// forces it for an `agentCompleted` park. Its `rework` answer routes through
+/// `HumanDecisionRouting` to `implementationReady`, which is the implementation
+/// lane's entry state and not the design lane's. Changing that route is a
+/// `HumanDecisionRouting`/transition-contract change outside this lane; the
+/// decision is still the platform's only operator-visible signal, and `cancel`
+/// is correct. Reported as a discovery rather than silently adding a decision
+/// type or an edge.
+Future<StallGateOutcome> raiseDesignProducerRefusalDecision({
+  required DurableWorkflowEngine workflowEngine,
+  required ExecutionStore executionStore,
+  required Job job,
+  required DesignRevisionProducerResult refusal,
+  void Function(String message, Map<String, dynamic> context)? logger,
+}) async {
+  final code = refusal.refusalCode;
+  if (!refusal.isRefused || code == null || code.isEmpty) {
+    return StallGateOutcome.notParkable;
+  }
+
+  final WorkItem item;
+  try {
+    item = await workflowEngine.loadWorkItem(job.workItemId);
+  } on Object catch (e) {
+    logger?.call('design.refusal.work-item-unreadable', {
+      'jobId': job.jobId,
+      'workItemId': job.workItemId,
+      'refusalCode': code,
+      'error': '$e',
+      'action':
+          'no work item decision was raised and no item id was invented; the '
+          'refusal is recorded on the job and in this log only',
+    });
+    return StallGateOutcome.notParkable;
+  }
+
+  return _parkAndAsk(
+    workflowEngine: workflowEngine,
+    executionStore: executionStore,
+    item: item,
+    question: designProducerRefusalQuestion(
+      item: item,
+      job: job,
+      refusal: refusal,
+    ),
+    options: _stallOptions,
+    recommendation: 'REWORK',
+    metadata: designProducerRefusalMetadata(
+      item: item,
+      job: job,
+      refusal: refusal,
+    ),
+    eventPrefix: 'design.refusal',
+    logContext: {
+      'jobType': job.jobType.wire,
+      'jobId': job.jobId,
+      'executionId': executionIdentity(job),
+      'refusalCode': code,
+    },
+    notParkableAction:
+        'the design producer refused, but the item is not at a state this '
+        'gate may park from. Nothing was written',
+    producerEvidenceAction:
+        'no work item decision was raised. The refusal stands and the item '
+        'still needs a person; nothing was fabricated to unblock it',
+    logger: logger,
+  );
+}
+
+const List<HumanDecisionOption> _stallOptions = [
+  HumanDecisionOption(
+    optionId: 'rework',
+    label: 'Start this work again',
+    description:
+        'The cause is fixed. Send it back to be built and reviewed again.',
+  ),
+  HumanDecisionOption(
+    optionId: 'cancel',
+    label: 'Stop this work',
+    description: 'Stop working on this. The record is kept.',
+  ),
+];
+
+/// The one parking path both a scheduler stall and a producer refusal use.
+///
+/// Extracted verbatim from [raiseStallDecision] so the guarded route
+/// (`agentCompleted -> reviewInProgress -> waitingForHumanDecision`) has ONE
+/// implementation. Two copies would be two places to forget the evidence guard,
+/// and the second one would be the one nobody reviewed.
+Future<StallGateOutcome> _parkAndAsk({
+  required DurableWorkflowEngine workflowEngine,
+  required ExecutionStore executionStore,
+  required WorkItem item,
+  required String question,
+  required List<HumanDecisionOption> options,
+  required String recommendation,
+  required Map<String, dynamic> metadata,
+  required String eventPrefix,
+  required Map<String, dynamic> logContext,
+  required String notParkableAction,
+  required String producerEvidenceAction,
+  required void Function(String message, Map<String, dynamic> context)? logger,
+}) async {
+  final workItemId = item.workItemId;
 
   if (item.state == WorkItemState.waitingForHumanDecision) {
-    logger?.call('stall.already-parked', {
+    logger?.call('$eventPrefix.already-parked', {
       'workItemId': workItemId,
-      'jobType': stall.jobType.wire,
+      ...logContext,
     });
     return StallGateOutcome.alreadyPending;
   }
@@ -147,13 +316,11 @@ Future<StallGateOutcome> raiseStallDecision({
       // Forcing it would fabricate the very evidence `agentResultValid()`
       // exists to check. The item stays stalled and still needs a human; this
       // is a visible block, not a quiet one.
-      logger?.call('stall.producer-evidence-unreadable', {
+      logger?.call('$eventPrefix.producer-evidence-unreadable', {
         'workItemId': workItemId,
-        'jobType': stall.jobType.wire,
+        ...logContext,
         'producer': producer.note,
-        'action':
-            'no work item decision was raised. The stall stands and the item '
-            'still needs a person; nothing was fabricated to unblock it',
+        'action': producerEvidenceAction,
       });
       return StallGateOutcome.producerEvidenceUnreadable;
     }
@@ -173,20 +340,19 @@ Future<StallGateOutcome> raiseStallDecision({
         },
       );
     } on WorkflowTransitionRejectedException catch (e) {
-      logger?.call('stall.park-refused', {
+      logger?.call('$eventPrefix.park-refused', {
         'workItemId': workItemId,
+        ...logContext,
         'error': e.toString(),
       });
       return StallGateOutcome.notParkable;
     }
   } else {
-    logger?.call('stall.not-parkable', {
+    logger?.call('$eventPrefix.not-parkable', {
       'workItemId': workItemId,
       'state': item.state.wire,
-      'jobType': stall.jobType.wire,
-      'action':
-          'this lane has stopped launching work for this item, but the item is '
-          'not at a state this gate may park from. Nothing was written',
+      ...logContext,
+      'action': notParkableAction,
     });
     return StallGateOutcome.notParkable;
   }
@@ -195,23 +361,11 @@ Future<StallGateOutcome> raiseStallDecision({
     await workflowEngine.requestHumanDecision(
       workItemId: workItemId,
       decisionType: stalledWorkItemDecisionType,
-      question: stallQuestion(stall),
-      options: const [
-        HumanDecisionOption(
-          optionId: 'rework',
-          label: 'Start this work again',
-          description:
-              'The cause is fixed. Send it back to be built and reviewed again.',
-        ),
-        HumanDecisionOption(
-          optionId: 'cancel',
-          label: 'Stop this work',
-          description: 'Stop working on this. The record is kept.',
-        ),
-      ],
-      recommendation: 'REWORK',
+      question: question,
+      options: options,
+      recommendation: recommendation,
       blocking: true,
-      metadata: stallMetadata(stall),
+      metadata: metadata,
       actor: const WorkflowActor(
         actorId: 'orchestrator',
         actorType: ActorType.orchestrator,
@@ -226,19 +380,70 @@ Future<StallGateOutcome> raiseStallDecision({
       },
     );
   } on WorkflowTransitionRejectedException catch (e) {
-    logger?.call('stall.decision-refused', {
+    logger?.call('$eventPrefix.decision-refused', {
       'workItemId': workItemId,
+      ...logContext,
       'error': e.toString(),
     });
     return StallGateOutcome.notParkable;
   }
 
-  logger?.call('stall.parked', {
+  logger?.call('$eventPrefix.parked', {
     'workItemId': workItemId,
-    'jobType': stall.jobType.wire,
-    'deferrals': stall.deferrals,
+    ...logContext,
   });
   return StallGateOutcome.raised;
+}
+
+/// The one sentence an operator reads for a refused design revision. It names
+/// the refusal code and the work item, because "the design step did not run"
+/// without either is not actionable.
+String designProducerRefusalQuestion({
+  required WorkItem item,
+  required Job job,
+  required DesignRevisionProducerResult refusal,
+}) {
+  final detail = refusal.detail;
+  return 'The design producer refused to produce a revision for '
+      '"${item.title}" (${item.workItemId}). Refusal code: '
+      '${refusal.refusalCode}.'
+      '${detail == null || detail.isEmpty ? '' : ' Detail: $detail.'} '
+      'The item is at ${item.state.wire} and will not be retried '
+      'automatically.';
+}
+
+/// The structured facts of a refusal, kept beside the prose. Carries the
+/// job/execution identity the decision's idempotence is keyed to, so an
+/// operator can tell which refused run this question belongs to.
+/// The durable identity of the run that refused.
+///
+/// The AGENT execution id is the identity the producer keys a revision on and
+/// the one it records as `designerExecutionId`, so using the worker execution
+/// id here would make the decision point at a different run than the refusal
+/// does. The worker id remains the fallback for a job whose reference carries
+/// only that side.
+String? executionIdentity(Job job) =>
+    job.executionReference?.agentExecutionId ??
+    job.executionReference?.workerExecutionId;
+
+Map<String, dynamic> designProducerRefusalMetadata({
+  required WorkItem item,
+  required Job job,
+  required DesignRevisionProducerResult refusal,
+}) {
+  final executionId = executionIdentity(job);
+  return {
+    designProducerRefusalMetadataKey: {
+      'workItemId': item.workItemId,
+      'state': item.state.wire,
+      'jobType': job.jobType.wire,
+      'jobId': job.jobId,
+      'executionId': executionId,
+      'refusalCode': refusal.refusalCode,
+      'detail': refusal.detail,
+      'dedupeKey': '${job.jobId}:${executionId ?? ''}',
+    },
+  };
 }
 
 /// The one sentence an operator reads. Carries the item's state and how many

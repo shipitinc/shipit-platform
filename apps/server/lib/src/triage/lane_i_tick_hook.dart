@@ -12,6 +12,16 @@ import 'triage_processor.dart';
 /// batch down.
 typedef TickJobHandler = Future<void> Function(Job job);
 
+/// Observes the verdict of one completed `designRevision` job.
+///
+/// The producer returns a VERDICT rather than throwing on a named refusal, and
+/// the drain is the only place that has both the job and the result in hand.
+/// The sink is how step 8 turns `refused` into an operator-visible stalled
+/// decision without making the producer own decision policy (F-222 / decision
+/// `e2c7a05b`).
+typedef DesignRevisionOutcomeSink =
+    Future<void> Function(Job job, DesignRevisionProducerResult result);
+
 /// Raised when a job's [JobType] has no registered handler.
 ///
 /// ## Why this is an exception and not another `skipped++`
@@ -182,9 +192,12 @@ Future<TriageTickDrainResult> drainTriageOutcomesFromTick({
   // The design step-6 producer. It is registered HERE rather than in a
   // caller-supplied `handlers` map so that `JobType.designRevision` is a
   // property of the dispatch table itself: step 8 mounts the design scheduler
-  // and already finds the type handled. It stays inert until then, because no
-  // design job is enqueued in this composition.
+  // and already finds the type handled.
   DesignRevisionProducer? designRevisionProducer,
+  // Called with the producer's verdict. A named refusal is a normal return, so
+  // without this the drain would count it as a success and no operator would
+  // ever see it (F-222).
+  DesignRevisionOutcomeSink? designRevisionOutcomeSink,
   Map<JobType, TickJobHandler>? handlers,
   required void Function(String event, Map<String, dynamic> data) logger,
 }) async {
@@ -196,7 +209,9 @@ Future<TriageTickDrainResult> drainTriageOutcomesFromTick({
       ...triageOnlyTickHandlers(triageProcessor: triageProcessor),
     if (designRevisionProducer != null)
       JobType.designRevision: (job) async {
-        await designRevisionProducer.processCompletedDesignRevisionJob(job);
+        final result = await designRevisionProducer
+            .processCompletedDesignRevisionJob(job);
+        await designRevisionOutcomeSink?.call(job, result);
       },
     ...?handlers,
   };
@@ -205,6 +220,18 @@ Future<TriageTickDrainResult> drainTriageOutcomesFromTick({
     'no handler survived for ${JobType.triageDefect.wire}; a caller-supplied '
     'table must not be able to remove the triage handler, or every triage job '
     'would look unhandled',
+  );
+  // The designRevision handler is the ONLY place the producer's verdict is
+  // read. A caller-supplied entry for the same type would silently replace it
+  // (the spread is last), and a refused revision would again be counted as
+  // handled with no decision raised. That is the F-222 defect wearing a
+  // different hat, so it is refused at construction rather than trusted.
+  assert(
+    designRevisionProducer == null ||
+        !(handlers?.containsKey(JobType.designRevision) ?? false),
+    'the designRevision handler is registered by the drain itself; a '
+    'caller-supplied handlers map must not override it, or a refused design '
+    'revision is counted as handled without surfacing a decision',
   );
   assert(
     table.isNotEmpty,

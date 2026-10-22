@@ -915,14 +915,18 @@ void main() {
     });
 
     test(
-      'nothing mounts or re-points a scheduler in the OD-6 change',
+      'the composition mounts exactly the schedulers the design authorises — '
+      'no more, no fewer',
       () async {
-        // `run()` already builds THREE schedulers at base — `sched-triage`,
-        // `sched-review`, `sched-impl`. OD-6 must leave that set exactly as it
-        // was: it adds a COORDINATOR, which verifies work, and never a
-        // SCHEDULER, which would start dispatching. The count is pinned to the
-        // base so that adding one here fails loudly instead of shipping a
-        // scheduler nobody reviewed.
+        // OD-6 pinned this set to THREE (`sched-triage`, `sched-review`,
+        // `sched-impl`) and forbade adding one, because OD-6 adds a verifier and
+        // never a dispatcher. Design-governance step 8 later added the two
+        // design schedulers BY DECISION (`sched-design-revision`,
+        // `sched-design-review`, mounted together in `runDesignLaneTick`), so
+        // the set here is the post-step-8 one. The durable value of the test is
+        // unchanged: an id that is added, renamed or removed WITHOUT a matching
+        // edit here fails loudly instead of shipping a scheduler nobody
+        // reviewed.
         final source = await _readServerSource();
         final constructions = RegExp(
           r"Scheduler\(\s*schedulerId: '([^']+)'",
@@ -930,12 +934,18 @@ void main() {
 
         expect(
           constructions,
-          ['sched-triage', 'sched-review', 'sched-impl'],
+          [
+            'sched-triage',
+            'sched-review',
+            'sched-design-revision',
+            'sched-design-review',
+            'sched-impl',
+          ],
           reason:
-              'the three schedulers `run()` builds are unchanged by OD-6. A '
-              'fourth entry, a renamed id, or a different set means a '
-              'scheduler was added or re-pointed — outside what this slice is '
-              'authorised to do.',
+              'the schedulers `run()` builds. A new entry, a renamed id, or a '
+              'different set means a scheduler was added or re-pointed without '
+              'updating this test — which is the review this assertion exists '
+              'to force.',
         );
 
         // And the implementation lane still dispatches through the SAME

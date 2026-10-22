@@ -130,18 +130,35 @@ void main() {
       );
     });
 
-    test('the three budgets are distinct, so no role inherits another by '
-        'accident', () {
-      final values = AgentExecutionBudgets.byRole.values
-          .map((d) => d.inSeconds)
-          .toSet();
+    test('roles are distinct EXCEPT the one documented sharing pair, so no '
+        'role inherits another by accident', () {
+      // Two roles MAY share a number only when that sharing was DECIDED and
+      // written down. Exactly one such decision exists — `design-reviewer`
+      // takes `engineering-review`'s number because it is the same kind of
+      // run (see both headers in `AgentExecutionBudgets.byRole`) — and it is
+      // named here rather than swallowed. Any OTHER collision is still an
+      // accident: two lanes running under one number nobody chose is
+      // indistinguishable from one lane being mis-set.
+      final shared = <String, List<String>>{};
+      for (final entry in AgentExecutionBudgets.byRole.entries) {
+        shared
+            .putIfAbsent('${entry.value.inSeconds}', () => <String>[])
+            .add(entry.key);
+      }
+      final collisions =
+          shared.entries
+              .where((e) => e.value.length > 1)
+              .map((e) => (e.value..sort()).join('+'))
+              .toList()
+            ..sort();
       expect(
-        values.length,
-        AgentExecutionBudgets.byRole.length,
+        collisions,
+        ['design-reviewer+engineering-review'],
         reason:
-            'two roles sharing a budget is fine only if it was decided. '
-            'Today it is not, and two lanes running under one accidental '
-            'number is indistinguishable from one lane being mis-set.',
+            'the only roles allowed to share a budget are the two named in '
+            'this expectation. A new collision means a role was given another '
+            'lane\'s number without a decision; a missing one means the '
+            'documented sharing was changed without this test.',
       );
     });
   });

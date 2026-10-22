@@ -932,9 +932,14 @@ void main() {
         impl,
         tick,
       );
+      // The wording names the CODE lanes: since design-governance step 8 the
+      // design section runs ABOVE this one and also draws from `agentCompleted`,
+      // so implementation is the first of the two *code* lanes sharing it. The
+      // load-bearing fact — this section states its own ordering constraint
+      // immediately above itself — is what the assertion protects.
       expect(
         note,
-        contains('FIRST of the two lanes that share `agentCompleted`'),
+        contains('FIRST of the two CODE lanes that share `agentCompleted`'),
         reason:
             'the one section whose position is load-bearing must say so '
             'immediately above itself, where a reader editing the order will '

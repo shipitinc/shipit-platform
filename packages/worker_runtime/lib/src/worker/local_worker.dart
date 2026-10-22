@@ -369,9 +369,14 @@ class LocalWorker implements Worker {
       // removes the worktree. The worktree is detached and is destroyed on
       // completion, so an uncommitted edit is not evidence anything downstream
       // can inspect: the produced revision is the commit. A reviewer must NEVER
-      // commit — it inspects what the implementer produced — so this is skipped
-      // for the engineering-reviewer role.
-      if (request.role != AgentRole.engineeringReviewer) {
+      // commit — it inspects what the producer produced — so this is skipped
+      // for BOTH reviewer roles.
+      //
+      // The DESIGN reviewer is excluded for the same reason, and the step-8
+      // mount is what makes that reachable: its subject is the Penpot revision
+      // the producer recorded, not a commit of the review worktree.
+      if (request.role != AgentRole.engineeringReviewer &&
+          request.role != AgentRole.designReviewer) {
         final committed = await artifactCommitter.commit(
           worktreePath: descriptor.worktreePath,
           workItemId: request.workItemId,

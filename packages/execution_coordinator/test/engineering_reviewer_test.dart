@@ -134,6 +134,44 @@ void main() {
     },
   );
 
+  test('a DESIGN reviewer runs IN designInReview and is not moved to '
+      'agentCompleted', () async {
+    // The design approval is raised from `designInReview` (§5.3/§5.4 of the
+    // design-governance-runtime design). If the coordinator treated the
+    // design reviewer like an ordinary producing role it would take
+    // `designInReview -> agentExecuting` and then `agentExecuting ->
+    // agentCompleted`, which both loses the state the approval gate reads and
+    // hands the item to the ENGINEERING review lane's entry state.
+    await workflowStore.saveWorkItem(
+      WorkItem(
+        workItemId: 'wi-1',
+        productId: 'prod-1',
+        category: WorkItemCategory.feature,
+        title: 'Design the calculator add screen',
+        state: WorkItemState.designInReview,
+        qaContractId: 'qa-1',
+        createdAt: DateTime.utc(2026, 10, 22),
+        updatedAt: DateTime.utc(2026, 10, 22),
+      ),
+    );
+
+    await coordinator.execute(
+      request(
+        executionId: 'exec-design-review',
+        role: AgentRole.designReviewer,
+      ),
+    );
+
+    final item = await workflowEngine.loadWorkItem('wi-1');
+    expect(
+      item.state,
+      WorkItemState.designInReview,
+      reason:
+          'reviewInProgress is the ENGINEERING reviewer\'s state; the design '
+          'review happens while the item is designInReview',
+    );
+  });
+
   test('a reviewer terminal outcome performs NO workflow transition', () async {
     await runImplementer();
     await coordinator.execute(

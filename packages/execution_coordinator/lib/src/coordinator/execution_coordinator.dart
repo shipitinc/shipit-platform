@@ -546,9 +546,18 @@ class ExecutionCoordinator {
     }
 
     final item = await workflowEngine.loadWorkItem(request.workItemId);
-    final isReviewer = request.role == AgentRole.engineeringReviewer;
-    final runningState = isReviewer
+    final isEngineeringReviewer = request.role == AgentRole.engineeringReviewer;
+    // The DESIGN reviewer is a reviewer too, but its state is the one the
+    // `designApproval` gate is raised FROM (`designInReview`, §5.3/§5.4 of the
+    // design-governance-runtime design). There is no separate
+    // `designReviewInProgress` state, and entering `agentExecuting` would both
+    // lose the state the approval reads and hand the item to the ENGINEERING
+    // review lane's `agentCompleted` entry when the review finishes.
+    final isDesignReviewer = request.role == AgentRole.designReviewer;
+    final runningState = isEngineeringReviewer
         ? WorkItemState.reviewInProgress
+        : isDesignReviewer
+        ? WorkItemState.designInReview
         : WorkItemState.agentExecuting;
     if (item.state != runningState) {
       try {
@@ -563,7 +572,7 @@ class ExecutionCoordinator {
           // why `engineeringReviewDefinition.skipWorkflowPolicyCheck` is true), but
           // this transition runs against the durable engine, so it must. Every
           // non-reviewer role keeps the original context byte for byte.
-          context: isReviewer
+          context: isEngineeringReviewer
               ? await _reviewEntryTransitionContext(request.workItemId)
               : const {'agentAvailable': true, 'capabilitiesMatch': true},
         );
@@ -1332,9 +1341,12 @@ class ExecutionCoordinator {
     // invariant "missing implies non-null" a thing to re-check by eye.
     final missingArtifact = artifactMissing ? artifact : null;
 
-    if (request.role == AgentRole.engineeringReviewer) {
-      // For engineering reviewers, the coordinator must NOT transition out of
-      // reviewInProgress; the tick handler will raise a human decision instead.
+    if (request.role == AgentRole.engineeringReviewer ||
+        request.role == AgentRole.designReviewer) {
+      // For BOTH reviewer roles, the coordinator must NOT transition out of the
+      // state the review gate reads: `reviewInProgress` for an engineering
+      // review, `designInReview` for a design review. The tick handler/approval
+      // raiser owns the transition out.
       //
       // That applies to the artifact rule too, and is the reason this lane can
       // enforce an artifact without owning its routing: where a verdict-absent
