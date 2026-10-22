@@ -3106,7 +3106,10 @@ strengthens the claim.** 8 mutations total, 0 green reverts, none discarded as f
   likely to be skipped and the one that matters most."* **It has a live consumer now**: contracts lane E
   provisions carry `requiredArtifacts[0].validationSchema: null` and `requiredArtifactSchemas: 'absent'` — a
   *named* absence. The anchor is what turns that `null` into something a validator can check.
-- **Step 6 — the producer.** Nothing runs `designRevision` or writes a `DesignRevision`.
+- **Step 6 — LANDED at `cfff8c4` (tests `b5b0377`).** `DesignRevisionProducer` is a terminal-job consumer
+  registered in the tick drain; it writes a `DesignRevision`, submits the design contract
+  `draft -> underReview` (decision `d5e8a144`), and advances `agentCompleted -> designInReview` with both
+  metadata keys. It is INERT until step 8 mounts the scheduler.
 - **Step 7 — LANDED at `3c033ef`.** `designRejected → designRequired` and
   `designRevisionDefinition.entryProbeTargets[designRejected]=designRequired` are both in tree; the new edge is
   orchestrator-only, matching design §5.4(a), and deliberately carries no `designContractExists()` because the
@@ -3247,7 +3250,8 @@ filename. **Read names, not counts, and never infer a file's verdict from a repo
 **detects** it, only a managed model or `schema_bootstrap.sql` **prevents** it — needs an owner); F-175
 (§3.5.3's read-half `schemaInvalid` exists only in the design document); F-174 (now fixed in-tree but the trap's
 scope is noted); F-156 is now closed at `3c033ef` and step 7 landed there.
-**Step 6 (the producer) is not started**, and the runtime remains OFF.
+**Step 6 (the producer) landed at `cfff8c4`** (tests `b5b0377`), but it is INERT: no design scheduler is
+mounted, so no `designRevision` job exists and the runtime remains OFF until step 8.
 
 ## 42. QA lane slice P1 (the two readers) landed — and a red gate was proven pre-existing, not absorbed
 
@@ -3694,3 +3698,29 @@ the triage / baseline / credential / implementation / persistence suites. A chan
 declared gate while its own regression test never runs. This is a coverage convention defect, not a lane error;
 the F-170 lane ran the file explicitly and said so. Fix: move co-located tests under `test/`, or give the runner
 an explicit `lib/**/*_test.dart` lane and pin both in `AGENTS.md`. Review M-2 on `3c033ef`.
+
+**F-221 — P3 does not detect a forked revision lineage.**
+`design_revision_producer.dart` accepts any payload whose `parentRevisionId` equals the current approved
+revision, but does not check whether a SECOND draft already claims the same approved parent, so two forked
+successors are both written. The design names this hostile case explicitly (§3.1 P3). Unreachable today
+because the correction loop is dead until D-1 is fixed, so it is not blocking the first run; it must be
+closed WITH the correction loop, not after, by reading existing revisions at write time. Review M2 on
+`cfff8c4`.
+
+**F-222 — a producer refusal parks the item with only a log line, and the job is counted succeeded.**
+Every `_refuse` path logs and returns normally, so `drainTriageOutcomesFromTick` records the job as
+succeeded, the job goes terminal, nothing retries, and the item stays at `agentCompleted` — which is not an
+entry state of `designRevisionDefinition`, so nothing re-enqueues. Harmless while the producer is inert;
+at step 8 it converts a refused design revision into a permanently parked work item whose only symptom is a
+log line. **Step 8 must decide the operator-visible remedy** (a human decision object, a re-enqueue, or a
+park state) before the lane goes live. Review M3 on `cfff8c4`.
+
+**F-223 — three step-8-adjacent residuals from the producer review.**
+(a) P2's equality half — a revision's design-system revision must equal the product's declared one — is
+unenforceable: `Product` carries no such field and no store declares one, so only non-blank is enforced
+(review L2). (b) `server.dart`'s comment calling step 8 "a scheduler mount and nothing else" is wrong: each
+scheduler drains its own tick, so a design tick needs its own drain call passing the producer (review L3).
+(c) `designRevision` is registered in the drain's type table but the trailing `...?handlers` spread can
+override it; `triageDefect` is assert-protected and this new one is not (review L4). Also unclosed:
+`contract.not-draft` is untested and fires AFTER the revision write (step 9), and a crash-replay upserts the
+same revision id with the replay clock, so `createdAt` is not immutable (review L1/L6).
