@@ -3107,15 +3107,20 @@ strengthens the claim.** 8 mutations total, 0 green reverts, none discarded as f
   provisions carry `requiredArtifacts[0].validationSchema: null` and `requiredArtifactSchemas: 'absent'` — a
   *named* absence. The anchor is what turns that `null` into something a validator can check.
 - **Step 6 — the producer.** Nothing runs `designRevision` or writes a `DesignRevision`.
-- **Step 7 — `designRejected → designRequired` AND `entryProbeTargets`.** Both absent; a rejected design still
-  strands the item, and it is **both, never one**.
+- **Step 7 — LANDED at `3c033ef`.** `designRejected → designRequired` and
+  `designRevisionDefinition.entryProbeTargets[designRejected]=designRequired` are both in tree; the new edge is
+  orchestrator-only, matching design §5.4(a), and deliberately carries no `designContractExists()` because the
+  scheduler probe cannot supply a `DesignContractResolution` (`EntryHopper._hopContext`). Both halves are
+  separately falsified by tests, and the live copy guard forced a control-plane arm (`c159b8e`).
 - **Step 8 — mount `sched-design-revision` / `sched-design-review`.** F-171 goes live here.
 - **Step 9 — raise `designApproval`.** No producer.
 - **Plus the F-170 design ruling, before step 8.**
 - Step 5 (`DesignRiskPolicy`) is deferred under D4 and not blocking; step 10 (D-1 dedupe suffix, D-4 vacuous
   test) blocks the **second** run, not the first.
-- **F-156** (`_DesignContractUnderReviewGuard` reading caller-supplied `context['designContractStatus']`) belongs
-  on the runtime's ledger **before step 6** — same defect class step 2 closed on the adjacent edge.
+- **F-156 — CLOSED at `3c033ef`.** `_DesignContractUnderReviewGuard` now reads `DesignContractResolution.status`
+  from the SAME store lookup as the existence guard; a caller-supplied `context['designContractStatus']` is no
+  longer read anywhere in production, and a contract-less item with a planted `underReview` context is refused
+  by test. This was the defect class step 2 closed on the adjacent edge.
 
 ## 40. Step 4: the anchor's schema, gate and differential landed; B1 blocked three times on MY errors
 
@@ -3241,7 +3246,7 @@ filename. **Read names, not counts, and never infer a file's verdict from a repo
 **Still open, unchanged:** F-170/F-165 (`product_qa_contract_spec` erasure is 5/5 reproducible; the guard
 **detects** it, only a managed model or `schema_bootstrap.sql` **prevents** it — needs an owner); F-175
 (§3.5.3's read-half `schemaInvalid` exists only in the design document); F-174 (now fixed in-tree but the trap's
-scope is noted); F-156 (`_DesignContractUnderReviewGuard` still reads caller-supplied context).
+scope is noted); F-156 is now closed at `3c033ef` and step 7 landed there.
 **Step 6 (the producer) is not started**, and the runtime remains OFF.
 
 ## 42. QA lane slice P1 (the two readers) landed — and a red gate was proven pre-existing, not absorbed
@@ -3680,3 +3685,12 @@ a signature `apps/server/tool/run_unit_tests.dart` itself documents as a known r
 `dart pub get --offline` on this machine is ~2 min, so the test's own 3-minute `@Timeout` is unsatisfiable
 under ambient load. Neither is caused by the F2 work; both must be resolved or re-measured on a quiet
 machine before the merge gate can be trusted.
+
+**F-220 — the declared `apps/server` unit gate cannot see 17 co-located `lib/**/*_test.dart` suites.**
+`apps/server/tool/run_unit_tests.dart` enumerates only top-level `test/*.dart`, non-recursively, so every
+`apps/server/lib/**/*_test.dart` suite is outside the per-execution gate: 17 files today, including
+`lib/src/triage/lane_e_design_remediation_work_item_test.dart` (27 tests, which the F-170 change relies on) and
+the triage / baseline / credential / implementation / persistence suites. A change can therefore pass the
+declared gate while its own regression test never runs. This is a coverage convention defect, not a lane error;
+the F-170 lane ran the file explicitly and said so. Fix: move co-located tests under `test/`, or give the runner
+an explicit `lib/**/*_test.dart` lane and pin both in `AGENTS.md`. Review M-2 on `3c033ef`.
