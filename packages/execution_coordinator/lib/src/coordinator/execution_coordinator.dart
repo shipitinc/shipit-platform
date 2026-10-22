@@ -1543,9 +1543,21 @@ class ExecutionCoordinator {
   ) async {
     final (status, eventType, reason) = _failureDetails(terminalEvent);
 
-    if (request.role == AgentRole.engineeringReviewer) {
-      // Do not transition workflow state out of reviewInProgress for reviewer
-      // terminal outcomes; tick handler will create the human decision.
+    if (request.role == AgentRole.engineeringReviewer ||
+        request.role == AgentRole.designReviewer) {
+      // Do not transition workflow state out of the state the review gate reads
+      // for EITHER reviewer role: `reviewInProgress` for an engineering review,
+      // `designInReview` for a design review. The tick handler / approval raiser
+      // owns the transition out.
+      //
+      // This mirrors [_completeSuccess], which already treats both reviewer
+      // roles the same way. Without the design-reviewer arm a failed design
+      // review attempted `designInReview -> agentFailed`, an edge the transition
+      // table does not offer; the rejection was caught by [_finalize] and the
+      // execution was reported as a coordinator finalize error instead of as the
+      // review failure it was. The item is left at `designInReview` — where step
+      // 9's approval gate reads it — and this lane deliberately does not invent
+      // a failure edge (see FOLLOW_UPS F-224(d)).
     } else {
       await workflowEngine.transition(
         workItemId: request.workItemId,

@@ -119,6 +119,7 @@ import 'src/triage/defect_triage_sweep.dart';
 import 'src/triage/lane_i_tick_hook.dart'
     show
         DesignRevisionOutcomeSink,
+        TickJobHandler,
         TriageTickDrainResult,
         drainTriageOutcomesFromTick;
 import 'src/triage/stalled_work_item_gate.dart'
@@ -1256,37 +1257,12 @@ void run(List<String> args) async {
           triageProcessor: triageProcessor,
           designRevisionProducer: designRevisionProducer,
           designRevisionOutcomeSink: designRefusalSink.sink,
-          // `onboardProduct` is registered so the dispatch table is COMPLETE.
-          // Onboarding jobs are product-scoped and are claimed and run by
-          // `BaselineProductDispatcher` below, so they never appear in a triage
-          // `SchedulerTickResult` and this handler does not fire in this
-          // composition. It is registered because the alternative is an
-          // `UnhandledJobTypeException` — a job type no handler was written for —
-          // the moment any future composition lets one scheduler serve both.
-          handlers: {
-            JobType.onboardProduct: (job) => observeCompletedOnboardingJob(
-              job: job,
-              logger: _log,
-            ),
-            // The shared job store means this tick can reconcile an
-            // `implementFeature` job. The implementation lane owns it; this
-            // registration keeps the table complete so the drain does not throw
-            // `UnhandledJobTypeException` for another lane's job.
-            JobType.implementFeature: (job) =>
-                observeReconciledImplementationJob(job: job, logger: _log),
-            JobType.engineeringReview: engineeringReviewTickHandler(
-              workflowEngine: durableWorkflowEngine,
-              executionStore: coordinator.store,
-              // The triage lane never settles a review job — the registration is
-              // completeness, not a live path (see the note above) — but the
-              // handler is the SAME one the review section builds, and it routes
-              // rather than parks, so it needs the same artifact source. Wiring
-              // it here keeps the two registrations from describing different
-              // gates.
-              workerStore: workerStore,
-              logger: _log,
-            ),
-          },
+          handlers: triageSectionDrainHandlers(
+            workflowEngine: durableWorkflowEngine,
+            executionStore: coordinator.store,
+            workerStore: workerStore,
+            logger: _log,
+          ),
           logger: _log,
         );
         outcome.dispatched = tickResult.dispatched.length;
@@ -1467,7 +1443,7 @@ void run(List<String> args) async {
       // different questions, and one of them throwing says nothing about the
       // other.
       //
-      // SECOND of the two lanes that share `agentCompleted`, after
+      // SECOND of the two CODE lanes that share `agentCompleted`, after
       // `implScheduler.tick()` — see the ordering note on that section. By the
       // time this runs, every item the inflow owns has already left
       // `agentCompleted`, so this lane's entry set no longer claims it and the
@@ -1833,6 +1809,62 @@ Future<WorkerRegistrationHeartbeat> startWorkerRegistrationHeartbeat({
   return heartbeat;
 }
 
+/// The dispatch table the TRIAGE section's drain uses.
+///
+/// ## WHY THIS IS A NAMED FUNCTION AND NOT AN INLINE MAP
+///
+/// For the same reason [runReviewLaneTick] is extracted: a dispatch table a test
+/// can only read is a table whose omissions stay invisible until a real job of
+/// the missing type is reconciled. `drainTriageOutcomesFromTick` dispatches BY
+/// TYPE and THROWS for a considered job with no handler, so every type any
+/// scheduler can reconcile from the shared `JobStore` must appear here.
+///
+/// Step 8 mounted `sched-design-review` but registered `designReview` only in
+/// the two design-lane tables. Because every scheduler's step 1 reconciles every
+/// held job — not only its own lane's — a design-review lease expiry surfaced in
+/// the triage drain first and threw before `observeCompletedDesignReviewJob`
+/// could run. Making the table callable is what lets
+/// `apps/server/test/design_review_drain_completeness_test.dart` drive the
+/// PRODUCTION table instead of a copy of it.
+Map<JobType, TickJobHandler> triageSectionDrainHandlers({
+  required DurableWorkflowEngine workflowEngine,
+  required ExecutionStore executionStore,
+  required WorkerStore workerStore,
+  required void Function(String event, Map<String, dynamic> data) logger,
+}) => {
+  // `onboardProduct` is registered so the dispatch table is COMPLETE.
+  // Onboarding jobs are product-scoped and are claimed and run by
+  // `BaselineProductDispatcher`, so they never appear in a triage
+  // `SchedulerTickResult` and this handler does not fire in this composition. It
+  // is registered because the alternative is an `UnhandledJobTypeException` — a
+  // job type no handler was written for — the moment any future composition lets
+  // one scheduler serve both.
+  JobType.onboardProduct: (job) =>
+      observeCompletedOnboardingJob(job: job, logger: logger),
+  // The shared job store means this tick can reconcile an `implementFeature`
+  // job. The implementation lane owns it; this registration keeps the table
+  // complete so the drain does not throw `UnhandledJobTypeException` for
+  // another lane's job.
+  JobType.implementFeature: (job) =>
+      observeReconciledImplementationJob(job: job, logger: logger),
+  JobType.engineeringReview: engineeringReviewTickHandler(
+    workflowEngine: workflowEngine,
+    executionStore: executionStore,
+    // The triage lane never settles a review job — the registration is
+    // completeness, not a live path — but the handler is the SAME one the review
+    // section builds, and it routes rather than parks, so it needs the same
+    // artifact source. Wiring it here keeps the two registrations from
+    // describing different gates.
+    workerStore: workerStore,
+    logger: logger,
+  ),
+  // Step 8 mounts `sched-design-review`, whose jobs are reconciled by EVERY
+  // scheduler sharing the job store. Absent here, a terminal design-review job
+  // reaches this drain first and fails the whole triage section (B1).
+  JobType.designReview: (job) =>
+      observeCompletedDesignReviewJob(job: job, logger: logger),
+};
+
 /// What one [runReviewLaneTick] concluded, for the composition root to report.
 class ReviewLaneTickResult {
   const ReviewLaneTickResult({
@@ -1950,6 +1982,14 @@ Future<ReviewLaneTickResult> runReviewLaneTick({
         workerStore: workerStore,
         logger: log,
       ),
+      // THIRD type step 8 mounts, and the same shared-job-store reason: a
+      // terminal `designReview` job can be reconciled by ANY scheduler's tick,
+      // including this one. Without a handler the review section itself fails
+      // before the design section ever sees the job. This drain has no
+      // unconsumed-review list, so the observation is the log line
+      // `observeCompletedDesignReviewJob` writes; step 9 owns the consumer.
+      JobType.designReview: (job) =>
+          observeCompletedDesignReviewJob(job: job, logger: log),
     },
     logger: log,
   );

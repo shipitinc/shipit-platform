@@ -172,6 +172,62 @@ void main() {
     );
   });
 
+  test('a FAILED design reviewer performs NO workflow transition and leaves '
+      'the item at designInReview', () async {
+    // A design review happens IN `designInReview`; that is the state the
+    // `designApproval` gate reads. `designInReview -> agentFailed` is not an
+    // edge in `work_item_transitions.dart`, so the failure path must special-case
+    // the design reviewer exactly as it already special-cases the engineering
+    // reviewer. Without that arm this call rejects the transition, `_finalize`
+    // rethrows, and a failed design review is reported as a coordinator fault.
+    await workflowStore.saveWorkItem(
+      WorkItem(
+        workItemId: 'wi-1',
+        productId: 'prod-1',
+        category: WorkItemCategory.feature,
+        title: 'Design the calculator add screen',
+        state: WorkItemState.designInReview,
+        qaContractId: 'qa-1',
+        createdAt: DateTime.utc(2026, 10, 22),
+        updatedAt: DateTime.utc(2026, 10, 22),
+      ),
+    );
+
+    final failingSession = FakeAgentSession(
+      executionId: 'exec-design-review-fail',
+      workItemId: 'wi-1',
+      behavior: FakeBehavior.fail,
+    );
+    final failingCoordinator = ExecutionCoordinator(
+      store: executionStore,
+      workflowEngine: workflowEngine,
+      runtime: AgentRuntime(
+        registry: AgentAdapterRegistry()
+          ..register(FakeAgentAdapter(failingSession)),
+      ),
+      verificationPlan: VerificationPlan(command: fixture.verifyCommand()),
+    );
+
+    final before = await workflowEngine.loadWorkItem('wi-1');
+    await failingCoordinator.execute(
+      request(
+        executionId: 'exec-design-review-fail',
+        role: AgentRole.designReviewer,
+      ),
+    );
+
+    final after = await workflowEngine.loadWorkItem('wi-1');
+    expect(after.state, WorkItemState.designInReview);
+    expect(
+      after.version,
+      before.version,
+      reason:
+          'no workflow transition may be attempted for a failed design review: '
+          'designInReview has no edge to agentFailed, and inventing one is a '
+          'product decision (FOLLOW_UPS F-224(d))',
+    );
+  });
+
   test('a reviewer terminal outcome performs NO workflow transition', () async {
     await runImplementer();
     await coordinator.execute(

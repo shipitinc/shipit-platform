@@ -3724,3 +3724,19 @@ scheduler drains its own tick, so a design tick needs its own drain call passing
 override it; `triageDefect` is assert-protected and this new one is not (review L4). Also unclosed:
 `contract.not-draft` is untested and fires AFTER the revision write (step 9), and a crash-replay upserts the
 same revision id with the replay clock, so `createdAt` is not immutable (review L1/L6).
+
+**F-224 — step 8's known boundaries, recorded rather than worked around.**
+(a) **No design review-result producer.** `saveDesignReviewResult` has stores and store-contract tests but
+**no production caller**, so a reviewer's verdict is durable only as its agent execution; nothing writes a
+`DesignReviewResult` row. (b) **A design review result has no consumer.** `observeCompletedDesignReviewJob`
+logs the terminal `designReview` job and the design tick reports it as `unconsumedReviewJobIds`; the
+`designApproval` raiser that consumes it is step 9 (§9 step 9, `G-C`). (c) **Design refusal `rework` routes
+to `implementationReady`.** The stall/refusal park reuses `stalledWorkItemDecisionType` because the state
+machine forces it for an `agentCompleted` park, so its `rework` answer goes through `HumanDecisionRouting`
+to `implementationReady` — the implementation lane's entry state, not the design lane's. Recorded as the
+`KNOWN BOUNDARY` on `raiseDesignProducerRefusalDecision`; changing it is a routing/transition-contract change
+outside step 8. (d) **A failed design review has no signal and no edge.** The correction makes the
+coordinator's failure path leave the item at `designInReview` instead of attempting a non-existent
+`designInReview -> agentFailed` transition. The missing edge is a **product decision** and is deliberately
+NOT invented here; until step 9's approval gate exists, a failed design review has no operator-visible
+signal beyond the execution record. Review L3/B1/H1 on `1a027e9`.
