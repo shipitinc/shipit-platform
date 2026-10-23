@@ -1,0 +1,39 @@
+# human-decision.yaml
+decision_id: 3deb2755-b2d8-482b-81dd-9ba59b2f0c54
+type: ARCHITECTURE
+status: RESOLVED
+title: Reopen Design Revision 5 for H1 grant declaration gap
+question: >-
+  Design Revision 5 was approved (9140fad7) but its H1 row claims RESOLVED for the
+  designScopeDeclaration grant, yet no implementation exists (no field in DesignRevision,
+  no producer writer, no recorder reader). Decision 7d2a81f0 states implementation is
+  separate and unreviewed.
+resolution:
+  outcome: REOPEN_DESIGN
+  decided_by: operator
+  decided_at: 2026-10-23T15:45:00Z
+  selected_option: REOPEN_DESIGN
+  rationale: >-
+    The approved design asserts a capability (grant declaration at approval) that is not
+    specified in the artifact. The design must specify the `declaredOwnedPaths` field in
+    DesignRevision, the producer's write path, and the recorder's read path before
+    implementation can proceed. This requires revision 6, focused re-review, and Level 3
+    re-approval.
+  consequence: >-
+    Revision 5's Level 3 approval (9140fad7) is superseded by this decision. Revision 6
+    will be the approved baseline. Step-9 correction and implementation lanes remain
+    paused until revision 6 is approved.
+follow_up_actions:
+  - action: >-
+      Dispatch design correction lane for revision 6: add declaredOwnedPaths to
+      DesignRevision, producer write, recorder read; update H1 row to reflect
+      implementation status.
+    owner: engineering-manager
+  - action: >-
+      Focused re-review of revision 6; Level 3 human re-approval per DESIGN_GOVERNANCE.md:99,163.
+    owner: engineering-manager
+related_records:
+  - 9140fad7-837b-429c-aa3e-5d8288036a33
+  - 7d2a81f0
+  - 67ec3b62-cd34-4a4a-b0cf-26b5b1422189
+  - d41a6e85-7c02-4b39-9f18-3e6b5a20d7f4
