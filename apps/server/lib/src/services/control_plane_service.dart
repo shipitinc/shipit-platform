@@ -35,6 +35,10 @@ import 'package:worker_protocol/worker_protocol.dart' show WorkerRegistration;
 
 import '../baseline/durable_workspace_runtime.dart'
     show DurableWorkspaceRuntime;
+import '../design/design_review_recorder.dart'
+    show
+        designApprovalAbsentChoiceIsResolvable,
+        designApprovalAbsentResolvableChoices;
 import '../generated/feature_request_summary_view.dart';
 import '../implementation/design_scope_grant.dart';
 import '../persistence/persistence_database.dart';
@@ -2163,14 +2167,23 @@ class ControlPlaneService {
   /// crafted against this method would answer `approve` on a decision raised
   /// precisely because NO reviewer approved anything.
   ///
-  /// [verdictAbsentChoiceIsResolvable] closes that for exactly one decision type
-  /// and no other: a decision carrying `reviewVerdictAbsentMetadataKey`, which is
-  /// the marker `raiseVerdictAbsentDecision` writes. Scoped deliberately — "every
-  /// choice must be one of the decision's options" is a change to every
-  /// lifecycle gate's behaviour and is not what decision
-  /// `c495e02f-5c5d-4b45-8124-42ad0e90d6d4` asked for. What it asked for is that a
-  /// decision carrying no verdict cannot be turned into one, and that is
-  /// enforced here, before the engine writes anything.
+  /// TWO guards close that, one per lane, and no others:
+  ///
+  ///  * [verdictAbsentChoiceIsResolvable] for an engineering-review decision
+  ///    carrying `reviewVerdictAbsentMetadataKey`, which is the marker
+  ///    `raiseVerdictAbsentDecision` writes; and
+  ///  * [designApprovalAbsentChoiceIsResolvable] for a design-approval decision
+  ///    carrying `designReviewVerdictAbsentMetadataKey`, which is the marker the
+  ///    design recorder writes.
+  ///
+  /// Each is scoped deliberately — "every choice must be one of the decision's
+  /// options" is a change to every lifecycle gate's behaviour and is not what
+  /// decision `c495e02f-5c5d-4b45-8124-42ad0e90d6d4` asked for. What it asked
+  /// for is that a decision carrying no verdict cannot be turned into one, and
+  /// that is enforced here, before the engine writes anything. The design guard
+  /// calls the recorder's own helper rather than re-deriving the choice set, so
+  /// the menu the recorder documents and the menu this path enforces cannot
+  /// drift.
   Future<WorkItem> resolveHumanDecision({
     required String decisionId,
     required HumanDecisionChoice choice,
@@ -2201,6 +2214,33 @@ class ControlPlaneService {
         'resolved as "${choice.wire}". Resolve it with '
         '${verdictAbsentResolvableChoices.map((c) => c.wire).join(' or ')}. '
         'Nothing was written.',
+      );
+    }
+
+    if (!designApprovalAbsentChoiceIsResolvable(decision, choice)) {
+      // The design lane's mirror of the guard above. Without this call the
+      // recorder's helper is dead code and a crafted `approve` resolves an
+      // absent-verdict design decision as though a reviewer had spoken: the
+      // empty scope grant is recorded and the engine moves the item to
+      // `designApproved`. Same discipline — nothing is written.
+      logger.warning('workflow.decision_choice_refused', {
+        'decisionId': decisionId,
+        'workItemId': decision.workItemId,
+        'choice': choice.wire,
+        'verdictRecorded': false,
+        'allowedChoices': designApprovalAbsentResolvableChoices
+            .map((c) => c.wire)
+            .toList(),
+        'reason':
+            'this design approval records that NO reviewer returned a verdict, '
+            'so it cannot be resolved with a choice that asserts one. Nothing '
+            'was written',
+      });
+      throw StateError(
+        'decision $decisionId records no design reviewer verdict, so it cannot '
+        'be resolved as "${choice.wire}". Resolve it with '
+        '${designApprovalAbsentResolvableChoices.map((c) => c.wire).join(' or ')}'
+        '. Nothing was written.',
       );
     }
 
