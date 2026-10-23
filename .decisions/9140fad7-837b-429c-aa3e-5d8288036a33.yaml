@@ -1,0 +1,143 @@
+# human-decision.yaml
+decision_id: 9140fad7-837b-429c-aa3e-5d8288036a33
+type: ARCHITECTURE
+status: PENDING
+title: Approve Design Revision 5 for the design-governance runtime (Level 3)
+question: >-
+  Should Design Revision 5 (design/design-governance-runtime, revision_id
+  86746508-b05e-4811-9298-287e598d875b, commit 1e2a59f) be APPROVED as the design basis for
+  implementation?
+context:
+  summary: >-
+    Revision 5 is a rebase-and-repair of revision 4. It distinguishes LANDED work at base e8fa164
+    from STILL REQUIRED, and decides the three blockers from the revision-4 review: (B1/G-G)
+    `designApproved` has no production consumer — adds `designApproved -> implementationReady` plus
+    `DesignApprovalHandoff` and removes the state from the triage entry set; (B2/G-H) no design
+    readiness reconciler — adds `DesignReadinessReconciler`; (B3/G-I) the design-review instruction
+    has no machine contract — adds the full section 3.6 contract against shipped types.
+  risk_level: 3
+  risk_consequence: >-
+    Level 3 (major workflow change): DESIGN_GOVERNANCE.md:99,163 requires HUMAN_DECISION_REQUIRED
+    for product/design/architecture approval, and `approved_by` must be a human ID
+    (DESIGN_GOVERNANCE.md:60,88). The independent design reviewer returned APPROVED at 1e2a59f but
+    also returned HUMAN_DECISION_REQUIRED: NO; that part is overridden by the Level 3 rule and is
+    why this object exists.
+  independent_review:
+    verdict: APPROVED
+    correction_required: false
+    human_decision_required_per_reviewer: false
+    reviewed_artifact: 1e2a59f
+    reviewer_distance: >-
+      Focused design reviewer, read-only; it had access to the artifact and base e8fa164 but not to
+      pending `.decisions/`. It reported no design-only defects (file:line) and characterized the
+      section 3.6/4.4.4/5.4 specifications as coherent and internally consistent.
+  related_decisions:
+    - id: d41a6e85-7c02-4b39-9f18-3e6b5a20d7f4
+      note: >-
+        Authorized building the design-governance runtime, but explicitly required it to be
+        "designed and reviewed before anything is built". It did not approve this revision.
+    - id: 67ec3b62-cd34-4a4a-b0cf-26b5b1422189
+      note: >-
+        HD-6, resolved 2026-10-23 as REMOVE_DESIGN_APPROVED_FROM_ENTRY_STATES. This is exactly
+        Revision 5 section 5.4(c); Revision 5 had chosen that option without citing HD-6, which was
+        surfaced before this approval.
+    - id: a1c7d904-3b8e-4f21-9d6e-5c2f81b7a390
+      note: Gate D4 resolved.
+  blocking_work_item:
+    item_type: OTHER
+    item_id: design-governance-runtime
+    item_ref: >-
+      Design approval blocks step-9 merge (`design-step-9` @ 69f84ae) and implementation of the
+      design's section 9 steps 3a/8a/8b. Step 9 additionally still carries two engineering-review
+      DO_NOT_MERGE blockers (missing `designScopeDeclaration` on the approved designApproval; no
+      JSON output contract on the design-review instruction) that this decision does not waive.
+  evidence:
+    documents:
+      - type: OTHER
+        id: design-revision
+        url: design/design-governance-runtime/design-revision.md
+      - type: OTHER
+        id: design-revision-metadata
+        url: design/design-governance-runtime/design-revision-metadata.yaml
+      - type: OTHER
+        id: design-brief
+        url: design/design-governance-runtime/design-brief.md
+      - type: OTHER
+        id: design-brief-metadata
+        url: design/design-governance-runtime/design-brief-metadata.yaml
+      - type: OTHER
+        id: governance
+        url: docs/engineering/DESIGN_GOVERNANCE.md
+      - type: OTHER
+        id: adr-0021
+        url: docs/adr/0021-design-defect-routing.md
+    data:
+      - kind: QA_READ_ONLY_OBSERVATION
+        id: revision-sha
+        value: >-
+          1e2a59f on branch design-rev4 (worktree .../design-rev3); 4 files, 771+/302- against
+          e8fa164; YAML_OK; no prohibited paths.
+      - kind: QA_READ_ONLY_OBSERVATION
+        id: step9-build
+        value: >-
+          design-step-9 @ 69f84ae is gate-green on format/analyze/tests (apps/server runner 66
+          files, EXIT=0) but not merged and not approved.
+  unblocked_if_approved:
+    - Record approval metadata on Revision 5 (status, reviewed_by, approved_by, approved_at, HD-6 ref).
+    - Dispatch a correction lane for the two step-9 engineering-review blockers; then focused re-review.
+    - Dispatch implementation of the design's section 9 steps 3a/8a/8b/9 under their own reviewed lanes.
+options_considered:
+  - option: APPROVE_REVISION_5
+    description: >-
+      Approve Revision 5 as the design basis. Unblocks the design gate, the step-9 correction lane,
+      and implementation of section 3.6 (review contract), section 4.4.4 (readiness reconciler),
+      and section 5.4 (approval routing). Step 9 still needs its two engineering-review blockers
+      fixed and re-reviewed before merge.
+    recommendation: >-
+      RECOMMENDED. The artifact is independently approved, HD-6 is resolved in alignment with
+      section 5.4(c), and the remaining gaps are post-approval implementation that the design
+      specifies concretely.
+  - option: APPROVE_SCOPE_LIMITED
+    description: >-
+      Approve Revision 5 but authorize only the step-9 correction/merge now; defer section
+      3.6/4.4.4/5.4 implementation to a later go. Smaller blast radius, but leaves B1/B2/B3
+      unimplemented in production and keeps design-approved items without a deterministic owner.
+  - option: REQUEST_CHANGES
+    description: >-
+      Do not approve; name concerns and return the artifact for revision 6 and focused re-review.
+      Appropriate only if a substantive design defect remains, which the independent review did not
+      find.
+  - option: DEFER
+    description: >-
+      Keep Revision 5 DRAFT; nothing merges and no implementation lane is dispatched.
+recommendation: >-
+  Select APPROVE_REVISION_5. The design is independently approved and HD-6 is now resolved in the
+  same direction; the remaining work is implementation the design already specifies, gated by the
+  normal per-lane review and validation.
+risk:
+  - >-
+    Approving authorizes a Level 3 workflow change: designApproved stops entering triage and gains a
+    new implementationReady handoff. HD-6 accepted that platform-wide consequence explicitly.
+  - >-
+    Approval does not waive the step-9 DO_NOT_MERGE blockers; merging without fixing them would
+    reproduce the exact grant-clobbering defect the engineering review found.
+resolution:
+  outcome: null
+  decided_by: null
+  decided_at: null
+  selected_option: null
+  rationale: null
+follow_up_actions:
+  - action: >-
+      Record approval metadata on design-revision-metadata.yaml (status APPROVED, reviewed_by
+      referencing the focused review at 1e2a59f, approved_by operator, approved_at, HD-6 reference)
+      and commit on branch design-rev4.
+    owner: engineering-manager
+  - action: >-
+      Dispatch a correction lane for the two step-9 blockers, then focused engineering re-review;
+      do not merge step 9 on design approval alone.
+    owner: engineering-manager
+related_records:
+  - 67ec3b62-cd34-4a4a-b0cf-26b5b1422189
+  - d41a6e85-7c02-4b39-9f18-3e6b5a20d7f4
+  - a1c7d904-3b8e-4f21-9d6e-5c2f81b7a390
