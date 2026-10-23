@@ -646,6 +646,7 @@ abstract final class DesignRevisionFidelityAnchorValidator {
       updatedAt: revision.updatedAt,
       approvedAt: revision.approvedAt,
       version: revision.version,
+      declaredOwnedPaths: revision.declaredOwnedPaths,
     );
   }
 

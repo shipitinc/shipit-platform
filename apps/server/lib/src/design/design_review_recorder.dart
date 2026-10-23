@@ -14,6 +14,8 @@ import 'package:workflow_store/workflow_store.dart'
 
 import 'design_revision_producer.dart'
     show designRevisionIdMetadataKey, designerExecutionIdMetadataKey;
+import '../implementation/design_scope_grant.dart'
+    show designScopeDeclarationMetadata;
 
 /// The `metadata` key under which a design-approval decision records the
 /// verdict it was raised from, so the resolution path can tell an APPROVED plan
@@ -650,7 +652,7 @@ class DesignReviewRecorder {
     return _raiseApproval(
       job: job,
       item: item,
-      revisionId: revisionId,
+      revision: revision,
       executionId: executionId,
       result: read.result!,
     );
@@ -762,12 +764,13 @@ class DesignReviewRecorder {
   Future<DesignReviewRecorderOutcome> _raiseApproval({
     required Job job,
     required WorkItem item,
-    required String revisionId,
+    required DesignRevision revision,
     required String executionId,
     required DesignReviewResult result,
   }) async {
     final producerActorId =
         item.metadata?[designerExecutionIdMetadataKey] as String?;
+    final declaredPaths = revision.declaredOwnedPaths ?? const <String>[];
     try {
       await _workflowEngine.requestHumanDecision(
         workItemId: item.workItemId,
@@ -780,6 +783,12 @@ class DesignReviewRecorder {
           'designReviewResult': result.toJson(),
           'reviewExecutionId': executionId,
           designReviewVerdictMetadataKey: result.verdict.wire,
+          ...designScopeDeclarationMetadata(
+            declaredOwnedPaths: declaredPaths,
+            decisionType: HumanDecisionType.designApproval,
+            declaredBy: 'design-review-recorder',
+            declaredAt: _clock(),
+          ),
         },
         // The ORCHESTRATOR, not the reviewer: this is a platform gate on the
         // revision, not something the reviewer said about itself. The edge
@@ -797,7 +806,7 @@ class DesignReviewRecorder {
       _logger('design.review.recorder.approval-refused', {
         'jobId': job.jobId,
         'workItemId': item.workItemId,
-        'revisionId': revisionId,
+        'revisionId': revision.revisionId,
         'executionId': executionId,
         'verdict': result.verdict.wire,
         'error': e.toString(),
@@ -811,7 +820,7 @@ class DesignReviewRecorder {
     _logger('design.review.recorder.approval-raised', {
       'jobId': job.jobId,
       'workItemId': item.workItemId,
-      'revisionId': revisionId,
+      'revisionId': revision.revisionId,
       'executionId': executionId,
       'verdict': result.verdict.wire,
       'blocking': true,

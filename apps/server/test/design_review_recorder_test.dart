@@ -83,6 +83,7 @@ void main() {
     bool referenceExecution = true,
     bool preSeededResult = false,
     DateTime Function()? clock,
+    List<String>? declaredOwnedPaths,
   }) async {
     final workflowStore = InMemoryWorkflowStore();
     final engine = DurableWorkflowEngine(store: workflowStore);
@@ -142,6 +143,7 @@ void main() {
           createdAt: now,
           updatedAt: now,
           version: 1,
+          declaredOwnedPaths: declaredOwnedPaths ?? <String>[],
         ),
       );
     }
@@ -274,6 +276,40 @@ void main() {
         DesignReviewVerdict.approved.wire,
       );
     });
+
+    test(
+      'includes designScopeDeclarationMetadata when revision has declaredOwnedPaths',
+      () async {
+        const declaredPaths = ['apps/server/**', 'packages/scheduler/**'];
+        final h = await host(declaredOwnedPaths: declaredPaths);
+
+        final outcome = await h.recorder.record(h.job);
+
+        expect(outcome, DesignReviewRecorderOutcome.recorded);
+
+        final item = await h.engine.loadWorkItem(workItemId);
+        expect(item.state, WorkItemState.waitingForHumanDecision);
+        final decision = await h.workflowStore.readHumanDecision(
+          item.blockingHumanDecisionId!,
+        );
+        expect(decision.decisionType, HumanDecisionType.designApproval);
+
+        // The metadata should include designScopeDeclarationMetadata fields
+        expect(decision.metadata, isNotNull);
+        expect(decision.metadata!['declaredOwnedPaths'], declaredPaths);
+        expect(decision.metadata!['designScopeDeclaration'], isNotNull);
+        final declaration =
+            decision.metadata!['designScopeDeclaration']
+                as Map<String, dynamic>;
+        expect(declaration['declaredOwnedPaths'], declaredPaths);
+        expect(
+          declaration['decisionType'],
+          HumanDecisionType.designApproval.wire,
+        );
+        expect(declaration['declaredBy'], 'design-review-recorder');
+        expect(declaration['declaredAt'], isNotNull);
+      },
+    );
 
     test(
       'every revision is gated unconditionally (D4: every revision HIGH)',

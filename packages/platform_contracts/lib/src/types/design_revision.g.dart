@@ -34,6 +34,9 @@ DesignRevision _$DesignRevisionFromJson(Map<String, dynamic> json) =>
           ? null
           : DateTime.parse(json['approvedAt'] as String),
       version: (json['version'] as num).toInt(),
+      declaredOwnedPaths: (json['declaredOwnedPaths'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList(),
     );
 
 Map<String, dynamic> _$DesignRevisionToJson(DesignRevision instance) =>
@@ -61,4 +64,5 @@ Map<String, dynamic> _$DesignRevisionToJson(DesignRevision instance) =>
       'updatedAt': instance.updatedAt.toIso8601String(),
       'approvedAt': ?instance.approvedAt?.toIso8601String(),
       'version': instance.version,
+      'declaredOwnedPaths': instance.declaredOwnedPaths,
     };

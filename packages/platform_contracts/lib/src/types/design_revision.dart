@@ -35,6 +35,7 @@ class DesignRevision extends Equatable {
     required this.updatedAt,
     this.approvedAt,
     required this.version,
+    this.declaredOwnedPaths,
   });
 
   final String revisionId;
@@ -73,6 +74,8 @@ class DesignRevision extends Equatable {
   @JsonKey(includeIfNull: false)
   final DateTime? approvedAt;
   final int version;
+  @JsonKey(includeIfNull: false, defaultValue: <String>[])
+  final List<String>? declaredOwnedPaths;
 
   factory DesignRevision.fromJson(Map<String, dynamic> json) =>
       _$DesignRevisionFromJson(json);
@@ -104,6 +107,7 @@ class DesignRevision extends Equatable {
     updatedAt,
     approvedAt,
     version,
+    declaredOwnedPaths,
   ];
 }
 

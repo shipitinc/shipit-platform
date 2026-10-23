@@ -3307,12 +3307,15 @@ const JobDefinition designReviewDefinition = JobDefinition(
 String designRevisionDedupeKey(WorkItem item, JobDefinition definition) =>
     '${item.workItemId}:${definition.jobType.wire}';
 
-/// Builds a dedupe key for design review jobs: (workItemId, designRevisionId, jobType).
-/// Prevents duplicate reviews of the same revision. Reads designRevisionId from
-/// WorkItem.metadata['designRevisionId'] (set by workflow on transition to designInReview).
+/// Builds a dedupe key for design review jobs: (workItemId, designRevisionId, attempt, jobType).
+/// Prevents duplicate reviews of the same revision attempt. Reads designRevisionId from
+/// WorkItem.metadata['designRevisionId'] and designReviewAttempt from
+/// WorkItem.metadata['designReviewAttempt'] (set by workflow on transition to designInReview;
+/// rework increments it).
 String designReviewDedupeKey(WorkItem item, JobDefinition definition) {
   final revisionId = item.metadata?['designRevisionId'] as String?;
-  return '${item.workItemId}:${revisionId ?? 'unknown'}:${definition.jobType.wire}';
+  final attempt = item.metadata?['designReviewAttempt'] as int? ?? 0;
+  return '${item.workItemId}:${revisionId ?? 'unknown'}:a${attempt}:${definition.jobType.wire}';
 }
 
 /// Builds an instruction for design revision jobs.
@@ -3320,9 +3323,40 @@ String designRevisionInstruction(WorkItem item, JobDefinition definition) =>
     'Produce a design revision for "${item.title}" (${item.workItemId}) in Penpot.';
 
 /// Builds an instruction for design review jobs.
+///
+/// The instruction includes the machine-readable JSON contract (§3.6.2) that the
+/// reviewer must populate in its `structuredResult`. The recorder tolerates a
+/// single surrounding code fence (```json ... ```).
 String designReviewInstruction(WorkItem item, JobDefinition definition) =>
-    'Review the design revision for "${item.title}" (${item.workItemId}) in Penpot. '
-    'Provide independent assessment without consulting the designer.';
+    '''Review the design revision for "${item.title}" (${item.workItemId}) in Penpot.
+Provide independent assessment without consulting the designer.
+
+Return your assessment as a JSON object in `structuredResult` matching this contract:
+
+```json
+{
+  "verdict": "approved|rejected|rework",
+  "assessedDimensions": ["layout", "typography", "color", "contrast", "motion", "responsive", "content", "a11y", "state-coverage", "brand"],
+  "findings": [
+    {
+      "category": "design-system|usability|accessibility|consistency|completeness|other",
+      "severity": "blocker|high|medium|low",
+      "dimension": "layout|typography|color|contrast|motion|responsive|content|a11y|state-coverage|brand",
+      "evidence": "Specific reference to board/state/artifact",
+      "requiredCorrection": "What must change to satisfy this finding",
+      "affectedSurface": "Board/page/component identifier"
+    }
+  ],
+  "reviewScope": {
+    "revisionId": "<design-revision-id>",
+    "designSystemRevision": "<design-system-revision>",
+    "provider": "penpot",
+    "fileId": "<penpot-file-id>",
+    "pageId": "<penpot-page-id>",
+    "boardIds": ["<board-id-1>", "<board-id-2>"]
+  }
+}
+```''';
 
 /// Builds a worker execution request for design revision jobs.
 Future<WorkerExecutionRequest> designRevisionRequest(
@@ -3351,6 +3385,9 @@ Future<WorkerExecutionRequest> designRevisionRequest(
 /// Includes excludedExecutionIds to enforce independence at dispatch.
 /// Reads designerExecutionId from WorkItem.metadata['designerExecutionId']
 /// (set by workflow on transition to designInReview).
+///
+/// Fails closed if `designerExecutionId` is absent — independence cannot be
+/// enforced without knowing which execution to exclude.
 Future<WorkerExecutionRequest> designReviewRequest(
   Job job,
   SchedulerWorkload workload,
@@ -3358,6 +3395,12 @@ Future<WorkerExecutionRequest> designReviewRequest(
   ModelSelectionService? modelSelection,
 ) async {
   final designerExecutionId = item.metadata?['designerExecutionId'] as String?;
+  if (designerExecutionId == null || designerExecutionId.isEmpty) {
+    throw StateError(
+      'designReviewRequest: designerExecutionId is missing from work item metadata; '
+      'cannot enforce reviewer independence without it',
+    );
+  }
   final runtimeConfig = await modelRuntimeConfig(job, item, modelSelection);
   return WorkerExecutionRequest(
     workerExecutionId: 'wx-${job.jobId}',
@@ -3370,9 +3413,7 @@ Future<WorkerExecutionRequest> designReviewRequest(
     timeoutSeconds: workload.timeoutSeconds,
     runtimeTypeId: workload.runtimeTypeId,
     cleanupPolicy: workload.cleanupPolicy,
-    excludedExecutionIds: designerExecutionId != null
-        ? [designerExecutionId]
-        : const [],
+    excludedExecutionIds: [designerExecutionId],
     runtimeConfig: runtimeConfig,
   );
 }
