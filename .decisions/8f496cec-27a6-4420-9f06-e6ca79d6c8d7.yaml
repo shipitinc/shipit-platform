@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 8f496cec-27a6-4420-9f06-e6ca79d6c8d7
 type: ARCHITECTURE
-status: PENDING
+status: RESOLVED
 title: Re-approve Design Revision 6 (design-governance-runtime, Level 3) after H1 correction
 question: >-
   Should Design Revision 6 (commit bde2181, branch design-rev6-worktree, base e8fa164)
@@ -93,11 +93,16 @@ risk:
     Re-approval confirms the corrected implementation (Postgres store, fixtures, fidelity anchor)
     matches the approved design. No new design risk.
 resolution:
-  outcome: null
-  decided_by: null
-  decided_at: null
-  selected_option: null
-  rationale: null
+  outcome: REAPPROVE_REVISION_6
+  decided_by: operator
+  decided_at: 2026-10-23T17:00:00Z
+  selected_option: REAPPROVE_REVISION_6
+  rationale: >-
+    Re-approved as the corrected design basis. Revision 6 implements the H1 grant declaration
+    per 7d2a81f0 (F-215); correction bde2181 fixed the Postgres store persistence (B1) and
+    store contract fixtures (H1) found by focused re-review. All per-execution gates pass.
+    This re-approval confirms the corrected implementation matches the approved design.
+    Step 9 DO_NOT_MERGE blockers are not waived.
 follow_up_actions:
   - action: >-
       Record re-approval metadata on design-revision-metadata.yaml (status APPROVED,
