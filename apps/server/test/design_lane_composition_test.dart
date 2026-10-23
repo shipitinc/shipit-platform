@@ -1,3 +1,4 @@
+import 'package:control_plane_server/src/design/design_review_recorder.dart';
 import 'package:control_plane_server/server.dart'
     show
         AgentExecutionBudgets,
@@ -356,6 +357,12 @@ class _Host {
     workflowEngine: engine,
     executionStore: executionStore,
     workerStore: workerStore,
+    designReviewRecorder: DesignReviewRecorder(
+      workflowEngine: engine,
+      executionStore: executionStore,
+      designGovernanceStore: InMemoryDesignGovernanceStore(),
+      logger: (message, context) => loggedEvents.add((message, context)),
+    ),
     foldStalls: (_) {},
     log: (message, context) => loggedEvents.add((message, context)),
   );
