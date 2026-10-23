@@ -1,7 +1,7 @@
 # human-decision.yaml
 decision_id: 9140fad7-837b-429c-aa3e-5d8288036a33
 type: ARCHITECTURE
-status: PENDING
+status: RESOLVED
 title: Approve Design Revision 5 for the design-governance runtime (Level 3)
 question: >-
   Should Design Revision 5 (design/design-governance-runtime, revision_id
@@ -122,11 +122,18 @@ risk:
     Approval does not waive the step-9 DO_NOT_MERGE blockers; merging without fixing them would
     reproduce the exact grant-clobbering defect the engineering review found.
 resolution:
-  outcome: null
-  decided_by: null
-  decided_at: null
-  selected_option: null
-  rationale: null
+  outcome: APPROVED
+  decided_by: operator
+  decided_at: 2026-10-23T15:13:24Z
+  selected_option: APPROVE_REVISION_5
+  rationale: >-
+    Approved as the design basis for implementation. The artifact was independently approved by
+    the focused design reviewer at 1e2a59f (CORRECTION_REQUIRED: NO, no design-only defects), and
+    HD-6 (67ec3b62) is now resolved as REMOVE_DESIGN_APPROVED_FROM_ENTRY_STATES, which is exactly
+    section 5.4(c). The remaining gaps are implementation the design specifies concretely. This
+    approval does NOT waive the two step-9 engineering-review DO_NOT_MERGE blockers; step 9 must
+    be corrected and re-reviewed before merge. Implementation of sections 3.6, 4.4.4 and 5.4 is
+    authorized but each lane still requires its own validation and independent review.
 follow_up_actions:
   - action: >-
       Record approval metadata on design-revision-metadata.yaml (status APPROVED, reviewed_by
