@@ -1,0 +1,116 @@
+# human-decision.yaml
+decision_id: 8f496cec-27a6-4420-9f06-e6ca79d6c8d7
+type: ARCHITECTURE
+status: PENDING
+title: Re-approve Design Revision 6 (design-governance-runtime, Level 3) after H1 correction
+question: >-
+  Should Design Revision 6 (commit bde2181, branch design-rev6-worktree, base e8fa164)
+  be APPROVED as the corrected design basis for implementation?
+context:
+  summary: >-
+    Revision 5 (2078ec4) was Level 3 approved (9140fad7) but post-approval discovery:
+    H1 row claimed RESOLVED ("designApproval carries designScopeDeclaration") with NO
+    implementation. Decision 3deb2755 reopened for revision 6.
+    Revision 6 (433c5b3) implemented the grant declaration per 7d2a81f0 (F-215):
+    - DesignRevision.declaredOwnedPaths field + producer write + design_approval_raiser read
+    - Migration adds declared_owned_paths column
+    - H1 dispositioned IMPLEMENTED
+    Focused re-review of 433c5b3 found BLOCKER B1 (Postgres store missing persistence) and H1 (fixtures).
+    Correction bde2181 fixed both (Postgres store read/write, store contract fixtures, fidelity anchor).
+    All per-execution gates pass: format/analyze/37 design_revision_producer_test/68 store contract tests.
+  risk_level: 3
+  risk_consequence: >-
+    Level 3 (major workflow change): DESIGN_GOVERNANCE.md:99,163 requires human approval.
+    The design artifact (revision 6) is unchanged from 433c5b3; only implementation files corrected.
+    This re-approval confirms the corrected implementation matches the approved design.
+  independent_review:
+    verdict: CHANGES_REQUIRED (433c5b3) -> APPROVE_CORRECTIONS (bde2181)
+    correction_required: false
+    human_decision_required_per_reviewer: false
+    reviewed_artifact: 433c5b3 (design), bde2181 (correction)
+    reviewer_distance: >-
+      Focused design reviewer: CHANGES_REQUIRED for B1/H1. Focused re-reviewer: APPROVE_CORRECTIONS.
+      Both read-only; no design defects in the artifact.
+  related_decisions:
+    - id: 9140fad7-837b-429c-aa3e-5d8288036a33
+      note: Level 3 approval of revision 5 (superseded by this revision)
+    - id: 3deb2755-b2d8-429c-aa3e-5d8288036a33
+      note: Reopened design for H1 gap correction
+    - id: 7d2a81f0
+      note: Grant declaration at design/plan time (F-215) — now implemented
+    - id: 67ec3b62-cd34-4a4a-b0cf-26b5b1422189
+      note: HD-6 resolved as REMOVE_DESIGN_APPROVED_FROM_ENTRY_STATES
+  blocking_work_item:
+    item_type: OTHER
+    item_id: design-governance-runtime
+    item_ref: >-
+      Design approval blocks step-9 correction lane and implementation of §9 steps 3a/8a/8b/9.
+      Step 9 (design-step-9 @ 69f84ae) still carries two engineering-review DO_NOT_MERGE blockers.
+  evidence:
+    documents:
+      - type: OTHER
+        id: design-revision
+        url: design/design-governance-runtime/design-revision.md
+      - type: OTHER
+        id: design-revision-metadata
+        url: design/design-governance-runtime/design-revision-metadata.yaml
+      - type: OTHER
+        id: governance
+        url: docs/engineering/DESIGN_GOVERNANCE.md
+    data:
+      - kind: QA_READ_ONLY_OBSERVATION
+        id: validation
+        value: >-
+          All gates pass at bde2181: format=0, analyze=0 (7 deprecation warnings), 37 design_revision_producer_test,
+          68 store contract tests (DesignGovernanceStore including declaredOwnedPaths), 350 platform_contracts,
+          230 workflow_engine, 178 qa_orchestration, 193 execution_coordinator.
+      - kind: QA_READ_ONLY_OBSERVATION
+        id: correction-scope
+        value: >-
+          Design artifact (revision 6 at 433c5b3) unchanged; only implementation files corrected:
+          postgres_design_governance_store.dart, fixtures.dart, fidelity_anchor.dart.
+options_considered:
+  - option: REAPPROVE_REVISION_6
+    description: >-
+      Re-approve Revision 6 (bde2181) as the corrected design basis. Unblocks step-9 correction
+      lane and implementation of §9 steps 3a/8a/8b/9. Step 9 still requires its two
+      engineering-review blockers fixed and re-reviewed before merge.
+    recommendation: >-
+      RECOMMENDED. The design is independently approved, corrections are verified, and all
+      gates pass. The H1 grant declaration is now fully implemented per 7d2a81f0.
+  - option: REQUEST_CHANGES
+    description: >-
+      Do not re-approve; name concerns and return for revision 7. Appropriate only if a
+      substantive design defect remains.
+  - option: DEFER
+    description: >-
+      Keep Revision 6 unapproved; nothing merges and no implementation lane is dispatched.
+recommendation: >-
+  Select REAPPROVE_REVISION_6. The design was independently approved, the H1 implementation
+  gap is corrected and verified, and all gates pass.
+risk:
+  - >-
+    Re-approval confirms the corrected implementation (Postgres store, fixtures, fidelity anchor)
+    matches the approved design. No new design risk.
+resolution:
+  outcome: null
+  decided_by: null
+  decided_at: null
+  selected_option: null
+  rationale: null
+follow_up_actions:
+  - action: >-
+      Record re-approval metadata on design-revision-metadata.yaml (status APPROVED,
+      reviewed_by referencing focused reviews, approved_by operator, approved_at,
+      Level 3 decision 8f496cec) and commit on branch design-rev6-worktree.
+    owner: engineering-manager
+  - action: >-
+      Dispatch step-9 correction lane for its two engineering-review blockers;
+      then focused engineering re-review; then merge (human-authorized push).
+    owner: engineering-manager
+related_records:
+  - 9140fad7-837b-429c-aa3e-5d8288036a33
+  - 3deb2755-b2d8-429c-aa3e-5d8288036a33
+  - 7d2a81f0
+  - 67ec3b62-cd34-4a4a-b0cf-26b5b1422189
+  - d41a6e85-7c02-4b39-9f18-3e6b5a20d7f4
