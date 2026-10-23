@@ -217,8 +217,8 @@ DesignReviewRead _readDesignReview({
             ? DesignReviewNoVerdictCause.reviewerResultMissing
             : DesignReviewNoVerdictCause.reviewerExecutionFailed,
         'the reviewer execution reached ${execution.status.name} without '
-            'writing an agent result'
-            '${execution.reason == null ? '' : ' (${execution.reason})'}',
+        'writing an agent result'
+        '${execution.reason == null ? '' : ' (${execution.reason})'}',
       ),
     );
   }
@@ -571,8 +571,8 @@ class DesignReviewRecorder {
     final executionId = execution.executionId;
 
     // ---- The idempotence read ----
-    final existing =
-        await _designGovernanceStore.readDesignReviewResultForExecution(
+    final existing = await _designGovernanceStore
+        .readDesignReviewResultForExecution(
           revisionId,
           executionId,
         );
@@ -736,7 +736,8 @@ class DesignReviewRecorder {
       final now = _clock();
       await _executionStore.appendEvent(
         AgentEventRecord(
-          eventId: 'design-no-verdict-$executionId-${now.microsecondsSinceEpoch}',
+          eventId:
+              'design-no-verdict-$executionId-${now.microsecondsSinceEpoch}',
           executionId: executionId,
           workItemId: workItemId,
           sequence: sequence,

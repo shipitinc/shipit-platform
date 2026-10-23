@@ -275,86 +275,97 @@ void main() {
       );
     });
 
-    test('every revision is gated unconditionally (D4: every revision HIGH)',
-        () async {
-      for (final verdict in DesignReviewVerdict.values) {
+    test(
+      'every revision is gated unconditionally (D4: every revision HIGH)',
+      () async {
+        for (final verdict in DesignReviewVerdict.values) {
+          final h = await host(
+            structuredResult: {'verdict': verdict.wire},
+          );
+          final outcome = await h.recorder.record(h.job);
+          expect(
+            outcome,
+            DesignReviewRecorderOutcome.recorded,
+            reason: 'verdict ${verdict.wire} must still gate',
+          );
+          final item = await h.engine.loadWorkItem(workItemId);
+          expect(item.state, WorkItemState.waitingForHumanDecision);
+        }
+      },
+    );
+
+    test(
+      'reads an embedded designReviewResult object and keeps its findings',
+      () async {
         final h = await host(
-          structuredResult: {'verdict': verdict.wire},
+          structuredResult: {
+            'designReviewResult': DesignReviewResult(
+              reviewExecutionId: reviewerExecutionId,
+              revisionId: revisionId,
+              verdict: DesignReviewVerdict.changesRequired,
+              findings: const [],
+              assessedDimensions: const ['design-system'],
+              createdAt: now,
+              version: 1,
+            ).toJson(),
+          },
         );
+
         final outcome = await h.recorder.record(h.job);
-        expect(
-          outcome,
-          DesignReviewRecorderOutcome.recorded,
-          reason: 'verdict ${verdict.wire} must still gate',
-        );
-        final item = await h.engine.loadWorkItem(workItemId);
-        expect(item.state, WorkItemState.waitingForHumanDecision);
-      }
-    });
 
-    test('reads an embedded designReviewResult object and keeps its findings',
-        () async {
-      final h = await host(
-        structuredResult: {
-          'designReviewResult': DesignReviewResult(
-            reviewExecutionId: reviewerExecutionId,
-            revisionId: revisionId,
-            verdict: DesignReviewVerdict.changesRequired,
-            findings: const [],
-            assessedDimensions: const ['design-system'],
-            createdAt: now,
-            version: 1,
-          ).toJson(),
-        },
-      );
-
-      final outcome = await h.recorder.record(h.job);
-
-      expect(outcome, DesignReviewRecorderOutcome.recorded);
-      final stored = await h.governanceStore.readDesignReviewResultForExecution(
-        revisionId,
-        reviewerExecutionId,
-      );
-      expect(stored!.verdict, DesignReviewVerdict.changesRequired);
-    });
+        expect(outcome, DesignReviewRecorderOutcome.recorded);
+        final stored = await h.governanceStore
+            .readDesignReviewResultForExecution(
+              revisionId,
+              reviewerExecutionId,
+            );
+        expect(stored!.verdict, DesignReviewVerdict.changesRequired);
+      },
+    );
   });
 
   group('idempotence', () {
-    test('a repeated tick writes no second result and no second decision',
-        () async {
-      final h = await host();
+    test(
+      'a repeated tick writes no second result and no second decision',
+      () async {
+        final h = await host();
 
-      final first = await h.recorder.record(h.job);
-      expect(first, DesignReviewRecorderOutcome.recorded);
+        final first = await h.recorder.record(h.job);
+        expect(first, DesignReviewRecorderOutcome.recorded);
 
-      final second = await h.recorder.record(h.job);
-      expect(second, DesignReviewRecorderOutcome.alreadyRecorded);
+        final second = await h.recorder.record(h.job);
+        expect(second, DesignReviewRecorderOutcome.alreadyRecorded);
 
-      final results = await h.governanceStore.readDesignReviewResultsForRevision(
-        revisionId,
-      );
-      expect(results, hasLength(1), reason: 'exactly one result row');
+        final results = await h.governanceStore
+            .readDesignReviewResultsForRevision(
+              revisionId,
+            );
+        expect(results, hasLength(1), reason: 'exactly one result row');
 
-      // The engine's own requestHumanDecision idempotency means the parked
-      // decision is returned rather than a second one minted.
-      final item = await h.engine.loadWorkItem(workItemId);
-      expect(item.state, WorkItemState.waitingForHumanDecision);
-    });
+        // The engine's own requestHumanDecision idempotency means the parked
+        // decision is returned rather than a second one minted.
+        final item = await h.engine.loadWorkItem(workItemId);
+        expect(item.state, WorkItemState.waitingForHumanDecision);
+      },
+    );
 
-    test('a result already durable is not rewritten, but the gate still rises',
-        () async {
-      final h = await host(preSeededResult: true);
+    test(
+      'a result already durable is not rewritten, but the gate still rises',
+      () async {
+        final h = await host(preSeededResult: true);
 
-      final outcome = await h.recorder.record(h.job);
-      expect(outcome, DesignReviewRecorderOutcome.recorded);
+        final outcome = await h.recorder.record(h.job);
+        expect(outcome, DesignReviewRecorderOutcome.recorded);
 
-      final results = await h.governanceStore.readDesignReviewResultsForRevision(
-        revisionId,
-      );
-      expect(results, hasLength(1));
-      final item = await h.engine.loadWorkItem(workItemId);
-      expect(item.state, WorkItemState.waitingForHumanDecision);
-    });
+        final results = await h.governanceStore
+            .readDesignReviewResultsForRevision(
+              revisionId,
+            );
+        expect(results, hasLength(1));
+        final item = await h.engine.loadWorkItem(workItemId);
+        expect(item.state, WorkItemState.waitingForHumanDecision);
+      },
+    );
   });
 
   group('fail-closed, without fabrication', () {
@@ -451,19 +462,27 @@ void main() {
       );
     }
 
-    test('a result with no verdict raises a labelled non-verdict decision',
-        () async {
-      await expectNoVerdict(
-        () => host(structuredResult: const {'assessedDimensions': ['a11y']}),
-      );
-    });
+    test(
+      'a result with no verdict raises a labelled non-verdict decision',
+      () async {
+        await expectNoVerdict(
+          () => host(
+            structuredResult: const {
+              'assessedDimensions': ['a11y'],
+            },
+          ),
+        );
+      },
+    );
 
-    test('an unreadable verdict string raises a labelled non-verdict decision',
-        () async {
-      await expectNoVerdict(
-        () => host(structuredResult: const {'verdict': 'needs_work'}),
-      );
-    });
+    test(
+      'an unreadable verdict string raises a labelled non-verdict decision',
+      () async {
+        await expectNoVerdict(
+          () => host(structuredResult: const {'verdict': 'needs_work'}),
+        );
+      },
+    );
 
     test('a completed reviewer that wrote no result raises a non-verdict '
         'decision', () async {
@@ -495,23 +514,25 @@ void main() {
       expect(stored, isNotNull);
     });
 
-    test('an execution reference that does not resolve still falls back',
-        () async {
-      // The job names an execution, but the store holds the reviewer under a
-      // different id — the lease-expiry shape.
-      final h = await host(referenceExecution: true);
-      final orphanJob = h.job.copyWith(
-        executionReference: JobExecutionReference(
-          workerExecutionId: 'wx-missing',
-          agentExecutionId: 'agx-missing',
-          createdAt: now,
-        ),
-      );
+    test(
+      'an execution reference that does not resolve still falls back',
+      () async {
+        // The job names an execution, but the store holds the reviewer under a
+        // different id — the lease-expiry shape.
+        final h = await host(referenceExecution: true);
+        final orphanJob = h.job.copyWith(
+          executionReference: JobExecutionReference(
+            workerExecutionId: 'wx-missing',
+            agentExecutionId: 'agx-missing',
+            createdAt: now,
+          ),
+        );
 
-      final outcome = await h.recorder.record(orphanJob);
+        final outcome = await h.recorder.record(orphanJob);
 
-      expect(outcome, DesignReviewRecorderOutcome.recorded);
-    });
+        expect(outcome, DesignReviewRecorderOutcome.recorded);
+      },
+    );
   });
 }
 
