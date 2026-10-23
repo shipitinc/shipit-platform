@@ -1,11 +1,12 @@
 # human-decision.yaml
 #
-# HD-6. OPEN. Recorded 2026-10-12, deferred by the human for later addressing.
+# HD-6. RESOLVED 2026-10-23: remove designApproved from triage entry states (option 2), matching
+# Revision 5 section 5.4(c). Recorded 2026-10-12; was deferred by the human until now.
 # Escalated independently by TWO implement lanes and endorsed by TWO independent reviews.
 # Nothing has been changed on the basis of either option; the inert path is left intact and declared.
 decision_id: 67ec3b62-cd34-4a4a-b0cf-26b5b1422189
 type: ARCHITECTURE
-status: PENDING
+status: RESOLVED
 question: >-
   (HD-6) Should a DESIGN APPROVAL count as a re-triage for the purposes of the triage dedupe
   discriminator? Today `(designApproval, approve) -> designApproved` does NOT advance
@@ -86,11 +87,24 @@ risk:
   - >-
     Choosing option 2 changes the meaning of design approval platform-wide; it is not a local fix.
 resolution:
-  outcome: null
-  decided_by: null
-  decided_at: null
-  selected_option: null
-  rationale: null
+  outcome: REMOVE_DESIGN_APPROVED_FROM_ENTRY_STATES
+  decided_by: operator
+  decided_at: 2026-10-23T15:06:32Z
+  selected_option: REMOVE_DESIGN_APPROVED_FROM_ENTRY_STATES
+  rationale: >-
+    Selected option 2 (remove designApproved from triageDefectDefinition.entryStates), matching
+    design/design-governance-runtime Revision 5 section 5.4(c). The reason option 2 was previously
+    unattractive — it leaves an approved design with no automatic next step — no longer holds:
+    Revision 5 section 5.4(a)/(b) adds designApproved -> implementationReady plus
+    DesignApprovalHandoff, so the implementation lane becomes the deterministic sole owner.
+    Removing the state from the triage entry set therefore closes the already-executable collision
+    at triage_entry_state_drift_guard_test.dart:680-736 without adding a per-(type, choice)
+    discriminator exception to the 'approve must not inflate the counter' rule.
+  consequence: >-
+    This is a platform-wide change to what design approval does, not a local fix, and is accepted
+    as such. It is implemented as part of Revision 5 section 5.4 (implementation step 8b), not
+    as an unrelated lane. The design artifact had chosen this option without citing HD-6; the
+    omission was surfaced by the Engineering Manager before approval and recorded here.
 follow_up_actions:
   - action: >-
       Raise this record with the human when the design-approval flow is next in scope. Do not fold the
