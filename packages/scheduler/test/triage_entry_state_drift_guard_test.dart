@@ -105,10 +105,8 @@ bool _isReWork(HumanDecisionType type, HumanDecisionChoice choice) =>
 ///
 /// Closing M1 means the guard now really does iterate every entry state, and
 /// that immediately surfaced a pair the `designNotRequired`-only filter never
-/// looked at: `(designApproval, approve) -> designApproved`. `designApproved`
-/// has been a `triageDefectDefinition` entry state since before this change, so
-/// this is PRE-EXISTING and is not caused by making `reviewRejected`
-/// dispatchable.
+/// looked at: `(designReviewRequest, approve) -> designApproved`. `designApproved`
+/// USED TO BE a `triageDefectDefinition` entry state, so this was PRE-EXISTING.
 ///
 /// It puts two decisions that are both deliberate at base into direct
 /// conflict, and resolving them is not a test-authoring question:
@@ -121,8 +119,8 @@ bool _isReWork(HumanDecisionType type, HumanDecisionChoice choice) =>
 ///     discriminator reuses a consumed key and is inert for ever.
 ///
 /// Both cannot be true for this pair, and WHICH ONE GIVES is a product
-/// decision, not an implementation one: it changes what every design approval
-/// does to the dedupe counter. It is therefore declared here, named in the
+/// decision, not an implementation one: it changes what every design review
+/// approval does to the dedupe counter. It is therefore declared here, named in the
 /// reason, and escalated — not quietly excused, and not silently "fixed" by
 /// editing the predicate under a guard that was asked to close a different
 /// finding.
@@ -130,32 +128,13 @@ bool _isReWork(HumanDecisionType type, HumanDecisionChoice choice) =>
 /// The declaration is still load-bearing. A route that is neither re-work nor
 /// listed here FAILS this guard, which is the whole of M1: before this change
 /// such a route would have been invisible.
-const _declaredNotReWork = <(HumanDecisionType, HumanDecisionChoice), String>{
-  (HumanDecisionType.designApproval, HumanDecisionChoice.approve):
-      'lands on designApproved, a triage entry state, so a design approval IS '
-      'a release to the dispatch lane. It is left unstamped because the '
-      'predicate is choice-keyed and "approve must not inflate the '
-      'counter" is a deliberate, tested decision at base. Consequence: an '
-      'item that was ALREADY triaged before this route (designNotRequired '
-      '-> agentExecuting -> agentCompleted -> designInReview -> approve) '
-      're-requests the bare historical key, which the first triage job '
-      'holds for ever. PRE-EXISTING; needs a human decision. See the '
-      'REPORTED RESIDUAL test below, which demonstrates it mechanically.',
-  (HumanDecisionType.designReviewRequest, HumanDecisionChoice.approve):
-      'the design-review park\'s "do the design review" answer, landing on '
-      'designApproved — the SAME state, the SAME triage entry state, and '
-      'the SAME residual the entry above describes. Declared not re-work '
-      'because this is FORWARD PROGRESS: the operator is saying "do the '
-      'review", not "do the work again". The rule keys `approve` as re-work '
-      'for exactly one type — escalation, the one approve that means '
-      '"again" — so every other `approve`, this one included, is '
-      'acceptance. Neither the predicate nor this list distinguishes '
-      'design_approval from design_review_request: both are `approve` onto '
-      'designApproved and both inherit the consequence the entry above '
-      'escalates, which this one rides on rather than re-opens. The park is '
-      'green-vacuous at this slice — nothing raises this type yet, so '
-      'nothing routes through it in production.',
-};
+///
+/// NOTE: `designApproval/approve` was previously in this list but was removed
+/// when `designApproved` was removed from `triageDefectDefinition.entryStates`
+/// per design-revision.md §5.4(c). It now lands on `designApproved` which is
+/// no longer a triage entry state, so it is not a route into a triage entry state
+/// at all.
+const _declaredNotReWork = <(HumanDecisionType, HumanDecisionChoice), String>{};
 
 WorkItem _itemAt(WorkItemState state) {
   final now = DateTime.utc(2026, 6, 1);
@@ -194,9 +173,10 @@ void main() {
         triageDefectDefinition.entryStates,
         containsAll(<WorkItemState>[
           WorkItemState.designNotRequired,
-          WorkItemState.designApproved,
+          WorkItemState.reviewRejected,
+          WorkItemState.planned,
         ]),
-        reason: 'the two states the pre-existing guard did cover',
+        reason: 'the three states the pre-existing guard covers',
       );
     });
   });
@@ -377,20 +357,14 @@ void main() {
           );
         }
 
-        // Which is exactly why `(designReviewRequest, approve)` has to appear in
-        // `_declaredNotReWork`. Asserted here so the declaration is not a
-        // coincidence of the main guard happening to reach designApproved with
-        // it: this is the pair whose classification the ruling fixed.
+        // The park's approve route now lands on designApproved which is NOT a
+        // triage entry state (removed per design-revision.md §5.4(c)). So it
+        // does not need to be in _declaredNotReWork.
         expect(
-          _declaredNotReWork.keys,
-          contains((
-            HumanDecisionType.designReviewRequest,
-            HumanDecisionChoice.approve,
-          )),
+          _declaredNotReWork.isEmpty,
+          isTrue,
           reason:
-              'the park lands on designApproved, a triage entry state, and its '
-              'answer is `approve`, which is not re-work. An undeclared route '
-              'into an entry state leaves the work item permanently inert.',
+              'no routes into triage entry states are undeclared non-re-work',
         );
         expect(
           _declaredNotReWork.values.every((reason) => reason.length > 80),
@@ -456,7 +430,7 @@ void main() {
         );
         expect(
           routesByEntryState.keys,
-          contains(WorkItemState.designApproved),
+          contains(WorkItemState.reviewRejected),
           reason:
               'the entry state M1 named. The old filter never saw it, which is '
               'exactly why it stayed green; if it stops being reachable this '
@@ -730,19 +704,23 @@ void main() {
       },
     );
 
-    test('the item is still DISPATCHABLE — the residual is a dedupe problem, '
-        'not an entry-state one', () {
-      // The distinction matters when reading the residual. The state dispatches
-      // fine; what it cannot do is mint a job while every key is consumed. That
-      // is the discriminator's job, and it is the part under review.
-      expect(
-        evaluator.evaluate(
-          _itemAt(WorkItemState.designApproved),
-          triageDefectDefinition,
-        ),
-        RunnableWorkStatus.runnable,
-      );
-    });
+    test(
+      'the item is NOT DISPATCHABLE by triage — designApproved is no longer a triage entry state',
+      () {
+        // designApproved was removed from triageDefectDefinition.entryStates per
+        // design-revision.md §5.4(c). Items at designApproved now go through the
+        // DesignApprovalHandoff to implementationReady, not through triage.
+        expect(
+          evaluator.evaluate(
+            _itemAt(WorkItemState.designApproved),
+            triageDefectDefinition,
+          ),
+          RunnableWorkStatus.noAction,
+          reason:
+              'designApproved is no longer a triage entry state, so triage does not dispatch it',
+        );
+      },
+    );
   });
 
   group('a state that is NOT an entry state still refuses', () {

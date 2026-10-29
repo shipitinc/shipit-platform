@@ -19,6 +19,8 @@ import 'package:qa_orchestration/qa_orchestration.dart'
         ProductQAContractSpecRefusal,
         ProductQAContractSpecStore,
         ProductQAContractSpecUnavailable;
+import 'package:design_governance/design_governance.dart'
+    show DesignGovernanceStore;
 import 'package:workflow_engine/workflow_engine.dart' show ProductGuard;
 import 'package:scheduler/scheduler.dart'
     show JobStore, JobQueue, onboardingJob, onboardingWorkItemId;
@@ -35,6 +37,7 @@ import 'package:worker_protocol/worker_protocol.dart' show WorkerRegistration;
 
 import '../baseline/durable_workspace_runtime.dart'
     show DurableWorkspaceRuntime;
+import '../design/design_approval_handoff.dart' show DesignApprovalHandoff;
 import '../design/design_review_recorder.dart'
     show
         designApprovalAbsentChoiceIsResolvable,
@@ -48,6 +51,7 @@ import '../persistence/postgres_defect_store.dart'
         hide
         ConcurrentModificationException;
 import '../persistence/postgres_design_contract_store.dart';
+import '../persistence/postgres_design_governance_store.dart';
 import '../persistence/postgres_execution_store.dart';
 import '../persistence/postgres_human_decision_store.dart';
 import '../persistence/postgres_human_direction_store.dart';
@@ -129,6 +133,14 @@ class ControlPlaneService {
   /// purpose is durability.
   DesignContractStore get designContractStore =>
       PostgresDesignContractStore(_db);
+
+  /// The durable store for design governance (revisions, reviews, findings, events).
+  ///
+  /// Built over the SAME [_db] as every other store here, so the revision
+  /// status updates read and write the same durable rows the rest of the
+  /// platform reads. Implements [DesignRevisionStore] interface.
+  DesignGovernanceStore get designGovernanceStore =>
+      PostgresDesignGovernanceStore(_db);
 
   DateTime Function() get clock => DateTime.now;
 
@@ -2278,6 +2290,42 @@ class ControlPlaneService {
       'state': workItem.state.name,
       'version': workItem.version,
     });
+
+    // DESIGN APPROVAL HANDOFF (§5.4(b)) — after a designApproval/approve resolution,
+    // advance the design revision status and transition the work item from
+    // designApproved to implementationReady.
+    if (decision.decisionType == HumanDecisionType.designApproval &&
+        choice == HumanDecisionChoice.approve) {
+      final handoff = DesignApprovalHandoff(
+        workflowEngine: workflowEngine,
+        workflowStore: workflowStore,
+        designGovernanceStore: designGovernanceStore,
+        logger: (event, fields) => logger.info(event, fields),
+      );
+      final handoffResult = await handoff.execute(
+        decision: decision,
+        choice: choice,
+        item: workItem,
+      );
+      // The handoff never throws; it records failures via metadata and logs.
+      // We return the potentially-updated work item from the handoff result.
+      if (handoffResult.succeeded && handoffResult.workItem != workItem) {
+        logger.info('workflow.design_approval_handoff_transitioned', {
+          'workItemId': handoffResult.workItem.workItemId,
+          'fromState': workItem.state.wire,
+          'toState': handoffResult.workItem.state.wire,
+        });
+        return handoffResult.workItem;
+      }
+      if (!handoffResult.succeeded) {
+        logger.info('workflow.design_approval_handoff_did_not_transition', {
+          'workItemId': workItem.workItemId,
+          'failureCode': handoffResult.failureCode,
+          'failureDetail': handoffResult.failureDetail,
+        });
+      }
+    }
+
     return workItem;
   }
 

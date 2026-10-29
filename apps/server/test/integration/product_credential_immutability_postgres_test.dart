@@ -210,6 +210,41 @@ String _versionOf(File migration) =>
 ///
 /// [omit] drops one migration from the replay; [only] replays just that one.
 /// Exactly one of them is ever passed.
+const _productSeed =
+    '''
+INSERT INTO "$_chainSchema"."product"
+    ("productId", "name", "description", "manifestVersion", "state",
+     "createdAt", "updatedAt", "version")
+VALUES ('shipit-platform', 'ShipIt Platform',
+        'seeded by the chain-replay harness',
+        'test', 'governed', now(), now(), 1);
+''';
+
+String _chainWorkItemSeedForRepoint(File migration) {
+  final ids = RegExp(
+    r"\('((?:defect|design-remediation)-DEF-\d+)', 'defects'\)",
+  ).allMatches(migration.readAsStringSync()).map((m) => m.group(1)!).toSet();
+  if (ids.isEmpty) {
+    return '';
+  }
+  final buffer = StringBuffer();
+  for (final id in ids.toList()..sort()) {
+    final suffix = id
+        .replaceFirst('design-remediation-', '')
+        .replaceFirst('defect-', '');
+    buffer.writeln('''
+INSERT INTO "$_chainSchema"."work_item"
+    ("workItemId", "productId", "category", "title", "description", "state",
+     "featureRef", "createdAt", "updatedAt", "version")
+VALUES ('$id', 'defects', 'bugfix', 'chain replay seed', 'chain replay seed',
+        'implementation_ready', '$suffix', now(), now(), 1);
+''');
+  }
+  return buffer.toString();
+}
+
+const _needsProductRegistry = "'tr-product-repoint-' ||";
+
 String _chainScript({File? omit, File? only}) {
   final buffer = StringBuffer()
     ..writeln('BEGIN;')
@@ -219,6 +254,11 @@ String _chainScript({File? omit, File? only}) {
       if (file.path != only.path) continue;
     } else if (omit != null && file.path == omit.path) {
       continue;
+    }
+    if (file.readAsStringSync().contains(_needsProductRegistry)) {
+      buffer
+        ..write(_productSeed)
+        ..write(_chainWorkItemSeedForRepoint(file));
     }
     for (final line in file.readAsLinesSync()) {
       final trimmed = line.trim();

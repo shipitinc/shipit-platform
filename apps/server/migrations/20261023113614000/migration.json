@@ -1,0 +1,18 @@
+{
+  "__className__": "serverpod.DatabaseMigration",
+  "actions": [],
+  "warnings": [],
+  "installedModules": [
+    {
+      "__className__": "serverpod.DatabaseMigrationVersion",
+      "module": "control_plane",
+      "version": "20261019010044759"
+    },
+    {
+      "__className__": "serverpod.DatabaseMigrationVersion",
+      "module": "serverpod",
+      "version": "20260129180959368"
+    }
+  ],
+  "migrationApiVersion": 1
+}

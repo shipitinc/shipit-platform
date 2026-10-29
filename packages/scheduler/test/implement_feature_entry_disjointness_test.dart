@@ -144,7 +144,7 @@ void main() {
       // `Scheduler`; both reasons are stated in this file's own header.
       expect(
         shared(defaultImplementFeatureDefinition, triageDefectDefinition),
-        {WorkItemState.designNotRequired, WorkItemState.designApproved},
+        {WorkItemState.designNotRequired},
         reason:
             'this overlap is the reason implementFeatureDefinition had to be a '
             'SIBLING rather than a widening of the existing definition. If this '

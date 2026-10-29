@@ -2003,7 +2003,6 @@ void main() {
               triageDefectDefinition.entryStates,
               {
                 WorkItemState.designNotRequired,
-                WorkItemState.designApproved,
                 WorkItemState.reviewRejected,
                 WorkItemState.planned,
               },
@@ -2013,6 +2012,9 @@ void main() {
                   'The original claim was "NO entryStates set was widened": '
                   'that is now false, and the reason is recorded rather than '
                   'the assertion quietly dropped. '
+                  '`designApproved` is absent because decision HD-6 removed it '
+                  'from every lane entryStates set; it was never a triage '
+                  'collision source. '
                   '\n\nThe invariant is that the triage/implementation '
                   'dispatch collision is structurally unreachable, because '
                   '`implementFeatureDefinition` dispatches from the '
@@ -2095,28 +2097,40 @@ void main() {
       });
 
       group('graceful handling', () {
-        test('a malformed structured result persists nothing', () async {
-          final db = await newDb();
-          final run = await _dispatchTriage(
-            db: db,
-            runId: _nextRunId(runCounter++),
-            // No classification: the agent ran, but its output is unusable.
-            structuredResult: const {'status': 'triaging', 'confidence': 0.5},
-          );
-          addTearDown(run.dispose);
+        test(
+          'a malformed structured result is a permanent failure that persists '
+          'nothing',
+          () async {
+            final db = await newDb();
+            final run = await _dispatchTriage(
+              db: db,
+              runId: _nextRunId(runCounter++),
+              // No classification: the agent ran, but its output is unusable.
+              structuredResult: const {'status': 'triaging', 'confidence': 0.5},
+            );
+            addTearDown(run.dispose);
 
-          // The agent itself succeeded; only the platform-side parse fails.
-          expect(run.job.state, JobState.succeeded);
-          expect(await run.process(), isNull);
-          expect(await run.triageResultRowsForDefect(), isEmpty);
-          final defect = await run.defectStore.readDefect(run.defectId);
-          expect(defect.metadataJson, isNull);
-          expect(defect.status, DefectStatus.reported);
-          expect(
-            await run.defectStore.readClarificationsForDefect(run.defectId),
-            isEmpty,
-          );
-        });
+            // A cleanly-finished triage run that carries no parseable
+            // classification produced none of its lane's artifact.
+            // `SuccessArtifact` treats that as `executionFailed`, which
+            // `RetryPolicy.classify` makes PERMANENT with zero attempts spent
+            // (`packages/execution_coordinator/lib/src/coordinator/`
+            // `success_artifact.dart`, `classificationVerdict`). A job that
+            // reported `succeeded` here would claim triage concluded something
+            // it did not.
+            expect(run.job.state, JobState.failed);
+            expect(run.job.failure?.kind, JobFailureKind.permanent);
+            expect(await run.process(), isNull);
+            expect(await run.triageResultRowsForDefect(), isEmpty);
+            final defect = await run.defectStore.readDefect(run.defectId);
+            expect(defect.metadataJson, isNull);
+            expect(defect.status, DefectStatus.reported);
+            expect(
+              await run.defectStore.readClarificationsForDefect(run.defectId),
+              isEmpty,
+            );
+          },
+        );
 
         test('an unknown classification is rejected, not guessed', () async {
           final db = await newDb();
@@ -2133,19 +2147,27 @@ void main() {
           expect(await run.triageResultRowsForDefect(), isEmpty);
         });
 
-        test('an empty structured result persists nothing', () async {
-          final db = await newDb();
-          final run = await _dispatchTriage(
-            db: db,
-            runId: _nextRunId(runCounter++),
-            structuredResult: const {},
-          );
-          addTearDown(run.dispose);
+        test(
+          'an empty structured result is a permanent failure that persists '
+          'nothing',
+          () async {
+            final db = await newDb();
+            final run = await _dispatchTriage(
+              db: db,
+              runId: _nextRunId(runCounter++),
+              structuredResult: const {},
+            );
+            addTearDown(run.dispose);
 
-          expect(run.job.state, JobState.succeeded);
-          expect(await run.process(), isNull);
-          expect(await run.triageResultRowsForDefect(), isEmpty);
-        });
+            // Same rule as the malformed case above: an empty result carries no
+            // classification, so the lane produced nothing and the failure is
+            // permanent rather than retried into a second empty run.
+            expect(run.job.state, JobState.failed);
+            expect(run.job.failure?.kind, JobFailureKind.permanent);
+            expect(await run.process(), isNull);
+            expect(await run.triageResultRowsForDefect(), isEmpty);
+          },
+        );
 
         test(
           'a failed agent session fails the job and persists nothing',

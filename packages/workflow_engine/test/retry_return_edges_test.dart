@@ -168,12 +168,13 @@ void main() {
       // the whole decision turns on: the fix is a RETURN to an existing entry
       // state, and a widening — even one element wide — would put two
       // schedulers on one work item in the same tick.
+      // NOTE: `designApproved` was removed from triageDefectDefinition.entryStates
+      // per design-revision.md §5.4(c) (DesignApprovalHandoff implementation).
       expect(implementFeatureDefinition.entryStates, {
         WorkItemState.implementationReady,
       });
       expect(triageDefectDefinition.entryStates, {
         WorkItemState.designNotRequired,
-        WorkItemState.designApproved,
         WorkItemState.reviewRejected,
         // Added after the retry-return decision by lane `impl-PLANNED-ENTRY-HOP`
         // for an unrelated reason: `planned` had no route out of itself at all,

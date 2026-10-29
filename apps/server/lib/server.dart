@@ -75,6 +75,7 @@ import 'package:worker_runtime/worker_runtime.dart'
 
 import 'src/generated/endpoints.dart';
 import 'src/generated/protocol.dart';
+import 'src/design/design_readiness_reconciler.dart';
 import 'src/design/design_review_observer.dart';
 import 'src/design/design_review_recorder.dart';
 import 'src/design/design_review_workload_resolver.dart';
@@ -869,6 +870,14 @@ void run(List<String> args) async {
     logger: _log,
   );
 
+  // The design readiness reconciler: advances designApproved -> implementationReady.
+  // Constructed here with the same dependencies the producer uses.
+  final designReadinessReconciler = DesignReadinessReconciler(
+    workflowEngine: durableWorkflowEngine,
+    workflowStore: workflowStore,
+    logger: _log,
+  );
+
   // ---- Baseline production: a PRODUCT-SCOPED path, not a second triage loop. ----
   //
   // `JobType.onboardProduct` jobs were enqueued, stored, displayed by
@@ -1344,6 +1353,7 @@ void run(List<String> args) async {
           executionStore: coordinator.store,
           workerStore: workerStore,
           designReviewRecorder: designReviewRecorder,
+          designReadinessReconciler: designReadinessReconciler,
           foldStalls: outcome.foldStalls,
           log: _log,
         );
@@ -2258,6 +2268,7 @@ Future<DesignLaneTickResult> runDesignLaneTick({
   required ExecutionStore executionStore,
   required WorkerStore workerStore,
   required DesignReviewRecorder designReviewRecorder,
+  required DesignReadinessReconciler designReadinessReconciler,
   required void Function(StallGateResult stalls) foldStalls,
   required void Function(String event, Map<String, dynamic> data) log,
 }) async {
@@ -2310,6 +2321,21 @@ Future<DesignLaneTickResult> runDesignLaneTick({
       'handedOff': revisionDrain.handedOff,
     });
   }
+
+  // ---- Design readiness reconciler: advance designApproved -> implementationReady. ----
+  //
+  // Runs after the producer has advanced items to designInReview and the
+  // recorder has raised designApproval decisions, and before the review scheduler
+  // runs. This ordering ensures that items that have passed the designApproval
+  // gate are moved to implementationReady before the review scheduler evaluates
+  // its entry states.
+  final readinessResult = await designReadinessReconciler.sweep();
+  log('design.readiness.sweep.completed', {
+    'scanned': readinessResult.scanned,
+    'transitioned': readinessResult.transitioned,
+    'refused': readinessResult.refused,
+    'failed': readinessResult.failed,
+  });
 
   final reviewTick = await designReviewScheduler.tick();
   foldStalls(

@@ -118,6 +118,7 @@ class _ProducerRun {
     required this.workflowEngine,
     required this.executionStore,
     required this.workerStore,
+    required this.result,
   });
 
   /// Runs one real implementation execution and returns the host.
@@ -132,6 +133,11 @@ class _ProducerRun {
     required GitRepoFixture repo,
     required String workspaceRoot,
     required bool writeArtifact,
+    // A producer that commits nothing is a PERMANENT failure at the
+    // coordinator (`SuccessArtifact`'s implementer rule), so the no-commit
+    // test has to accept `executedFail` to observe the item it settles. Every
+    // other caller keeps the default and fails loudly on an unexpected status.
+    bool expectSuccess = true,
   }) async {
     final workflowStore = PostgresWorkflowStore(db);
     final workflowEngine = DurableWorkflowEngine(store: workflowStore);
@@ -228,7 +234,7 @@ class _ProducerRun {
     );
     session.release();
     final result = await run.timeout(const Duration(seconds: 20));
-    if (result.status != WorkerExecutionStatus.executedPass) {
+    if (expectSuccess && result.status != WorkerExecutionStatus.executedPass) {
       throw StateError(
         'the producer run for $workItemId did not succeed, so nothing this '
         'file asserts about producerActorId, endingRevision or the review '
@@ -243,6 +249,7 @@ class _ProducerRun {
       workflowEngine: workflowEngine,
       executionStore: executionStore,
       workerStore: workerStore,
+      result: result,
     );
   }
 
@@ -251,6 +258,10 @@ class _ProducerRun {
   final DurableWorkflowEngine workflowEngine;
   final ExecutionStore executionStore;
   final WorkerStore workerStore;
+
+  /// What the real `LocalWorker` returned. Exposed so a test about a run the
+  /// coordinator REFUSED can assert the refusal rather than the run it wanted.
+  final WorkerExecutionResult result;
 
   Future<WorkItem> item() => workflowEngine.loadWorkItem(workItemId);
 
@@ -472,9 +483,20 @@ void main() {
             repo: repo,
             workspaceRoot: workspaceRoot,
             writeArtifact: false,
+            expectSuccess: false,
           );
+
+          // A cleanly-finished implementer that changed nothing produced none
+          // of its lane's artifact. `SuccessArtifact` makes that a PERMANENT
+          // failure with zero attempts spent, so the item settles at
+          // `agentFailed` and never reaches `agentCompleted` — the state the
+          // review lane dispatches from. The no-commit discrimination moved
+          // from the review gate to the coordinator; both halves are asserted
+          // below so neither is assumed.
+          expect(run.result.status, WorkerExecutionStatus.executedFail);
+          expect(run.result.failureCode, WorkerFailureCode.agentFailed);
           final item = await run.item();
-          expect(item.state, WorkItemState.agentCompleted);
+          expect(item.state, WorkItemState.agentFailed);
 
           // The triage shape, and the measured shape of every real producer in
           // the QA database: HEAD is recorded either way, so an untouched
@@ -546,12 +568,12 @@ void main() {
           final after = await run.item();
           expect(
             after.state,
-            WorkItemState.agentCompleted,
+            WorkItemState.agentFailed,
             reason:
-                'the implementation inflow owns this item — it produced a '
-                'report, not an artifact. Parking it would pre-empt the lane '
-                'that can do the work and hand a human a rework/reject choice '
-                'that is the wrong question.',
+                'the coordinator already refused the run permanently, so the '
+                'review gate must leave it alone rather than park a run that '
+                'produced nothing. Parking would hand a human a rework/reject '
+                'choice over an artifact that does not exist.',
           );
           expect(after.blockingHumanDecisionId, isNull);
         },

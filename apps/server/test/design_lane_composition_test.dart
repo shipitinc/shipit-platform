@@ -1,4 +1,7 @@
+import 'package:control_plane_server/src/design/design_readiness_reconciler.dart';
 import 'package:control_plane_server/src/design/design_review_recorder.dart';
+import 'package:control_plane_server/src/design/design_review_workload_resolver.dart';
+import 'package:control_plane_server/src/design/design_revision_producer.dart';
 import 'package:control_plane_server/server.dart'
     show
         AgentExecutionBudgets,
@@ -6,8 +9,6 @@ import 'package:control_plane_server/server.dart'
         DesignRefusalSink,
         buildDesignRefusalSink,
         runDesignLaneTick;
-import 'package:control_plane_server/src/design/design_review_workload_resolver.dart';
-import 'package:control_plane_server/src/design/design_revision_producer.dart';
 import 'package:design_governance/design_governance.dart';
 import 'package:execution_coordinator/execution_coordinator.dart';
 import 'package:platform_contracts/platform_contracts.dart';
@@ -97,6 +98,7 @@ class _Host {
     required this.revisionScheduler,
     required this.reviewScheduler,
     required this.producer,
+    required this.readinessReconciler,
     required this.loggedEvents,
   });
 
@@ -311,6 +313,12 @@ class _Host {
       )),
     );
 
+    final readinessReconciler = DesignReadinessReconciler(
+      workflowEngine: engine,
+      workflowStore: workflowStore,
+      logger: (message, context) => loggedEvents.add((message, context)),
+    );
+
     return _Host._(
       mode: mode,
       workflowStore: workflowStore,
@@ -322,6 +330,7 @@ class _Host {
       revisionScheduler: revisionScheduler,
       reviewScheduler: reviewScheduler,
       producer: producer,
+      readinessReconciler: readinessReconciler,
       loggedEvents: loggedEvents,
     );
   }
@@ -336,6 +345,7 @@ class _Host {
   final Scheduler revisionScheduler;
   final Scheduler reviewScheduler;
   final DesignRevisionProducer producer;
+  final DesignReadinessReconciler readinessReconciler;
   final List<(String, Map<String, dynamic>)> loggedEvents;
 
   /// The SAME sink the composition root builds, from the SAME function, so the
@@ -363,6 +373,7 @@ class _Host {
       designGovernanceStore: InMemoryDesignGovernanceStore(),
       logger: (message, context) => loggedEvents.add((message, context)),
     ),
+    designReadinessReconciler: readinessReconciler,
     foldStalls: (_) {},
     log: (message, context) => loggedEvents.add((message, context)),
   );

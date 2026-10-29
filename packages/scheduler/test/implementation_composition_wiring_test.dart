@@ -146,7 +146,8 @@ void main() {
         reason:
             'the scheduler must be built over the NEW definition, not over '
             '`defaultImplementFeatureDefinition` — the latter still declares '
-            '{designNotRequired, designApproved} and would collide with triage',
+            '{designNotRequired, designApproved} and would collide with triage '
+            'on designNotRequired',
       );
     });
 

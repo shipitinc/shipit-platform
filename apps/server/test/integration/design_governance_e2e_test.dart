@@ -258,7 +258,11 @@ class DesignGovernanceE2EHost {
       workItemId: workItemId,
       to: WorkItemState.designInReview,
       trigger: TransitionTrigger.systemEvent,
-      context: {
+      // Mirrors DesignRevisionProducer: keyed by the designer execution, so a
+      // re-drain of the same completed execution is a no-op instead of a
+      // rejected `designInReview -> designInReview`.
+      idempotencyKey: 'design-revision-transition-$designerExecutionId',
+      metadataMerge: {
         'designRevisionId': designRevisionId,
         'designerExecutionId': designerExecutionId,
       },

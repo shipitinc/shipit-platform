@@ -81,7 +81,7 @@ Future<void> _purgeSuiteRows() async {
   for (final statement in const <String>[
     'DELETE FROM "product_qa_contract_spec" WHERE "productId" LIKE '
         '\'$_productPrefix%\'',
-    'DELETE FROM "qa_contract" WHERE "contractId" LIKE \'$_productPrefix%\'',
+    'DELETE FROM "qa_contract" WHERE "contractId" LIKE \'%$_productPrefix%\'',
   ]) {
     await db.query(statement);
   }
@@ -302,7 +302,7 @@ void main() {
           await provision(_otherWorkItemId);
           final total = await db.query(
             'SELECT count(*)::int AS "n" FROM "qa_contract" '
-            'WHERE "contractId" LIKE \'$_productPrefix%\'',
+            'WHERE "contractId" LIKE \'%$_productPrefix%\'',
           );
           expect((total.first.toColumnMap()['n'] as num).toInt(), 2);
         },

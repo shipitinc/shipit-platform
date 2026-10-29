@@ -83,6 +83,13 @@
       "type": ["object", "null"],
       "description": "Optional structured review scope (subset of design contract)"
     },
+    "declaredOwnedPaths": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "string"
+      },
+      "description": "Paths the design lane declares it owns, carried to the scope grant issued on approval"
+    },
     "carriedForwardFromRevisionId": {
       "type": ["string", "null"],
       "pattern": "^DES-R[0-9]+$",

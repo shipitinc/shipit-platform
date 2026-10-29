@@ -125,7 +125,6 @@ const JobDefinition triageDefectDefinition = JobDefinition(
   requiredCapabilities: {WorkerCapability.linux, WorkerCapability.git},
   entryStates: {
     WorkItemState.designNotRequired,
-    WorkItemState.designApproved,
     WorkItemState.reviewRejected,
     WorkItemState.planned,
   },

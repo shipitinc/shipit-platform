@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:control_plane_server/src/implementation/implementation_path_ownership.dart';
 import 'package:control_plane_server/src/qa/production_qa_sources.dart';
 import 'package:control_plane_server/src/services/control_plane_service.dart';
+import 'package:design_governance/design_governance.dart';
 import 'package:execution_coordinator/execution_coordinator.dart'
     show ExecutionStore, InMemoryExecutionStore;
 import 'package:path/path.dart' as p;
@@ -580,12 +581,17 @@ class _TestService extends ControlPlaneService {
 
   final WorkflowStore _store;
   final ExecutionStore _executions;
+  final DesignGovernanceStore _designGovernance =
+      InMemoryDesignGovernanceStore();
 
   @override
   WorkflowStore get workflowStore => _store;
 
   @override
   ExecutionStore get executionStore => _executions;
+
+  @override
+  DesignGovernanceStore get designGovernanceStore => _designGovernance;
 
   @override
   DurableWorkflowEngine get workflowEngine =>

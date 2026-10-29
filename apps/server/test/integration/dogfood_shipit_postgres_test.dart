@@ -38,7 +38,7 @@ Future<PersistenceDatabase> _newDb() async {
 /// no baseline surviving from an earlier run).
 Future<void> _purgeSuiteRows() async {
   final db = await _newDb();
-  const product = 'shipit-platform';
+  const product = 'dogfood-shipit';
   const statements = <String>[
     'DELETE FROM "baseline_fact" WHERE "baselineId" IN '
         '(SELECT "baselineId" FROM "product_baseline" '
@@ -127,15 +127,15 @@ void main() {
 
           // 1. Durable Product identity (never cwd/repo URL/process-global).
           await engine.createProduct(
-            productId: 'shipit-platform',
+            productId: 'dogfood-shipit',
             name: 'ShipIt',
             description: 'The platform itself (S-1 dogfood).',
           );
 
           // 2. Repository attribution: durable, product-scoped.
           await engine.addRepositoryReference(
-            repositoryId: 'repo-shipit-platform',
-            productId: 'shipit-platform',
+            repositoryId: 'repo-dogfood-shipit',
+            productId: 'dogfood-shipit',
             uri: repoRoot.path,
             kind: RepositoryKind.monorepo,
             provider: RepositoryProvider.local,
@@ -176,7 +176,7 @@ void main() {
 
           // 4. Propose (NOT accept) the baseline. The human gate stays open.
           final proposed = await engine.proposeBaseline(
-            productId: 'shipit-platform',
+            productId: 'dogfood-shipit',
             facts: facts,
           );
           expect(proposed.revision, 1);
@@ -207,7 +207,7 @@ void main() {
             store: PostgresProductRegistryStore(await _newDb()),
             humanDecisionStore: freshDecisions,
           );
-          final ctx = await fresh.loadProductContext('shipit-platform');
+          final ctx = await fresh.loadProductContext('dogfood-shipit');
           expect(ctx.product.name, 'ShipIt');
           // Proposing a baseline moves the product into baselinePending. It
           // is NOT governed, because no human has approved anything — which is
@@ -223,7 +223,7 @@ void main() {
           );
           expect(ctx.allBaselines.single.contentHash, proposed.contentHash);
           expect(ctx.allBaselines.single.facts.length, facts.length);
-          expect(fresh.readBaselineRevision('shipit-platform', 1), completes);
+          expect(fresh.readBaselineRevision('dogfood-shipit', 1), completes);
 
           // Sanity: record the exact pinned revision discovery ran against.
           expect(head, matches(RegExp(r'^[0-9a-f]{40}$|^[0-9a-f]{7,}$')));

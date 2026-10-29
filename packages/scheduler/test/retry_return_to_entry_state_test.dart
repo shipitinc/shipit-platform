@@ -719,7 +719,6 @@ void main() {
       );
       expect(triageDefectDefinition.entryStates, {
         WorkItemState.designNotRequired,
-        WorkItemState.designApproved,
         WorkItemState.reviewRejected,
         // `planned` was added AFTER the retry-return decision, by lane
         // `impl-PLANNED-ENTRY-HOP`, for a reason that is not the retry: a

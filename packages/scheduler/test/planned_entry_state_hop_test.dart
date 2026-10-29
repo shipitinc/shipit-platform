@@ -84,7 +84,6 @@ void main() {
     requiredCapabilities: {WorkerCapability.linux, WorkerCapability.git},
     entryStates: {
       WorkItemState.designNotRequired,
-      WorkItemState.designApproved,
       WorkItemState.reviewRejected,
     },
     entryProbeTargets: {

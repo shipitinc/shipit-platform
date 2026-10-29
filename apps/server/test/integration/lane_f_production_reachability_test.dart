@@ -1569,17 +1569,19 @@ void main() {
             WorkItemState.agentExecuting,
           );
 
-          // The unhandled copy of the finalize error is a separate production
-          // wart (`_releaseExecution` settles a `Completer` nobody listens to,
-          // execution_coordinator.dart:618-637). It is recorded rather than
-          // asserted away, because `server.dart`'s timer swallows it and
-          // nobody is looking at it.
+          // The finalize error used to escape as an unhandled async error
+          // because `_releaseExecution` settled a `Completer` nobody listened
+          // to. It now attaches a no-op listener before completing with the
+          // error, so the error reaches the one intended reader
+          // (`cancelExecution`) and never the ambient zone. Pinned at ZERO:
+          // this assertion previously required exactly one, and dropping it
+          // would let the leak return silently.
           expect(
             unhandled,
-            hasLength(1),
+            isEmpty,
             reason:
-                'one unhandled async error from the settled contract nobody is '
-                'waiting on \u2014 still present, still invisible in production',
+                'the settled contract is completed only after a listener is '
+                'attached; nothing is left unhandled',
           );
 
           // --- the drain runs, REFUSES this job, and RETURNS --------------

@@ -75,7 +75,8 @@ void main() {
   }
 
   withServerpod(
-    'feature request intake files a draft work item and its intake direction',
+    'feature request intake parks a work item for design and raises its '
+    'intake direction',
     (sessionBuilder, endpoints) async {
       setUp(() async {
         await purgeSuiteRows();
@@ -107,7 +108,7 @@ void main() {
         PersistenceDatabase(sessionBuilder.build().db),
       );
 
-      test('creates a draft feature work item', () async {
+      test('creates a feature work item and parks it for design', () async {
         final result = await endpoints.intakeEndpoints.createFeatureRequest(
           sessionBuilder,
           productId: _suiteProductId,
@@ -118,14 +119,21 @@ void main() {
 
         expect(result.workItemId, matches(_workItemId));
         expect(result.title, 'Dark mode');
-        expect(result.state, WorkItemState.draft.wire);
+        // The endpoint returns the item AS IT SETTLED, not the `draft` snapshot
+        // taken before the work-entry trigger ran. With no design contract on
+        // the product, `WorkEntryTrigger` walks the feature
+        // `draft -> planning -> planned -> featureIntakeParked`
+        // (`apps/server/lib/src/triage/work_entry.dart` `_walkToFeatureIntakeParked`),
+        // because `planned` is a `triageDefect` entry state and the scheduler
+        // is category-blind. Parking is the recorded outcome, not a failure.
+        expect(result.state, WorkItemState.featureIntakeParked.wire);
 
         final workItem = await storeInTestTransaction(
           sessionBuilder,
         ).readWorkItem(result.workItemId);
         expect(workItem.category, WorkItemCategory.feature);
         expect(workItem.productId, _suiteProductId);
-        expect(workItem.state, WorkItemState.draft);
+        expect(workItem.state, WorkItemState.featureIntakeParked);
         expect(workItem.description, contains('dark mode'));
       });
 

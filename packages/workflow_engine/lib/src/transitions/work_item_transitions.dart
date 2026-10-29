@@ -169,6 +169,9 @@ class WorkItemTransitions {
         escalationDecisionTypes: {HumanDecisionType.designApproval},
       ),
     ],
+    (WorkItemState.designApproved, WorkItemState.implementationReady): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+    ],
     (WorkItemState.designApproved, WorkItemState.agentExecuting): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
       GuardConditions.agentAvailable(),

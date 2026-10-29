@@ -2,6 +2,7 @@ import 'package:control_plane_server/src/design/design_review_recorder.dart';
 import 'package:control_plane_server/src/implementation/design_scope_grant.dart'
     show designScopeGrantProvenanceKey;
 import 'package:control_plane_server/src/services/control_plane_service.dart';
+import 'package:design_governance/design_governance.dart';
 import 'package:execution_coordinator/execution_coordinator.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:serverpod/serverpod.dart';
@@ -272,12 +273,17 @@ class _TestService extends ControlPlaneService {
 
   final WorkflowStore _store;
   final ExecutionStore _executions;
+  final DesignGovernanceStore _designGovernance =
+      InMemoryDesignGovernanceStore();
 
   @override
   WorkflowStore get workflowStore => _store;
 
   @override
   ExecutionStore get executionStore => _executions;
+
+  @override
+  DesignGovernanceStore get designGovernanceStore => _designGovernance;
 
   @override
   DurableWorkflowEngine get workflowEngine =>

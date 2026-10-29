@@ -51,3 +51,5 @@ EXPOSE 8080
 # repository is supplied as a volume (see compose.yaml): the server refuses to
 # boot without SHIPIT_TRIAGE_REPOSITORY_PATH pointing at a real git repository.
 CMD ["dart", "bin/main.dart", "--apply-migrations"]
+
+ARG CACHE_BUST=2
