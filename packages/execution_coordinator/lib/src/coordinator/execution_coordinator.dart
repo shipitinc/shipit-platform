@@ -1038,6 +1038,7 @@ class ExecutionCoordinator {
           },
         );
       }
+      _eventSequences.remove(execution.executionId);
       orphans.add(orphaned);
     }
     return orphans;
@@ -1113,7 +1114,6 @@ class ExecutionCoordinator {
       return finalRecord;
     } catch (error) {
       await session?.close();
-      _releaseExecution(executionId, error: error);
       // A completion that could not be applied because the work item moved on
       // is ordinary staleness, not a coordinator fault — but it still has to be
       // REPORTED, because the execution did not achieve what it was for. Only
@@ -1155,6 +1155,8 @@ class ExecutionCoordinator {
       } catch (_) {
         // Fail-sealed: the original error is the primary signal, and the
         // settled contract already carries it (see `_releaseExecution`).
+      } finally {
+        _releaseExecution(executionId, error: error);
       }
       rethrow;
     }
@@ -1901,10 +1903,18 @@ class ExecutionCoordinator {
     required AgentEventType type,
     Map<String, dynamic> payload = const {},
     ExecutionStore? via,
-  }) {
+  }) async {
+    if (!_eventSequences.containsKey(executionId)) {
+      final events = await this.store.readEvents(executionId);
+      int maxSeq = 0;
+      for (final e in events) {
+        if (e.sequence > maxSeq) maxSeq = e.sequence;
+      }
+      _eventSequences[executionId] = maxSeq;
+    }
     final store = via ?? this.store;
     final sequence = _nextSequence(executionId);
-    return store.appendEvent(
+    await store.appendEvent(
       AgentEventRecord(
         eventId: 'evt-$executionId-$type-$sequence',
         executionId: executionId,
