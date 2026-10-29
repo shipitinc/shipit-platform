@@ -3758,3 +3758,9 @@ WARNING: The database does not match the target database:
 ```
 - **Symptom:** Warnings during server boot in `staging` mode about missing columns and indexes that the migration DID add. This is due to Serverpod 3.4.13's `liveTable.like(target)` treating columns/indexes in the live DB that are *not* in the target schema as "missing" rather than "extra".
 - **Action:** Wait for Serverpod upstream fix or document as benign. Ensure we do not erroneously generate repair migrations that drop live data.
+
+## F-225: Design Revision Scheduler Fails to Dispatch from design_required
+Manual transitions of test work items to `design_required` (with an empty dedupe list) are no longer resulting in the creation of `design_revision` jobs by the `sched-design-revision` scheduler during the tick cycle.
+- **Symptom:** Work items placed in `design_required` state are ignored. The `job` table remains empty for these items. 
+- **Action:** Investigate the `designRevisionScheduler`'s queueing logic, specifically `designRevisionDedupeKey` generation or capacity guards that might be silently rejecting the items due to missing context (like `designContractId` missing from the mock data).
+- **Priority:** Blocking end-to-end autonomous flow through the design lane for new items.
