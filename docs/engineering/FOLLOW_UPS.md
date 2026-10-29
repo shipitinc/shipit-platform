@@ -3740,3 +3740,21 @@ coordinator's failure path leave the item at `designInReview` instead of attempt
 `designInReview -> agentFailed` transition. The missing edge is a **product decision** and is deliberately
 NOT invented here; until step 9's approval gate exists, a failed design review has no operator-visible
 signal beyond the execution record. Review L3/B1/H1 on `1a027e9`.
+
+## F-223: Local QA Agent Execution Freezing/Sequencing Race
+The local QA runtime's `w-design-revision-local` agent gets stuck in `running` state without appending new events or hitting a timeout reliably, eventually resulting in the execution becoming a zombie or failing due to `agent_event_execution_sequence_unique` constraint violations during retry.
+- **Symptom:** Live design agent jobs hang indefinitely or crash the `ExecutionCoordinator` when retrying `agent_event` sequence appending.
+- **Action:** Fix `ExecutionCoordinator` and `AgentEvent` sequencing. Ensure `_eventSequences` are properly cleared on retry and that there's no race condition between `_appendEvent` and database updates when an agent execution fails/is interrupted and retried.
+- **Priority:** Blocking live QA usage of the design lane (and potentially other agent lanes).
+
+## F-224: Live Database Integrity Missing Column (declared_owned_paths)
+The live local QA database issues warnings on boot:
+```
+WARNING: The database does not match the target database:
+ - Table "design_revision" is not like the target database:
+ - Missing Column "declared_owned_paths".
+ - Missing Index "design_revision_approved_unique_per_work_item".
+ - Missing Index "design_revision_declared_owned_paths_idx".
+```
+- **Symptom:** Warnings during server boot in `staging` mode about missing columns and indexes that the migration DID add. This is due to Serverpod 3.4.13's `liveTable.like(target)` treating columns/indexes in the live DB that are *not* in the target schema as "missing" rather than "extra".
+- **Action:** Wait for Serverpod upstream fix or document as benign. Ensure we do not erroneously generate repair migrations that drop live data.
