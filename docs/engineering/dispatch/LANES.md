@@ -1419,3 +1419,6 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | correct-worker-lease-starvation | correct | CLOSED — cycle 1 done | same worktree | fix/worker-lease-starvation | fb8dde3 | PRECISION | CORRECTION_COMPLETE 98bdca85 | → focused-reviewer |
 | focused-review-worker-lease | re-review | CLOSED | (read-only) | fix/worker-lease-starvation | fb8dde3 | PRECISION | DO_NOT_APPROVE_CORRECTIONS — mid-stage resume writes unfenced (:799/:815 _setCleanup blind upsert, :846 _finish CAS window, :590/:667 events) | → correction cycle 2 |
 | correct-worker-lease-starvation-r2 | correct | IN_FLIGHT | /private/tmp/shipit-fix-worker-lease-starvation | fix/worker-lease-starvation | fb8dde3 | PRECISION | await report → focused-reviewer (cycle 2; impasse if fails again) |
+| correct-worker-lease-starvation-r2 | correct | CLOSED | same worktree | fix/worker-lease-starvation | fb8dde3 | PRECISION | CORRECTION_COMPLETE 1ec22f0 | → focused-reviewer |
+| focused-review-worker-lease-r2 | re-review | CLOSED | (read-only) | fix/worker-lease-starvation | fb8dde3 | PRECISION | APPROVE_CORRECTIONS, READY_FOR_MERGE | → integrator |
+| integrate-worker-lease | integrate | CLOSED | scratch rehearsal | fix/worker-lease-starvation | fb8dde3 | STANDARD | MERGE_APPROVED → merged a661aae (human-authorized) | done |
