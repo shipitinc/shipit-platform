@@ -1422,3 +1422,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | correct-worker-lease-starvation-r2 | correct | CLOSED | same worktree | fix/worker-lease-starvation | fb8dde3 | PRECISION | CORRECTION_COMPLETE 1ec22f0 | → focused-reviewer |
 | focused-review-worker-lease-r2 | re-review | CLOSED | (read-only) | fix/worker-lease-starvation | fb8dde3 | PRECISION | APPROVE_CORRECTIONS, READY_FOR_MERGE | → integrator |
 | integrate-worker-lease | integrate | CLOSED | scratch rehearsal | fix/worker-lease-starvation | fb8dde3 | STANDARD | MERGE_APPROVED → merged a661aae (human-authorized) | done |
+| research-tick-hold | research | IN_FLIGHT | canonical (read-only) | main | 128c721 | CHEAP_READ | await findings → remediation dispatch |
+| impl-onboarding-lease | implement | IN_FLIGHT | /private/tmp/shipit-fix-onboarding-lease | fix/onboarding-worker-lease-bound | 128c721 | STANDARD | await report → engineering-reviewer |

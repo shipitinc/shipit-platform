@@ -1522,3 +1522,12 @@ tick-epoch — a structural throughput defect, not a data wedge. Next session: d
 CHEAP_READ/STANDARD lane to verify which call in the tick path awaits the execution
 (`drainTriageOutcomesFromTick` / `_dispatchOne` / drain handler) and whether enqueue phases are
 blocked behind it; then remediate as a design change.
+
+### Next work items started (2026-10-30)
+- `research-tick-hold` — read-only investigation of which call in the shared tick path holds
+  while an execution runs (the ~1h enqueue delay proved the serialization hypothesis needs a
+  mechanism, not just a pattern). Feeds the throughput remediation decision.
+- `impl-onboarding-lease` — F-232: port the merged F-226 bound+epoch fencing to
+  `OnboardingWorker` (same defect class). Worktree `fix/onboarding-worker-lease-bound`.
+Live QA self-recovered meanwhile: both test items got fresh `design_revision` jobs at 05:06
+(one running on retry at 11:08, one failed), impl jobs draining 1/tick.
