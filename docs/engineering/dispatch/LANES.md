@@ -1424,3 +1424,6 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-worker-lease | integrate | CLOSED | scratch rehearsal | fix/worker-lease-starvation | fb8dde3 | STANDARD | MERGE_APPROVED → merged a661aae (human-authorized) | done |
 | research-tick-hold | research | IN_FLIGHT | canonical (read-only) | main | 128c721 | CHEAP_READ | await findings → remediation dispatch |
 | impl-onboarding-lease | implement | IN_FLIGHT | /private/tmp/shipit-fix-onboarding-lease | fix/onboarding-worker-lease-bound | 128c721 | STANDARD | await report → engineering-reviewer |
+| review-impl-onboarding-lease | review | CLOSED | (read-only) | fix/onboarding-worker-lease-bound | 128c721 | STANDARD | APPROVE_WITH_NON_BLOCKING_FOLLOWUP | → integrator |
+| integrate-onboarding-lease | integrate | CLOSED | scratch rehearsal | fix/onboarding-worker-lease-bound | 128c721 | STANDARD | MERGE_APPROVED → merged b2148d9 (human-authorized) | done |
+| impl-detached-dispatch | implement | IN_FLIGHT | /private/tmp/shipit-fix-detached-dispatch | fix/detached-dispatch | 94d8677 | PRECISION | await report → engineering-reviewer |
