@@ -1441,3 +1441,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | deploy-qa-f237 | deploy | IN_FLIGHT | canonical (no repo writes) | main | adda3ee | STANDARD | await DEPLOYMENT_* → verify concurrency restored live |
 | deploy-qa-f237 | deploy | CLOSED — DEPLOYMENT_FAILED (gate stop) | canonical | main | adda3ee | STANDARD | red gate correctly blocked deploy; QA untouched | → correction lane |
 | correct-f237-integration-tests | correct | IN_FLIGHT | /private/tmp/shipit-f237-integration-settle | fix/f237-integration-settle | 6fcb630 | STANDARD | await report → focused-reviewer → redeploy retry |
+| correct-f237-integration-tests | correct | CLOSED — CORRECTION_COMPLETE | /private/tmp/shipit-f237-integration-settle | fix/f237-integration-settle | 6fcb630 | STANDARD | cb5f76f: test-integration +319 green; flagged F-238 prod race | → focused-reviewer |
+| focused-review-f237-integration | re-review | IN_FLIGHT | (read-only) | fix/f237-integration-settle | 6fcb630 | STANDARD | await result → integrator → merge → redeploy retry |
