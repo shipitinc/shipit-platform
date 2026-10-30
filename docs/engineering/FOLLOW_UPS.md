@@ -3830,3 +3830,23 @@ Same defect class, different worker — needs its own correction, NOT folded int
 `fix/dedupe-key-self-heal` @ `0d43d8f` — integrator `MERGE_APPROVED`, clean rehearsal (tree
 `d86e1d85`, identical reviewed blobs), merge-tier gates green except `make test-integration`
 (deferred to merge executor). Merge + push need authorization; 401 local commits are unpushed.
+
+## F-234: design refusal lands `not-parkable` on `agent_failed` — item needs a person
+An interrupted `design_revision` execution is unresumable post-restart (`execution.reference-missing`),
+the job fails `executionInterrupted` (correct), but the refusal then reports
+`design.refusal.not-parkable` + `not-surfaced` — the work item at `agent_failed` is outside the states
+the park gate may act on, so nothing reaches the operator except a log line. Same class as F-222/F-224(d):
+a lane outcome with no operator-visible surface. Fix: either a park edge from `agent_failed`, or map the
+refusal to a retry-return target so the item re-enters `design_required` automatically.
+- **Priority:** operator-visibility gap on every interrupted design run.
+
+## F-235: stale `agent_execution` rows stay `running` after restart
+9 rows remained `running` post-restart (their processes died with the container). They do not starve
+dispatch — capacity counts active claims/leases, not these rows — but the state is cosmetic-false and
+confuses "is anything actually running". Fix: a boot-time or sweep-time reconcile marking
+process-orphaned `running` rows `interrupted`/`orphaned`.
+- **Priority:** cosmetic; monitor for reclaim coverage.
+
+## F-236: `SHIPIT_PROVISION_DURABLE_WORKSPACE` still set in docker/.env
+Boot banner advises clearing it (already-provisioned no-op). One-line env cleanup at next compose touch.
+- **Priority:** trivial housekeeping.

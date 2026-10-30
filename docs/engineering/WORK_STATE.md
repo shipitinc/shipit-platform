@@ -1497,3 +1497,16 @@ identical), human-authorized "merge now". `make test-integration` remains owed b
 AND `eeb9c97` — run it before the next QA redeploy so the merged tree gets the merge-tier gate.
 Both remediation fixes are now on `main`; the live QA redeploy that activates them is a
 deployment-authority action not yet requested.
+
+### Deploy at merged HEAD — DEPLOYMENT_SUCCESSFUL (lane 944c7828)
+`make test-integration` **+319 All passed** — owed merge-tier gate PAID for `eeb9c97`+`a661aae`.
+Images rebuilt (`server 6e2bd183`, `client ca340670`), stack at `5d41c8b`, verified by identity.
+**Fixes verified live:** the two zombie design jobs failed `executionInterrupted` at claim-lease
+expiry, capacity freed, `sched-impl` dispatched `jb-hnnwg8c8f8` next tick. Zero post-deploy
+deferrals in ~8 ticks.
+Residuals remediated by ops SQL (disclosed): 2 `agent_failed` items reset → `design_required`
+(UPDATE 2); their `executionInterrupted` jobs → `cancelled` (UPDATE 2; infra-killed, no artifact).
+**OPEN — next monitoring pass:** 40+ min later no fresh `design_revision` job has enqueued for
+either item despite the keys being yielded — enqueue itself is not firing; needs a lane to check
+why (tick hold? evaluator? entry-hop?). F-234 not-parkable refusal gap, F-235 stale `running`
+agent_execution rows, F-236 env housekeeping all filed.
