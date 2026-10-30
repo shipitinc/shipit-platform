@@ -1450,3 +1450,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | impl-persistence-tx-slot | implement | IN_FLIGHT | /private/tmp/shipit-fix-tx-slot | fix/persistence-tx-slot | ea7754a | PRECISION | await report → engineering-reviewer (F-238 confirmed-live race) |
 | impl-persistence-tx-slot | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-tx-slot | fix/persistence-tx-slot | ea7754a | PRECISION | e15b0ca zone-scoped tx binding, 9 tests | → reviewer |
 | review-impl-persistence-tx-slot | review | IN_FLIGHT | (read-only) | fix/persistence-tx-slot | ea7754a | PRECISION | await result |
+| review-impl-persistence-tx-slot | review | CLOSED | (read-only) | fix/persistence-tx-slot | ea7754a | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (3 LOW) | → integrator |
+| integrate-persistence-tx-slot | integrate | IN_FLIGHT | scratch rehearsal | fix/persistence-tx-slot | ea7754a | PRECISION | await MERGE_APPROVED → merge auth question |
