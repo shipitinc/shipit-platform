@@ -45,7 +45,11 @@ class FileRestartHarness {
     this.dispatch = dispatch ?? ControlledDispatcher(workerStore: workerStore);
     final supplied = this.dispatch;
     if (supplied is ControlledDispatcher) {
-      supplied.workerStore ??= workerStore;
+      // Re-point, never ??=: a dispatcher shared across a restart would keep
+      // writing durable tails into the FIRST host's store, while
+      // FileJsonWorkerStore snapshots at construction — the resumed host's
+      // reconcile would never see the run's rows and would requeue forever.
+      supplied.workerStore = workerStore;
     }
     final modelPolicyStore = InMemoryModelPolicyStore();
     final modelSelection = ModelSelectionService(modelPolicyStore);

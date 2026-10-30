@@ -101,9 +101,16 @@ void main() {
       await host.scheduler.tick();
       await _settle(host);
 
-      final job = (await host.jobStore.listJobs()).single;
-      expect(job.state, JobState.cancelled);
+      // Cancelling releases the dedupe key, so the settling tick also mints
+      // and dispatches the successor row for the still-runnable item.
+      final jobs = await host.jobStore.listJobs();
+      final job = jobs.singleWhere((j) => j.state == JobState.cancelled);
       expect(job.executionReference!.agentExecutionId, 'agx-cancelled');
+      for (final live in jobs.where((j) => !j.isTerminal)) {
+        while (await host.jobStore.readClaimForJob(live.jobId) != null) {
+          await Future<void>.delayed(const Duration(milliseconds: 1));
+        }
+      }
     });
   });
 
@@ -208,19 +215,23 @@ void main() {
 
       await host.scheduler.tick();
       await _settle(host);
+      // The lost CAS leaves the durable job without a reference, so the
+      // settling tick's reconcile sees a stale claim and requeues rather than
+      // adopting — the same fail-safe a crash would produce. The re-dispatched
+      // run is what a second settle then adopts.
+      await _settle(host);
 
       expect(losing.lostMarkRunningWrites, 1);
       final job = (await host.jobStore.listJobs()).single;
       expect(job.state, JobState.succeeded);
 
-      // The lost CAS left no reference behind. The correct value on a lost CAS
-      // is the worker execution that produced the adopted outcome - the same
-      // execution the dispatch request named - never the empty string.
+      // The correct value is the worker execution that produced the adopted
+      // outcome — the re-dispatch's own stamped id — never the empty string.
       final ref = job.executionReference;
       expect(ref, isNotNull, reason: 'adoption must restore the reference');
       expect(ref!.workerExecutionId, isNotEmpty);
       expect(ref.workerExecutionId, 'wx-${job.jobId}');
-      expect(ref.workerExecutionId, dispatch.runs.single.workerExecutionId);
+      expect(ref.workerExecutionId, dispatch.runs.last.workerExecutionId);
       expect(ref.agentExecutionId, 'agx-1');
     });
 
@@ -241,13 +252,19 @@ void main() {
 
       await host.scheduler.tick();
       await _settle(host);
+      await _settle(host);
 
       expect(losing.lostMarkRunningWrites, 1);
       final job = (await host.jobStore.listJobs()).single;
       expect(job.state, JobState.succeeded);
-      // No reference beats a reference pointing at nothing: a reader follows
-      // the chain, and an empty id is not a worker execution.
-      expect(job.executionReference, isNull);
+      // The unnamed first run's outcome cannot be attributed durably — its
+      // only link lived in the returned result — so reconcile requeues the
+      // row and the re-dispatch's markRunning stamps the real execution id.
+      // What must never land is the EMPTY id the dispatcher reported.
+      expect(job.executionReference, isNotNull);
+      expect(job.executionReference!.workerExecutionId, 'wx-${job.jobId}');
+      expect(job.executionReference!.workerExecutionId, isNot(''));
+      expect(job.executionReference!.agentExecutionId, 'agx-1');
     });
 
     test(
@@ -260,10 +277,15 @@ void main() {
 
         await host.scheduler.tick();
         await _settle(host);
+        await _settle(host);
 
         final job = (await host.jobStore.listJobs()).single;
         expect(job.state, JobState.succeeded);
-        expect(job.executionReference, isNull);
+        // The re-dispatch stamps the real execution id at markRunning; what is
+        // NOT fabricated is an agent-execution link none of the runs reported.
+        expect(job.executionReference, isNotNull);
+        expect(job.executionReference!.workerExecutionId, 'wx-${job.jobId}');
+        expect(job.executionReference!.agentExecutionId, isNull);
       },
     );
 
@@ -529,7 +551,11 @@ class _Host {
     this.dispatch = dispatch ?? _ReportingDispatcher();
     final supplied = this.dispatch;
     if (supplied is _ReportingDispatcher) {
-      supplied.workerStore ??= workerStore;
+      // Re-point, never ??=: a shared dispatcher retains the store the FIRST
+      // host wired, while FileJsonWorkerStore snapshots at construction — a
+      // resumed host reconciling a stale snapshot would never see the run's
+      // durable tail and would requeue the job forever.
+      supplied.workerStore = workerStore;
     }
     final modelPolicyStore = InMemoryModelPolicyStore();
     final modelSelection = ModelSelectionService(modelPolicyStore);
@@ -707,7 +733,24 @@ class _ReportingDispatcher implements WorkerDispatch {
           endedAt: result.endedAt,
         ),
       );
-      await store.saveResult(result);
+      await store.saveResult(
+        result.workerExecutionId == request.workerExecutionId
+            ? result
+            : WorkerExecutionResult(
+                workerExecutionId: request.workerExecutionId,
+                workItemId: result.workItemId,
+                status: result.status,
+                workerId: result.workerId,
+                workspaceId: result.workspaceId,
+                startingRevision: result.startingRevision,
+                startedAt: result.startedAt,
+                endedAt: result.endedAt,
+                cleanupStatus: result.cleanupStatus,
+                failureCode: result.failureCode,
+                failureDetail: result.failureDetail,
+                agentExecutionId: result.agentExecutionId,
+              ),
+      );
     }
     return result;
   }

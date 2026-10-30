@@ -33,11 +33,13 @@ void main() {
         // Tick one, which enqueues all five and starts the first execution.
         final a = host.schedulers[0].tick();
         await waitUntil(
-          () => host.dispatch.parked == 1,
+          () => host.dispatch.parked >= 1,
           because: 'the first execution to enter the runtime',
         );
 
-        // Tick two admits the second slot.
+        // Tick two admits the second slot — or the first tick already did:
+        // detached dispatch starts every admitted run inside the same tick,
+        // and the budget — not the tick topology — is what caps it at two.
         final b = host.schedulers[1].tick();
         await waitUntil(
           () => host.dispatch.parked == 2,
@@ -127,7 +129,7 @@ void main() {
         // Two overlapping ticks fill the budget and park.
         final first = host.schedulers[0].tick();
         await waitUntil(
-          () => host.dispatch.parked == 1,
+          () => host.dispatch.parked >= 1,
           because: 'the first slot',
         );
         final second = host.schedulers[1].tick();
@@ -390,7 +392,7 @@ void main() {
 
         final first = host.schedulers[0].tick();
         await waitUntil(
-          () => host.dispatch.parked == 1,
+          () => host.dispatch.parked >= 1,
           because: 'the first slot',
         );
         final second = host.schedulers[1].tick();
@@ -431,9 +433,11 @@ void main() {
         // the cap neither blocks a restarted process nor loses its accounting
         // when the work it was counting finishes.
         host.dispatch.releaseAll();
-        // The two held runs settle through reconcile-adoption once their
-        // continuations release the claims — driving the restarted process's
-        // ticks is what performs the adoption and frees the slots (F-237).
+        // The RESTARTED process does the adopting tick: its reconcile frees
+        // the two held slots and the same tick's dispatch phase takes one for
+        // wi-3 — settleHeldJobs waits for the claim releases and then drives
+        // exactly that tick (F-237).
+        await settleHeldJobs(host.store, restarted.scheduler);
         await waitUntil(() async {
           await restarted.scheduler.tick();
           return restarted.dispatch.started.length >= 1;

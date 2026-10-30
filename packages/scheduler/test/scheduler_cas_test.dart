@@ -241,20 +241,30 @@ void main() {
     await shared.scheduler.tick();
 
     // The placement failure is delivered to the detached continuation, which
-    // reverts the job asynchronously — the queued state is the durable signal
-    // to wait on, never a fixed delay.
-    await waitUntil(
-      () async =>
-          (await shared.jobStore.listJobs()).single.state == JobState.queued,
-      because: 'the failed placement to revert the job to queued',
-    );
+    // reverts the job asynchronously — the deferred EVENT is the durable
+    // signal to wait on, never a fixed delay.
+    late Job job;
+    await waitUntil(() async {
+      job = (await shared.jobStore.listJobs()).single;
+      if (job.state != JobState.queued) return false;
+      final events = await shared.jobStore.readEvents(job.jobId);
+      return events.any((e) => e.type == SchedulerEventType.jobDeferred);
+    }, because: 'the failed placement to revert the job to queued');
 
-    final job = (await shared.jobStore.listJobs()).single;
     expect(job.state, JobState.queued);
     expect(job.failure, isNull);
     expect(dispatch.runs, isEmpty);
     expect(await shared.jobStore.readClaimForJob(job.jobId), isNull);
     final events = await shared.jobStore.readEvents(job.jobId);
-    expect(events.last.type, SchedulerEventType.jobDeferred);
+    expect(
+      events.map((e) => e.type),
+      contains(SchedulerEventType.jobDeferred),
+      reason: 'the placement failure is recorded as a deferral, not a loss',
+    );
+    expect(
+      events.map((e) => e.type),
+      isNot(contains(SchedulerEventType.jobFailed)),
+      reason: 'a lease failure must never become a terminal failure',
+    );
   });
 }

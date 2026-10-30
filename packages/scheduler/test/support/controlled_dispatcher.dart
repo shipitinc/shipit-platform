@@ -194,5 +194,25 @@ Future<void> persistWorkerOutcome(
       endedAt: result.endedAt,
     ),
   );
-  await store.saveResult(result);
+  // The scheduler's JobExecutionReference names the REQUEST's execution id,
+  // so the stored result is keyed under it even when the dispatcher reports
+  // a different one — `readResult(ref)` must hit for adoption to see the
+  // reported agentExecutionId. The reported id stays on the record itself.
+  final stored = result.workerExecutionId == request.workerExecutionId
+      ? result
+      : WorkerExecutionResult(
+          workerExecutionId: request.workerExecutionId,
+          workItemId: result.workItemId,
+          status: result.status,
+          workerId: result.workerId,
+          workspaceId: result.workspaceId,
+          startingRevision: result.startingRevision,
+          startedAt: result.startedAt,
+          endedAt: result.endedAt,
+          cleanupStatus: result.cleanupStatus,
+          failureCode: result.failureCode,
+          failureDetail: result.failureDetail,
+          agentExecutionId: result.agentExecutionId,
+        );
+  await store.saveResult(stored);
 }

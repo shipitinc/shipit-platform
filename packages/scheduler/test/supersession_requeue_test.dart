@@ -3,9 +3,11 @@ import 'dart:io';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:scheduler/scheduler.dart';
 import 'package:test/test.dart';
+import 'package:worker_runtime/worker_runtime.dart';
 
 import 'support/controlled_dispatcher.dart';
 import 'support/file_host.dart';
+import 'support/settle.dart';
 
 /// A superseded execution must not be terminally `failed`.
 ///
@@ -18,6 +20,16 @@ import 'support/file_host.dart';
 /// The judgement is a SPLIT, and collapsing it is the defect in either
 /// direction: a blanket requeue loops forever on an item that no longer accepts
 /// this job's definition, and a blanket fail is what strands today.
+/// The claim a detached run holds until its continuation releases it for
+/// reconcile-adoption — the durable signal `settle()` waits on, used here on
+/// its own when the test must NOT consume the settle tick's re-dispatch.
+Future<void> claimReleased(FileRestartHarness host, String jobId) {
+  return waitUntil(
+    () async => await host.jobStore.readClaimForJob(jobId) == null,
+    because: 'the detached run to release its claim for reconcile',
+  );
+}
+
 void main() {
   late Directory dir;
   final t0 = DateTime.utc(2026, 1, 1, 12);
@@ -84,20 +96,25 @@ void main() {
       final requeued = (await host.jobStore.readJob(job.jobId))!;
       expect(
         requeued.state,
-        JobState.queued,
+        JobState.running,
         reason:
             'the item is still in designNotRequired, so this job is still '
-            'wanted — it only arrived at the wrong moment',
+            'wanted — it only arrived at the wrong moment. Detached dispatch '
+            'requeues AND re-dispatches in the same settle tick, so the '
+            'observable wanted state is running, not queued',
       );
       expect(requeued.failure, isNull, reason: 'no failure is what happened');
 
       // And it really is retried against the new state, rather than merely
-      // parked: a later tick dispatches the SAME job row again.
-      final second = await host.scheduler.tick();
-      await host.settle();
-      expect(second.dispatched, [job.jobId]);
+      // parked: the settle tick already dispatched the SAME row again, and a
+      // later tick adopts that run and dispatches it yet again.
       expect(dispatch.runs, hasLength(2));
+      await claimReleased(host, job.jobId);
+      final second = await host.scheduler.tick();
+      expect(second.dispatched, [job.jobId]);
+      expect(dispatch.runs, hasLength(3));
       expect((await host.jobStore.readJob(job.jobId))!.jobId, job.jobId);
+      await claimReleased(host, job.jobId);
     });
 
     test('the requeue consumes NO retry budget — explicitly, with the bound '
@@ -176,8 +193,11 @@ void main() {
         );
         final after = (await host.jobStore.readJob(job.jobId))!;
         expect(after.failure, isNull);
-        expect(after.executionReference, isNull);
-        expect(after.workerId, isNull);
+        // The requeue cleared the superseded run's reference; the same settle
+        // tick then re-dispatched, so the reference that is present belongs to
+        // the live run — assert that, then let it finish for teardown.
+        expect(after.executionReference, isNotNull);
+        await claimReleased(host, job.jobId);
       },
     );
 
@@ -189,12 +209,12 @@ void main() {
       await host.itemRunnable();
       final job = await host.enqueueJob();
 
+      // One settle() is now a whole supersession cycle: it adopts the run,
+      // defers, requeues and re-dispatches in the same tick. Three dispatches
+      // of the same row therefore take one tick plus two settles.
       final first = await host.scheduler.tick();
-      await host.settle();
-      final second = await host.scheduler.tick();
-      await host.settle();
-      final third = await host.scheduler.tick();
-      await host.settle();
+      final second = await host.settle();
+      final third = await host.settle();
 
       expect(
         first.enqueued,
@@ -277,8 +297,10 @@ void main() {
         await hostA.settle();
         expect(
           (await hostA.jobStore.readJob(jobA.jobId))!.state,
-          JobState.queued,
+          JobState.running,
+          reason: 'requeued and re-dispatched inside the settle tick',
         );
+        await claimReleased(hostA, jobA.jobId);
 
         // (b), on a second worktree so the stores are independent.
         final dir2 = Directory.systemTemp.createTempSync('supersession_b');
@@ -402,18 +424,19 @@ void main() {
       await host.itemRunnable();
       final job = await host.enqueueJob();
 
+      await host.scheduler.tick();
       for (var i = 0; i < 3; i++) {
-        await host.scheduler.tick();
+        // One settle per deferral: adopt -> defer -> requeue -> re-dispatch
+        // all happen inside it, so running is the wanted observable.
         await host.settle();
         expect(
           (await host.jobStore.readJob(job.jobId))!.state,
-          JobState.queued,
+          JobState.running,
           reason: 'deferral ${i + 1} of 3 should still defer',
         );
       }
 
       // The fourth supersession is past the bound.
-      await host.scheduler.tick();
       await host.settle();
 
       final retired = (await host.jobStore.readJob(job.jobId))!;
@@ -428,12 +451,23 @@ void main() {
       expect(retired.attempt, 1);
 
       // Bounded for THIS job: four worker executions, then it is retired.
-      final runsAtStop = dispatch.runs.length;
-      expect(runsAtStop, 4);
+      // The retiring tick also mints the successor row (cancelled releases
+      // the dedupe key, per the note above), so count the runs against THIS
+      // job's execution id rather than every request.
+      final thisExecution = dispatch.runs.first.workerExecutionId;
       expect(
-        (await host.jobStore.listJobsForWorkItem('wi-1')).single.state,
+        dispatch.runs.where((r) => r.workerExecutionId == thisExecution).length,
+        4,
+      );
+      final rows = await host.jobStore.listJobsForWorkItem('wi-1');
+      expect(
+        rows.singleWhere((j) => j.jobId == job.jobId).state,
         JobState.cancelled,
       );
+      final successor = rows.where((j) => j.jobId != job.jobId);
+      for (final next in successor) {
+        await claimReleased(host, next.jobId);
+      }
     });
   });
 
@@ -455,21 +489,47 @@ void main() {
         await host.settle();
         expect(
           (await host.jobStore.readJob(job.jobId))!.state,
-          JobState.queued,
+          JobState.running,
+          reason: 'deferred and re-dispatched inside the settle tick',
         );
 
+        // The restart reads the FILE, not the first process's memory — and a
+        // FileJson*Store snapshots at construction, so the durable evidence
+        // must already be on disk before it is built. Poll fresh store
+        // instances so the waits observe exactly what the restart will load:
+        // the released claim, and run2's terminal execution row.
+        final refId = (await host.jobStore.readJob(
+          job.jobId,
+        ))!.executionReference!.workerExecutionId;
+        await waitUntil(
+          () async =>
+              await FileJsonJobStore(
+                File('${dir.path}/jobs.json'),
+              ).readClaimForJob(job.jobId) ==
+              null,
+          because: 'the released claim to be durable on disk',
+        );
+        await waitUntil(
+          () async =>
+              await FileJsonWorkerStore(
+                File('${dir.path}/workers.json'),
+              ).readWorkerExecution(refId) !=
+              null,
+          because: 'the second run terminal execution row to be durable',
+        );
         final restarted = FileRestartHarness(
           dir,
           clock: () => t0,
           dispatch: dispatch,
         );
         await restarted.scheduler.tick();
-        await restarted.settle();
         final afterRestart = (await restarted.jobStore.readJob(job.jobId))!;
         expect(
           afterRestart.state,
-          JobState.queued,
-          reason: 'the second process defers on its own',
+          JobState.running,
+          reason:
+              'the second process defers on its own — and the same tick '
+              're-dispatches, so running is the wanted observable',
         );
         expect(afterRestart.attempt, 1);
 
@@ -483,6 +543,7 @@ void main() {
               'the bound is counted from the log, so a restart neither '
               'resets it nor double-counts it',
         );
+        await restarted.settle();
       },
     );
 
@@ -530,12 +591,18 @@ void main() {
       expect(job.jobId, running.jobId);
       expect(
         job.state,
-        JobState.queued,
-        reason: 'reconciling a crash over a superseded run must not fail it',
+        JobState.running,
+        reason:
+            'reconciling a crash over a superseded run must not fail it — '
+            'it requeues, and the same settle tick re-dispatches',
       );
       expect(job.failure, isNull);
       expect(job.attempt, 1);
-      expect(job.executionReference, isNull);
+      // The superseded run's reference was cleared on requeue and the settle
+      // tick re-dispatched, so a live reference is present — deterministically
+      // the same id, since a supersession never consumes an attempt.
+      expect(job.executionReference, isNotNull);
+      await claimReleased(restarted, job.jobId);
       expect(
         (await restarted.jobStore.readEvents(
           job.jobId,

@@ -668,11 +668,13 @@ void main() {
       expect(wi2, hasLength(1));
       expect(
         wi2.single.state,
-        JobState.queued,
+        JobState.running,
         reason:
             'wi-2 was deferred once, not cancelled: the bound belongs to the '
-            'item that spent it. A count shared across work items would let '
-            'one stuck item strand every other item in the system',
+            'item that spent it. Detached dispatch requeues AND re-dispatches '
+            'inside the settle tick, so running is the deferred observable. '
+            'A count shared across work items would let one stuck item '
+            'strand every other item in the system',
       );
     });
   });

@@ -268,14 +268,18 @@ void main() {
       );
     };
     await world.review.tick();
-    await world.settle();
-    final reviewJob = (await world.jobStore.listJobs()).singleWhere(
+    final dispatchedJob = (await world.jobStore.listJobs()).singleWhere(
       (j) => j.jobType == JobType.engineeringReview,
     );
-    expect(
-      reviewJob.state,
-      JobState.retryWaiting,
-      reason: 'a retry really is owed',
+    // The detached run ends when its continuation drops the claim — the
+    // durable signal the crashed reviewer left the item HERE. That state is
+    // read BEFORE any tick adopts the outcome: adoption and the retry-return
+    // pass are one tick now, so post-adoption the item is already back at
+    // agentCompleted.
+    await waitUntil(
+      () async =>
+          await world.jobStore.readClaimForJob(dispatchedJob.jobId) == null,
+      because: 'the crashed reviewer run to release its claim',
     );
     expect(
       (await world.item()).state,
@@ -290,7 +294,16 @@ void main() {
     // entry states, so without `job.jobType == _definition.jobType` this lane
     // would consider returning an item it does not own.
     final implDuringReview = await world.implementation.tick();
-    await world.settle();
+    final reviewJob = (await world.jobStore.listJobs()).singleWhere(
+      (j) => j.jobType == JobType.engineeringReview,
+    );
+    expect(
+      reviewJob.state,
+      JobState.retryWaiting,
+      reason:
+          'a retry really is owed — the implementation lane\'s reconcile '
+          'adopted the terminal run, and only its OWN return pass is scoped',
+    );
     expect(
       implDuringReview.retryReturned,
       isEmpty,
@@ -307,9 +320,10 @@ void main() {
       reason: 'nor retire it',
     );
 
-    // ---- the review lane returns the item to ITS OWN entry state.
+    // ---- the review lane returns the item to ITS OWN entry state. Its
+    // return pass sees the parked retry — nothing is adopted in this tick,
+    // so no settle is needed between it and the assertions.
     final returned = await world.review.tick();
-    await world.settle();
     expect(returned.retryReturned.where((m) => m.returned).map((m) => m.to), [
       WorkItemState.agentCompleted,
     ]);
@@ -383,6 +397,7 @@ void main() {
       reason: 'the back-off has elapsed, so the queue considers the retry due',
     );
     expect((await world.review.tick()).dispatched, hasLength(1));
+    await world.settle();
     expect(
       world.dispatch.runs,
       hasLength(2),
@@ -415,7 +430,9 @@ void main() {
     await world.workflowStore.saveWorkItem(_atAgentCompleted());
 
     final tick = await world.review.tick();
-    await world.settle();
+    // No settle: the job was refused before any execution, so there is no
+    // detached run to adopt — and the bundled implementation tick would
+    // legitimately route this no-commit item, which is not what is asserted.
 
     expect(
       tick.blockedArtifactMissing,

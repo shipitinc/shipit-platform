@@ -201,12 +201,37 @@ void main() {
         ],
       );
       final first = await host.scheduler.tick();
-      await host.settle();
 
       expect(first.dispatched, hasLength(1));
       expect(dispatch.runs, hasLength(1));
 
       var job = await host.job();
+      // The detached run ends when its continuation drops the claim — the
+      // durable signal the scripted settleThrough has landed the item at
+      // agentFailed. The PRECONDITION is read HERE, before any tick adopts
+      // the outcome: adopt and return are one pass inside a tick now, so
+      // there is no post-settle moment where the item is still outside the
+      // entry states.
+      await waitUntil(
+        () async => await host.jobStore.readClaimForJob(job.jobId) == null,
+        because: 'the first run to release its claim for reconcile',
+      );
+      expect(
+        (await host.workflowStore.readWorkItem('wi-1')).state,
+        WorkItemState.agentFailed,
+        reason:
+            'PRECONDITION, and the defect in one line: the item is outside '
+            'every implementFeatureDefinition entry state, so nothing can '
+            'claim the retry',
+      );
+
+      // ---- the adopting tick. This is the pass that used to cancel the
+      // retry; it now adopts run1, schedules the bounded retry and returns
+      // the item to the entry state, all in the same tick.
+      final second = await host.scheduler.tick();
+      await host.settle();
+
+      job = await host.job();
       expect(
         job.state,
         JobState.retryWaiting,
@@ -221,18 +246,6 @@ void main() {
             'the one-minute back-off, which is the only reason the retry '
             'cannot run yet',
       );
-      expect(
-        (await host.workflowStore.readWorkItem('wi-1')).state,
-        WorkItemState.agentFailed,
-        reason:
-            'PRECONDITION, and the defect in one line: the item is outside '
-            'every implementFeatureDefinition entry state, so nothing can '
-            'claim the retry',
-      );
-
-      // ---- the next tick. This is the tick that used to cancel the retry.
-      final second = await host.scheduler.tick();
-      await host.settle();
 
       expect(
         second.cancelledQueued,
@@ -346,15 +359,25 @@ void main() {
 
       expect((await host.scheduler.tick()).dispatched, hasLength(1));
       expect(dispatch.runs, hasLength(1));
-      expect((await host.job()).state, JobState.retryWaiting);
+      // The detached run is still in flight or resolving; the claim release
+      // is the durable signal the crashed reviewer left the item HERE.
+      var reviewJob = await host.job();
+      await waitUntil(
+        () async =>
+            await host.jobStore.readClaimForJob(reviewJob.jobId) == null,
+        because: 'the crashed reviewer run to release its claim',
+      );
       expect(
         (await host.workflowStore.readWorkItem('wi-1')).state,
         WorkItemState.reviewInProgress,
         reason: 'PRECONDITION: a crashed reviewer leaves the item HERE',
       );
 
+      // The adopting tick settles run1 into a parked retry AND returns the
+      // item to the review lane's entry state in the same pass.
       final second = await host.scheduler.tick();
       await host.settle();
+      expect((await host.job()).state, JobState.retryWaiting);
       expect(second.cancelledQueued, isEmpty);
       expect(
         second.retryReturned.where((m) => m.returned).map((m) => m.to),
@@ -402,7 +425,12 @@ void main() {
           ],
         );
         await host.scheduler.tick();
-        await host.settle();
+        var triageJob = await host.job();
+        await waitUntil(
+          () async =>
+              await host.jobStore.readClaimForJob(triageJob.jobId) == null,
+          because: 'the triage run to release its claim for reconcile',
+        );
         expect(
           (await host.workflowStore.readWorkItem('wi-1')).state,
           WorkItemState.agentFailed,

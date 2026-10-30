@@ -301,12 +301,14 @@ void main() {
       await host.itemRunnable();
       final job = await host.enqueueJob();
 
+      await host.scheduler.tick();
       for (var i = 0; i < 3; i++) {
-        await host.scheduler.tick();
+        // One settle per deferral: adopt -> defer -> requeue -> re-dispatch
+        // inside it, so running is the wanted observable.
         await host.settle();
         expect(
           (await host.jobStore.readJob(job.jobId))!.state,
-          JobState.queued,
+          JobState.running,
           reason: 'deferral ${i + 1} of 3 must still defer, not stop',
         );
       }
