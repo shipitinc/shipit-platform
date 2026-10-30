@@ -1447,3 +1447,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-f237-integration-settle | integrate | CLOSED | scratch rehearsal | fix/f237-integration-settle | 6fcb630 | STANDARD | MERGE_APPROVED → merged (human-authorized) | done |
 | deploy-qa-f237-r2 | deploy | IN_FLIGHT | canonical (no repo writes) | main | 35ababa | STANDARD | gate paid at cb5f76f; await DEPLOYMENT_* + F-237 live-effect evidence |
 | deploy-qa-f237-r2 | deploy | CLOSED — DEPLOYMENT_SUCCESSFUL | canonical | main | 35ababa | STANDARD | F-237 verified live: TICK_OVERLAP_DROPPED 246/6h→0, concurrent dispatches at cap 2 | done |
+| impl-persistence-tx-slot | implement | IN_FLIGHT | /private/tmp/shipit-fix-tx-slot | fix/persistence-tx-slot | ea7754a | PRECISION | await report → engineering-reviewer (F-238 confirmed-live race) |
