@@ -1540,3 +1540,10 @@ unreachable while any execution runs. Filed as F-237 with the verified fix shape
 from completion; `_reconcileClaim`/`_adoptFromExecution` already adopts terminal executions after
 claim-lease expiry). Remediation lane queued AFTER `impl-onboarding-lease` closes — the detach
 work touches scheduler/worker_dispatch paths that could overlap `packages/worker_runtime/**`.
+
+### F-232 MERGED — OnboardingWorker bound + epoch fencing on main
+`fix/onboarding-worker-lease-bound` merged (human-authorized "merge now"). All three remediation
+fixes now on main (`eeb9c97` dedupe, `a661aae` worker-lease, this). `make test-integration` owed
+again before next QA redeploy.
+NEXT: F-237 detached-dispatch remediation lane — the confirmed platform throughput defect
+(`scheduler.dart:1960` awaits terminal result inside the shared single flight).
