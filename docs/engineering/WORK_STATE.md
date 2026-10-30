@@ -1477,3 +1477,10 @@ SELF_EDITS: workflow bookkeeping only — `FOLLOW_UPS.md` (F-225 addendum, F-226
 - Reviewer MEDIUM filed as **F-232** (`OnboardingWorker` same starvation shape).
 - Re-dispatched after session loss: `review-impl-worker-lease-starvation` → DO_NOT_MERGE (above);
   `integrate-dedupe-self-heal` → MERGE_APPROVED → merged.
+
+### Worker-lease correction loop — cycle 1 closed, cycle 2 in flight
+`98bdca85` verified all 7 claimed fences present + correctly placed, reviewed HEAD preserved,
+gates green — but focused re-review found residual holes ONE stage deeper: `_setCleanup` blind
+upserts (`:799`,`:815`) and a `_finish` CAS window (`:846`) still write after mid-stage
+abandonment, resurrecting the terminal row. Cycle 2 dispatched against the concrete findings
+(new commit on `98bdca85`). If cycle-2 re-review fails on the same mechanism → impasse → escalate.

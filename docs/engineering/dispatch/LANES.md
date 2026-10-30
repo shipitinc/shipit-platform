@@ -1416,3 +1416,6 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | deploy-qa-unstick | deploy | CLOSED | canonical | main | fb8dde3 | STANDARD | DEPLOYMENT_SUCCESSFUL | done |
 | review-impl-worker-lease-starvation | review | CLOSED — DO_NOT_MERGE | (read-only) | fix/worker-lease-starvation | fb8dde3 | PRECISION | post-checkpoint fence gap BLOCKER | → correction lane |
 | correct-worker-lease-starvation | correct | IN_FLIGHT | /private/tmp/shipit-fix-worker-lease-starvation | fix/worker-lease-starvation | fb8dde3 | PRECISION | await report → focused-reviewer |
+| correct-worker-lease-starvation | correct | CLOSED — cycle 1 done | same worktree | fix/worker-lease-starvation | fb8dde3 | PRECISION | CORRECTION_COMPLETE 98bdca85 | → focused-reviewer |
+| focused-review-worker-lease | re-review | CLOSED | (read-only) | fix/worker-lease-starvation | fb8dde3 | PRECISION | DO_NOT_APPROVE_CORRECTIONS — mid-stage resume writes unfenced (:799/:815 _setCleanup blind upsert, :846 _finish CAS window, :590/:667 events) | → correction cycle 2 |
+| correct-worker-lease-starvation-r2 | correct | IN_FLIGHT | /private/tmp/shipit-fix-worker-lease-starvation | fix/worker-lease-starvation | fb8dde3 | PRECISION | await report → focused-reviewer (cycle 2; impasse if fails again) |
