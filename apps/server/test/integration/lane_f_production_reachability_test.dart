@@ -2026,21 +2026,33 @@ void main() {
             extraDefectIds: const [healthyCase],
           );
 
-          final tick = await pipeline.tick();
+          // F-237: a run's claim stays held while its detached continuation
+          // is in flight, so on this capacity-1 worker the SECOND item is
+          // deferred out of the first tick — `deferred` is back-pressure,
+          // and the item is re-evaluated and dispatched by the first settle's
+          // adopting tick, which frees the slot. The two-job batch therefore
+          // lands across the settle sequence rather than inside one tick;
+          // what the drain receives below is still one batch through a single
+          // processor, job store and execution store.
+          final dispatched = <String>[];
+          dispatched.addAll((await pipeline.tick()).dispatched);
+          while (dispatched.length < 2) {
+            dispatched.addAll((await pipeline.settle()).dispatched);
+          }
           expect(
-            tick.dispatched,
+            dispatched,
             hasLength(2),
-            reason: 'one real tick dispatched both work items',
+            reason: 'the settle sequence dispatched both work items',
           );
 
-          // F-237: both runs are detached and settle outside the tick — the
-          // wait covers every held job this pipeline owns, and the adopting
-          // tick reconciles the whole batch.
+          // The second detached run is still in flight — settle it so its
+          // claim is released and adopted before teardown, the same reason
+          // every detached run this suite starts must settle.
           await pipeline.settle();
 
           // Map each job back to its work item so the batch can be ordered.
           final jobByWorkItem = <String, Job>{};
-          for (final jobId in tick.dispatched) {
+          for (final jobId in dispatched) {
             final job = await pipeline.jobStore.readJob(jobId);
             expect(job!.state, JobState.succeeded, reason: 'really succeeded');
             expect(job.jobType, JobType.triageDefect);
