@@ -3869,3 +3869,19 @@ it: "PRE-EXISTING and NOT fixed" — a defect riding on the deliberate single-fl
   load-bearing design-before-impl ordering (`server.dart:1326-1399`).
 - **Priority:** THE throughput defect of the platform — every lane's cadence collapses to ~1
   execution at a time whenever any agent runs for hours.
+
+## F-238: `PersistenceDatabase` single-transaction-slot race — F-237 detached dispatch can collide concurrent writers on the shared `db` wrapper (POTENTIAL PRODUCTION DEFECT)
+Discovered by `correct-f237-integration-tests` while migrating the integration suite:
+`PersistenceDatabase` owns one transaction slot; F-237's detached settle means a tick can drive a
+second `inTransaction` while a detached run's terminal commit is still in flight — observed as
+"Session or transaction has already finished" failures when callers shared one wrapper.
+`server.dart:251-255` wires all three Postgres stores (`PostgresJobStore`, `PostgresWorkerStore`,
+`PostgresWorkerRegistrationStore`) to ONE `db` instance — the same latent race exists in production
+under multi-dispatch ticks (real agent runs make collision timing far less likely than scripted
+runtime doubles, but it is reachable). The test-harness remedy (one `PersistenceDatabase(db.db)`
+wrapper per logical caller) cannot be applied to the test suite's shared-writer sites alone —
+verify whether production needs per-store `PersistenceDatabase` instances or a mutex/serialization
+on `inTransaction` per wrapper. This is inside F-237's blast radius and must be resolved before the
+detached-dispatch code is considered fully safe under real concurrency.
+- **Priority:** real production-race candidate — the reason F-237's integration suite found it before
+  production did.
