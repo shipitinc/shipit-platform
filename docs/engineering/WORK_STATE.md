@@ -1547,3 +1547,11 @@ fixes now on main (`eeb9c97` dedupe, `a661aae` worker-lease, this). `make test-i
 again before next QA redeploy.
 NEXT: F-237 detached-dispatch remediation lane — the confirmed platform throughput defect
 (`scheduler.dart:1960` awaits terminal result inside the shared single flight).
+
+### F-237 MERGED — detached dispatch on main (the throughput fix)
+`fix/detached-dispatch` merged (human-authorized "merge now"): tick returns after
+claim+markRunning; jobs settle via reconcile-adoption (durable `_adoptFromExecution`
+path, restart-safe via claim-lease expiry). Expected live effect after next QA redeploy:
+lanes regain the 30s tick cadence during in-flight executions — multiple agents can be
+dispatched within one tick (bounded by the C=2 capacity gate), enqueues/drains no longer
+wait out a running execution. `make test-integration` owed again.
