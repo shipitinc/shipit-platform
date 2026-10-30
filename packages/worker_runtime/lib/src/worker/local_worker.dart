@@ -103,8 +103,13 @@ DateTime _utcNow() => DateTime.now().toUtc();
 /// A bounded wait does not cancel the future it was waiting on, so the
 /// abandoned drive keeps running detached. The drive's epoch tells it apart
 /// from a later run: a stale drive cannot set the slot's active session or
-/// workspace, cannot start a session nobody is waiting for, and cannot
+/// workspace, cannot start a session nobody is waiting for, cannot inspect,
+/// commit, clean up after or finish a run nobody is waiting for, and cannot
 /// clear the lease — those are all owned by the run that holds the slot.
+/// Without the post-checkpoint fences a resumed drive would CAS-overwrite
+/// the abandon path's `timedOut` terminal with a competing status and
+/// `checkout -B` force-move the artifact branch onto an abandoned run's
+/// output.
 class LocalWorker implements Worker {
   LocalWorker({
     required this.workerId,
@@ -328,6 +333,17 @@ class LocalWorker implements Worker {
       if (request.cleanupPolicy.preservesOnFailure) {
         cleanupStatus = WorkerCleanupStatus.preservedPerPolicy;
       } else {
+        // KNOWN RACE, documented rather than solved: this cleanup runs while
+        // the detached drive may still be inside an in-flight worktree
+        // operation — the wedged await it was abandoned on (an inspect, an
+        // artifact commit) resumes to find its worktree being removed, or
+        // already gone. Both directions are tolerated: the detached side's
+        // operation fails or completes pointlessly and every write it could
+        // make afterwards is epoch-fenced, and a removal that fails because
+        // a git process still holds the directory reports the honest
+        // cleanupFailed rather than wedging. What the race must never do is
+        // block — the step bound is what keeps a stuck git from re-taking
+        // the lease.
         try {
           cleanupStatus = await workspaceManager
               .cleanup(descriptor)
@@ -384,18 +400,26 @@ class LocalWorker implements Worker {
 
   /// The result a DETACHED drive returns when it unwedges and finds its run
   /// abandoned. Nobody awaits it — [run] already settled through
-  /// [_abandonDrive] — so it writes nothing; it exists so the drive can stop
-  /// without starting work nobody is waiting for.
+  /// [_abandonDrive] — and the epoch fences on the way here guarantee this is
+  /// where the drive stops: no session start, no inspection or artifact
+  /// commit, no cleanup record, no terminal write.
+  ///
+  /// "Writes nothing" is a claim about the durable record and the artifact
+  /// branch only. A wedged await can still be holding an in-flight operation
+  /// when the run is abandoned — a git invocation, a worktree touch — and
+  /// that operation may complete when the await resumes (see the race note
+  /// in [_abandonDrive]). What the fences guarantee is that nothing the
+  /// detached drive does afterwards reaches the store or the artifact
+  /// branch a retry resolves.
   WorkerExecutionResult _detachedResult(
-    WorkerExecutionRequest request,
-    DateTime startedAt,
+    WorkerExecution execution,
     String? agentExecutionId,
   ) {
     return WorkerExecutionResult(
-      workerExecutionId: request.workerExecutionId,
-      workItemId: request.workItemId,
+      workerExecutionId: execution.workerExecutionId,
+      workItemId: execution.workItemId,
       status: WorkerExecutionStatus.timedOut,
-      startingRevision: request.startingRevision,
+      startingRevision: execution.requestedStartingRevision,
       workerId: workerId,
       workspaceId: '',
       agentExecutionId: agentExecutionId,
@@ -403,7 +427,7 @@ class LocalWorker implements Worker {
       failureCode: WorkerFailureCode.timedOut,
       failureDetail:
           'the worker drive outlived its whole-run bound and was abandoned',
-      startedAt: startedAt,
+      startedAt: execution.startedAt ?? DateTime.now().toUtc(),
       endedAt: DateTime.now().toUtc(),
     );
   }
@@ -465,6 +489,7 @@ class LocalWorker implements Worker {
         );
         return _finish(
           execution,
+          epoch: epoch,
           finalStatus: finalStatus,
           cleanupStatus: cleanupStatus,
           failureCode: failureCode,
@@ -491,7 +516,7 @@ class LocalWorker implements Worker {
           // Best-effort: a stale drive's leftover is platform-owned metadata
           // under the workspace root and is reclaimed by the sweeps.
         }
-        return _detachedResult(request, startedAt, agentExecutionId);
+        return _detachedResult(execution, agentExecutionId);
       }
       _activeAgentExecutionId = agentRequest.executionId;
 
@@ -506,6 +531,13 @@ class LocalWorker implements Worker {
               ),
             );
       } on TimeoutException catch (e) {
+        if (_isStale(epoch)) {
+          // Abandoned while wedged in this await: the cleanup record and the
+          // terminal write below belong to the abandon path. A detached
+          // drive running them would CAS-overwrite the honest timedOut it
+          // already wrote.
+          return _detachedResult(execution, agentExecutionId);
+        }
         failureCode = WorkerFailureCode.timedOut;
         failureDetail = e.toString();
         await _cancelAgent(execution, agentRequest.executionId);
@@ -517,6 +549,7 @@ class LocalWorker implements Worker {
         );
         return _finish(
           execution,
+          epoch: epoch,
           finalStatus: finalStatus,
           cleanupStatus: cleanupStatus,
           failureCode: failureCode,
@@ -526,6 +559,17 @@ class LocalWorker implements Worker {
           changedFiles: changedFiles,
           diffSummary: diffSummary,
         );
+      }
+
+      // Re-check staleness AFTER the session settles: a drive abandoned
+      // while it was wedged in the event write or the execute await above
+      // resumes here, and the abandon path already wrote this run's honest
+      // terminal. Everything below — inspection, the artifact commit, the
+      // cleanup record, _finish — is a write nobody is waiting for, and the
+      // commit would `checkout -B` force-move the artifact branch a retry
+      // resolves.
+      if (_isStale(epoch)) {
+        return _detachedResult(execution, agentExecutionId);
       }
 
       // Inspect git BEFORE cleanup: this is the platform's own evidence.
@@ -597,7 +641,14 @@ class LocalWorker implements Worker {
       // The DESIGN reviewer is excluded for the same reason, and the step-8
       // mount is what makes that reachable: its subject is the Penpot revision
       // the producer recorded, not a commit of the review worktree.
-      if (request.role != AgentRole.engineeringReviewer &&
+      //
+      // The stale guard comes FIRST: a drive abandoned while it was wedged in
+      // the inspection or verification reads above resumes here, and running
+      // the commit now would force-move `shipit/impl/<workItemId>` — the
+      // shared branch a retry's commit and a downstream reviewer resolve —
+      // onto an abandoned run's artifact.
+      if (!_isStale(epoch) &&
+          request.role != AgentRole.engineeringReviewer &&
           request.role != AgentRole.designReviewer) {
         final committed = await artifactCommitter.commit(
           worktreePath: descriptor.worktreePath,
@@ -624,6 +675,14 @@ class LocalWorker implements Worker {
         }
       }
     } on Object catch (e) {
+      if (_isStale(epoch)) {
+        // Abandoned while wedged in an await that then threw — commonly the
+        // worktree disappearing under an in-flight inspect or commit because
+        // the abandon cleanup raced it (see _abandonDrive). Emitting an
+        // executionFailed event or a cleanup record now would decorate a run
+        // that already settled honestly as timedOut.
+        return _detachedResult(execution, agentExecutionId);
+      }
       failureCode = failureCode == WorkerFailureCode.none
           ? WorkerFailureCode.agentFailed
           : failureCode;
@@ -636,6 +695,14 @@ class LocalWorker implements Worker {
       );
     }
 
+    // Last checkpoint before the writes a detached drive must never reach:
+    // the cleanup RECORD (_setCleanup inside _finalCleanup) and the terminal
+    // write. A drive abandoned while it was wedged in the artifact commit or
+    // an event write above resumes here; the abandon path already owns this
+    // run's ending, including its workspace cleanup.
+    if (_isStale(epoch)) {
+      return _detachedResult(execution, agentExecutionId);
+    }
     cleanupStatus = await _finalCleanup(
       execution,
       request,
@@ -644,6 +711,7 @@ class LocalWorker implements Worker {
     );
     return _finish(
       execution,
+      epoch: epoch,
       finalStatus: finalStatus,
       cleanupStatus: cleanupStatus,
       failureCode: failureCode,
@@ -751,6 +819,7 @@ class LocalWorker implements Worker {
 
   Future<WorkerExecutionResult> _finish(
     WorkerExecution execution, {
+    int? epoch,
     required WorkerExecutionStatus finalStatus,
     required WorkerCleanupStatus cleanupStatus,
     required WorkerFailureCode failureCode,
@@ -763,6 +832,15 @@ class LocalWorker implements Worker {
     String? diffSummary,
     String? endingRevision,
   }) async {
+    // Epoch fence: a drive that outlived the whole-run bound keeps running
+    // detached, and a wedged await can resume all the way down here. The
+    // abandon path already wrote this run's honest terminal, so a stale
+    // drive writing now would CAS-overwrite timedOut with a competing
+    // status, overwrite the saved result, and append terminal events. The
+    // abandon path itself passes no epoch — it IS the legitimate writer.
+    if (epoch != null && _isStale(epoch)) {
+      return _detachedResult(execution, agentExecutionId);
+    }
     // Re-read the canonical record so the terminal write's CAS compares
     // against the last persisted intermediate version.
     final current =
@@ -837,11 +915,11 @@ class LocalWorker implements Worker {
     });
     // The lease is deliberately NOT cleared here. `_leased` belongs to the
     // run, and `run`'s finally is the only place that releases it: a drive
-    // that was abandoned at the whole-run bound still reaches this method
-    // when its wedged await unwedges, and letting it clear the slot would
-    // free a lease a successor run already holds — the same starvation bug,
-    // one level down. The same reasoning keeps `_activeAgentExecutionId`
-    // teardown in `release()`.
+    // that was abandoned at the whole-run bound is turned back by the epoch
+    // fence above, but even without it, letting a late continuation clear
+    // the slot would free a lease a successor run already holds — the same
+    // starvation bug, one level down. The same reasoning keeps
+    // `_activeAgentExecutionId` teardown in `release()`.
     return result;
   }
 

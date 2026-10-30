@@ -47,6 +47,7 @@ void main() {
     required AgentExecutionDriver driver,
     required WorkerStore store,
     Duration abandonStepBound = const Duration(seconds: 5),
+    ArtifactCommitter artifactCommitter = const ArtifactCommitter(),
   }) {
     return LocalWorker(
       workerId: 'w-test',
@@ -55,6 +56,7 @@ void main() {
       workspaceManager: workspaceManager,
       executionDriver: driver,
       workerStore: store,
+      artifactCommitter: artifactCommitter,
       // A whole-run bound of roughly timeoutSeconds + 50ms + 400ms: small
       // enough to test, structured exactly like production.
       workerLeaseGrace: const Duration(milliseconds: 50),
@@ -330,6 +332,91 @@ void main() {
       },
       timeout: const Timeout(Duration(minutes: 1)),
     );
+
+    test('resumed after the execute checkpoint writes nothing: the terminal '
+        'row, the saved result and the artifact branch stay the abandon '
+        "path's", () async {
+      final store = InMemoryWorkerStore();
+      final driver = _WedgingDriver()
+        ..verificationsGate = Completer<void>()
+        // Give the abandoned run a produced artifact: without the
+        // post-checkpoint fence the resumed drive commits it, and the
+        // counting committer + branch check below catch the regression.
+        ..writeArtifact = true;
+      final committer = _CountingCommitter();
+      final worker = buildWorker(
+        driver: driver,
+        store: store,
+        artifactCommitter: committer,
+      );
+
+      // The drive wedges at verificationsFor — AFTER execute and inspect,
+      // one of the post-checkpoint awaits the pre-execute fence never
+      // covered — and the run abandons at the whole-run bound.
+      final abandoned = await worker.run(buildRequest('wx-resume'));
+      expect(abandoned.status, WorkerExecutionStatus.timedOut);
+      expect(
+        (await store.readWorkerExecution('wx-resume'))?.status,
+        WorkerExecutionStatus.timedOut,
+      );
+
+      // Prove the drive wedged POST-checkpoint: otherwise this test is a
+      // rerun of the pre-execute fence, not a regression test for it.
+      final deadline = DateTime.now().add(const Duration(seconds: 10));
+      while (DateTime.now().isBefore(deadline)) {
+        if (driver.verificationsCalls.contains('agx-wx-resume')) break;
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      expect(
+        driver.verificationsCalls,
+        contains('agx-wx-resume'),
+        reason:
+            'the drive must have wedged post-checkpoint for this to '
+            'exercise the resume fence',
+      );
+
+      // Unwedge the drive. It resumes through the status switch, the
+      // artifact commit, the cleanup record and _finish — all writes a
+      // detached drive must not reach.
+      driver.verificationsGate!.complete();
+      await Future<void>.delayed(const Duration(seconds: 1));
+
+      final persisted = await store.readWorkerExecution('wx-resume');
+      expect(
+        persisted?.status,
+        WorkerExecutionStatus.timedOut,
+        reason:
+            'a resumed detached drive must not CAS-overwrite the terminal '
+            'row the abandon path wrote',
+      );
+      expect(persisted?.failureCode, WorkerFailureCode.timedOut);
+      expect(
+        (await store.readResult('wx-resume'))?.status,
+        WorkerExecutionStatus.timedOut,
+        reason: 'the saved result must not be overwritten either',
+      );
+      expect(
+        committer.calls,
+        0,
+        reason:
+            'a stale drive running the artifact commit would checkout -B '
+            'force-move shipit/impl/<workItemId> onto an abandoned '
+            "run's artifact",
+      );
+      final branchLookup = await Process.run('git', [
+        '-C',
+        repo.root.path,
+        'rev-parse',
+        '--verify',
+        'refs/heads/shipit/impl/wi-1',
+      ]);
+      expect(
+        branchLookup.exitCode,
+        isNot(0),
+        reason: 'the artifact branch must not exist for an abandoned run',
+      );
+      expect(await workspaceManager.discoverAll(), isEmpty);
+    }, timeout: const Timeout(Duration(minutes: 1)));
   });
 }
 
@@ -338,6 +425,7 @@ void main() {
 /// drive.
 class _WedgingDriver implements AgentExecutionDriver {
   var wedgeVerifications = false;
+  var writeArtifact = false;
   Completer<void>? verificationsGate;
   final executeCalls = <String>[];
   final cancelCalls = <String>[];
@@ -362,6 +450,13 @@ class _WedgingDriver implements AgentExecutionDriver {
   @override
   Future<AgentExecution> execute(AgentExecutionRequest request) async {
     executeCalls.add(request.executionId);
+    if (writeArtifact) {
+      // A produced artifact in the worktree: an unfenced resumed drive
+      // would commit it onto shipit/impl/<workItemId>.
+      File(
+        '${request.workspace.path}/produced_artifact.txt',
+      ).writeAsStringSync('produced by the abandoned run\n');
+    }
     return _execution(request, AgentSessionStatus.completed);
   }
 
@@ -391,6 +486,31 @@ class _WedgingDriver implements AgentExecutionDriver {
       return Completer<List<PlatformVerification>>().future;
     }
     return const [];
+  }
+}
+
+/// An [ArtifactCommitter] that counts invocations: a stale drive must never
+/// reach the artifact commit, so any non-zero count is the unfenced-write
+/// defect returning.
+class _CountingCommitter extends ArtifactCommitter {
+  var calls = 0;
+
+  @override
+  Future<ArtifactCommitOutcome> commit({
+    required String worktreePath,
+    required String workItemId,
+    required String startingRevision,
+    required String message,
+    String branchPrefix = 'shipit/impl',
+  }) {
+    calls++;
+    return super.commit(
+      worktreePath: worktreePath,
+      workItemId: workItemId,
+      startingRevision: startingRevision,
+      message: message,
+      branchPrefix: branchPrefix,
+    );
   }
 }
 
