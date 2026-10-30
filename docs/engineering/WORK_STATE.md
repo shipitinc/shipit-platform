@@ -1484,3 +1484,9 @@ gates green — but focused re-review found residual holes ONE stage deeper: `_s
 upserts (`:799`,`:815`) and a `_finish` CAS window (`:846`) still write after mid-stage
 abandonment, resurrecting the terminal row. Cycle 2 dispatched against the concrete findings
 (new commit on `98bdca85`). If cycle-2 re-review fails on the same mechanism → impasse → escalate.
+
+### Worker-lease correction loop CLOSED — APPROVE_CORRECTIONS at 1ec22f0
+Cycle-2 focused re-review approved all findings: `_setCleanup`/`_finish`/`_transition`/event
+writes all epoch-fenced; null-epoch=legitimate-writer contract verified unreachable by detached
+drives; live path behavior-identical; cleanup-wedge test green; residual (intra-tx CAS) honestly
+bounded. READY_FOR_MERGE → integrator dispatched (`integrate-worker-lease`).
