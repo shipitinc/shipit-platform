@@ -25,6 +25,20 @@ import 'util/db_row_util.dart';
 /// makes it impossible to write a row whose stored dedupe key disagrees with
 /// its state.
 ///
+/// ## Stale keys written OUTSIDE this store are repaired, not honoured
+///
+/// That invariant only covers rows this store writes. A terminal row written
+/// any other way — manual ops SQL, a repair migration — can hold a non-NULL
+/// `activeDedupeKey` for ever, and the unique index then makes every enqueue
+/// for that key collide and surface as [DuplicateActiveJobException], which
+/// `enqueueIfAbsent` reads as a live holder and answers `created: false`
+/// every tick: a cancelled job permanently suppressing the work it was meant
+/// to release. The store repairs that at the transaction boundary (see
+/// [_repairStaleKeyAndRetryOnce]): a dedupe violation whose conflicting
+/// holder is TERMINAL gets its `activeDedupeKey` cleared and the operation
+/// retried once. A NON-terminal holder is a genuine active job — the
+/// constraint did its work and the exception propagates untouched.
+///
 /// ## It is also the store that can enforce a global execution cap
 ///
 /// [CapacityLockingJobStore] is implemented here — and only here — because
@@ -38,7 +52,9 @@ class PostgresJobStore implements JobStore, CapacityLockingJobStore {
 
   @override
   Future<T> inTransaction<T>(Future<T> Function(JobStore store) body) {
-    return _db.inTransaction<T>(() => body(this));
+    return _repairStaleKeyAndRetryOnce(
+      () => _db.inTransaction<T>(() => body(this)),
+    );
   }
 
   /// Runs [body] inside a transaction holding the cluster-wide exclusive
@@ -89,21 +105,113 @@ class PostgresJobStore implements JobStore, CapacityLockingJobStore {
     int lockKey,
     Future<T> Function(JobStore store) body,
   ) {
-    return _db.inTransaction<T>(() async {
-      await _db.execute(
-        'SELECT pg_advisory_xact_lock(@lockKey::bigint)',
-        parameters: QueryParameters.named({'lockKey': lockKey}),
-      );
-      // `this` is the handle bound to the open transaction: every call it makes
-      // routes through `_db`, which is now carrying `_activeTransaction`, so the
-      // count and the claim commit or roll back together. Exactly the handle
-      // `inTransaction` passes, for exactly the same reason.
-      return body(this);
-    });
+    return _repairStaleKeyAndRetryOnce(
+      () => _db.inTransaction<T>(() async {
+        await _db.execute(
+          'SELECT pg_advisory_xact_lock(@lockKey::bigint)',
+          parameters: QueryParameters.named({'lockKey': lockKey}),
+        );
+        // `this` is the handle bound to the open transaction: every call it makes
+        // routes through `_db`, which is now carrying `_activeTransaction`, so the
+        // count and the claim commit or roll back together. Exactly the handle
+        // `inTransaction` passes, for exactly the same reason.
+        return body(this);
+      }),
+    );
+  }
+
+  /// Runs [operation]; if it dies on [DuplicateActiveJobException] AND the
+  /// conflicting holder is a TERMINAL row still holding a stale
+  /// `activeDedupeKey`, clears that key and runs [operation] again — once.
+  ///
+  /// ## Why the repair lives at the transaction boundary
+  ///
+  /// PostgreSQL aborts a transaction on the first statement error, so nothing
+  /// inside the failed transaction — including `saveJob` itself — can issue
+  /// the repair; only the code that opened it can, once the rollback is done
+  /// and `_activeTransaction` is clear again. Retrying the whole [operation]
+  /// is safe precisely because the rollback already discarded every partial
+  /// effect: the second run re-reads current state rather than resuming a
+  /// half-applied one.
+  ///
+  /// ## Why one retry, never a loop
+  ///
+  /// A second violation means a REAL holder raced in between the repair and
+  /// the retry — the constraint doing exactly its job — and looping would
+  /// turn that contention into a spin. The retry's exception propagates
+  /// untouched, so a genuine concurrent enqueue is still reported as one.
+  Future<T> _repairStaleKeyAndRetryOnce<T>(
+    Future<T> Function() operation,
+  ) async {
+    try {
+      return await operation();
+    } on DuplicateActiveJobException catch (e) {
+      if (await _releaseStaleActiveDedupeKey(e.dedupeKey) == 0) rethrow;
+      return operation();
+    }
+  }
+
+  /// Clears a STALE `activeDedupeKey`: sets it NULL on the row holding
+  /// [activeDedupeKey] only when that row is TERMINAL, and returns how many
+  /// rows were repaired — 0 or 1, since the unique index admits at most one
+  /// holder per value.
+  ///
+  /// ## Why the repair is keyed on `activeDedupeKey`, not `dedupeKey`
+  ///
+  /// The violated index is on `activeDedupeKey`; the holder's `dedupeKey`
+  /// column carries the same value on every row this store wrote, but an
+  /// out-of-band write is under no such obligation. Clearing by the indexed
+  /// column repairs exactly the row the constraint named — including a
+  /// stale holder that is NOT the latest row for its `dedupeKey`, which a
+  /// `findLatestByDedupeKey`-driven repair could never even see.
+  ///
+  /// ## Why the terminal-state guard is part of the UPDATE
+  ///
+  /// A NON-terminal holder is a live job and the exception must stand, so
+  /// the predicate does the discrimination rather than a read-then-write the
+  /// holder could invalidate in between. PostgreSQL re-evaluates `WHERE` on
+  /// the locked row, so a row revived to a live state out from under the
+  /// repair keeps its key and the statement simply affects nothing.
+  ///
+  /// The terminal wire values are passed as parameters from [JobState]'s own
+  /// spellings rather than inlined: `job.state` is a pinned wire format, and
+  /// a literal here would be a second spelling of it that could drift.
+  ///
+  /// This never runs inside the failed transaction (it would be rejected
+  /// outright — the transaction is already aborted); every caller invokes it
+  /// after rollback, on a store with no active transaction.
+  Future<int> _releaseStaleActiveDedupeKey(String activeDedupeKey) {
+    return _db.execute(
+      '''UPDATE "job" SET "activeDedupeKey" = NULL
+         WHERE "activeDedupeKey" = @staleActiveDedupeKey
+           AND "state" IN (@succeeded, @failed, @cancelled)''',
+      parameters: QueryParameters.named({
+        'staleActiveDedupeKey': activeDedupeKey,
+        'succeeded': JobState.succeeded.wire,
+        'failed': JobState.failed.wire,
+        'cancelled': JobState.cancelled.wire,
+      }),
+    );
   }
 
   @override
-  Future<void> saveJob(Job job, {int? expectedVersion}) async {
+  Future<void> saveJob(Job job, {int? expectedVersion}) {
+    if (_db.hasActiveTransaction) {
+      // Inside an open transaction a dedupe violation has already aborted it:
+      // the repair cannot run from here, so the [DuplicateActiveJobException]
+      // propagates to [inTransaction], which repairs and retries the body.
+      return _writeJob(job, expectedVersion: expectedVersion);
+    }
+    // A bare saveJob has no transaction boundary to retry for it (the
+    // onboarding sweep and the operator-triggered enqueue both call it
+    // directly), so it applies the same repair itself — a stale key would
+    // wedge these enqueue paths exactly as it wedged the queue's.
+    return _repairStaleKeyAndRetryOnce(
+      () => _writeJob(job, expectedVersion: expectedVersion),
+    );
+  }
+
+  Future<void> _writeJob(Job job, {int? expectedVersion}) async {
     if (expectedVersion != null) {
       int affected;
       try {
@@ -298,16 +406,13 @@ class PostgresJobStore implements JobStore, CapacityLockingJobStore {
 
   @override
   Future<void> appendEvent(SchedulerEventRecord event) async {
-    await _db.execute(
-      '''INSERT INTO "scheduler_event" (
+    await _db.execute('''INSERT INTO "scheduler_event" (
              "eventId", "jobId", "workItemId", "sequence", "type",
              "occurredAt", "payloadJson"
            ) VALUES (
              @eventId, @jobId, @workItemId, @sequence, @type,
              @occurredAt, @payloadJson
-           )''',
-      parameters: QueryParameters.named(_eventToParams(event)),
-    );
+           )''', parameters: QueryParameters.named(_eventToParams(event)));
   }
 
   @override
