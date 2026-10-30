@@ -52,6 +52,21 @@ const Duration kDefaultWorkerRegistrationStaleAfter = Duration(minutes: 2);
 /// that could never return.
 const Duration kDefaultWorkerRegistrationWriteTimeout = Duration(seconds: 10);
 
+/// The bound on everything one run does OUTSIDE the agent session's own
+/// budget: workspace prepare, event writes, inspection, verification reads,
+/// the artifact commit, cleanup and the terminal write. Each of those is
+/// already bounded where the platform controls it — every git invocation
+/// carries its own timeout — so this is the ceiling on their SUM, sized
+/// above the worst case the inner bounds permit. A drive that outlives it is
+/// wedged rather than slow, and the lease must not be held for it.
+const Duration kDefaultWorkerDriveOverheadBound = Duration(minutes: 15);
+
+/// The bound on each best-effort step of the abandon path — the agent
+/// cancel, the workspace cleanup and the terminal write. The abandon path
+/// exists to escape a wedge; a step that may itself BE the wedged component
+/// is never awaited past this.
+const Duration kDefaultWorkerAbandonStepBound = Duration(seconds: 30);
+
 DateTime _utcNow() => DateTime.now().toUtc();
 
 /// Default [Worker]: one durable execution per acquisition, isolated in a
@@ -69,6 +84,27 @@ DateTime _utcNow() => DateTime.now().toUtc();
 /// containing such a worker instead of quietly skipping it — a skipped worker
 /// is the exact defect this class exists to close, and a silent skip would
 /// reintroduce it wearing a green build.
+///
+/// ## THE LEASE HAS A WHOLE-RUN BOUND (F-226)
+///
+/// The `execute` await inside the drive has always been bounded at
+/// `timeoutSeconds + workerLeaseGrace`, but every OTHER await in the drive
+/// was not — event writes, inspection, verification reads, cleanup and the
+/// terminal write — so a wedge in any of them held `_leased` forever: the
+/// scheduler's zombie sweep can orphan the durable execution row but has no
+/// path back to the in-process slot, and the worker reports `busy 1/1`
+/// permanently. [run] therefore bounds the drive as a whole at
+/// `timeoutSeconds + workerLeaseGrace + driveOverheadBound` and, on expiry,
+/// abandons the drive through [_abandonDrive]: the hung agent session is
+/// cancelled, the workspace cleanup is attempted, an honest `timedOut`
+/// outcome is written where the store still answers, and the lease is
+/// released by `run`'s finally regardless.
+///
+/// A bounded wait does not cancel the future it was waiting on, so the
+/// abandoned drive keeps running detached. The drive's epoch tells it apart
+/// from a later run: a stale drive cannot set the slot's active session or
+/// workspace, cannot start a session nobody is waiting for, and cannot
+/// clear the lease — those are all owned by the run that holds the slot.
 class LocalWorker implements Worker {
   LocalWorker({
     required this.workerId,
@@ -84,6 +120,8 @@ class LocalWorker implements Worker {
     this.inspector = const GitWorkspaceInspector(),
     this.artifactCommitter = const ArtifactCommitter(),
     this.workerLeaseGrace = const Duration(seconds: 60),
+    this.driveOverheadBound = kDefaultWorkerDriveOverheadBound,
+    this.abandonStepBound = kDefaultWorkerAbandonStepBound,
     this.eventSink,
     DateTime Function()? clock,
   }) : _capabilities = capabilities,
@@ -119,12 +157,41 @@ class LocalWorker implements Worker {
   final ArtifactCommitter artifactCommitter;
   final Duration workerLeaseGrace;
 
+  /// The bound on the parts of a run that are not the agent session itself:
+  /// prepare, event writes, inspection, verification reads, the artifact
+  /// commit, cleanup and the terminal write. See
+  /// [kDefaultWorkerDriveOverheadBound].
+  final Duration driveOverheadBound;
+
+  /// The bound applied to each step of [_abandonDrive]. See
+  /// [kDefaultWorkerAbandonStepBound].
+  final Duration abandonStepBound;
+
   /// Optional observer for normalized worker events (used by tests/audit).
   final void Function(WorkerEventRecord event)? eventSink;
 
   bool _leased = false;
   int _sequence = 0;
   String? _activeAgentExecutionId;
+
+  /// The workspace the CURRENT run prepared, tracked so [_abandonDrive] can
+  /// attempt its cleanup after the drive that owned it was given up on.
+  /// Epoch-guarded like [_activeAgentExecutionId]: a drive that outlived its
+  /// run must never overwrite a successor's.
+  WorkspaceDescriptor? _activeDescriptor;
+
+  /// The generation of the current [run]. A drive abandoned at the
+  /// whole-run bound keeps running detached; the epoch is how it is told
+  /// apart from a later run now holding the slot it used to own.
+  int _driveEpoch = 0;
+
+  /// The epoch of a drive that was explicitly abandoned. A drive is stale
+  /// the moment its run is given up on — not only when a successor starts —
+  /// so an abandoned drive that unwedges in the gap before the next [run]
+  /// still cannot start a session nobody is waiting for.
+  int? _abandonedEpoch;
+
+  bool _isStale(int epoch) => epoch != _driveEpoch || epoch == _abandonedEpoch;
 
   @override
   Set<WorkerCapability> get capabilities => _capabilities;
@@ -142,6 +209,7 @@ class LocalWorker implements Worker {
   Future<void> release() async {
     _leased = false;
     _activeAgentExecutionId = null;
+    _activeDescriptor = null;
   }
 
   WorkerRegistration toRegistration({WorkerStatus status = WorkerStatus.idle}) {
@@ -194,17 +262,156 @@ class LocalWorker implements Worker {
         .timeout(timeout ?? heartbeatWriteTimeout);
   }
 
+  /// The ceiling on the WHOLE run: the agent session's own budget plus the
+  /// grace the `execute` await already carries, plus the bound on everything
+  /// else the drive does. Without it the lease is held by every unbounded
+  /// await in the drive — an event write, a verification read, a cleanup —
+  /// which is the F-226 starvation: the zombie sweep can orphan the durable
+  /// row but has no path back to the in-process slot, so the worker reports
+  /// `busy 1/1` for ever and every queued job defers `workerBusy`.
+  Duration _runBound(WorkerExecutionRequest request) =>
+      Duration(seconds: request.timeoutSeconds) +
+      workerLeaseGrace +
+      driveOverheadBound;
+
   @override
   Future<WorkerExecutionResult> run(WorkerExecutionRequest request) async {
     if (!_leased) await acquire();
+    final epoch = ++_driveEpoch;
     try {
-      return await _drive(request);
+      return await _drive(request, epoch).timeout(_runBound(request));
+    } on TimeoutException {
+      return _abandonDrive(request, epoch);
     } finally {
-      await release();
+      // The lease belongs to the CURRENT run only. A drive abandoned at the
+      // bound is still unwinding detached; this guard keeps its late
+      // completion — and only its late completion — from freeing a slot a
+      // successor already owns.
+      if (epoch == _driveEpoch) await release();
     }
   }
 
-  Future<WorkerExecutionResult> _drive(WorkerExecutionRequest request) async {
+  /// Settles a run whose drive outlived [_runBound]: marks the drive's epoch
+  /// dead so its detached continuation cannot start a session or touch the
+  /// slot, cancels the hung agent session, attempts the workspace cleanup,
+  /// and writes an honest terminal outcome. Every step is bounded by
+  /// [abandonStepBound] and best-effort — the abandon path exists to escape
+  /// a wedge and must never wait on one, so a component that may itself be
+  /// the wedge (the store, the driver) is given [abandonStepBound] and no
+  /// more. The lease itself is freed by [run]'s finally.
+  Future<WorkerExecutionResult> _abandonDrive(
+    WorkerExecutionRequest request,
+    int epoch,
+  ) async {
+    _abandonedEpoch = epoch;
+    final bound = _runBound(request);
+    final failureDetail =
+        'worker drive exceeded its whole-run bound of $bound and was '
+        'abandoned; the wedged await continues detached but holds no lease';
+    final agentExecutionId = _activeAgentExecutionId;
+    final descriptor = _activeDescriptor;
+
+    // Stop the hung agent session where one was started. The timeout arm in
+    // _drive uses this same path for the same reason.
+    if (agentExecutionId != null) {
+      try {
+        await executionDriver
+            .cancel(agentExecutionId, 'worker drive bound exceeded')
+            .timeout(abandonStepBound);
+      } on Object {
+        // The driver may be the wedged component; the cancel is best-effort.
+      }
+    }
+
+    var cleanupStatus = WorkerCleanupStatus.notApplicable;
+    if (descriptor != null) {
+      if (request.cleanupPolicy.preservesOnFailure) {
+        cleanupStatus = WorkerCleanupStatus.preservedPerPolicy;
+      } else {
+        try {
+          cleanupStatus = await workspaceManager
+              .cleanup(descriptor)
+              .timeout(abandonStepBound);
+        } on Object {
+          cleanupStatus = WorkerCleanupStatus.cleanupFailed;
+        }
+      }
+    }
+
+    try {
+      return await _finish(
+        WorkerExecution(
+          workerExecutionId: request.workerExecutionId,
+          workItemId: request.workItemId,
+          repositoryPath: request.repositoryPath,
+          requestedStartingRevision: request.startingRevision,
+          requiredCapabilities: request.requiredCapabilities,
+          status: WorkerExecutionStatus.agentExecuting,
+          cleanupPolicy: request.cleanupPolicy,
+          workerId: workerId,
+          workspaceId: descriptor?.workspaceId,
+          agentExecutionId: agentExecutionId,
+          createdAt: DateTime.now().toUtc(),
+          startedAt: DateTime.now().toUtc(),
+        ),
+        finalStatus: WorkerExecutionStatus.timedOut,
+        cleanupStatus: cleanupStatus,
+        failureCode: WorkerFailureCode.timedOut,
+        failureDetail: failureDetail,
+        agentExecutionId: agentExecutionId,
+      ).timeout(abandonStepBound);
+    } on Object {
+      // The store itself may be the wedge — a locked connection pool is one
+      // of the F-226 suspects — so the terminal write is attempted but never
+      // awaited past the step bound. The result below is still the honest
+      // outcome; the durable row is left for the scheduler's zombie sweep.
+      return WorkerExecutionResult(
+        workerExecutionId: request.workerExecutionId,
+        workItemId: request.workItemId,
+        status: WorkerExecutionStatus.timedOut,
+        startingRevision: request.startingRevision,
+        workerId: workerId,
+        workspaceId: descriptor?.workspaceId ?? '',
+        agentExecutionId: agentExecutionId,
+        cleanupStatus: cleanupStatus,
+        failureCode: WorkerFailureCode.timedOut,
+        failureDetail: failureDetail,
+        startedAt: DateTime.now().toUtc(),
+        endedAt: DateTime.now().toUtc(),
+      );
+    }
+  }
+
+  /// The result a DETACHED drive returns when it unwedges and finds its run
+  /// abandoned. Nobody awaits it — [run] already settled through
+  /// [_abandonDrive] — so it writes nothing; it exists so the drive can stop
+  /// without starting work nobody is waiting for.
+  WorkerExecutionResult _detachedResult(
+    WorkerExecutionRequest request,
+    DateTime startedAt,
+    String? agentExecutionId,
+  ) {
+    return WorkerExecutionResult(
+      workerExecutionId: request.workerExecutionId,
+      workItemId: request.workItemId,
+      status: WorkerExecutionStatus.timedOut,
+      startingRevision: request.startingRevision,
+      workerId: workerId,
+      workspaceId: '',
+      agentExecutionId: agentExecutionId,
+      cleanupStatus: WorkerCleanupStatus.notApplicable,
+      failureCode: WorkerFailureCode.timedOut,
+      failureDetail:
+          'the worker drive outlived its whole-run bound and was abandoned',
+      startedAt: startedAt,
+      endedAt: DateTime.now().toUtc(),
+    );
+  }
+
+  Future<WorkerExecutionResult> _drive(
+    WorkerExecutionRequest request,
+    int epoch,
+  ) async {
     final startedAt = DateTime.now().toUtc();
     var execution = WorkerExecution(
       workerExecutionId: request.workerExecutionId,
@@ -246,6 +453,7 @@ class LocalWorker implements Worker {
           request,
           workerId: workerId,
         );
+        if (!_isStale(epoch)) _activeDescriptor = descriptor;
       } on Object catch (e) {
         failureCode = WorkerFailureCode.prepareFailed;
         failureDetail = e.toString();
@@ -271,6 +479,20 @@ class LocalWorker implements Worker {
       );
       final agentRequest = _agentRequest(execution, request, descriptor);
       agentExecutionId = agentRequest.executionId;
+      if (_isStale(epoch)) {
+        // This drive outlived the whole-run bound and was abandoned while it
+        // was wedged. Starting the session now would run real work on a slot
+        // a later run may already own, so the drive unwinds the workspace it
+        // just prepared and stops instead. Its lease was already freed by
+        // [run]'s finally — never by this drive.
+        try {
+          await workspaceManager.cleanup(descriptor);
+        } on Object {
+          // Best-effort: a stale drive's leftover is platform-owned metadata
+          // under the workspace root and is reclaimed by the sweeps.
+        }
+        return _detachedResult(request, startedAt, agentExecutionId);
+      }
       _activeAgentExecutionId = agentRequest.executionId;
 
       AgentExecution settled;
@@ -613,8 +835,13 @@ class LocalWorker implements Worker {
         via: tx,
       );
     });
-    _leased = false;
-    _activeAgentExecutionId = null;
+    // The lease is deliberately NOT cleared here. `_leased` belongs to the
+    // run, and `run`'s finally is the only place that releases it: a drive
+    // that was abandoned at the whole-run bound still reaches this method
+    // when its wedged await unwedges, and letting it clear the slot would
+    // free a lease a successor run already holds — the same starvation bug,
+    // one level down. The same reasoning keeps `_activeAgentExecutionId`
+    // teardown in `release()`.
     return result;
   }
 

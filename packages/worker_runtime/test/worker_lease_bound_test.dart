@@ -1,0 +1,469 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:platform_contracts/platform_contracts.dart';
+import 'package:test/test.dart';
+import 'package:worker_protocol/worker_protocol.dart';
+import 'package:worker_runtime/worker_runtime.dart';
+
+import 'support/git_repo_fixture.dart';
+
+/// Regression coverage for F-226 worker-lease starvation.
+///
+/// `LocalWorker._leased` was held for the whole duration of `run` while only
+/// ONE await inside the drive — `executionDriver.execute` — was bounded. Two
+/// live QA executions wedged inside unbounded awaits ran 8-9 hours past their
+/// budgets; the zombie sweep orphaned their durable rows but has no path back
+/// to the in-process slot, so both workers reported `busy 1/1` for ever and
+/// every queued job deferred `workerBusy`.
+///
+/// These tests wedge the drive at an unbounded await — a verification read
+/// that never completes, a store transaction held on a gate — and prove the
+/// lease is released at the whole-run bound, the hung session is cancelled,
+/// and the worker takes the next run.
+void main() {
+  late Directory temp;
+  late GitRepoFixture repo;
+  late GitWorktreeWorkspaceManager workspaceManager;
+
+  setUp(() {
+    temp = Directory.systemTemp.createTempSync('worker_lease_');
+    repo = GitRepoFixture.create(temp.path);
+    workspaceManager = GitWorktreeWorkspaceManager(
+      workspaceRoot: '${temp.path}/workspaces',
+    );
+  });
+
+  tearDown(() {
+    try {
+      repo.dispose();
+    } on Object {
+      // cleanup may already have removed worktrees; root removal is best-effort
+    }
+    if (temp.existsSync()) temp.deleteSync(recursive: true);
+  });
+
+  LocalWorker buildWorker({
+    required AgentExecutionDriver driver,
+    required WorkerStore store,
+    Duration abandonStepBound = const Duration(seconds: 5),
+  }) {
+    return LocalWorker(
+      workerId: 'w-test',
+      poolId: 'test-pool',
+      capabilities: const {WorkerCapability.linux},
+      workspaceManager: workspaceManager,
+      executionDriver: driver,
+      workerStore: store,
+      // A whole-run bound of roughly timeoutSeconds + 50ms + 400ms: small
+      // enough to test, structured exactly like production.
+      workerLeaseGrace: const Duration(milliseconds: 50),
+      driveOverheadBound: const Duration(milliseconds: 400),
+      abandonStepBound: abandonStepBound,
+    );
+  }
+
+  WorkerExecutionRequest buildRequest(String workerExecutionId) =>
+      WorkerExecutionRequest(
+        workerExecutionId: workerExecutionId,
+        workItemId: 'wi-1',
+        repositoryPath: repo.root.path,
+        startingRevision: repo.startingRevision,
+        requiredCapabilities: const {WorkerCapability.linux},
+        role: AgentRole.implementer,
+        instruction: 'Implement add(2,3)==5 inside the worktree.',
+        timeoutSeconds: 1,
+        runtimeTypeId: 'stub-runtime',
+        cleanupPolicy: WorkerCleanupPolicy.removeAlways,
+      );
+
+  group('a drive wedged at an unbounded await', () {
+    test(
+      'abandons at the whole-run bound, cancels the session, writes timedOut '
+      'and frees the lease',
+      () async {
+        final store = InMemoryWorkerStore();
+        // The wedge stands in for any unbounded await after `execute` — the
+        // F-226 candidates were event writes, inspection, verification reads,
+        // cleanup and the terminal write.
+        final driver = _WedgingDriver()..wedgeVerifications = true;
+        final worker = buildWorker(driver: driver, store: store);
+
+        final elapsed = Stopwatch()..start();
+        final result = await worker.run(buildRequest('wx-wedge'));
+        elapsed.stop();
+
+        expect(
+          result.status,
+          WorkerExecutionStatus.timedOut,
+          reason:
+              'an abandoned drive is an honest timeout: transient to '
+              'RetryPolicy, never a silent success and never a hang',
+        );
+        expect(result.failureCode, WorkerFailureCode.timedOut);
+        expect(result.failureDetail, contains('whole-run bound'));
+        expect(
+          elapsed.elapsed,
+          lessThan(const Duration(seconds: 10)),
+          reason:
+              'the wedged future NEVER completes; a run that waits for it '
+              'is the starvation defect returning (waited ${elapsed.elapsed})',
+        );
+
+        // The hung agent session is stopped through the existing cancel
+        // path, not merely unblocked around.
+        expect(
+          driver.cancelCalls,
+          contains('agx-wx-wedge'),
+          reason: 'abandonment must cancel the in-flight agent execution',
+        );
+
+        // The lease is free and the worker reads idle again.
+        expect(worker.isAcquirable, isTrue);
+        expect(worker.liveStatus, WorkerStatus.idle);
+        expect(worker.toRegistration().currentLoad, 0);
+
+        // The durable record was marked terminal, honestly — the zombie
+        // sweep is no longer the only thing that can end it.
+        final persisted = await store.readWorkerExecution('wx-wedge');
+        expect(persisted?.status, WorkerExecutionStatus.timedOut);
+        expect(persisted?.failureCode, WorkerFailureCode.timedOut);
+        final savedResult = await store.readResult('wx-wedge');
+        expect(savedResult?.status, WorkerExecutionStatus.timedOut);
+
+        // The workspace the drive prepared was cleaned by the abandon path.
+        expect(await workspaceManager.discoverAll(), isEmpty);
+      },
+      timeout: const Timeout(Duration(minutes: 1)),
+    );
+
+    test(
+      'the freed worker takes the next run normally',
+      () async {
+        final store = InMemoryWorkerStore();
+        final driver = _WedgingDriver()..wedgeVerifications = true;
+        final worker = buildWorker(driver: driver, store: store);
+
+        final abandoned = await worker.run(buildRequest('wx-first'));
+        expect(abandoned.status, WorkerExecutionStatus.timedOut);
+
+        driver.wedgeVerifications = false;
+        final result = await worker.run(buildRequest('wx-second'));
+
+        expect(
+          result.status,
+          WorkerExecutionStatus.executedPass,
+          reason:
+              'the point of freeing the lease is that the worker keeps '
+              'working; a slot that only LOOKS free is the same starvation',
+        );
+        expect(worker.isAcquirable, isTrue);
+        expect(await workspaceManager.discoverAll(), isEmpty);
+      },
+      timeout: const Timeout(Duration(minutes: 1)),
+    );
+
+    test(
+      'still frees the lease when the terminal write is itself the wedge',
+      () async {
+        // A store whose reads never return stands in for the locked
+        // connection pool from the F-226 diagnosis. The abandon path's own
+        // terminal write must be bounded, or the fix re-wedges one level
+        // down.
+        final store = _GatedStore(InMemoryWorkerStore())..wedgeReads = true;
+        final driver = _WedgingDriver()..wedgeVerifications = true;
+        final worker = buildWorker(
+          driver: driver,
+          store: store,
+          abandonStepBound: const Duration(milliseconds: 300),
+        );
+
+        final elapsed = Stopwatch()..start();
+        final result = await worker.run(buildRequest('wx-dead-store'));
+        elapsed.stop();
+
+        expect(result.status, WorkerExecutionStatus.timedOut);
+        expect(result.failureCode, WorkerFailureCode.timedOut);
+        expect(
+          elapsed.elapsed,
+          lessThan(const Duration(seconds: 10)),
+          reason:
+              'a wedged store must not turn the abandon path into a second '
+              'place the lease can be held forever (waited ${elapsed.elapsed})',
+        );
+        expect(worker.isAcquirable, isTrue);
+        expect(worker.liveStatus, WorkerStatus.idle);
+      },
+      timeout: const Timeout(Duration(minutes: 1)),
+    );
+  });
+
+  group('the detached drive that unwedges later', () {
+    test(
+      'cannot start an agent session and cannot take the slot back',
+      () async {
+        final inner = InMemoryWorkerStore();
+        // Hold every inTransaction open on a gate the test controls: the
+        // drive wedges in its FIRST write, before any session exists.
+        final store = _GatedStore(inner)..closeGate();
+        final driver = _WedgingDriver();
+        final worker = buildWorker(
+          driver: driver,
+          store: store,
+          abandonStepBound: const Duration(milliseconds: 300),
+        );
+
+        final result = await worker.run(buildRequest('wx-gated'));
+        expect(result.status, WorkerExecutionStatus.timedOut);
+        expect(worker.isAcquirable, isTrue);
+        expect(driver.executeCalls, isEmpty);
+
+        // Now let the wedged await unwind. The detached drive resumes,
+        // writes its early events and prepares a workspace — and MUST NOT
+        // start a session on a slot it no longer owns.
+        store.openGate();
+
+        final deadline = DateTime.now().add(const Duration(seconds: 15));
+        WorkerExecution? record;
+        while (DateTime.now().isBefore(deadline)) {
+          record = await inner.readWorkerExecution('wx-gated');
+          if (record != null &&
+              (record.status == WorkerExecutionStatus.agentExecuting ||
+                  record.status == WorkerExecutionStatus.timedOut)) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+        // Give the detached drive room to reach the point where it would
+        // have called execute, then prove it did not.
+        await Future<void>.delayed(const Duration(seconds: 1));
+
+        expect(
+          driver.executeCalls,
+          isEmpty,
+          reason:
+              'an abandoned drive that unwedges must bail out rather than '
+              'spawn real agent work nobody is waiting for',
+        );
+        expect(
+          worker.isAcquirable,
+          isTrue,
+          reason:
+              'the detached drive must never take the lease back — that '
+              'would starve the slot a second time',
+        );
+      },
+      timeout: const Timeout(Duration(minutes: 1)),
+    );
+
+    test(
+      'cannot clear the lease of a successor run that took the freed slot',
+      () async {
+        final inner = InMemoryWorkerStore();
+        final store = _GatedStore(inner)..closeGate();
+        final firstDriver = _WedgingDriver();
+        final worker = buildWorker(
+          driver: firstDriver,
+          store: store,
+          abandonStepBound: const Duration(milliseconds: 300),
+        );
+
+        final abandoned = await worker.run(buildRequest('wx-stale'));
+        expect(abandoned.status, WorkerExecutionStatus.timedOut);
+        expect(worker.isAcquirable, isTrue);
+
+        // A successor takes the freed slot and parks on gates of its own —
+        // a slow-but-alive drive, not a wedged one. The stale drive's gate
+        // stays shut for now.
+        final successorStoreGate = Completer<void>();
+        store.releaseTo(heldBy: successorStoreGate);
+        firstDriver.verificationsGate = Completer<void>();
+        final successor = worker.run(buildRequest('wx-successor'));
+
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(
+          worker.isAcquirable,
+          isFalse,
+          reason: 'the successor holds the slot now',
+        );
+
+        // Let the successor run until it is parked at the verification read
+        // holding the lease, THEN unwind the stale drive into the window
+        // where a late lease-clear would hurt.
+        successorStoreGate.complete();
+        final deadline = DateTime.now().add(const Duration(seconds: 15));
+        while (DateTime.now().isBefore(deadline)) {
+          if (firstDriver.verificationsCalls.contains('agx-wx-successor')) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+        expect(
+          firstDriver.verificationsCalls,
+          contains('agx-wx-successor'),
+          reason: 'the successor is mid-drive and holds the slot',
+        );
+
+        store.openGate();
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(
+          worker.isAcquirable,
+          isFalse,
+          reason:
+              'the stale drive resuming must not free the slot the '
+              'successor still holds — the starvation bug one level down',
+        );
+        expect(
+          firstDriver.executeCalls,
+          isNot(contains('agx-wx-stale')),
+          reason: 'the stale drive bails before starting its session',
+        );
+
+        firstDriver.verificationsGate!.complete();
+        final result = await successor;
+        expect(result.status, WorkerExecutionStatus.executedPass);
+        expect(
+          worker.isAcquirable,
+          isTrue,
+          reason: 'after the SUCCESSOR finishes the slot is free again',
+        );
+      },
+      timeout: const Timeout(Duration(minutes: 1)),
+    );
+  });
+}
+
+/// An [AgentExecutionDriver] that completes `execute` promptly but can wedge
+/// `verificationsFor` forever — the shape of an unbounded await inside the
+/// drive.
+class _WedgingDriver implements AgentExecutionDriver {
+  var wedgeVerifications = false;
+  Completer<void>? verificationsGate;
+  final executeCalls = <String>[];
+  final cancelCalls = <String>[];
+  final verificationsCalls = <String>[];
+
+  AgentExecution _execution(
+    AgentExecutionRequest request,
+    AgentSessionStatus status,
+  ) => AgentExecution(
+    executionId: request.executionId,
+    workItemId: request.workItemId,
+    requestId: 'req-${request.executionId}',
+    runtimeTypeId: request.runtimeTypeId,
+    role: request.role,
+    status: status,
+    workspace: request.workspace,
+    sessionId: 'ses-stub',
+    startedAt: DateTime.now().toUtc(),
+    completedAt: DateTime.now().toUtc(),
+  );
+
+  @override
+  Future<AgentExecution> execute(AgentExecutionRequest request) async {
+    executeCalls.add(request.executionId);
+    return _execution(request, AgentSessionStatus.completed);
+  }
+
+  @override
+  Future<AgentExecution> cancel(String executionId, String reason) async {
+    cancelCalls.add(executionId);
+    return AgentExecution(
+      executionId: executionId,
+      workItemId: 'wi-1',
+      requestId: 'req-$executionId',
+      runtimeTypeId: 'stub-runtime',
+      role: AgentRole.implementer,
+      status: AgentSessionStatus.cancelled,
+      workspace: const AgentWorkspace(workspaceId: 'ws-stub', path: '/tmp'),
+    );
+  }
+
+  @override
+  Future<List<PlatformVerification>> verificationsFor(
+    String executionId,
+  ) async {
+    verificationsCalls.add(executionId);
+    final gate = verificationsGate;
+    if (gate != null) await gate.future;
+    if (wedgeVerifications) {
+      // Never completes: the wedged await.
+      return Completer<List<PlatformVerification>>().future;
+    }
+    return const [];
+  }
+}
+
+/// A [WorkerStore] that forwards everything to an in-memory store but can
+/// hold `inTransaction` on a gate the test controls — the shape of a
+/// database write wedged on a locked connection pool — and can wedge reads
+/// outright.
+class _GatedStore implements WorkerStore {
+  _GatedStore(this._inner);
+
+  final WorkerStore _inner;
+
+  Completer<void>? _gate;
+  Completer<void>? _staleGate;
+  Completer<void>? _heldBy;
+  var wedgeReads = false;
+
+  void closeGate() => _gate = Completer<void>();
+
+  /// Stops gating new calls on [_gate] and hands the pause to [heldBy]:
+  /// calls arriving after this wait on [heldBy] instead, so a test can
+  /// control the stale drive and the successor drive separately. The gate
+  /// the stale calls already captured is kept in [_staleGate] so
+  /// [openGate] can still unwind them.
+  void releaseTo({required Completer<void> heldBy}) {
+    _staleGate = _gate;
+    _gate = null;
+    _heldBy = heldBy;
+  }
+
+  void openGate() {
+    _staleGate?.complete();
+    _gate?.complete();
+    _staleGate = null;
+    _gate = null;
+  }
+
+  @override
+  Future<T> inTransaction<T>(Future<T> Function(WorkerStore) body) async {
+    final gate = _gate ?? _heldBy;
+    if (gate != null) await gate.future;
+    return _inner.inTransaction(body);
+  }
+
+  @override
+  Future<WorkerExecution?> readWorkerExecution(String workerExecutionId) {
+    if (wedgeReads) return Completer<WorkerExecution?>().future;
+    return _inner.readWorkerExecution(workerExecutionId);
+  }
+
+  @override
+  Future<void> saveWorkerExecution(
+    WorkerExecution execution, {
+    int? expectedVersion,
+  }) => _inner.saveWorkerExecution(execution, expectedVersion: expectedVersion);
+
+  @override
+  Future<List<WorkerExecution>> listWorkerExecutions() =>
+      _inner.listWorkerExecutions();
+
+  @override
+  Future<void> saveResult(WorkerExecutionResult result) =>
+      _inner.saveResult(result);
+
+  @override
+  Future<WorkerExecutionResult?> readResult(String workerExecutionId) =>
+      _inner.readResult(workerExecutionId);
+
+  @override
+  Future<void> appendEvent(WorkerEventRecord event) =>
+      _inner.appendEvent(event);
+
+  @override
+  Future<List<WorkerEventRecord>> readEvents(String workerExecutionId) =>
+      _inner.readEvents(workerExecutionId);
+}
