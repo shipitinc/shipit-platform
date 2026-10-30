@@ -1445,3 +1445,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | focused-review-f237-integration | re-review | IN_FLIGHT | (read-only) | fix/f237-integration-settle | 6fcb630 | STANDARD | await result → integrator → merge → redeploy retry |
 | focused-review-f237-integration | re-review | CLOSED | (read-only) | fix/f237-integration-settle | 6fcb630 | STANDARD | APPROVE_CORRECTIONS (re-ran test-integration +319 green) | → integrator |
 | integrate-f237-integration-settle | integrate | CLOSED | scratch rehearsal | fix/f237-integration-settle | 6fcb630 | STANDARD | MERGE_APPROVED → merged (human-authorized) | done |
+| deploy-qa-f237-r2 | deploy | IN_FLIGHT | canonical (no repo writes) | main | 35ababa | STANDARD | gate paid at cb5f76f; await DEPLOYMENT_* + F-237 live-effect evidence |
