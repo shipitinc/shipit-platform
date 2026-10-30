@@ -1439,3 +1439,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-detached-dispatch-r2 | integrate | IN_FLIGHT | scratch rehearsal | fix/detached-dispatch | 94d8677 | PRECISION | await MERGE_APPROVED → merge auth question |
 | integrate-detached-dispatch-r2 | integrate | CLOSED | scratch rehearsal | fix/detached-dispatch | 94d8677 | PRECISION | MERGE_APPROVED → merged adda3ee (human-authorized) | done |
 | deploy-qa-f237 | deploy | IN_FLIGHT | canonical (no repo writes) | main | adda3ee | STANDARD | await DEPLOYMENT_* → verify concurrency restored live |
+| deploy-qa-f237 | deploy | CLOSED — DEPLOYMENT_FAILED (gate stop) | canonical | main | adda3ee | STANDARD | red gate correctly blocked deploy; QA untouched | → correction lane |
+| correct-f237-integration-tests | correct | IN_FLIGHT | /private/tmp/shipit-f237-integration-settle | fix/f237-integration-settle | 6fcb630 | STANDARD | await report → focused-reviewer → redeploy retry |

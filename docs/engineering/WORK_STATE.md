@@ -1555,3 +1555,13 @@ path, restart-safe via claim-lease expiry). Expected live effect after next QA r
 lanes regain the 30s tick cadence during in-flight executions — multiple agents can be
 dispatched within one tick (bounded by the C=2 capacity gate), enqueues/drains no longer
 wait out a running execution. `make test-integration` owed again.
+
+### deploy-qa-f237 → DEPLOYMENT_FAILED at step 1 (gate correctly stopped the deploy)
+`make test-integration` RED at `6fcb630`: 35 failures in 4 files — `triage_execution` (25),
+`design_governance_e2e` (5), `lane_f_production_reachability` (4), `e2e_restart_persistence` (1).
+Signature is the SAME class as the server-unit fallout: `Expected: succeeded/completed, Actual:
+running` — `test/integration/` never migrated to reconcile-adoption settle (F-237 touched zero
+integration files). QA stack untouched, still on pre-F-237 revision. Correction lane
+`correct-f237-integration-tests` dispatched (branch `fix/f237-integration-settle`, owns
+apps/server/test/integration/** + test/support/**) — includes a teardown-leak fix (detached
+executions outliving session disposal). Redeploy retries once the gate is green.
