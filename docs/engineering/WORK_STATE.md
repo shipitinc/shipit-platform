@@ -1572,3 +1572,13 @@ resolved via reconcile-adoption settle; `make test-integration` verified +319 by
 reviewer AND integrator evidence. QA redeploy for F-237 can now retry at HEAD with a green
 merge-tier gate. Open: F-238 production-race candidate (server.dart shared `db` wrapper),
 queued behind the redeploy verification.
+
+### F-237 LIVE — detached dispatch verified in production (deploy-qa-f237-r2, DEPLOYMENT_SUCCESSFUL)
+TICK_OVERLAP_DROPPED: 246/6h pre-deploy → **0** post-deploy. A 6h-overdue retryWaiting job
+(1102) drained and succeeded ~40s after boot while job 1064 remained running — 2 concurrent
+executions at cap. Jobs 1103 (impl) and 1104 (review) enqueued+dispatched without waiting on
+prior completions. All identity checks pass; QA now runs the F-237+F-232 merged code.
+**F-238 CONFIRMED REAL in production**: 3 non-recurring "Session or transaction has already
+finished" failures at 3 sites (design.tick, implementation.tick, review.settled-redrive →
+PostgresJobStore.listJobs:336) — the shared-`db`-wrapper transaction-slot race under detached
+dispatch. Self-recovers next tick but must be fixed. F-238 remediation lane dispatched.
