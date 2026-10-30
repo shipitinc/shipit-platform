@@ -1510,3 +1510,15 @@ Residuals remediated by ops SQL (disclosed): 2 `agent_failed` items reset → `d
 either item despite the keys being yielded — enqueue itself is not firing; needs a lane to check
 why (tick hold? evaluator? entry-hop?). F-234 not-parkable refusal gap, F-235 stale `running`
 agent_execution rows, F-236 env housekeeping all filed.
+
+### OPEN — standing investigation: single-flight tick held by in-flight executions
+No new `design_revision` job has enqueued for the two reset items 40+ min after their dedupe
+keys were yielded and the items returned to `design_required` — same items enqueued fine within
+seconds post-first-restart. Prime hypothesis: the shared tick is held in-flight for the duration
+of a running execution (`wx-jb-hnnwg8c8f8` agentExecuting since 04:06, 4h budget) — consistent
+with 25 `TICK_OVERLAP_DROPPED` events and zero design drains during earlier 60-min windows. If
+the drain/tick awaits execution completion, the platform serializes ALL lanes to ~1 execution per
+tick-epoch — a structural throughput defect, not a data wedge. Next session: dispatch a
+CHEAP_READ/STANDARD lane to verify which call in the tick path awaits the execution
+(`drainTriageOutcomesFromTick` / `_dispatchOne` / drain handler) and whether enqueue phases are
+blocked behind it; then remediate as a design change.
