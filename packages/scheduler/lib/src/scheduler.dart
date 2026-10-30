@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:meta/meta.dart';
 import 'package:platform_contracts/platform_contracts.dart';
 import 'package:workflow_engine/workflow_engine.dart';
@@ -1956,23 +1958,111 @@ class Scheduler {
       workerExecutionId: request.workerExecutionId,
     );
 
+    // THE DETACHED RUN — F-237.
+    //
+    // `_dispatch.run` returns the execution's TERMINAL result, and awaiting it
+    // here held the tick for the whole agent session. Every lane shares one
+    // TickSingleFlight, so during that await there was no reconcile, no
+    // enqueue and no drain for ANY lane — the platform serialised to ~1
+    // concurrent execution no matter what the capacity budget allowed. The
+    // run is therefore STARTED here and settled by [_settleDetachedRun]
+    // outside the tick; the claim and the `jobDispatched` bookkeeping above
+    // are unchanged, so a crash between this line and the run starting is
+    // still distinguishable from "never dispatched".
+    //
+    // Settlement still lands on exactly one durable path: the continuation
+    // drops this job's claim the moment the run resolves, so the NEXT tick's
+    // step-1 reconcile sees a held job with no live lease, reads the terminal
+    // worker execution the worker layer persisted, and adopts it through
+    // [_reconcileClaim] -> [_adoptFromExecution] — the same verdict machinery
+    // a restart uses. If this process dies before the continuation runs, the
+    // claim's own lease still expires and that same path is the backstop.
+    //
+    // Reporting is preserved by construction rather than declared: the
+    // adoption lands the job in `reconciled`, which is inside the
+    // `dispatched ∪ terminal ∪ reconciled` union the composition root drains —
+    // so a settled outcome is always named to its consumer. Settling the job
+    // in the continuation instead would leave a terminal row no tick ever
+    // names, and a terminal job nobody drains is an outcome nobody consumes.
+    unawaited(_settleDetachedRun(current, request));
+    return const _DispatchOutcome(dispatched: true);
+  }
+
+  /// The detached half of [_dispatchOne]: awaits the run's terminal state
+  /// OUTSIDE the tick, then hands settlement back to the durable reconcile
+  /// path so the next tick adopts and reports it.
+  ///
+  /// ## WHY THE RESULT IS NOT ADOPTED HERE
+  ///
+  /// `run` resolves to a terminal [WorkerExecutionResult], and [_adopt] could
+  /// settle the job from it in this continuation — but a job settled here is
+  /// named in NO tick result, and the composition root's outcome drain
+  /// consumes only the `dispatched ∪ terminal ∪ reconciled` union of a tick.
+  /// A terminal job nobody names is an outcome nobody consumes: a finished
+  /// run whose verdict never reaches its handler. The adoption is therefore
+  /// left where it already lives: releasing the claim makes the NEXT tick's
+  /// [_reconcileClaim] read the durable terminal execution — which the worker
+  /// persists before `run` resolves — and adopt it through
+  /// [_adoptFromExecution], landing the id in `reconciled` on the channel the
+  /// drain already reads. The delay is one tick, which is also the earliest
+  /// the drain could consume the outcome anyway.
+  ///
+  /// ## Crash/restart
+  ///
+  /// The claim release is one durable write. A crash BEFORE it leaves the
+  /// lease in place, and reconcile adopts at expiry — the original backstop,
+  /// unchanged. A crash AFTER it still converges: the next tick in this or a
+  /// fresh process finds the held job with no claim and adopts. There is no
+  /// window in which a finished execution is left unreported.
+  Future<void> _settleDetachedRun(
+    Job job,
+    WorkerExecutionRequest request,
+  ) async {
     try {
-      final result = await _dispatch.run(request);
-      final adopted = await _adopt(current, result, now);
-      return _DispatchOutcome(
-        dispatched: true,
-        terminalJob: adopted.isTerminal ? adopted : null,
-      );
+      await _dispatch.run(request);
     } on WorkerDispatchException catch (e) {
       // Placement failed AFTER the claim but no execution was ever started:
-      // safe to release the claim and let a later tick retry.
-      await _queue.revertToQueued(
-        job: current,
-        reason: e.toString(),
-        outcome: e.outcome,
-      );
-      return const _DispatchOutcome();
+      // safe to release the claim and let a later tick retry — the same
+      // verdict this path produced when the run was awaited inside the tick.
+      try {
+        await _queue.revertToQueued(
+          job: job,
+          reason: e.toString(),
+          outcome: e.outcome,
+        );
+      } on Object {
+        // The revert itself failed: the claim is still held and expires on
+        // its own lease, so reconcile requeues or adopts the job from the
+        // durable record. A failure to release is a delay, never a loss.
+      }
+      return;
+    } on Object {
+      // An outcome this lane cannot classify is not a verdict to write: the
+      // durable worker record is the truth reconcile reads, so fall through
+      // to the claim release — adoption, renewal, requeue or zombie reclaim
+      // are all decided there from the persisted row.
     }
+    try {
+      await _releaseClaimForReconcile(job.jobId);
+    } on Object {
+      // The claim stays held and expires on its own lease: reconcile then
+      // does exactly the same adoption, one lease-window later. The release
+      // is the prompt path, never the only one.
+    }
+  }
+
+  /// Drops the job's lease so the next tick's reconcile pass settles it.
+  ///
+  /// Deliberately a CLAIM deletion and not a job write: the job row stays
+  /// `running` until [_adoptFromExecution] gives it its verdict, so capacity
+  /// accounting — which counts `job.state` — keeps charging the slot until
+  /// the execution's outcome is actually adopted. A job already settled by a
+  /// concurrent writer (zombie reclaim, another lane's reconcile) is left
+  /// alone.
+  Future<void> _releaseClaimForReconcile(String jobId) async {
+    final current = await _jobStore.readJob(jobId);
+    if (current == null || current.isTerminal) return;
+    await _jobStore.deleteClaim(jobId);
   }
 
   /// Gives each ATTEMPT of a job its own worker-execution id, and nothing else

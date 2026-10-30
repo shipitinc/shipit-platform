@@ -50,6 +50,9 @@ void main() {
     await host.session.awaitingGate;
     host.session.release();
     await tick;
+    // Detached dispatch (F-237): the run settles through reconcile-adoption
+    // on the tick after its continuation released the claim.
+    await host.settle();
 
     final jobs = await host.jobStore.listJobsForWorkItem('wi-a');
     expect(jobs, hasLength(1));

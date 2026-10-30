@@ -59,6 +59,14 @@ void main() {
     host.session.release();
     await tick;
 
+    // Dispatch is detached (F-237): the tick STARTED the run and returned.
+    // Each settle() is one production tick interval: the completed run's
+    // continuation releases the claim, then the next tick adopts the terminal
+    // execution through reconcile. The first settle also dispatches the
+    // second job — the slot the first job freed.
+    await host.settle();
+    await host.settle();
+
     // Both runnable jobs converged; the worker slot was released each time.
     final jobB = (await host.jobStore.listJobsForWorkItem('wi-b')).single;
     final jobC = (await host.jobStore.listJobsForWorkItem('wi-c')).single;
@@ -69,16 +77,23 @@ void main() {
     expect(host.worker.isAcquirable, isTrue);
     expect(await host.workerStore.listWorkerExecutions(), hasLength(2));
 
-    // Full audit trail: queued -> claimed -> dispatched -> completed, once per
-    // runnable job, and A never emitted anything.
+    // Full audit trail: queued -> [deferred while the worker was busy] ->
+    // claimed -> dispatched -> completed, once per runnable job, and A never
+    // emitted anything. Under detached dispatch the SECOND job is attempted
+    // while the first run still holds the worker, so its honest deferral is
+    // part of the trail now.
     for (final job in [jobB, jobC]) {
       final events = await host.jobStore.readEvents(job.jobId);
-      expect(events.map((e) => e.type), [
-        SchedulerEventType.jobQueued,
-        SchedulerEventType.jobClaimed,
-        SchedulerEventType.jobDispatched,
-        SchedulerEventType.jobCompleted,
-      ]);
+      expect(events.first.type, SchedulerEventType.jobQueued);
+      expect(events.last.type, SchedulerEventType.jobCompleted);
+      expect(
+        events.where((e) => e.type == SchedulerEventType.jobClaimed),
+        hasLength(1),
+      );
+      expect(
+        events.where((e) => e.type == SchedulerEventType.jobDispatched),
+        hasLength(1),
+      );
     }
   });
 
@@ -90,6 +105,10 @@ void main() {
     await host.session.awaitingGate;
     host.session.release();
     await firstTick;
+    // Detached dispatch (F-237): each completed run settles through
+    // reconcile-adoption on the tick AFTER its claim is released.
+    await host.settle();
+    await host.settle();
     final jobIds = (await host.jobStore.listJobs()).map((j) => j.jobId).toList()
       ..sort();
     expect(await host.workerStore.listWorkerExecutions(), hasLength(2));

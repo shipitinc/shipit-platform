@@ -7,6 +7,7 @@ import 'package:workflow_engine/workflow_engine.dart';
 
 import 'support/controlled_dispatcher.dart';
 import 'support/file_host.dart';
+import 'support/settle.dart';
 
 void main() {
   late Directory dir;
@@ -70,6 +71,9 @@ void main() {
       await tw.shared.enqueueJob();
 
       await Future.wait([tw.a.tick(), tw.b.tick()]);
+      // Detached dispatch (F-237): the winning replica's run settles through
+      // reconcile-adoption on the next tick after its claim is released.
+      await tw.shared.settle();
 
       final jobs = await tw.shared.jobStore.listJobs();
       expect(jobs, hasLength(1));
@@ -209,6 +213,9 @@ void main() {
     )).job;
 
     await shared.scheduler.tick();
+    // Both runs were dispatched detached in the one tick above; each settles
+    // through reconcile-adoption once its completion released the claim.
+    await shared.settle();
 
     final runs = (shared.dispatch as ControlledDispatcher).runs;
     expect(runs, hasLength(2));
@@ -233,12 +240,31 @@ void main() {
 
     await shared.scheduler.tick();
 
-    final job = (await shared.jobStore.listJobs()).single;
+    // The placement failure is delivered to the detached continuation, which
+    // reverts the job asynchronously — the deferred EVENT is the durable
+    // signal to wait on, never a fixed delay.
+    late Job job;
+    await waitUntil(() async {
+      job = (await shared.jobStore.listJobs()).single;
+      if (job.state != JobState.queued) return false;
+      final events = await shared.jobStore.readEvents(job.jobId);
+      return events.any((e) => e.type == SchedulerEventType.jobDeferred);
+    }, because: 'the failed placement to revert the job to queued');
+
     expect(job.state, JobState.queued);
     expect(job.failure, isNull);
     expect(dispatch.runs, isEmpty);
     expect(await shared.jobStore.readClaimForJob(job.jobId), isNull);
     final events = await shared.jobStore.readEvents(job.jobId);
-    expect(events.last.type, SchedulerEventType.jobDeferred);
+    expect(
+      events.map((e) => e.type),
+      contains(SchedulerEventType.jobDeferred),
+      reason: 'the placement failure is recorded as a deferral, not a loss',
+    );
+    expect(
+      events.map((e) => e.type),
+      isNot(contains(SchedulerEventType.jobFailed)),
+      reason: 'a lease failure must never become a terminal failure',
+    );
   });
 }

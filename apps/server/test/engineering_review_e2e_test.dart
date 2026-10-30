@@ -12,6 +12,7 @@ import 'package:control_plane_server/src/review/engineering_review_gate.dart';
 
 import 'support/design_gate_agents.dart';
 import 'support/git_repo_fixture.dart';
+import 'support/settle.dart';
 import 'package:control_plane_server/server.dart';
 
 /// Runs a read-only git command in [repoPath] under the fixture's hermetic
@@ -273,11 +274,20 @@ class EngineeringReviewE2EHost {
     'suspectedCategory': 'checkout',
   };
 
+  /// Detached dispatch (F-237) split every "run a lane" helper in two: the
+  /// tick only STARTS the execution, and the terminal outcome is adopted by
+  /// the NEXT tick's reconcile once the run's continuation has released the
+  /// claim. Each helper below therefore returns the DISPATCHING tick's
+  /// result — `dispatched`/`blockedArtifactMissing` are read off it — after
+  /// settling the run through the same durable path a production tick
+  /// interval provides.
   Future<SchedulerTickResult> runImplementer() async {
     final tick = implScheduler.tick();
     await implSession.awaitingGate;
     implSession.release();
-    return tick;
+    final result = await tick;
+    await settleHeldJobs(jobStore, implScheduler);
+    return result;
   }
 
   /// Runs the TRIAGE producer: it emits [_triageClassification] and writes no
@@ -288,14 +298,18 @@ class EngineeringReviewE2EHost {
     final tick = triageScheduler.tick();
     await triageSession.awaitingGate;
     triageSession.release();
-    return tick;
+    final result = await tick;
+    await settleHeldJobs(jobStore, triageScheduler);
+    return result;
   }
 
   Future<SchedulerTickResult> runEngineeringReview() async {
     final tick = reviewScheduler.tick();
     await reviewSession.awaitingGate;
     reviewSession.release();
-    return tick;
+    final result = await tick;
+    await settleHeldJobs(jobStore, reviewScheduler);
+    return result;
   }
 
   /// The terminal engineering-review job for [workItemId].

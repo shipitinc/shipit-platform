@@ -7,6 +7,7 @@ import 'package:test/test.dart';
 import 'package:workflow_engine/workflow_engine.dart';
 
 import '../support/controlled_dispatcher.dart';
+import '../support/settle.dart';
 import '../support/file_host.dart';
 import 'health_store.dart';
 
@@ -42,7 +43,7 @@ void main() {
     final harness = FileRestartHarness(dir, clock: () => t0);
     final dispatch = ControlledDispatcher(
       capabilities: const {WorkerCapability.linux, WorkerCapability.git},
-    );
+    )..workerStore = harness.workerStore;
     final monitor = ProviderHealthMonitor(
       modelPolicyStore: InMemoryModelPolicyStore(),
       workflowStore: harness.workflowStore,
@@ -107,6 +108,7 @@ void main() {
 
       await h.monitor.checkAll();
       final tick = await h.scheduler.tick();
+      await settleHeldJobs(h.harness.jobStore, h.scheduler);
 
       final job = await jobOf(h.harness, 'wi-defect-1');
       expect(h.monitor.hasAllProvidersDown(AgentRole.triageDefect), isFalse);
@@ -132,6 +134,7 @@ void main() {
     await defect(h.harness, 'wi-defect-1');
     await h.monitor.checkAll();
     final healthyTick = await h.scheduler.tick();
+    await settleHeldJobs(h.harness.jobStore, h.scheduler);
     final first = await jobOf(h.harness, 'wi-defect-1');
     expect(
       healthyTick.dispatched,
@@ -144,6 +147,7 @@ void main() {
     await defect(h.harness, 'wi-defect-2');
     await h.monitor.checkAll();
     final blipTick = await h.scheduler.tick();
+    await settleHeldJobs(h.harness.jobStore, h.scheduler);
     expect(
       blipTick.dispatched,
       contains((await jobOf(h.harness, 'wi-defect-2')).jobId),
@@ -157,6 +161,7 @@ void main() {
     await defect(h.harness, 'wi-defect-3');
 
     final blocked = await h.scheduler.tick();
+    await settleHeldJobs(h.harness.jobStore, h.scheduler);
     final stranded = await jobOf(h.harness, 'wi-defect-3');
     expect(blocked.dispatched, isEmpty);
     expect(
@@ -172,6 +177,7 @@ void main() {
     expect(h.monitor.hasAllProvidersDown(AgentRole.triageDefect), isFalse);
 
     final released = await h.scheduler.tick();
+    await settleHeldJobs(h.harness.jobStore, h.scheduler);
     expect(released.dispatched, contains(stranded.jobId));
     expect(
       (await h.harness.jobStore.readJob(stranded.jobId))!.state,
@@ -203,6 +209,7 @@ void main() {
       await h.monitor.checkAll();
     }
     final tick = await h.scheduler.tick();
+    await settleHeldJobs(h.harness.jobStore, h.scheduler);
 
     expect(h.monitor.hasAllProvidersDown(AgentRole.triageDefect), isFalse);
     expect(

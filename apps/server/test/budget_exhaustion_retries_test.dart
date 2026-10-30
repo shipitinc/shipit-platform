@@ -13,6 +13,7 @@ import 'package:control_plane_server/src/review/engineering_review_gate.dart';
 
 import 'support/design_gate_agents.dart';
 import 'support/git_repo_fixture.dart';
+import 'support/settle.dart';
 
 /// A review whose execution budget runs out is RETRIED. A review that crashes
 /// is not. Both halves are here, end to end, through the real
@@ -782,6 +783,13 @@ class ReviewRetryHost {
     implSession.release();
     await tick;
 
+    // Detached dispatch (F-237): the tick above only STARTED the run. The
+    // job settles through reconcile-adoption — the run's continuation
+    // releases the claim and the next tick's `_reconcileClaim` adopts the
+    // terminal execution. `agentCompleted` lands there, not in the tick
+    // that returned.
+    await settleHeldJobs(jobStore, implScheduler);
+
     final item = await workflowEngine.loadWorkItem(workItemId);
     expect(
       item.state,
@@ -790,7 +798,17 @@ class ReviewRetryHost {
     );
   }
 
-  Future<SchedulerTickResult> tickReview() => reviewScheduler.tick();
+  /// A review tick the way production observes one across the F-237 split:
+  /// the tick STARTS the run and returns; the detached continuation
+  /// releases the claim; the settle tick's reconcile adopts the terminal
+  /// execution. The returned result is the DISPATCHING tick's — `dispatched`
+  /// is read off it, and the settle tick's `dispatched` would always be
+  /// empty for a job its own reconcile just settled.
+  Future<SchedulerTickResult> tickReview() async {
+    final dispatched = await reviewScheduler.tick();
+    await settleHeldJobs(jobStore, reviewScheduler);
+    return dispatched;
+  }
 
   Future<Job> reviewJob(String workItemId) async {
     final jobs = await jobStore.listJobsForWorkItem(workItemId);

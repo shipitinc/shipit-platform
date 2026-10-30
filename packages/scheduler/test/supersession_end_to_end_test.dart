@@ -82,6 +82,7 @@ void main() {
     host.session.release();
 
     final tick = await host.scheduler.tick();
+    await host.settle();
 
     expect(tick.enqueued, hasLength(1), reason: 'the item is probeable');
     final job = (await host.jobStore.listJobs()).single;
@@ -118,6 +119,7 @@ void main() {
       await itemCancelledMidPrepare();
       host.session.release();
       await host.scheduler.tick();
+      await host.settle();
       final job = (await host.jobStore.listJobs()).single;
 
       // The worker row is durable evidence that the marker really crossed.
@@ -171,6 +173,7 @@ void main() {
       await itemCancelledMidPrepare();
       host.session.release();
       await host.scheduler.tick();
+      await host.settle();
       final job = (await host.jobStore.listJobs()).single;
 
       final execution = await host.workerStore.readWorkerExecution(
@@ -196,9 +199,11 @@ void main() {
     await itemCancelledMidPrepare();
     host.session.release();
     await host.scheduler.tick();
+    await host.settle();
     final job = (await host.jobStore.listJobs()).single;
 
     final second = await host.scheduler.tick();
+    await host.settle();
     expect(second.enqueued, isEmpty);
     expect(second.dispatched, isEmpty);
     expect(await host.jobStore.listJobs(), hasLength(1));

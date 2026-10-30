@@ -38,6 +38,7 @@ void main() {
         await host.itemRunnable();
 
         final tick = await host.scheduler.tick();
+        await _settle(host);
         expect(tick.dispatched, hasLength(1));
 
         final job = (await host.jobStore.listJobs()).single;
@@ -77,6 +78,7 @@ void main() {
       await host.itemRunnable();
 
       await host.scheduler.tick();
+      await _settle(host);
 
       final job = (await host.jobStore.listJobs()).single;
       expect(job.state, JobState.failed);
@@ -97,10 +99,18 @@ void main() {
       await host.itemRunnable();
 
       await host.scheduler.tick();
+      await _settle(host);
 
-      final job = (await host.jobStore.listJobs()).single;
-      expect(job.state, JobState.cancelled);
+      // Cancelling releases the dedupe key, so the settling tick also mints
+      // and dispatches the successor row for the still-runnable item.
+      final jobs = await host.jobStore.listJobs();
+      final job = jobs.singleWhere((j) => j.state == JobState.cancelled);
       expect(job.executionReference!.agentExecutionId, 'agx-cancelled');
+      for (final live in jobs.where((j) => !j.isTerminal)) {
+        while (await host.jobStore.readClaimForJob(live.jobId) != null) {
+          await Future<void>.delayed(const Duration(milliseconds: 1));
+        }
+      }
     });
   });
 
@@ -204,19 +214,24 @@ void main() {
       await host.itemRunnable();
 
       await host.scheduler.tick();
+      await _settle(host);
+      // The lost CAS leaves the durable job without a reference, so the
+      // settling tick's reconcile sees a stale claim and requeues rather than
+      // adopting — the same fail-safe a crash would produce. The re-dispatched
+      // run is what a second settle then adopts.
+      await _settle(host);
 
       expect(losing.lostMarkRunningWrites, 1);
       final job = (await host.jobStore.listJobs()).single;
       expect(job.state, JobState.succeeded);
 
-      // The lost CAS left no reference behind. The correct value on a lost CAS
-      // is the worker execution that produced the adopted outcome - the same
-      // execution the dispatch request named - never the empty string.
+      // The correct value is the worker execution that produced the adopted
+      // outcome — the re-dispatch's own stamped id — never the empty string.
       final ref = job.executionReference;
       expect(ref, isNotNull, reason: 'adoption must restore the reference');
       expect(ref!.workerExecutionId, isNotEmpty);
       expect(ref.workerExecutionId, 'wx-${job.jobId}');
-      expect(ref.workerExecutionId, dispatch.runs.single.workerExecutionId);
+      expect(ref.workerExecutionId, dispatch.runs.last.workerExecutionId);
       expect(ref.agentExecutionId, 'agx-1');
     });
 
@@ -236,13 +251,20 @@ void main() {
       await host.itemRunnable();
 
       await host.scheduler.tick();
+      await _settle(host);
+      await _settle(host);
 
       expect(losing.lostMarkRunningWrites, 1);
       final job = (await host.jobStore.listJobs()).single;
       expect(job.state, JobState.succeeded);
-      // No reference beats a reference pointing at nothing: a reader follows
-      // the chain, and an empty id is not a worker execution.
-      expect(job.executionReference, isNull);
+      // The unnamed first run's outcome cannot be attributed durably — its
+      // only link lived in the returned result — so reconcile requeues the
+      // row and the re-dispatch's markRunning stamps the real execution id.
+      // What must never land is the EMPTY id the dispatcher reported.
+      expect(job.executionReference, isNotNull);
+      expect(job.executionReference!.workerExecutionId, 'wx-${job.jobId}');
+      expect(job.executionReference!.workerExecutionId, isNot(''));
+      expect(job.executionReference!.agentExecutionId, 'agx-1');
     });
 
     test(
@@ -254,10 +276,16 @@ void main() {
         await host.itemRunnable();
 
         await host.scheduler.tick();
+        await _settle(host);
+        await _settle(host);
 
         final job = (await host.jobStore.listJobs()).single;
         expect(job.state, JobState.succeeded);
-        expect(job.executionReference, isNull);
+        // The re-dispatch stamps the real execution id at markRunning; what is
+        // NOT fabricated is an agent-execution link none of the runs reported.
+        expect(job.executionReference, isNotNull);
+        expect(job.executionReference!.workerExecutionId, 'wx-${job.jobId}');
+        expect(job.executionReference!.agentExecutionId, isNull);
       },
     );
 
@@ -272,6 +300,7 @@ void main() {
       await host.itemRunnable();
 
       await host.scheduler.tick();
+      await _settle(host);
 
       final job = (await host.jobStore.listJobs()).single;
       expect(job.executionReference!.workerExecutionId, 'wx-${job.jobId}');
@@ -297,6 +326,7 @@ void main() {
           final first = _Host(dir, clock: () => now, dispatch: dispatch);
           await first.itemRunnable();
           await first.scheduler.tick();
+          await _settle(first);
 
           final retrying = (await first.jobStore.listJobs()).single;
           expect(retrying.state, JobState.retryWaiting);
@@ -317,6 +347,7 @@ void main() {
           now = t0.add(const Duration(minutes: 2));
           final resumed = _Host(dir, clock: () => now, dispatch: dispatch);
           await resumed.scheduler.tick();
+          await _settle(resumed);
 
           final done = (await resumed.jobStore.listJobs()).single;
           expect(done.state, JobState.succeeded);
@@ -364,10 +395,13 @@ void main() {
         await host.itemRunnable();
 
         await host.scheduler.tick();
+        await _settle(host);
         final afterFirst = (await host.jobStore.listJobs()).single;
 
         await host.scheduler.tick();
+        await _settle(host);
         await host.scheduler.tick();
+        await _settle(host);
         final afterMore = await host.jobStore.listJobs();
 
         expect(afterMore, hasLength(1), reason: 'idempotent enqueue');
@@ -393,6 +427,7 @@ void main() {
           );
           await host.itemRunnable();
           await host.scheduler.tick();
+          await _settle(host);
           final terminal = (await host.jobStore.listJobs()).single;
 
           final again = await host.scheduler.queue.enqueueIfAbsent(
@@ -430,6 +465,7 @@ void main() {
         await host.itemRunnable();
 
         await host.scheduler.tick();
+        await _settle(host);
 
         final job = (await host.jobStore.listJobs()).single;
         expect(job.state, JobState.failed);
@@ -513,6 +549,14 @@ class _Host {
     jobStore = store ?? FileJsonJobStore(File('${dir.path}/jobs.json'));
     workerStore = FileJsonWorkerStore(File('${dir.path}/workers.json'));
     this.dispatch = dispatch ?? _ReportingDispatcher();
+    final supplied = this.dispatch;
+    if (supplied is _ReportingDispatcher) {
+      // Re-point, never ??=: a shared dispatcher retains the store the FIRST
+      // host wired, while FileJsonWorkerStore snapshots at construction — a
+      // resumed host reconciling a stale snapshot would never see the run's
+      // durable tail and would requeue the job forever.
+      supplied.workerStore = workerStore;
+    }
     final modelPolicyStore = InMemoryModelPolicyStore();
     final modelSelection = ModelSelectionService(modelPolicyStore);
     scheduler = Scheduler(
@@ -624,6 +668,11 @@ class _ReportingDispatcher implements WorkerDispatch {
   /// model a dispatch layer that misreports or cannot name its execution.
   final String? reportWorkerExecutionId;
 
+  /// When set, `run` persists the terminal execution row and result before
+  /// returning — the durable tail a real worker commits — so the scheduler's
+  /// reconcile-adoption path can settle the job (F-237).
+  WorkerStore? workerStore;
+
   final _runs = <WorkerExecutionRequest>[];
 
   List<WorkerExecutionRequest> get runs => List.unmodifiable(_runs);
@@ -649,7 +698,7 @@ class _ReportingDispatcher implements WorkerDispatch {
   Future<WorkerExecutionResult> run(WorkerExecutionRequest request) async {
     final attempt = _runs.length;
     _runs.add(request);
-    return WorkerExecutionResult(
+    final result = WorkerExecutionResult(
       workerExecutionId: reportWorkerExecutionId ?? request.workerExecutionId,
       workItemId: request.workItemId,
       status: statusSeries[attempt % statusSeries.length],
@@ -663,6 +712,47 @@ class _ReportingDispatcher implements WorkerDispatch {
       agentExecutionId:
           agentExecutionIdSeries[attempt % agentExecutionIdSeries.length],
     );
+    final store = workerStore;
+    if (store != null) {
+      await store.saveWorkerExecution(
+        WorkerExecution(
+          workerExecutionId: request.workerExecutionId,
+          workItemId: request.workItemId,
+          repositoryPath: request.repositoryPath,
+          requestedStartingRevision: request.startingRevision,
+          requiredCapabilities: request.requiredCapabilities,
+          status: result.status,
+          cleanupPolicy: request.cleanupPolicy,
+          workerId: result.workerId,
+          workspaceId: result.workspaceId,
+          agentExecutionId: result.agentExecutionId,
+          cleanupStatus: result.cleanupStatus,
+          failureCode: result.failureCode,
+          reason: result.failureDetail,
+          startedAt: result.startedAt,
+          endedAt: result.endedAt,
+        ),
+      );
+      await store.saveResult(
+        result.workerExecutionId == request.workerExecutionId
+            ? result
+            : WorkerExecutionResult(
+                workerExecutionId: request.workerExecutionId,
+                workItemId: result.workItemId,
+                status: result.status,
+                workerId: result.workerId,
+                workspaceId: result.workspaceId,
+                startingRevision: result.startingRevision,
+                startedAt: result.startedAt,
+                endedAt: result.endedAt,
+                cleanupStatus: result.cleanupStatus,
+                failureCode: result.failureCode,
+                failureDetail: result.failureDetail,
+                agentExecutionId: result.agentExecutionId,
+              ),
+      );
+    }
+    return result;
   }
 
   @override
@@ -733,4 +823,27 @@ class _CasLosingJobStore implements JobStore {
   @override
   Future<T> inTransaction<T>(Future<T> Function(JobStore store) body) =>
       inner.inTransaction((_) => body(this));
+}
+
+/// Waits for every held job's detached run to release its claim, then runs
+/// the tick that settles it through reconcile-adoption — the two halves a
+/// production tick interval provides between "the run ended" and "the job
+/// was adopted" (F-237: dispatch no longer awaits the terminal result).
+Future<void> _settle(_Host host) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 10));
+  for (;;) {
+    var held = false;
+    for (final job in await host.jobStore.listJobs()) {
+      if ((job.state == JobState.claimed || job.state == JobState.running) &&
+          await host.jobStore.readClaimForJob(job.jobId) != null) {
+        held = true;
+      }
+    }
+    if (!held) break;
+    if (DateTime.now().isAfter(deadline)) {
+      throw StateError('timed out waiting for held jobs to release claims');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+  await host.scheduler.tick();
 }
