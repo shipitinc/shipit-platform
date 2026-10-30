@@ -84,8 +84,12 @@ void main() {
         'register ShipIt, discover pinned HEAD read-only, propose baseline, survive restart',
         () async {
           final repoRoot = await _repoRoot();
+          // `.git` is a directory in a normal checkout but a FILE holding a
+          // `gitdir:` pointer in a linked worktree (`git worktree add`).
+          // Either shape is a valid git working tree.
+          final dotGit = '${repoRoot.path}/.git';
           expect(
-            Directory('${repoRoot.path}/.git').existsSync(),
+            Directory(dotGit).existsSync() || File(dotGit).existsSync(),
             isTrue,
             reason: 'dogfood expects a git working tree at ${repoRoot.path}',
           );
