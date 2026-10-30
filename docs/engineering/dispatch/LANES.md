@@ -1400,3 +1400,14 @@ deleted."* Two reasons for the delete anyway:
 
 The three `product_credential` rows are **retained and revoked** rather than deleted, so the A1 invariant's
 audit trail survives.
+
+## Session 2026-10-30 — F-226/F-227 remediation lanes (dispatched by orchestrator-main)
+
+| task_id | type | state | worktree | branch | base_sha | routing_class | next action |
+|---|---|---|---|---|---|---|---|
+| impl-worker-lease-starvation | implement | IN_FLIGHT | /private/tmp/shipit-fix-worker-lease-starvation | fix/worker-lease-starvation | fb8dde3 | PRECISION | await report → auto engineering-reviewer |
+| impl-dedupe-self-heal | implement | IN_FLIGHT | /private/tmp/shipit-fix-dedupe-self-heal | fix/dedupe-key-self-heal | fb8dde3 | STANDARD | await report → auto engineering-reviewer |
+
+Ownership verified disjoint: worker-lease lane owns `packages/worker_runtime/**` only;
+dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test/**`,
+`apps/server/lib/src/persistence/postgres_job_store.dart`, `apps/server/test/**`.

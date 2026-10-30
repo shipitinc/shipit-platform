@@ -1394,3 +1394,58 @@ the operator using the product, not by any gate — every test that touched thes
     diagnostic reading the full Postgres log around the abort (OOM vs assertion vs shared memory) before it
     happens again mid-workflow. **Do not restart or `qa-down` the QA stack to "fix" it** — items are sitting
     at the human gate and that state is the first thing such a command would cost.
+
+---
+
+## SESSION 2026-10-29/30 (orchestrator-main) — live-QA diagnosis; two starvation defects found and dispatched
+
+WORK_ITEM: platform dogfood flow — keep the end-to-end autonomous lane moving on QA.
+STATE: REMEDIATION_DISPATCHED — two bounded implementer lanes for the wedge mechanisms; live
+  unstick awaits human authorization (deployment-authority action on shared QA state).
+
+Verified live (read-only; psql + HTTP only — no Docker commands, per AGENTS.md shared-Docker rule):
+- Server :8180 `OK`, client :8081 `200`. Schedulers ticking (last `scheduler_event` 02:05).
+- Running image includes design step 8 (`sched-design-revision` claimed `jb-hnny3s8b5p`).
+  Agent worktree `requestedStartingRevision` = `f58d6fb` (Oct 9) — **stale by 400 commits**;
+  every agent forked a worktree from a 20-day-old checkout.
+- `main` = `fb8dde3`, 400 ahead of `origin/main` (unpushed; gh token lacks `workflow` scope, SSH was used before).
+
+Blockages found (evidence, not hypothesis):
+1. **F-226 worker lease starvation.** `w-impl-local`, `w-triage-local` report `busy 1/1` with
+   ZERO running jobs — `LocalWorker._leased` held by `run()` futures wedged in `_drive` past
+   their budgets (executions ran 8.2h/9.2h vs 4h/30m). Zombie sweep orphaned the ROWS at
+   02:05 but cannot release the in-process lease. 7 `implement_feature` jobs + all triage
+   defer `workerBusy` every tick.
+2. **F-227 `activeDedupeKey` leak.** `jb-hnnwapzybj` (failed) and `jb-hnny3s8b5p` (cancelled)
+   hold non-NULL `activeDedupeKey` — flipped terminal OUTSIDE `PostgresJobStore` (no terminal
+   events, NULL failureJson → manual ops write during F-225 repro). `DEF-fresh-test` is
+   suppressed forever: `DuplicateActiveJobException` → `created:false` every tick, invisible.
+   `DEF-f223-test`'s key is also held by design (failed job) + needs a transition.
+3. **F-228 un-ended executions.** `wx-jb-hn3liczxln` orphaned Oct-11, `endedAt` NULL 19 days;
+   `wx-jb-hnntgl4dak` `agentExecuting` 15h vs a 2h design budget, owning job already cancelled.
+4. F-225 addendum filed: items are NOT ignored — jobs were created; the wedge is the leaked
+   dedupe keys, not the enqueue predicate.
+
+Awaiting the operator (product-flow, answered in UI, not Manager-escalated): 5 pending
+`engineering_review` human_decisions (newest `dec-hnnats8mji`, Oct 28); item
+`defect-DEF-1791685264570406` at `waiting_for_human_decision` since Oct 16.
+Parked (no lane): 3 `agent_failed`, 1 `agent_completed`, 2 `design_required`.
+
+BLOCKERS: none for code remediation — lanes dispatched below.
+DECISIONS SURFACED (blocking):
+- `b1e4d3a0` (HD-7) — `FileJsonExecutionStore` deliberate? Gates the human's own ordered
+  remediation B→A→C (agent failure detail). PENDING since 2026-10-12.
+- QA unstick authorization — clearing 2 leaked dedupe keys + resetting wedged workers +
+  optional redeploy at HEAD are writes to shared QA state / deployment-authority actions.
+
+SELF_EDITS: workflow bookkeeping only — `FOLLOW_UPS.md` (F-225 addendum, F-226..F-228),
+  this block, dispatch records.
+
+### Human answers received 2026-10-30 (structured question UI)
+- **HD-7 `b1e4d3a0` → OVERSIGHT_OR_DEFAULT.** FileJsonExecutionStore was a leftover, not a
+  deliberate boundary. Option B (switch ExecutionCoordinator to PostgresExecutionStore) proceeds
+  as a bounded persistence change with independent review. Decision object RESOLVED+committed.
+  Dispatch serialized behind `impl-dedupe-self-heal` (both write `apps/server/test/**`).
+- **QA unstick → Repair + redeploy at HEAD.** Human authorized: clear the 2 leaked dedupe keys,
+  rebuild server+client images at `fb8dde3`, restart the QA stack via a deployment-authority lane,
+  verify by identity (runMode/composition), and confirm the design lane re-enqueues.

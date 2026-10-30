@@ -421,7 +421,12 @@ must advance the discriminator". Which one yields changes what *approve a design
 exception mirroring the existing `(escalation, approve)` shape. Closes the path without disturbing the
 pinned engineering-review rule. Both reviews recommended it. Not to be folded into an unrelated lane.
 
-## HD-7 — `b1e4d3a0-f1cb-4eda-9ae3-1d84081b88f4` — OPEN (deferred by the human)
+## HD-7 — `b1e4d3a0-f1cb-4eda-9ae3-1d84081b88f4` — RESOLVED 2026-10-30 (OVERSIGHT_OR_DEFAULT)
+
+**Answered via structured question UI:** the file store was a default/leftover, not a deliberate
+boundary. Option B of the B → A → C order proceeds as a bounded persistence change with its own
+independent review (per the decision's follow_up_actions). Object updated to RESOLVED in
+`.decisions/b1e4d3a0-f1cb-4eda-9ae3-1d84081b88f4.yaml`. The record below is retained as raised.
 
 **Was `FileJsonExecutionStore` chosen deliberately for agent execution records?**
 

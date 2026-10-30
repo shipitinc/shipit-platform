@@ -5,7 +5,7 @@
 # It gates option B of the human's own chosen remediation order for agent failure detail.
 decision_id: b1e4d3a0-f1cb-4eda-9ae3-1d84081b88f4
 type: ARCHITECTURE
-status: PENDING
+status: RESOLVED
 question: >-
   (HD-7) Was `FileJsonExecutionStore` chosen DELIBERATELY for the ExecutionCoordinator's agent
   execution records? If yes, Option B of the agent-failure-detail remediation order is a product
@@ -87,11 +87,17 @@ recommendation: >-
   None until the human answers. The orchestrator has no basis to recommend between a deliberate design
   and an oversight, and both readings are consistent with the evidence in the repository.
 resolution:
-  outcome: null
-  decided_by: null
-  decided_at: null
-  selected_option: null
-  rationale: null
+  outcome: RESOLVED
+  decided_by: repository-owner (structured question UI, 2026-10-30)
+  decided_at: 2026-10-30T02:30:00Z
+  selected_option: OVERSIGHT_OR_DEFAULT
+  rationale: >-
+    The file store was a default/leftover, not a deliberate boundary: the PostgresExecutionStore
+    implementation and the agent_execution/agent_result/agent_event/platform_verification tables
+    exist and are already migrated — intent that was never wired. Option B is therefore a
+    straightforward persistence fix: durable, inspectable agent outcomes. Presented and answered via
+    the structured question UI alongside the QA-unstick authorization; selected_option verified
+    against the options as originally presented.
 follow_up_actions:
   - action: >-
       Ask the human this question directly before implementing Option B. It was asked twice in session
