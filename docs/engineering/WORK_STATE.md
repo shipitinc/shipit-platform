@@ -1490,3 +1490,10 @@ Cycle-2 focused re-review approved all findings: `_setCleanup`/`_finish`/`_trans
 writes all epoch-fenced; null-epoch=legitimate-writer contract verified unreachable by detached
 drives; live path behavior-identical; cleanup-wedge test green; residual (intra-tx CAS) honestly
 bounded. READY_FOR_MERGE → integrator dispatched (`integrate-worker-lease`).
+
+### F-226 MERGED — worker-lease starvation fix on main
+`fix/worker-lease-starvation` merged (integrator rehearsal tree `be37a943`, reviewed blobs
+identical), human-authorized "merge now". `make test-integration` remains owed by this change
+AND `eeb9c97` — run it before the next QA redeploy so the merged tree gets the merge-tier gate.
+Both remediation fixes are now on `main`; the live QA redeploy that activates them is a
+deployment-authority action not yet requested.
