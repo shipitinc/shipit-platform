@@ -25,6 +25,7 @@ import 'package:workflow_store/workflow_store.dart';
 import 'package:worker_protocol/worker_protocol.dart';
 import 'package:worker_runtime/worker_runtime.dart';
 
+import '../support/integration_settle.dart';
 import 'test_tools/serverpod_test_tools.dart';
 
 // ---------------------------------------------------------------------------
@@ -32,7 +33,15 @@ import 'test_tools/serverpod_test_tools.dart';
 // package tests). Self-contained; avoids importing test/ support from deps.
 // ---------------------------------------------------------------------------
 class FakeDispatch implements WorkerDispatch {
-  FakeDispatch({this.capacity = 1});
+  FakeDispatch({required this.workerStore, this.capacity = 1});
+
+  /// The store [run] commits its terminal outcome to BEFORE returning — the
+  /// same durable tail `LocalWorker` commits. Detached dispatch (F-237)
+  /// settles the job through reconcile-adoption, which reads this durable
+  /// record rather than the returned future: without it the run leaves no
+  /// execution behind and reconcile can only requeue the job for want of a
+  /// referenced execution — then re-dispatch it on every later tick.
+  final WorkerStore workerStore;
 
   int capacity;
 
@@ -82,6 +91,10 @@ class FakeDispatch implements WorkerDispatch {
       cleanupStatus: WorkerCleanupStatus.removed,
       failureCode: WorkerFailureCode.none,
     );
+    // The durable tail, BEFORE the future resolves: the terminal execution
+    // row plus the stored result are what the next tick's reconcile-adoption
+    // settles the job from.
+    await persistWorkerOutcome(workerStore, request, result);
     return result;
   }
 
@@ -126,7 +139,7 @@ class Harness {
     h.jobStore = _ScopedJobStore(h._db, _ownedWorkItems);
     h.workerStore = PostgresWorkerStore(h._db);
     h.executionStore = _ScopedExecutionStore(h._db, _ownedWorkItems);
-    h.dispatch = FakeDispatch();
+    h.dispatch = FakeDispatch(workerStore: h.workerStore);
     h.scheduler = Scheduler(
       schedulerId: 'sched-e2e',
       workflowStore: h.workflowStore,
@@ -414,7 +427,22 @@ void main() {
         final tick = await _second!.scheduler.tick();
 
         expect(tick.reconciled, hasLength(1));
+
+        // F-237 detached dispatch: the same tick requeued the stale claim AND
+        // dispatched it, so the job is still running here — the run settles
+        // outside the tick. The claim release plus this reconcile tick is the
+        // durable two-step a production tick interval provides.
+        final adopt = await settleHeldJobs(
+          _second!.jobStore,
+          _second!.scheduler,
+        );
+
         final job = (await _second!.jobStore.listJobs()).single;
+        expect(
+          adopt.reconciled,
+          [job.jobId],
+          reason: 'the run was adopted by reconcile, not settled by dispatch',
+        );
         expect(job.state, JobState.succeeded);
         expect(job.failure, isNull);
         expect(_second!.dispatch.runs, hasLength(1));

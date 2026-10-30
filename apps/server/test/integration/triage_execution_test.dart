@@ -23,6 +23,7 @@ import 'package:control_plane_server/src/triage/lane_a_defect_triage_work_item.d
 import 'package:control_plane_server/src/triage/lane_e_design_remediation_work_item.dart';
 import 'package:control_plane_server/src/triage/triage_processor.dart';
 
+import '../support/integration_settle.dart';
 import 'test_tools/serverpod_test_tools.dart';
 
 /// Human-reported defect text, shared by the fixture and the assertions so a
@@ -504,9 +505,12 @@ class _TriageRun {
     required this.workItemId,
     required this.evidenceIds,
     required this.tick,
+    required this.adoptTick,
+    required this.itemStateWhenClaimReleased,
     required this.job,
     required this.scheduler,
     required this.jobStore,
+    required this.scopedJobStore,
     required this.processor,
     required this.triageStore,
     required this.defectStore,
@@ -526,9 +530,38 @@ class _TriageRun {
   final String workItemId;
   final List<String> evidenceIds;
   final SchedulerTickResult tick;
+
+  /// The tick that adopted the dispatched run's durable outcome.
+  ///
+  /// F-237 detached dispatch: [tick] STARTED the execution and returned, the
+  /// run's continuation released the claim, and [adoptTick] is the next
+  /// tick — the one whose step-1 reconcile adopted the terminal worker
+  /// execution. `reconciled`, `retryReturned` and `cancelledQueued` are read
+  /// off THIS result: adopt and the retry-return pass are one tick now, so
+  /// there is no later tick to observe them on.
+  final SchedulerTickResult adoptTick;
+
+  /// The work item's state read BETWEEN the run's claim release and the
+  /// adopting tick — the only moment a test can observe the state the
+  /// coordinator left the item in (`agentCompleted`, `agentFailed`) before
+  /// the adopting tick's own passes move it again.
+  final WorkItemState itemStateWhenClaimReleased;
   final Job job;
   final Scheduler scheduler;
   final PostgresJobStore jobStore;
+
+  /// The scoped store the settle wait polls, listing only this run's jobs.
+  ///
+  /// Two things are true of it. It is NARROWED like the scheduler's own
+  /// store: the wait reads `listJobs()`, and the unscoped [jobStore] would
+  /// make this run block on another suite's in-flight job in the shared
+  /// database. And it is backed by an INDEPENDENT `PersistenceDatabase`
+  /// wrapper over the same `session.db`: the detached run commits its
+  /// durable tail inside `workerStore.inTransaction` on [db], and a poll on
+  /// that same wrapper would attach to the worker's transaction and die
+  /// with `Session or transaction has already finished` when the commit
+  /// lands mid-poll. A second wrapper has a transaction slot of its own.
+  final JobStore scopedJobStore;
   final TriageProcessor processor;
   final PostgresTriageStore triageStore;
   final PostgresDefectStore defectStore;
@@ -628,6 +661,13 @@ class _TriageRun {
 
   Future<TriageResult?> process() => processor.processCompletedTriageJob(job);
 
+  /// The settle half of detached dispatch (F-237) for a dispatch made AFTER
+  /// this run was built — the scheduled retry. Waits for the run's
+  /// continuation to release the claim, then returns the adopting tick's
+  /// result, which is where the settled verdict is named (`reconciled`).
+  Future<SchedulerTickResult> settle() =>
+      settleHeldJobs(scopedJobStore, scheduler);
+
   /// A brand new processor over a brand new execution store backed by the same
   /// file, i.e. what a restarted server would observe.
   ///
@@ -655,9 +695,12 @@ class _TriageRun {
       workItemId: workItemId,
       evidenceIds: evidenceIds,
       tick: tick,
+      adoptTick: adoptTick,
+      itemStateWhenClaimReleased: itemStateWhenClaimReleased,
       job: job,
       scheduler: scheduler,
       jobStore: jobStore,
+      scopedJobStore: scopedJobStore,
       triageStore: triageStore,
       defectStore: defectStore,
       workflowStore: workflowStore,
@@ -696,7 +739,14 @@ class _TriageRun {
   /// breaks their assertions. Every identifier below carries the run id, so
   /// this cannot touch a row this suite did not create.
   Future<void> dispose() async {
-    await purgeSuiteRows(db);
+    // Purge over an INDEPENDENT `PersistenceDatabase` wrapper: if a test
+    // aborted while a detached run was still in flight, the worker's
+    // `inTransaction` commit can still be open on [db], and a purge query on
+    // that same wrapper would attach to it and die with
+    // `Session or transaction has already finished` — the teardown symptom
+    // this migration exists to prevent. A second wrapper has a transaction
+    // slot of its own, so the purge always goes straight to the pool.
+    await purgeSuiteRows(PersistenceDatabase(db.db));
     repo.dispose();
     if (caseRoot.existsSync()) caseRoot.deleteSync(recursive: true);
   }
@@ -982,6 +1032,15 @@ Future<_TriageRun> _dispatchTriage({
     jobStore,
     'defect-DEF-$runId',
   );
+  // The settle poll's view of the same jobs, over an INDEPENDENT
+  // `PersistenceDatabase` wrapper: the detached run commits inside
+  // `workerStore.inTransaction` on [db], and a claim-release poll on that
+  // same wrapper would attach to the worker's transaction and die the
+  // moment the commit lands mid-poll. See `integration_settle.dart`.
+  final pollJobStore = _ScopedJobStore.forPrefix(
+    PostgresJobStore(PersistenceDatabase(db.db)),
+    'defect-DEF-$runId',
+  );
   final scheduler = Scheduler(
     schedulerId: 'sched-triage-$runId',
     workflowStore: _ScopedWorkflowStore(
@@ -1017,6 +1076,22 @@ Future<_TriageRun> _dispatchTriage({
       'expected exactly one dispatched triage job, got ${tick.dispatched}',
     );
   }
+
+  // F-237 detached dispatch: [tick] STARTED the run and returned while it
+  // was still in flight. The run's continuation releases the claim once the
+  // durable outcome is written, and the NEXT tick's step-1 reconcile adopts
+  // the terminal worker execution. The two halves are kept observable on
+  // purpose: the item's state is read BETWEEN release and adoption — the
+  // only moment the state the coordinator left it in (`agentCompleted`,
+  // `agentFailed`) is visible, before the adopting tick's own passes (the
+  // retry-return among them) move it again — and the job is read AFTER
+  // adoption, so a test sees the settled verdict exactly like the
+  // pre-detached read did.
+  await waitForClaimRelease(pollJobStore);
+  final itemStateWhenClaimReleased = (await workflowStore.readWorkItem(
+    'defect-DEF-$runId',
+  )).state;
+  final adoptTick = await scheduler.tick();
   final job = await jobStore.readJob(tick.dispatched.single);
   if (job == null) {
     repo.dispose();
@@ -1033,9 +1108,12 @@ Future<_TriageRun> _dispatchTriage({
     workItemId: 'defect-DEF-$runId',
     evidenceIds: [evidenceIdFor(runId)],
     tick: tick,
+    adoptTick: adoptTick,
+    itemStateWhenClaimReleased: itemStateWhenClaimReleased,
     job: job,
     scheduler: scheduler,
     jobStore: jobStore,
+    scopedJobStore: pollJobStore,
     processor: TriageProcessor(
       db: db,
       workflowStore: workflowStore,
@@ -1081,7 +1159,7 @@ void main() {
         openSessions.clear();
       });
 
-      group('real triage execution path', () {
+      group('real triage execution path', timeout: const Timeout(Duration(minutes: 5)), () {
         test(
           'a persisted triage work item is dispatched, executed, verified and '
           'persisted as a TriageResult',
@@ -1308,7 +1386,7 @@ void main() {
         });
       });
 
-      group('classification routing', () {
+      group('classification routing', timeout: const Timeout(Duration(minutes: 5)), () {
         for (final classification in const [
           DefectClassification.implementationDefect,
           DefectClassification.designDefect,
@@ -1541,6 +1619,26 @@ void main() {
             // Positive control fired: the real scheduler, real worker and real
             // coordinator produced a real design-revision job.
             expect(tick.dispatched, hasLength(1));
+
+            // F-237 detached dispatch: the tick STARTED the control run and
+            // returned; its claim release plus this reconcile tick is what
+            // settles it, so the verdict below is the adopted one — the same
+            // two-step every other dispatch in this suite now takes. The wait
+            // is scoped to the same two work items the design scheduler owns,
+            // never the whole shared table, and polls over an independent
+            // `PersistenceDatabase` wrapper for the same reason
+            // `_dispatchTriage`'s does — the design worker's own terminal
+            // commit runs `workerStore.inTransaction` on `run.db`.
+            await settleHeldJobs(
+              _ScopedJobStore.forWorkItems(
+                PostgresJobStore(PersistenceDatabase(run.db.db)),
+                {
+                  run.designRemediationWorkItemId,
+                  controlWorkItemId,
+                },
+              ),
+              designScheduler,
+            );
             final controlJob = await run.jobStore.readJob(
               tick.dispatched.single,
             );
@@ -1607,226 +1705,233 @@ void main() {
         );
       });
 
-      group('clarification routing', () {
-        test(
-          'non-empty clarifications survive a restart in both read paths',
-          () async {
+      group(
+        'clarification routing',
+        timeout: const Timeout(Duration(minutes: 5)),
+        () {
+          test(
+            'non-empty clarifications survive a restart in both read paths',
+            () async {
+              final db = await newDb();
+              const question = 'Which client is affected?';
+              const reason = 'The report does not identify the client surface.';
+              const secondQuestion = 'Which invoice provider is in use?';
+              const secondReason = 'Checkout and invoice disagree by 5.00.';
+              final run = await _dispatchTriage(
+                db: db,
+                runId: _nextRunId(runCounter++),
+                structuredResult: _triageStructuredResult(
+                  classification: DefectClassification.requirementGap.wire,
+                  confidence: 0.35,
+                  recommendedNextAction: 'clarify',
+                  clarificationRequired: const [
+                    {'question': question, 'reason': reason},
+                    {'question': secondQuestion, 'reason': secondReason},
+                  ],
+                ),
+              );
+              addTearDown(run.dispose);
+
+              final result = await run.process();
+              expect(result!.clarificationRequired, hasLength(2));
+
+              // The raw `text` column really is JSON text, not a list. This is
+              // the shape the typed reader has to decode.
+              final persisted = await run.triageResultRow(result.resultId);
+              expect(persisted!['clarificationRequired'], isA<String>());
+              expect(
+                jsonDecode(persisted['clarificationRequired']! as String),
+                hasLength(2),
+              );
+
+              // Read 1: the owning store, in a fresh instance over the same
+              // database — a stand-in for a restarted server.
+              final reread = await run
+                  .restarted(db: db)
+                  .triageStore
+                  .readTriageResult(result.resultId);
+              expect(reread!.clarificationRequired, hasLength(2));
+              expect(
+                reread.clarificationRequired.map((c) => c.question).toList(),
+                [question, secondQuestion],
+              );
+              expect(
+                reread.clarificationRequired.map((c) => c.reason).toList(),
+                [reason, secondReason],
+              );
+
+              // Read 2: `PostgresDefectStore` delegates the same three triage
+              // reads to `PostgresTriageStore`, so a caller holding only a
+              // defect store must see identical typed data, not a second
+              // divergent decoder.
+              final viaDefectStore = await run.defectStore.readTriageResult(
+                result.resultId,
+              );
+              expect(viaDefectStore, reread);
+
+              final viaJob = await run.defectStore.readTriageResultForJob(
+                run.job.jobId,
+              );
+              expect(viaJob, reread);
+              expect(
+                (await run.defectStore.readTriageResultsForDefect(
+                  run.defectId,
+                )).single,
+                reread,
+              );
+
+              // And the durable side effect the clarifications caused is real.
+              final clarifications = await run.defectStore
+                  .readClarificationsForDefect(run.defectId);
+              expect(clarifications, hasLength(2));
+              expect(
+                clarifications.map((c) => c.question).toSet(),
+                {question, secondQuestion},
+              );
+              expect(
+                clarifications.every(
+                  (c) => c.requestedByTriageJobId == run.job.jobId,
+                ),
+                isTrue,
+              );
+            },
+          );
+
+          test(
+            'PRODUCTION DEFECT: replaying a job with clarifications appends a '
+            'second copy of each row',
+            () async {
+              final db = await newDb();
+              const question = 'Which client is affected?';
+              final run = await _dispatchTriage(
+                db: db,
+                runId: _nextRunId(runCounter++),
+                structuredResult: _triageStructuredResult(
+                  classification: DefectClassification.requirementGap.wire,
+                  recommendedNextAction: 'clarify',
+                  clarificationRequired: const [
+                    {
+                      'question': question,
+                      'reason': 'The report does not identify the client.',
+                    },
+                  ],
+                ),
+              );
+              addTearDown(run.dispose);
+
+              final first = await run.process();
+              expect(first!.clarificationRequired, hasLength(1));
+              expect(
+                await run.defectStore.readClarificationsForDefect(run.defectId),
+                hasLength(1),
+              );
+
+              // A replay is a realistic production event, not a contrived one:
+              // `apps/server/lib/server.dart` re-reads every job the scheduler
+              // touched and calls the processor on each that is terminal, and a
+              // lease-expiry reconciliation can put the same job in `terminal`
+              // again.
+              final second = await run.process();
+              expect(second!.resultId, first.resultId);
+
+              // The TriageResult itself IS idempotent — one row, one id...
+              expect(await run.triageResultRowsForDefect(), hasLength(1));
+              expect(await run.triageResultRow(first.resultId), isNotNull);
+
+              // ...but the clarification side effect is not.
+              //
+              // `TriageProcessor._createClarifications` mints
+              // `clar-<resultId>-<DateTime.now().millisecondsSinceEpoch>` and
+              // `processCompletedTriageJob` has no "already processed" guard, so
+              // every replay appends another row. `triage_result` is keyed by id
+              // and `saveTriageResult` upserts, which is why only the
+              // append-only table drifts.
+              final clarifications = await run.defectStore
+                  .readClarificationsForDefect(run.defectId);
+              expect(clarifications, hasLength(2));
+              expect(
+                clarifications.map((c) => c.question),
+                everyElement(question),
+              );
+              expect(
+                clarifications.map((c) => c.clarificationId).toSet(),
+                hasLength(2),
+                reason:
+                    'distinct ids minted from the wall clock, not derived '
+                    'from the result',
+              );
+              expect(
+                clarifications.every(
+                  (c) => c.status == ClarificationStatus.needsAnswer,
+                ),
+                isTrue,
+                reason:
+                    'so a human sees the same question twice and answering '
+                    'one leaves the other dangling',
+              );
+            },
+          );
+
+          test(
+            'an ambiguous defect persists a durable clarification',
+            () async {
+              final db = await newDb();
+              const question = 'Which client is affected?';
+              const reason = 'The report does not identify the client surface.';
+              final run = await _dispatchTriage(
+                db: db,
+                runId: _nextRunId(runCounter++),
+                structuredResult: _triageStructuredResult(
+                  classification: DefectClassification.requirementGap.wire,
+                  confidence: 0.35,
+                  recommendedNextAction: 'clarify',
+                  clarificationRequired: const [
+                    {'question': question, 'reason': reason},
+                  ],
+                ),
+              );
+              addTearDown(run.dispose);
+
+              final result = await run.process();
+              expect(result, isNotNull);
+              expect(result!.clarificationRequired, hasLength(1));
+              expect(result.clarificationRequired.single.question, question);
+              expect(result.clarificationRequired.single.reason, reason);
+              expect(result.recommendedNextAction, 'clarify');
+
+              final clarifications = await run.defectStore
+                  .readClarificationsForDefect(run.defectId);
+              expect(clarifications, hasLength(1));
+              final clarification = clarifications.single;
+              expect(clarification.question, question);
+              expect(clarification.reason, reason);
+              expect(clarification.status, ClarificationStatus.needsAnswer);
+              expect(clarification.requestedByTriageJobId, run.job.jobId);
+              expect(clarification.answer, isNull);
+            },
+          );
+
+          test('an unambiguous defect raises no clarification', () async {
             final db = await newDb();
-            const question = 'Which client is affected?';
-            const reason = 'The report does not identify the client surface.';
-            const secondQuestion = 'Which invoice provider is in use?';
-            const secondReason = 'Checkout and invoice disagree by 5.00.';
             final run = await _dispatchTriage(
               db: db,
               runId: _nextRunId(runCounter++),
               structuredResult: _triageStructuredResult(
-                classification: DefectClassification.requirementGap.wire,
-                confidence: 0.35,
-                recommendedNextAction: 'clarify',
-                clarificationRequired: const [
-                  {'question': question, 'reason': reason},
-                  {'question': secondQuestion, 'reason': secondReason},
-                ],
+                classification: DefectClassification.implementationDefect.wire,
               ),
             );
             addTearDown(run.dispose);
 
-            final result = await run.process();
-            expect(result!.clarificationRequired, hasLength(2));
-
-            // The raw `text` column really is JSON text, not a list. This is
-            // the shape the typed reader has to decode.
-            final persisted = await run.triageResultRow(result.resultId);
-            expect(persisted!['clarificationRequired'], isA<String>());
-            expect(
-              jsonDecode(persisted['clarificationRequired']! as String),
-              hasLength(2),
-            );
-
-            // Read 1: the owning store, in a fresh instance over the same
-            // database — a stand-in for a restarted server.
-            final reread = await run
-                .restarted(db: db)
-                .triageStore
-                .readTriageResult(result.resultId);
-            expect(reread!.clarificationRequired, hasLength(2));
-            expect(
-              reread.clarificationRequired.map((c) => c.question).toList(),
-              [question, secondQuestion],
-            );
-            expect(
-              reread.clarificationRequired.map((c) => c.reason).toList(),
-              [reason, secondReason],
-            );
-
-            // Read 2: `PostgresDefectStore` delegates the same three triage
-            // reads to `PostgresTriageStore`, so a caller holding only a
-            // defect store must see identical typed data, not a second
-            // divergent decoder.
-            final viaDefectStore = await run.defectStore.readTriageResult(
-              result.resultId,
-            );
-            expect(viaDefectStore, reread);
-
-            final viaJob = await run.defectStore.readTriageResultForJob(
-              run.job.jobId,
-            );
-            expect(viaJob, reread);
-            expect(
-              (await run.defectStore.readTriageResultsForDefect(
-                run.defectId,
-              )).single,
-              reread,
-            );
-
-            // And the durable side effect the clarifications caused is real.
-            final clarifications = await run.defectStore
-                .readClarificationsForDefect(run.defectId);
-            expect(clarifications, hasLength(2));
-            expect(
-              clarifications.map((c) => c.question).toSet(),
-              {question, secondQuestion},
-            );
-            expect(
-              clarifications.every(
-                (c) => c.requestedByTriageJobId == run.job.jobId,
-              ),
-              isTrue,
-            );
-          },
-        );
-
-        test(
-          'PRODUCTION DEFECT: replaying a job with clarifications appends a '
-          'second copy of each row',
-          () async {
-            final db = await newDb();
-            const question = 'Which client is affected?';
-            final run = await _dispatchTriage(
-              db: db,
-              runId: _nextRunId(runCounter++),
-              structuredResult: _triageStructuredResult(
-                classification: DefectClassification.requirementGap.wire,
-                recommendedNextAction: 'clarify',
-                clarificationRequired: const [
-                  {
-                    'question': question,
-                    'reason': 'The report does not identify the client.',
-                  },
-                ],
-              ),
-            );
-            addTearDown(run.dispose);
-
-            final first = await run.process();
-            expect(first!.clarificationRequired, hasLength(1));
+            expect(await run.process(), isNotNull);
             expect(
               await run.defectStore.readClarificationsForDefect(run.defectId),
-              hasLength(1),
+              isEmpty,
             );
+          });
+        },
+      );
 
-            // A replay is a realistic production event, not a contrived one:
-            // `apps/server/lib/server.dart` re-reads every job the scheduler
-            // touched and calls the processor on each that is terminal, and a
-            // lease-expiry reconciliation can put the same job in `terminal`
-            // again.
-            final second = await run.process();
-            expect(second!.resultId, first.resultId);
-
-            // The TriageResult itself IS idempotent — one row, one id...
-            expect(await run.triageResultRowsForDefect(), hasLength(1));
-            expect(await run.triageResultRow(first.resultId), isNotNull);
-
-            // ...but the clarification side effect is not.
-            //
-            // `TriageProcessor._createClarifications` mints
-            // `clar-<resultId>-<DateTime.now().millisecondsSinceEpoch>` and
-            // `processCompletedTriageJob` has no "already processed" guard, so
-            // every replay appends another row. `triage_result` is keyed by id
-            // and `saveTriageResult` upserts, which is why only the
-            // append-only table drifts.
-            final clarifications = await run.defectStore
-                .readClarificationsForDefect(run.defectId);
-            expect(clarifications, hasLength(2));
-            expect(
-              clarifications.map((c) => c.question),
-              everyElement(question),
-            );
-            expect(
-              clarifications.map((c) => c.clarificationId).toSet(),
-              hasLength(2),
-              reason:
-                  'distinct ids minted from the wall clock, not derived '
-                  'from the result',
-            );
-            expect(
-              clarifications.every(
-                (c) => c.status == ClarificationStatus.needsAnswer,
-              ),
-              isTrue,
-              reason:
-                  'so a human sees the same question twice and answering '
-                  'one leaves the other dangling',
-            );
-          },
-        );
-
-        test('an ambiguous defect persists a durable clarification', () async {
-          final db = await newDb();
-          const question = 'Which client is affected?';
-          const reason = 'The report does not identify the client surface.';
-          final run = await _dispatchTriage(
-            db: db,
-            runId: _nextRunId(runCounter++),
-            structuredResult: _triageStructuredResult(
-              classification: DefectClassification.requirementGap.wire,
-              confidence: 0.35,
-              recommendedNextAction: 'clarify',
-              clarificationRequired: const [
-                {'question': question, 'reason': reason},
-              ],
-            ),
-          );
-          addTearDown(run.dispose);
-
-          final result = await run.process();
-          expect(result, isNotNull);
-          expect(result!.clarificationRequired, hasLength(1));
-          expect(result.clarificationRequired.single.question, question);
-          expect(result.clarificationRequired.single.reason, reason);
-          expect(result.recommendedNextAction, 'clarify');
-
-          final clarifications = await run.defectStore
-              .readClarificationsForDefect(run.defectId);
-          expect(clarifications, hasLength(1));
-          final clarification = clarifications.single;
-          expect(clarification.question, question);
-          expect(clarification.reason, reason);
-          expect(clarification.status, ClarificationStatus.needsAnswer);
-          expect(clarification.requestedByTriageJobId, run.job.jobId);
-          expect(clarification.answer, isNull);
-        });
-
-        test('an unambiguous defect raises no clarification', () async {
-          final db = await newDb();
-          final run = await _dispatchTriage(
-            db: db,
-            runId: _nextRunId(runCounter++),
-            structuredResult: _triageStructuredResult(
-              classification: DefectClassification.implementationDefect.wire,
-            ),
-          );
-          addTearDown(run.dispose);
-
-          expect(await run.process(), isNotNull);
-          expect(
-            await run.defectStore.readClarificationsForDefect(run.defectId),
-            isEmpty,
-          );
-        });
-      });
-
-      group('attempt bounds and retries', () {
+      group('attempt bounds and retries', timeout: const Timeout(Duration(minutes: 5)), () {
         test(
           'a transient failure returns the item to the lane entry state and '
           'the scheduled retry REALLY RUNS',
@@ -1892,24 +1997,25 @@ void main() {
             expect(run.job.maxAttempts, triageDefectDefinition.maxAttempts);
 
             // `RetryPolicy.retryDelay` is one minute, so the retry is not yet
-            // due, and the work item has been moved to `agentFailed` by the
+            // due, and the work item was moved to `agentFailed` by the
             // coordinator settling the interrupted execution — outside every
-            // triage entry state.
+            // triage entry state. That state is observed BETWEEN the run's
+            // claim release and the adopting tick: adopt and return are one
+            // pass inside a tick now (F-237), so no later read can see it.
             expect(run.job.availableAt, DateTime.utc(2026, 3, 1, 12, 1));
             expect(
-              (await run.workflowStore.readWorkItem(run.workItemId)).state,
+              run.itemStateWhenClaimReleased,
               WorkItemState.agentFailed,
             );
 
-            // ---- THE RETURN, on the very next tick.
+            // ---- THE RETURN, inside the adopting tick.
             //
-            // This is the tick that used to cancel the retry. It now hands the
-            // item back to `designNotRequired`, which is
+            // This is the pass that used to cancel the retry. In one tick it
+            // adopted run 1, parked the bounded retry AND handed the item
+            // back to `designNotRequired`, which is
             // `triageDefectDefinition.entryStates` and always was.
-            final returning = await run.scheduler.tick();
-
             expect(
-              returning.cancelledQueued,
+              run.adoptTick.cancelledQueued,
               isEmpty,
               reason:
                   'LINK 4 OF THE DEFECT, inverted. The retry that was just '
@@ -1918,7 +2024,9 @@ void main() {
                   'nothing drained it, so an operator saw nothing either.',
             );
             expect(
-              returning.retryReturned.where((m) => m.returned).map((m) => m.to),
+              run.adoptTick.retryReturned
+                  .where((m) => m.returned)
+                  .map((m) => m.to),
               [WorkItemState.designNotRequired],
               reason:
                   'the item went back to the triage lane\'s OWN entry state — '
@@ -1929,7 +2037,7 @@ void main() {
               WorkItemState.designNotRequired,
             );
             expect(
-              returning.dispatched,
+              run.adoptTick.dispatched,
               isEmpty,
               reason: 'the one-minute back-off has not elapsed yet',
             );
@@ -1959,7 +2067,10 @@ void main() {
             //
             // Not "a retry was scheduled" — that already worked. This is the
             // second real agent session, in a second real worktree, through the
-            // real coordinator and the real platform verifier.
+            // real coordinator and the real platform verifier. Detached again:
+            // the claim release plus this tick's reconcile-adoption is what
+            // settles it (F-237).
+            await run.settle();
             final recovered = await run.jobStore.readJob(run.job.jobId);
             expect(recovered!.state, JobState.succeeded);
             expect(recovered.attempt, 2);
@@ -1979,10 +2090,10 @@ void main() {
             //
             // The RECOVERED row has to be handed to the processor, not
             // `run.process()`: that helper reads `run.job`, which is the
-            // SNAPSHOT taken at the first dispatch — the failed one — so it is
-            // null for the uninteresting reason that a `retryWaiting` job has no
-            // result to consume. Both are asserted, so the difference is stated
-            // rather than assumed.
+            // SNAPSHOT taken after the first run was adopted — the
+            // `retryWaiting` one — so it is null for the uninteresting reason
+            // that a `retryWaiting` job has no result to consume. Both are
+            // asserted, so the difference is stated rather than assumed.
             expect(await run.process(), isNull);
             expect(
               await run.processor.processCompletedTriageJob(recovered),
@@ -2096,7 +2207,7 @@ void main() {
         });
       });
 
-      group('graceful handling', () {
+      group('graceful handling', timeout: const Timeout(Duration(minutes: 5)), () {
         test(
           'a malformed structured result is a permanent failure that persists '
           'nothing',
@@ -2196,335 +2307,355 @@ void main() {
         );
       });
 
-      group('production defect: typed triage readback', () {
-        test(
-          'PRODUCTION DEFECT: evidenceUsed is persisted without checking it '
-          'against the defect',
-          () async {
-            final db = await newDb();
-            const phantomEvidence = 'ev-does-not-exist-9f3a';
-            final run = await _dispatchTriage(
-              db: db,
-              runId: _nextRunId(runCounter++),
-              structuredResult: _triageStructuredResult(
-                classification: DefectClassification.implementationDefect.wire,
-                // The agent claims evidence that was never collected.
-                evidenceUsed: const [phantomEvidence],
-              ),
-            );
-            addTearDown(run.dispose);
-
-            final result = await run.process();
-            expect(result, isNotNull);
-
-            // The claim is stored verbatim, in the durable row and in the
-            // typed read. `TriageProcessor._parseTriageResult` does
-            // `(structured.evidenceUsed as List?)?.cast<String>()` and
-            // nothing downstream intersects it with the defect's evidence, so
-            // an agent that invents a citation is indistinguishable from one
-            // that read the evidence.
-            expect(result!.evidenceUsed, [phantomEvidence]);
-            final reread = await run.triageStore.readTriageResult(
-              result.resultId,
-            );
-            expect(reread!.evidenceUsed, [phantomEvidence]);
-            expect(
-              (await run.triageResultRow(result.resultId))!['evidenceUsed'],
-              [phantomEvidence],
-            );
-
-            // The defect genuinely has no such evidence, so the citation is
-            // dangling rather than merely unverified.
-            final real = await run.defectStore.readEvidenceForDefect(
-              run.defectId,
-            );
-            expect(
-              real.map((e) => e.evidenceId),
-              isNot(contains(phantomEvidence)),
-            );
-            expect(real, hasLength(1));
-
-            // And it is surfaced to whoever reads the triage outcome, so the
-            // unverifiable citation is not quarantined anywhere.
-            final defect = await run.defectStore.readDefect(run.defectId);
-            final metadata =
-                jsonDecode(defect.metadataJson!) as Map<String, dynamic>;
-            expect(metadata['triageResultId'], result.resultId);
-
-            // This pins the CURRENT behaviour on purpose: the absence of
-            // validation is a characterisation, not an endorsement. When
-            // production starts rejecting unbacked citations, this test is
-            // expected to fail and be replaced with the rejection assertion.
-            // The other direction is already covered truthfully: the
-            // harness's own `evidenceUsed` defaulting in `_dispatchTriage` is
-            // documented as a harness convenience, not a production guarantee.
-          },
-        );
-
-        test(
-          'TriageResult survives a restart through PostgresTriageStore',
-          () async {
-            final db = await newDb();
-            final run = await _dispatchTriage(
-              db: db,
-              runId: _nextRunId(runCounter++),
-              structuredResult: _triageStructuredResult(
-                classification: DefectClassification.implementationDefect.wire,
-              ),
-            );
-            addTearDown(run.dispose);
-
-            final result = await run.process();
-            expect(result, isNotNull);
-
-            // The row really is in Postgres and survives a restart...
-            final restarted = run.restarted(db: db);
-            expect(
-              await restarted.triageResultRow(result!.resultId),
-              isNotNull,
-            );
-
-            // ...and the typed store reads it back losslessly.
-            //
-            // Regression guard for a real production bug:
-            // PostgresTriageStore._triageResultFromRow cast the `text` column
-            // `clarificationRequired` (and the `json` columns
-            // `suspectedComponents` / `evidenceUsed`) straight to `List`,
-            // so every readTriageResult / readTriageResultForJob /
-            // readTriageResultsForDefect call threw
-            //   type 'String' is not a subtype of type 'List<dynamic>'
-            // and TriageResult.clarificationRequired could never be
-            // recovered from Postgres. Reads now go through
-            // decodeJsonList / decodeJsonArray.
-            final reread = await run.triageStore.readTriageResult(
-              result.resultId,
-            );
-            expect(reread, isNotNull);
-            expect(reread!.resultId, result.resultId);
-            expect(reread.defectId, result.defectId);
-            expect(
-              reread.recommendedClassification,
-              result.recommendedClassification,
-            );
-            expect(reread.confidence, result.confidence);
-            expect(reread.suspectedComponents, result.suspectedComponents);
-            expect(reread.evidenceUsed, result.evidenceUsed);
-            expect(
-              reread.clarificationRequired.map((c) => c.question).toList(),
-              result.clarificationRequired.map((c) => c.question).toList(),
-            );
-            expect(reread.jobId, result.jobId);
-          },
-        );
-      });
-
-      group('typed endpoint read path', () {
-        test(
-          'inspect returns the whole triage outcome over the wire shape it '
-          'actually publishes',
-          () async {
-            final db = await newDb();
-            const question = 'Which client is affected?';
-            const reason = 'The report does not identify the client surface.';
-            final run = await _dispatchTriage(
-              db: db,
-              runId: _nextRunId(runCounter++),
-              structuredResult: _triageStructuredResult(
-                classification: DefectClassification.requirementGap.wire,
-                recommendedNextAction: 'clarify',
-                clarificationRequired: const [
-                  {'question': question, 'reason': reason},
-                ],
-              ),
-            );
-            addTearDown(run.dispose);
-            final result = (await run.process())!;
-            expect(result, isNotNull);
-
-            // `DefectEndpoints.inspect` returns `DefectInspectionView`, a
-            // generated protocol class, so the contract under test is the
-            // model's own field list rather than a hand-built map's keys. The
-            // set assertion is kept because it is the thing that catches a
-            // field being ADDED: `toJson()` is the complete wire projection.
-            final inspected = await endpoints.defectEndpoints.inspect(
-              sessionBuilder,
-              defectId: run.defectId,
-            );
-            //
-            // `'remediationWorkItem'` IS NOT IN THIS SET, and its absence is
-            // asserted deliberately below rather than papered over: the field
-            // is null (the endpoint has never linked one — see the TODO), and
-            // Serverpod's generated `toJson()` omits a null field entirely,
-            // exactly as `MintedCredentialView.toJson()` omits `host`. Listing
-            // it here would be asserting a key the wire does not carry.
-            // `'__className__'` IS present and IS listed: it is the framing tag
-            // the model is dispatched on, not payload.
-            expect(
-              inspected.toJson().keys.toSet(),
-              {
-                '__className__',
-                'defect',
-                'evidence',
-                'clarifications',
-                'events',
-                'triageResult',
-              },
-            );
-
-            // The defect body is the human report, plus the triage reference
-            // the processor merged in.
-            final defect = inspected.defect;
-            expect(defect.defectId, run.defectId);
-            expect(defect.title, _defectTitle);
-            expect(defect.status, DefectStatus.reported.wire);
-            expect(defect.severity, 'high');
-            expect(defect.reporter, 'reporter@example.com');
-            expect(defect.classification, isNull);
-            expect(defect.version, 2, reason: 'intake write, then triage');
-            final metadata =
-                jsonDecode(defect.metadataJson!) as Map<String, dynamic>;
-            expect(metadata['triageResultId'], result.resultId);
-            expect(
-              metadata['triageClassification'],
-              DefectClassification.requirementGap.wire,
-            );
-
-            // Every child collection is present and non-empty, so a reader
-            // cannot be handed a silently empty list.
-            final evidence = inspected.evidence;
-            expect(evidence, hasLength(1));
-            expect(evidence.single.evidenceId, run.evidenceIds.single);
-            expect(
-              evidence.single.kind,
-              EvidenceIntakeKind.textDescription.wire,
-            );
-
-            final clarifications = inspected.clarifications;
-            expect(clarifications, hasLength(1));
-            expect(clarifications.single.question, question);
-            expect(clarifications.single.reason, reason);
-            expect(
-              clarifications.single.status,
-              ClarificationStatus.needsAnswer.wire,
-            );
-            expect(
-              clarifications.single.requestedByTriageJobId,
-              run.job.jobId,
-            );
-
-            final events = inspected.events;
-            expect(events, hasLength(1));
-            expect(events.single.type, DefectEventType.created.wire);
-            expect(events.single.actorType, ActorType.human.wire);
-
-            // The triage result publishes its `clarificationRequired` as typed
-            // `DefectClarificationRequestView`s, which is the same
-            // `{'question', 'reason'}` shape the store decodes — so the endpoint
-            // still proves the round trip a control-plane client depends on.
-            final triage = inspected.triageResult!;
-            expect(triage.resultId, result.resultId);
-            expect(triage.jobId, run.job.jobId);
-            expect(
-              triage.recommendedClassification,
-              DefectClassification.requirementGap.wire,
-            );
-            expect(triage.recommendedStatus, DefectStatus.triaging.wire);
-            expect(triage.confidence, result.confidence);
-            expect(triage.evidenceUsed, run.evidenceIds);
-            expect(triage.clarificationRequired.single.question, question);
-
-            // The endpoint does not link the remediation work item yet; it is
-            // a hard-coded null with a TODO, so assert that rather than
-            // pretending the link exists.
-            expect(inspected.remediationWorkItem, isNull);
-          },
-        );
-      });
-
-      group('triage job definition', () {
-        test(
-          'the scheduler really only dispatches from its entry states',
-          () async {
-            // A constant compared with its own literal proves nothing: it can
-            // only fail if someone edits the constant, and it says nothing
-            // about whether the scheduler honours it. This drives the real
-            // `RunnableWorkEvaluator` and the real `Scheduler` instead.
-            final db = await newDb();
-            final run = await _dispatchTriage(
-              db: db,
-              runId: _nextRunId(runCounter++),
-              structuredResult: _triageStructuredResult(
-                classification: DefectClassification.implementationDefect.wire,
-              ),
-            );
-            addTearDown(run.dispose);
-
-            // The seeded item sits in an entry state, so it ran.
-            expect(run.job.state, JobState.succeeded);
-            expect(run.tick.enqueued, hasLength(1));
-
-            // A second tick is a no-op, so the entry state alone is not what
-            // keeps re-running it.
-            final settled = (await run.scheduler.tick()).enqueued;
-            expect(settled, isEmpty);
-
-            // Now walk the SAME work item through every state that is not an
-            // entry state of the triage definition, one at a time, and assert
-            // the evaluator refuses to call it runnable. `WorkItemState.values`
-            // minus the entry states, so a state added to the enum later is
-            // covered automatically instead of silently skipped.
-            final item = await run.workflowStore.readWorkItem(run.workItemId);
-            final evaluator = RunnableWorkEvaluator(
-              policy: const WorkflowEngine(),
-            );
-            for (final state in WorkItemState.values) {
-              if (triageDefectDefinition.entryStates.contains(state)) continue;
-              expect(
-                evaluator.evaluate(
-                  item.copyWith(state: state),
-                  triageDefectDefinition,
+      group(
+        'production defect: typed triage readback',
+        timeout: const Timeout(Duration(minutes: 5)),
+        () {
+          test(
+            'PRODUCTION DEFECT: evidenceUsed is persisted without checking it '
+            'against the defect',
+            () async {
+              final db = await newDb();
+              const phantomEvidence = 'ev-does-not-exist-9f3a';
+              final run = await _dispatchTriage(
+                db: db,
+                runId: _nextRunId(runCounter++),
+                structuredResult: _triageStructuredResult(
+                  classification:
+                      DefectClassification.implementationDefect.wire,
+                  // The agent claims evidence that was never collected.
+                  evidenceUsed: const [phantomEvidence],
                 ),
-                isNot(RunnableWorkStatus.runnable),
-                reason: '$state is not an entry state of the triage definition',
               );
-            }
-            for (final state in triageDefectDefinition.entryStates) {
-              expect(
-                evaluator.evaluate(
-                  item.copyWith(state: state),
-                  triageDefectDefinition,
-                ),
-                RunnableWorkStatus.runnable,
-                reason: '$state is an entry state and must be runnable',
-              );
-            }
-            expect(triageDefectDefinition.requiredRole, AgentRole.triageDefect);
-            expect(
-              triageDefectDefinition.targetState,
-              WorkItemState.agentExecuting,
-            );
-          },
-        );
+              addTearDown(run.dispose);
 
-        test('deduplicates on the job type, not the work item alone', () {
-          final now = DateTime.now().toUtc();
-          final item = WorkItem(
-            workItemId: 'defect-DEF-1',
-            productId: 'defects',
-            category: WorkItemCategory.feature,
-            title: 'Triage defect DEF-1',
-            description: 'A human reported defect awaiting automated triage.',
-            state: WorkItemState.designNotRequired,
-            createdAt: now,
-            updatedAt: now,
-            version: 1,
+              final result = await run.process();
+              expect(result, isNotNull);
+
+              // The claim is stored verbatim, in the durable row and in the
+              // typed read. `TriageProcessor._parseTriageResult` does
+              // `(structured.evidenceUsed as List?)?.cast<String>()` and
+              // nothing downstream intersects it with the defect's evidence, so
+              // an agent that invents a citation is indistinguishable from one
+              // that read the evidence.
+              expect(result!.evidenceUsed, [phantomEvidence]);
+              final reread = await run.triageStore.readTriageResult(
+                result.resultId,
+              );
+              expect(reread!.evidenceUsed, [phantomEvidence]);
+              expect(
+                (await run.triageResultRow(result.resultId))!['evidenceUsed'],
+                [phantomEvidence],
+              );
+
+              // The defect genuinely has no such evidence, so the citation is
+              // dangling rather than merely unverified.
+              final real = await run.defectStore.readEvidenceForDefect(
+                run.defectId,
+              );
+              expect(
+                real.map((e) => e.evidenceId),
+                isNot(contains(phantomEvidence)),
+              );
+              expect(real, hasLength(1));
+
+              // And it is surfaced to whoever reads the triage outcome, so the
+              // unverifiable citation is not quarantined anywhere.
+              final defect = await run.defectStore.readDefect(run.defectId);
+              final metadata =
+                  jsonDecode(defect.metadataJson!) as Map<String, dynamic>;
+              expect(metadata['triageResultId'], result.resultId);
+
+              // This pins the CURRENT behaviour on purpose: the absence of
+              // validation is a characterisation, not an endorsement. When
+              // production starts rejecting unbacked citations, this test is
+              // expected to fail and be replaced with the rejection assertion.
+              // The other direction is already covered truthfully: the
+              // harness's own `evidenceUsed` defaulting in `_dispatchTriage` is
+              // documented as a harness convenience, not a production guarantee.
+            },
           );
-          expect(
-            triageDefectDedupeKey(item, triageDefectDefinition),
-            'defect-DEF-1:triage_defect',
+
+          test(
+            'TriageResult survives a restart through PostgresTriageStore',
+            () async {
+              final db = await newDb();
+              final run = await _dispatchTriage(
+                db: db,
+                runId: _nextRunId(runCounter++),
+                structuredResult: _triageStructuredResult(
+                  classification:
+                      DefectClassification.implementationDefect.wire,
+                ),
+              );
+              addTearDown(run.dispose);
+
+              final result = await run.process();
+              expect(result, isNotNull);
+
+              // The row really is in Postgres and survives a restart...
+              final restarted = run.restarted(db: db);
+              expect(
+                await restarted.triageResultRow(result!.resultId),
+                isNotNull,
+              );
+
+              // ...and the typed store reads it back losslessly.
+              //
+              // Regression guard for a real production bug:
+              // PostgresTriageStore._triageResultFromRow cast the `text` column
+              // `clarificationRequired` (and the `json` columns
+              // `suspectedComponents` / `evidenceUsed`) straight to `List`,
+              // so every readTriageResult / readTriageResultForJob /
+              // readTriageResultsForDefect call threw
+              //   type 'String' is not a subtype of type 'List<dynamic>'
+              // and TriageResult.clarificationRequired could never be
+              // recovered from Postgres. Reads now go through
+              // decodeJsonList / decodeJsonArray.
+              final reread = await run.triageStore.readTriageResult(
+                result.resultId,
+              );
+              expect(reread, isNotNull);
+              expect(reread!.resultId, result.resultId);
+              expect(reread.defectId, result.defectId);
+              expect(
+                reread.recommendedClassification,
+                result.recommendedClassification,
+              );
+              expect(reread.confidence, result.confidence);
+              expect(reread.suspectedComponents, result.suspectedComponents);
+              expect(reread.evidenceUsed, result.evidenceUsed);
+              expect(
+                reread.clarificationRequired.map((c) => c.question).toList(),
+                result.clarificationRequired.map((c) => c.question).toList(),
+              );
+              expect(reread.jobId, result.jobId);
+            },
           );
-        });
-      });
+        },
+      );
+
+      group(
+        'typed endpoint read path',
+        timeout: const Timeout(Duration(minutes: 5)),
+        () {
+          test(
+            'inspect returns the whole triage outcome over the wire shape it '
+            'actually publishes',
+            () async {
+              final db = await newDb();
+              const question = 'Which client is affected?';
+              const reason = 'The report does not identify the client surface.';
+              final run = await _dispatchTriage(
+                db: db,
+                runId: _nextRunId(runCounter++),
+                structuredResult: _triageStructuredResult(
+                  classification: DefectClassification.requirementGap.wire,
+                  recommendedNextAction: 'clarify',
+                  clarificationRequired: const [
+                    {'question': question, 'reason': reason},
+                  ],
+                ),
+              );
+              addTearDown(run.dispose);
+              final result = (await run.process())!;
+              expect(result, isNotNull);
+
+              // `DefectEndpoints.inspect` returns `DefectInspectionView`, a
+              // generated protocol class, so the contract under test is the
+              // model's own field list rather than a hand-built map's keys. The
+              // set assertion is kept because it is the thing that catches a
+              // field being ADDED: `toJson()` is the complete wire projection.
+              final inspected = await endpoints.defectEndpoints.inspect(
+                sessionBuilder,
+                defectId: run.defectId,
+              );
+              //
+              // `'remediationWorkItem'` IS NOT IN THIS SET, and its absence is
+              // asserted deliberately below rather than papered over: the field
+              // is null (the endpoint has never linked one — see the TODO), and
+              // Serverpod's generated `toJson()` omits a null field entirely,
+              // exactly as `MintedCredentialView.toJson()` omits `host`. Listing
+              // it here would be asserting a key the wire does not carry.
+              // `'__className__'` IS present and IS listed: it is the framing tag
+              // the model is dispatched on, not payload.
+              expect(
+                inspected.toJson().keys.toSet(),
+                {
+                  '__className__',
+                  'defect',
+                  'evidence',
+                  'clarifications',
+                  'events',
+                  'triageResult',
+                },
+              );
+
+              // The defect body is the human report, plus the triage reference
+              // the processor merged in.
+              final defect = inspected.defect;
+              expect(defect.defectId, run.defectId);
+              expect(defect.title, _defectTitle);
+              expect(defect.status, DefectStatus.reported.wire);
+              expect(defect.severity, 'high');
+              expect(defect.reporter, 'reporter@example.com');
+              expect(defect.classification, isNull);
+              expect(defect.version, 2, reason: 'intake write, then triage');
+              final metadata =
+                  jsonDecode(defect.metadataJson!) as Map<String, dynamic>;
+              expect(metadata['triageResultId'], result.resultId);
+              expect(
+                metadata['triageClassification'],
+                DefectClassification.requirementGap.wire,
+              );
+
+              // Every child collection is present and non-empty, so a reader
+              // cannot be handed a silently empty list.
+              final evidence = inspected.evidence;
+              expect(evidence, hasLength(1));
+              expect(evidence.single.evidenceId, run.evidenceIds.single);
+              expect(
+                evidence.single.kind,
+                EvidenceIntakeKind.textDescription.wire,
+              );
+
+              final clarifications = inspected.clarifications;
+              expect(clarifications, hasLength(1));
+              expect(clarifications.single.question, question);
+              expect(clarifications.single.reason, reason);
+              expect(
+                clarifications.single.status,
+                ClarificationStatus.needsAnswer.wire,
+              );
+              expect(
+                clarifications.single.requestedByTriageJobId,
+                run.job.jobId,
+              );
+
+              final events = inspected.events;
+              expect(events, hasLength(1));
+              expect(events.single.type, DefectEventType.created.wire);
+              expect(events.single.actorType, ActorType.human.wire);
+
+              // The triage result publishes its `clarificationRequired` as typed
+              // `DefectClarificationRequestView`s, which is the same
+              // `{'question', 'reason'}` shape the store decodes — so the endpoint
+              // still proves the round trip a control-plane client depends on.
+              final triage = inspected.triageResult!;
+              expect(triage.resultId, result.resultId);
+              expect(triage.jobId, run.job.jobId);
+              expect(
+                triage.recommendedClassification,
+                DefectClassification.requirementGap.wire,
+              );
+              expect(triage.recommendedStatus, DefectStatus.triaging.wire);
+              expect(triage.confidence, result.confidence);
+              expect(triage.evidenceUsed, run.evidenceIds);
+              expect(triage.clarificationRequired.single.question, question);
+
+              // The endpoint does not link the remediation work item yet; it is
+              // a hard-coded null with a TODO, so assert that rather than
+              // pretending the link exists.
+              expect(inspected.remediationWorkItem, isNull);
+            },
+          );
+        },
+      );
+
+      group(
+        'triage job definition',
+        timeout: const Timeout(Duration(minutes: 5)),
+        () {
+          test(
+            'the scheduler really only dispatches from its entry states',
+            () async {
+              // A constant compared with its own literal proves nothing: it can
+              // only fail if someone edits the constant, and it says nothing
+              // about whether the scheduler honours it. This drives the real
+              // `RunnableWorkEvaluator` and the real `Scheduler` instead.
+              final db = await newDb();
+              final run = await _dispatchTriage(
+                db: db,
+                runId: _nextRunId(runCounter++),
+                structuredResult: _triageStructuredResult(
+                  classification:
+                      DefectClassification.implementationDefect.wire,
+                ),
+              );
+              addTearDown(run.dispose);
+
+              // The seeded item sits in an entry state, so it ran.
+              expect(run.job.state, JobState.succeeded);
+              expect(run.tick.enqueued, hasLength(1));
+
+              // A second tick is a no-op, so the entry state alone is not what
+              // keeps re-running it.
+              final settled = (await run.scheduler.tick()).enqueued;
+              expect(settled, isEmpty);
+
+              // Now walk the SAME work item through every state that is not an
+              // entry state of the triage definition, one at a time, and assert
+              // the evaluator refuses to call it runnable. `WorkItemState.values`
+              // minus the entry states, so a state added to the enum later is
+              // covered automatically instead of silently skipped.
+              final item = await run.workflowStore.readWorkItem(run.workItemId);
+              final evaluator = RunnableWorkEvaluator(
+                policy: const WorkflowEngine(),
+              );
+              for (final state in WorkItemState.values) {
+                if (triageDefectDefinition.entryStates.contains(state))
+                  continue;
+                expect(
+                  evaluator.evaluate(
+                    item.copyWith(state: state),
+                    triageDefectDefinition,
+                  ),
+                  isNot(RunnableWorkStatus.runnable),
+                  reason:
+                      '$state is not an entry state of the triage definition',
+                );
+              }
+              for (final state in triageDefectDefinition.entryStates) {
+                expect(
+                  evaluator.evaluate(
+                    item.copyWith(state: state),
+                    triageDefectDefinition,
+                  ),
+                  RunnableWorkStatus.runnable,
+                  reason: '$state is an entry state and must be runnable',
+                );
+              }
+              expect(
+                triageDefectDefinition.requiredRole,
+                AgentRole.triageDefect,
+              );
+              expect(
+                triageDefectDefinition.targetState,
+                WorkItemState.agentExecuting,
+              );
+            },
+          );
+
+          test('deduplicates on the job type, not the work item alone', () {
+            final now = DateTime.now().toUtc();
+            final item = WorkItem(
+              workItemId: 'defect-DEF-1',
+              productId: 'defects',
+              category: WorkItemCategory.feature,
+              title: 'Triage defect DEF-1',
+              description: 'A human reported defect awaiting automated triage.',
+              state: WorkItemState.designNotRequired,
+              createdAt: now,
+              updatedAt: now,
+              version: 1,
+            );
+            expect(
+              triageDefectDedupeKey(item, triageDefectDefinition),
+              'defect-DEF-1:triage_defect',
+            );
+          });
+        },
+      );
     },
     rollbackDatabase: RollbackDatabase.disabled,
   );

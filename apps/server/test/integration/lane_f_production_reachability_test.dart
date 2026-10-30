@@ -23,6 +23,7 @@ import 'package:control_plane_server/src/triage/lane_a_defect_triage_work_item.d
 import 'package:control_plane_server/src/triage/lane_i_tick_hook.dart';
 import 'package:control_plane_server/src/triage/triage_processor.dart';
 
+import '../support/integration_settle.dart';
 import 'test_tools/serverpod_test_tools.dart';
 
 /// Lane F: does the triage pipeline actually REACH a durable `TriageResult`
@@ -762,6 +763,8 @@ class _ProductionPipeline {
     required this.engine,
     required this.coordinator,
     required this.scheduler,
+    required this.scopedJobStore,
+    required this.pollJobStore,
     required this.processor,
     required this.logs,
     required this.intakeLogs,
@@ -780,6 +783,19 @@ class _ProductionPipeline {
   final DurableWorkflowEngine engine;
   final ExecutionCoordinator coordinator;
   final Scheduler scheduler;
+
+  /// The narrowed job listing the scheduler was built with.
+  final JobStore scopedJobStore;
+
+  /// The scoped listing the settle wait POLLS. Narrowed like
+  /// [scopedJobStore] so the wait never blocks on another suite's job, and
+  /// backed by an INDEPENDENT `PersistenceDatabase` wrapper over the same
+  /// `session.db`: the detached run commits its durable tail inside
+  /// `workerStore.inTransaction` on [db], so a claim-release poll on that
+  /// same wrapper would attach to the worker's transaction and die with
+  /// `Session or transaction has already finished` the moment the commit
+  /// lands mid-poll.
+  final JobStore pollJobStore;
   final TriageProcessor processor;
 
   /// Events emitted by [TriageProcessor] ONLY. Kept separate from
@@ -819,6 +835,13 @@ class _ProductionPipeline {
 
   Future<SchedulerTickResult> tick() => scheduler.tick();
 
+  /// The settle half of detached dispatch (F-237): waits for every held job
+  /// this pipeline owns to release its claim — the durable signal each
+  /// in-flight run's continuation finished — then returns the ADOPTING tick's
+  /// result, where the settled verdicts are named in `reconciled`.
+  Future<SchedulerTickResult> settle() =>
+      settleHeldJobs(pollJobStore, scheduler);
+
   static Future<_ProductionPipeline> build({
     required PersistenceDatabase db,
     required Directory caseRoot,
@@ -839,15 +862,32 @@ class _ProductionPipeline {
     final workerId = _workerIdFor(defectId);
 
     // --- the real stores, over the real database ------------------------
+    // `PersistenceDatabase` is owned by exactly ONE logical caller — a
+    // single active transaction slot — and detached dispatch (F-237) makes
+    // the components below that caller's boundary for real: a run's
+    // continuation commits inside `workerStore.inTransaction` and the
+    // coordinator settles through `engine`'s store while the SAME tick is
+    // still opening `jobStore.inTransaction` for the next job. Two callers
+    // on one wrapper is `StateError: A transaction is already active` (or a
+    // poll attaching to a finished transaction). The components that write
+    // inside the detached run therefore get their OWN wrapper over the same
+    // `session.db` — `PersistenceDatabase(db.db)` — while sequential callers
+    // keep sharing [db]. Same database, same tables, one caller per wrapper.
     final workflowStore = PostgresWorkflowStore(db);
     final jobStore = PostgresJobStore(db);
-    final workerStore = PostgresWorkerStore(db);
+    final workerStore = PostgresWorkerStore(PersistenceDatabase(db.db));
     final defectStore = PostgresDefectStore(db);
     final triageStore = PostgresTriageStore(db);
     // The real store, constructed exactly as `ControlPlaneService.qaContractStore`
     // constructs it (line 97: `PostgresQAContractStore(_db)`).
     final qaContractStore = PostgresQAContractStore(db);
-    final engine = DurableWorkflowEngine(store: workflowStore);
+    // The coordinator's engine writes work-item transitions INSIDE the
+    // detached run — its store gets its own wrapper for the same reason as
+    // `workerStore` above. Reads still see every committed row on the shared
+    // `session.db`; only the transaction slot differs.
+    final engine = DurableWorkflowEngine(
+      store: PostgresWorkflowStore(PersistenceDatabase(db.db)),
+    );
     // `extraDefectIds` lets one pipeline carry several triage work items, so a
     // test can exercise a MULTI-JOB tick batch. It matters that they share one
     // pipeline rather than being two pipelines: the drain runs one processor
@@ -921,11 +961,23 @@ class _ProductionPipeline {
     if (registerWorker) registry.register(worker);
 
     // --- the real scheduler, as `server.dart` composes it ----------------
-    // Only the two listings are scoped; see `_ScopedWorkflowStore`.
+    // Only the two listings are scoped; see `_ScopedWorkflowStore`. The job
+    // store view is hoisted because the settle wait must poll the SAME
+    // narrowed listing the scheduler reconciles — never the whole table.
+    final scopedJobStore = _ScopedJobStore(jobStore, owned);
+    // The settle poll's view of the same jobs, over an INDEPENDENT
+    // `PersistenceDatabase` wrapper: the detached run commits inside
+    // `workerStore.inTransaction` on [db], and a claim-release poll on that
+    // same wrapper would attach to the worker's transaction and die the
+    // moment the commit lands mid-poll. See `integration_settle.dart`.
+    final pollJobStore = _ScopedJobStore(
+      PostgresJobStore(PersistenceDatabase(db.db)),
+      owned,
+    );
     final scheduler = Scheduler(
       schedulerId: 'sched-lane-f-$caseSuffix',
       workflowStore: _ScopedWorkflowStore(workflowStore, owned),
-      jobStore: _ScopedJobStore(jobStore, owned),
+      jobStore: scopedJobStore,
       workerStore: workerStore,
       dispatch: WorkerDispatcherAdapter(WorkerDispatcher(registry: registry)),
       definition: triageDefectDefinition,
@@ -974,6 +1026,8 @@ class _ProductionPipeline {
       engine: engine,
       coordinator: coordinator,
       scheduler: scheduler,
+      scopedJobStore: scopedJobStore,
+      pollJobStore: pollJobStore,
       // Production logs to stdout; here the logger is captured so a test can
       // assert whether the hook actually drove the processor.
       processor: TriageProcessor(
@@ -1184,18 +1238,37 @@ void main() {
             tick.terminal,
             isEmpty,
             reason:
-                'a job dispatched AND completed inside one tick is reported '
-                'only in `dispatched`; `server.dart` unions the three lists '
-                'precisely because of this, and the hook only drains because '
-                'of it',
+                'under detached dispatch (F-237) a job can never be terminal '
+                'in its own dispatching tick: the tick STARTS the run and '
+                'returns. `server.dart` unions the three lists precisely '
+                'because the settled outcome is named on a LATER tick',
           );
           expect(tick.reconciled, isEmpty);
 
-          // THE production boundary, and the real one. This calls
-          // `drainTriageOutcomesFromTick` — `server.dart:207` calls that same
-          // function on the same arguments — so the union, the guards and the
-          // per-job isolation exercised here are production's, not a copy.
-          final drain = await pipeline.drain(tick);
+          // THE production boundary, and the real one — run exactly the way
+          // `server.dart:207` runs it: the drain is called on EVERY tick
+          // result. On the dispatching tick the job is still running, so the
+          // drain's own not-terminal guard correctly skips it rather than
+          // handing the processor a live execution.
+          final early = await pipeline.drain(tick);
+          expect(early.considered, 1);
+          expect(
+            early.skipped,
+            1,
+            reason:
+                'the run is still in flight at this tick — the drain must '
+                'not hand a non-terminal job to the processor',
+          );
+          expect(early.handedOff, 0);
+          expect(early.failedJobIds, isEmpty);
+
+          // The run's continuation releases the claim; the next tick's
+          // step-1 reconcile adopts the terminal worker execution and names
+          // the job in `reconciled` — the leg the union exists for.
+          final adopting = await pipeline.settle();
+          expect(adopting.reconciled, [tick.dispatched.single]);
+
+          final drain = await pipeline.drain(adopting);
           expect(drain.considered, 1);
           expect(drain.skipped, 0);
           expect(drain.handedOff, 1);
@@ -1524,11 +1597,30 @@ void main() {
             reason: 'and genuinely no contract row was written',
           );
 
-          final (tick, unhandled) = await capturingUnhandled(pipeline.tick);
+          // F-237 detached dispatch: the tick only STARTS the run — the
+          // refused-transition signature below is produced while the run
+          // resolves, and the finalize error reaches the ambient zone from
+          // the detached continuation. The whole settle therefore runs inside
+          // the guarded zone, so the unhandled-error assertion still covers
+          // the entire execution rather than just the dispatch.
+          final ((tick, adopting), unhandled) = await capturingUnhandled(
+            () async {
+              final dispatching = await pipeline.tick();
+              final adopting = await pipeline.settle();
+              return (dispatching, adopting);
+            },
+          );
           expect(
             tick.dispatched,
             hasLength(1),
             reason: 'the worker and adapter are registered, so it dispatches',
+          );
+          expect(
+            adopting.reconciled,
+            [tick.dispatched.single],
+            reason:
+                'the failed run is adopted through reconcile like any '
+                'terminal outcome — `failed` is a verdict, not a stall',
           );
 
           // --- the exact signature B9 exists to catch --------------------
@@ -1589,8 +1681,11 @@ void main() {
           // refused job is a normal outcome reported in `succeededJobIds`, not
           // a throw. Awaiting it without a try/catch IS the assertion:
           // reaching the next line proves it returned, and the accounting below
-          // proves the refusal was counted rather than swallowed.
-          final drain = await pipeline.drain(tick);
+          // proves the refusal was counted rather than swallowed. The drain is
+          // fed the ADOPTING tick's result — the tick whose `reconciled` leg
+          // names the settled job, which is the tick production's drain would
+          // consume it on.
+          final drain = await pipeline.drain(adopting);
           expect(drain.considered, 1);
           expect(drain.skipped, 0);
           expect(
@@ -1789,10 +1884,17 @@ void main() {
           );
           expect(dispatchedTick.reconciled, isEmpty);
 
+          // F-237: each dispatching tick only STARTED its run. Every detached
+          // execution a test starts must settle before the test ends — the
+          // claim release plus one reconcile tick — or it outlives the purge.
+          await dispatchedPipeline.settle();
+
           final terminalTick = await terminalPipeline.tick();
           final terminalJobId = terminalTick.dispatched.single;
+          await terminalPipeline.settle();
           final reconciledTick = await reconciledPipeline.tick();
           final reconciledJobId = reconciledTick.dispatched.single;
+          await reconciledPipeline.settle();
 
           // Hand each job to the real drain through exactly ONE leg of the
           // union. `SchedulerTickResult` is a plain value, so this is the
@@ -1924,16 +2026,33 @@ void main() {
             extraDefectIds: const [healthyCase],
           );
 
-          final tick = await pipeline.tick();
+          // F-237: a run's claim stays held while its detached continuation
+          // is in flight, so on this capacity-1 worker the SECOND item is
+          // deferred out of the first tick — `deferred` is back-pressure,
+          // and the item is re-evaluated and dispatched by the first settle's
+          // adopting tick, which frees the slot. The two-job batch therefore
+          // lands across the settle sequence rather than inside one tick;
+          // what the drain receives below is still one batch through a single
+          // processor, job store and execution store.
+          final dispatched = <String>[];
+          dispatched.addAll((await pipeline.tick()).dispatched);
+          while (dispatched.length < 2) {
+            dispatched.addAll((await pipeline.settle()).dispatched);
+          }
           expect(
-            tick.dispatched,
+            dispatched,
             hasLength(2),
-            reason: 'one real tick dispatched both work items',
+            reason: 'the settle sequence dispatched both work items',
           );
+
+          // The second detached run is still in flight — settle it so its
+          // claim is released and adopted before teardown, the same reason
+          // every detached run this suite starts must settle.
+          await pipeline.settle();
 
           // Map each job back to its work item so the batch can be ordered.
           final jobByWorkItem = <String, Job>{};
-          for (final jobId in tick.dispatched) {
+          for (final jobId in dispatched) {
             final job = await pipeline.jobStore.readJob(jobId);
             expect(job!.state, JobState.succeeded, reason: 'really succeeded');
             expect(job.jobType, JobType.triageDefect);
