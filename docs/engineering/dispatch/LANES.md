@@ -1431,3 +1431,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-impl-detached-dispatch | review | IN_FLIGHT | (read-only) | fix/detached-dispatch | 94d8677 | PRECISION | await result → integrator or correction loop |
 | review-impl-detached-dispatch | review | CLOSED | (read-only) | fix/detached-dispatch | 94d8677 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (4 LOW) | → integrator |
 | integrate-detached-dispatch | integrate | IN_FLIGHT | scratch rehearsal | fix/detached-dispatch | 94d8677 | PRECISION | await MERGE_APPROVED → merge auth question |
+| integrate-detached-dispatch | integrate | CLOSED — INTEGRATION_BLOCKED | scratch rehearsal | fix/detached-dispatch | 94d8677 | PRECISION | 4 apps/server test files assert same-tick settle → correction lane |
+| correct-detached-dispatch | correct | IN_FLIGHT | /private/tmp/shipit-fix-detached-dispatch | fix/detached-dispatch | 94d8677 | STANDARD | await report → focused-reviewer |
