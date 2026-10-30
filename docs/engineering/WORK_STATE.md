@@ -1582,3 +1582,10 @@ prior completions. All identity checks pass; QA now runs the F-237+F-232 merged 
 finished" failures at 3 sites (design.tick, implementation.tick, review.settled-redrive →
 PostgresJobStore.listJobs:336) — the shared-`db`-wrapper transaction-slot race under detached
 dispatch. Self-recovers next tick but must be fixed. F-238 remediation lane dispatched.
+
+### F-238 MERGED — zone-scoped transaction binding on main (`42d3f81`)
+The production race confirmed live (shared `db` wrapper, single tx slot) is fixed at the
+abstraction: `inTransaction` binds the `Transaction` as a Zone value keyed on the wrapper, so
+concurrent logical writers run on independent pooled connections instead of colliding. Integrator
+ran `make test-integration` on the merged tree (+318-1, sole failure unrelated dogfood timeout).
+Deploy lane to put it live + verify the 3-session-error sites are clean.
