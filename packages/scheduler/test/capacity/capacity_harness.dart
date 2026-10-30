@@ -9,6 +9,9 @@ import 'package:workflow_store/workflow_store.dart';
 import 'package:worker_protocol/worker_protocol.dart';
 import 'package:worker_runtime/worker_runtime.dart';
 
+import '../support/controlled_dispatcher.dart';
+export '../support/settle.dart' show settleHeldJobs;
+
 /// A [JobStore] that behaves like a durable one under the capacity guard.
 ///
 /// Two properties matter, and both are deliberately reproduced rather than
@@ -141,12 +144,17 @@ class SerializedJobStore implements JobStore, CapacityLockingJobStore {
 /// end-state assertion, and a brief overshoot is precisely what exhausts a
 /// host: the peak is the number that matters.
 class InstrumentedDispatcher implements WorkerDispatch {
-  InstrumentedDispatcher({this.maxConcurrency = 8});
+  InstrumentedDispatcher({this.maxConcurrency = 8, this.workerStore});
 
   /// Advertised worker parallelism. Deliberately generous: the WORKER does not
   /// enforce this cap, so anything the test observes above `C` is the capacity
   /// guard failing, not the worker pool doing its job.
   final int maxConcurrency;
+
+  /// When set, `run` persists the terminal worker execution row and result
+  /// before returning — the durable tail a real `LocalWorker` commits — so the
+  /// scheduler's reconcile-adoption path can settle the job (F-237).
+  WorkerStore? workerStore;
 
   var _active = 0;
   var observedMaxConcurrency = 0;
@@ -215,7 +223,7 @@ class InstrumentedDispatcher implements WorkerDispatch {
       // execution is held, not merely at its instant of entry.
       await SerializedJobStore.roundTrip();
       final now = DateTime.now().toUtc();
-      return WorkerExecutionResult(
+      final result = WorkerExecutionResult(
         workerExecutionId: request.workerExecutionId,
         workItemId: request.workItemId,
         status: WorkerExecutionStatus.executedPass,
@@ -227,6 +235,9 @@ class InstrumentedDispatcher implements WorkerDispatch {
         cleanupStatus: WorkerCleanupStatus.removed,
         failureCode: WorkerFailureCode.none,
       );
+      final store = workerStore;
+      if (store != null) await persistWorkerOutcome(store, request, result);
+      return result;
     } finally {
       _active--;
     }
@@ -248,7 +259,7 @@ class CapacityHost {
       workerStore = InMemoryWorkerStore() {
     workflowEngine = DurableWorkflowEngine(store: workflowStore);
     store = SerializedJobStore(innerStore);
-    dispatch = InstrumentedDispatcher();
+    dispatch = InstrumentedDispatcher()..workerStore = workerStore;
     schedulers = [
       for (var i = 0; i < replicas; i++) _newScheduler('sched-${i + 1}'),
     ];
@@ -310,7 +321,7 @@ class CapacityHost {
   })
   restart({int cap = 2}) {
     final freshStore = SerializedJobStore(innerStore);
-    final freshDispatch = InstrumentedDispatcher();
+    final freshDispatch = InstrumentedDispatcher()..workerStore = workerStore;
     final fresh = _newScheduler(
       'sched-restarted',
       dispatch: freshDispatch,

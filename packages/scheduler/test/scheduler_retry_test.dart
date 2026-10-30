@@ -20,15 +20,18 @@ void main() {
       'passes through retryWaiting to succeed; the coding result failure is '
       'permanent and never auto-retried', () async {
     var now = t0;
-    final dispatch = ControlledDispatcher()
+    final first = FileRestartHarness(dir, clock: () => now);
+    final dispatch = first.dispatch as ControlledDispatcher
       ..statusSeries = () => const [
         WorkerExecutionStatus.timedOut,
         WorkerExecutionStatus.executedPass,
       ];
-    final first = FileRestartHarness(dir, clock: () => now, dispatch: dispatch);
 
     await first.itemRunnable();
     await first.scheduler.tick();
+    // Detached dispatch (F-237): the timed-out run settles through
+    // reconcile-adoption on the tick after its claim is released.
+    await first.settle();
 
     var job = (await first.jobStore.listJobs()).single;
     expect(job.state, JobState.retryWaiting);
@@ -60,6 +63,7 @@ void main() {
       dispatch: dispatch,
     );
     await resumed.scheduler.tick();
+    await resumed.settle();
 
     job = (await resumed.jobStore.listJobs()).single;
     expect(job.state, JobState.succeeded);
@@ -75,6 +79,7 @@ void main() {
     await host.itemRunnable();
 
     await host.scheduler.tick();
+    await host.settle();
 
     final job = (await host.jobStore.listJobs()).single;
     expect(job.state, JobState.failed);
@@ -95,6 +100,7 @@ void main() {
     await host.itemRunnable();
 
     await host.scheduler.tick();
+    await host.settle();
 
     final job = (await host.jobStore.listJobs()).single;
     expect(job.state, JobState.failed);

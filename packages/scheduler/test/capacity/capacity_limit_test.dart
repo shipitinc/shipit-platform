@@ -169,9 +169,12 @@ void main() {
         ], because: 'the ticks that ran against a full budget');
 
         // Later ticks, with the budget free again, drain the rest — and the
-        // peak over the entire run still never exceeded C.
-        await host.schedulers[0].tick();
-        await host.schedulers[1].tick();
+        // peak over the entire run still never exceeded C. Detached dispatch
+        // (F-237): each completed run settles through reconcile-adoption on
+        // the tick after its claim is released, which is what frees its slot.
+        for (var i = 0; i < 4; i++) {
+          await settleHeldJobs(host.store, host.schedulers[i % 2]);
+        }
 
         expect(
           host.dispatch.observedMaxConcurrency,
@@ -243,9 +246,13 @@ void main() {
       await settleAll([holder], because: 'the tick that held the slot');
 
       // A later tick, with the budget free, picks the refused job up and it
-      // completes. Nothing was lost and nothing needed intervention.
+      // completes. Nothing was lost and nothing needed intervention. The
+      // holder's run settles through reconcile-adoption first — that is what
+      // frees the slot — and the refused job's own run settles a tick later
+      // (F-237).
       host.dispatch.parkRuns = false;
-      await host.schedulers[1].tick();
+      await settleHeldJobs(host.store, host.schedulers[1]);
+      await settleHeldJobs(host.store, host.schedulers[1]);
 
       expect(
         (await host.innerStore.readJob(refused.jobId))!.state,
@@ -356,8 +363,11 @@ void main() {
         host.dispatch.releaseAll();
         await settleAll([a, b], because: 'the two racing ticks');
 
-        // Whichever was refused is queued and picked up by a later tick.
-        await host.schedulers[0].tick();
+        // Whichever was refused is queued and picked up by a later tick; the
+        // winner settles through reconcile-adoption (F-237) before its slot
+        // frees for the runner-up.
+        await settleHeldJobs(host.store, host.schedulers[0]);
+        await settleHeldJobs(host.store, host.schedulers[0]);
         expect(
           (await host.jobs()).where((j) => j.state == JobState.succeeded),
           hasLength(2),
@@ -421,10 +431,13 @@ void main() {
         // the cap neither blocks a restarted process nor loses its accounting
         // when the work it was counting finishes.
         host.dispatch.releaseAll();
-        await waitUntil(
-          () => restarted.dispatch.started.length >= 1,
-          because: 'the restarted process to take a freed slot',
-        );
+        // The two held runs settle through reconcile-adoption once their
+        // continuations release the claims — driving the restarted process's
+        // ticks is what performs the adoption and frees the slots (F-237).
+        await waitUntil(() async {
+          await restarted.scheduler.tick();
+          return restarted.dispatch.started.length >= 1;
+        }, because: 'the restarted process to take a freed slot');
 
         expect(
           restarted.dispatch.started,
@@ -445,7 +458,7 @@ void main() {
           second,
           third,
         ], because: 'every tick to finish once the executions were released');
-        await host.schedulers[0].tick();
+        await settleHeldJobs(host.store, host.schedulers[0]);
 
         expect(
           host.dispatch.observedMaxConcurrency,

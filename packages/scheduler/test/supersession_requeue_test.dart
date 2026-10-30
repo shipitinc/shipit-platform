@@ -73,6 +73,7 @@ void main() {
       final job = await host.enqueueJob();
 
       final first = await host.scheduler.tick();
+      await host.settle();
       expect(first.dispatched, [job.jobId]);
       expect(
         first.terminal,
@@ -93,6 +94,7 @@ void main() {
       // And it really is retried against the new state, rather than merely
       // parked: a later tick dispatches the SAME job row again.
       final second = await host.scheduler.tick();
+      await host.settle();
       expect(second.dispatched, [job.jobId]);
       expect(dispatch.runs, hasLength(2));
       expect((await host.jobStore.readJob(job.jobId))!.jobId, job.jobId);
@@ -114,6 +116,7 @@ void main() {
       // ever consumes an attempt and the budget is never touched.
       for (var i = 0; i < 6; i++) {
         await host.scheduler.tick();
+        await host.settle();
       }
 
       final after = (await host.jobStore.readJob(job.jobId))!;
@@ -143,6 +146,7 @@ void main() {
         final job = await host.enqueueJob();
 
         await host.scheduler.tick();
+        await host.settle();
 
         final deferrals = (await host.jobStore.readEvents(
           job.jobId,
@@ -186,8 +190,11 @@ void main() {
       final job = await host.enqueueJob();
 
       final first = await host.scheduler.tick();
+      await host.settle();
       final second = await host.scheduler.tick();
+      await host.settle();
       final third = await host.scheduler.tick();
+      await host.settle();
 
       expect(
         first.enqueued,
@@ -227,6 +234,7 @@ void main() {
       final job = await host.enqueueJob();
 
       final tick = await host.scheduler.tick();
+      await host.settle();
       expect(tick.dispatched, [job.jobId]);
       // NB: the verdict is read from the durable row, not from
       // `SchedulerTickResult.terminal`. That list is not populated for an
@@ -247,6 +255,7 @@ void main() {
 
       // Not retried: a further tick dispatches nothing.
       await host.scheduler.tick();
+      await host.settle();
       expect(dispatch.runs, hasLength(1));
     });
 
@@ -265,6 +274,7 @@ void main() {
         await hostA.itemRunnable();
         final jobA = await hostA.enqueueJob();
         await hostA.scheduler.tick();
+        await hostA.settle();
         expect(
           (await hostA.jobStore.readJob(jobA.jobId))!.state,
           JobState.queued,
@@ -283,6 +293,7 @@ void main() {
         await hostB.itemRunnable();
         final jobB = await hostB.enqueueJob();
         await hostB.scheduler.tick();
+        await hostB.settle();
 
         expect(
           (await hostB.jobStore.readJob(jobB.jobId))!.state,
@@ -306,6 +317,7 @@ void main() {
       final job = await host.enqueueJob();
 
       await host.scheduler.tick();
+      await host.settle();
 
       final failed = (await host.jobStore.readJob(job.jobId))!;
       expect(failed.state, JobState.failed);
@@ -334,6 +346,7 @@ void main() {
         final job = await host.enqueueJob();
 
         await host.scheduler.tick();
+        await host.settle();
 
         expect(
           (await host.jobStore.readJob(job.jobId))!.state,
@@ -391,6 +404,7 @@ void main() {
 
       for (var i = 0; i < 3; i++) {
         await host.scheduler.tick();
+        await host.settle();
         expect(
           (await host.jobStore.readJob(job.jobId))!.state,
           JobState.queued,
@@ -400,6 +414,7 @@ void main() {
 
       // The fourth supersession is past the bound.
       await host.scheduler.tick();
+      await host.settle();
 
       final retired = (await host.jobStore.readJob(job.jobId))!;
       expect(retired.state, JobState.cancelled);
@@ -437,6 +452,7 @@ void main() {
         await host.itemRunnable();
         final job = await host.enqueueJob();
         await host.scheduler.tick();
+        await host.settle();
         expect(
           (await host.jobStore.readJob(job.jobId))!.state,
           JobState.queued,
@@ -448,6 +464,7 @@ void main() {
           dispatch: dispatch,
         );
         await restarted.scheduler.tick();
+        await restarted.settle();
         final afterRestart = (await restarted.jobStore.readJob(job.jobId))!;
         expect(
           afterRestart.state,
@@ -507,6 +524,7 @@ void main() {
         dispatch: dispatch,
       );
       await restarted.scheduler.tick();
+      await restarted.settle();
 
       final job = (await restarted.jobStore.listJobs()).single;
       expect(job.jobId, running.jobId);

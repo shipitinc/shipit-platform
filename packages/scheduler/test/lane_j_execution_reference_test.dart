@@ -38,6 +38,7 @@ void main() {
         await host.itemRunnable();
 
         final tick = await host.scheduler.tick();
+        await _settle(host);
         expect(tick.dispatched, hasLength(1));
 
         final job = (await host.jobStore.listJobs()).single;
@@ -77,6 +78,7 @@ void main() {
       await host.itemRunnable();
 
       await host.scheduler.tick();
+      await _settle(host);
 
       final job = (await host.jobStore.listJobs()).single;
       expect(job.state, JobState.failed);
@@ -97,6 +99,7 @@ void main() {
       await host.itemRunnable();
 
       await host.scheduler.tick();
+      await _settle(host);
 
       final job = (await host.jobStore.listJobs()).single;
       expect(job.state, JobState.cancelled);
@@ -204,6 +207,7 @@ void main() {
       await host.itemRunnable();
 
       await host.scheduler.tick();
+      await _settle(host);
 
       expect(losing.lostMarkRunningWrites, 1);
       final job = (await host.jobStore.listJobs()).single;
@@ -236,6 +240,7 @@ void main() {
       await host.itemRunnable();
 
       await host.scheduler.tick();
+      await _settle(host);
 
       expect(losing.lostMarkRunningWrites, 1);
       final job = (await host.jobStore.listJobs()).single;
@@ -254,6 +259,7 @@ void main() {
         await host.itemRunnable();
 
         await host.scheduler.tick();
+        await _settle(host);
 
         final job = (await host.jobStore.listJobs()).single;
         expect(job.state, JobState.succeeded);
@@ -272,6 +278,7 @@ void main() {
       await host.itemRunnable();
 
       await host.scheduler.tick();
+      await _settle(host);
 
       final job = (await host.jobStore.listJobs()).single;
       expect(job.executionReference!.workerExecutionId, 'wx-${job.jobId}');
@@ -297,6 +304,7 @@ void main() {
           final first = _Host(dir, clock: () => now, dispatch: dispatch);
           await first.itemRunnable();
           await first.scheduler.tick();
+          await _settle(first);
 
           final retrying = (await first.jobStore.listJobs()).single;
           expect(retrying.state, JobState.retryWaiting);
@@ -317,6 +325,7 @@ void main() {
           now = t0.add(const Duration(minutes: 2));
           final resumed = _Host(dir, clock: () => now, dispatch: dispatch);
           await resumed.scheduler.tick();
+          await _settle(resumed);
 
           final done = (await resumed.jobStore.listJobs()).single;
           expect(done.state, JobState.succeeded);
@@ -364,10 +373,13 @@ void main() {
         await host.itemRunnable();
 
         await host.scheduler.tick();
+        await _settle(host);
         final afterFirst = (await host.jobStore.listJobs()).single;
 
         await host.scheduler.tick();
+        await _settle(host);
         await host.scheduler.tick();
+        await _settle(host);
         final afterMore = await host.jobStore.listJobs();
 
         expect(afterMore, hasLength(1), reason: 'idempotent enqueue');
@@ -393,6 +405,7 @@ void main() {
           );
           await host.itemRunnable();
           await host.scheduler.tick();
+          await _settle(host);
           final terminal = (await host.jobStore.listJobs()).single;
 
           final again = await host.scheduler.queue.enqueueIfAbsent(
@@ -430,6 +443,7 @@ void main() {
         await host.itemRunnable();
 
         await host.scheduler.tick();
+        await _settle(host);
 
         final job = (await host.jobStore.listJobs()).single;
         expect(job.state, JobState.failed);
@@ -513,6 +527,10 @@ class _Host {
     jobStore = store ?? FileJsonJobStore(File('${dir.path}/jobs.json'));
     workerStore = FileJsonWorkerStore(File('${dir.path}/workers.json'));
     this.dispatch = dispatch ?? _ReportingDispatcher();
+    final supplied = this.dispatch;
+    if (supplied is _ReportingDispatcher) {
+      supplied.workerStore ??= workerStore;
+    }
     final modelPolicyStore = InMemoryModelPolicyStore();
     final modelSelection = ModelSelectionService(modelPolicyStore);
     scheduler = Scheduler(
@@ -624,6 +642,11 @@ class _ReportingDispatcher implements WorkerDispatch {
   /// model a dispatch layer that misreports or cannot name its execution.
   final String? reportWorkerExecutionId;
 
+  /// When set, `run` persists the terminal execution row and result before
+  /// returning — the durable tail a real worker commits — so the scheduler's
+  /// reconcile-adoption path can settle the job (F-237).
+  WorkerStore? workerStore;
+
   final _runs = <WorkerExecutionRequest>[];
 
   List<WorkerExecutionRequest> get runs => List.unmodifiable(_runs);
@@ -649,7 +672,7 @@ class _ReportingDispatcher implements WorkerDispatch {
   Future<WorkerExecutionResult> run(WorkerExecutionRequest request) async {
     final attempt = _runs.length;
     _runs.add(request);
-    return WorkerExecutionResult(
+    final result = WorkerExecutionResult(
       workerExecutionId: reportWorkerExecutionId ?? request.workerExecutionId,
       workItemId: request.workItemId,
       status: statusSeries[attempt % statusSeries.length],
@@ -663,6 +686,30 @@ class _ReportingDispatcher implements WorkerDispatch {
       agentExecutionId:
           agentExecutionIdSeries[attempt % agentExecutionIdSeries.length],
     );
+    final store = workerStore;
+    if (store != null) {
+      await store.saveWorkerExecution(
+        WorkerExecution(
+          workerExecutionId: request.workerExecutionId,
+          workItemId: request.workItemId,
+          repositoryPath: request.repositoryPath,
+          requestedStartingRevision: request.startingRevision,
+          requiredCapabilities: request.requiredCapabilities,
+          status: result.status,
+          cleanupPolicy: request.cleanupPolicy,
+          workerId: result.workerId,
+          workspaceId: result.workspaceId,
+          agentExecutionId: result.agentExecutionId,
+          cleanupStatus: result.cleanupStatus,
+          failureCode: result.failureCode,
+          reason: result.failureDetail,
+          startedAt: result.startedAt,
+          endedAt: result.endedAt,
+        ),
+      );
+      await store.saveResult(result);
+    }
+    return result;
   }
 
   @override
@@ -733,4 +780,27 @@ class _CasLosingJobStore implements JobStore {
   @override
   Future<T> inTransaction<T>(Future<T> Function(JobStore store) body) =>
       inner.inTransaction((_) => body(this));
+}
+
+/// Waits for every held job's detached run to release its claim, then runs
+/// the tick that settles it through reconcile-adoption — the two halves a
+/// production tick interval provides between "the run ended" and "the job
+/// was adopted" (F-237: dispatch no longer awaits the terminal result).
+Future<void> _settle(_Host host) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 10));
+  for (;;) {
+    var held = false;
+    for (final job in await host.jobStore.listJobs()) {
+      if ((job.state == JobState.claimed || job.state == JobState.running) &&
+          await host.jobStore.readClaimForJob(job.jobId) != null) {
+        held = true;
+      }
+    }
+    if (!held) break;
+    if (DateTime.now().isAfter(deadline)) {
+      throw StateError('timed out waiting for held jobs to release claims');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+  await host.scheduler.tick();
 }

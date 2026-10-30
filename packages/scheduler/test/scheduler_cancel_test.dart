@@ -73,6 +73,10 @@ void main() {
       await tick;
 
       expect(host.session.wasCancelled, isTrue);
+
+      // Detached dispatch (F-237): the cancelled run's terminal row settles
+      // through reconcile-adoption on the tick after its claim is released.
+      await host.settle();
       expect(host.worker.isAcquirable, isTrue);
 
       final job = (await host.jobStore.readJob(running.jobId))!;

@@ -177,6 +177,9 @@ void main() {
       // before awaiting the tick or it would park there forever.
       host.session.release();
       final tick = await host.scheduler.tick();
+      // Detached dispatch (F-237): the fresh run settles through
+      // reconcile-adoption on the tick after its claim is released.
+      await host.settle();
       expect(tick.enqueued, hasLength(1));
       expect(
         tick.enqueued.single,

@@ -10,10 +10,25 @@ import 'package:worker_runtime/worker_runtime.dart';
 /// CAS, lease reconciliation, and crash-recovery paths (where the real
 /// stack's git/agent machinery would introduce nondeterminism).
 class ControlledDispatcher implements WorkerDispatch {
-  ControlledDispatcher({Set<WorkerCapability> capabilities = const {}})
-    : _capabilities = capabilities;
+  ControlledDispatcher({
+    Set<WorkerCapability> capabilities = const {},
+    this.workerStore,
+  }) : _capabilities = capabilities;
 
   final Set<WorkerCapability> _capabilities;
+
+  /// When set, `run` persists the terminal worker execution row and the
+  /// [WorkerExecutionResult] BEFORE it returns — the same durable tail
+  /// `LocalWorker._finish` commits — so the scheduler's reconcile-adoption
+  /// path (`_reconcileClaim` -> `_adoptFromExecution`) can settle the job from
+  /// durable state exactly the way it does after a real run or a restart.
+  /// Without it a finished run leaves no durable record and reconcile can only
+  /// requeue the job for want of a referenced execution.
+  ///
+  /// Mutable rather than final so a harness can wire its own store into a
+  /// dispatcher it was handed — the store's owner is the harness, not the
+  /// fake's construction site.
+  WorkerStore? workerStore;
 
   final _runs = <WorkerExecutionRequest>[];
   final _cancellations = <(String, String)>[];
@@ -48,13 +63,15 @@ class ControlledDispatcher implements WorkerDispatch {
   ];
 
   int _runsStarted = 0;
-  var _inFlight = false;
+  var _inFlight = 0;
 
   List<WorkerExecutionRequest> get runs => List.unmodifiable(_runs);
   List<(String, String)> get cancellations => List.unmodifiable(_cancellations);
 
-  /// Completes when a run is in flight and parked (capacity consumed).
-  bool get hasRunInFlight => _inFlight;
+  /// True while at least one accepted run is still parked (capacity consumed).
+  /// A count rather than a flag because dispatch is detached: two runs may be
+  /// in flight at once, and the first to finish must not zero the signal.
+  bool get hasRunInFlight => _inFlight > 0;
 
   @override
   WorkerSelection select(WorkerExecutionRequest request) {
@@ -68,7 +85,7 @@ class ControlledDispatcher implements WorkerDispatch {
               c: CapabilitySpec(capability: c, version: '1'),
           },
           status: WorkerStatus.idle,
-          currentLoad: _inFlight ? 1 : 0,
+          currentLoad: _inFlight > 0 ? 1 : 0,
           maxConcurrency: 1,
           lastHeartbeat: DateTime.now(),
         ),
@@ -86,46 +103,96 @@ class ControlledDispatcher implements WorkerDispatch {
       );
     }
     _runs.add(request);
-    _inFlight = true;
+    _inFlight++;
     _runsStarted++;
-    if (urgentError != null) throw urgentError!;
-    final builder = resultBuilder;
-    if (builder != null) {
-      final scripted = await builder(request);
-      _resultsByWorkerExecutionId[request.workerExecutionId] = scripted;
-      _inFlight = false;
-      return scripted;
+    try {
+      if (urgentError != null) throw urgentError!;
+      final builder = resultBuilder;
+      if (builder != null) {
+        final scripted = await builder(request);
+        _resultsByWorkerExecutionId[request.workerExecutionId] = scripted;
+        await _persistTerminal(request, scripted);
+        return scripted;
+      }
+      final series = statusSeries();
+      final status = series.length == 1
+          ? series.first
+          : series.elementAt(_runsStarted - 1);
+      await Future<void>.delayed(Duration.zero);
+      final t = DateTime.now().toUtc();
+      final result = WorkerExecutionResult(
+        workerExecutionId: request.workerExecutionId,
+        workItemId: request.workItemId,
+        status: status,
+        workerId: 'w-scripted-1',
+        workspaceId: 'ws-${request.workerExecutionId}',
+        startingRevision: request.startingRevision,
+        startedAt: t,
+        endedAt: t,
+        cleanupStatus: WorkerCleanupStatus.removed,
+        failureCode: status == WorkerExecutionStatus.prepareFailed
+            ? WorkerFailureCode.prepareFailed
+            : WorkerFailureCode.none,
+        failureDetail: status == WorkerExecutionStatus.prepareFailed
+            ? 'scripted prepare failure'
+            : null,
+      );
+      _resultsByWorkerExecutionId[request.workerExecutionId] = result;
+      await _persistTerminal(request, result);
+      return result;
+    } finally {
+      _inFlight--;
     }
-    final series = statusSeries();
-    final status = series.length == 1
-        ? series.first
-        : series.elementAt(_runsStarted - 1);
-    await Future<void>.delayed(Duration.zero);
-    _inFlight = false;
-    final t = DateTime.now().toUtc();
-    final result = WorkerExecutionResult(
-      workerExecutionId: request.workerExecutionId,
-      workItemId: request.workItemId,
-      status: status,
-      workerId: 'w-scripted-1',
-      workspaceId: 'ws-${request.workerExecutionId}',
-      startingRevision: request.startingRevision,
-      startedAt: t,
-      endedAt: t,
-      cleanupStatus: WorkerCleanupStatus.removed,
-      failureCode: status == WorkerExecutionStatus.prepareFailed
-          ? WorkerFailureCode.prepareFailed
-          : WorkerFailureCode.none,
-      failureDetail: status == WorkerExecutionStatus.prepareFailed
-          ? 'scripted prepare failure'
-          : null,
-    );
-    _resultsByWorkerExecutionId[request.workerExecutionId] = result;
-    return result;
+  }
+
+  /// The durable tail `LocalWorker` commits inside its terminal transaction:
+  /// the execution row in its terminal status plus the stored result, so the
+  /// scheduler's reconcile-adoption path settles this job from durable state
+  /// rather than from the returned future.
+  Future<void> _persistTerminal(
+    WorkerExecutionRequest request,
+    WorkerExecutionResult result,
+  ) async {
+    final store = workerStore;
+    if (store == null) return;
+    await persistWorkerOutcome(store, request, result);
   }
 
   @override
   Future<void> cancel(String workerId, String reason) async {
     _cancellations.add((workerId, reason));
   }
+}
+
+/// The durable tail a real worker commits before `run` returns: the terminal
+/// [WorkerExecution] row plus the stored [WorkerExecutionResult]. Any
+/// [WorkerDispatch] test double that plays a completed run must persist this
+/// pair, or the scheduler's reconcile-adoption path finds no durable record
+/// and can only requeue the job for want of a referenced execution.
+Future<void> persistWorkerOutcome(
+  WorkerStore store,
+  WorkerExecutionRequest request,
+  WorkerExecutionResult result,
+) async {
+  await store.saveWorkerExecution(
+    WorkerExecution(
+      workerExecutionId: request.workerExecutionId,
+      workItemId: request.workItemId,
+      repositoryPath: request.repositoryPath,
+      requestedStartingRevision: request.startingRevision,
+      requiredCapabilities: request.requiredCapabilities,
+      status: result.status,
+      cleanupPolicy: request.cleanupPolicy,
+      workerId: result.workerId,
+      workspaceId: result.workspaceId,
+      agentExecutionId: result.agentExecutionId,
+      cleanupStatus: result.cleanupStatus,
+      failureCode: result.failureCode,
+      reason: result.failureDetail,
+      createdAt: result.startedAt,
+      startedAt: result.startedAt,
+      endedAt: result.endedAt,
+    ),
+  );
+  await store.saveResult(result);
 }

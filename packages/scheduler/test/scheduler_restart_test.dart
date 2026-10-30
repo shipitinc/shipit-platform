@@ -28,9 +28,14 @@ void main() {
     final tick = await second.scheduler.tick();
 
     expect(tick.reconciled, hasLength(1));
+    // The reclaim requeued the job and the SAME tick re-dispatched it —
+    // detached (F-237), so the run settles through reconcile-adoption on the
+    // tick after its continuation released the claim.
+    final settle = await second.settle();
     final job = (await second.jobStore.listJobs()).single;
     expect(job.state, JobState.succeeded);
     expect(job.failure, isNull);
+    expect(settle.reconciled, [job.jobId]);
     expect((second.dispatch as ControlledDispatcher).runs, hasLength(1));
     expect(await second.jobStore.readClaimForJob(job.jobId), isNull);
 

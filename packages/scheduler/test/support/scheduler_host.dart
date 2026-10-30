@@ -12,6 +12,7 @@ import 'design_contract_fixtures.dart';
 import 'gate_fake_agent.dart';
 import 'git_repo_fixture.dart';
 import 'hooked_workspace_manager.dart';
+import 'settle.dart';
 
 /// Full-stack deterministic host: real workflow engine + store, real
 /// execution coordinator, real worker (git worktree + capacity-1 + verifier)
@@ -162,6 +163,17 @@ class SchedulerHost {
   late WorkerDispatcher dispatcher;
   late JobStore jobStore;
   late Scheduler scheduler;
+
+  /// Waits for every currently-held job's detached run to release its claim,
+  /// then runs the tick that settles it through reconcile-adoption — the two
+  /// halves a production tick interval provides between "the run ended" and
+  /// "the job was adopted".
+  ///
+  /// Dispatch is detached (F-237): a tick STARTS the execution and returns,
+  /// and the run's continuation drops the claim so the NEXT tick's
+  /// `_reconcileClaim` adopts the terminal worker execution. The claim going
+  /// absent is the durable signal that continuation ran — never a sleep.
+  Future<SchedulerTickResult> settle() => settleHeldJobs(jobStore, scheduler);
 
   /// A work item politely parked at `designNotRequired`: RUNNABLE.
   Future<WorkItem> itemRunnable({

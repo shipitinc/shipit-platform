@@ -87,6 +87,7 @@ void main() {
     await host.itemRunnable();
     for (var i = 0; i < ticks; i++) {
       await host.scheduler.tick();
+      await host.settle();
     }
     return (host: host, dispatch: dispatch);
   }
@@ -115,6 +116,7 @@ void main() {
         // And it is STABLE: three more ticks add nothing.
         for (var i = 0; i < 3; i++) {
           await host.scheduler.tick();
+          await host.settle();
         }
         expect(
           await host.jobStore.listJobsForWorkItem('wi-1'),
@@ -177,8 +179,10 @@ void main() {
 
         for (var i = 0; i < 4; i++) {
           await host.scheduler.tick();
+          await host.settle();
         }
         final result = await host.scheduler.tick();
+        await host.settle();
 
         expect(
           result.stalled,
@@ -231,6 +235,7 @@ void main() {
       await host.itemRunnable();
       for (var i = 0; i < 5; i++) {
         await host.scheduler.tick();
+        await host.settle();
       }
       expect(
         await host.jobStore.listJobsForWorkItem('wi-1'),
@@ -267,6 +272,7 @@ void main() {
       );
 
       final after = await host.scheduler.tick();
+      await host.settle();
       expect(
         after.stalled,
         isEmpty,
@@ -297,6 +303,7 @@ void main() {
 
       for (var i = 0; i < 3; i++) {
         await host.scheduler.tick();
+        await host.settle();
         expect(
           (await host.jobStore.readJob(job.jobId))!.state,
           JobState.queued,
@@ -304,6 +311,7 @@ void main() {
         );
       }
       final result = await host.scheduler.tick();
+      await host.settle();
       expect(
         result.stalled,
         isEmpty,
@@ -343,6 +351,7 @@ void main() {
         );
 
         await host.scheduler.tick();
+        await host.settle();
         final rows = await host.jobStore.listJobsForWorkItem('wi-1');
         expect(rows.last.state, JobState.cancelled);
         expect(
@@ -362,6 +371,7 @@ void main() {
         // no further growth on more ticks.
         for (var i = 0; i < 3; i++) {
           await host.scheduler.tick();
+          await host.settle();
         }
         expect(
           await host.jobStore.listJobsForWorkItem('wi-1'),

@@ -7,6 +7,7 @@ import 'package:workflow_engine/workflow_engine.dart';
 
 import 'support/controlled_dispatcher.dart';
 import 'support/file_host.dart';
+import 'support/settle.dart';
 
 void main() {
   late Directory dir;
@@ -70,6 +71,9 @@ void main() {
       await tw.shared.enqueueJob();
 
       await Future.wait([tw.a.tick(), tw.b.tick()]);
+      // Detached dispatch (F-237): the winning replica's run settles through
+      // reconcile-adoption on the next tick after its claim is released.
+      await tw.shared.settle();
 
       final jobs = await tw.shared.jobStore.listJobs();
       expect(jobs, hasLength(1));
@@ -209,6 +213,9 @@ void main() {
     )).job;
 
     await shared.scheduler.tick();
+    // Both runs were dispatched detached in the one tick above; each settles
+    // through reconcile-adoption once its completion released the claim.
+    await shared.settle();
 
     final runs = (shared.dispatch as ControlledDispatcher).runs;
     expect(runs, hasLength(2));
@@ -232,6 +239,15 @@ void main() {
     dispatch.failRun = true;
 
     await shared.scheduler.tick();
+
+    // The placement failure is delivered to the detached continuation, which
+    // reverts the job asynchronously — the queued state is the durable signal
+    // to wait on, never a fixed delay.
+    await waitUntil(
+      () async =>
+          (await shared.jobStore.listJobs()).single.state == JobState.queued,
+      because: 'the failed placement to revert the job to queued',
+    );
 
     final job = (await shared.jobStore.listJobs()).single;
     expect(job.state, JobState.queued);

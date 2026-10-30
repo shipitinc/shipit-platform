@@ -8,6 +8,7 @@ import 'package:workflow_engine/workflow_engine.dart';
 import 'package:workflow_store/workflow_store.dart';
 
 import 'support/controlled_dispatcher.dart';
+import 'support/settle.dart';
 
 /// A retryable execution failure returns the work item to the entry state of
 /// the lane whose job failed, so the scheduled retry can actually be claimed.
@@ -85,6 +86,7 @@ class _Host {
     workflowStore = InMemoryWorkflowStore();
     jobStore = InMemoryJobStore();
     workerStore = InMemoryWorkerStore();
+    this.dispatch.workerStore ??= workerStore;
     engine = DurableWorkflowEngine(store: workflowStore);
     scheduler = Scheduler(
       schedulerId: 'sched-1',
@@ -104,6 +106,10 @@ class _Host {
   late DurableWorkflowEngine engine;
   late Scheduler scheduler;
   final ControlledDispatcher dispatch;
+
+  /// Lets the detached run's continuation release its claim, then ticks —
+  /// the reconcile-adoption step a production tick interval covers (F-237).
+  Future<SchedulerTickResult> settle() => settleHeldJobs(jobStore, scheduler);
 
   Future<WorkItem> plant(WorkItem item) async {
     await workflowStore.saveWorkItem(item);
@@ -195,6 +201,7 @@ void main() {
         ],
       );
       final first = await host.scheduler.tick();
+      await host.settle();
 
       expect(first.dispatched, hasLength(1));
       expect(dispatch.runs, hasLength(1));
@@ -225,6 +232,7 @@ void main() {
 
       // ---- the next tick. This is the tick that used to cancel the retry.
       final second = await host.scheduler.tick();
+      await host.settle();
 
       expect(
         second.cancelledQueued,
@@ -269,6 +277,7 @@ void main() {
       dispatch.resultBuilder = null;
       dispatch.statusSeries = () => const [WorkerExecutionStatus.executedPass];
       final third = await host.scheduler.tick();
+      await host.settle();
 
       expect(
         third.dispatched,
@@ -345,6 +354,7 @@ void main() {
       );
 
       final second = await host.scheduler.tick();
+      await host.settle();
       expect(second.cancelledQueued, isEmpty);
       expect(
         second.retryReturned.where((m) => m.returned).map((m) => m.to),
@@ -362,6 +372,7 @@ void main() {
       now = t0.add(const Duration(minutes: 2));
       dispatch.resultBuilder = null;
       final third = await host.scheduler.tick();
+      await host.settle();
       expect(third.dispatched, hasLength(1));
       expect(
         dispatch.runs,
@@ -391,12 +402,14 @@ void main() {
           ],
         );
         await host.scheduler.tick();
+        await host.settle();
         expect(
           (await host.workflowStore.readWorkItem('wi-1')).state,
           WorkItemState.agentFailed,
         );
 
         final second = await host.scheduler.tick();
+        await host.settle();
 
         // `triageDefectDefinition.entryStates` holds THREE states. Only
         // `designNotRequired` is reachable from `agentFailed`, and the pass
@@ -437,6 +450,7 @@ void main() {
           ],
         );
         await host.scheduler.tick();
+        await host.settle();
 
         final job = await host.job();
         expect(job.state, JobState.failed, reason: 'terminal, not retryable');
@@ -444,6 +458,7 @@ void main() {
 
         for (var i = 0; i < 3; i++) {
           final tick = await host.scheduler.tick();
+          await host.settle();
           expect(
             tick.retryReturned,
             isEmpty,
@@ -486,9 +501,11 @@ void main() {
         ],
       );
       await host.scheduler.tick();
+      await host.settle();
 
       expect((await host.job()).state, JobState.cancelled);
       final tick = await host.scheduler.tick();
+      await host.settle();
       expect(tick.retryReturned, isEmpty);
       expect(
         (await host.workflowStore.readWorkItem('wi-1')).state,
@@ -522,6 +539,7 @@ void main() {
 
       // attempt 1
       await host.scheduler.tick();
+      await host.settle();
       expect(dispatch.runs, hasLength(1));
       expect((await host.job()).state, JobState.retryWaiting);
 
@@ -550,6 +568,7 @@ void main() {
         return _outcome(request, WorkerExecutionStatus.timedOut);
       };
       final second = await host.scheduler.tick();
+      await host.settle();
       expect(second.dispatched, hasLength(1), reason: 'attempt 2 really ran');
       expect(dispatch.runs, hasLength(2));
 
@@ -565,6 +584,7 @@ void main() {
       for (var i = 0; i < 4; i++) {
         now = now.add(const Duration(hours: 1));
         final tick = await host.scheduler.tick();
+        await host.settle();
         expect(tick.dispatched, isEmpty);
         expect(
           tick.retryReturned,
@@ -627,6 +647,7 @@ void main() {
       );
 
       final tick = await host.scheduler.tick();
+      await host.settle();
 
       expect(
         tick.retryReturned.where((m) => m.returned),
@@ -676,6 +697,7 @@ void main() {
         );
 
         final tick = await host.scheduler.tick();
+        await host.settle();
 
         expect(tick.retryReturned.where((m) => m.returned), isEmpty);
         expect(tick.retryReturned.single.reason, contains('blocking human'));

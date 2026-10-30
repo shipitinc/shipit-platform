@@ -200,6 +200,7 @@ void main() {
       }
 
       final tick = await host.scheduler.tick();
+      await host.settle();
 
       // This is the whole defect in three counts: nothing enqueued, nothing
       // dispatched, nothing moved. And — the reason it survived days —
@@ -253,6 +254,7 @@ void main() {
       }
 
       final tick = await host.scheduler.tick();
+      await host.settle();
 
       expect(tick.entryHopRefused, isEmpty);
       expect(
@@ -279,6 +281,7 @@ void main() {
         }
 
         await host.scheduler.tick();
+        await host.settle();
 
         for (final id in strandedIds) {
           final hops = (await host.workflowStore.readTransitionHistory(id))
@@ -317,6 +320,7 @@ void main() {
         }
 
         final tick = await host.scheduler.tick();
+        await host.settle();
 
         expect(
           tick.dispatched,
@@ -602,6 +606,7 @@ void main() {
 
         for (var i = 0; i < 25; i++) {
           await host.scheduler.tick();
+          await host.settle();
         }
 
         expect(
@@ -807,6 +812,7 @@ void main() {
       );
 
       await host.scheduler.tick();
+      await host.settle();
 
       expect(
         (await host.workflowStore.readWorkItem(id)).state,

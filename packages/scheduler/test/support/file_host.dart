@@ -7,6 +7,7 @@ import 'package:workflow_store/workflow_store.dart';
 import 'package:worker_runtime/worker_runtime.dart';
 
 import 'controlled_dispatcher.dart';
+import 'settle.dart';
 
 /// File-backed harness for scheduler crash/restart tests. Constructing a new
 /// instance over the same [Directory] simulates a fresh process that must
@@ -36,7 +37,16 @@ class FileRestartHarness {
     );
     jobStore = FileJsonJobStore(File('${dir.path}/jobs.json'));
     workerStore = FileJsonWorkerStore(File('${dir.path}/workers.json'));
-    this.dispatch = dispatch ?? ControlledDispatcher();
+    // The default dispatcher writes its terminal worker rows into the same
+    // store the scheduler reconciles from, so a dispatched job settles via
+    // `_reconcileClaim` -> `_adoptFromExecution` on the tick after its run —
+    // the same path a real `LocalWorker` run takes. A caller-supplied
+    // dispatcher is wired to the same store unless it already has one.
+    this.dispatch = dispatch ?? ControlledDispatcher(workerStore: workerStore);
+    final supplied = this.dispatch;
+    if (supplied is ControlledDispatcher) {
+      supplied.workerStore ??= workerStore;
+    }
     final modelPolicyStore = InMemoryModelPolicyStore();
     final modelSelection = ModelSelectionService(modelPolicyStore);
     scheduler = Scheduler(
@@ -155,6 +165,18 @@ class FileRestartHarness {
     expectClaimed(claim!);
     return (await jobStore.readJob(job.jobId))!;
   }
+
+  /// Waits for every currently-held job's detached run to release its claim,
+  /// then runs the tick that settles it through reconcile-adoption — the two
+  /// halves a production tick interval provides between "the run ended" and
+  /// "the job was adopted".
+  ///
+  /// Dispatch is detached (F-237): a tick STARTS the execution and returns,
+  /// and the run's continuation drops the claim so the NEXT tick's
+  /// `_reconcileClaim` adopts the terminal worker execution. Tests must not
+  /// observe that release with a fixed sleep; the claim going absent is the
+  /// durable signal itself.
+  Future<SchedulerTickResult> settle() => settleHeldJobs(jobStore, scheduler);
 
   /// Marks the claimed job as dispatched to a worker (execution reference
   /// durably recorded with the requested workerExecutionId).

@@ -92,6 +92,7 @@ void main() {
 
         host.session.release();
         final tick = await host.scheduler.tick();
+        await host.settle();
 
         // One job, dispatched, and this time it SUCCEEDED.
         expect(tick.enqueued, hasLength(1));
@@ -152,6 +153,7 @@ void main() {
 
         host.session.release();
         await host.scheduler.tick();
+        await host.settle();
 
         final history = await host.workflowStore.readTransitionHistory('wi-1');
         final hops = history
@@ -207,6 +209,7 @@ void main() {
         host.session.release();
         for (var i = 0; i < 25; i++) {
           await host.scheduler.tick();
+          await host.settle();
         }
 
         final jobs = await host.jobStore.listJobs();
@@ -242,6 +245,7 @@ void main() {
         await host.itemRunnable();
 
         final tick = await host.scheduler.tick();
+        await host.settle();
 
         expect(tick.enqueued, hasLength(1));
         final job = (await host.jobStore.listJobs()).single;
@@ -293,11 +297,13 @@ void main() {
       host.session.release();
 
       final first = await host.scheduler.tick();
+      await host.settle();
       expect(first.enqueued, hasLength(1));
       expect(first.dispatched, hasLength(1));
 
       for (var i = 0; i < 25; i++) {
         await host.scheduler.tick();
+        await host.settle();
       }
 
       final jobs = await host.jobStore.listJobs();
@@ -340,6 +346,7 @@ void main() {
 
         host.session.release();
         final tick = await host.scheduler.tick();
+        await host.settle();
 
         expect(tick.enqueued, hasLength(1));
         expect(tick.dispatched, hasLength(1));
@@ -362,6 +369,7 @@ void main() {
         await itemDesignRejected(host);
 
         final tick = await host.scheduler.tick();
+        await host.settle();
 
         expect(tick.entryHopRefused, hasLength(1));
         expect(tick.entryHopRefused.single.workItemId, 'wi-1');
@@ -513,6 +521,7 @@ void main() {
         );
         await host.itemRunnable();
         final first = await host.scheduler.tick();
+        await host.settle();
         expect(first.enqueued, hasLength(1));
         final firstJob = (await host.jobStore.listJobs()).single;
 
@@ -521,6 +530,7 @@ void main() {
         Job? exhausted;
         for (var i = 0; i < 8; i++) {
           await host.scheduler.tick();
+          await host.settle();
           final current = await host.jobStore.readJob(firstJob.jobId);
           exhausted = current;
           if (current?.state == JobState.cancelled) break;
@@ -547,6 +557,7 @@ void main() {
         // item's state is `design_not_required` either way and cannot tell a
         // stopped lane from a spinning one.
         final stalled = await host.scheduler.tick();
+        await host.settle();
         expect(
           stalled.stalled.map((s) => s.workItemId),
           contains('wi-1'),
@@ -585,6 +596,7 @@ void main() {
         // The cancelled job yields the key, so the next tick mints a FRESH job
         // for the same work item — the remint whose count used to reset.
         final remint = await host.scheduler.tick();
+        await host.settle();
         expect(remint.enqueued, hasLength(1));
         final secondJob = (await host.jobStore.readJob(
           remint.enqueued.single,
@@ -637,6 +649,7 @@ void main() {
       // wi-1 burns its whole budget first, on its own.
       for (var i = 0; i < 8; i++) {
         await host.scheduler.tick();
+        await host.settle();
       }
 
       final wi1 = await host.jobStore.listJobsForWorkItem('wi-1');
@@ -649,6 +662,7 @@ void main() {
       // wi-2 arrives afterwards and has spent nothing.
       await host.itemRunnable(workItemId: 'wi-2');
       await host.scheduler.tick();
+      await host.settle();
 
       final wi2 = await host.jobStore.listJobsForWorkItem('wi-2');
       expect(wi2, hasLength(1));
@@ -688,6 +702,7 @@ void main() {
       expect(stale.created, isTrue);
 
       final tick = await host.scheduler.tick();
+      await host.settle();
 
       expect(
         tick.cancelledQueued,

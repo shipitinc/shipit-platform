@@ -5,6 +5,7 @@ import 'package:worker_runtime/worker_runtime.dart';
 import 'package:workflow_store/workflow_store.dart';
 
 import 'support/controlled_dispatcher.dart';
+import 'support/settle.dart';
 
 /// OD-10's discriminator is not fooled by the retry return.
 ///
@@ -143,7 +144,7 @@ class _World {
     jobStore = InMemoryJobStore();
     workerStore = InMemoryWorkerStore();
     engine = DurableWorkflowEngine(store: workflowStore);
-    dispatch = ControlledDispatcher();
+    dispatch = ControlledDispatcher()..workerStore = workerStore;
 
     implementation = Scheduler(
       schedulerId: 'sched-impl',
@@ -184,6 +185,15 @@ class _World {
   late InMemoryWorkerStore workerStore;
   late DurableWorkflowEngine engine;
   late ControlledDispatcher dispatch;
+
+  /// Lets the detached run's continuation release its claim,
+  /// then ticks BOTH lanes — reconcile-adoption is lane-agnostic
+  /// (F-237).
+  Future<void> settle() async {
+    await settleHeldJobs(jobStore, implementation);
+    await settleHeldJobs(jobStore, review);
+  }
+
   late Scheduler implementation;
   late Scheduler review;
 
@@ -258,6 +268,7 @@ void main() {
       );
     };
     await world.review.tick();
+    await world.settle();
     final reviewJob = (await world.jobStore.listJobs()).singleWhere(
       (j) => j.jobType == JobType.engineeringReview,
     );
@@ -279,6 +290,7 @@ void main() {
     // entry states, so without `job.jobType == _definition.jobType` this lane
     // would consider returning an item it does not own.
     final implDuringReview = await world.implementation.tick();
+    await world.settle();
     expect(
       implDuringReview.retryReturned,
       isEmpty,
@@ -297,6 +309,7 @@ void main() {
 
     // ---- the review lane returns the item to ITS OWN entry state.
     final returned = await world.review.tick();
+    await world.settle();
     expect(returned.retryReturned.where((m) => m.returned).map((m) => m.to), [
       WorkItemState.agentCompleted,
     ]);
@@ -331,6 +344,7 @@ void main() {
       WorkerExecutionStatus.executedPass,
     ];
     final implTick = await world.implementation.tick();
+    await world.settle();
 
     expect(
       implTick.completionInflow.where((m) => m.moved),
@@ -401,6 +415,7 @@ void main() {
     await world.workflowStore.saveWorkItem(_atAgentCompleted());
 
     final tick = await world.review.tick();
+    await world.settle();
 
     expect(
       tick.blockedArtifactMissing,
