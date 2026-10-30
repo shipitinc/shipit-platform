@@ -5,6 +5,8 @@ import 'package:worker_protocol/worker_protocol.dart';
 import 'package:worker_runtime/worker_runtime.dart';
 import 'package:workflow_store/workflow_store.dart';
 
+import 'support/settle.dart';
+
 /// A scheduled retry REALLY produces a second dispatch — and a crash really
 /// never does.
 ///
@@ -108,12 +110,19 @@ void main() {
     'a TIMED-OUT run spends an attempt and the retry really runs again',
     () async {
       await readyWorkItem('wi-retry');
-      final dispatch = ScriptedDispatch([WorkerExecutionStatus.timedOut]);
+      final dispatch = ScriptedDispatch([
+        WorkerExecutionStatus.timedOut,
+      ], workerStore);
       final scheduler = schedulerOver(dispatch);
 
       final first = await scheduler.tick();
       expect(first.dispatched, isNotEmpty, reason: 'the first attempt ran');
       expect(dispatch.runCount, 1);
+
+      // Detached dispatch (F-237): the tick STARTED the run; the outcome is
+      // adopted by the next tick's reconcile once the continuation has
+      // released the claim. `timedOut` lands there, not in the tick above.
+      await settleHeldJobs(jobStore, scheduler);
 
       final afterTimeout = await triageJob('wi-retry');
       expect(
@@ -154,6 +163,10 @@ void main() {
       );
       expect(dispatch.runCount, 2);
 
+      // Same settle discipline: the second run's `executedPass` is adopted
+      // by the reconcile pass after its claim is released.
+      await settleHeldJobs(jobStore, scheduler);
+
       final done = await triageJob('wi-retry');
       expect(done.state, JobState.succeeded);
       expect(done.attempt, 2, reason: 'exactly one retry was spent');
@@ -162,11 +175,17 @@ void main() {
 
   test('a run that FAILS spends no attempt and is never retried', () async {
     await readyWorkItem('wi-crash');
-    final dispatch = ScriptedDispatch([WorkerExecutionStatus.executedFail]);
+    final dispatch = ScriptedDispatch([
+      WorkerExecutionStatus.executedFail,
+    ], workerStore);
     final scheduler = schedulerOver(dispatch);
 
     await scheduler.tick();
     expect(dispatch.runCount, 1);
+
+    // Settle through reconcile-adoption: `executedFail` is adopted by the
+    // tick after the run's claim release, not by the dispatching tick.
+    await settleHeldJobs(jobStore, scheduler);
 
     final afterFailure = await triageJob('wi-crash');
     expect(
@@ -206,12 +225,18 @@ void main() {
     await readyWorkItem('wi-bound');
     final dispatch = ScriptedDispatch(
       List.filled(6, WorkerExecutionStatus.timedOut),
+      workerStore,
     );
     final scheduler = schedulerOver(dispatch);
 
+    // Each pass is one full settle cycle rather than one tick: a tick that
+    // starts a run leaves it `running`, and the reconcile-adoption pass
+    // after the claim release is where the attempt is spent and the next
+    // back-off begins. The `settleHeldJobs` wait is the durable half of
+    // "the run ended"; its tick is the adopting half (F-237).
     for (var i = 0; i < 4; i++) {
       clock = clock.add(const Duration(minutes: 2));
-      await scheduler.tick();
+      await settleHeldJobs(jobStore, scheduler);
       if ((await triageJob('wi-bound')).isTerminal) break;
     }
 
@@ -240,11 +265,19 @@ void main() {
 /// That last property is the whole point: it isolates the scheduler's retry
 /// bookkeeping from the workflow-state question that the real chain raises and
 /// that `budget_exhaustion_retries_test.dart` pins separately.
+///
+/// It also commits the same durable tail `LocalWorker` does — the terminal
+/// [WorkerExecution] row plus the stored result — because under detached
+/// dispatch (F-237) that row, not the returned future, is what the next
+/// tick's `_reconcileClaim` -> `_adoptFromExecution` settles the job from.
+/// Without it a finished run leaves no durable record and reconcile can only
+/// requeue the job for want of a referenced execution.
 class ScriptedDispatch implements WorkerDispatch {
-  ScriptedDispatch(List<WorkerExecutionStatus> script)
+  ScriptedDispatch(List<WorkerExecutionStatus> script, this.workerStore)
     : _script = List<WorkerExecutionStatus>.of(script);
 
   final List<WorkerExecutionStatus> _script;
+  final WorkerStore workerStore;
   int runCount = 0;
 
   /// Appends the outcome the next `run` should report.
@@ -281,7 +314,7 @@ class ScriptedDispatch implements WorkerDispatch {
         : WorkerExecutionStatus.executedPass;
     runCount++;
     final ended = DateTime.utc(2026, 1, 1).add(Duration(seconds: runCount));
-    return WorkerExecutionResult(
+    final result = WorkerExecutionResult(
       workerExecutionId: request.workerExecutionId,
       workItemId: request.workItemId,
       status: status,
@@ -298,6 +331,31 @@ class ScriptedDispatch implements WorkerDispatch {
           ? 'agent session timed out'
           : null,
     );
+    // The durable tail, BEFORE the future resolves: the same rows
+    // `LocalWorker` commits in its terminal transaction, which is what the
+    // next tick's reconcile-adoption reads.
+    await workerStore.saveWorkerExecution(
+      WorkerExecution(
+        workerExecutionId: request.workerExecutionId,
+        workItemId: request.workItemId,
+        repositoryPath: request.repositoryPath,
+        requestedStartingRevision: request.startingRevision,
+        requiredCapabilities: request.requiredCapabilities,
+        status: result.status,
+        cleanupPolicy: request.cleanupPolicy,
+        workerId: result.workerId,
+        workspaceId: result.workspaceId,
+        agentExecutionId: result.agentExecutionId,
+        cleanupStatus: result.cleanupStatus,
+        failureCode: result.failureCode,
+        reason: result.failureDetail,
+        createdAt: result.startedAt,
+        startedAt: result.startedAt,
+        endedAt: result.endedAt,
+      ),
+    );
+    await workerStore.saveResult(result);
+    return result;
   }
 
   @override

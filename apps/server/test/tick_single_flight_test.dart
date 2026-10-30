@@ -780,15 +780,25 @@ void main() {
     // The behavioural claim, as distinct from "the flag is released again".
     //
     // These drive a REAL `Scheduler.tick()` over real in-memory stores, wrapped
-    // in the real `TickSingleFlight`, with a dispatcher that gives one work item
-    // an execution which never returns. That is the 2026-10-18 shape minus the
-    // database: tick 1 dispatches the stuck item and blocks inside
-    // `_dispatchOne`, so without a lease nothing after it ever runs again.
+    // in the real `TickSingleFlight`. The wedge has TWO halves, because F-237
+    // split the 2026-10-18 shape in two:
+    //
+    //  * a dispatcher that gives one work item an execution which never
+    //    returns — the stuck execution, still real, still holding its
+    //    capacity slot and its job at `running`. What it can no longer do
+    //    is wedge the tick: detached dispatch returns from `_dispatchOne`
+    //    the moment the run is started, so a parked `run` holds a claim,
+    //    never the guard.
+    //  * a durable store read that never returns — armed on the NEXT job's
+    //    `readJob` inside `_dispatchOne`. That is the only shape left that
+    //    still parks a real tick mid-body, so it is what the lease is
+    //    exercised against.
     //
     // NO DATABASE WAS INVOLVED — see the file header. What is therefore NOT
-    // proved: that a real `git` clone, a real agent process or a real
-    // `ArtifactCommitter.commit` hangs in production the way this execution
-    // hangs here. That is a runtime observation and belongs to the operator.
+    // proved: that a real `git` clone, a real agent process, a real
+    // `ArtifactCommitter.commit` or a real Postgres call hangs in production
+    // the way these hang here. That is a runtime observation and belongs to
+    // the operator.
 
     test(
       'with the lease, a later tick RUNS and dispatches the next item',
@@ -796,13 +806,22 @@ void main() {
         final t0 = DateTime.utc(2026, 1, 1, 12);
         final host = _CapacityHost(clock: () => t0);
         host.applyCap(capacityOf(2));
-        await host.enqueueAll(['wi-stuck', 'wi-next']);
+        final jobs = await host.enqueueAll(['wi-stuck', 'wi-next']);
 
         // `wi-stuck` gets an execution that never returns; `wi-next` gets a
         // normal one. The queue therefore has to drain AROUND the stuck item,
         // which is the only way "recovery" can mean anything at all.
+        //
+        // The tick's own wedge is armed on wi-next's first `readJob` inside
+        // `_dispatchOne` — before the claim, so wi-next stays `queued` and
+        // unclaimed for whichever tick runs next. Pre-F-237 the parked run
+        // itself was the wedge; detached dispatch made that impossible on
+        // purpose, and a durable call the tick awaits is what remains.
         host.dispatch.parkRuns = true;
         host.dispatch.neverReleaseFor = <String>{'wi-stuck'};
+        host.store.parkReadJobFor(
+          jobs.firstWhere((j) => j.workItemId == 'wi-next').jobId,
+        );
 
         final log = _LogCapture();
         final timers = _LeaseTimers();
@@ -823,10 +842,19 @@ void main() {
           () => host.dispatch.startedWorkItems.contains('wi-stuck'),
           because: 'tick 1 to dispatch the stuck item',
         );
+        await _waitUntil(
+          () => host.store.parkedReads == 1,
+          because:
+              'tick 1 to reach the durable read inside wi-next\'s dispatch '
+              'and wedge there — observed, not assumed',
+        );
         expect(
           host.dispatch.startedWorkItems,
           ['wi-stuck'],
-          reason: 'tick 1 dispatches serially, so it is still inside wi-stuck',
+          reason:
+              'wi-stuck was dispatched and wi-next never reached its run: '
+              'the tick is wedged inside the read between the two '
+              'dispatches',
         );
 
         // Only `wi-stuck` is stuck. From here on, anything a later tick starts
@@ -843,8 +871,9 @@ void main() {
           tick.isRunning,
           isFalse,
           reason:
-              'the tick is blocked inside `_dispatchOne` awaiting an execution '
-              'that will never return; the lease is the only thing that ends it',
+              'the tick is blocked inside `_dispatchOne` awaiting a store '
+              'read that will never return; the lease is the only thing '
+              'that ends it',
         );
 
         final recovered = await tick.trigger();
@@ -881,8 +910,10 @@ void main() {
         // Teardown only, after every assertion above. `stuck` is deliberately
         // NOT awaited: an abandoned tick is still running, which is the whole
         // point, and waiting for it here would assert the opposite of what this
-        // test proves.
+        // test proves. Both halves of the wedge are released — the parked run
+        // AND the parked read — so the abandoned body can unwind.
         host.dispatch.releaseStuck();
+        host.store.releaseParkedReads();
         expect(stuck, isNotNull);
       },
       timeout: const Timeout(Duration(seconds: 60)),
@@ -896,10 +927,13 @@ void main() {
         final t0 = DateTime.utc(2026, 1, 1, 12);
         final host = _CapacityHost(clock: () => t0);
         host.applyCap(capacityOf(2));
-        await host.enqueueAll(['wi-stuck', 'wi-next']);
+        final jobs = await host.enqueueAll(['wi-stuck', 'wi-next']);
 
         host.dispatch.parkRuns = true;
         host.dispatch.neverReleaseFor = <String>{'wi-stuck'};
+        host.store.parkReadJobFor(
+          jobs.firstWhere((j) => j.workItemId == 'wi-next').jobId,
+        );
 
         final scheduler = host.schedulers.first;
         final tick = TickSingleFlight(
@@ -912,8 +946,10 @@ void main() {
 
         final stuck = tick.trigger();
         await _waitUntil(
-          () => host.dispatch.startedWorkItems.contains('wi-stuck'),
-          because: 'tick 1 to dispatch the stuck item',
+          () => host.store.parkedReads == 1,
+          because:
+              'tick 1 to dispatch the stuck item and wedge on the durable '
+              'read inside the next dispatch',
         );
 
         // Twenty more triggers over a second. Every one is dropped, forever.
@@ -937,7 +973,10 @@ void main() {
         );
         expect(tick.isRunning, isTrue);
 
-        // Teardown only.
+        // Teardown only — release BOTH halves of the wedge (the parked read
+        // that holds the tick, then the parked run) before awaiting the tick,
+        // or `stuck` can never complete.
+        host.store.releaseParkedReads();
         host.dispatch.releaseStuck();
         await stuck;
       },
@@ -1642,8 +1681,46 @@ class StoreScopedLockingJobStore implements JobStore, CapacityLockingJobStore {
   Future<void> saveJob(Job job, {int? expectedVersion}) =>
       inner.saveJob(job, expectedVersion: expectedVersion);
 
+  /// Job ids whose next [readJob] hangs until [releaseParkedReads] —
+  /// armed once per id, consumed by the first matching call.
+  ///
+  /// F-237 detached the run from the tick: a parked `WorkerDispatch.run`
+  /// can no longer hold `tick()` open, because `_dispatchOne` returns the
+  /// moment the run is STARTED. What can still hold a tick — and what the
+  /// recovery tests therefore use as their wedge — is a durable call the
+  /// tick body itself awaits. `readJob` is the first one `_dispatchOne`
+  /// makes of the job it is about to dispatch, before the claim, so a
+  /// parked read leaves that job `queued` and unclaimed for the next tick.
+  final Set<String> _parkReadJobFor = <String>{};
+  final List<Completer<void>> _parkedReads = <Completer<void>>[];
+
+  /// Arms a one-shot hang on the next [readJob] of [jobId].
+  void parkReadJobFor(String jobId) => _parkReadJobFor.add(jobId);
+
+  /// How many reads are currently parked — the observable half of the
+  /// wedge, so a test proves the tick is inside it rather than assuming.
+  int get parkedReads => _parkedReads.length;
+
+  /// TEARDOWN ONLY — completes every parked read so the tick holding it
+  /// can unwind. Same discipline as `_InstrumentedDispatcher.releaseStuck`:
+  /// releasing the wedge mid-test is exactly the bug these tests catch.
+  void releaseParkedReads() {
+    for (final parked in _parkedReads) {
+      if (!parked.isCompleted) parked.complete();
+    }
+    _parkedReads.clear();
+    _parkReadJobFor.clear();
+  }
+
   @override
-  Future<Job?> readJob(String jobId) => inner.readJob(jobId);
+  Future<Job?> readJob(String jobId) async {
+    if (_parkReadJobFor.remove(jobId)) {
+      final gate = Completer<void>();
+      _parkedReads.add(gate);
+      await gate.future;
+    }
+    return inner.readJob(jobId);
+  }
 
   @override
   Future<List<Job>> listJobs() => inner.listJobs();
