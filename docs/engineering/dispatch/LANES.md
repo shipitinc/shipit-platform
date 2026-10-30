@@ -1437,3 +1437,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | focused-review-detached-dispatch | re-review | IN_FLIGHT | (read-only) | fix/detached-dispatch | 94d8677 | STANDARD | await result → integrator re-check |
 | focused-review-detached-dispatch | re-review | CLOSED | (read-only) | fix/detached-dispatch | 94d8677 | STANDARD | APPROVE_CORRECTIONS, READY_FOR_MERGE | → integrator |
 | integrate-detached-dispatch-r2 | integrate | IN_FLIGHT | scratch rehearsal | fix/detached-dispatch | 94d8677 | PRECISION | await MERGE_APPROVED → merge auth question |
+| integrate-detached-dispatch-r2 | integrate | CLOSED | scratch rehearsal | fix/detached-dispatch | 94d8677 | PRECISION | MERGE_APPROVED → merged adda3ee (human-authorized) | done |
