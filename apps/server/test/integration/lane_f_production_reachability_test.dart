@@ -862,15 +862,32 @@ class _ProductionPipeline {
     final workerId = _workerIdFor(defectId);
 
     // --- the real stores, over the real database ------------------------
+    // `PersistenceDatabase` is owned by exactly ONE logical caller — a
+    // single active transaction slot — and detached dispatch (F-237) makes
+    // the components below that caller's boundary for real: a run's
+    // continuation commits inside `workerStore.inTransaction` and the
+    // coordinator settles through `engine`'s store while the SAME tick is
+    // still opening `jobStore.inTransaction` for the next job. Two callers
+    // on one wrapper is `StateError: A transaction is already active` (or a
+    // poll attaching to a finished transaction). The components that write
+    // inside the detached run therefore get their OWN wrapper over the same
+    // `session.db` — `PersistenceDatabase(db.db)` — while sequential callers
+    // keep sharing [db]. Same database, same tables, one caller per wrapper.
     final workflowStore = PostgresWorkflowStore(db);
     final jobStore = PostgresJobStore(db);
-    final workerStore = PostgresWorkerStore(db);
+    final workerStore = PostgresWorkerStore(PersistenceDatabase(db.db));
     final defectStore = PostgresDefectStore(db);
     final triageStore = PostgresTriageStore(db);
     // The real store, constructed exactly as `ControlPlaneService.qaContractStore`
     // constructs it (line 97: `PostgresQAContractStore(_db)`).
     final qaContractStore = PostgresQAContractStore(db);
-    final engine = DurableWorkflowEngine(store: workflowStore);
+    // The coordinator's engine writes work-item transitions INSIDE the
+    // detached run — its store gets its own wrapper for the same reason as
+    // `workerStore` above. Reads still see every committed row on the shared
+    // `session.db`; only the transaction slot differs.
+    final engine = DurableWorkflowEngine(
+      store: PostgresWorkflowStore(PersistenceDatabase(db.db)),
+    );
     // `extraDefectIds` lets one pipeline carry several triage work items, so a
     // test can exercise a MULTI-JOB tick batch. It matters that they share one
     // pipeline rather than being two pipelines: the drain runs one processor
