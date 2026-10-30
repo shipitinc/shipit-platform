@@ -10,6 +10,7 @@ import 'package:worker_runtime/worker_runtime.dart';
 
 import '../support/design_gate_agents.dart';
 import '../support/git_repo_fixture.dart';
+import '../support/integration_settle.dart';
 
 /// Full-stack deterministic design-governance host: real workflow engine +
 /// store, real execution coordinator, real workers (git worktree + capacity-1
@@ -214,23 +215,28 @@ class DesignGovernanceE2EHost {
   }
 
   /// Runs ONE design-revision job to durably-completed (enqueue + dispatch +
-  /// gated execution + release) and waits for the tick to settle.
+  /// gated execution + release) and settles it through reconcile-adoption.
   ///
   /// Uses the same deterministic pattern as the scheduler slice: capture the
-  /// tick future, wait for the gate, release, then await the tick.
+  /// tick future, wait for the gate, release, await the tick — then the
+  /// F-237 settle half: the dispatching tick only STARTED the run, so the
+  /// claim release plus one reconcile tick is what lands the verdict.
   Future<void> runDesignRevision(String workItemId) async {
     final tick = designRevisionScheduler.tick();
     await designSession.awaitingGate;
     designSession.release();
     await tick;
+    await settleHeldJobs(jobStore, designRevisionScheduler);
   }
 
-  /// Runs ONE design-review job to durably-completed.
+  /// Runs ONE design-review job to durably-completed, with the same
+  /// release-then-adopt settle as [runDesignRevision].
   Future<void> runDesignReview(String workItemId) async {
     final tick = designReviewScheduler.tick();
     await reviewSession.awaitingGate;
     reviewSession.release();
     await tick;
+    await settleHeldJobs(jobStore, designReviewScheduler);
   }
 
   /// A tick with NO expected dispatch (already-terminal dedupe, blocked gate,

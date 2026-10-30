@@ -23,6 +23,7 @@ import 'package:control_plane_server/src/triage/lane_a_defect_triage_work_item.d
 import 'package:control_plane_server/src/triage/lane_e_design_remediation_work_item.dart';
 import 'package:control_plane_server/src/triage/triage_processor.dart';
 
+import '../support/integration_settle.dart';
 import 'test_tools/serverpod_test_tools.dart';
 
 /// Human-reported defect text, shared by the fixture and the assertions so a
@@ -504,9 +505,12 @@ class _TriageRun {
     required this.workItemId,
     required this.evidenceIds,
     required this.tick,
+    required this.adoptTick,
+    required this.itemStateWhenClaimReleased,
     required this.job,
     required this.scheduler,
     required this.jobStore,
+    required this.scopedJobStore,
     required this.processor,
     required this.triageStore,
     required this.defectStore,
@@ -526,9 +530,38 @@ class _TriageRun {
   final String workItemId;
   final List<String> evidenceIds;
   final SchedulerTickResult tick;
+
+  /// The tick that adopted the dispatched run's durable outcome.
+  ///
+  /// F-237 detached dispatch: [tick] STARTED the execution and returned, the
+  /// run's continuation released the claim, and [adoptTick] is the next
+  /// tick — the one whose step-1 reconcile adopted the terminal worker
+  /// execution. `reconciled`, `retryReturned` and `cancelledQueued` are read
+  /// off THIS result: adopt and the retry-return pass are one tick now, so
+  /// there is no later tick to observe them on.
+  final SchedulerTickResult adoptTick;
+
+  /// The work item's state read BETWEEN the run's claim release and the
+  /// adopting tick — the only moment a test can observe the state the
+  /// coordinator left the item in (`agentCompleted`, `agentFailed`) before
+  /// the adopting tick's own passes move it again.
+  final WorkItemState itemStateWhenClaimReleased;
   final Job job;
   final Scheduler scheduler;
   final PostgresJobStore jobStore;
+
+  /// The scoped store the settle wait polls, listing only this run's jobs.
+  ///
+  /// Two things are true of it. It is NARROWED like the scheduler's own
+  /// store: the wait reads `listJobs()`, and the unscoped [jobStore] would
+  /// make this run block on another suite's in-flight job in the shared
+  /// database. And it is backed by an INDEPENDENT `PersistenceDatabase`
+  /// wrapper over the same `session.db`: the detached run commits its
+  /// durable tail inside `workerStore.inTransaction` on [db], and a poll on
+  /// that same wrapper would attach to the worker's transaction and die
+  /// with `Session or transaction has already finished` when the commit
+  /// lands mid-poll. A second wrapper has a transaction slot of its own.
+  final JobStore scopedJobStore;
   final TriageProcessor processor;
   final PostgresTriageStore triageStore;
   final PostgresDefectStore defectStore;
@@ -628,6 +661,13 @@ class _TriageRun {
 
   Future<TriageResult?> process() => processor.processCompletedTriageJob(job);
 
+  /// The settle half of detached dispatch (F-237) for a dispatch made AFTER
+  /// this run was built — the scheduled retry. Waits for the run's
+  /// continuation to release the claim, then returns the adopting tick's
+  /// result, which is where the settled verdict is named (`reconciled`).
+  Future<SchedulerTickResult> settle() =>
+      settleHeldJobs(scopedJobStore, scheduler);
+
   /// A brand new processor over a brand new execution store backed by the same
   /// file, i.e. what a restarted server would observe.
   ///
@@ -655,9 +695,12 @@ class _TriageRun {
       workItemId: workItemId,
       evidenceIds: evidenceIds,
       tick: tick,
+      adoptTick: adoptTick,
+      itemStateWhenClaimReleased: itemStateWhenClaimReleased,
       job: job,
       scheduler: scheduler,
       jobStore: jobStore,
+      scopedJobStore: scopedJobStore,
       triageStore: triageStore,
       defectStore: defectStore,
       workflowStore: workflowStore,
@@ -982,6 +1025,15 @@ Future<_TriageRun> _dispatchTriage({
     jobStore,
     'defect-DEF-$runId',
   );
+  // The settle poll's view of the same jobs, over an INDEPENDENT
+  // `PersistenceDatabase` wrapper: the detached run commits inside
+  // `workerStore.inTransaction` on [db], and a claim-release poll on that
+  // same wrapper would attach to the worker's transaction and die the
+  // moment the commit lands mid-poll. See `integration_settle.dart`.
+  final pollJobStore = _ScopedJobStore.forPrefix(
+    PostgresJobStore(PersistenceDatabase(db.db)),
+    'defect-DEF-$runId',
+  );
   final scheduler = Scheduler(
     schedulerId: 'sched-triage-$runId',
     workflowStore: _ScopedWorkflowStore(
@@ -1017,6 +1069,22 @@ Future<_TriageRun> _dispatchTriage({
       'expected exactly one dispatched triage job, got ${tick.dispatched}',
     );
   }
+
+  // F-237 detached dispatch: [tick] STARTED the run and returned while it
+  // was still in flight. The run's continuation releases the claim once the
+  // durable outcome is written, and the NEXT tick's step-1 reconcile adopts
+  // the terminal worker execution. The two halves are kept observable on
+  // purpose: the item's state is read BETWEEN release and adoption — the
+  // only moment the state the coordinator left it in (`agentCompleted`,
+  // `agentFailed`) is visible, before the adopting tick's own passes (the
+  // retry-return among them) move it again — and the job is read AFTER
+  // adoption, so a test sees the settled verdict exactly like the
+  // pre-detached read did.
+  await waitForClaimRelease(pollJobStore);
+  final itemStateWhenClaimReleased = (await workflowStore.readWorkItem(
+    'defect-DEF-$runId',
+  )).state;
+  final adoptTick = await scheduler.tick();
   final job = await jobStore.readJob(tick.dispatched.single);
   if (job == null) {
     repo.dispose();
@@ -1033,9 +1101,12 @@ Future<_TriageRun> _dispatchTriage({
     workItemId: 'defect-DEF-$runId',
     evidenceIds: [evidenceIdFor(runId)],
     tick: tick,
+    adoptTick: adoptTick,
+    itemStateWhenClaimReleased: itemStateWhenClaimReleased,
     job: job,
     scheduler: scheduler,
     jobStore: jobStore,
+    scopedJobStore: pollJobStore,
     processor: TriageProcessor(
       db: db,
       workflowStore: workflowStore,
@@ -1541,6 +1612,26 @@ void main() {
             // Positive control fired: the real scheduler, real worker and real
             // coordinator produced a real design-revision job.
             expect(tick.dispatched, hasLength(1));
+
+            // F-237 detached dispatch: the tick STARTED the control run and
+            // returned; its claim release plus this reconcile tick is what
+            // settles it, so the verdict below is the adopted one — the same
+            // two-step every other dispatch in this suite now takes. The wait
+            // is scoped to the same two work items the design scheduler owns,
+            // never the whole shared table, and polls over an independent
+            // `PersistenceDatabase` wrapper for the same reason
+            // `_dispatchTriage`'s does — the design worker's own terminal
+            // commit runs `workerStore.inTransaction` on `run.db`.
+            await settleHeldJobs(
+              _ScopedJobStore.forWorkItems(
+                PostgresJobStore(PersistenceDatabase(run.db.db)),
+                {
+                  run.designRemediationWorkItemId,
+                  controlWorkItemId,
+                },
+              ),
+              designScheduler,
+            );
             final controlJob = await run.jobStore.readJob(
               tick.dispatched.single,
             );
@@ -1892,24 +1983,25 @@ void main() {
             expect(run.job.maxAttempts, triageDefectDefinition.maxAttempts);
 
             // `RetryPolicy.retryDelay` is one minute, so the retry is not yet
-            // due, and the work item has been moved to `agentFailed` by the
+            // due, and the work item was moved to `agentFailed` by the
             // coordinator settling the interrupted execution — outside every
-            // triage entry state.
+            // triage entry state. That state is observed BETWEEN the run's
+            // claim release and the adopting tick: adopt and return are one
+            // pass inside a tick now (F-237), so no later read can see it.
             expect(run.job.availableAt, DateTime.utc(2026, 3, 1, 12, 1));
             expect(
-              (await run.workflowStore.readWorkItem(run.workItemId)).state,
+              run.itemStateWhenClaimReleased,
               WorkItemState.agentFailed,
             );
 
-            // ---- THE RETURN, on the very next tick.
+            // ---- THE RETURN, inside the adopting tick.
             //
-            // This is the tick that used to cancel the retry. It now hands the
-            // item back to `designNotRequired`, which is
+            // This is the pass that used to cancel the retry. In one tick it
+            // adopted run 1, parked the bounded retry AND handed the item
+            // back to `designNotRequired`, which is
             // `triageDefectDefinition.entryStates` and always was.
-            final returning = await run.scheduler.tick();
-
             expect(
-              returning.cancelledQueued,
+              run.adoptTick.cancelledQueued,
               isEmpty,
               reason:
                   'LINK 4 OF THE DEFECT, inverted. The retry that was just '
@@ -1918,7 +2010,9 @@ void main() {
                   'nothing drained it, so an operator saw nothing either.',
             );
             expect(
-              returning.retryReturned.where((m) => m.returned).map((m) => m.to),
+              run.adoptTick.retryReturned
+                  .where((m) => m.returned)
+                  .map((m) => m.to),
               [WorkItemState.designNotRequired],
               reason:
                   'the item went back to the triage lane\'s OWN entry state — '
@@ -1929,7 +2023,7 @@ void main() {
               WorkItemState.designNotRequired,
             );
             expect(
-              returning.dispatched,
+              run.adoptTick.dispatched,
               isEmpty,
               reason: 'the one-minute back-off has not elapsed yet',
             );
@@ -1959,7 +2053,10 @@ void main() {
             //
             // Not "a retry was scheduled" — that already worked. This is the
             // second real agent session, in a second real worktree, through the
-            // real coordinator and the real platform verifier.
+            // real coordinator and the real platform verifier. Detached again:
+            // the claim release plus this tick's reconcile-adoption is what
+            // settles it (F-237).
+            await run.settle();
             final recovered = await run.jobStore.readJob(run.job.jobId);
             expect(recovered!.state, JobState.succeeded);
             expect(recovered.attempt, 2);
@@ -1979,10 +2076,10 @@ void main() {
             //
             // The RECOVERED row has to be handed to the processor, not
             // `run.process()`: that helper reads `run.job`, which is the
-            // SNAPSHOT taken at the first dispatch — the failed one — so it is
-            // null for the uninteresting reason that a `retryWaiting` job has no
-            // result to consume. Both are asserted, so the difference is stated
-            // rather than assumed.
+            // SNAPSHOT taken after the first run was adopted — the
+            // `retryWaiting` one — so it is null for the uninteresting reason
+            // that a `retryWaiting` job has no result to consume. Both are
+            // asserted, so the difference is stated rather than assumed.
             expect(await run.process(), isNull);
             expect(
               await run.processor.processCompletedTriageJob(recovered),
