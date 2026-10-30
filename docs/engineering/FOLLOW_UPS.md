@@ -3850,3 +3850,22 @@ process-orphaned `running` rows `interrupted`/`orphaned`.
 ## F-236: `SHIPIT_PROVISION_DURABLE_WORKSPACE` still set in docker/.env
 Boot banner advises clearing it (already-provisioned no-op). One-line env cleanup at next compose touch.
 - **Priority:** trivial housekeeping.
+
+## F-237: CONFIRMED — dispatch awaits the whole execution inside the single-flight tick (all lanes serialize to ~1 concurrent execution)
+`await _dispatch.run(request)` at `scheduler.dart:1960` returns the TERMINAL WorkerExecutionResult;
+it is awaited serially inside `Scheduler.tick()`'s dispatch loop (`:1068`), and all five schedulers
+run inside ONE `TickSingleFlight` (`server.dart:1242-1245`, guard held until `runTick` returns).
+During any in-flight execution there is no tick at all — no reconcile, no enqueue, no drain, for
+every lane simultaneously. Explains the ~1h enqueue delay on the reset items, the 25
+`TICK_OVERLAP_DROPPED` events, and the missing design drains. `server.dart:1115-1148` already names
+it: "PRE-EXISTING and NOT fixed" — a defect riding on the deliberate single-flight mechanism.
+`maxHold` (17h derived) only mitigates a wedged tick.
+- **Recommended remediation (research-verified):** option 1 — detach dispatch-start from completion.
+  Keep claim + `markRunning` (`:1940-1957`) but stop awaiting the terminal result; settle jobs via
+  the existing durable `_reconcileClaim` → `_adoptFromExecution` path (`:2709-2750`,`:3030`), which
+  already adopts terminal executions after claim-lease expiry — restart-safe by construction. Add an
+  in-process completion continuation for promptness. Optionally a per-tick dispatch cap on top.
+  Per-lane single flights rejected: each lane would still serialize to its own run AND breaks the
+  load-bearing design-before-impl ordering (`server.dart:1326-1399`).
+- **Priority:** THE throughput defect of the platform — every lane's cadence collapses to ~1
+  execution at a time whenever any agent runs for hours.

@@ -1531,3 +1531,12 @@ blocked behind it; then remediate as a design change.
   `OnboardingWorker` (same defect class). Worktree `fix/onboarding-worker-lease-bound`.
 Live QA self-recovered meanwhile: both test items got fresh `design_revision` jobs at 05:06
 (one running on retry at 11:08, one failed), impl jobs draining 1/tick.
+
+### research-tick-hold → CONFIRMED (lane d4d34573, RESEARCH_COMPLETE)
+Dispatch awaits the terminal result inside the shared single-flight tick
+(`scheduler.dart:1960` awaited serially at `:1068`; guard `server.dart:1242-1245` gates all 5
+schedulers for the execution's whole duration). Enqueue isn't capacity/evaluator-gated — it is
+unreachable while any execution runs. Filed as F-237 with the verified fix shape (detach dispatch
+from completion; `_reconcileClaim`/`_adoptFromExecution` already adopts terminal executions after
+claim-lease expiry). Remediation lane queued AFTER `impl-onboarding-lease` closes — the detach
+work touches scheduler/worker_dispatch paths that could overlap `packages/worker_runtime/**`.
