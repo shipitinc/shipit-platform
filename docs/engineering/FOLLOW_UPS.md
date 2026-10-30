@@ -3798,13 +3798,19 @@ schedulers from a single source of truth so a fifth scheduler cannot be silently
 - **Priority:** Non-blocking observability gap — found by the deploy lane verifying by identity.
 
 ## F-230: `implement_feature` jobs defer on `product_missing` — the readiness gate requires a governed product
-6 of 7 queued implement jobs (`defect-DEF-1791684*/5*/6*` items) defer per-tick under
-`[implementation.deferred.product_missing]`: product `defects` is not governed, so the readiness probe
-refuses dispatch. This is a truthful gate firing on a DATA condition, not a wedge — but it means the
-entire defect backlog routed to product `defects` can never implement until that product is governed or
-the items are re-parented. Product-scope question for the operator, not a lane fix.
-- **Priority:** Blocking the implementation lane for every item filed under `defects` — surfaced to the
-  operator; deciding whether `defects` becomes a governed product is a product decision.
+**Corrected 2026-10-30 by verbatim server-log read:** only ONE job genuinely defers on this gate —
+`jb-hnnwg8c8f8` (`design-remediation-DEF-1791685264570406`, productId `defects`, which has NO product
+row): `implementation.deferred.product_missing` once per tick. The other 6 queued jobs
+(`defect-DEF-1791684*/5*/6*`, product `shipit-platform`, governed) emit `implementation.readiness.resolved`
+every tick and are never claimed — they starve silently on the agent-capacity cap
+(`SHIPIT_DISPATCH_MAX_CONCURRENT_AGENTS=2`, consumed by the live design/impl executions) and the
+single-flight tick held by in-flight design-agent runs. NOT a product-governance block for them.
+- **Residual product decision (small):** the `defects` productId on manually-created/test items has no
+  product row — either re-parent those items or register the product; only `jb-hnnwg8c8f8` waits on it.
+- **Observability gap folded in:** probe deferrals and capacity deferrals emit no `scheduler_event`
+  rows — only `workerBusy` does — so a starved job is invisible in the DB; reads require server stdout.
+- **Priority:** Narrow — one test item parked on a product decision; the capacity starvation resolves
+  itself when the running agents settle.
 
 ## F-231: Agent worktrees fork from a stale starting revision (`f58d6fb`, Oct 9)
 Every `worker_execution.requestedStartingRevision` observed = `f58d6fb` — the checkout the workspace
@@ -3812,3 +3818,15 @@ manager materialized once and never advanced. Agents review/implement 400-commit
 must then reconcile with current `main`. Fix: the composition should re-resolve starting revision per
 dispatch (or per boot) against the canonical checkout/remote, not pin whatever the clone held at seed time.
 - **Priority:** Correctness hazard for every agent lane — stale-base outputs will conflict on merge.
+
+## F-232: `OnboardingWorker` retains the pre-F-226 starvation shape
+`onboarding_worker.dart` `run()` has no whole-run bound and `_finish` still clears `_leased` inline —
+a wedged store/driver starves the onboarding worker identically to F-226's `LocalWorker` defect.
+Same defect class, different worker — needs its own correction, NOT folded into the F-226 lane
+(reviewer MEDIUM on `2b24f4e`).
+- **Priority:** Same starvation class; onboarding is lower-frequency but the wedge is identical.
+
+## F-233: Merge/integration authority — F-227 dedupe self-heal is MERGE_APPROVED, awaiting merge
+`fix/dedupe-key-self-heal` @ `0d43d8f` — integrator `MERGE_APPROVED`, clean rehearsal (tree
+`d86e1d85`, identical reviewed blobs), merge-tier gates green except `make test-integration`
+(deferred to merge executor). Merge + push need authorization; 401 local commits are unpushed.
