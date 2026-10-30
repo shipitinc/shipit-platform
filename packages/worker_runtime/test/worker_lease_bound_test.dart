@@ -48,12 +48,13 @@ void main() {
     required WorkerStore store,
     Duration abandonStepBound = const Duration(seconds: 5),
     ArtifactCommitter artifactCommitter = const ArtifactCommitter(),
+    WorkspaceManager? manager,
   }) {
     return LocalWorker(
       workerId: 'w-test',
       poolId: 'test-pool',
       capabilities: const {WorkerCapability.linux},
-      workspaceManager: workspaceManager,
+      workspaceManager: manager ?? workspaceManager,
       executionDriver: driver,
       workerStore: store,
       artifactCommitter: artifactCommitter,
@@ -65,19 +66,21 @@ void main() {
     );
   }
 
-  WorkerExecutionRequest buildRequest(String workerExecutionId) =>
-      WorkerExecutionRequest(
-        workerExecutionId: workerExecutionId,
-        workItemId: 'wi-1',
-        repositoryPath: repo.root.path,
-        startingRevision: repo.startingRevision,
-        requiredCapabilities: const {WorkerCapability.linux},
-        role: AgentRole.implementer,
-        instruction: 'Implement add(2,3)==5 inside the worktree.',
-        timeoutSeconds: 1,
-        runtimeTypeId: 'stub-runtime',
-        cleanupPolicy: WorkerCleanupPolicy.removeAlways,
-      );
+  WorkerExecutionRequest buildRequest(
+    String workerExecutionId, {
+    int timeoutSeconds = 1,
+  }) => WorkerExecutionRequest(
+    workerExecutionId: workerExecutionId,
+    workItemId: 'wi-1',
+    repositoryPath: repo.root.path,
+    startingRevision: repo.startingRevision,
+    requiredCapabilities: const {WorkerCapability.linux},
+    role: AgentRole.implementer,
+    instruction: 'Implement add(2,3)==5 inside the worktree.',
+    timeoutSeconds: timeoutSeconds,
+    runtimeTypeId: 'stub-runtime',
+    cleanupPolicy: WorkerCleanupPolicy.removeAlways,
+  );
 
   group('a drive wedged at an unbounded await', () {
     test(
@@ -417,6 +420,82 @@ void main() {
       );
       expect(await workspaceManager.discoverAll(), isEmpty);
     }, timeout: const Timeout(Duration(minutes: 1)));
+
+    test('wedged inside workspaceManager.cleanup: the resumed drive cannot '
+        'resurrect the timedOut row', () async {
+      final store = InMemoryWorkerStore();
+      // The drive makes it all the way to _finalCleanup and wedges on
+      // the FIRST cleanup call — the exact await the post-resume blind
+      // _setCleanup upsert follows. Later calls (the abandon path's own
+      // cleanup) pass straight through, so the terminal write lands
+      // with the honest cleanup outcome.
+      final gatedWorkspace = _GatedWorkspaceManager(workspaceManager)
+        ..armCleanupGate();
+      final driver = _WedgingDriver();
+      final worker = buildWorker(
+        driver: driver,
+        store: store,
+        manager: gatedWorkspace,
+        abandonStepBound: const Duration(milliseconds: 300),
+      );
+
+      // Drive the run WITHOUT awaiting so the test can confirm the
+      // drive reached the cleanup wedge before the whole-run bound
+      // fires at ~4.45s — otherwise this exercises the wrong stage.
+      final runFuture = worker.run(
+        buildRequest('wx-cleanup', timeoutSeconds: 4),
+      );
+      final deadline = DateTime.now().add(const Duration(seconds: 3));
+      while (gatedWorkspace.cleanupCalls.isEmpty &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      expect(
+        gatedWorkspace.cleanupCalls,
+        isNotEmpty,
+        reason:
+            'the drive must reach _finalCleanup and wedge inside '
+            'workspaceManager.cleanup before the bound fires — this '
+            'call arriving pre-bound is what makes it the FIRST, '
+            'gated call rather than the abandon path\u2019s',
+      );
+
+      final abandoned = await runFuture;
+      expect(abandoned.status, WorkerExecutionStatus.timedOut);
+      expect(
+        (await store.readWorkerExecution('wx-cleanup'))?.status,
+        WorkerExecutionStatus.timedOut,
+      );
+
+      // Unwedge the cleanup. The detached drive resumes into
+      // _setCleanup and _finish — the two blind upserts this
+      // regression covers — and must be fenced out of both.
+      gatedWorkspace.openCleanupGate();
+      await Future<void>.delayed(const Duration(seconds: 1));
+
+      final persisted = await store.readWorkerExecution('wx-cleanup');
+      expect(
+        persisted?.status,
+        WorkerExecutionStatus.timedOut,
+        reason:
+            'the resumed drive\u2019s blind cleanup-record upsert would '
+            'rewrite the terminal row back to agentExecuting',
+      );
+      expect(
+        persisted?.endedAt,
+        isNotNull,
+        reason:
+            'a resurrected row is the stale in-memory copy: it carries '
+            'endedAt=null again',
+      );
+      expect(persisted?.failureCode, WorkerFailureCode.timedOut);
+      expect(
+        (await store.readResult('wx-cleanup'))?.status,
+        WorkerExecutionStatus.timedOut,
+        reason: 'the saved result must not be overwritten either',
+      );
+      expect(await workspaceManager.discoverAll(), isEmpty);
+    }, timeout: const Timeout(Duration(minutes: 1)));
   });
 }
 
@@ -512,6 +591,46 @@ class _CountingCommitter extends ArtifactCommitter {
       branchPrefix: branchPrefix,
     );
   }
+}
+
+/// A [WorkspaceManager] that forwards to a real manager but holds the
+/// FIRST `cleanup` call on a gate the test controls — the shape of the
+/// drive wedging inside the cleanup await that precedes the blind
+/// `_setCleanup` upsert. Only the first call is gated: the abandon
+/// path's own cleanup must still run so the terminal row is written
+/// with the honest outcome.
+class _GatedWorkspaceManager implements WorkspaceManager {
+  _GatedWorkspaceManager(this._inner);
+
+  final WorkspaceManager _inner;
+  Completer<void>? _cleanupGate;
+  var _callIndex = 0;
+  final cleanupCalls = <WorkspaceDescriptor>[];
+
+  void armCleanupGate() => _cleanupGate = Completer<void>();
+
+  void openCleanupGate() {
+    _cleanupGate?.complete();
+    _cleanupGate = null;
+  }
+
+  @override
+  Future<WorkspaceDescriptor> prepare(
+    WorkerExecutionRequest request, {
+    String workerId = '',
+  }) => _inner.prepare(request, workerId: workerId);
+
+  @override
+  Future<WorkerCleanupStatus> cleanup(WorkspaceDescriptor descriptor) async {
+    final index = _callIndex++;
+    cleanupCalls.add(descriptor);
+    final gate = _cleanupGate;
+    if (gate != null && index == 0) await gate.future;
+    return _inner.cleanup(descriptor);
+  }
+
+  @override
+  Future<List<WorkspaceDescriptor>> discoverAll() => _inner.discoverAll();
 }
 
 /// A [WorkerStore] that forwards everything to an in-memory store but can

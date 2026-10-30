@@ -449,10 +449,20 @@ class LocalWorker implements Worker {
       createdAt: startedAt,
       startedAt: startedAt,
     );
-    await workerStore.inTransaction((tx) async {
+    final acquired = await workerStore.inTransaction<bool>((tx) async {
+      // If THIS transaction is where the drive wedged, the abandon path
+      // already owns the run's ending by the time the body resumes: the
+      // acquiring row and its event are blind upserts that would
+      // resurrect a terminal record. The fence goes INSIDE the body —
+      // the top of the body is the first statement to run post-resume.
+      if (_isStale(epoch)) return false;
       await tx.saveWorkerExecution(execution);
       await _event(execution, WorkerEventType.workerAcquired, via: tx);
+      return true;
     });
+    if (!acquired) {
+      return _detachedResult(execution, null);
+    }
 
     WorkspaceDescriptor? descriptor;
     var cleanupStatus = WorkerCleanupStatus.notApplicable;
@@ -471,6 +481,7 @@ class LocalWorker implements Worker {
       execution = await _transition(
         execution,
         WorkerExecutionStatus.workspacePreparing,
+        epoch: epoch,
       );
       try {
         descriptor = await workspaceManager.prepare(
@@ -479,6 +490,13 @@ class LocalWorker implements Worker {
         );
         if (!_isStale(epoch)) _activeDescriptor = descriptor;
       } on Object catch (e) {
+        if (_isStale(epoch)) {
+          // Abandoned while wedged inside prepare, which then threw —
+          // commonly the abandon cleanup removing the worktree under it.
+          // The prepareFailed event and the terminal write below belong
+          // to a run that already settled as timedOut.
+          return _detachedResult(execution, agentExecutionId);
+        }
         failureCode = WorkerFailureCode.prepareFailed;
         failureDetail = e.toString();
         finalStatus = WorkerExecutionStatus.prepareFailed;
@@ -497,10 +515,25 @@ class LocalWorker implements Worker {
         );
       }
 
+      if (_isStale(epoch)) {
+        // A drive abandoned while it was wedged inside prepare resumes
+        // here: the workspaceReady event and the agentExecuting
+        // transition below are fresh writes on a run the abandon path
+        // already ended. Unwind the workspace it just prepared — the
+        // abandon path never learned about it (the _activeDescriptor
+        // guard above refused it) — and stop.
+        try {
+          await workspaceManager.cleanup(descriptor);
+        } on Object {
+          // Best-effort, exactly as in the post-transition bail below.
+        }
+        return _detachedResult(execution, agentExecutionId);
+      }
       await _event(execution, WorkerEventType.workspaceReady);
       execution = await _transition(
         execution,
         WorkerExecutionStatus.agentExecuting,
+        epoch: epoch,
       );
       final agentRequest = _agentRequest(execution, request, descriptor);
       agentExecutionId = agentRequest.executionId;
@@ -523,6 +556,12 @@ class LocalWorker implements Worker {
       AgentExecution settled;
       try {
         await _event(execution, WorkerEventType.executionStarted);
+        if (_isStale(epoch)) {
+          // Abandoned while wedged in the event write: starting the
+          // session now would run real agent work nobody is waiting
+          // for, on a slot a successor may already hold.
+          return _detachedResult(execution, agentExecutionId);
+        }
         settled = await executionDriver
             .execute(agentRequest)
             .timeout(
@@ -546,6 +585,7 @@ class LocalWorker implements Worker {
           execution,
           request,
           descriptor,
+          epoch: epoch,
         );
         return _finish(
           execution,
@@ -586,6 +626,12 @@ class LocalWorker implements Worker {
       final verifications = await executionDriver.verificationsFor(
         agentRequest.executionId,
       );
+      if (_isStale(epoch)) {
+        // Abandoned while wedged in this read (or in the inspection
+        // above): the verificationStarted event and everything below
+        // are fresh writes on a run that already settled.
+        return _detachedResult(execution, agentExecutionId);
+      }
       if (verifications.isNotEmpty) {
         await _event(execution, WorkerEventType.verificationStarted);
         verificationId = verifications.first.verificationId;
@@ -658,6 +704,13 @@ class LocalWorker implements Worker {
               'shipit artifact: ${request.workItemId} '
               '(${request.role.wire}) ${request.workerExecutionId}',
         );
+        if (_isStale(epoch)) {
+          // Abandoned while wedged inside the commit itself: the branch
+          // move may already have happened (the documented race), but
+          // the artifactCommitFailed event below must not land on a run
+          // that already settled.
+          return _detachedResult(execution, agentExecutionId);
+        }
         if (committed.revision != null) {
           endingRevision = committed.revision;
         } else if (committed.failureDetail != null) {
@@ -708,6 +761,7 @@ class LocalWorker implements Worker {
       request,
       descriptor,
       finalStatus: finalStatus,
+      epoch: epoch,
     );
     return _finish(
       execution,
@@ -789,15 +843,23 @@ class LocalWorker implements Worker {
     WorkerExecutionRequest request,
     WorkspaceDescriptor? descriptor, {
     WorkerExecutionStatus finalStatus = WorkerExecutionStatus.executedFail,
+    int? epoch,
   }) async {
     if (descriptor == null) return WorkerCleanupStatus.notApplicable;
     if (request.cleanupPolicy.preservesOnFailure &&
         finalStatus != WorkerExecutionStatus.executedPass) {
-      await _setCleanup(execution, WorkerCleanupStatus.preservedPerPolicy);
+      await _setCleanup(
+        execution,
+        WorkerCleanupStatus.preservedPerPolicy,
+        epoch: epoch,
+      );
       return WorkerCleanupStatus.preservedPerPolicy;
     }
     final status = await workspaceManager.cleanup(descriptor);
-    await _setCleanup(execution, status);
+    // A drive abandoned while it was wedged inside the cleanup await
+    // resumes here; the epoch-fenced record write is what keeps its
+    // blind upsert from resurrecting the abandon path's terminal row.
+    await _setCleanup(execution, status, epoch: epoch);
     return status;
   }
 
@@ -806,14 +868,19 @@ class LocalWorker implements Worker {
   Future<WorkerCleanupStatus> _cleanupAfterFailure(
     WorkerExecution execution,
     WorkerExecutionRequest request,
-    WorkspaceDescriptor descriptor,
-  ) async {
+    WorkspaceDescriptor descriptor, {
+    int? epoch,
+  }) async {
     if (request.cleanupPolicy.preservesOnFailure) {
-      await _setCleanup(execution, WorkerCleanupStatus.preservedPerPolicy);
+      await _setCleanup(
+        execution,
+        WorkerCleanupStatus.preservedPerPolicy,
+        epoch: epoch,
+      );
       return WorkerCleanupStatus.preservedPerPolicy;
     }
     final status = await workspaceManager.cleanup(descriptor);
-    await _setCleanup(execution, status);
+    await _setCleanup(execution, status, epoch: epoch);
     return status;
   }
 
@@ -846,6 +913,13 @@ class LocalWorker implements Worker {
     final current =
         await workerStore.readWorkerExecution(execution.workerExecutionId) ??
         execution;
+    // Second fence, between the re-read and the transaction: a drive
+    // abandoned while it was wedged in the read resumes here, and a CAS
+    // built on the pre-abandon version would land terminal + result +
+    // event over the abandon path's row.
+    if (epoch != null && _isStale(epoch)) {
+      return _detachedResult(execution, agentExecutionId);
+    }
     final terminal = current.copyWith(
       status: finalStatus,
       workspaceId: current.workspaceId ?? '',
@@ -859,7 +933,14 @@ class LocalWorker implements Worker {
     );
     late final WorkerExecutionResult result;
 
-    await workerStore.inTransaction((tx) async {
+    final committed = await workerStore.inTransaction<bool>((tx) async {
+      // Last fence INSIDE the transaction machinery: a drive abandoned
+      // while it was wedged waiting on the transaction resumes at the
+      // top of this body, before any write. The residual window —
+      // abandonment between the individual writes below — is what
+      // [WorkerStore.saveWorkerExecution]'s expectedVersion CAS covers
+      // where the store enforces it; it cannot shrink further from here.
+      if (epoch != null && _isStale(epoch)) return false;
       await tx.saveWorkerExecution(terminal, expectedVersion: current.version);
 
       result = WorkerExecutionResult(
@@ -912,7 +993,11 @@ class LocalWorker implements Worker {
         payload: {'status': finalStatus.name},
         via: tx,
       );
+      return true;
     });
+    if (!committed) {
+      return _detachedResult(execution, agentExecutionId);
+    }
     // The lease is deliberately NOT cleared here. `_leased` belongs to the
     // run, and `run`'s finally is the only place that releases it: a drive
     // that was abandoned at the whole-run bound is turned back by the epoch
@@ -925,8 +1010,14 @@ class LocalWorker implements Worker {
 
   Future<WorkerExecution> _transition(
     WorkerExecution execution,
-    WorkerExecutionStatus status,
-  ) async {
+    WorkerExecutionStatus status, {
+    int? epoch,
+  }) async {
+    // Epoch fence, same contract as [_finish]: callers pass the drive's
+    // epoch, and a detached drive resumed from a wedge must not
+    // blind-upsert a stale status over the abandon path's terminal row.
+    // Null epoch means the caller IS the legitimate writer.
+    if (epoch != null && _isStale(epoch)) return execution;
     final next = execution.copyWith(
       status: status,
       version: execution.version + 1,
@@ -937,8 +1028,14 @@ class LocalWorker implements Worker {
 
   Future<void> _setCleanup(
     WorkerExecution execution,
-    WorkerCleanupStatus status,
-  ) async {
+    WorkerCleanupStatus status, {
+    int? epoch,
+  }) async {
+    // Epoch fence, same contract as [_transition]: without it a detached
+    // drive resumed from a wedge inside workspaceManager.cleanup would
+    // blind-upsert this record over the abandon path's terminal row —
+    // resurrecting timedOut back to a live status with endedAt cleared.
+    if (epoch != null && _isStale(epoch)) return;
     final next = execution.copyWith(
       cleanupStatus: status,
       version: execution.version + 1,
