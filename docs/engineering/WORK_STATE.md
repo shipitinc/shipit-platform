@@ -1565,3 +1565,10 @@ integration files). QA stack untouched, still on pre-F-237 revision. Correction 
 `correct-f237-integration-tests` dispatched (branch `fix/f237-integration-settle`, owns
 apps/server/test/integration/** + test/support/**) — includes a teardown-leak fix (detached
 executions outliving session disposal). Redeploy retries once the gate is green.
+
+### F-237 integration-settle merged — merge-tier gate green
+`fix/f237-integration-settle` merged (human-authorized "merge now"): all 35 red-gate failures
+resolved via reconcile-adoption settle; `make test-integration` verified +319 by independent
+reviewer AND integrator evidence. QA redeploy for F-237 can now retry at HEAD with a green
+merge-tier gate. Open: F-238 production-race candidate (server.dart shared `db` wrapper),
+queued behind the redeploy verification.
