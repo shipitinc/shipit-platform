@@ -1460,3 +1460,20 @@ SELF_EDITS: workflow bookkeeping only — `FOLLOW_UPS.md` (F-225 addendum, F-226
 - Deviations/discoveries routed to follow-ups: **F-229** (banner never names design schedulers),
   **F-230** (`product_missing` readiness gate — `defects` product ungoverned; product decision),
   **F-231** (worktrees fork from stale `f58d6fb`).
+
+### Correction loop + landings (2026-10-30, continued)
+- **F-227 MERGED `eeb9c97`** — human-authorized "merge now"; `make test-integration` deferred by
+  that choice (owed on next merge-tier run; store-level tests pin the emitted SQL).
+- **`defects` items re-parented** — human-authorized; 3 rows → `shipit-platform` (verified UPDATE 3).
+  `jb-hnnwg8c8f8` should stop deferring `product_missing` once the probe re-reads.
+- **worker-lease review `DO_NOT_MERGE`** — post-checkpoint fence gap: a stale drive abandoned after
+  `local_worker.dart:482` can CAS-overwrite the terminal row and force-move `shipit/impl/<id>`.
+  Correction lane dispatched (cycle 1, `correct-worker-lease-starvation`); focused re-review to follow.
+- **HD-7 Option B ALREADY LANDED** — `server.dart:386` wires `agentExecutionStore(db)`
+  (PostgresExecutionStore) at HEAD; agent executions now persist. Remainder of B→A→C:
+  `Job.failure` populates (verified on live rows) but `JobRecordView` has no `failure` field
+  (option A API half unbuilt); option C failure-detail panel unbuilt. Both need generated-path
+  ownership (`control_plane_client/**` rewrites on `serverpod generate`) — deferred, not blocking.
+- Reviewer MEDIUM filed as **F-232** (`OnboardingWorker` same starvation shape).
+- Re-dispatched after session loss: `review-impl-worker-lease-starvation` → DO_NOT_MERGE (above);
+  `integrate-dedupe-self-heal` → MERGE_APPROVED → merged.

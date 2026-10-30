@@ -1411,3 +1411,8 @@ audit trail survives.
 Ownership verified disjoint: worker-lease lane owns `packages/worker_runtime/**` only;
 dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test/**`,
 `apps/server/lib/src/persistence/postgres_job_store.dart`, `apps/server/test/**`.
+| review-impl-dedupe-self-heal | review | CLOSED | (read-only) | fix/dedupe-key-self-heal | fb8dde3 | STANDARD | APPROVE_WITH_NON_BLOCKING_FOLLOWUP | integrated |
+| integrate-dedupe-self-heal | integrate | CLOSED | temp rehearsal | fix/dedupe-key-self-heal | fb8dde3 | STANDARD | MERGE_APPROVED → merged eeb9c97 (human-authorized) | done |
+| deploy-qa-unstick | deploy | CLOSED | canonical | main | fb8dde3 | STANDARD | DEPLOYMENT_SUCCESSFUL | done |
+| review-impl-worker-lease-starvation | review | CLOSED — DO_NOT_MERGE | (read-only) | fix/worker-lease-starvation | fb8dde3 | PRECISION | post-checkpoint fence gap BLOCKER | → correction lane |
+| correct-worker-lease-starvation | correct | IN_FLIGHT | /private/tmp/shipit-fix-worker-lease-starvation | fix/worker-lease-starvation | fb8dde3 | PRECISION | await report → focused-reviewer |
