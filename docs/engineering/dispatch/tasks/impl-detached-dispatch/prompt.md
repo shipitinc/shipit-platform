@@ -8,7 +8,7 @@ FEATURE: F-237 detach dispatch-start from execution completion (tick serializati
 AREA: scheduler dispatch loop / tick composition
 WORKTREE: /private/tmp/shipit-fix-detached-dispatch
 BRANCH: fix/detached-dispatch
-BASE_SHA: <HEAD at worktree creation>
+BASE_SHA: 94d8677
 OWNED_PATHS:
   - packages/scheduler/lib/src/scheduler.dart
   - packages/scheduler/lib/src/dispatch/**
