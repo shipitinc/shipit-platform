@@ -1449,3 +1449,14 @@ SELF_EDITS: workflow bookkeeping only — `FOLLOW_UPS.md` (F-225 addendum, F-226
 - **QA unstick → Repair + redeploy at HEAD.** Human authorized: clear the 2 leaked dedupe keys,
   rebuild server+client images at `fb8dde3`, restart the QA stack via a deployment-authority lane,
   verify by identity (runMode/composition), and confirm the design lane re-enqueues.
+
+### deploy-qa-unstick → DEPLOYMENT_SUCCESSFUL (lane eac8edcd, 1700s)
+- SQL repair: 2 leaked `activeDedupeKey` cleared; `jb-hnnwapzybj` corrected `failed`→`cancelled`
+  (it never ran — no claim/dispatch/failure events); 2 un-ended `worker_execution` rows closed.
+- Server image was already byte-identical to HEAD (cache-hit; coordinator fix `68afc22` was live).
+  Client rebuilt `57832a60`; `restart server` dropped the wedged in-process leases.
+- Post-restart verified by identity: `runMode: staging`; both test items re-enqueued → claimed by
+  `sched-design-revision` → `agent_executing` live; workers idle; **0 `workerBusy` since**.
+- Deviations/discoveries routed to follow-ups: **F-229** (banner never names design schedulers),
+  **F-230** (`product_missing` readiness gate — `defects` product ungoverned; product decision),
+  **F-231** (worktrees fork from stale `f58d6fb`).

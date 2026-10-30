@@ -3787,3 +3787,28 @@ The derived column is nulled only by `saveJob`'s inline derivation (`postgres_jo
 - `wx-jb-hnntgl4dak-1vq26jz` (w-design-revision-local): status `agentExecuting`, `endedAt` NULL, running 15h+ against a 2h `design-agent` budget, on `DEF-fresh-test` — the job it served (`jb-hnny3s8b5p`) was cancelled; the execution was never closed and the 02:05 zombie sweep did NOT reclaim it (design-lane staleness bound may differ, or its job's cancellation severed the sweep's link to it).
 - **Action:** bound every non-terminal execution row's lifetime regardless of which lane owns it; reconcile `agentExecuting` rows whose owning job is terminal.
 - **Priority:** Non-blocking while workers are single-flight, but it is how F-226's slot leak becomes durable.
+
+## F-229: Composition banner does not name the design schedulers — liveness is unverifiable from boot output
+`[server.composition]` at HEAD lists `sched-triage`, `sched-impl`, `sched-baseline` but never
+`sched-design-revision`/`sched-design-review` (verified identical across two boots of the same image).
+Design-lane liveness is provable only via `job_claimed` `ownerId` payloads or tick-drain lines — the
+first thing an operator reaches for is the thing that cannot answer. Fix: add the two schedulers to the
+composition banner (server.dart composition-log site), or extend the banner to enumerate all mounted
+schedulers from a single source of truth so a fifth scheduler cannot be silently absent.
+- **Priority:** Non-blocking observability gap — found by the deploy lane verifying by identity.
+
+## F-230: `implement_feature` jobs defer on `product_missing` — the readiness gate requires a governed product
+6 of 7 queued implement jobs (`defect-DEF-1791684*/5*/6*` items) defer per-tick under
+`[implementation.deferred.product_missing]`: product `defects` is not governed, so the readiness probe
+refuses dispatch. This is a truthful gate firing on a DATA condition, not a wedge — but it means the
+entire defect backlog routed to product `defects` can never implement until that product is governed or
+the items are re-parented. Product-scope question for the operator, not a lane fix.
+- **Priority:** Blocking the implementation lane for every item filed under `defects` — surfaced to the
+  operator; deciding whether `defects` becomes a governed product is a product decision.
+
+## F-231: Agent worktrees fork from a stale starting revision (`f58d6fb`, Oct 9)
+Every `worker_execution.requestedStartingRevision` observed = `f58d6fb` — the checkout the workspace
+manager materialized once and never advanced. Agents review/implement 400-commit-old code; their output
+must then reconcile with current `main`. Fix: the composition should re-resolve starting revision per
+dispatch (or per boot) against the canonical checkout/remote, not pin whatever the clone held at seed time.
+- **Priority:** Correctness hazard for every agent lane — stale-base outputs will conflict on merge.
