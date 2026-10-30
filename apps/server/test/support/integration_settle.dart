@@ -24,16 +24,17 @@ import 'settle.dart' show waitUntil;
 /// own rows, and handing the wait the unscoped store would make one suite
 /// block on another suite's in-flight job.
 ///
-/// For session-scoped Postgres stores the poll must ALSO run on an
-/// INDEPENDENT `PersistenceDatabase` wrapper over the same `session.db` —
-/// `PersistenceDatabase(db.db)`, never the harness's own `db`. The detached
-/// run commits its durable tail inside `workerStore.inTransaction`, and a
-/// `PersistenceDatabase` routes every query through its single active
-/// transaction slot: a poll issued on the shared wrapper while the worker's
-/// commit is open attaches to THAT transaction and dies with
+/// For session-scoped Postgres stores the poll still runs on an INDEPENDENT
+/// `PersistenceDatabase` wrapper over the same `session.db` —
+/// `PersistenceDatabase(db.db)`. The detached run commits its durable tail
+/// inside `workerStore.inTransaction`, and BEFORE the F-238 fix a wrapper
+/// routed every query through a single per-instance transaction slot: a poll
+/// issued on the shared wrapper while the worker's commit was open attached
+/// to THAT transaction and died with
 /// `Session or transaction has already finished` the moment the commit
-/// lands mid-poll. A second wrapper has a slot of its own, so the poll
-/// always goes straight to the pool.
+/// landed mid-poll. The slot is now zone-scoped to the caller, so the shared
+/// wrapper is safe too — the independent wrapper here is harmless belt and
+/// braces and keeps the poll outside whatever binding a caller might hold.
 Future<void> waitForClaimRelease(
   JobStore jobStore, {
   Duration timeout = const Duration(minutes: 2),

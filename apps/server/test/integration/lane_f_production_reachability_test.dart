@@ -862,17 +862,18 @@ class _ProductionPipeline {
     final workerId = _workerIdFor(defectId);
 
     // --- the real stores, over the real database ------------------------
-    // `PersistenceDatabase` is owned by exactly ONE logical caller — a
-    // single active transaction slot — and detached dispatch (F-237) makes
-    // the components below that caller's boundary for real: a run's
-    // continuation commits inside `workerStore.inTransaction` and the
-    // coordinator settles through `engine`'s store while the SAME tick is
-    // still opening `jobStore.inTransaction` for the next job. Two callers
-    // on one wrapper is `StateError: A transaction is already active` (or a
-    // poll attaching to a finished transaction). The components that write
-    // inside the detached run therefore get their OWN wrapper over the same
-    // `session.db` — `PersistenceDatabase(db.db)` — while sequential callers
-    // keep sharing [db]. Same database, same tables, one caller per wrapper.
+    // Detached dispatch (F-237) makes these components genuinely concurrent
+    // writers: a run's continuation commits inside `workerStore.inTransaction`
+    // and the coordinator settles through `engine`'s store while the SAME
+    // tick is still opening `jobStore.inTransaction` for the next job.
+    // Before F-238's fix, two callers on one wrapper collided —
+    // `StateError: A transaction is already active`, or a poll attaching to
+    // a finished transaction — so the detached writers were given their OWN
+    // wrapper over the same `session.db` (`PersistenceDatabase(db.db)`).
+    // `PersistenceDatabase` now binds its transaction to the caller's async
+    // context rather than the instance, so the shared [db] would be safe
+    // too; the separate wrappers remain as written — same database, same
+    // tables, and harmless.
     final workflowStore = PostgresWorkflowStore(db);
     final jobStore = PostgresJobStore(db);
     final workerStore = PostgresWorkerStore(PersistenceDatabase(db.db));

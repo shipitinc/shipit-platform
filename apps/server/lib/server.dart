@@ -248,6 +248,15 @@ void run(List<String> args) async {
 
   // Set up persistence and scheduler.
   final session = await pod.createSession(enableLogging: false);
+  // ONE shared wrapper, deliberately. `PersistenceDatabase` binds its active
+  // transaction to the CALLER's asynchronous context (a zone value keyed on
+  // the wrapper), not to the instance — so two concurrent logical writers,
+  // a tick and a detached run's commit, each open their own transaction on
+  // their own pooled connection instead of colliding on a shared slot
+  // (F-238). Splitting it per store would not separate the callers that
+  // share a store object — the five LocalWorkers hold one
+  // PostgresWorkerStore — and the zone binding is what makes that split
+  // unnecessary. See the class doc.
   final db = PersistenceDatabase(session.db);
 
   final workflowStore = PostgresWorkflowStore(db);
