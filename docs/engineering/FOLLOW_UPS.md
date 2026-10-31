@@ -3894,3 +3894,15 @@ dishonest and any future code reading `retryWaiting` as "will eventually run" is
 retry scheduling should resolve `failed` when `attempt >= maxAttempts` instead of enqueueing a
 wait that can never be honored.
 - **Priority:** edge-case correctness; no live blockage (item is separately parked on a human gate).
+
+## F-240: `!isResolved` idempotent-reuse loops treat cancelled decisions as live requests (LATENT, widened surface after isOpen migration)
+`product_registry_engine` reuse loops (`requestBaselineApproval` ~L811,
+`requestLifecycleDecision` ~L1345, `requestPolicyAuthorisation` ~L1565) use `!status.isResolved`
+to mean "open request", so a `cancelled` decision is returned as "the existing request" — now
+hidden by the `isOpen` read surfaces rather than surfaced-and-resolvable (reviewer MEDIUM on
+57655fb). Latent today: nothing cancels lifecycle/policy decisions, and baseline-approval
+amendment changes contentHash so binding match fails. Also `design_readiness_reconciler.dart:116`
+counts a cancelled designApproval as pending forever (no writer cancels them today).
+Fix: migrate the reuse loops + reconciler check to `status.isOpen`.
+- **Priority:** latent; same defect class F-24x fixed — becomes live the first time a decision
+  of those types is ever cancelled.
