@@ -1459,3 +1459,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | fix-pending-decision-card | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-decision-card | fix/pending-decision-card | 226ceb8 | STANDARD | 57655fb: pendingDecisions uses blockingHumanDecisionId + isOpen; isTerminal/isOpen added | → reviewer |
 | review-fix-decision-card | review | IN_FLIGHT | (read-only) | fix/pending-decision-card | 226ceb8 | STANDARD | await result |
 | fix-needs-you-deeplink | implement | IN_FLIGHT | /private/tmp/shipit-fix-needs-you-link | fix/needs-you-deeplink | a155ef5 | PRECISION | client: Home card missing ?wi=; cancelled read-only render |
+| review-fix-decision-card | review | CLOSED | (read-only) | fix/pending-decision-card | 226ceb8 | STANDARD | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (F-240 filed for latent isResolved reuse loops) | → integrator |
+| integrate-decision-card | integrate | IN_FLIGHT | scratch rehearsal | fix/pending-decision-card | 226ceb8 | STANDARD | await MERGE_APPROVED → merge auth question |
