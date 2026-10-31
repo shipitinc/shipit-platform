@@ -3885,3 +3885,12 @@ on `inTransaction` per wrapper. This is inside F-237's blast radius and must be 
 detached-dispatch code is considered fully safe under real concurrency.
 - **Priority:** real production-race candidate — the reason F-237's integration suite found it before
   production did.
+
+## F-239: `retryWaiting` job at maxAttempts sits in limbo — never dispatches, never fails
+`jb-hnp9t75a6t-n2aon4` (`engineering_review`, attempt=2/maxAttempts=2) sits at `retryWaiting`
+4.5h+ past `availableAt`, never claimed — a job at its attempt ceiling should resolve `failed`,
+not wait forever. Its dedupeKey carries an attempt suffix so nothing is blocked, but the state is
+dishonest and any future code reading `retryWaiting` as "will eventually run" is misled. Fix:
+retry scheduling should resolve `failed` when `attempt >= maxAttempts` instead of enqueueing a
+wait that can never be honored.
+- **Priority:** edge-case correctness; no live blockage (item is separately parked on a human gate).

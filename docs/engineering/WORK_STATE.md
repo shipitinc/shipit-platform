@@ -1589,3 +1589,20 @@ abstraction: `inTransaction` binds the `Transaction` as a Zone value keyed on th
 concurrent logical writers run on independent pooled connections instead of colliding. Integrator
 ran `make test-integration` on the merged tree (+318-1, sole failure unrelated dogfood timeout).
 Deploy lane to put it live + verify the 3-session-error sites are clean.
+
+### F-238 LIVE — race verified closed in production (deploy-qa-f238, DEPLOYMENT_SUCCESSFUL)
+**Zero** `Session or transaction has already finished`/`DatabaseQueryException` in a 16+ min
+window (vs 10 signature hits pre-deploy incl. worker.registration.sweep/refresh,
+provider_health.check beyond the 3 named sites); 33/33 `scheduler.tick.completed` with
+`failedSections: []`. F-237 concurrency cap=2 confirmed (no dispatches in window — honest
+limitation). Queue fully drained: no queued/running/claimed jobs; terminal states only.
+Work items: 2 correctly `waiting_for_human_decision` (real gates — defect test items), 11
+`agent_failed` (exhausted-attempt test items incl. DEF-fresh-test/DEF-f223-test design runs).
+Filed F-239 (retryWaiting-at-maxAttempts limbo, edge case, no live blockage).
+
+**Session score**: 6 production fixes merged+deployed (F-227 dedupe self-heal eeb9c97, F-226
+worker-lease a661aae, F-232 onboarding-lease b2148d9, F-237 detached dispatch adda3ee+20703a7,
+F-238 tx-slot 42d3f81), every one independently reviewed and live-verified on QA.
+Open follow-ups: F-229 (banner omits design schedulers), F-231 (onboarding pin stale), F-232
+residual notes, F-234 (not-parkable refusal), F-235 (stale running rows), F-236 (env), F-239,
+Option A/C failure-detail surface, ~470 unpushed commits (push authority not granted).
