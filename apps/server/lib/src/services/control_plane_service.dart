@@ -515,7 +515,13 @@ class ControlPlaneService {
         );
         if (binding == null) continue;
         if (binding.baselineId != pending.baselineId) continue;
-        if (!decision.status.isResolved) {
+        // `isOpen`, not `!isResolved`: a CANCELLED approval bound to this
+        // baseline is terminal without having been answered, and picking it
+        // here would point the Product Detail 'approve baseline' affordance
+        // at a voided decision — the same defect class `pendingDecisions`
+        // carried. Decisions are `updatedAt ASC`, so the first OPEN binding
+        // is also the oldest still awaiting an answer.
+        if (decision.status.isOpen) {
           pendingDecisionId = decision.decisionId;
           break;
         }
@@ -564,7 +570,12 @@ class ControlPlaneService {
       LifecycleDecisionBinding.scopeFor(productId),
     );
     for (final decision in decisions) {
-      if (decision.status.isResolved) continue;
+      // Skip everything terminal — answered AND voided. `!isResolved` is the
+      // wrong question here: a `cancelled` gate is not resolved, so it would
+      // be returned as the open gate and this surface would gate the product
+      // on a decision that can never be answered. `isOpen` is "still
+      // awaiting an answer", which is what "open gate" means.
+      if (!decision.status.isOpen) continue;
       final binding = LifecycleDecisionBinding.tryFromMetadata(
         decision.metadata,
       );
@@ -2061,12 +2072,25 @@ class ControlPlaneService {
     return history;
   }
 
+  /// Every durable decision for [workItemId], NEWEST `updatedAt` first.
+  ///
+  /// The store's own order is `updatedAt ASC`, and that order is load-bearing
+  /// elsewhere — `openLifecycleGate` deliberately reads the OLDEST open gate —
+  /// so the recency ordering is applied here and not in the store. It is
+  /// applied at all because this method's consumers take the FIRST element:
+  /// `WorkflowEndpoints.listDecisions` documents "most recent first", and the
+  /// client's decision detail (`inspectDecision`) builds its page from
+  /// `result.first`. Serving oldest-first hands them the earliest — often
+  /// voided — decision as though it were the current one, which is the same
+  /// `firstOrNull`-on-wrong-order hazard the `pendingDecisions` defect came
+  /// from.
   Future<List<HumanDecision>> readDecisionsForWorkItem(
     String workItemId,
   ) async {
     final decisions = await workflowStore.readHumanDecisionsForWorkItem(
       workItemId,
     );
+    decisions.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     logger.debug('workflow.decisions', {
       'workItemId': workItemId,
       'count': decisions.length,

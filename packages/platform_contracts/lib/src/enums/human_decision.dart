@@ -89,6 +89,25 @@ enum HumanDecisionStatus {
 
   bool get isResolved => this == HumanDecisionStatus.resolved;
 
+  /// No answer can still arrive: the decision was either answered
+  /// ([resolved]) or voided without one ([cancelled]).
+  ///
+  /// `cancelled` is deliberately NOT folded into [isResolved]: `resolved`
+  /// means a decider recorded a choice, and the surfaces that ask "was this
+  /// answered" — the 'Already decided' ledger, the engines' idempotent-replay
+  /// checks — would mis-report a voided decision as decided. What those
+  /// surfaces are usually trying to ask is the terminal property below.
+  bool get isTerminal =>
+      this == HumanDecisionStatus.resolved ||
+      this == HumanDecisionStatus.cancelled;
+
+  /// Still awaiting an answer — the question `!isResolved` was being asked
+  /// to mean, which it cannot: `!isResolved` silently includes [cancelled],
+  /// and a voided decision is exactly the one that can never be answered.
+  /// `pending`, `inProgress`, `escalated` and `deferred` all still stand in
+  /// front of someone.
+  bool get isOpen => !isTerminal;
+
   static HumanDecisionStatus fromWire(String value) => values.firstWhere(
     (status) => status.wire == value,
     orElse: () =>

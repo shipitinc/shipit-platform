@@ -9,6 +9,19 @@ import '../services/ui_view_mappers.dart';
 
 /// Endpoints for the Home dashboard overview.
 class HomeEndpoints extends Endpoint {
+  /// Test/override seam for the service this endpoint builds.
+  ///
+  /// `@doNotGenerate` is REQUIRED and is not decoration. Serverpod treats
+  /// every public, non-`@doNotGenerate`, `Session`-first method on an
+  /// `Endpoint` as a wire endpoint and fails generation unless it returns
+  /// `Future` or `Stream`; this returns a plain `ControlPlaneService`, so
+  /// without the annotation `serverpod generate` exits 1. The same seam
+  /// exists on `WorkItemActionEndpoints` for the same reason: it is what lets
+  /// a unit test drive the REAL endpoint methods over in-memory stores.
+  @doNotGenerate
+  ControlPlaneService serviceFor(Session session) =>
+      ControlPlaneService(session);
+
   /// Returns summary counts plus the supporting detail the Overview screen
   /// renders: the finished pass/fail split, a server-stamped freshness marker,
   /// and the queue/capacity strip.
@@ -18,7 +31,7 @@ class HomeEndpoints extends Endpoint {
   /// own records", so a value that cannot be read is reported as zero/absent
   /// rather than inferred.
   Future<Overview> overview(Session session) async {
-    final service = ControlPlaneService(session);
+    final service = serviceFor(session);
     final allItems = await service.readAllWorkItems();
 
     final now = DateTime.now();
@@ -38,12 +51,20 @@ class HomeEndpoints extends Endpoint {
         )
         .length;
 
-    // Waiting on you: items whose blocking decision is still unresolved.
+    // Waiting on you: items whose blocking decision still awaits an answer.
     //
     // A work item can retain a `blockingHumanDecisionId` after that decision
     // has been answered, so the pointer alone overstates the queue. Counting
     // it would disagree with the Needs you screen, which reads the decisions
     // themselves. The decision record is the authority.
+    //
+    // `isOpen`, not `!isResolved`: a `cancelled` decision is terminal without
+    // having been answered, so an item whose pointer names a voided decision
+    // is stuck-but-not-awaiting-an-answer — and `pendingDecisions` below will
+    // not surface it. Counting it here would put a number on the card strip
+    // that no card can satisfy. A missing decision row still counts: the
+    // pointer asserts the item IS blocked, and an unverifiable row is not a
+    // reason to clear it.
     var waitingOnYou = 0;
     for (final item in allItems) {
       if (item.blockingHumanDecisionId == null || item.state.isTerminal) {
@@ -55,7 +76,7 @@ class HomeEndpoints extends Endpoint {
       final blocking = decisions
           .where((d) => d.decisionId == item.blockingHumanDecisionId)
           .firstOrNull;
-      if (blocking == null || !blocking.isResolved) waitingOnYou++;
+      if (blocking == null || blocking.status.isOpen) waitingOnYou++;
     }
 
     // Recently finished: terminal states in last 24h
@@ -140,7 +161,7 @@ class HomeEndpoints extends Endpoint {
     String? productId,
     int? limit,
   }) async {
-    final service = ControlPlaneService(session);
+    final service = serviceFor(session);
     var items = await service.readAllWorkItems();
 
     if (state != null) {
@@ -173,9 +194,16 @@ class HomeEndpoints extends Endpoint {
     int? limit,
     int? offset,
   }) async {
-    final service = ControlPlaneService(session);
+    final service = serviceFor(session);
     final allItems = await service.readAllWorkItems();
 
+    // `isResolved` stays the membership test even though `cancelled` is also
+    // terminal. The 'Already decided' ledger's client splits rows on
+    // `choice != null`, and a voided decision carries no choice — admitting
+    // `cancelled` here would file a decision nobody answered under "decided"
+    // on the server and under "pending" on the client. A voided decision's
+    // audit home is the per-item decision list (`listDecisions`), not this
+    // ledger.
     final decided = <(HumanDecision, WorkItem)>[];
     for (final item in allItems) {
       final decisions = await service.readDecisionsForWorkItem(
@@ -212,11 +240,16 @@ class HomeEndpoints extends Endpoint {
   }
 
   /// Lists pending blocking human decisions.
+  ///
+  /// Each card is the decision the work item says it is blocked on — the row
+  /// named by [WorkItem.blockingHumanDecisionId] — surfaced only while that
+  /// decision is still open. The item itself names its blocker, so this never
+  /// has to pick among an item's decisions at all.
   Future<List<DecisionView>> pendingDecisions(
     Session session, {
     int? limit,
   }) async {
-    final service = ControlPlaneService(session);
+    final service = serviceFor(session);
     final allItems = await service.readAllWorkItems();
 
     // Get work items with pending blocking decisions
@@ -233,8 +266,34 @@ class HomeEndpoints extends Endpoint {
       final itemDecisions = await service.readDecisionsForWorkItem(
         item.workItemId,
       );
+      // The decision the item is ACTUALLY blocked on, and only while it is
+      // still awaiting an answer.
+      //
+      // This used to take the FIRST `!isResolved && blocking` row — two
+      // independent defects in one expression:
+      //
+      //  * `!isResolved` includes `cancelled`. A voided decision is terminal
+      //    without having been answered (migration 20261014210000000 voided
+      //    one such on QA), so it counted as "pending" and this list served
+      //    it to the 'Needs your approval' card — which then linked to a
+      //    decision nobody could ever open for an answer.
+      //  * `firstOrNull` over `updatedAt ASC` picked the OLDEST matching row,
+      //    not the item's current blocker. When a voided decision and a live
+      //    one coexist, the voided one sorts first.
+      //
+      // The item's own `blockingHumanDecisionId` is the authority: it names
+      // the decision holding the item, so there is nothing to order by and
+      // no other row to mistake it for. `isOpen` is "still awaiting an
+      // answer" — it surfaces pending/inProgress/escalated/deferred and
+      // skips both answered and voided decisions. A stale pointer naming a
+      // terminal decision surfaces NOTHING rather than guessing a different
+      // row: a pointer that no longer names a live blocker is a data-repair
+      // finding, not a card.
       final pendingDecision = itemDecisions
-          .where((d) => !d.isResolved && d.blocking == true)
+          .where(
+            (d) =>
+                d.decisionId == item.blockingHumanDecisionId && d.status.isOpen,
+          )
           .firstOrNull;
 
       if (pendingDecision != null) {
