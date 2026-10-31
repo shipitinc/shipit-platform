@@ -1466,3 +1466,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-needs-you-deeplink | review | IN_FLIGHT | (read-only) | fix/needs-you-deeplink | a155ef5 | PRECISION | await result |
 | review-needs-you-deeplink | review | CLOSED | (read-only) | fix/needs-you-deeplink | a155ef5 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP | → integrator |
 | integrate-needs-you-deeplink | integrate | CLOSED | scratch rehearsal | fix/needs-you-deeplink | a155ef5 | STANDARD | MERGE_APPROVED → merged (human-authorized) | done |
+| deploy-qa-decision-fix | deploy | CLOSED — DEPLOYMENT_SUCCESSFUL | canonical | main | 2f266b3 | STANDARD | verified live: card surfaces dec-hn9zf6jgzn (pending) not dec-hn7h7daum6 (cancelled); ?wi= carries workItemId |

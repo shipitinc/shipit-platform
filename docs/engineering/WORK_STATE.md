@@ -1633,3 +1633,12 @@ names the real pending decision, not the voided cancelled one. Client (this merg
 cards append ?wi= (dead-link class closed for ALL decisions), inspectDecision selects by id,
 cancelled decisions render read-only. Remaining: QA redeploy to make both live; F-240 latent
 isResolved-reuse follow-up; LOW doc-comment ordering claim.
+
+### Decision-card bug VERIFIED LIVE on QA (deploy-qa-decision-fix, 2026-10-31)
+Post-redeploy verification confirmed: the Home "Waiting for your approval" card for
+`defect-DEF-1791685264570406` now surfaces `dec-hn9zf6jgzn-158lz0o` (pending, isOpen) — NOT the
+voided `dec-hn7h7daum6-2atjhe` (cancelled) — and deep-links
+`/needs-you/dec-hn9zf6jgzn-158lz0o?wi=defect-DEF-1791685264570406` (?wi= populated, bundle-built).
+The reported "We could not open this decision" symptom cannot recur: server resolves the actual
+blockingHumanDecisionId, client carries the work item param, cancelled decisions render read-only.
+Both halves independently reviewed + merged + deployed + verified.
