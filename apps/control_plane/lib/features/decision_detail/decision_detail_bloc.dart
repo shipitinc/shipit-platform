@@ -27,7 +27,12 @@ class DecisionDetailBloc
   ) async {
     emit(state.copyWith(isLoading: true));
     try {
-      final detail = await _repository.inspectDecision(_runId);
+      // The work item can carry several decisions (a voided one plus its
+      // re-raised successor); name ours so the screen shows THIS record.
+      final detail = await _repository.inspectDecision(
+        _runId,
+        decisionId: _decisionId,
+      );
       final sourceOptions = detail.options != null && detail.options!.isNotEmpty
           ? detail.options!
           : (detail.context?.availableOptions ?? const [])
@@ -54,7 +59,9 @@ class DecisionDetailBloc
       emit(
         state.copyWith(
           isLoading: false,
-          decisionId: _decisionId,
+          // The id of the record actually rendered — the requested one when
+          // the match held, the most recent when it did not.
+          decisionId: detail.decisionId,
           runId: _runId,
           runName: PlainLanguage.headline(
             title: detail.workItemTitle ?? detail.workItemId,
@@ -103,7 +110,10 @@ class DecisionDetailBloc
     emit(state.copyWith(isSubmitting: true));
     try {
       await _repository.resolveDecision(
-        decisionId: _decisionId,
+        // The id of the rendered record, not the requested one: the two
+        // differ only when the deep link named a decision that is no longer
+        // on this work item and the page fell back to the most recent.
+        decisionId: state.decisionId,
         choice: state.selectedChoice!,
         decider: 'operator',
         rationale: state.rationale,

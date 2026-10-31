@@ -60,8 +60,10 @@ class MockControlPlaneRepository
       throw UnimplementedError();
 
   @override
-  Future<DecisionDetailResponse> inspectDecision(String workItemId) async =>
-      throw UnimplementedError();
+  Future<DecisionDetailResponse> inspectDecision(
+    String workItemId, {
+    String? decisionId,
+  }) async => throw UnimplementedError();
 
   @override
   Future<void> resolveDecision({

@@ -52,8 +52,18 @@ class MockControlPlaneRepository
   Future<WorkItemDetailResponse> inspectWorkItem(String workItemId) async =>
       throw UnimplementedError();
 
+  /// What the bloc asked the repository to inspect, for selection-by-id
+  /// assertions.
+  String? inspectedWorkItemId;
+  String? inspectedDecisionId;
+
   @override
-  Future<DecisionDetailResponse> inspectDecision(String workItemId) async {
+  Future<DecisionDetailResponse> inspectDecision(
+    String workItemId, {
+    String? decisionId,
+  }) async {
+    inspectedWorkItemId = workItemId;
+    inspectedDecisionId = decisionId;
     if (throwError != null) throw throwError!;
     if (decisionDetailResponse == null) throw StateError('No response');
     return decisionDetailResponse!;
@@ -191,6 +201,10 @@ void main() {
       expect(bloc.state.question, 'Approve deployment?');
       expect(bloc.state.choices.map((c) => c.value), ['approve', 'reject']);
       expect(bloc.state.choices.map((c) => c.label), ['Approve', 'Reject']);
+      // The work item can hold several decisions; the repository must be
+      // asked for THIS one, not left to return whichever is most recent.
+      expect(repository.inspectedWorkItemId, 'wi-001');
+      expect(repository.inspectedDecisionId, 'dec-001');
     });
 
     test(
