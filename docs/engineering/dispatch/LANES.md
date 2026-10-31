@@ -1454,3 +1454,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-persistence-tx-slot | integrate | IN_FLIGHT | scratch rehearsal | fix/persistence-tx-slot | ea7754a | PRECISION | await MERGE_APPROVED → merge auth question |
 | integrate-persistence-tx-slot | integrate | CLOSED | scratch rehearsal | fix/persistence-tx-slot | ea7754a | PRECISION | MERGE_APPROVED (test-integration +318-1 on merged tree) → merged 42d3f81 | done |
 | deploy-qa-f238 | deploy | IN_FLIGHT | canonical (no repo writes) | main | 42d3f81 | STANDARD | gate paid on merged tree; await race-error absence evidence |
+| op-retries | ops (manager direct) | CLOSED | canonical (endpoint calls) | main | — | — | 10 agent_failed items retried via retryFailedWorkItem; all re-entered flow |

@@ -1606,3 +1606,23 @@ F-238 tx-slot 42d3f81), every one independently reviewed and live-verified on QA
 Open follow-ups: F-229 (banner omits design schedulers), F-231 (onboarding pin stale), F-232
 residual notes, F-234 (not-parkable refusal), F-235 (stale running rows), F-236 (env), F-239,
 Option A/C failure-detail surface, ~470 unpushed commits (push authority not granted).
+
+### Failed-job investigation + operator retries (2026-10-31, human directive)
+Investigated all 53 `failed` jobs on QA; classification:
+- **31 bug-caused, all bugs already FIXED on main**: 14 zombie-reclaimed (F-226 era), 9 triage
+  verification-plan failures (fixed via `buildTriageExecutionCoordinator`), 4 agent_event seq
+  23505 (F-223/68afc22), 3 tx-slot `Session or transaction has already finished` (F-238/42d3f81),
+  1 workspacePrepare git timeout (transient-load).
+- **9 transient/provider-class**: 8 `agent session failed`, 1 `agent session timed out`.
+- **4 QA-contract gate**: `agentExecuting→agentCompleted` rejected "QA contract must exist" — items
+  now all carry `qaContractId`; ordering gap already closed upstream (verify impl completion on
+  WI-feature's fresh job).
+- **6 permanent-by-design**: superseded executions / designNotRequired→reviewInProgress rejections —
+  correct gate semantics, not retried.
+- **3 no-failureJson**: manually flipped test rows.
+**Action taken**: called `retryFailedWorkItem` (sanctioned operator endpoint) on all 10
+`agent_failed` items — all accepted → `design_not_required`. Verified: next tick enqueued
+triage_defect jobs for all 10; `defect-DEF-1791684804452198` dispatched; `WI-feature` triage
+succeeded → implement_feature queued. Left alone: 2 `waiting_for_human_decision` items (real
+gates), superseded-outcome jobs (terminal truth), DEF-fresh/f223-test (already self-progressing
+at agent_executing).
