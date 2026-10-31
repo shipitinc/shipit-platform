@@ -87,6 +87,11 @@ String? knownTransitionMessage(String from, String to) => switch ((from, to)) {
   ('waiting_for_human_decision', 'design_in_review') =>
     'Changes asked for, design updated',
   ('design_approved', 'agent_executing') => 'Agent started work',
+  // No `agentAvailable` guard on this edge, unlike the `-> agentExecuting`
+  // row above: the design is approved and the item is QUEUED for the build
+  // lane (`implementationReady`), not started — so the copy is the queue.
+  ('design_approved', 'implementation_ready') =>
+    'Design approved, queued to build',
   ('design_rejected', 'design_in_review') =>
     'Design updated, waiting on review',
   ('design_rejected', 'design_required') =>

@@ -107,7 +107,10 @@ class MockRepository
       );
 
   @override
-  Future<DecisionDetailResponse> inspectDecision(String workItemId) async =>
+  Future<DecisionDetailResponse> inspectDecision(
+    String workItemId, {
+    String? decisionId,
+  }) async =>
       decisionDetail ??
       DecisionDetailResponse(
         decisionId: 'dec-1',

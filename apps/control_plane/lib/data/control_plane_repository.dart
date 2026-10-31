@@ -350,28 +350,43 @@ class ControlPlaneRepository {
         .toList();
   }
 
-  Future<DecisionDetailResponse> inspectDecision(String workItemId) async {
+  /// `listDecisions` returns EVERY decision on the work item, most recent
+  /// first — including voided predecessors when a decision was cancelled and
+  /// re-raised. Selecting `.first` unconditionally can therefore render a
+  /// different record than the one the caller linked, so when [decisionId]
+  /// is supplied the matching entry wins; an unknown id still falls back to
+  /// the most recent rather than failing what used to open.
+  Future<DecisionDetailResponse> inspectDecision(
+    String workItemId, {
+    String? decisionId,
+  }) async {
     final result = await _client.workflowEndpoints.listDecisions(
       workItemId: workItemId,
     );
     if (result.isEmpty) {
       throw StateError('No decisions found for work item $workItemId');
     }
+    final decision = decisionId == null
+        ? result.first
+        : result.firstWhere(
+            (d) => d.decisionId == decisionId,
+            orElse: () => result.first,
+          );
     return DecisionDetailResponse(
-      decisionId: result.first.decisionId,
-      workItemId: result.first.workItemId,
-      workItemTitle: result.first.workItemTitle,
-      workItemDescription: result.first.workItemDescription,
-      decisionType: result.first.decisionType,
-      status: result.first.status,
-      question: result.first.question,
-      context: result.first.context == null
+      decisionId: decision.decisionId,
+      workItemId: decision.workItemId,
+      workItemTitle: decision.workItemTitle,
+      workItemDescription: decision.workItemDescription,
+      decisionType: decision.decisionType,
+      status: decision.status,
+      question: decision.question,
+      context: decision.context == null
           ? null
           : DecisionContext(
-              workflowState: result.first.context!.workflowState,
-              availableOptions: result.first.context!.availableOptions,
+              workflowState: decision.context!.workflowState,
+              availableOptions: decision.context!.availableOptions,
             ),
-      options: result.first.options
+      options: decision.options
           ?.map(
             (o) => DecisionOption(
               optionId: o.optionId,
@@ -381,18 +396,16 @@ class ControlPlaneRepository {
             ),
           )
           .toList(),
-      recommendation: result.first.recommendation,
-      artifactRefs: result.first.artifactRefs
-          ?.map(_artifactRefResponse)
-          .toList(),
-      blocking: result.first.blocking,
-      requestedAt: result.first.requestedAt,
-      expiration: result.first.expiration,
-      choice: result.first.choice,
-      decider: result.first.decider,
-      rationale: result.first.rationale,
-      resolvedAt: result.first.resolvedAt,
-      signature: result.first.signature,
+      recommendation: decision.recommendation,
+      artifactRefs: decision.artifactRefs?.map(_artifactRefResponse).toList(),
+      blocking: decision.blocking,
+      requestedAt: decision.requestedAt,
+      expiration: decision.expiration,
+      choice: decision.choice,
+      decider: decision.decider,
+      rationale: decision.rationale,
+      resolvedAt: decision.resolvedAt,
+      signature: decision.signature,
     );
   }
 

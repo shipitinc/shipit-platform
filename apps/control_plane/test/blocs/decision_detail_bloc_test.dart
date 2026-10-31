@@ -52,8 +52,18 @@ class MockControlPlaneRepository
   Future<WorkItemDetailResponse> inspectWorkItem(String workItemId) async =>
       throw UnimplementedError();
 
+  /// What the bloc asked the repository to inspect, for selection-by-id
+  /// assertions.
+  String? inspectedWorkItemId;
+  String? inspectedDecisionId;
+
   @override
-  Future<DecisionDetailResponse> inspectDecision(String workItemId) async {
+  Future<DecisionDetailResponse> inspectDecision(
+    String workItemId, {
+    String? decisionId,
+  }) async {
+    inspectedWorkItemId = workItemId;
+    inspectedDecisionId = decisionId;
     if (throwError != null) throw throwError!;
     if (decisionDetailResponse == null) throw StateError('No response');
     return decisionDetailResponse!;
@@ -191,6 +201,74 @@ void main() {
       expect(bloc.state.question, 'Approve deployment?');
       expect(bloc.state.choices.map((c) => c.value), ['approve', 'reject']);
       expect(bloc.state.choices.map((c) => c.label), ['Approve', 'Reject']);
+      // The work item can hold several decisions; the repository must be
+      // asked for THIS one, not left to return whichever is most recent.
+      expect(repository.inspectedWorkItemId, 'wi-001');
+      expect(repository.inspectedDecisionId, 'dec-001');
+    });
+
+    test(
+      'a cancelled record is closed without an outcome and never pending',
+      () async {
+        // The server ships `status: 'cancelled'` with a null `choice` on a
+        // voided decision; `choice == null` alone reads as unresolved, so
+        // `isCancelled` must come from the status wire itself.
+        repository.decisionDetailResponse = DecisionDetailResponse(
+          decisionId: 'dec-001',
+          workItemId: 'wi-001',
+          decisionType: 'human',
+          status: 'cancelled',
+          question: 'Approve deployment?',
+          options: [
+            DecisionOption(
+              optionId: 'approve',
+              label: 'approve',
+              recommended: false,
+            ),
+          ],
+          blocking: false,
+          requestedAt: DateTime(2026, 1, 1),
+        );
+
+        final bloc = DecisionDetailBloc(
+          decisionId: 'dec-001',
+          runId: 'wi-001',
+          repository: repository,
+        )..add(DecisionDetailLoaded());
+        await bloc.stream.firstWhere((s) => !s.isLoading);
+
+        expect(bloc.state.statusWire, 'cancelled');
+        expect(bloc.state.isCancelled, true);
+        expect(bloc.state.alreadyResolved, false);
+      },
+    );
+
+    test('a pending record is not reported cancelled', () async {
+      repository.decisionDetailResponse = DecisionDetailResponse(
+        decisionId: 'dec-001',
+        workItemId: 'wi-001',
+        decisionType: 'human',
+        status: 'pending',
+        question: 'Approve deployment?',
+        options: [
+          DecisionOption(
+            optionId: 'approve',
+            label: 'approve',
+            recommended: false,
+          ),
+        ],
+        blocking: true,
+        requestedAt: DateTime(2026, 1, 1),
+      );
+
+      final bloc = DecisionDetailBloc(
+        decisionId: 'dec-001',
+        runId: 'wi-001',
+        repository: repository,
+      )..add(DecisionDetailLoaded());
+      await bloc.stream.firstWhere((s) => !s.isLoading);
+
+      expect(bloc.state.isCancelled, false);
     });
 
     test('emits selected choice on DecisionChoiceSelected', () async {
