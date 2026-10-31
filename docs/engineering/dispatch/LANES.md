@@ -1464,3 +1464,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-decision-card | integrate | CLOSED | scratch rehearsal | fix/pending-decision-card | 226ceb8 | STANDARD | MERGE_APPROVED (test-integration 319/319) → merged 3f9d7a2 (human-authorized) | done |
 | fix-needs-you-deeplink | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-needs-you-link | fix/needs-you-deeplink | a155ef5 | PRECISION | 59029c9: ?wi= on Home cards, cancelled read-only, decisionId selection | → reviewer |
 | review-needs-you-deeplink | review | IN_FLIGHT | (read-only) | fix/needs-you-deeplink | a155ef5 | PRECISION | await result |
+| review-needs-you-deeplink | review | CLOSED | (read-only) | fix/needs-you-deeplink | a155ef5 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP | → integrator |
+| integrate-needs-you-deeplink | integrate | CLOSED | scratch rehearsal | fix/needs-you-deeplink | a155ef5 | STANDARD | MERGE_APPROVED → merged (human-authorized) | done |

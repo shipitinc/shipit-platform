@@ -1626,3 +1626,10 @@ triage_defect jobs for all 10; `defect-DEF-1791684804452198` dispatched; `WI-fea
 succeeded → implement_feature queued. Left alone: 2 `waiting_for_human_decision` items (real
 gates), superseded-outcome jobs (terminal truth), DEF-fresh/f223-test (already self-progressing
 at agent_executing).
+
+### Decision-card bug — BOTH halves merged (`3f9d7a2` server + this client merge)
+Server (3f9d7a2): pendingDecisions resolves item.blockingHumanDecisionId + isOpen — the card now
+names the real pending decision, not the voided cancelled one. Client (this merge): Home gate
+cards append ?wi= (dead-link class closed for ALL decisions), inspectDecision selects by id,
+cancelled decisions render read-only. Remaining: QA redeploy to make both live; F-240 latent
+isResolved-reuse follow-up; LOW doc-comment ordering claim.
