@@ -1455,3 +1455,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-persistence-tx-slot | integrate | CLOSED | scratch rehearsal | fix/persistence-tx-slot | ea7754a | PRECISION | MERGE_APPROVED (test-integration +318-1 on merged tree) → merged 42d3f81 | done |
 | deploy-qa-f238 | deploy | IN_FLIGHT | canonical (no repo writes) | main | 42d3f81 | STANDARD | gate paid on merged tree; await race-error absence evidence |
 | op-retries | ops (manager direct) | CLOSED | canonical (endpoint calls) | main | — | — | 10 agent_failed items retried via retryFailedWorkItem; all re-entered flow |
+| fix-pending-decision-card | implement | IN_FLIGHT | /private/tmp/shipit-fix-decision-card | fix/pending-decision-card | 226ceb8 | STANDARD | pendingDecisions serves cancelled decision instead of pending → dead card link |
