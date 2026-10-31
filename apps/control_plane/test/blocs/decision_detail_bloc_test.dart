@@ -193,6 +193,70 @@ void main() {
       expect(bloc.state.choices.map((c) => c.label), ['Approve', 'Reject']);
     });
 
+    test(
+      'a cancelled record is closed without an outcome and never pending',
+      () async {
+        // The server ships `status: 'cancelled'` with a null `choice` on a
+        // voided decision; `choice == null` alone reads as unresolved, so
+        // `isCancelled` must come from the status wire itself.
+        repository.decisionDetailResponse = DecisionDetailResponse(
+          decisionId: 'dec-001',
+          workItemId: 'wi-001',
+          decisionType: 'human',
+          status: 'cancelled',
+          question: 'Approve deployment?',
+          options: [
+            DecisionOption(
+              optionId: 'approve',
+              label: 'approve',
+              recommended: false,
+            ),
+          ],
+          blocking: false,
+          requestedAt: DateTime(2026, 1, 1),
+        );
+
+        final bloc = DecisionDetailBloc(
+          decisionId: 'dec-001',
+          runId: 'wi-001',
+          repository: repository,
+        )..add(DecisionDetailLoaded());
+        await bloc.stream.firstWhere((s) => !s.isLoading);
+
+        expect(bloc.state.statusWire, 'cancelled');
+        expect(bloc.state.isCancelled, true);
+        expect(bloc.state.alreadyResolved, false);
+      },
+    );
+
+    test('a pending record is not reported cancelled', () async {
+      repository.decisionDetailResponse = DecisionDetailResponse(
+        decisionId: 'dec-001',
+        workItemId: 'wi-001',
+        decisionType: 'human',
+        status: 'pending',
+        question: 'Approve deployment?',
+        options: [
+          DecisionOption(
+            optionId: 'approve',
+            label: 'approve',
+            recommended: false,
+          ),
+        ],
+        blocking: true,
+        requestedAt: DateTime(2026, 1, 1),
+      );
+
+      final bloc = DecisionDetailBloc(
+        decisionId: 'dec-001',
+        runId: 'wi-001',
+        repository: repository,
+      )..add(DecisionDetailLoaded());
+      await bloc.stream.firstWhere((s) => !s.isLoading);
+
+      expect(bloc.state.isCancelled, false);
+    });
+
     test('emits selected choice on DecisionChoiceSelected', () async {
       repository.decisionDetailResponse = DecisionDetailResponse(
         decisionId: 'dec-001',

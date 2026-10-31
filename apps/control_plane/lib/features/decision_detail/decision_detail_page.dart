@@ -95,6 +95,10 @@ class _DecisionView extends StatelessWidget {
             ? null
             : now.difference(state.createdAt!);
         final settled = state.isSubmitted || state.alreadyResolved;
+        // A voided record ships `choice == null`, so `settled` alone would
+        // still render it "WAITING FOR YOU" with a live submit panel.
+        final cancelled = state.isCancelled;
+        final closed = settled || cancelled;
 
         return SingleChildScrollView(
           child: Padding(
@@ -118,21 +122,33 @@ class _DecisionView extends StatelessWidget {
                   parentRef: PlainLanguage.refLabel(state.decisionId),
                   onParentTap: () => context.go('/needs-you'),
                   title: state.question,
-                  statusLabel: settled ? 'DECIDED' : 'WAITING FOR YOU',
-                  statusColor: settled ? palette.positive : palette.attention,
+                  statusLabel: cancelled
+                      ? 'CANCELLED'
+                      : settled
+                      ? 'DECIDED'
+                      : 'WAITING FOR YOU',
+                  statusColor: cancelled
+                      ? palette.inkTertiary
+                      : settled
+                      ? palette.positive
+                      : palette.attention,
                   facts: [
                     if (state.createdAt != null)
                       (
                         'asked ${PlainLanguage.timeOfDay(state.createdAt!, now: now)}',
                         null,
                       ),
-                    if (!settled)
+                    if (!closed)
                       (PlainLanguage.waitingFor(waiting), palette.attention),
                   ],
                 ),
                 const SizedBox(height: 22),
                 if (isMobile(context)) ...[
-                  _LeftColumn(state: state, settled: settled),
+                  _LeftColumn(
+                    state: state,
+                    settled: settled,
+                    cancelled: cancelled,
+                  ),
                   const SizedBox(height: 20),
                   _YourCall(state: state, compact: true),
                 ] else
@@ -149,7 +165,11 @@ class _DecisionView extends StatelessWidget {
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            _LeftColumn(state: state, settled: settled),
+                            _LeftColumn(
+                              state: state,
+                              settled: settled,
+                              cancelled: cancelled,
+                            ),
                             const SizedBox(height: 24),
                             _YourCall(state: state),
                           ],
@@ -159,7 +179,11 @@ class _DecisionView extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Expanded(
-                            child: _LeftColumn(state: state, settled: settled),
+                            child: _LeftColumn(
+                              state: state,
+                              settled: settled,
+                              cancelled: cancelled,
+                            ),
                           ),
                           const SizedBox(width: 32),
                           SizedBox(width: 392, child: _YourCall(state: state)),
@@ -190,12 +214,19 @@ class _DecisionView extends StatelessWidget {
 }
 
 class _LeftColumn extends StatelessWidget {
-  const _LeftColumn({required this.state, required this.settled});
+  const _LeftColumn({
+    required this.state,
+    required this.settled,
+    required this.cancelled,
+  });
 
   final DecisionDetailState state;
 
   /// True once a durable outcome exists.
   final bool settled;
+
+  /// True when the decision was voided — closed, but with no outcome.
+  final bool cancelled;
 
   @override
   Widget build(BuildContext context) {
@@ -204,12 +235,15 @@ class _LeftColumn extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          settled ? 'Why ShipIt stopped' : 'Why ShipIt stopped',
+          'Why ShipIt stopped',
           style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary),
         ),
         const SizedBox(height: 6),
         Text(
-          settled
+          cancelled
+              ? 'This is the record of a decision that was cancelled '
+                    'before it was answered.'
+              : settled
               ? 'This is the record of what was decided and why.'
               : 'This work cannot continue until you decide.',
           style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary),
@@ -224,7 +258,9 @@ class _LeftColumn extends StatelessWidget {
             ),
             DefinitionEntry(
               label: 'STATUS',
-              value: settled
+              value: cancelled
+                  ? 'Cancelled — no answer is needed'
+                  : settled
                   ? 'Decided — recorded against this run'
                   : 'Waiting for your approval',
             ),
@@ -259,7 +295,9 @@ class _LeftColumn extends StatelessWidget {
         ],
         const SizedBox(height: 20),
         Text(
-          'What happens after you decide',
+          cancelled
+              ? 'The choices that were on the table'
+              : 'What happens after you decide',
           style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary),
         ),
         const SizedBox(height: 6),
@@ -307,6 +345,34 @@ class _YourCallState extends State<_YourCall> {
     final palette = context.palette;
     final state = widget.state;
     final settled = state.isSubmitted || state.alreadyResolved;
+
+    // A voided record is closed without an outcome: render what happened,
+    // never the option cards, rationale field or submit affordance — a
+    // cancelled decision accepts no answer.
+    if (state.isCancelled) {
+      return _wrap(
+        children: [
+          Text(
+            'No answer is needed',
+            style: ShipItType.sectionTitle.copyWith(color: palette.inkPrimary),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'This decision was cancelled, so it no longer accepts an answer.',
+            style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary),
+          ),
+          const SizedBox(height: 14),
+          const ContentRule(),
+          const SizedBox(height: 15),
+          const MicroLabel('STATUS'),
+          const SizedBox(height: 4),
+          Text(
+            'Cancelled',
+            style: ShipItType.status.copyWith(color: palette.inkTertiary),
+          ),
+        ],
+      );
+    }
 
     if (settled) {
       return _wrap(

@@ -69,6 +69,7 @@ class DecisionDetailBloc
           recommendation: detail.recommendation,
           haltedState: detail.context?.workflowState,
           artifacts: detail.artifactRefs ?? const [],
+          statusWire: detail.status,
           alreadyResolved: detail.choice != null,
           resolvedChoice: detail.choice,
         ),
@@ -96,7 +97,9 @@ class DecisionDetailBloc
     DecisionSubmitted event,
     Emitter<DecisionDetailState> emit,
   ) async {
-    if (state.selectedChoice == null) return;
+    // A voided record accepts no answer — refuse the write, not just the
+    // button that issues it.
+    if (state.selectedChoice == null || state.isCancelled) return;
     emit(state.copyWith(isSubmitting: true));
     try {
       await _repository.resolveDecision(
@@ -139,6 +142,7 @@ class DecisionDetailState {
     this.recommendation,
     this.haltedState,
     this.artifacts = const [],
+    this.statusWire = 'pending',
     this.alreadyResolved = false,
     this.resolvedChoice,
     this.errorMessage,
@@ -170,6 +174,17 @@ class DecisionDetailState {
   /// Artifacts under review, for the evidence panel.
   final List<ArtifactRefResponse> artifacts;
 
+  /// Durable `HumanDecisionStatus` wire value. `choice == null` alone cannot
+  /// tell a pending decision from a voided one — both ship a null choice —
+  /// so the status itself is what says the record is closed without an
+  /// answer.
+  final String statusWire;
+
+  /// True when this decision was voided. A cancelled record is closed like a
+  /// resolved one, but no outcome was recorded — it must render read-only
+  /// and must never offer a live submit panel.
+  bool get isCancelled => statusWire == 'cancelled';
+
   /// True when this decision already carries a durable outcome.
   final bool alreadyResolved;
   final String? resolvedChoice;
@@ -193,6 +208,7 @@ class DecisionDetailState {
     String? recommendation,
     String? haltedState,
     List<ArtifactRefResponse>? artifacts,
+    String? statusWire,
     bool? alreadyResolved,
     String? resolvedChoice,
     String? errorMessage,
@@ -215,6 +231,7 @@ class DecisionDetailState {
       recommendation: recommendation ?? this.recommendation,
       haltedState: haltedState ?? this.haltedState,
       artifacts: artifacts ?? this.artifacts,
+      statusWire: statusWire ?? this.statusWire,
       alreadyResolved: alreadyResolved ?? this.alreadyResolved,
       resolvedChoice: resolvedChoice ?? this.resolvedChoice,
       errorMessage: errorMessage,

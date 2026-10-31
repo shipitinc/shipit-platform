@@ -534,8 +534,9 @@ class _GateCard extends StatelessWidget {
                   width: 128,
                   height: 24,
                   child: OutlinedButton(
-                    onPressed: () =>
-                        context.go('/needs-you/${gate.decisionId}'),
+                    onPressed: () => context.go(
+                      '/needs-you/${gate.decisionId}?wi=${gate.workItemId}',
+                    ),
                     child: const Text('Review and decide'),
                   ),
                 ),
@@ -868,7 +869,9 @@ class _MobileGateCard extends StatelessWidget {
           MobilePrimaryButton(
             label: 'Review and decide',
             fullWidth: false,
-            onPressed: () => context.go('/needs-you/${gate.decisionId}'),
+            onPressed: () => context.go(
+              '/needs-you/${gate.decisionId}?wi=${gate.workItemId}',
+            ),
           ),
         ],
       ),
