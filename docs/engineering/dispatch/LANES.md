@@ -1456,3 +1456,6 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | deploy-qa-f238 | deploy | IN_FLIGHT | canonical (no repo writes) | main | 42d3f81 | STANDARD | gate paid on merged tree; await race-error absence evidence |
 | op-retries | ops (manager direct) | CLOSED | canonical (endpoint calls) | main | — | — | 10 agent_failed items retried via retryFailedWorkItem; all re-entered flow |
 | fix-pending-decision-card | implement | IN_FLIGHT | /private/tmp/shipit-fix-decision-card | fix/pending-decision-card | 226ceb8 | STANDARD | pendingDecisions serves cancelled decision instead of pending → dead card link |
+| fix-pending-decision-card | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-decision-card | fix/pending-decision-card | 226ceb8 | STANDARD | 57655fb: pendingDecisions uses blockingHumanDecisionId + isOpen; isTerminal/isOpen added | → reviewer |
+| review-fix-decision-card | review | IN_FLIGHT | (read-only) | fix/pending-decision-card | 226ceb8 | STANDARD | await result |
+| fix-needs-you-deeplink | implement | IN_FLIGHT | /private/tmp/shipit-fix-needs-you-link | fix/needs-you-deeplink | a155ef5 | PRECISION | client: Home card missing ?wi=; cancelled read-only render |
