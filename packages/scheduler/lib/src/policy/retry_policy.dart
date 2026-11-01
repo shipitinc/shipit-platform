@@ -1,5 +1,6 @@
 import 'package:meta/meta.dart';
 import 'package:platform_contracts/platform_contracts.dart';
+import 'package:worker_runtime/worker_runtime.dart';
 
 /// Bounded, conservative retry policy. Only transient INFRASTRUCTURE
 /// failures may ever be retried (bounded by the job's `maxAttempts`); a
@@ -42,6 +43,21 @@ class RetryPolicy {
           WorkerExecutionStatus.workspacePreparing ||
           WorkerExecutionStatus.agentExecuting ||
           WorkerExecutionStatus.finalizing:
+        // A store compare-and-swap loss is not a coding result: another
+        // writer already advanced the durable row, which is exactly the
+        // infrastructure race `transient` exists for. The exception TYPE
+        // cannot cross the worker boundary — `LocalWorker` flattens it to a
+        // string — so the worker marks the detail with
+        // [storeContentionMarker] and the marker, never prose matching, is
+        // what is checked. F-241: an unmarked CAS detail classified
+        // PERMANENT and jobs died on races they had already lost correctly.
+        if (isStoreContentionDetail(detail)) {
+          return JobFailure(
+            code: JobFailureCode.executionInterrupted,
+            kind: JobFailureKind.transient,
+            reason: detail,
+          );
+        }
         return JobFailure(
           code: JobFailureCode.executionFailed,
           kind: JobFailureKind.permanent,

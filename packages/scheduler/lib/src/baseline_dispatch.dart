@@ -5,6 +5,7 @@
 
 import 'package:meta/meta.dart';
 import 'package:platform_contracts/platform_contracts.dart';
+import 'package:worker_runtime/worker_runtime.dart';
 
 import 'baseline_product.dart';
 import 'queue/job_queue.dart';
@@ -574,21 +575,35 @@ class BaselineProductDispatcher {
         ),
       );
     } on Object catch (error, stackTrace) {
+      // A store compare-and-swap loss DOES carry a claim about whether the
+      // same call would succeed: it means another writer already advanced
+      // the row, so the lane's attempt raced rather than failed. That is
+      // transient by construction — F-241's `Concurrent modification of
+      // <item|execution>` classified permanent on the agent lanes for the
+      // same reason this branch exists for the baseline lane. Every OTHER
+      // exception keeps the permanent verdict: it still carries no claim.
+      final contention =
+          isStoreContentionError(error) ||
+          error is ConcurrentJobModificationException;
       log?.call('baseline.dispatch.lane_raised', {
         'jobId': job.jobId,
         'productId': target.productId,
         'repositoryId': target.repositoryId,
         'error': error.toString(),
         'stack': stackTrace.toString(),
-        'retry': false,
-        'action':
-            'permanent: an exception carries no claim about whether the same '
-            'call would succeed, so it is not retried automatically',
+        'retry': contention,
+        'action': contention
+            ? 'transient: a store compare-and-swap loss means another writer '
+                  'already advanced the row; the job retries within its '
+                  'attempt bound'
+            : 'permanent: an exception carries no claim about whether the '
+                  'same call would succeed, so it is not retried '
+                  'automatically',
       });
       return OnboardingFaulted(
         code: laneThrewCode,
         reason: error.toString(),
-        transient: false,
+        transient: contention,
       );
     }
   }

@@ -16,6 +16,8 @@ dependencies:
     path: ../platform_contracts
   worker_protocol:
     path: ../worker_protocol
+  workflow_store:
+    path: ../workflow_store
 
 dev_dependencies:
   test: ^1.25.2

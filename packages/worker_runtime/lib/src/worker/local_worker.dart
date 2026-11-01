@@ -7,6 +7,7 @@ import 'package:worker_protocol/worker_protocol.dart';
 
 import '../env/environment_policy.dart';
 import '../execution/agent_execution_driver.dart';
+import '../store/store_contention.dart';
 import '../store/worker_store.dart';
 import '../store/worker_registration_store.dart';
 import '../workspace/artifact_committer.dart';
@@ -727,6 +728,21 @@ class LocalWorker implements Worker {
           );
         }
       }
+    } on ConcurrentWorkerModificationException {
+      if (_isStale(epoch)) {
+        return _detachedResult(execution, agentExecutionId);
+      }
+      // The WORKER-EXECUTION row itself was advanced by a concurrent writer —
+      // a scheduler zombie reclaim or the worker reconciler — so it already
+      // carries a verdict this drive lost to. Every write below would
+      // contradict it: `_setCleanup`'s blind upsert would resurrect this
+      // stale copy's status over the terminal row, and `_finish`'s terminal
+      // compare-and-swap would replace the winning verdict with a second,
+      // false one. The drive therefore writes nothing and rethrows: the run
+      // fails out to `_settleDetachedRun`, which drops the claim so the
+      // next tick's reconcile adopts the row that already won — the verdict
+      // that is actually durable.
+      rethrow;
     } on Object catch (e) {
       if (_isStale(epoch)) {
         // Abandoned while wedged in an await that then threw — commonly the
@@ -736,16 +752,40 @@ class LocalWorker implements Worker {
         // that already settled honestly as timedOut.
         return _detachedResult(execution, agentExecutionId);
       }
-      failureCode = failureCode == WorkerFailureCode.none
-          ? WorkerFailureCode.agentFailed
-          : failureCode;
-      failureDetail ??= e.toString();
-      finalStatus = WorkerExecutionStatus.executedFail;
-      await _event(
-        execution,
-        WorkerEventType.executionFailed,
-        payload: {'detail': e.toString()},
-      );
+      if (isStoreContentionError(e)) {
+        // A compare-and-swap loss on the WORK ITEM or AGENT EXECUTION rows:
+        // a concurrent writer already advanced the durable record, so this
+        // run's outcome was decided by somebody else. A lost race is
+        // TRANSIENT — retrying it belongs to whoever settles the job — but
+        // the worker-execution row is still this drive's to settle, and the
+        // honest terminal for it is `executedFail` carrying the contention
+        // marker: `RetryPolicy.classify` reads the marker and requeues the
+        // job instead of terminal-failing it. Unmarked, this same detail
+        // classified PERMANENT and jobs died on races they had already lost
+        // correctly (F-241). `agentFailed` stays the generic carrier code —
+        // the marker, not the code, carries the classification.
+        failureCode = failureCode == WorkerFailureCode.none
+            ? WorkerFailureCode.agentFailed
+            : failureCode;
+        failureDetail = '$storeContentionMarker $e';
+        finalStatus = WorkerExecutionStatus.executedFail;
+        await _event(
+          execution,
+          WorkerEventType.executionFailed,
+          payload: {'detail': failureDetail, 'storeContention': true},
+        );
+      } else {
+        failureCode = failureCode == WorkerFailureCode.none
+            ? WorkerFailureCode.agentFailed
+            : failureCode;
+        failureDetail ??= e.toString();
+        finalStatus = WorkerExecutionStatus.executedFail;
+        await _event(
+          execution,
+          WorkerEventType.executionFailed,
+          payload: {'detail': e.toString()},
+        );
+      }
     }
 
     // Last checkpoint before the writes a detached drive must never reach:
