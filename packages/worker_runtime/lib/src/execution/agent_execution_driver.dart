@@ -13,10 +13,27 @@ abstract interface class AgentExecutionDriver {
   Future<List<PlatformVerification>> verificationsFor(String executionId);
 }
 
+/// Optional port an [AgentExecutionDriver] may implement when the durable
+/// [AgentResult] behind an execution is readable from the driver layer.
+///
+/// Kept OUT of [AgentExecutionDriver] on purpose: that contract is
+/// implemented by scripted doubles across this repository and in test code
+/// outside the worker packages, so widening it is a breaking change for
+/// implementers nobody here may edit. A driver that does not implement this
+/// port is simply one whose results are not readable from the worker — the
+/// honest answer downstream is "no evidence", never a guess. The worker
+/// consults it for exactly one thing: the provider-dead signature that
+/// separates "the model quota was exhausted" from "the work hung".
+abstract interface class AgentResultReader {
+  /// The persisted result for [executionId], or null when none exists.
+  Future<AgentResult?> resultFor(String executionId);
+}
+
 /// Default driver: forwards requests verbatim to [ExecutionCoordinator]. The
 /// coordinator owns workflow-state transitions and durable execution records;
 /// the driver adds no policy of its own.
-class CoordinatorAgentExecutionDriver implements AgentExecutionDriver {
+class CoordinatorAgentExecutionDriver
+    implements AgentExecutionDriver, AgentResultReader {
   CoordinatorAgentExecutionDriver(this._coordinator);
 
   final ExecutionCoordinator _coordinator;
@@ -32,4 +49,8 @@ class CoordinatorAgentExecutionDriver implements AgentExecutionDriver {
   @override
   Future<List<PlatformVerification>> verificationsFor(String executionId) =>
       _coordinator.store.readVerifications(executionId);
+
+  @override
+  Future<AgentResult?> resultFor(String executionId) =>
+      _coordinator.store.readResult(executionId);
 }

@@ -2313,6 +2313,16 @@ class Scheduler {
         );
       case JobFailureKind.transient:
         if (_retryPolicy.canRetry(current)) {
+          // A provider-dead failure earns the retry the NEXT step of the
+          // role's model chain. Written BEFORE the retry is scheduled so no
+          // dispatch can claim the retry while the item still names the
+          // provider that just failed underneath it. The human-decision
+          // escalation path is untouched: this bump is additive, bounded by
+          // the chain, and only ever applied for a failure the worker itself
+          // classified as provider-side.
+          if (isProviderFailureDetail(result.failureDetail)) {
+            await _applyProviderEscalation(current);
+          }
           return _queue.scheduleRetry(
             job: current,
             failure: failure,
@@ -2337,6 +2347,73 @@ class Scheduler {
           now: now,
           executionReference: adopted,
         );
+    }
+  }
+
+  /// Advances `WorkItem.metadata['escalationIndex']` one step after a
+  /// provider-unavailable failure, so the retry's dispatch selects the next
+  /// model in the role's chain — the automatic half of paid-model
+  /// escalation, additive beside the human-decision path.
+  ///
+  /// ## THE BOUND IS THE CHAIN, NOT THE DECISION-TYPE GUARD
+  ///
+  /// `escalationIndexWithinLimitForDecisionTypes` bounds the HUMAN
+  /// escalation path inside `DurableWorkflowEngine.resolveHumanDecision`,
+  /// and it is left alone. This bound is
+  /// [ModelSelectionService.escalationCeilingFor] — the role's own
+  /// `model_policy` chain length — because "there is no next step" is the
+  /// only thing that makes escalating wrong here. An index already at the
+  /// ceiling is left alone: automatic escalation stops at the top of the
+  /// chain, and never escalates a single-step policy at all.
+  ///
+  /// ## FAIL DIRECTION
+  ///
+  /// Every failure inside this method degrades to "no bump": a scheduler
+  /// with no model selector has no chain to escalate within; an unreadable
+  /// item cannot be bounded; a lost compare-and-swap means another writer
+  /// owns the item. In each case the retry proceeds on the step already
+  /// recorded — unescalated is the direction that does not spend the paid
+  /// tier on a guess, and a provider still dead produces the signature
+  /// again next time.
+  ///
+  /// ## WHERE THE MARKER COMES FROM
+  ///
+  /// The caller checked [isProviderFailureDetail] on the worker's
+  /// `failureDetail`, which `LocalWorker` stamps only when the durable
+  /// [AgentResult] showed the provider-dead signature — a runtime-reported
+  /// provider error, or zero output of every kind. A genuine work failure
+  /// never carries it, so a code defect never reaches the paid tier.
+  Future<void> _applyProviderEscalation(Job job) async {
+    final selection = _modelSelection;
+    if (selection == null) return;
+    final WorkItem item;
+    try {
+      item = await _workflowStore.readWorkItem(job.workItemId);
+    } on Object {
+      return;
+    }
+    final current = item.metadata?['escalationIndex'] as int? ?? 0;
+    final int ceiling;
+    try {
+      ceiling = await selection.escalationCeilingFor(job.requiredRole);
+    } on Object {
+      return;
+    }
+    if (current >= ceiling) return;
+    final bumped = Map<String, dynamic>.from(item.metadata ?? {})
+      ..['escalationIndex'] = current + 1;
+    try {
+      await _workflowStore.saveWorkItem(
+        item.copyWith(
+          metadata: bumped,
+          updatedAt: _clock().toUtc(),
+          version: item.version + 1,
+        ),
+        expectedVersion: item.version,
+      );
+    } on ConcurrentModificationException {
+      // Another writer advanced the item; the retry still proceeds on the
+      // step already recorded.
     }
   }
 

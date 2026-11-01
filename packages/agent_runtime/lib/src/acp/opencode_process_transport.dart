@@ -8,7 +8,7 @@ import 'acp_transport.dart';
 
 /// AcpTransport backed by a spawned `opencode acp` child process speaking
 /// newline-delimited JSON-RPC 2.0 over stdio.
-class OpenCodeProcessTransport implements AcpTransport {
+class OpenCodeProcessTransport implements AcpTransport, StderrTail {
   OpenCodeProcessTransport({
     required this.executable,
     required this.cwd,
@@ -98,6 +98,7 @@ class OpenCodeProcessTransport implements AcpTransport {
   @override
   bool get isOpen => _isOpen && !_closed;
 
+  @override
   String get stderrTail => _stderrBuffer.length > 4000
       ? _stderrBuffer.substring(_stderrBuffer.length - 4000)
       : _stderrBuffer;
