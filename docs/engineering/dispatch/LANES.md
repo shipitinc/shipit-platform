@@ -1468,3 +1468,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-needs-you-deeplink | integrate | CLOSED | scratch rehearsal | fix/needs-you-deeplink | a155ef5 | STANDARD | MERGE_APPROVED → merged (human-authorized) | done |
 | deploy-qa-decision-fix | deploy | CLOSED — DEPLOYMENT_SUCCESSFUL | canonical | main | 2f266b3 | STANDARD | verified live: card surfaces dec-hn9zf6jgzn (pending) not dec-hn7h7daum6 (cancelled); ?wi= carries workItemId |
 | deploy-qa-db-recovery | deploy | IN_FLIGHT | canonical (no repo writes) | main | HEAD | STANDARD | QA postgres stuck in recovery ~15+min; diagnose+recover data-preserving |
+| fix-cas-transient | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-cas | fix/cas-transient | abcbbd4 | STANDARD | f3b4643: store_contention marker → CAS losses transient | → reviewer 1efd514f |
+| fix-contract-gate | implement | IN_FLIGHT | /private/tmp/shipit-fix-contract-gate | fix/contract-gate | abcbbd4 | STANDARD | F-242: defer agentExecuting when no qaContractId | b7cb6616 running |
