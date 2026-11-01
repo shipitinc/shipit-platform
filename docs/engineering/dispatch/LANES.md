@@ -1481,3 +1481,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | impl-provider-env-wiring | implement | IN_FLIGHT | /private/tmp/shipit-provider-env | feat/provider-env-wiring | 7ca2b49 | STANDARD | wire OPENCODE_OPENROUTER_API_KEY to QA + prod env | 63a21908 running |
 | impl-provider-env-wiring | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-provider-env | feat/provider-env-wiring | 7ca2b49 | STANDARD | 4f477bf: OPENROUTER_API_KEY + OPENCODE_ twin wired to compose env, prod by-name docs | → reviewer 8efe9d1b |
 | review-provider-env-wiring | review | IN_FLIGHT | (read-only) | feat/provider-env-wiring | 7ca2b49 | STANDARD | await result |
+| review-provider-env-wiring | review | CLOSED | (read-only) | feat/provider-env-wiring | 7ca2b49 | STANDARD | APPROVE_FOR_MERGE | → integrator |
+| integrate-provider-env-wiring | integrate | CLOSED | scratch rehearsal | feat/provider-env-wiring | 7ca2b49 | STANDARD | MERGE_APPROVED → merged (human-authorized) | done |
