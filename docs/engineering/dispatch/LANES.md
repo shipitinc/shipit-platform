@@ -1486,3 +1486,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | deploy-qa-paid-models | deploy | IN_FLIGHT | canonical (no repo writes) | main | HEAD | STANDARD | paid OpenRouter tier live (env key + chains) | 37063e97 running |
 | impl-auto-model-escalation | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-auto-escalation | feat/auto-model-escalation | 7ca2b49 | PRECISION | cbd85ba: stderr-scan provider detection + provider_unavailable marker + auto escalationIndex | → reviewer ffd74b0b |
 | review-auto-model-escalation | review | IN_FLIGHT | (read-only) | feat/auto-model-escalation | 7ca2b49 | PRECISION | await result |
+| review-auto-model-escalation | review | CLOSED | (read-only) | feat/auto-model-escalation | 7ca2b49 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP | → integrator |
+| integrate-auto-model-escalation | integrate | CLOSED | scratch rehearsal | feat/auto-model-escalation | 7ca2b49 | STANDARD | MERGE_APPROVED (test-integration +318-1 F-161 flake) → merged (human-authorized) | done |
