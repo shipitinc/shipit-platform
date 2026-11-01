@@ -1470,3 +1470,6 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | deploy-qa-db-recovery | deploy | IN_FLIGHT | canonical (no repo writes) | main | HEAD | STANDARD | QA postgres stuck in recovery ~15+min; diagnose+recover data-preserving |
 | fix-cas-transient | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-cas | fix/cas-transient | abcbbd4 | STANDARD | f3b4643: store_contention marker → CAS losses transient | → reviewer 1efd514f |
 | fix-contract-gate | implement | IN_FLIGHT | /private/tmp/shipit-fix-contract-gate | fix/contract-gate | abcbbd4 | STANDARD | F-242: defer agentExecuting when no qaContractId | b7cb6616 running |
+| review-cas-transient | review | CLOSED | (read-only) | fix/cas-transient | abcbbd4 | STANDARD | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (F-243 product_registry CAS latent) | → integrator |
+| integrate-cas-transient | integrate | CLOSED | scratch rehearsal | fix/cas-transient | abcbbd4 | STANDARD | MERGE_APPROVED (test-integration +319) → merged a9ee72e | done |
+| fix-contract-gate | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-contract-gate | fix/contract-gate | abcbbd4 | STANDARD | 375e94c: contractless defer on impl+triage+design lanes | → reviewer f020b659 |
