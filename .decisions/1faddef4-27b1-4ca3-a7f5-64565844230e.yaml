@@ -1,0 +1,15 @@
+decisionId: 1faddef4-27b1-4ca3-a7f5-64565844230e
+decisionType: operator_configuration
+status: resolved
+question: "QA agent layer dead — every role's model_policy chain is opencode/space-bunny-free and the account free quota is exhausted (verified: 'Free usage limit reached' on all free models, zero successful calls since ~22:56Z Oct 31). How to unblock and structure the paid tier?"
+options:
+  - optionId: wire_byok_paid
+    label: "Wire OpenRouter BYOK + cost-prioritized per-role paid chains + automatic escalation"
+chosen: wire_byok_paid
+decidedBy: human-operator
+decidedAt: 2026-11-01T19:45:00Z
+rationale: "Operator provided .openRouterApiKey (gitignored), authorized paid tier, directed 'make paid model escalation automatic and no longer needing human escalation' and 'prioritize cost based on openrouter's offerings', and will set a usage limit on the openrouter key."
+consequences:
+  - OPENROUTER_API_KEY wired into docker/.env (gitignored) → compose.qa.yaml env
+  - model_policy chains updated per role: cheap paid default (deepseek-v4.1-flash; glm-4.7-flash/qwen3.8-flash for mechanical roles) + claude-sonnet-5.5 escalation step for judgment-heavy roles
+  - automatic escalationIndex bump on provider failure (lane impl-auto-model-escalation) — no human escalation needed
