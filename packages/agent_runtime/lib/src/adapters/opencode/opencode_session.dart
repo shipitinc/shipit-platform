@@ -23,7 +23,15 @@ ProviderErrorType _detectProviderErrorType(String message) {
   if (lower.contains('credit balance') ||
       lower.contains('insufficient credits') ||
       lower.contains('billing') ||
-      lower.contains('quota exceeded')) {
+      lower.contains('quota exceeded') ||
+      // The quota family observed live: opencode swallows
+      // `AI_APICallError: Free usage limit reached` and answers
+      // `session/prompt` never — the text only exists on stderr.
+      lower.contains('usage limit') ||
+      lower.contains('limit reached') ||
+      lower.contains('insufficient_quota') ||
+      lower.contains('out of credits') ||
+      lower.contains('payment required')) {
     return ProviderErrorType.creditExhausted;
   }
   if (lower.contains('rate limit') ||
@@ -494,6 +502,46 @@ class OpenCodeSession implements AgentSession {
 
   ProviderError? _lastProviderError;
 
+  /// Records a provider error read from the transport's stderr tail, when the
+  /// tail names one.
+  ///
+  /// The ACP wire does NOT carry provider failures in the shape production
+  /// actually hits: verified live, `AI_APICallError: Free usage limit
+  /// reached` is swallowed by the runtime — `session/prompt` is never
+  /// answered and no `session/update` arrives — while the child prints the
+  /// error on stderr and goes quiet. `OpenCodeProcessTransport` already
+  /// buffers that stderr; nothing read it, so the only signal the runtime
+  /// ever emitted was being thrown away.
+  ///
+  /// Nothing is fabricated here. Only text the runtime itself wrote is
+  /// read, only text [_detectProviderErrorType] recognises counts as
+  /// evidence, and an unmatched tail is left unrecorded rather than guessed
+  /// at — `unknown` is the answer "this is not a provider error we can
+  /// name", not a licence to claim one.
+  void _providerErrorFromStderr() {
+    // An UNCLASSIFIED error already recorded — `_reportTransportInterruption`
+    // stamps `ProviderErrorType.unknown` for every wire failure — does not
+    // block this scan: stderr evidence is stronger than "we could not name
+    // the failure", so a classified tail upgrades it.
+    final existing = _lastProviderError;
+    if (existing != null && existing.type != ProviderErrorType.unknown) {
+      return;
+    }
+    final transport = _transport;
+    if (transport == null || transport is! StderrTail) return;
+    final tail = (transport as StderrTail).stderrTail.trim();
+    if (tail.isEmpty) return;
+    final type = _detectProviderErrorType(tail);
+    if (type == ProviderErrorType.unknown) return;
+    _lastProviderError = ProviderError(
+      type: type,
+      provider: _provider,
+      // Retain the END of the tail: a bounded buffer keeps the most recent
+      // bytes, which is where the fatal line lives.
+      message: tail.length > 500 ? tail.substring(tail.length - 500) : tail,
+    );
+  }
+
   /// A transport failed: the wire went quiet, the child died, or a request ran
   /// out of time. Reported as [SessionInterrupted], NOT as [SessionFailed].
   ///
@@ -872,18 +920,33 @@ class OpenCodeSession implements AgentSession {
 
   @override
   Future<AgentResult> getResult() async {
+    // A result can be asked for while the session never settled: the
+    // coordinator's budget path manufactures its own terminal event and
+    // then calls this on a session that is still `running` and has emitted
+    // nothing. `partial` is the honest status for that shape — reporting
+    // the initial `completed` here would write a durable claim that the
+    // runtime finished work it never did.
+    final effectiveStatus = _settled
+        ? _resultStatus
+        : AgentResultStatus.partial;
+    // One look at the child's diagnostic tail before the record is sealed.
+    // A session that did not complete cleanly may have died on a provider
+    // error the ACP wire never carried; see [_providerErrorFromStderr].
+    if (_status != AgentSessionStatus.completed) {
+      _providerErrorFromStderr();
+    }
     final text = _finalText();
     final payload = _structuredPayload(text);
     final structured = payload.isEmpty
         ? const <String, dynamic>{}
         : _canonicaliseContractTokens(payload);
-    final completed = _resultStatus == AgentResultStatus.completed;
+    final completed = effectiveStatus == AgentResultStatus.completed;
     return AgentResult(
       resultId: 'result-$_sessionId',
       executionId: executionId,
       sessionId: _sessionId,
       workItemId: _workItemId,
-      status: _resultStatus,
+      status: effectiveStatus,
       artifacts: const [],
       diagnostics: AgentDiagnostics(
         exitCode: completed ? 0 : 1,
@@ -896,7 +959,10 @@ class OpenCodeSession implements AgentSession {
             : [
                 DiagnosticEntry(
                   code: 'agent_runtime_failure',
-                  message: _resultReason,
+                  message: _resultReason.isEmpty
+                      ? 'the session ended without reporting a terminal '
+                            'state'
+                      : _resultReason,
                   severity: 'error',
                 ),
               ],
@@ -940,7 +1006,7 @@ class OpenCodeSession implements AgentSession {
         // True only when the runtime returned nothing at all. The distinction is
         // what keeps a wire timeout from being read downstream as an assessment.
         'runtimeAnswered':
-            _resultStatus == AgentResultStatus.completed ||
+            effectiveStatus == AgentResultStatus.completed ||
             _status == AgentSessionStatus.failed,
         if (_stopReason.isNotEmpty) 'stopReason': _stopReason,
         'structuredResultPresent': structured.isNotEmpty,

@@ -443,4 +443,5 @@ DesignRevision _withColumn(
   updatedAt: revision.updatedAt,
   approvedAt: revision.approvedAt,
   version: revision.version,
+  declaredOwnedPaths: revision.declaredOwnedPaths,
 );

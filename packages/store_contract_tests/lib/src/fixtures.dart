@@ -571,6 +571,7 @@ DesignRevision buildDesignRevision({
     updatedAt: now,
     approvedAt: status == DesignRevisionStatus.approved ? now : null,
     version: version,
+    declaredOwnedPaths: const ['lib/owned/**', 'apps/server/lib/owned/**'],
   );
 }
 

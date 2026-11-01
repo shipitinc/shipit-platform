@@ -30,6 +30,22 @@ abstract interface class AcpTransport {
   Future<void> close();
 }
 
+/// Optional capability: a transport that retains a bounded tail of the
+/// child's diagnostic stream.
+///
+/// Provider failures do not always reach the wire. A runtime that hits a
+/// quota or billing wall may swallow the API error entirely — `session/prompt`
+/// is simply never answered, and no `session/update` names the cause — while
+/// printing the real reason to stderr. A transport that keeps that tail lets
+/// the session report the provider's own words instead of leaving the platform
+/// to infer an outage from silence. Transports that capture nothing simply do
+/// not implement this; a missing tail is no evidence either way.
+abstract interface class StderrTail {
+  /// The most recent bytes retained from the child's stderr. Empty when the
+  /// transport has seen none.
+  String get stderrTail;
+}
+
 @immutable
 class AcpInitializeResult {
   const AcpInitializeResult({

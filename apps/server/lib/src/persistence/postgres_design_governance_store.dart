@@ -110,7 +110,8 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
            "artifactRefsJson", "designerExecutionId", "reviewExecutionIdsJson",
            "fidelityAnchorSchemaVersion", "status", "riskTier", "reviewScopeJson",
            "carriedForwardFromRevisionId",
-           "supersededByRevisionId", "createdAt", "updatedAt", "approvedAt", "version"
+           "supersededByRevisionId", "declared_owned_paths",
+           "createdAt", "updatedAt", "approvedAt", "version"
          ) VALUES (
            @revisionId, @workItemId, @productId, @parentRevisionId,
            @designSystemRevision, @providerType, @penpotFileId, @penpotPageId,
@@ -118,7 +119,8 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
            @artifactRefsJson, @designerExecutionId, @reviewExecutionIdsJson,
            @fidelityAnchorSchemaVersion, @status, @riskTier, @reviewScopeJson,
            @carriedForwardFromRevisionId,
-           @supersededByRevisionId, @createdAt, @updatedAt, @approvedAt, @version
+           @supersededByRevisionId, @declared_owned_paths,
+           @createdAt, @updatedAt, @approvedAt, @version
          )''';
 
     if (expectedVersion != null) {
@@ -143,6 +145,7 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
              "reviewScopeJson" = @reviewScopeJson,
              "carriedForwardFromRevisionId" = @carriedForwardFromRevisionId,
              "supersededByRevisionId" = @supersededByRevisionId,
+             "declared_owned_paths" = @declared_owned_paths,
              "createdAt" = @createdAt,
              "updatedAt" = @updatedAt,
              "approvedAt" = @approvedAt,
@@ -213,6 +216,7 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
              "reviewScopeJson" = EXCLUDED."reviewScopeJson",
              "carriedForwardFromRevisionId" = EXCLUDED."carriedForwardFromRevisionId",
              "supersededByRevisionId" = EXCLUDED."supersededByRevisionId",
+             "declared_owned_paths" = EXCLUDED."declared_owned_paths",
              "createdAt" = EXCLUDED."createdAt",
              "updatedAt" = EXCLUDED."updatedAt",
              "approvedAt" = EXCLUDED."approvedAt",
@@ -582,6 +586,11 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
       updatedAt: decodeUtc(m['updatedAt'])!,
       approvedAt: decodeUtc(m['approvedAt']),
       version: m['version'] as int,
+      declaredOwnedPaths:
+          (m['declared_owned_paths'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList(growable: false) ??
+          const <String>[],
     );
   }
 
@@ -615,6 +624,7 @@ class PostgresDesignGovernanceStore implements DesignGovernanceStore {
       ),
       'carriedForwardFromRevisionId': json['carriedForwardFromRevisionId'],
       'supersededByRevisionId': json['supersededByRevisionId'],
+      'declared_owned_paths': revision.declaredOwnedPaths,
       'createdAt': PersistenceDatabase.toUtc(revision.createdAt),
       'updatedAt': PersistenceDatabase.toUtc(revision.updatedAt),
       'approvedAt': PersistenceDatabase.toUtc(revision.approvedAt),

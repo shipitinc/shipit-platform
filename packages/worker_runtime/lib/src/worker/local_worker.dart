@@ -7,6 +7,7 @@ import 'package:worker_protocol/worker_protocol.dart';
 
 import '../env/environment_policy.dart';
 import '../execution/agent_execution_driver.dart';
+import '../execution/provider_failure.dart';
 import '../store/store_contention.dart';
 import '../store/worker_store.dart';
 import '../store/worker_registration_store.dart';
@@ -662,7 +663,7 @@ class LocalWorker implements Worker {
         case AgentSessionStatus.interrupted:
           finalStatus = WorkerExecutionStatus.timedOut;
           failureCode = WorkerFailureCode.timedOut;
-          failureDetail = 'agent session timed out';
+          failureDetail = await _timeoutDetailFor(agentRequest.executionId);
         case AgentSessionStatus.cancelled:
           finalStatus = WorkerExecutionStatus.cancelled;
           failureCode = WorkerFailureCode.cancelled;
@@ -854,6 +855,31 @@ class LocalWorker implements Worker {
         hostEnv: Platform.environment,
       ),
     );
+  }
+
+  /// The failure detail for an interrupted agent session: the honest
+  /// timeout, enriched with [providerFailureMarker] when the durable agent
+  /// result shows the provider produced nothing — or said so itself.
+  ///
+  /// The enrichment is what lets `Scheduler._adopt` tell "the model quota
+  /// was exhausted" apart from "the work hung": both settle `timedOut` and
+  /// both are transient, but only the first earns a bump up the role's
+  /// model chain. A driver that cannot read the result, or a read that
+  /// fails, degrades to the plain detail — never a guessed marker, because
+  /// a false marker spends the paid tier.
+  Future<String> _timeoutDetailFor(String agentExecutionId) async {
+    const base = 'agent session timed out';
+    final driver = executionDriver;
+    if (driver is! AgentResultReader) return base;
+    final AgentResult? result;
+    try {
+      result = await (driver as AgentResultReader).resultFor(agentExecutionId);
+    } on Object {
+      return base;
+    }
+    final evidence = providerFailureEvidence(result);
+    if (evidence == null) return base;
+    return '$base; $providerFailureMarker$evidence';
   }
 
   Future<void> _cancelAgent(

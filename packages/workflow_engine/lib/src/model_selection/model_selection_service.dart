@@ -108,6 +108,21 @@ class ModelSelectionService {
     );
   }
 
+  /// The largest escalation index [role]'s chain can serve:
+  /// `chain.length - 1`, or 0 when no policy exists (the configured default
+  /// is a single step, so there is nothing to escalate TO).
+  ///
+  /// Read by the scheduler's automatic provider-failure escalation, whose
+  /// bound is the chain itself — deliberately NOT the
+  /// `escalationIndexWithinLimit` decision-type guard, which bounds the
+  /// human-decision escalation path. An index already at this ceiling is at
+  /// the top of the chain, which is where automatic escalation stops.
+  Future<int> escalationCeilingFor(AgentRole role) async {
+    final policy = await _getPolicy(role);
+    if (policy == null || policy.chain.isEmpty) return 0;
+    return policy.chain.length - 1;
+  }
+
   /// Writes the operator-configured default into `model_policy` for every
   /// agent role, so the default becomes durable, auditable and tunable through
   /// the table rather than living only as a constant.
