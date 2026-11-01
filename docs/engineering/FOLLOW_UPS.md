@@ -3924,3 +3924,13 @@ until a contract exists (or the upstream lane should mint one) — a preconditio
 failure. Fix: gate entry on `qaContractId` presence, or auto-request the contract upstream instead
 of consuming attempts to a guaranteed-fail gate.
 - **Priority:** structural — every retry of a contractless item burns an attempt on a known-fail.
+
+## F-243: product_registry.ConcurrentModificationException not covered on baseline lane (LATENT)
+`BaselineProductionLane.saveBaseline(expectedVersion:)` CAS loss propagates through
+`BaselineLaneRunnerAdapter` into `BaselineProductDispatcher._run` → classifies PERMANENT — same
+F-241 misclassification on a lane f3b4643 touched but could not cover (no product_registry dep).
+Fails closed (permanent, bounded) — non-blocking but same defect class. Fix: add coverage (dep or
+adapter mapping) so the product-registry CAS loss also classifies transient; correct the
+store_contention.dart comment claiming the 3 types are the complete CAS family (job-store and
+product-registry types also exist).
+- **Priority:** latent — fires only when the baseline CAS loses a race.
