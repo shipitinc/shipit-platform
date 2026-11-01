@@ -9,8 +9,8 @@ AREA: implementation readiness / QA-contract precondition
 WORKTREE: /private/tmp/shipit-fix-contract-gate
 BRANCH: fix/contract-gate
 BASE_SHA: HEAD
-OWNED_PATHS: [apps/server/lib/**, packages/scheduler/**]
-READ_ONLY_PATHS: [packages/workflow_engine/**, packages/platform_contracts/**]
+OWNED_PATHS: [apps/server/lib/**/*, apps/server/test/**/]
+READ_ONLY_PATHS: [packages/workflow_engine/**/*, packages/platform_contracts/**/*, packages/scheduler/**/*]
 PROHIBITED_PATHS: [.agents/ .claude/ AGENTS.md docs/adr/** .decisions/** **/generated/**]
 VALIDATION_COMMANDS: [dart format --output=none --set-exit-if-changed . (root), dart analyze + dart run tool/run_unit_tests.dart (apps/server), dart analyze + dart test (packages/scheduler)]
 ROUTING_CLASS: STANDARD
