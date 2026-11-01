@@ -3906,3 +3906,21 @@ counts a cancelled designApproval as pending forever (no writer cancels them tod
 Fix: migrate the reuse loops + reconciler check to `status.isOpen`.
 - **Priority:** latent; same defect class F-24x fixed — becomes live the first time a decision
   of those types is ever cancelled.
+
+## F-241: optimistic-CAS loss recorded as PERMANENT job failure instead of transient
+6 triage/implement jobs failed `Concurrent modification of <item|execution> (expected version N,
+actual N+1)` → `executionFailed` permanent. A CAS loss means another writer already advanced the
+row — inherently transient; marking it permanent kills the attempt. Likely F-237-adjacent: detached
+continuation + tick + reconcile now write the same entities concurrently, so CAS races the old
+in-tick flow never had. Fix: classify `ConcurrentModificationException`/version-mismatch errors as
+transient so RetryPolicy re-queues the attempt rather than failing the job.
+- **Priority:** real misclassification — loses work on timing, not on defect.
+
+## F-242: items reach implement/triage jobs with no qaContractId → guaranteed permanent failure at agentCompleted
+`DEF-fresh-test`/`DEF-f223-test` (and any item without a QA contract) fail `QA contract must exist
+before implementation completes` at the FINAL transition — the job does the agent work, then the
+transition is rejected and the attempt is gone. The readiness probe should defer `agentExecuting`
+until a contract exists (or the upstream lane should mint one) — a precondition gap, not a runtime
+failure. Fix: gate entry on `qaContractId` presence, or auto-request the contract upstream instead
+of consuming attempts to a guaranteed-fail gate.
+- **Priority:** structural — every retry of a contractless item burns an attempt on a known-fail.
