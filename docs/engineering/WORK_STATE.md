@@ -1659,3 +1659,14 @@ Executions emit zero events and die at the 1800s budget. ProviderHealthMonitor r
 outage (deduped on the old open ones). Wiring: `.openRouterApiKey` at repo root (gitignored);
 `OPENCODE_OPENROUTER_API_KEY` env convention exists but absent in QA container. Two lanes in
 flight: auto-escalationIndex on provider failure (no human escalation) + provider env wiring.
+
+### Paid OpenRouter tier wired (2026-11-01, human-authorized decision 1faddef4)
+- `.openRouterApiKey` → gitignored (753293b); value written to `docker/.env` (gitignored).
+- `93fdc4a` merged: OPENROUTER_API_KEY + OPENCODE_OPENROUTER_API_KEY → compose.qa.yaml env.
+- `model_policy` chains updated via `updateModelPolicy` (version 2, decision 1faddef4):
+  judgment roles = [deepseek-v4.1-flash, claude-sonnet-5.5]; FOCUSED_REVIEWER/DESIGN_REVIEWER/
+  QA_ARCHITECT = glm-4.7-flash; QA_EXECUTOR = qwen3.8-flash; TRIAGE_DEFECT = deepseek-v4.1-flash.
+- Deploy in flight (37063e97) — container recreate so the key reaches opencode; then verify
+  model_execution_record shows tokens>0 on a paid model (vs the zero-token quota-dead signature).
+- impl-auto-model-escalation (c5aebdd3) still running — auto escalationIndex bump on provider
+  failure lands separately.

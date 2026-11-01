@@ -1483,3 +1483,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-provider-env-wiring | review | IN_FLIGHT | (read-only) | feat/provider-env-wiring | 7ca2b49 | STANDARD | await result |
 | review-provider-env-wiring | review | CLOSED | (read-only) | feat/provider-env-wiring | 7ca2b49 | STANDARD | APPROVE_FOR_MERGE | → integrator |
 | integrate-provider-env-wiring | integrate | CLOSED | scratch rehearsal | feat/provider-env-wiring | 7ca2b49 | STANDARD | MERGE_APPROVED → merged (human-authorized) | done |
+| deploy-qa-paid-models | deploy | IN_FLIGHT | canonical (no repo writes) | main | HEAD | STANDARD | paid OpenRouter tier live (env key + chains) | 37063e97 running |
