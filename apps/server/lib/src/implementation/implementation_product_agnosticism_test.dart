@@ -72,6 +72,19 @@ void main() {
       label: 'the implementation job definition',
       path: 'packages/scheduler/lib/src/implement_feature.dart',
     ),
+    // Registered on repair: both landed in the directory after this gate was
+    // written and were silently uncovered — which is precisely the failure the
+    // "names every non-test file" check exists to catch. Both were verified
+    // clean against the rule set below before being listed.
+    (
+      label: 'the dispatch-time path-ownership grant',
+      path:
+          'apps/server/lib/src/implementation/implementation_path_ownership.dart',
+    ),
+    (
+      label: 'the design-scope grant',
+      path: 'apps/server/lib/src/implementation/design_scope_grant.dart',
+    ),
   ];
 
   /// True for the WORKSPACE root, not the server package root.
@@ -289,6 +302,11 @@ WorkItem _fixtureItem() {
     title: 'A fixture item used only to ask the probe about a product',
     description: 'The probe reads the product and its onboarding record.',
     state: WorkItemState.implementationReady,
+    // A contract, so the behaviour tests above reach the gate they name: the
+    // contract check sits between the product gates and the record gate, and
+    // without this both tests would defer early at `qa_contract_missing` while
+    // claiming to prove "no record defers" and "ungoverned defers first".
+    qaContractId: 'qa-contract-wi-agnosticism',
     createdAt: now,
     updatedAt: now,
   );

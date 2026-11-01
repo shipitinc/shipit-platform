@@ -5,6 +5,8 @@ import 'package:platform_contracts/platform_contracts.dart'
 import 'package:scheduler/scheduler.dart'
     show SchedulerWorkload, WorkloadResolver;
 
+import '../qa/qa_contract_dispatch_gate.dart' show workItemCarriesQaContract;
+
 /// Reads a product's lifecycle state, or `null` when no such product exists.
 ///
 /// A narrow port rather than a `ProductRegistryEngine`, for one reason: the
@@ -156,7 +158,7 @@ final class ImplementationWorkspaceDeferred extends ImplementationReadiness {
 /// So the probe resolves the durable clone, and when it cannot, it DEFERS. It
 /// never substitutes either of the above.
 ///
-/// ## The three gates, in order
+/// ## The four gates, in order
 ///
 /// Each gate is cheaper and more fundamental than the one after it, and each
 /// has a different owner:
@@ -165,14 +167,26 @@ final class ImplementationWorkspaceDeferred extends ImplementationReadiness {
 ///     "work may be dispatched for this product"; every other value says the
 ///     product has no accepted baseline, is paused, or is archived. Deferring
 ///     here costs nothing — a paused product resumes.
-///  2. **the record names the product's DURABLE clone, pinned and live.** Not
+///  2. **the item carries the QA contract its completion is judged by.** The
+///     only edge out of a finished implementation, `agentExecuting ->
+///     agentCompleted`, is guarded by `GuardConditions.qaContractExists()` and
+///     the coordinator supplies `qaContractId` from the work item itself — so
+///     an item without one is refused at the LAST transition, after the agent
+///     work ran and the attempt was spent. This is F-242: a guaranteed-fail
+///     gate charged to the retry budget. It is checked before the workspace
+///     questions because a field already in hand answers it, and because
+///     "this item can never complete" outranks "this product's clone
+///     resolves" when both are true. Resumable: the provisioning lanes stamp
+///     a contract at creation, and the repair tooling attaches a real one
+///     from the product's declared spec to an item that has none.
+///  3. **the record names the product's DURABLE clone, pinned and live.** Not
 ///     merely "a pin and a workspace": `OnboardingRecord.hasDurableProductClone`
 ///     also requires the DURABLE shape, because `workspace` is one column
 ///     holding two documents and the per-execution shape answers true to the
 ///     older, shape-blind predicate while naming a worker execution's worktree.
 ///     Reading the wrong shape yields a path that exists and is not the
 ///     product's.
-///  3. **the clone is on disk and resolves at its recorded pin.** A record can
+///  4. **the clone is on disk and resolves at its recorded pin.** A record can
 ///     outlive its tree — a host bind that was never mounted, a directory
 ///     removed by hand, a pin the clone does not contain.
 ///
@@ -252,8 +266,10 @@ class ImplementationReadinessProbe {
   /// | 4 | [_resolveCommit] — `Process.runSync` **throws** `ProcessException` when the process cannot start | throws | `pin_unresolvable`, carrying the exception verbatim |
   /// | 5 | [_log] — the composition root's is `stdout.writeln`, which raises on a closed pipe | throws | swallowed; the deferral is still returned, unlogged |
   ///
-  /// Two further reads are guarded but are **not ports**, and are not counted in the
-  /// five: `record.hasDurableProductClone` (a value, answering `false` → `no_durable_workspace`)
+  /// Three further reads are guarded but are **not ports**, and are not counted in the
+  /// five: `workItemCarriesQaContract(item)` (a field predicate on the item the
+  /// caller already handed in, answering `false` → `qa_contract_missing`),
+  /// `record.hasDurableProductClone` (a value, answering `false` → `no_durable_workspace`)
   /// and `record.workspace!.requireDurable()` (a *method on a record that port 2
   /// already returned*, which throws on a record of the wrong shape →
   /// `workspace_shape_unknown`). They are listed here because the earlier version of
@@ -325,6 +341,44 @@ class ImplementationReadinessProbe {
         'here, and the item will run when it becomes governed',
         event: 'implementation.deferred.product_not_governed',
         details: {'productState': state.wire},
+      );
+    }
+
+    // GATE 2 — the item must carry the QA contract its completion is judged
+    // by.
+    //
+    // `agentExecuting -> agentCompleted` is the ONLY edge out of a finished
+    // implementation and it carries `GuardConditions.qaContractExists()`,
+    // which the coordinator answers from the work item's own `qaContractId`.
+    // An item without one therefore cannot be refused at dispatch: it is
+    // refused at the FINAL transition, after the agent work ran and the
+    // attempt was spent — and every retry buys the identical outcome, which
+    // is the F-242 burn this gate exists to end.
+    //
+    // Deferral, not failure, for the same reason the workspace gates defer:
+    // the condition is transient with respect to the platform's own progress.
+    // A contract minted onto the item — by a provisioning lane at creation,
+    // or by the repair tooling attaching one from the product's declared
+    // spec — lifts this on the next tick. An item whose product declares no
+    // QA spec has nothing to mint and defers indefinitely, which is the
+    // intended outcome: completing such an item is impossible, and every run
+    // spent re-discovering that at the last transition is a run burned on a
+    // gate that could never pass.
+    //
+    // It is asked BEFORE the onboarding read on cost alone — a field on the
+    // item already in hand needs no store round-trip — and on precedence:
+    // "this item cannot complete" is the fact an operator needs when it is
+    // true, ahead of every workspace question below it.
+    if (!workItemCarriesQaContract(item)) {
+      return _deferred(
+        item,
+        'work item ${item.workItemId} carries no QA contract id, so the '
+        'agentExecuting -> agentCompleted guard can never pass for it: '
+        'dispatching now would spend a full implementation run and its '
+        'attempt on a transition that refuses by construction. Not a '
+        'failure — a real contract minted onto the item lifts this on the '
+        'next tick',
+        event: 'implementation.deferred.qa_contract_missing',
       );
     }
 

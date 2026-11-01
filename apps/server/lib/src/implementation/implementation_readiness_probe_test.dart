@@ -148,7 +148,17 @@ void main() {
     );
   }
 
-  WorkItem item() {
+  /// A work item that carries a QA contract BY DEFAULT, so every existing
+  /// gate test exercises the gate it names rather than stopping one gate
+  /// early at `qa_contract_missing`.
+  ///
+  /// The default is load-bearing, not convenience: the contract check sits
+  /// between the product gates and the workspace gates, so a fixture with no
+  /// `qaContractId` would make "no onboarding record defers" pass while the
+  /// deferral actually fired two gates earlier for a different reason —
+  /// the exact kind of green that covers nothing. Contractless items are
+  /// asked for explicitly, by name.
+  WorkItem item({String? qaContractId = 'qa-contract-wi-probe'}) {
     final now = DateTime.utc(2026);
     return WorkItem(
       workItemId: 'wi-probe',
@@ -157,6 +167,7 @@ void main() {
       title: 'A fixture item used only to ask the probe about a product',
       description: 'The probe reads the product and its onboarding record.',
       state: WorkItemState.implementationReady,
+      qaContractId: qaContractId,
       createdAt: now,
       updatedAt: now,
     );
@@ -313,7 +324,83 @@ void main() {
     }
   });
 
-  group('gate 2 — the record must name the product\'s DURABLE clone', () {
+  group('gate 2 — the item must carry its QA contract', () {
+    test('no qaContractId defers with the named event', () async {
+      final events = <String>[];
+      // A governed product and a PERFECT record: the contract gate must still
+      // refuse, because nothing downstream of it can make `agentExecuting ->
+      // agentCompleted` pass. Without the record being right this test would
+      // pass for the wrong gate's reason.
+      final readiness = await probeFor(
+        record: durableRecord(repositoryPath: repoRoot.path),
+        log: events,
+      ).probe(item(qaContractId: null));
+
+      final deferred = readiness as ImplementationWorkspaceDeferred;
+      expect(deferred.reason, contains('no QA contract id'));
+      expect(
+        deferred.reason,
+        contains('wi-probe'),
+        reason:
+            'the operator has to know WHICH item cannot complete — the '
+            'deferral reason is the only sentence they get',
+      );
+      expect(events, ['implementation.deferred.qa_contract_missing']);
+    });
+
+    test(
+      'a BLANK qaContractId defers — it is a missing contract, not one',
+      () async {
+        // `GuardConditions.qaContractExists()` tests `!= null`, so a whitespace
+        // id would pass the completion guard while naming no contract at all —
+        // the worse of the two contractless shapes. The gate reads it the way
+        // `qa_drain.dart` reads it: absent.
+        final readiness = await probeFor(
+          record: durableRecord(repositoryPath: repoRoot.path),
+        ).probe(item(qaContractId: '   '));
+
+        expect(readiness, isA<ImplementationWorkspaceDeferred>());
+        expect(
+          (readiness as ImplementationWorkspaceDeferred).reason,
+          contains('no QA contract id'),
+        );
+      },
+    );
+
+    test('the deferral asks again rather than burning an attempt', () async {
+      // The whole point of the F-242 fix: the job is never dispatched, so no
+      // attempt is consumed and no human decision is raised — the item waits
+      // for a contract to be minted onto it.
+      final readiness = await probeFor().probe(item(qaContractId: null));
+
+      final deferred = readiness as ImplementationWorkspaceDeferred;
+      expect(
+        deferred.reason,
+        contains('Not a failure'),
+        reason:
+            'the reason must say this waits, not that it failed. An operator '
+            'reading "cannot complete" and one reading "something broke" act '
+            'completely differently',
+      );
+    });
+
+    test('a contractless item on a NON-governed product reports the product '
+        'gate, not the contract gate', () async {
+      // Ordering is a real property: product-level facts come before
+      // item-level ones, so both being true reports the reason an operator
+      // resolves first. Once governed, the next tick reports the contract.
+      final readiness = await probeFor(
+        state: ProductState.paused,
+      ).probe(item(qaContractId: null));
+
+      expect(
+        (readiness as ImplementationWorkspaceDeferred).reason,
+        contains('paused'),
+      );
+    });
+  });
+
+  group('gate 3 — the record must name the product\'s DURABLE clone', () {
     test('no record at all defers', () async {
       final readiness = await probeFor().probe(item());
       expect(
@@ -343,15 +430,15 @@ void main() {
     );
 
     test('an unpinned durable clone is refused', () async {
-      final record = durableRecord(repositoryPath: repoRoot.path).copyWith(
-        pinnedRevision: null,
-      );
+      final record = durableRecord(
+        repositoryPath: repoRoot.path,
+      ).copyWith(pinnedRevision: null);
       final readiness = await probeFor(record: record).probe(item());
       expect(readiness, isA<ImplementationWorkspaceDeferred>());
     });
   });
 
-  group('gate 3 — the clone must be on disk and at its pin', () {
+  group('gate 4 — the clone must be on disk and at its pin', () {
     test(
       'a recorded path that does not exist defers and names the path',
       () async {
@@ -433,12 +520,8 @@ void main() {
       // ignore: unnecessary_lambdas
       Future<void> probeOne(ImplementationReadinessProbe p) => p.probe(item());
 
-      await probeOne(
-        probeFor(state: ProductState.paused, log: events),
-      );
-      await probeOne(
-        probeFor(record: recordWithoutWorkspace(), log: events),
-      );
+      await probeOne(probeFor(state: ProductState.paused, log: events));
+      await probeOne(probeFor(record: recordWithoutWorkspace(), log: events));
       await probeOne(
         probeFor(
           record: durableRecord(repositoryPath: '/not/there'),
@@ -558,15 +641,16 @@ void main() {
         final events = <String>[];
         final probe = ImplementationReadinessProbe(
           readProductState: (_) async => ProductState.governed,
-          readOnboarding: (_) async => durableRecord(
-            repositoryPath: repoRoot.path,
-          ),
+          readOnboarding: (_) async =>
+              durableRecord(repositoryPath: repoRoot.path),
           repositoryExists: (_) => true,
-          resolveCommit: (path, revision) => throw ProcessException(
-            'git',
-            ['-C', path, 'rev-parse', '--verify', '$revision^{commit}'],
-            'No such file or directory',
-          ),
+          resolveCommit: (path, revision) => throw ProcessException('git', [
+            '-C',
+            path,
+            'rev-parse',
+            '--verify',
+            '$revision^{commit}',
+          ], 'No such file or directory'),
           runtimeTypeId: 'probe-runtime',
           timeoutSeconds: 1800,
           log: (event, data) => events.add(event),
@@ -656,43 +740,40 @@ void main() {
       },
     );
 
-    test(
-      'a log that THROWS does not convert a deferral into a crash',
-      () async {
-        // The fifth injected port, and the one most likely to be forgotten
-        // because the default cannot throw. The default cannot; an INJECTED one
-        // can. The composition root's `_log` is `stdout.writeln`, which raises
-        // `StdoutException` / `OSError` on a broken or closed stdout — ordinary
-        // for a service whose parent closed the pipe.
-        //
-        // The hazard is specific to `_deferred`: it is called from inside `catch`
-        // blocks, so a throw from the log does not merely escape the probe, it
-        // escapes the very handler that was recording why the work was refused.
-        final probe = ImplementationReadinessProbe(
-          readProductState: (_) async => ProductState.paused,
-          readOnboarding: (_) async => null,
-          runtimeTypeId: 'probe-runtime',
-          timeoutSeconds: 1800,
-          log: (event, data) => throw const _BrokenLog(),
-        );
+    test('a log that THROWS does not convert a deferral into a crash', () async {
+      // The fifth injected port, and the one most likely to be forgotten
+      // because the default cannot throw. The default cannot; an INJECTED one
+      // can. The composition root's `_log` is `stdout.writeln`, which raises
+      // `StdoutException` / `OSError` on a broken or closed stdout — ordinary
+      // for a service whose parent closed the pipe.
+      //
+      // The hazard is specific to `_deferred`: it is called from inside `catch`
+      // blocks, so a throw from the log does not merely escape the probe, it
+      // escapes the very handler that was recording why the work was refused.
+      final probe = ImplementationReadinessProbe(
+        readProductState: (_) async => ProductState.paused,
+        readOnboarding: (_) async => null,
+        runtimeTypeId: 'probe-runtime',
+        timeoutSeconds: 1800,
+        log: (event, data) => throw const _BrokenLog(),
+      );
 
-        final readiness = await probe.probe(item());
+      final readiness = await probe.probe(item());
 
-        expect(
-          readiness,
-          isA<ImplementationWorkspaceDeferred>(),
-          reason:
-              'a deferral is already the safe outcome; a failing sink must not '
-              'upgrade it into a throw that leaves `tick()`. The refusal is '
-              'returned to the caller regardless of whether it could be written '
-              'down',
-        );
-        expect(
-          (readiness as ImplementationWorkspaceDeferred).productId,
-          'product-a',
-        );
-      },
-    );
+      expect(
+        readiness,
+        isA<ImplementationWorkspaceDeferred>(),
+        reason:
+            'a deferral is already the safe outcome; a failing sink must not '
+            'upgrade it into a throw that leaves `tick()`. The refusal is '
+            'returned to the caller regardless of whether it could be written '
+            'down',
+      );
+      expect(
+        (readiness as ImplementationWorkspaceDeferred).productId,
+        'product-a',
+      );
+    });
 
     test(
       'one job\'s broken clone costs that job ALONE — the next job in the same '
@@ -714,6 +795,10 @@ void main() {
             category: WorkItemCategory.feature,
             title: 'Fixture item $id',
             description: 'A fixture used to ask what one bad clone costs',
+            // A contract on every fixture item: the contract gate sits ahead
+            // of the clone gates this test is about, so an item without one
+            // would defer before the port under test is ever asked.
+            qaContractId: 'qa-contract-$id',
           );
           await _parkAtImplementationReady(workflowStore, id);
         }
@@ -748,11 +833,9 @@ void main() {
             repositoryExists: (_) => true,
             resolveCommit: (path, revision) {
               if (path == badClonePath) {
-                throw ProcessException(
-                  'git',
-                  const ['rev-parse'],
-                  'No such file or directory',
-                );
+                throw ProcessException('git', const [
+                  'rev-parse',
+                ], 'No such file or directory');
               }
               return (commit: revision, output: null);
             },
@@ -840,156 +923,155 @@ void main() {
       },
     );
 
-    test(
-      'an UNREADABLE clone costs that job ALONE — the next job in the same '
-      'tick still dispatches',
-      () async {
-        // The same property, arrived at through the SECOND unguarded port and
-        // through the REAL default `_directoryExists` rather than an injected
-        // stand-in. Nothing is stubbed here: the healthy product's clone is the
-        // real git fixture, its pin is its real commit, and `resolveCommit` is
-        // the production shell-out. The only hostile element is a directory the
-        // process genuinely cannot traverse — which is what a host bind with the
-        // wrong ownership looks like from inside the probe.
-        final locked = lockedClone();
-        if (!locked.unreadable) {
-          // The fixture needs permission bits that actually deny traversal, which
-          // a process running as root simply cannot be given. Reported rather
-          // than silently dropped — the repo's convention for a declared
-          // limitation, per `WorkflowStoreContractDeviations`.
-          //
-          // No coverage is lost by this: the GUARD is covered unconditionally by
-          // the injected-port test above, which raises the identical
-          // `FileSystemException` on every platform. What this test alone proves
-          // is that the PRODUCTION default `_directoryExists` really raises it.
-          printOnFailure(
-            'DECLARED LIMITATION: this process cannot create a directory it is '
-            'denied access to (root ignores mode bits), so the real-filesystem '
-            'proof that `_directoryExists` throws did not run here. The guard '
-            'itself is still covered by the injected-port test in this group.',
-          );
-          return;
-        }
+    test('an UNREADABLE clone costs that job ALONE — the next job in the same '
+        'tick still dispatches', () async {
+      // The same property, arrived at through the SECOND unguarded port and
+      // through the REAL default `_directoryExists` rather than an injected
+      // stand-in. Nothing is stubbed here: the healthy product's clone is the
+      // real git fixture, its pin is its real commit, and `resolveCommit` is
+      // the production shell-out. The only hostile element is a directory the
+      // process genuinely cannot traverse — which is what a host bind with the
+      // wrong ownership looks like from inside the probe.
+      final locked = lockedClone();
+      if (!locked.unreadable) {
+        // The fixture needs permission bits that actually deny traversal, which
+        // a process running as root simply cannot be given. Reported rather
+        // than silently dropped — the repo's convention for a declared
+        // limitation, per `WorkflowStoreContractDeviations`.
+        //
+        // No coverage is lost by this: the GUARD is covered unconditionally by
+        // the injected-port test above, which raises the identical
+        // `FileSystemException` on every platform. What this test alone proves
+        // is that the PRODUCTION default `_directoryExists` really raises it.
+        printOnFailure(
+          'DECLARED LIMITATION: this process cannot create a directory it is '
+          'denied access to (root ignores mode bits), so the real-filesystem '
+          'proof that `_directoryExists` throws did not run here. The guard '
+          'itself is still covered by the injected-port test in this group.',
+        );
+        return;
+      }
 
-        final workflowStore = InMemoryWorkflowStore();
-        final jobStore = InMemoryJobStore();
-        final engine = DurableWorkflowEngine(store: workflowStore);
+      final workflowStore = InMemoryWorkflowStore();
+      final jobStore = InMemoryJobStore();
+      final engine = DurableWorkflowEngine(store: workflowStore);
 
-        for (final id in [unreadableCloneItem, healthyCloneItem]) {
-          await engine.createWorkItem(
-            workItemId: id,
-            productId: 'product-$id',
-            category: WorkItemCategory.feature,
-            title: 'Fixture item $id',
-            description:
-                'A fixture used to ask what one unreadable clone costs',
-          );
-          await _parkAtImplementationReady(workflowStore, id);
-        }
+      for (final id in [unreadableCloneItem, healthyCloneItem]) {
+        await engine.createWorkItem(
+          workItemId: id,
+          productId: 'product-$id',
+          category: WorkItemCategory.feature,
+          title: 'Fixture item $id',
+          description: 'A fixture used to ask what one unreadable clone costs',
+          // See the sibling test above: no contract on the item would defer
+          // it at the contract gate, before the port under test is asked.
+          qaContractId: 'qa-contract-$id',
+        );
+        await _parkAtImplementationReady(workflowStore, id);
+      }
 
-        // NO `repositoryExists:` override and NO `resolveCommit:` override. The
-        // ports are the production defaults, which is the whole point: the fault
-        // has to arrive through the code the composition root actually runs.
-        final inner = toWorkloadResolver(
-          ImplementationReadinessProbe(
-            readProductState: (_) async => ProductState.governed,
-            readOnboarding: (productId) async => OnboardingRecord(
-              onboardingId: 'onb-$productId',
-              productId: productId,
-              // The healthy clone is pinned at its REAL commit so the real
-              // `_gitRevParse` resolves it.
-              pinnedRevision: realCommit,
-              workspace: OnboardingWorkspace.durable(
-                DurableWorkspaceDescriptor(
-                  workspaceId: 'dws-$productId',
-                  productId: productId,
-                  repositoryPath: productId == 'product-$unreadableCloneItem'
-                      ? locked.path
-                      : repoRoot.path,
-                  startingRevision: realCommit,
-                  createdAt: DateTime.utc(2026),
-                ),
+      // NO `repositoryExists:` override and NO `resolveCommit:` override. The
+      // ports are the production defaults, which is the whole point: the fault
+      // has to arrive through the code the composition root actually runs.
+      final inner = toWorkloadResolver(
+        ImplementationReadinessProbe(
+          readProductState: (_) async => ProductState.governed,
+          readOnboarding: (productId) async => OnboardingRecord(
+            onboardingId: 'onb-$productId',
+            productId: productId,
+            // The healthy clone is pinned at its REAL commit so the real
+            // `_gitRevParse` resolves it.
+            pinnedRevision: realCommit,
+            workspace: OnboardingWorkspace.durable(
+              DurableWorkspaceDescriptor(
+                workspaceId: 'dws-$productId',
+                productId: productId,
+                repositoryPath: productId == 'product-$unreadableCloneItem'
+                    ? locked.path
+                    : repoRoot.path,
+                startingRevision: realCommit,
+                createdAt: DateTime.utc(2026),
               ),
-              createdAt: DateTime.utc(2026),
-              updatedAt: DateTime.utc(2026),
             ),
-            runtimeTypeId: 'probe-runtime',
-            timeoutSeconds: 1800,
+            createdAt: DateTime.utc(2026),
+            updatedAt: DateTime.utc(2026),
           ),
-        );
+          runtimeTypeId: 'probe-runtime',
+          timeoutSeconds: 1800,
+        ),
+      );
 
-        final attempted = <String>[];
-        final requests = <WorkerExecutionRequest>[];
+      final attempted = <String>[];
+      final requests = <WorkerExecutionRequest>[];
 
-        final result = await Scheduler(
-          schedulerId: 'sched-impl',
-          workflowStore: workflowStore,
-          jobStore: jobStore,
-          workerStore: InMemoryWorkerStore(),
-          dispatch: _RecordingDispatch(requests),
-          definition: implementFeatureDefinition,
-          dedupeKeyBuilder: implementFeatureDedupeKey,
-          instructionBuilder: implementFeatureInstruction,
-          requestBuilder: implementFeatureRequest,
-          workloadResolver: (job, item) {
-            attempted.add(item.workItemId);
-            return inner(job, item);
-          },
-          workload: SchedulerWorkload(
-            repositoryPath: 'a-triage-only-checkout',
-            startingRevision: 'a' * 40,
-            timeoutSeconds: 1800,
-            runtimeTypeId: 'fake-runtime',
-          ),
-          clock: () => DateTime.utc(2026, 1, 1),
-        ).tick();
+      final result = await Scheduler(
+        schedulerId: 'sched-impl',
+        workflowStore: workflowStore,
+        jobStore: jobStore,
+        workerStore: InMemoryWorkerStore(),
+        dispatch: _RecordingDispatch(requests),
+        definition: implementFeatureDefinition,
+        dedupeKeyBuilder: implementFeatureDedupeKey,
+        instructionBuilder: implementFeatureInstruction,
+        requestBuilder: implementFeatureRequest,
+        workloadResolver: (job, item) {
+          attempted.add(item.workItemId);
+          return inner(job, item);
+        },
+        workload: SchedulerWorkload(
+          repositoryPath: 'a-triage-only-checkout',
+          startingRevision: 'a' * 40,
+          timeoutSeconds: 1800,
+          runtimeTypeId: 'fake-runtime',
+        ),
+        clock: () => DateTime.utc(2026, 1, 1),
+      ).tick();
 
-        expect(
-          attempted,
-          containsAll([unreadableCloneItem, healthyCloneItem]),
-          reason:
-              'NON-VACUITY. Both jobs must have been dispatch-attempted in THIS '
-              'tick, or the assertion below proves nothing. Order is not '
-              'asserted and does not need to be: a throw from EITHER position '
-              'aborts the pass equally',
-        );
+      expect(
+        attempted,
+        containsAll([unreadableCloneItem, healthyCloneItem]),
+        reason:
+            'NON-VACUITY. Both jobs must have been dispatch-attempted in THIS '
+            'tick, or the assertion below proves nothing. Order is not '
+            'asserted and does not need to be: a throw from EITHER position '
+            'aborts the pass equally',
+      );
 
-        expect(
-          requests.map((r) => r.workItemId),
-          [healthyCloneItem],
-          reason:
-              'this is the finding, and it is the same escape the '
-              '`resolveCommit` test covers, reached through the filesystem '
-              'instead of through `Process`. `Directory.existsSync()` throws '
-              '`FileSystemException` on a permission fault, nothing between '
-              'there and the unguarded `await _workloadResolver(...)` in '
-              '`_dispatchOne` catches it, and the healthy job after it is never '
-              'looked at',
-        );
-        expect(requests.single.repositoryPath, repoRoot.path);
-        expect(requests.single.startingRevision, realCommit);
-        expect(
-          result.blockedArtifactMissing,
-          hasLength(1),
-          reason:
-              'the unreadable job\'s refusal must be VISIBLE on the tick, and '
-              'must be exactly one job\'s worth',
-        );
-        expect(result.terminal, isEmpty);
-        expect(result.cancelledQueued, isEmpty);
+      expect(
+        requests.map((r) => r.workItemId),
+        [healthyCloneItem],
+        reason:
+            'this is the finding, and it is the same escape the '
+            '`resolveCommit` test covers, reached through the filesystem '
+            'instead of through `Process`. `Directory.existsSync()` throws '
+            '`FileSystemException` on a permission fault, nothing between '
+            'there and the unguarded `await _workloadResolver(...)` in '
+            '`_dispatchOne` catches it, and the healthy job after it is never '
+            'looked at',
+      );
+      expect(requests.single.repositoryPath, repoRoot.path);
+      expect(requests.single.startingRevision, realCommit);
+      expect(
+        result.blockedArtifactMissing,
+        hasLength(1),
+        reason:
+            'the unreadable job\'s refusal must be VISIBLE on the tick, and '
+            'must be exactly one job\'s worth',
+      );
+      expect(result.terminal, isEmpty);
+      expect(result.cancelledQueued, isEmpty);
 
-        // Same non-burn rule as the sibling test: "cannot read" is not "failed".
-        final stranded = (await jobStore.listJobsForWorkItem(
-          unreadableCloneItem,
-        )).single;
-        expect(stranded.state, JobState.queued);
-        expect(
-          stranded.attempt,
-          1,
-          reason: 'an unreadable clone must not burn the job\'s retry budget',
-        );
-      },
-    );
+      // Same non-burn rule as the sibling test: "cannot read" is not "failed".
+      final stranded = (await jobStore.listJobsForWorkItem(
+        unreadableCloneItem,
+      )).single;
+      expect(stranded.state, JobState.queued);
+      expect(
+        stranded.attempt,
+        1,
+        reason: 'an unreadable clone must not burn the job\'s retry budget',
+      );
+    });
   });
 }
 
