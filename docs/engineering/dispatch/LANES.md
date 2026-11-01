@@ -1475,3 +1475,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | fix-contract-gate | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-contract-gate | fix/contract-gate | abcbbd4 | STANDARD | 375e94c: contractless defer on impl+triage+design lanes | → reviewer f020b659 |
 | review-contract-gate | review | CLOSED | (read-only) | fix/contract-gate | abcbbd4 | STANDARD | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (composition text-pin gap) | → integrator 0b355a49 |
 | integrate-contract-gate | integrate | IN_FLIGHT | scratch rehearsal | fix/contract-gate | abcbbd4 | STANDARD | await MERGE_APPROVED → merge auth question |
+| integrate-contract-gate | integrate | CLOSED | scratch rehearsal | fix/contract-gate | abcbbd4 | STANDARD | MERGE_APPROVED (test-integration +319) → merged (human-authorized) | done |

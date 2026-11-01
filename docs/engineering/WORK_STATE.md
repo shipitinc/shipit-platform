@@ -1642,3 +1642,10 @@ voided `dec-hn7h7daum6-2atjhe` (cancelled) — and deep-links
 The reported "We could not open this decision" symptom cannot recur: server resolves the actual
 blockingHumanDecisionId, client carries the work item param, cancelled decisions render read-only.
 Both halves independently reviewed + merged + deployed + verified.
+
+### F-241 + F-242 merged — the churn-blocking fixes are on main
+F-241 (a9ee72e): CAS losses classify TRANSIENT (store_contention marker) — retried items stop
+failing permanently on version races under detached-dispatch concurrency. F-242 (this merge):
+contractless items defer before agent work (qaContractGatedWorkloadResolver on impl/triage/design
+lanes) — DEF-fresh-test/DEF-f223-test now land blockedArtifactMissing resumable instead of burning
+attempts on the QA-contract gate. Both need a QA redeploy to go live.
