@@ -1477,3 +1477,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-contract-gate | integrate | IN_FLIGHT | scratch rehearsal | fix/contract-gate | abcbbd4 | STANDARD | await MERGE_APPROVED → merge auth question |
 | integrate-contract-gate | integrate | CLOSED | scratch rehearsal | fix/contract-gate | abcbbd4 | STANDARD | MERGE_APPROVED (test-integration +319) → merged (human-authorized) | done |
 | deploy-qa-f241-f242 | deploy | IN_FLIGHT | canonical (no repo writes) | main | 30cf939 | STANDARD | redeploy + verify F-241 CAS-transient + F-242 contract-defer live | 5c9b2623 running |
+| impl-auto-model-escalation | implement | IN_FLIGHT | /private/tmp/shipit-auto-escalation | feat/auto-model-escalation | 7ca2b49 | PRECISION | auto escalationIndex on provider failure (no human escalation) | c5aebdd3 running |
+| impl-provider-env-wiring | implement | IN_FLIGHT | /private/tmp/shipit-provider-env | feat/provider-env-wiring | 7ca2b49 | STANDARD | wire OPENCODE_OPENROUTER_API_KEY to QA + prod env | 63a21908 running |

@@ -1649,3 +1649,13 @@ failing permanently on version races under detached-dispatch concurrency. F-242 
 contractless items defer before agent work (qaContractGatedWorkloadResolver on impl/triage/design
 lanes) — DEF-fresh-test/DEF-f223-test now land blockedArtifactMissing resumable instead of burning
 attempts on the QA-contract gate. Both need a QA redeploy to go live.
+
+### Paid-model escalation work (2026-11-01, human-authorized)
+Root cause of the repeated failures: every role's model_policy chain = `opencode/space-bunny-free`,
+a single free-tier model — account's free quota exhausted ~22:56Z Oct 31 (verified live:
+"AI_APICallError: Free usage limit reached" on every free model; zero tokens consumed since).
+Executions emit zero events and die at the 1800s budget. ProviderHealthMonitor raised
+"all providers unavailable" decisions on Oct 11 (still pending) but never re-fired for this
+outage (deduped on the old open ones). Wiring: `.openRouterApiKey` at repo root (gitignored);
+`OPENCODE_OPENROUTER_API_KEY` env convention exists but absent in QA container. Two lanes in
+flight: auto-escalationIndex on provider failure (no human escalation) + provider env wiring.
