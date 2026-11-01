@@ -61,3 +61,29 @@ sessionLogs:
 #futureCall:
 #  concurrencyLimit: 1 # Defaults to 1, a negative or null value removes the limit
 #  scanInterval: 5000 # Unit in milliseconds, defaults to 5000
+
+# =============================================================================
+# Provider credentials (agent runtime) — referenced by NAME, never by value.
+# =============================================================================
+# The opencode agent runtime resolves provider credentials from its own
+# environment conventions. For the `openrouter` provider (paid tier) the
+# process environment must carry:
+#
+#   OPENROUTER_API_KEY            — the credential opencode itself reads
+#   OPENCODE_OPENROUTER_API_KEY   — platform-prefixed twin
+#                                   (OPENCODE_<PROVIDER>_API_KEY); may be
+#                                   omitted, in which case it should default
+#                                   to the canonical value, as the QA compose
+#                                   stack does
+#
+# Both the dispatch transport and the provider health probe spawn `opencode`
+# with `includeParentEnvironment: true`, so a process environment variable is
+# the ENTIRE delivery mechanism — no Serverpod config key and no
+# passwords.yaml entry can reach it, because opencode is a child process that
+# reads env vars, not the server's configuration store.
+#
+# Per AGENTS.md §13a the credential is referenced by NAME only: the value
+# enters this environment's secret management (not this file, not any
+# committed file) and is injected into the server's process environment by
+# the deployment. Absent = no OpenRouter credential; the free opencode/zen
+# tier keeps working.

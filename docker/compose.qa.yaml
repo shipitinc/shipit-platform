@@ -105,6 +105,53 @@ services:
       SHIPIT_SECRET_PROVIDER: "${SHIPIT_SECRET_PROVIDER:-}"
       # Container path; the host side is the bind mount below.
       SHIPIT_LOCAL_SECRET_DIR: /var/lib/shipit/secrets
+      # Provider credential for the agent runtime, delivered as a plain
+      # environment variable because that is the channel opencode actually
+      # reads. Both call sites that spawn `opencode` -- the dispatch transport
+      # (agent_runtime `opencode_process_transport.dart`,
+      # `includeParentEnvironment: true`) and the health probe (scheduler
+      # `provider_health_monitor.dart`, `opencode --provider <p> models` with
+      # the same inheritance) -- hand the child THE CONTAINER'S environment
+      # with no injected credential, so a variable declared here reaches
+      # opencode unmediated. `OPENROUTER_API_KEY` is the name opencode's own
+      # provider-auth convention resolves for the `openrouter` provider (paid
+      # tier, vs the free `opencode/zen` models that need no key).
+      #
+      # `OPENCODE_OPENROUTER_API_KEY` is the platform-prefixed twin
+      # (`OPENCODE_<PROVIDER>_API_KEY`). Nothing in the current tree reads the
+      # prefixed form -- the health monitor's old key-presence gate was removed
+      # when the probe switched to executing opencode itself -- but it is
+      # exported alongside the canonical name so any platform code that speaks
+      # the convention sees the same credential. It defaults TO the canonical
+      # value, so an operator sets exactly one variable; set both only to
+      # deliberately diverge them.
+      #
+      # Why compose interpolation from docker/.env and not the other
+      # candidates:
+      #  * NOT `env_file: - ../.env`: `environment:` OVERRIDES `env_file:` per
+      #    key, so a value in the repository-root .env would be silently
+      #    shadowed by this line resolving empty -- and that file is shared
+      #    with every other stack that declares the same env_file entry. The
+      #    credential convention for this stack is docker/.env (the compose
+      #    PROJECT-directory env file), same as SHIPIT_SECRET_PROVIDER above.
+      #  * NOT the secrets dir: SHIPIT_LOCAL_SECRET_DIR is consumed by
+      #    secret_provider_resolver.dart for git deploy-key private halves
+      #    (ADR 0018). opencode is a child process that reads environment
+      #    variables, not files under that directory -- a key file there would
+      #    never reach it.
+      #  * "${VAR:-}" and never "${VAR:?...}": Compose interpolates the whole
+      #    file before it filters services, so a mandatory variable would
+      #    break every command that reads this file, read-only ones included
+      #    (the same rule SHIPIT_PROVISION_DURABLE_WORKSPACE spells out).
+      #    Unset is a legal state: the container gets an empty string, opencode
+      #    simply finds no OpenRouter credential, and the free zen tier keeps
+      #    working.
+      #
+      # The VALUE lives in machine-local docker/.env (gitignored) for QA and
+      # in production's secret management for prod -- referenced by NAME only,
+      # per AGENTS.md section 13a. It is never written to any committed file.
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      OPENCODE_OPENROUTER_API_KEY: "${OPENCODE_OPENROUTER_API_KEY:-${OPENROUTER_API_KEY:-}}"
       SHIPIT_TRIAGE_WORKSPACE_ROOT: /triage-workspaces
       # The durable PRODUCT clone root, and the root the server's composition
       # passes into DurableWorkspaceRuntime.resolve. A1 does NOT read this: its
