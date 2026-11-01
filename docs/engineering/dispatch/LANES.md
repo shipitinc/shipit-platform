@@ -1484,3 +1484,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-provider-env-wiring | review | CLOSED | (read-only) | feat/provider-env-wiring | 7ca2b49 | STANDARD | APPROVE_FOR_MERGE | → integrator |
 | integrate-provider-env-wiring | integrate | CLOSED | scratch rehearsal | feat/provider-env-wiring | 7ca2b49 | STANDARD | MERGE_APPROVED → merged (human-authorized) | done |
 | deploy-qa-paid-models | deploy | IN_FLIGHT | canonical (no repo writes) | main | HEAD | STANDARD | paid OpenRouter tier live (env key + chains) | 37063e97 running |
+| impl-auto-model-escalation | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-auto-escalation | feat/auto-model-escalation | 7ca2b49 | PRECISION | cbd85ba: stderr-scan provider detection + provider_unavailable marker + auto escalationIndex | → reviewer ffd74b0b |
+| review-auto-model-escalation | review | IN_FLIGHT | (read-only) | feat/auto-model-escalation | 7ca2b49 | PRECISION | await result |
