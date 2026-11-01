@@ -98,6 +98,32 @@ melos run test
 melos run format
 ```
 
+## Environment & Credentials
+
+Local stacks take environment from **two distinct files, on two distinct
+mechanisms** — mixing them up is the documented way variables silently never
+arrive:
+
+- **`docker/.env`** (gitignored, machine-local; template: `docker/.env.example`) —
+  the Compose *project-directory* env file. Compose interpolates
+  `"${VAR:-...}"` expressions in `docker/compose.*.yaml` from it. Per-stack
+  credentials and host paths live here.
+- **`.env`** at the repository root (gitignored; template: `.env.example`) —
+  loaded into containers verbatim via `env_file:` and shared by every stack.
+  `environment:` overrides `env_file:` per key, so a variable a service also
+  interpolates must be set in `docker/.env`, not here.
+
+**Provider API keys** (e.g. the OpenRouter paid tier for the opencode agent
+runtime) are plain process environment variables: `OPENROUTER_API_KEY` is the
+name opencode itself resolves, and `OPENCODE_OPENROUTER_API_KEY` is the
+platform-prefixed twin (`OPENCODE_<PROVIDER>_API_KEY`). Both `environment:`
+entries in `docker/compose.qa.yaml` interpolate them from `docker/.env`, and
+both the dispatch transport and the provider health probe spawn `opencode`
+with `includeParentEnvironment: true`, so a container env var reaches
+opencode unmediated. In production the same names are injected by the
+environment's secret management — per `AGENTS.md` §13a credentials are
+referenced by name and the value never enters a committed file.
+
 ## Principles
 
 1. **AEF remains authoritative** - Platform implements, never duplicates policy

@@ -47,3 +47,6 @@ build/
 /shipit-workspaces/
 /shipit-workspaces-*/
 /workspaces/
+
+# OpenRouter API key for paid-model escalation (human-provided, never committed)
+.openRouterApiKey
