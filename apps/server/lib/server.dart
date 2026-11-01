@@ -142,6 +142,8 @@ import 'src/qa/production_qa_sources.dart'
         ProductionDeclaredOwnedPathsSource,
         buildProductionGateRegistry;
 import 'src/qa/qa_drain.dart' show runQADrain;
+import 'src/qa/qa_contract_dispatch_gate.dart'
+    show qaContractGatedWorkloadResolver;
 import 'src/qa/qa_workspace_retention.dart' show QaWorkspaceRetention;
 import 'package:scheduler/scheduler.dart'
     show
@@ -651,6 +653,24 @@ void run(List<String> args) async {
   // were.
   final capacityGuard = JobCapacityGuard(store: jobStore, capacity: capacity);
 
+  // The triage lane's ONE workload, named because two parameters consume it:
+  // the static `workload:` the Scheduler requires, and the contract gate that
+  // wraps it. Passing the same instance to both is what keeps "the workload a
+  // dispatched job runs against" and "the workload the gate releases"
+  // identical by construction rather than by convention.
+  final triageSchedulerWorkload = SchedulerWorkload(
+    repositoryPath: triageSource.path,
+    // A concrete commit, not the string 'HEAD'. The worktree manager refuses
+    // a worktree whose HEAD does not equal the requested revision exactly,
+    // and a literal 'HEAD' never equals a SHA.
+    startingRevision: triageSource.startingRevision,
+    // `AgentExecutionBudgets.triageSeconds`, NOT a literal — see that class
+    // for the provenance of the number and for why it is provisional.
+    timeoutSeconds: AgentExecutionBudgets.triageSeconds,
+    // The id `OpencodeAdapter` is registered under above.
+    runtimeTypeId: triageRuntimeTypeId,
+  );
+
   final scheduler = Scheduler(
     schedulerId: 'sched-triage',
     workflowStore: workflowStore,
@@ -676,18 +696,27 @@ void run(List<String> args) async {
     instructionBuilder: triageDefectInstruction,
     requestBuilder: triageDefectRequest,
     capacityGuard: capacityGuard,
-    workload: SchedulerWorkload(
-      repositoryPath: triageSource.path,
-      // A concrete commit, not the string 'HEAD'. The worktree manager refuses
-      // a worktree whose HEAD does not equal the requested revision exactly,
-      // and a literal 'HEAD' never equals a SHA.
-      startingRevision: triageSource.startingRevision,
-      // `AgentExecutionBudgets.triageSeconds`, NOT a literal — see that class
-      // for the provenance of the number and for why it is provisional.
-      timeoutSeconds: AgentExecutionBudgets.triageSeconds,
-      // The id `OpencodeAdapter` is registered under above.
-      runtimeTypeId: triageRuntimeTypeId,
+    // THE QA-CONTRACT PRECONDITION, AT THE ONLY SEAM BEFORE AGENT WORK IS
+    // CONSUMED.
+    //
+    // `agentExecuting -> agentCompleted` is guarded by
+    // `GuardConditions.qaContractExists()`, answered from the work item's own
+    // column — so a contractless item cannot be refused at dispatch, only at
+    // the FINAL transition, after the agent ran and the attempt was spent
+    // (F-242). The entry edge cannot carry the guard either: the scheduler's
+    // own policy probe has no `qaContractId` to supply. This resolver is the
+    // last place that sees the real WorkItem before a request is built or a
+    // claim is taken, and a `null` from it defers — job stays queued, attempt
+    // untouched, resumable the tick after a contract is minted onto the item.
+    // The identical rule gates `sched-impl` inside
+    // `ImplementationReadinessProbe`; this lane's workload is static, so the
+    // same precondition wraps it here rather than living in a probe.
+    workloadResolver: qaContractGatedWorkloadResolver(
+      workload: triageSchedulerWorkload,
+      deferralEvent: 'triage.deferred.qa_contract_missing',
+      log: _log,
     ),
+    workload: triageSchedulerWorkload,
     // Decoupled from `timeoutSeconds` deliberately: the scheduler's own default
     // is `timeoutSeconds * 4 + claimLease`, which is a five-minute-budget
     // heuristic and turns this lane's budget into a four-times-larger reclaim
@@ -808,6 +837,16 @@ void run(List<String> args) async {
   // dispatch and reports `blockedArtifactMissing`, which the design tick below
   // surfaces. The static workload is a required constructor argument and is
   // inert for exactly the reason the engineering-review one is.
+  // The design agent's ONE workload — like the triage lane's, a static value
+  // two parameters now share: the Scheduler's required `workload:` and the
+  // contract gate wrapped around it below.
+  final designRevisionSchedulerWorkload = SchedulerWorkload(
+    repositoryPath: triageSource.path,
+    startingRevision: triageSource.startingRevision,
+    timeoutSeconds: AgentExecutionBudgets.designAgentSeconds,
+    runtimeTypeId: triageRuntimeTypeId,
+  );
+
   final designRevisionScheduler = Scheduler(
     schedulerId: 'sched-design-revision',
     workflowStore: workflowStore,
@@ -821,12 +860,17 @@ void run(List<String> args) async {
     instructionBuilder: designRevisionInstruction,
     requestBuilder: designRevisionRequest,
     capacityGuard: capacityGuard,
-    workload: SchedulerWorkload(
-      repositoryPath: triageSource.path,
-      startingRevision: triageSource.startingRevision,
-      timeoutSeconds: AgentExecutionBudgets.designAgentSeconds,
-      runtimeTypeId: triageRuntimeTypeId,
+    // The same QA-contract precondition the triage and implementation lanes
+    // defer on: a contractless item reaches `agentExecuting` here too, and
+    // its design run would be refused at `agentExecuting -> agentCompleted`
+    // after the agent work was spent (F-242). The resolver is the last seam
+    // before a request is built or a claim is taken.
+    workloadResolver: qaContractGatedWorkloadResolver(
+      workload: designRevisionSchedulerWorkload,
+      deferralEvent: 'design_revision.deferred.qa_contract_missing',
+      log: _log,
     ),
+    workload: designRevisionSchedulerWorkload,
     zombieStalenessAfter: AgentExecutionBudgets.zombieStalenessFor(
       AgentExecutionBudgets.byRole['design-agent']!,
     ),
@@ -1025,10 +1069,7 @@ void run(List<String> args) async {
     instructionBuilder: implementFeatureInstruction,
     requestBuilder: implementationRequestWithPathOwnership,
     capacityGuard: capacityGuard,
-    workloadResolver: toWorkloadResolver(
-      implementationProbe,
-      log: _log,
-    ),
+    workloadResolver: toWorkloadResolver(implementationProbe, log: _log),
     // Required constructor argument. INERT — see above.
     workload: SchedulerWorkload(
       repositoryPath: triageSource.path,
@@ -3014,11 +3055,9 @@ const String tickCompletedLateCode = 'TICK_COMPLETED_AFTER_HOLD_EXPIRED';
 /// nothing" from "did not run at all". That distinction is the whole reason a
 /// drop is allowed to exist, so it is worth carrying rather than inferring.
 class TickOutcome {
-  TickOutcome({
-    List<String>? failedSections,
-    List<String>? reconcileFailed,
-  }) : failedSections = failedSections ?? <String>[],
-       reconcileFailed = reconcileFailed ?? <String>[];
+  TickOutcome({List<String>? failedSections, List<String>? reconcileFailed})
+    : failedSections = failedSections ?? <String>[],
+      reconcileFailed = reconcileFailed ?? <String>[];
 
   /// Jobs this tick actually started an execution for.
   int dispatched = 0;
@@ -4008,9 +4047,7 @@ class DurableWorkspaceProvisionInstruction {
 /// "repository": "r"}` is a plausible typo that would otherwise provision
 /// against a default, or against nothing, with no error anywhere.
 DurableWorkspaceProvisionInstruction?
-resolveDurableWorkspaceProvisionInstruction(
-  Map<String, String> environment,
-) {
+resolveDurableWorkspaceProvisionInstruction(Map<String, String> environment) {
   final raw = environment[_provisionDurableWorkspaceEnv]?.trim();
   if (raw == null || raw.isEmpty) return null;
 
