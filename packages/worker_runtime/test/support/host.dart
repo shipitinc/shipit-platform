@@ -18,10 +18,13 @@ class WorkerHost {
     required String workspaceRoot,
     WritingBehavior behavior = WritingBehavior.writeImplementation,
     bool throwOnStart = false,
+    WorkflowStore? workflowStore,
+    ExecutionStore? executionStore,
+    AgentExecutionDriver? executionDriver,
   }) {
-    workflowStore = InMemoryWorkflowStore();
-    workflowEngine = DurableWorkflowEngine(store: workflowStore);
-    executionStore = InMemoryExecutionStore();
+    this.workflowStore = workflowStore ?? InMemoryWorkflowStore();
+    workflowEngine = DurableWorkflowEngine(store: this.workflowStore);
+    this.executionStore = executionStore ?? InMemoryExecutionStore();
     session = WritingFakeAgentSession(
       executionId: 'agx-fixed',
       workItemId: 'wi-1',
@@ -33,7 +36,7 @@ class WorkerHost {
         ..register(WritingFakeAgentAdapter(session)),
     );
     coordinator = ExecutionCoordinator(
-      store: executionStore,
+      store: this.executionStore,
       workflowEngine: workflowEngine,
       runtime: runtime,
       // Relative command: the verifier runs in the WORKTREE (the workspace),
@@ -43,7 +46,7 @@ class WorkerHost {
         command: [Platform.resolvedExecutable, 'tool/verify.dart'],
       ),
     );
-    driver = CoordinatorAgentExecutionDriver(coordinator);
+    driver = executionDriver ?? CoordinatorAgentExecutionDriver(coordinator);
     workerStore = InMemoryWorkerStore();
     workspaceManager = GitWorktreeWorkspaceManager(
       workspaceRoot: workspaceRoot,
@@ -64,13 +67,13 @@ class WorkerHost {
     dispatcher = WorkerDispatcher(registry: WorkerRegistry()..register(worker));
   }
 
-  late InMemoryWorkflowStore workflowStore;
+  late WorkflowStore workflowStore;
   late DurableWorkflowEngine workflowEngine;
-  late InMemoryExecutionStore executionStore;
+  late ExecutionStore executionStore;
   late WritingFakeAgentSession session;
   late AgentRuntime runtime;
   late ExecutionCoordinator coordinator;
-  late CoordinatorAgentExecutionDriver driver;
+  late AgentExecutionDriver driver;
   late InMemoryWorkerStore workerStore;
   late GitWorktreeWorkspaceManager workspaceManager;
   late LocalWorker worker;

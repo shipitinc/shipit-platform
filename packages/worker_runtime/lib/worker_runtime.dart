@@ -9,6 +9,7 @@ export 'src/store/file_json_worker_store.dart';
 export 'src/store/file_json_worker_registration_store.dart';
 export 'src/store/in_memory_worker_store.dart';
 export 'src/store/in_memory_worker_registration_store.dart';
+export 'src/store/store_contention.dart';
 export 'src/store/worker_store.dart';
 export 'src/store/worker_registration_store.dart';
 export 'src/worker/local_worker.dart';

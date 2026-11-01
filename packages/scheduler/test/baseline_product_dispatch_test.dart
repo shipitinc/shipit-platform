@@ -367,6 +367,35 @@ void main() {
       );
       expect(job.failure!.kind, JobFailureKind.permanent);
     });
+
+    test(
+      'a raised store compare-and-swap loss is transient, not permanent',
+      () async {
+        // A CAS loss DOES carry a claim about whether the same call would
+        // succeed: another writer already advanced the row, so the lane's
+        // attempt raced rather than failed. That is the F-241 shape the
+        // agent lanes settle through `storeContentionMarker`, and the
+        // baseline lane classifies it the same way — retried within the
+        // attempt bound, never terminal on a race it lost correctly.
+        await store.saveJob(_onboardingJob());
+        final raising = BaselineProductDispatcher(
+          jobStore: store,
+          runner: (_) async => throw ConcurrentJobModificationException(
+            jobId: 'jb-1',
+            expectedVersion: 2,
+            actualVersion: 3,
+          ),
+          clock: clock.call,
+          log: (_, _) {},
+        );
+
+        final result = await raising.dispatch();
+        expect(result.retried, ['jb-1']);
+        final job = await store.readJob('jb-1');
+        expect(job!.state, JobState.retryWaiting);
+        expect(job.failure!.kind, JobFailureKind.transient);
+      },
+    );
   });
 
   group('the durable record never names a worker execution', () {
