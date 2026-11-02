@@ -1499,3 +1499,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | impl-acp-permission-responder | implement | IN_FLIGHT | /private/tmp/shipit-fix-acp-perm | fix/acp-permission-responder | 2e56eee | PRECISION | answer session/request_permission (F-244) | b463b86b running |
 | impl-acp-permission-responder | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-acp-perm | fix/acp-permission-responder | 2e56eee | PRECISION | 9848ed1: answer session/request_permission (deny) + -32601 fallback | → reviewer 0d872854 |
 | review-acp-permission-responder | review | IN_FLIGHT | (read-only) | fix/acp-permission-responder | 2e56eee | PRECISION | await result |
+| review-acp-permission-responder | review | CLOSED | (read-only) | fix/acp-permission-responder | 2e56eee | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP | → integrator |
+| integrate-acp-permission-responder | integrate | IN_FLIGHT | scratch rehearsal | fix/acp-permission-responder | 2e56eee | STANDARD | await result |
