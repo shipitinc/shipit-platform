@@ -3,6 +3,7 @@ library worker_runtime;
 export 'src/dispatcher/worker_dispatcher.dart';
 export 'src/env/environment_policy.dart';
 export 'src/execution/agent_execution_driver.dart';
+export 'src/execution/agent_execution_retirement.dart';
 export 'src/execution/provider_failure.dart';
 export 'src/reconcile/worker_reconciler.dart';
 export 'src/registry/worker_registry.dart';

@@ -119,6 +119,12 @@ class SchedulerHost {
           ),
       claimLease: claimLease,
       modelSelection: modelSelection,
+      // The production seam, over the SAME store the real coordinator writes:
+      // a zombie reclaim in this host closes the agent_execution row the way
+      // the wired composition root does.
+      agentExecutionRetirement: storeBackedAgentExecutionRetirement(
+        executionStore,
+      ),
     );
   }
 
