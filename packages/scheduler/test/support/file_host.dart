@@ -20,6 +20,7 @@ class FileRestartHarness {
     JobDefinition definition = defaultImplementFeatureDefinition,
     Duration claimLease = const Duration(minutes: 10),
     ExecutionLivenessProbe? executionLiveness,
+    AgentExecutionRetirement? agentExecutionRetirement,
     Duration? zombieStalenessAfter,
     WorkflowStore? workflowStoreOverride,
   }) {
@@ -69,6 +70,7 @@ class FileRestartHarness {
       clock: clock,
       claimLease: claimLease,
       executionLiveness: executionLiveness,
+      agentExecutionRetirement: agentExecutionRetirement,
       zombieStalenessAfter: zombieStalenessAfter,
       modelSelection: modelSelection,
     );

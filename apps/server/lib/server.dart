@@ -71,7 +71,8 @@ import 'package:worker_runtime/worker_runtime.dart'
         WorkerRegistrationHeartbeat,
         WorkerRegistrationStore,
         WorkerRegistry,
-        WorkerStore;
+        WorkerStore,
+        storeBackedAgentExecutionRetirement;
 
 import 'src/generated/endpoints.dart';
 import 'src/generated/protocol.dart';
@@ -687,6 +688,18 @@ void run(List<String> args) async {
     // only after the clock runs out, and one that legitimately runs long is
     // reclaimed for being slow rather than for being dead.
     executionLiveness: executionLiveness,
+    // The close half of the F-235 fix, and the reason the parameter is named
+    // here rather than left to default: without it the zombie reclaim drives
+    // the job and the `worker_execution` row to terminal but leaves the
+    // `agent_execution` row the dead drive wrote still 'running' — a stale
+    // live-execution claim that also blocks re-execution of its id. The seam
+    // is optional and `Scheduler` cannot depend on `execution_coordinator`, so
+    // the store-backed implementation is supplied as a function value, exactly
+    // like the probe above. The store is the triage coordinator's own: the
+    // same `agent_execution` table this lane's drives write into.
+    agentExecutionRetirement: storeBackedAgentExecutionRetirement(
+      coordinator.store,
+    ),
     // Without these the scheduler silently falls back to `_defaultDedupeKey` /
     // `_defaultInstruction` / `_defaultRequest`, which stamp
     // `AgentRole.triageDefect` jobs with
@@ -737,6 +750,11 @@ void run(List<String> args) async {
     definition: engineeringReviewDefinition,
     modelSelection: modelSelection,
     executionLiveness: executionLiveness,
+    // The same F-235 seam sched-triage wires above: this lane's drives run
+    // through the same triage coordinator, so the same ExecutionStore.
+    agentExecutionRetirement: storeBackedAgentExecutionRetirement(
+      coordinator.store,
+    ),
     dedupeKeyBuilder: engineeringReviewDedupeKey,
     instructionBuilder: engineeringReviewInstruction,
     requestBuilder: engineeringReviewRequest,
@@ -856,6 +874,11 @@ void run(List<String> args) async {
     definition: designRevisionDefinition,
     modelSelection: modelSelection,
     executionLiveness: executionLiveness,
+    // The same F-235 seam sched-triage wires above: this lane's drives run
+    // through the same triage coordinator, so the same ExecutionStore.
+    agentExecutionRetirement: storeBackedAgentExecutionRetirement(
+      coordinator.store,
+    ),
     dedupeKeyBuilder: designRevisionDedupeKey,
     instructionBuilder: designRevisionInstruction,
     requestBuilder: designRevisionRequest,
@@ -887,6 +910,11 @@ void run(List<String> args) async {
     definition: designReviewDefinition,
     modelSelection: modelSelection,
     executionLiveness: executionLiveness,
+    // The same F-235 seam sched-triage wires above: this lane's drives run
+    // through the same triage coordinator, so the same ExecutionStore.
+    agentExecutionRetirement: storeBackedAgentExecutionRetirement(
+      coordinator.store,
+    ),
     dedupeKeyBuilder: designReviewDedupeKey,
     instructionBuilder: designReviewInstruction,
     requestBuilder: designReviewRequest,
@@ -1065,6 +1093,15 @@ void run(List<String> args) async {
     definition: implementFeatureDefinition,
     modelSelection: modelSelection,
     executionLiveness: executionLiveness,
+    // The same F-235 seam sched-triage wires above. OD-6 gave this lane its
+    // own ExecutionCoordinator, but the retirement does not care which
+    // coordinator a dead drive belonged to: it settles a row in the shared
+    // `agent_execution` table, and both coordinators' stores are
+    // `agentExecutionStore(db)` over that one table — so `coordinator.store`
+    // is the same ExecutionStore here as at every other site.
+    agentExecutionRetirement: storeBackedAgentExecutionRetirement(
+      coordinator.store,
+    ),
     dedupeKeyBuilder: implementFeatureDedupeKey,
     instructionBuilder: implementFeatureInstruction,
     requestBuilder: implementationRequestWithPathOwnership,

@@ -7,6 +7,7 @@ import 'package:worker_protocol/worker_protocol.dart';
 
 import '../env/environment_policy.dart';
 import '../execution/agent_execution_driver.dart';
+import '../execution/agent_execution_retirement.dart';
 import '../execution/provider_failure.dart';
 import '../store/store_contention.dart';
 import '../store/worker_store.dart';
@@ -826,7 +827,9 @@ class LocalWorker implements Worker {
     WorkerExecutionRequest request,
     WorkspaceDescriptor descriptor,
   ) {
-    final agentExecutionId = 'agx-${request.workerExecutionId}';
+    final agentExecutionId = agentExecutionIdForWorkerExecution(
+      request.workerExecutionId,
+    );
     return AgentExecutionRequest(
       executionId: agentExecutionId,
       workItemId: request.workItemId,

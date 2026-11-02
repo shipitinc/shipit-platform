@@ -535,6 +535,7 @@ class Scheduler {
     DateTime Function()? clock,
     this.claimLease = const Duration(minutes: 10),
     ExecutionLivenessProbe? executionLiveness,
+    AgentExecutionRetirement? agentExecutionRetirement,
     Duration? zombieStalenessAfter,
     WorkflowEngine? policy,
     DesignContractStore? designContractStore,
@@ -610,6 +611,7 @@ class Scheduler {
        _requestBuilder = requestBuilder ?? _defaultRequest,
        _workloadResolver = workloadResolver,
        _executionLiveness = executionLiveness,
+       _retireAgentExecution = agentExecutionRetirement,
        _configuredZombieStaleness = zombieStalenessAfter,
        _providerHealthMonitor = providerHealthMonitor {
     _entryHopper = EntryHopper(
@@ -671,6 +673,13 @@ class Scheduler {
   /// visible state rather than a silent default: reconciliation then falls back
   /// to the [zombieStalenessBound] window instead of renewing forever.
   final ExecutionLivenessProbe? _executionLiveness;
+
+  /// Closes the `agent_execution` row a zombie reclaim finds still open. Null
+  /// means the composition root supplied no way to reach that store: the
+  /// reclaim still completes, and the row is left exactly as stale as it was —
+  /// the wiring gap is visible at the composition root (the same shape as an
+  /// unwired [_executionLiveness]), never silently claimed here.
+  final AgentExecutionRetirement? _retireAgentExecution;
 
   final Duration? _configuredZombieStaleness;
 
@@ -3016,6 +3025,16 @@ class Scheduler {
       throw const _ReclaimDeferredException();
     }
 
+    // The agent_execution row is closed BEFORE the worker_execution row and
+    // the job for the same reason the work item is released first: a crash
+    // anywhere below leaves the job non-terminal, so the next tick re-enters
+    // and converges — both retirements are idempotent on an already-closed
+    // row. Completing the job while the agent_execution row still reads
+    // `running` is the F-235 defect: the row the dead drive wrote is never
+    // finalized, it asserts a live run forever, and a terminal job is never
+    // reconciled again so nothing ever comes back to close it.
+    await _retireAgentExecutionRow(execution, now, reason);
+
     await _retireWorkerExecution(execution, now, reason);
 
     await _queue.complete(
@@ -3139,14 +3158,71 @@ class Scheduler {
     return _WorkItemRelease.contended;
   }
 
+  /// Drives the zombie's `agent_execution` row to a terminal state — the row
+  /// F-235 left `running` forever.
+  ///
+  /// ## WHY THE SCHEDULER CLOSES THE DEEPEST ROW
+  ///
+  /// `ExecutionCoordinator.execute` writes this row in the same transaction
+  /// that starts the execution, and the drive finalizes it when the session
+  /// settles. A zombie is precisely the case where that drive died: nothing
+  /// else will ever write the row's terminal status, and once the job above
+  /// it is terminal no tick re-reaches the execution — `tick` only reconciles
+  /// held jobs whose claim expired. QA accumulated 13+ `running` rows written
+  /// by dead drives, each asserting a live run that did not exist.
+  ///
+  /// The id is taken from the worker row's `agentExecutionId` when the worker
+  /// managed to stamp it, and DERIVED through
+  /// [agentExecutionIdForWorkerExecution] when it did not — the zombie shape
+  /// is exactly a row stuck at `agentExecuting`, and `agentExecutionId` is
+  /// only persisted on the worker row's terminal write. Deriving rather than
+  /// skipping the null case is the whole fix: a derived id that names no row
+  /// retires nothing (a no-op), while a row that exists but was never linked
+  /// is the one this close exists for.
+  ///
+  /// ## THE SEAM IS INJECTED
+  ///
+  /// `execution_coordinator` — the package that owns `ExecutionStore` —
+  /// deliberately cannot be a dependency of the scheduler, so the store-backed
+  /// close is supplied by the composition root exactly the way
+  /// [_executionLiveness] is. With none wired the reclaim still completes;
+  /// the row is left as stale as it was, never falsely reported closed.
+  /// [storeBackedAgentExecutionRetirement] is the production implementation.
+  ///
+  /// Errors other than the CAS loss the retirement already swallows propagate:
+  /// a store that refuses the write must not be followed by a terminal job
+  /// over a still-`running` row — the job stays non-terminal, the claim
+  /// expires, and the next tick re-enters and converges.
+  Future<void> _retireAgentExecutionRow(
+    WorkerExecution execution,
+    DateTime now,
+    String reason,
+  ) async {
+    final retire = _retireAgentExecution;
+    if (retire == null) return;
+    await retire(
+      _agentExecutionIdFor(execution),
+      now: now,
+      reason: 'zombie execution reclaimed: $reason',
+    );
+  }
+
+  /// The agent execution id a reclaim resolves for [execution] — the stamped
+  /// link when the worker row carries one, else the id the worker derived for
+  /// it. Shared by [_retireAgentExecutionRow] and [_retireWorkerExecution] so
+  /// the orphaned worker row and the closed agent row name the same id.
+  String _agentExecutionIdFor(WorkerExecution execution) =>
+      execution.agentExecutionId ??
+      agentExecutionIdForWorkerExecution(execution.workerExecutionId);
+
   /// Drives the zombie worker execution row to a terminal state.
   ///
   /// ## Why the scheduler does this, rather than "leaving it to the worker layer"
   ///
   /// The previous version deferred this to `worker_runtime`'s reconciler. In
   /// this topology that deferral is dead: the coordinator's `reconcileOrphans()`
-  /// finds nothing because `agent_execution` has no row for this execution, and
-  /// once the job is terminal no later tick re-reaches this execution at all —
+  /// only reaches `agent_execution` rows, and once the job is terminal no later
+  /// tick re-reaches this execution at all —
   /// `tick` only reconciles held jobs whose claim expired. QA showed the
   /// consequence directly: the job failed, capacity was released, and the
   /// `worker_execution` row stayed `agentExecuting` forever.
@@ -3176,6 +3252,13 @@ class Scheduler {
       await _workerStore.saveWorkerExecution(
         execution.copyWith(
           status: WorkerExecutionStatus.orphaned,
+          // The zombie shape is a row that never reached its terminal write,
+          // so `agentExecutionId` is usually absent here — the worker only
+          // stamps it at `_finish`. Persisting the resolved id on the
+          // orphaned row repairs the link the dead drive never wrote, so the
+          // Job -> WorkerExecution -> AgentExecution chain reads complete
+          // instead of dangling at exactly the layer this reclaim closed.
+          agentExecutionId: _agentExecutionIdFor(execution),
           failureCode: WorkerFailureCode.agentFailed,
           reason: 'orphaned by scheduler zombie reclaim: $reason',
           endedAt: now,
