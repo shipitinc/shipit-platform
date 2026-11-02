@@ -11,6 +11,7 @@ import 'package:execution_coordinator/execution_coordinator.dart'
 import 'package:platform_contracts/platform_contracts.dart'
     show
         AgentResult,
+        AgentRole,
         CommittedDiffPaths,
         Defect,
         DefectEvidence,
@@ -36,11 +37,14 @@ import 'package:qa_orchestration/qa_orchestration.dart'
         PlatformVerificationReader,
         QASourceProvenance,
         RevisionIdentitySource,
+        TriageClassificationAdmittedGate,
         buildGateRegistry;
 import 'package:worker_runtime/worker_runtime.dart' show WorkerStore;
 import 'package:workflow_store/workflow_store.dart' show WorkflowStore;
 
 import '../persistence/postgres_defect_store.dart' show DefectNotFoundException;
+import 'producer_scoped_gate.dart'
+    show ProducerRoleScopedGate, ProducerRoleSource;
 
 /// The producing execution of a work item, and the workspace it worked in.
 ///
@@ -62,6 +66,7 @@ class ResolvedProducer {
     required this.startingRevision,
     required this.how,
     required this.note,
+    this.role,
   });
 
   /// The producing execution's id.
@@ -86,6 +91,17 @@ class ResolvedProducer {
 
   /// One sentence, safe to log.
   final String note;
+
+  /// The producing execution's durable [AgentExecution.role], when the
+  /// execution row could be read.
+  ///
+  /// Nullable on the TYPE rather than required because the value is read off a
+  /// row the resolver may not see in tests — doubles that construct a
+  /// [ResolvedProducer] directly carry no role, and an absent role must read
+  /// as "not established", which the producer-scoped gate treats as
+  /// fail-closed. In production [ProducerWorkspaceResolver] always populates
+  /// it from the execution it resolved.
+  final AgentRole? role;
 }
 
 /// The seam the QA drain reads a work item's producer through.
@@ -171,6 +187,7 @@ class ProducerWorkspaceResolver implements ProducerResolver {
       startingRevision: execution.workspace.startingRevision,
       how: producer.how,
       note: producer.note,
+      role: execution.role,
     );
   }
 }
@@ -541,6 +558,35 @@ class ProductionRevisionIdentitySource implements RevisionIdentitySource {
   }
 }
 
+/// The [ProducerRoleSource] the producer-scoped gate reads, over the same
+/// resolver every other production source uses.
+///
+/// The role it answers is the resolved execution's OWN durable column
+/// (`AgentExecution.role`), resolved through `resolveProducerExecution` — the
+/// platform's one rule for "which execution produced this item", the same rule
+/// the drain resolved the result under evaluation through. Two reads of the
+/// same rule agree, so the role this source answers is the role of the
+/// execution whose `AgentResult` the gates are judging — never a different
+/// run's.
+///
+/// `null` propagates the resolver's own "no producer identified" answer: it is
+/// not an empty role and it is not an error, and the gate treats it as
+/// "applicability cannot be established" — the fail-closed direction, which
+/// evaluates the gate rather than exempting it.
+class ProductionProducerRoleSource implements ProducerRoleSource {
+  const ProductionProducerRoleSource({required this.resolver});
+
+  final ProducerWorkspaceResolver resolver;
+
+  @override
+  QASourceProvenance get provenance =>
+      const QASourceProvenance.production('producer_role');
+
+  @override
+  Future<AgentRole?> producerRoleFor(String workItemId) async =>
+      (await resolver.resolve(workItemId))?.role;
+}
+
 /// R1's source: the defect row a remediation work item names.
 class ProductionDefectRowReader implements DefectRowReader {
   const ProductionDefectRowReader({required this.defectStore});
@@ -621,6 +667,21 @@ GateRegistry buildProductionGateRegistry({
     defectRowReader: ProductionDefectRowReader(defectStore: defectStore),
     defectEvidenceReader: ProductionDefectEvidenceReader(
       defectStore: defectStore,
+    ),
+  )..register(
+    // F-246: `triage-classification-structure` asserts the shape of TRIAGE
+    // output, and the shipped product contract declares it on every
+    // `qa-product-*` contract — where an implementer's result could never
+    // satisfy it. The scoped evaluator answers `not_applicable` for a
+    // producer whose role is not `triageDefect`, and delegates verbatim for
+    // one that is. Registering AFTER `buildGateRegistry` replaces the plain
+    // evaluator under the same type key, so production applies the producer
+    // scope while the package's own registry — and the test doubles built
+    // from it — keep the unscoped assertion.
+    ProducerRoleScopedGate(
+      inner: TriageClassificationAdmittedGate(),
+      roleSource: ProductionProducerRoleSource(resolver: resolver),
+      appliesToRoles: const {AgentRole.triageDefect},
     ),
   );
 }
