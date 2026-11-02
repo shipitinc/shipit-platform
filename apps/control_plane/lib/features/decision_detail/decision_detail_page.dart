@@ -200,6 +200,11 @@ class _DecisionView extends StatelessWidget {
                         '${state.haltedState == null ? '' : ' · halted in: ${state.haltedState}'}',
                     '${state.decisionId} ${state.decisionTypeWire} '
                         'on ${state.runId}',
+                    // The headline leads with the plain-language
+                    // description; the technical title lives here, the same
+                    // place the run detail keeps it.
+                    if (state.workItemTitle != null)
+                      'title: ${state.workItemTitle}',
                     'options: '
                         '${state.choices.map((c) => c.value).join(', ')}',
                     if (state.resolvedChoice != null)

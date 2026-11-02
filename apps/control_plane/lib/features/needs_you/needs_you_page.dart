@@ -425,6 +425,7 @@ class _ConfirmStripState extends State<_ConfirmStrip> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             AccentTick(color: accent, height: 12),
             const SizedBox(width: 8),
@@ -434,11 +435,10 @@ class _ConfirmStripState extends State<_ConfirmStrip> {
             ),
             const SizedBox(width: 12),
             if (widget.choice.description != null)
+              // What the choice does is decision content — it renders whole.
               Expanded(
                 child: Text(
                   widget.choice.description!,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                   style: ShipItType.bodySmall.copyWith(
                     color: palette.inkTertiary,
                   ),
@@ -588,10 +588,11 @@ class _FactGrid extends StatelessWidget {
                 children: [
                   MicroLabel(fact.$1),
                   const SizedBox(height: 4),
+                  // WHAT IT IS is the decision's own subject — the same
+                  // content the detail page's WHAT THIS IS ABOUT row now
+                  // shows whole, so a card cannot ellipsize it either.
                   Text(
                     fact.$2,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                     style: ShipItType.bodySmall.copyWith(
                       color: fact.$3 ?? palette.inkPrimary,
                     ),
@@ -770,9 +771,13 @@ class _ResolvedRow extends StatelessWidget {
 
     return Column(
       children: [
-        SizedBox(
-          height: 34,
+        Padding(
+          // What was asked and what was chosen are the record's own fields —
+          // they render in full like every other decision surface, so the row
+          // grows with a long question rather than clipping it.
+          padding: const EdgeInsets.symmetric(vertical: 9),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SizedBox(
                 width: ShipItMetrics.colWhat,
@@ -782,29 +787,34 @@ class _ResolvedRow extends StatelessWidget {
                 ),
               ),
               Expanded(
-                child: Text(
-                  entry.question,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: ShipItType.rowTitle.copyWith(
-                    color: palette.inkPrimary,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: Text(
+                    entry.question,
+                    style: ShipItType.rowTitle.copyWith(
+                      color: palette.inkPrimary,
+                    ),
                   ),
                 ),
               ),
               SizedBox(
                 width: 140,
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    AccentTick(
-                      color: tone,
-                      height: ShipItMetrics.metricTickHeight,
+                    Padding(
+                      // Centres the 10px tick on the choice's first 12px
+                      // line now that the row top-aligns.
+                      padding: const EdgeInsets.only(top: 1),
+                      child: AccentTick(
+                        color: tone,
+                        height: ShipItMetrics.metricTickHeight,
+                      ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
                         entry.choiceLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: ShipItType.status.copyWith(color: tone),
                       ),
                     ),
@@ -878,8 +888,6 @@ class _ResolvedRowMobile extends StatelessWidget {
                   children: [
                     Text(
                       entry.question,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                       style: ShipItType.rowTitleMobile.copyWith(
                         color: palette.inkPrimary,
                       ),
@@ -897,8 +905,6 @@ class _ResolvedRowMobile extends StatelessWidget {
                         Flexible(
                           child: Text(
                             entry.choiceLabel,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
                             style: ShipItType.status.copyWith(color: tone),
                           ),
                         ),

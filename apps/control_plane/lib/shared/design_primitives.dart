@@ -626,6 +626,13 @@ class DetailHeader extends StatelessWidget {
 ///
 /// Penpot `F K n` / `F V n` / `F Rule n`: key at the row top (14px), value
 /// 16px below (18px), hairline 38px down — a 46px pitch.
+///
+/// The value renders IN FULL — the two-line ellipsis this list used to
+/// apply hid the record's own sentence, and every call site is a detail
+/// surface (decision, run, defect, product, operator panel) where the
+/// reader needs the whole text. A row taller than the board's pitch is the
+/// correct cost; a decider who cannot read what they are deciding on is
+/// not.
 class DefinitionList extends StatelessWidget {
   const DefinitionList({super.key, required this.entries});
 
@@ -660,8 +667,6 @@ class DefinitionList extends StatelessWidget {
                           ),
                       ],
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
