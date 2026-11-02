@@ -1492,3 +1492,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | impl-agent-exec-retirement-wiring | implement | IN_FLIGHT | /private/tmp/shipit-fix-zombie-exec | fix/zombie-exec-orphan | 74a7d2e | STANDARD | wire agentExecutionRetirement at 5 Scheduler sites | 4ea7805b running |
 | impl-agent-exec-retirement-wiring | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-zombie-exec | fix/zombie-exec-orphan | 74a7d2e | STANDARD | b2fe008: agentExecutionRetirement at all 5 Scheduler sites + guard | → reviewer e21d9c95 |
 | review-zombie-exec-orphan | review | IN_FLIGHT | (read-only) | fix/zombie-exec-orphan | da62a2d | STANDARD | both commits (74a7d2e+b2fe008) | await result |
+| review-zombie-exec-orphan | review | CLOSED | (read-only) | fix/zombie-exec-orphan | da62a2d | STANDARD | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (residual adopt-path hole filed) | → integrator |
+| integrate-zombie-exec-orphan | integrate | IN_FLIGHT | scratch rehearsal | fix/zombie-exec-orphan | da62a2d | STANDARD | await result |
