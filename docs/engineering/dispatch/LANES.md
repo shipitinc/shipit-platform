@@ -1510,3 +1510,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-decision-detail-surface | integrate | CLOSED | scratch rehearsal | feat/decision-detail-surface | da095e2 | STANDARD | MERGE_APPROVED (test-integration +319) → merged (human-authorized) | done |
 | impl-decision-field-truncation | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-truncation | fix/decision-field-truncation | 582d254 | STANDARD | 22daf08: DefinitionList uncapped + all human-input pages full text | → reviewer 051bc242 |
 | review-decision-field-truncation | review | IN_FLIGHT | (read-only) | fix/decision-field-truncation | 582d254 | STANDARD | await result (scope ruling) |
+| review-decision-field-truncation | review | CLOSED | (read-only) | fix/decision-field-truncation | 582d254 | STANDARD | APPROVE_FOR_MERGE (read-only-edit ruled justified) | → integrator |
+| integrate-decision-field-truncation | integrate | IN_FLIGHT | scratch rehearsal | fix/decision-field-truncation | 582d254 | STANDARD | await result |
