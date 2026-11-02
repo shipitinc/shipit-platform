@@ -249,6 +249,35 @@ void main() {
       await session.close();
     });
 
+    test('records denied permission asks as a result diagnostic', () async {
+      final fake = FakeAcpTransport(permissionAsks: 2);
+      final session = OpenCodeSession(
+        executionId: 'exec-1',
+        workItemId: 'work-1',
+        transportFactory: (_) async => fake,
+      );
+
+      await session.start(
+        AgentSessionConfig(
+          executionId: 'exec-1',
+          workItemId: 'work-1',
+          workingDirectory: '/tmp/ws',
+          timeout: _generousBudget,
+        ),
+      );
+      await session.sendInstruction(
+        const AgentInstruction(instructionId: 'instr-1', content: 'go'),
+      );
+
+      final result = await session.getResult();
+      final warning = result.diagnostics.warnings
+          .where((w) => w.code == 'permission_requests_denied')
+          .toList();
+      expect(warning, hasLength(1));
+      expect(warning.single.message, contains('2'));
+      await session.close();
+    });
+
     test('resumes an existing session id when configured', () async {
       final fake = FakeAcpTransport();
       final session = OpenCodeSession(
@@ -434,11 +463,17 @@ class FakeAcpTransport implements AcpTransport {
     this.promptDelay,
     this.promptHold = false,
     this.failInitialize = false,
+    this.permissionAsks = 0,
   });
 
   final Duration? promptDelay;
   final bool promptHold;
   final bool failInitialize;
+
+  /// Emit this many `acp/permission_denied` signals during `session/prompt`,
+  /// matching what `OpenCodeProcessTransport` adds when it answers a
+  /// `session/request_permission` with a deny.
+  final int permissionAsks;
 
   final _notifications = StreamController<Map<String, dynamic>>.broadcast(
     sync: true,
@@ -504,6 +539,12 @@ class FakeAcpTransport implements AcpTransport {
                   as Map<String, dynamic>)['text']
               as String,
         );
+        for (var i = 0; i < permissionAsks; i++) {
+          _notifications.add({
+            'method': 'acp/permission_denied',
+            'params': {'requestId': 90 + i},
+          });
+        }
         _emitSessionUpdate('agent_message_chunk', text: 'implemented');
         _emitSessionUpdate(
           'agent_message',

@@ -236,6 +236,12 @@ class OpenCodeSession implements AgentSession {
   /// Escalation index incremented on provider errors to trigger re-dispatch.
   int _escalationIndex = 0;
 
+  /// Number of `session/request_permission` asks the transport denied on
+  /// this session's behalf. Recorded as a diagnostic so a durable result
+  /// shows the agent asked for something outside its bounds and was refused
+  /// — the opposite of the silence that made exec 194's stall invisible.
+  int _permissionDenials = 0;
+
   @override
   String get sessionId => _sessionId;
 
@@ -685,6 +691,13 @@ class OpenCodeSession implements AgentSession {
       );
       return;
     }
+    if (message['method'] == 'acp/permission_denied') {
+      // Synthetic transport signal (see OpenCodeProcessTransport): the agent
+      // asked for permission and the platform responder denied it. Counted
+      // for the result diagnostic; not a session lifecycle event.
+      _permissionDenials++;
+      return;
+    }
     if (message['method'] != 'session/update') return;
     final params = message['params'];
     if (params is! Map<String, dynamic>) return;
@@ -986,6 +999,16 @@ class OpenCodeSession implements AgentSession {
             DiagnosticEntry(
               code: 'transport_interrupted',
               message: _failureDetail,
+              severity: 'warning',
+            ),
+          if (_permissionDenials > 0)
+            DiagnosticEntry(
+              code: 'permission_requests_denied',
+              message:
+                  'the agent raised $_permissionDenials permission '
+                  'request(s) on the wire; each was denied by the transport '
+                  'responder (policy: deny — an autonomous worker does not '
+                  'grant access that was not pre-allowed)',
               severity: 'warning',
             ),
         ],

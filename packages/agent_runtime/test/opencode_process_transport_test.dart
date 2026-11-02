@@ -156,6 +156,78 @@ void main() {
       expect(transport.pendingRequestCount, isZero);
     });
   });
+
+  group('server->client requests', () {
+    // Regression test for the exec-194 stall: opencode sends
+    // `session/request_permission` as a JSON-RPC REQUEST to the client, and
+    // the old transport dropped every id-bearing message with no matching
+    // pending request — the ask sat unacknowledged until the role budget
+    // killed the turn.
+    test(
+      'answers session/request_permission with a deny and the turn proceeds',
+      () async {
+        final transport = _loopback(
+          workspace,
+          _serverRequestScript(
+            serverMethod: 'session/request_permission',
+            serverParams: _permissionParams,
+          ),
+        );
+        final permissionSignals = <Map<String, dynamic>>[];
+        final sub = transport.notifications.listen((message) {
+          if (message['method'] == 'acp/permission_denied') {
+            permissionSignals.add(message);
+          }
+        });
+
+        await transport.initialize();
+
+        // The loopback reuses the pending prompt id for its permission
+        // request: the transport must answer the server request AND keep
+        // the prompt pending — not complete it with the request payload.
+        final response = await transport.request(
+          transport.nextRequestId,
+          'session/prompt',
+          {'sessionId': 'ses_loopback'},
+        );
+        expect(response['serverAnswered'], isTrue);
+        expect(response['serverOutcome'], equals('denied'));
+        expect(
+          permissionSignals,
+          hasLength(1),
+          reason: 'the denial must be signalled so the session can record it',
+        );
+        expect(transport.pendingRequestCount, isZero);
+
+        await sub.cancel();
+        await transport.close();
+      },
+    );
+
+    test('answers an unimplemented server->client request with a JSON-RPC '
+        'error instead of leaving it unacknowledged', () async {
+      final transport = _loopback(
+        workspace,
+        _serverRequestScript(
+          serverMethod: 'fs/read_text_file',
+          serverParams: '{"sessionId":"ses_loopback","path":"/etc/passwd"}',
+        ),
+      );
+
+      await transport.initialize();
+
+      final response = await transport.request(
+        transport.nextRequestId,
+        'session/prompt',
+        {'sessionId': 'ses_loopback'},
+      );
+      expect(response['serverAnswered'], isTrue);
+      expect(response['serverOutcome'], equals('method_not_found'));
+      expect(transport.pendingRequestCount, isZero);
+
+      await transport.close();
+    });
+  });
 }
 
 /// Writes the loopback script into [workspace] and returns a transport that
@@ -218,4 +290,61 @@ String _echoScript({
   return _loopbackTemplate
       .replaceAll('__DEFAULT_ARM__', arm)
       .replaceAll('__ID__', stringIds ? r'\"$id\"' : r'$id');
+}
+
+/// The options list opencode 1.18.x sends on `session/request_permission`:
+/// allow-once, allow-always, reject. The honest deny is the offered
+/// reject-kind option, not a fabricated id.
+const String _permissionParams =
+    '{"sessionId":"ses_loopback",'
+    '"toolCall":{"toolCallId":"call_1","title":"external_directory",'
+    '"kind":"other","status":"pending",'
+    '"rawInput":{"filePath":"/etc/passwd"}},'
+    '"options":['
+    '{"optionId":"once","kind":"allow_once","name":"Allow once"},'
+    '{"optionId":"always","kind":"allow_always","name":"Always allow"},'
+    '{"optionId":"reject","kind":"reject_once","name":"Reject"}'
+    ']}';
+
+/// A loopback that, on `session/prompt`, first sends a SERVER->CLIENT
+/// request ([serverMethod], [serverParams]) reusing the still-pending prompt
+/// id, then blocks the turn until the client answers it, and only then
+/// answers the prompt. The prompt result carries `serverAnswered`/`serverOutcome`
+/// so the test can see exactly what the client wrote back — or, on a
+/// regression, the turn simply stalls and the request timeout fails it,
+/// which is the exec-194 defect reproduced.
+String _serverRequestScript({
+  required String serverMethod,
+  required String serverParams,
+}) {
+  final arm =
+      '    *\'"method":"session/prompt"\'*)\n'
+      // Ask the client, reusing the pending prompt id: the collision is
+      // deliberate — a server request id must not resolve a client request.
+      '      printf "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":%s,'
+      '\\"method\\":\\"%s\\",\\"params\\":%s}\\n"'
+      ' "\$id" "$serverMethod" \'$serverParams\'\n'
+      '      reply=""\n'
+      '      while IFS= read -r reply; do\n'
+      '        case "\$reply" in\n'
+      '          *"\\"id\\":\$id"*) break ;;\n'
+      '        esac\n'
+      '      done\n'
+      '      verdict="other"\n'
+      '      case "\$reply" in\n'
+      '        *\'"optionId":"reject"\'*) verdict="denied" ;;\n'
+      '        *\'"outcome":"cancelled"\'*) verdict="cancelled" ;;\n'
+      '        *\'"code":-32601\'*) verdict="method_not_found" ;;\n'
+      '      esac\n'
+      '      printf "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":%s,'
+      '\\"result\\":{\\"serverAnswered\\":true,'
+      '\\"serverOutcome\\":\\"%s\\"}}\\n" "\$id" "\$verdict"\n'
+      '      ;;\n'
+      '    *)\n'
+      '      printf "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":__ID__,'
+      '\\"result\\":{\\"echoedId\\":\$id}}\\n"\n'
+      '      ;;\n';
+  return _loopbackTemplate
+      .replaceAll('__DEFAULT_ARM__', arm)
+      .replaceAll('__ID__', r'$id');
 }

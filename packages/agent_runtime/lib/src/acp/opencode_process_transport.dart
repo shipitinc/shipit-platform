@@ -156,6 +156,20 @@ class OpenCodeProcessTransport implements AcpTransport, StderrTail {
     if (message == null) return;
 
     final id = message['id'];
+    if (message['method'] is String && message.containsKey('id')) {
+      // A message carrying BOTH `id` and `method` is a server->client
+      // REQUEST (`session/request_permission`, `fs/read_text_file`,
+      // `terminal/*`, ...), not a response. It must be answered: an
+      // unanswered request blocks the agent's turn until the execution
+      // budget kills the whole session — exec 194 stalled 19+min on a
+      // single unacknowledged `session/request_permission`. Checking
+      // `method` BEFORE consulting `_pending` also keeps a server request
+      // whose id collides with a pending client request from wrongly
+      // completing that request.
+      _onServerRequest(id, message);
+      return;
+    }
+
     if (id is int || id is String) {
       // The correlation key is the request id exactly as `request` stored it
       // in `_pending`. JSON-RPC also permits a string id; the request API is
@@ -163,7 +177,7 @@ class OpenCodeProcessTransport implements AcpTransport, StderrTail {
       final key = id is int ? id : int.tryParse(id);
       final completer = key == null ? null : _pending.remove(key);
       if (completer == null) {
-        // Server->client request we do not model in this slice.
+        // A response for an id nobody is waiting on: ignore it.
         return;
       }
       if (message['error'] is Map<String, dynamic>) {
@@ -186,6 +200,113 @@ class OpenCodeProcessTransport implements AcpTransport, StderrTail {
     if (message['method'] == null) return;
     _notifications.add(message);
   }
+
+  /// Answers a server->client JSON-RPC request. Every such request MUST get
+  /// a response: the agent blocks the turn until one arrives, and this client
+  /// is the only party that can send it.
+  ///
+  /// ## POLICY: `session/request_permission` is DENIED, never granted
+  ///
+  /// The runtime asks only for what its permission rules did not pre-allow —
+  /// against opencode 1.18.x that is `external_directory` (a path outside the
+  /// workspace) and `doom_loop` (a repeated-call detector asking whether the
+  /// loop may continue). Everything else defaults to `allow` inside opencode,
+  /// so the only asks that reach the wire are the ones outside the bounds the
+  /// worker was already given.
+  ///
+  /// Granting is not a neutral convenience: the opencode child runs
+  /// UNSANDBOXED on the worker host with the worker's credentials, so an
+  /// `external_directory` grant is arbitrary host-path access decided by the
+  /// agent. Denying hands the agent an ordinary tool error and the turn
+  /// continues — the agent adapts to the workspace it was given, which is the
+  /// correct behaviour for an autonomous worker. `doom_loop` denial is its
+  /// purpose: the detector fired, so the repeated call is refused.
+  ///
+  /// The deny is expressed by selecting the offered `reject`-kind option
+  /// (`optionId: "reject"` on opencode 1.18.x, whose outcome parser maps any
+  /// non-allow selection to a one-shot deny with no persisted rule). When the
+  /// options carry no reject-kind entry the response is `cancelled`, which
+  /// the runtime maps to deny as well. A grant (`once`/`always`) is never
+  /// selected.
+  ///
+  /// `OPENCODE_PERMISSION` (a JSON env the runtime merges over its
+  /// `permission` config, e.g. `{"external_directory":"deny"}`) could make
+  /// the known ask kinds never fire. The responder was chosen instead: it
+  /// covers every ask kind and every future server->client request, not just
+  /// the two names known today.
+  ///
+  /// Any other server->client request is answered `-32601 Method not found`:
+  /// honest (the client does not implement `fs/*` or `terminal/*`) and,
+  /// structurally, what makes "an unmodelled request stalled the turn"
+  /// impossible — the response exists even when the method does not.
+  void _onServerRequest(Object? id, Map<String, dynamic> message) {
+    if (!isOpen) return;
+    final method = message['method'] as String;
+    final Map<String, dynamic> response;
+    if (method == 'session/request_permission') {
+      response = {
+        'jsonrpc': '2.0',
+        'id': id,
+        'result': _denyPermissionOutcome(message['params']),
+      };
+      if (!_closed) {
+        _notifications.add({
+          'method': 'acp/permission_denied',
+          'params': {
+            'requestId': id,
+            'toolCall':
+                (message['params'] as Map<String, dynamic>?)?['toolCall'],
+          },
+        });
+      }
+    } else {
+      response = {
+        'jsonrpc': '2.0',
+        'id': id,
+        'error': {
+          'code': -32601,
+          'message': 'shipit-platform does not implement $method',
+        },
+      };
+    }
+    try {
+      _process?.stdin.write(encodeFrame(response));
+    } catch (_) {
+      // A dead pipe means the child is gone; the exit handler completes
+      // outstanding requests and there is nobody left to answer.
+    }
+  }
+
+  /// The JSON-RPC `result` for a denied `session/request_permission`: the
+  /// offered reject-kind option when one exists, else the `cancelled`
+  /// outcome, which the runtime also maps to deny.
+  static Map<String, dynamic> _denyPermissionOutcome(Object? params) {
+    if (params is Map<String, dynamic> && params['options'] is List) {
+      String? rejectAny;
+      for (final option in params['options'] as List) {
+        if (option is! Map<String, dynamic>) continue;
+        final kind = option['kind'];
+        final optionId = option['optionId'];
+        if (kind == 'reject_once' && optionId is String) {
+          return _selectedOutcome(optionId);
+        }
+        if (rejectAny == null &&
+            kind is String &&
+            kind.startsWith('reject') &&
+            optionId is String) {
+          rejectAny = optionId;
+        }
+      }
+      if (rejectAny != null) return _selectedOutcome(rejectAny);
+    }
+    return const {
+      'outcome': {'outcome': 'cancelled'},
+    };
+  }
+
+  static Map<String, dynamic> _selectedOutcome(String optionId) => {
+    'outcome': {'outcome': 'selected', 'optionId': optionId},
+  };
 
   void _handleChildExit(String reason) {
     final died = _isOpen;
