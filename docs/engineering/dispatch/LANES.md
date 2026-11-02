@@ -1505,3 +1505,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | impl-decision-detail-surface | implement | IN_FLIGHT | /private/tmp/shipit-decision-surface | feat/decision-detail-surface | da095e2 | PRECISION | surface review verdict+findings+artifact+full context on decision detail | b90d86bb running |
 | impl-decision-detail-surface | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-decision-surface | feat/decision-detail-surface | da095e2 | PRECISION | 07b4b38: decisionType-aware detail surface + metadataJson view field | → reviewer a120fe3b |
 | review-decision-detail-surface | review | IN_FLIGHT | (read-only) | feat/decision-detail-surface | da095e2 | PRECISION | await result (2 scope rulings) |
+| review-decision-detail-surface | review | CLOSED | (read-only) | feat/decision-detail-surface | da095e2 | PRECISION | APPROVE_FOR_MERGE (both disclosures ruled on) | → integrator |
+| integrate-decision-detail-surface | integrate | IN_FLIGHT | scratch rehearsal | feat/decision-detail-surface | da095e2 | STANDARD | await result |
