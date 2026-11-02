@@ -58,10 +58,16 @@ void main() {
     decisionId: 'dec-rev-01',
     workItemId: 'WI-9c11',
     workItemTitle: 'Scheduler claim-CAS dedupe patch',
+    // Deliberately several lines long at the column's width: a two-line cap
+    // would cut the tail off, so asserting the tail proves the row carries
+    // the whole text.
     workItemDescription:
         'Stop duplicate jobs running twice. The claim handler retried the '
         'same job under a second worker while the first claim was still '
-        'live, and the dedupe guard never ran on the retry path.',
+        'live, and the dedupe guard never ran on the retry path. The second '
+        'execution then wrote over the first result, the audit trail lost '
+        'which worker actually held the claim, and the recovery pass picked '
+        'the stale outcome instead of the live one.',
     decisionType: 'engineering_review',
     status: status,
     question:
@@ -128,8 +134,8 @@ void main() {
   }
 
   testWidgets(
-    'engineering_review renders the verdict, findings, full context and the '
-    'artifact under review',
+    'engineering_review renders WHAT THIS IS ABOUT in full in its own row, '
+    'plus the verdict, findings and the artifact under review',
     (tester) async {
       final bloc = await pump(
         tester,
@@ -139,18 +145,30 @@ void main() {
       // The payload reached the state typed, not as raw text.
       expect(bloc.state.contextPayload, isA<EngineeringReviewContext>());
 
-      // Full context: the item title heads it, the whole description shows.
-      expect(find.text('WHAT THIS IS ABOUT — IN FULL'), findsOneWidget);
-      expect(find.text('Scheduler claim-CAS dedupe patch'), findsWidgets);
-      // The full-context body carries the description COMPLETE — the
-      // two-line definition row above holds the same text plus a ref span,
-      // so an exact match lands only on the untruncated copy.
+      // The "in full" section is gone — the original field IS the full
+      // field now, so a second copy would print the same sentence twice.
+      expect(find.text('WHAT THIS IS ABOUT — IN FULL'), findsNothing);
+      expect(find.text('WHAT THIS IS ABOUT'), findsOneWidget);
+
+      // The tail of the description is what a two-line cap would cut, so
+      // finding it proves the row carries the whole value.
+      final descriptionTail = find.textContaining(
+        'the recovery pass picked the stale outcome instead of the live one',
+        findRichText: true,
+      );
+      expect(descriptionTail, findsOneWidget);
+      // And the row carries no line cap at all.
+      expect(tester.widget<RichText>(descriptionTail).maxLines, isNull);
+
+      // The technical title is not lost — it sits under technical details,
+      // the same place the run detail keeps it.
+      expect(find.text('Scheduler claim-CAS dedupe patch'), findsNothing);
+      final disclosure = find.text('Show technical details');
+      await tester.ensureVisible(disclosure);
+      await tester.tap(disclosure);
+      await tester.pumpAndSettle();
       expect(
-        find.text(
-          'Stop duplicate jobs running twice. The claim handler retried the '
-          'same job under a second worker while the first claim was still '
-          'live, and the dedupe guard never ran on the retry path.',
-        ),
+        find.textContaining('title: Scheduler claim-CAS dedupe patch'),
         findsOneWidget,
       );
 
@@ -185,6 +203,21 @@ void main() {
       expect(find.text('SURFACES THE FINDINGS NAME'), findsOneWidget);
       // The affected surface appears on the finding card and in the list.
       expect(find.text('lib/src/scheduler.dart'), findsNWidgets(2));
+
+      // The WHAT HAPPENS column carries the whole consequence sentence —
+      // these are multi-line strings that a one-line row would clip.
+      for (final consequence in [
+        'Approves the reviewed change — the run continues with this '
+            'revision and the verdict is recorded',
+        'Records that the change was turned down — the work stays stopped '
+            'and the rejection is recorded against this revision',
+        'Sends the revision back for correction — the findings above are '
+            'what the next attempt must fix',
+      ]) {
+        final cell = find.text(consequence);
+        expect(cell, findsOneWidget);
+        expect(tester.widget<Text>(cell).maxLines, isNull);
+      }
     },
   );
 

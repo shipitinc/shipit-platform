@@ -211,12 +211,15 @@ class DecisionDetailState {
   final bool alreadyResolved;
   final String? resolvedChoice;
 
-  /// The gated item's own title, kept beside [runName] because the type
-  /// renderer heads the full-context section with the title itself.
+  /// The gated item's own technical title. [runName] leads with the
+  /// description when one is recorded; the title itself is kept here so the
+  /// technical-details strip can name it verbatim, the same place the run
+  /// detail page puts it.
   final String? workItemTitle;
 
-  /// The gated item's full recorded description — untruncated, unlike the
-  /// two-line definition row that summarises it.
+  /// The gated item's full recorded description. It is the source [runName]
+  /// is built from, and the definition row renders [runName] in full — so
+  /// this text reaches the page whole, not capped at two lines.
   final String? workItemDescription;
 
   /// The decision's `metadataJson` verbatim, kept for the technical-details

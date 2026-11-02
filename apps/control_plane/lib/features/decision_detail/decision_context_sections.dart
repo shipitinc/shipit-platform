@@ -38,8 +38,12 @@ class GenericDecisionDetailRenderer extends DecisionDetailRenderer {
 }
 
 /// Renders the record an `engineering_review` decision actually carries:
-/// the full context the two-line definition row truncates, the reviewer's
-/// verdict and findings, and the identity of the revision under review.
+/// the reviewer's verdict and findings, and the identity of the revision
+/// under review.
+///
+/// The item's description is NOT rendered here: the definition row above
+/// already carries it in full as the WHAT THIS IS ABOUT value, so a second
+/// copy would say the same sentence twice.
 class EngineeringReviewDetailRenderer extends DecisionDetailRenderer {
   const EngineeringReviewDetailRenderer();
 
@@ -51,13 +55,6 @@ class EngineeringReviewDetailRenderer extends DecisionDetailRenderer {
     final payload = state.contextPayload;
     final review = payload is EngineeringReviewContext ? payload : null;
     return [
-      if (state.workItemDescription?.trim().isNotEmpty == true) ...[
-        const SizedBox(height: 20),
-        _FullContextSection(
-          title: state.workItemTitle ?? state.runName,
-          body: state.workItemDescription!.trim(),
-        ),
-      ],
       if (review != null && review.verdict != null) ...[
         const SizedBox(height: 20),
         _ReviewVerdictSection(review: review),
@@ -86,40 +83,6 @@ final Map<String, DecisionDetailRenderer> decisionDetailRenderers = {
 DecisionDetailRenderer decisionDetailRendererFor(String decisionTypeWire) =>
     decisionDetailRenderers[decisionTypeWire] ??
     const GenericDecisionDetailRenderer();
-
-/// The whole story: the item's title as the header and its full recorded
-/// description, where the definition row above shows at most two lines of
-/// it. This is the panel a decider reads before the verdict.
-class _FullContextSection extends StatelessWidget {
-  const _FullContextSection({required this.title, required this.body});
-
-  final String title;
-  final String body;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const MicroLabel('WHAT THIS IS ABOUT — IN FULL'),
-        const SizedBox(height: 6),
-        Text(
-          title,
-          style: ShipItType.rowTitle.copyWith(
-            fontWeight: FontWeight.w600,
-            color: palette.inkPrimary,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          body,
-          style: ShipItType.bodySmall.copyWith(color: palette.inkSecondary),
-        ),
-      ],
-    );
-  }
-}
 
 /// The verdict badge and the findings behind it — what the reviewer
 /// actually concluded, which is the thing the decider is being asked to

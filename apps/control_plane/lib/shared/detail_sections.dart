@@ -315,6 +315,11 @@ class _ThumbnailSkeleton extends StatelessWidget {
 /// "AND THEN" is only rendered when the record supplies it; the durable
 /// decision contract currently has no downstream-effect field, so that column
 /// is omitted rather than invented.
+///
+/// Rows are not a fixed pitch: the WHAT HAPPENS column carries the sentence
+/// that tells a decider what their choice does, and ellipsizing it is
+/// precisely the reading this table exists for, so every column renders in
+/// full and the row grows with its content.
 class OutcomeTable extends StatelessWidget {
   const OutcomeTable({super.key, required this.rows});
 
@@ -342,39 +347,53 @@ class OutcomeTable extends StatelessWidget {
         for (final row in rows)
           Column(
             children: [
-              SizedBox(
-                height: 26,
+              Padding(
+                // 7+12+7 keeps a one-line row at the board's 26px pitch;
+                // longer text grows the row instead of being clipped.
+                padding: const EdgeInsets.symmetric(vertical: 7),
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     SizedBox(
                       width: 170,
-                      child: Row(
-                        children: [
-                          AccentTick(
-                            color: row.tone(palette),
-                            height: ShipItMetrics.metricTickHeight,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              row.choice,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: ShipItType.status.copyWith(
+                      // A wrapped choice must not touch the WHAT HAPPENS
+                      // text, so the column keeps a 12px inset on the inside
+                      // now that neither side clips at one line.
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 12),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              // Centres the 10px tick on the choice's first
+                              // 12px line now that the row top-aligns.
+                              padding: const EdgeInsets.only(top: 1),
+                              child: AccentTick(
                                 color: row.tone(palette),
+                                height: ShipItMetrics.metricTickHeight,
                               ),
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                row.choice,
+                                style: ShipItType.status.copyWith(
+                                  color: row.tone(palette),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                     Expanded(
-                      child: Text(
-                        row.happens,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: ShipItType.status.copyWith(
-                          color: palette.inkPrimary,
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 12),
+                        child: Text(
+                          row.happens,
+                          style: ShipItType.status.copyWith(
+                            color: palette.inkPrimary,
+                          ),
                         ),
                       ),
                     ),
@@ -383,8 +402,6 @@ class OutcomeTable extends StatelessWidget {
                         width: 216,
                         child: Text(
                           row.effect ?? '',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                           style: ShipItType.status.copyWith(
                             color: palette.inkSecondary,
                           ),
