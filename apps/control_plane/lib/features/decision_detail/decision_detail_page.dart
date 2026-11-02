@@ -11,6 +11,8 @@ import '../../shared/state_views.dart';
 import '../../shared/decision_choice.dart';
 import '../../shared/detail_sections.dart';
 import '../../shared/mobile_chrome.dart';
+import 'decision_context.dart';
+import 'decision_context_sections.dart';
 import 'decision_detail_bloc.dart';
 import 'decision_detail_event.dart';
 
@@ -276,6 +278,13 @@ class _LeftColumn extends StatelessWidget {
               ),
           ],
         ),
+        // The decisionType's own sections — an engineering review shows its
+        // verdict, findings and the artifact under review; a type with no
+        // registered renderer adds nothing, so the generic record is what
+        // every unmapped decision keeps.
+        ...decisionDetailRendererFor(
+          state.decisionTypeWire,
+        ).contextSections(context, state),
         if (state.artifacts.isNotEmpty) ...[
           const SizedBox(height: 20),
           EvidencePanel(
@@ -307,8 +316,15 @@ class _LeftColumn extends StatelessWidget {
               OutcomeRow(
                 choice: choice.label,
                 // The option's own description is the durable statement of
-                // what the choice does; nothing is inferred beyond it.
-                happens: choice.description ?? 'Records your decision',
+                // what the choice does and still wins; the per-type map only
+                // fills the void a description-less option leaves, which is
+                // where three identical "Records your decision" rows used to
+                // stand in for what approve/reject/rework actually do.
+                happens: optionConsequenceFor(
+                  decisionType: state.decisionTypeWire,
+                  choiceValue: choice.value,
+                  description: choice.description,
+                ),
                 sentiment: PlainLanguage.sentimentFor(choice.value),
               ),
           ],

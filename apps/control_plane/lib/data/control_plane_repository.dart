@@ -406,6 +406,7 @@ class ControlPlaneRepository {
       rationale: decision.rationale,
       resolvedAt: decision.resolvedAt,
       signature: decision.signature,
+      metadataJson: decision.metadataJson,
     );
   }
 
@@ -1867,6 +1868,7 @@ class DecisionDetailResponse {
     this.rationale,
     this.resolvedAt,
     this.signature,
+    this.metadataJson,
   });
 
   final String decisionId;
@@ -1895,6 +1897,13 @@ class DecisionDetailResponse {
   final String? rationale;
   final DateTime? resolvedAt;
   final String? signature;
+
+  /// The decision's free-form metadata as JSON TEXT — the same convention
+  /// the wire carries (`DecisionView.metadataJson`). `jsonDecode` recovers
+  /// the map exactly; an `engineering_review` decision carries its
+  /// `engineeringReviewResult` here, which is the verdict, the findings and
+  /// the artifact under review the detail page was never shown.
+  final String? metadataJson;
 }
 
 /// One claim a pending baseline makes about its product.

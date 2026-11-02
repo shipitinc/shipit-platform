@@ -39,6 +39,7 @@ abstract class DecisionView
     this.rationale,
     this.resolvedAt,
     this.signature,
+    this.metadataJson,
   });
 
   factory DecisionView({
@@ -61,6 +62,7 @@ abstract class DecisionView
     String? rationale,
     DateTime? resolvedAt,
     String? signature,
+    String? metadataJson,
   }) = _DecisionViewImpl;
 
   factory DecisionView.fromJson(Map<String, dynamic> jsonSerialization) {
@@ -104,6 +106,7 @@ abstract class DecisionView
           ? null
           : _i1.DateTimeJsonExtension.fromJson(jsonSerialization['resolvedAt']),
       signature: jsonSerialization['signature'] as String?,
+      metadataJson: jsonSerialization['metadataJson'] as String?,
     );
   }
 
@@ -147,6 +150,16 @@ abstract class DecisionView
 
   String? signature;
 
+  /// The decision's free-form metadata, carried as JSON TEXT. Serverpod
+  /// 3.4.13 has no field type that can hold arbitrary JSON, so the same
+  /// `*Json` string convention `AgentExecution.metadata`,
+  /// `AgentResult.structuredResult` and `Defect.clientContextJson` already
+  /// travel under applies here; `jsonDecode` recovers it exactly. This is
+  /// where an `engineering_review` decision carries its
+  /// `engineeringReviewResult` (verdict, findings, reviewExecutionId), and
+  /// without it the detail surface could only show the truncated context.
+  String? metadataJson;
+
   /// Returns a shallow copy of this [DecisionView]
   /// with some or all fields replaced by the given arguments.
   @_i1.useResult
@@ -170,6 +183,7 @@ abstract class DecisionView
     String? rationale,
     DateTime? resolvedAt,
     String? signature,
+    String? metadataJson,
   });
   @override
   Map<String, dynamic> toJson() {
@@ -197,6 +211,7 @@ abstract class DecisionView
       if (rationale != null) 'rationale': rationale,
       if (resolvedAt != null) 'resolvedAt': resolvedAt?.toJson(),
       if (signature != null) 'signature': signature,
+      if (metadataJson != null) 'metadataJson': metadataJson,
     };
   }
 
@@ -228,6 +243,7 @@ abstract class DecisionView
       if (rationale != null) 'rationale': rationale,
       if (resolvedAt != null) 'resolvedAt': resolvedAt?.toJson(),
       if (signature != null) 'signature': signature,
+      if (metadataJson != null) 'metadataJson': metadataJson,
     };
   }
 
@@ -260,6 +276,7 @@ class _DecisionViewImpl extends DecisionView {
     String? rationale,
     DateTime? resolvedAt,
     String? signature,
+    String? metadataJson,
   }) : super._(
          decisionId: decisionId,
          workItemId: workItemId,
@@ -280,6 +297,7 @@ class _DecisionViewImpl extends DecisionView {
          rationale: rationale,
          resolvedAt: resolvedAt,
          signature: signature,
+         metadataJson: metadataJson,
        );
 
   /// Returns a shallow copy of this [DecisionView]
@@ -306,6 +324,7 @@ class _DecisionViewImpl extends DecisionView {
     Object? rationale = _Undefined,
     Object? resolvedAt = _Undefined,
     Object? signature = _Undefined,
+    Object? metadataJson = _Undefined,
   }) {
     return DecisionView(
       decisionId: decisionId ?? this.decisionId,
@@ -337,6 +356,7 @@ class _DecisionViewImpl extends DecisionView {
       rationale: rationale is String? ? rationale : this.rationale,
       resolvedAt: resolvedAt is DateTime? ? resolvedAt : this.resolvedAt,
       signature: signature is String? ? signature : this.signature,
+      metadataJson: metadataJson is String? ? metadataJson : this.metadataJson,
     );
   }
 }

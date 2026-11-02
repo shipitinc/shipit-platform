@@ -472,6 +472,11 @@ class EndpointHomeEndpoints extends _i1.EndpointRef {
   );
 
   /// Lists pending blocking human decisions.
+  ///
+  /// Each card is the decision the work item says it is blocked on — the row
+  /// named by [WorkItem.blockingHumanDecisionId] — surfaced only while that
+  /// decision is still open. The item itself names its blocker, so this never
+  /// has to pick among an item's decisions at all.
   _i2.Future<List<_i16.DecisionView>> pendingDecisions({int? limit}) =>
       caller.callServerEndpoint<List<_i16.DecisionView>>(
         'homeEndpoints',
