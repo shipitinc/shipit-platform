@@ -2671,7 +2671,8 @@ final VerificationPlan triageVerificationPlan = VerificationPlan(
 /// * **The rows are produced serially** — `_completeSuccess` runs checks in
 ///   plan order — so this plan adds roughly 7.5 minutes of validation to an
 ///   implementation execution when warm (measured end-to-end at this HEAD:
-///   445s for all 32 checks, 31 exiting 0 and the flutter check failing only
+///   445s for all 32 checks (33 once control_plane_client re-entered the
+///   dart-test sweep), 31 exiting 0 and the flutter check failing only
 ///   on `transition_copy_test`), and much more cold in a system-temp
 ///   worktree — the runner alone took 959.67s there on this lane's single
 ///   observation (independent review re-measured 352s cold), and at base the

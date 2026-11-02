@@ -133,6 +133,7 @@
               "dart_test_packages_scheduler",
               "dart_test_packages_product_registry",
               "dart_test_packages_store_contract_tests",
+              "dart_test_packages_control_plane_client",
               "dart_test_packages_design_governance",
               "server_unit_tests_runner",
               "flutter_test_apps_control_plane"
@@ -167,6 +168,7 @@
               "dart_test_packages_scheduler": "dart test",
               "dart_test_packages_product_registry": "dart test",
               "dart_test_packages_store_contract_tests": "dart test",
+              "dart_test_packages_control_plane_client": "dart test",
               "dart_test_packages_design_governance": "dart test",
               "server_unit_tests_runner": "dart run tool/run_unit_tests.dart",
               "flutter_test_apps_control_plane": "flutter test"
