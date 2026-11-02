@@ -1507,3 +1507,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-decision-detail-surface | review | IN_FLIGHT | (read-only) | feat/decision-detail-surface | da095e2 | PRECISION | await result (2 scope rulings) |
 | review-decision-detail-surface | review | CLOSED | (read-only) | feat/decision-detail-surface | da095e2 | PRECISION | APPROVE_FOR_MERGE (both disclosures ruled on) | → integrator |
 | integrate-decision-detail-surface | integrate | IN_FLIGHT | scratch rehearsal | feat/decision-detail-surface | da095e2 | STANDARD | await result |
+| integrate-decision-detail-surface | integrate | CLOSED | scratch rehearsal | feat/decision-detail-surface | da095e2 | STANDARD | MERGE_APPROVED (test-integration +319) → merged (human-authorized) | done |
