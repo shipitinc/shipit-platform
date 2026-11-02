@@ -1502,3 +1502,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-acp-permission-responder | review | CLOSED | (read-only) | fix/acp-permission-responder | 2e56eee | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP | → integrator |
 | integrate-acp-permission-responder | integrate | IN_FLIGHT | scratch rehearsal | fix/acp-permission-responder | 2e56eee | STANDARD | await result |
 | integrate-acp-permission-responder | integrate | CLOSED | scratch rehearsal | fix/acp-permission-responder | 2e56eee | STANDARD | MERGE_APPROVED → merged (human-authorized) | done |
+| impl-decision-detail-surface | implement | IN_FLIGHT | /private/tmp/shipit-decision-surface | feat/decision-detail-surface | da095e2 | PRECISION | surface review verdict+findings+artifact+full context on decision detail | b90d86bb running |
