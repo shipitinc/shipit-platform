@@ -1488,3 +1488,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-auto-model-escalation | review | IN_FLIGHT | (read-only) | feat/auto-model-escalation | 7ca2b49 | PRECISION | await result |
 | review-auto-model-escalation | review | CLOSED | (read-only) | feat/auto-model-escalation | 7ca2b49 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP | → integrator |
 | integrate-auto-model-escalation | integrate | CLOSED | scratch rehearsal | feat/auto-model-escalation | 7ca2b49 | STANDARD | MERGE_APPROVED (test-integration +318-1 F-161 flake) → merged (human-authorized) | done |
+| impl-zombie-exec-orphan | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-zombie-exec | fix/zombie-exec-orphan | da62a2d | STANDARD | 74a7d2e: _reclaimZombie retires agent_execution row (F-235) — seam unwired | wiring gap noted |
+| impl-agent-exec-retirement-wiring | implement | IN_FLIGHT | /private/tmp/shipit-fix-zombie-exec | fix/zombie-exec-orphan | 74a7d2e | STANDARD | wire agentExecutionRetirement at 5 Scheduler sites | 4ea7805b running |
