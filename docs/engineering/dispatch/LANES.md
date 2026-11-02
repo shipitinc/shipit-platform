@@ -1495,3 +1495,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-zombie-exec-orphan | review | CLOSED | (read-only) | fix/zombie-exec-orphan | da62a2d | STANDARD | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (residual adopt-path hole filed) | → integrator |
 | integrate-zombie-exec-orphan | integrate | IN_FLIGHT | scratch rehearsal | fix/zombie-exec-orphan | da62a2d | STANDARD | await result |
 | integrate-zombie-exec-orphan | integrate | CLOSED | scratch rehearsal | fix/zombie-exec-orphan | da62a2d | STANDARD | MERGE_APPROVED (test-integration +319) → merged (human-authorized) | done |
+| deploy-qa-post-f235 | deploy | CLOSED | canonical | main | HEAD | STANDARD | F-235 + auto-escalation live at 2e56eee; paid tier streaming | done |
+| impl-acp-permission-responder | implement | IN_FLIGHT | /private/tmp/shipit-fix-acp-perm | fix/acp-permission-responder | 2e56eee | PRECISION | answer session/request_permission (F-244) | b463b86b running |
