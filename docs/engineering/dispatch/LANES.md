@@ -1518,3 +1518,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-qa-drain-loop | review | IN_FLIGHT | (read-only) | fix/qa-drain-loop | 7ace9ef | PRECISION | await result |
 | review-qa-drain-loop | review | CLOSED | (read-only) | fix/qa-drain-loop | 7ace9ef | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (mechanism verified) | → integrator |
 | integrate-qa-drain-loop | integrate | IN_FLIGHT | scratch rehearsal | fix/qa-drain-loop | 7ace9ef | STANDARD | await result |
+| integrate-qa-drain-loop | integrate | CLOSED | scratch rehearsal | fix/qa-drain-loop | 7ace9ef | STANDARD | MERGE_APPROVED (test-integration +319) → merged (human-authorized) | done |
