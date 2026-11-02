@@ -3934,3 +3934,5 @@ adapter mapping) so the product-registry CAS loss also classifies transient; cor
 store_contention.dart comment claiming the 3 types are the complete CAS family (job-store and
 product-registry types also exist).
 - **Priority:** latent — fires only when the baseline CAS loses a race.
+| F-245 | RESOLVED (merged pending) | qa.drain looped forever on review_approved items — idempotency keys scoped to the item forever; re-entry replayed the prior `enter` record leaving the item stranded with no edge out (decision_refused ~60/15min). Fix `158d831`: qaAttempt-scoped keys + qaFailed candidate arm. |
+| (product decision) | OPEN | `intake-structured-result-admitted` is type `triage-classification-structure` requiring fields only triage emits — unsatisfiable for implementation-produced feature items (e.g. WI-feature-1791823723502264). Should the triage-shaped structural gate apply to non-triage output? Genuine product call (92d567e3 kept it deliberately; F-93/F-105 record the tension) — flagged for human decision, not blocking F-245. |
