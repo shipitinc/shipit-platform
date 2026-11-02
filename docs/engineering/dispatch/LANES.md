@@ -1520,3 +1520,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-qa-drain-loop | integrate | IN_FLIGHT | scratch rehearsal | fix/qa-drain-loop | 7ace9ef | STANDARD | await result |
 | integrate-qa-drain-loop | integrate | CLOSED | scratch rehearsal | fix/qa-drain-loop | 7ace9ef | STANDARD | MERGE_APPROVED (test-integration +319) → merged (human-authorized) | done |
 | impl-qa-feature-gates | implement | IN_FLIGHT | /private/tmp/shipit-fix-qa-gates | fix/qa-feature-gates | 5a2ef09 | PRECISION | fix unsatisfiable intake gate on feature contracts (F-246) | 02cb8198 running |
+| impl-qa-feature-gates | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-qa-gates | fix/qa-feature-gates | 5a2ef09 | PRECISION | c58352a: ProducerRoleScopedGate (notApplicable for non-triage) | → reviewer e3adf424 |
+| review-qa-feature-gates | review | IN_FLIGHT | (read-only) | fix/qa-feature-gates | 5a2ef09 | PRECISION | await result |
