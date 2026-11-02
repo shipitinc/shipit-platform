@@ -1516,3 +1516,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | impl-qa-drain-loop | implement | IN_FLIGHT | /private/tmp/shipit-fix-drain-loop | fix/qa-drain-loop | 7ace9ef | PRECISION | fix reviewApproved→waitingForHumanDecision drain loop (F-245) | 2d1d715c running |
 | impl-qa-drain-loop | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-drain-loop | fix/qa-drain-loop | 7ace9ef | PRECISION | 158d831: qaAttempt-scoped idempotency + qaFailed candidate arm | → reviewer e9970ff5 |
 | review-qa-drain-loop | review | IN_FLIGHT | (read-only) | fix/qa-drain-loop | 7ace9ef | PRECISION | await result |
+| review-qa-drain-loop | review | CLOSED | (read-only) | fix/qa-drain-loop | 7ace9ef | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (mechanism verified) | → integrator |
+| integrate-qa-drain-loop | integrate | IN_FLIGHT | scratch rehearsal | fix/qa-drain-loop | 7ace9ef | STANDARD | await result |
