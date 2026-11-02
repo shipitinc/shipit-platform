@@ -2548,16 +2548,16 @@ final VerificationPlan triageVerificationPlan = VerificationPlan(
 /// expressed as one check PER ROOT, and `apps/server`'s unit tier gained its
 /// own runner (`tool/run_unit_tests.dart`).
 ///
-/// ## WHAT THIS DECLARES NOW — 32 CHECKS, AND WHAT THAT STILL ISN'T
+/// ## WHAT THIS DECLARES NOW — 33 CHECKS, AND WHAT THAT STILL ISN'T
 ///
 /// `AGENTS.md` -> "Required validation gates" declares FIVE per-execution
 /// checks. This plan ACTIVATES ALL FIVE of them, as
-/// 1 + 16 + 13 + 1 + 1 = 32 [VerificationCheck]s:
+/// 1 + 16 + 14 + 1 + 1 = 33 [VerificationCheck]s:
 ///
 /// * `dart_format_repo_root` — the repository-root format check, at `.`;
 /// * `dart_analyze_<slug>` × 16 — `dart analyze` at every workspace-member
 ///   root ([workspaceMemberRoots]);
-/// * `dart_test_<slug>` × 13 — `dart test` at the members whose unit tier is
+/// * `dart_test_<slug>` × 14 — `dart test` at the members whose unit tier is
 ///   a package suite ([dartTestSweepRoots]);
 /// * `server_unit_tests_runner` — `dart run tool/run_unit_tests.dart` at
 ///   `apps/server`, whose unit tier is a runner and never a bare `dart test`;
@@ -2671,7 +2671,8 @@ final VerificationPlan triageVerificationPlan = VerificationPlan(
 /// * **The rows are produced serially** — `_completeSuccess` runs checks in
 ///   plan order — so this plan adds roughly 7.5 minutes of validation to an
 ///   implementation execution when warm (measured end-to-end at this HEAD:
-///   445s for all 32 checks, 31 exiting 0 and the flutter check failing only
+///   445s for all 32 checks (33 once control_plane_client re-entered the
+///   dart-test sweep), 31 exiting 0 and the flutter check failing only
 ///   on `transition_copy_test`), and much more cold in a system-temp
 ///   worktree — the runner alone took 959.67s there on this lane's single
 ///   observation (independent review re-measured 352s cold), and at base the
@@ -2796,7 +2797,7 @@ const List<String> workspaceMemberRoots = [
 ];
 
 /// The workspace members whose unit tier is a plain package `dart test` —
-/// every member except the three exclusions below.
+/// every member except the two exclusions below.
 ///
 /// Each exclusion is a declaration with an owner, not a silent omission, and
 /// `implementation_verification_plan_test.dart` pins each one's continued
@@ -2809,20 +2810,18 @@ const List<String> workspaceMemberRoots = [
 /// * `apps/control_plane` — covered by the `flutter test` row; `dart test`
 ///   cannot load `flutter_test` there (measured at base `54d440c`: 42
 ///   loading errors).
-/// * `packages/control_plane_client` — has NO `test/` directory (measured at
-///   base `54d440c`), and `dart test` in a package without one exits 65.
-///   Activating it would fail every execution for an ABSENCE, which is the
-///   condition the no-row honesty rule exists for — the check would report a
-///   verdict about work that was never observed. The test pins the
-///   directory's absence, so adding tests there without restoring this root
-///   fails the test instead of leaving the new suite unrun.
+///
+/// `packages/control_plane_client` was a third exclusion while it had no
+/// `test/` directory; it gained one (decision-view metadata round-trip), so
+/// the exclusion's reason is gone and the root is back in the sweep — the
+/// guard test now pins its presence instead of its absence.
 ///
 /// Spelled out rather than derived, because a const list literal cannot carry
 /// a `for` element (measured: the constant evaluator rejects it) and a
 /// non-const derivation would let the list reorder itself at runtime. Spelled
 /// out, the drift guard is the same pubspec-equality test the full member
 /// list has: this list must equal [workspaceMemberRoots] minus exactly those
-/// three names, and the test computes both sides independently.
+/// two names, and the test computes both sides independently.
 const List<String> dartTestSweepRoots = [
   'packages/platform_contracts',
   'packages/workflow_engine',
@@ -2836,6 +2835,7 @@ const List<String> dartTestSweepRoots = [
   'packages/scheduler',
   'packages/product_registry',
   'packages/store_contract_tests',
+  'packages/control_plane_client',
   'packages/design_governance',
 ];
 

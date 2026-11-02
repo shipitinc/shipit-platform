@@ -2,6 +2,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/plain_language.dart';
 import '../../data/control_plane_repository.dart';
 import '../../shared/decision_choice.dart';
+import 'decision_context.dart';
 import 'decision_detail_event.dart';
 
 class DecisionDetailBloc
@@ -66,6 +67,13 @@ class DecisionDetailBloc
           runName: PlainLanguage.headline(
             title: detail.workItemTitle ?? detail.workItemId,
             description: detail.workItemDescription,
+          ),
+          workItemTitle: detail.workItemTitle,
+          workItemDescription: detail.workItemDescription,
+          metadataJson: detail.metadataJson,
+          contextPayload: parseDecisionContext(
+            decisionType: detail.decisionType,
+            metadataJson: detail.metadataJson,
           ),
           question: detail.question ?? 'Decision required',
           description: detail.context?.workflowState ?? '',
@@ -155,6 +163,10 @@ class DecisionDetailState {
     this.statusWire = 'pending',
     this.alreadyResolved = false,
     this.resolvedChoice,
+    this.workItemTitle,
+    this.workItemDescription,
+    this.metadataJson,
+    this.contextPayload = const GenericDecisionContext(),
     this.errorMessage,
   });
 
@@ -198,6 +210,27 @@ class DecisionDetailState {
   /// True when this decision already carries a durable outcome.
   final bool alreadyResolved;
   final String? resolvedChoice;
+
+  /// The gated item's own title, kept beside [runName] because the type
+  /// renderer heads the full-context section with the title itself.
+  final String? workItemTitle;
+
+  /// The gated item's full recorded description — untruncated, unlike the
+  /// two-line definition row that summarises it.
+  final String? workItemDescription;
+
+  /// The decision's `metadataJson` verbatim, kept for the technical-details
+  /// strip and any future section that reads a key the typed payload does
+  /// not surface.
+  final String? metadataJson;
+
+  /// The decision's metadata parsed per [decisionTypeWire] — an
+  /// [EngineeringReviewContext] for `engineering_review`, a
+  /// [GenericDecisionContext] everywhere else. Resolved once here so the
+  /// page never re-decodes and a payload this build cannot read is a fact
+  /// on the state, not an exception mid-render.
+  final DecisionContextPayload contextPayload;
+
   final String? errorMessage;
 
   DecisionDetailState copyWith({
@@ -221,6 +254,10 @@ class DecisionDetailState {
     String? statusWire,
     bool? alreadyResolved,
     String? resolvedChoice,
+    String? workItemTitle,
+    String? workItemDescription,
+    String? metadataJson,
+    DecisionContextPayload? contextPayload,
     String? errorMessage,
   }) {
     return DecisionDetailState(
@@ -244,6 +281,10 @@ class DecisionDetailState {
       statusWire: statusWire ?? this.statusWire,
       alreadyResolved: alreadyResolved ?? this.alreadyResolved,
       resolvedChoice: resolvedChoice ?? this.resolvedChoice,
+      workItemTitle: workItemTitle ?? this.workItemTitle,
+      workItemDescription: workItemDescription ?? this.workItemDescription,
+      metadataJson: metadataJson ?? this.metadataJson,
+      contextPayload: contextPayload ?? this.contextPayload,
       errorMessage: errorMessage,
     );
   }

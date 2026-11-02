@@ -21,3 +21,12 @@ fields:
   rationale: String?
   resolvedAt: DateTime?
   signature: String?
+  ### The decision's free-form metadata, carried as JSON TEXT. Serverpod
+  ### 3.4.13 has no field type that can hold arbitrary JSON, so the same
+  ### `*Json` string convention `AgentExecution.metadata`,
+  ### `AgentResult.structuredResult` and `Defect.clientContextJson` already
+  ### travel under applies here; `jsonDecode` recovers it exactly. This is
+  ### where an `engineering_review` decision carries its
+  ### `engineeringReviewResult` (verdict, findings, reviewExecutionId), and
+  ### without it the detail surface could only show the truncated context.
+  metadataJson: String?

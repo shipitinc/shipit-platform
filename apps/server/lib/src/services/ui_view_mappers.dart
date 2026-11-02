@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:platform_contracts/platform_contracts.dart';
 
 import '../generated/artifact_reference_view.dart';
@@ -123,6 +125,13 @@ class UiViewMappers {
       rationale: decision.rationale,
       resolvedAt: decision.timestamp,
       signature: decision.signature?.signature,
+      // The same JSON-TEXT convention the execution views already use for
+      // `AgentExecution.metadata`: an `engineering_review` decision carries
+      // its `engineeringReviewResult` here, and without it the detail
+      // surface could only show the truncated context.
+      metadataJson: decision.metadata == null
+          ? null
+          : jsonEncode(decision.metadata),
     );
   }
 

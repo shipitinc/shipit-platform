@@ -142,11 +142,11 @@ void main() {
       );
     });
 
-    test('the plan has 32 checks, matching workspaceMemberRoots + tests', () {
-      // The plan is 1 format + 16 analyze + 13 test + 1 server runner + 1
-      // flutter test = 32. Pinned here so a plan change that silently drops a
+    test('the plan has 33 checks, matching workspaceMemberRoots + tests', () {
+      // The plan is 1 format + 16 analyze + 14 test + 1 server runner + 1
+      // flutter test = 33. Pinned here so a plan change that silently drops a
       // root fails loudly against the manifest pin above.
-      expect(plan.checks, hasLength(32));
+      expect(plan.checks, hasLength(33));
     });
   });
 
