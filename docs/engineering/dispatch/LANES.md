@@ -1524,3 +1524,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-qa-feature-gates | review | IN_FLIGHT | (read-only) | fix/qa-feature-gates | 5a2ef09 | PRECISION | await result |
 | review-qa-feature-gates | review | CLOSED | (read-only) | fix/qa-feature-gates | 5a2ef09 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (mechanism verified) | → integrator |
 | integrate-qa-feature-gates | integrate | IN_FLIGHT | scratch rehearsal | fix/qa-feature-gates | 5a2ef09 | STANDARD | await result |
+| integrate-qa-feature-gates | integrate | CLOSED | scratch rehearsal | fix/qa-feature-gates | 5a2ef09 | STANDARD | MERGE_APPROVED (test-integration +319) → merged (human-authorized) | done |
