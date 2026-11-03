@@ -1542,3 +1542,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-infra-decision-resolve | review | IN_FLIGHT | (read-only) | fix/infra-decision-resolve | 18172c6 | PRECISION | await result |
 | review-infra-decision-resolve | review | CLOSED | (read-only) | fix/infra-decision-resolve | 18172c6 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (router verified; residuals filed F-251/F-252) | → integrator |
 | integrate-infra-decision-resolve | integrate | IN_FLIGHT | scratch rehearsal | fix/infra-decision-resolve | 18172c6 | STANDARD | await result → merge (standing auth) |
+| integrate-infra-decision-resolve | integrate | CLOSED | scratch rehearsal | fix/infra-decision-resolve | 18172c6 | STANDARD | MERGE_APPROVED → merged (standing auth) | done |
