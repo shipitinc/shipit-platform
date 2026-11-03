@@ -177,6 +177,40 @@ String implementFeatureDedupeKey(WorkItem item, JobDefinition definition) {
 /// gate downstream will refuse an execution that produced no commit and a run
 /// whose verification fails must land in `agentFailed` without a
 /// `producerActorId` rather than reaching review with no artifact.
+///
+/// ## WHY THE QA CONTRACT IS A REFERENCE, NOT A READING ASSIGNMENT (F-248)
+///
+/// `item.qaContractId` names a row in the control-plane database —
+/// `qa-product-<workItemId>`, provisioned by `buildProductQAContract` in
+/// `packages/qa_orchestration` — not a file anywhere in the agent's worktree.
+/// The previous wording, "the acceptance criteria there are the ones this run
+/// is judged against", sent the agent after it, and the demonstrated result
+/// (F-247) was a burned turn hunting an artifact it could not reach, an
+/// `external_directory` permission ask, a denial, `end_turn`, and a missing
+/// artifact. Two different models failed identically, so this is a property of
+/// the instruction, not of the model.
+///
+/// Inlining the contract is not the alternative, for two independent reasons:
+///
+///  * `InstructionBuilder` is `String Function(WorkItem, JobDefinition)` —
+///    synchronous, with no store. The contract row lives behind the DB-backed
+///    QA contract store, so it is not retrievable at instruction-build time
+///    without changing the typedef and its composition root, which is outside
+///    this package.
+///  * There is nothing to inline that the agent could act on. The contract
+///    declares platform-side gates — for this product, artifact-provenance,
+///    scope-confinement, declared-validation-outcome and
+///    revision-identity-match — which are evaluated against the persisted
+///    execution AFTER the run. The row carries no agent-facing acceptance
+///    criteria; the agent-facing criteria this lane has are the description
+///    and `metadata['acceptanceCriteria']`, and both are already inlined
+///    above.
+///
+/// The id is kept rather than deleted because the instruction is persisted on
+/// the job row, and the id is the join key back to the contract for anyone
+/// auditing the run. The wording around it exists to stop the hunt: it says
+/// where the record lives, that the agent cannot open it, that it must not
+/// look for it, and where the criteria it can actually act on already are.
 String implementFeatureInstruction(WorkItem item, JobDefinition definition) {
   final metadata = item.metadata ?? {};
   final category = item.category.name;
@@ -200,7 +234,13 @@ WORKING INSTRUCTIONS:
 4. Do not change the product manifest, dependency lockfiles, or CI configuration
    unless the task above explicitly asks for it.
 5. Do not write credentials, tokens, or host names into the repository.
-${qaContractId == null ? '' : 'QA CONTRACT: $qaContractId — the acceptance criteria there are the ones this run is judged against.\n'}
+${qaContractId == null ? '' : 'QA CONTRACT: $qaContractId — informational only. It names a platform-side\n'
+            'record in the control-plane database, not a file in this worktree, and it\n'
+            'cannot be opened from where you are working — do not look for it. The\n'
+            'criteria this run is judged against that you can act on are already\n'
+            'above: the DESCRIPTION, the ACCEPTANCE CRITERIA when present, and these\n'
+            'WORKING INSTRUCTIONS. The platform evaluates your committed change\n'
+            'against that contract itself after you finish.\n'}
 
 YOUR TASK:
 Apply the change, commit it, and summarise what you changed and why.
