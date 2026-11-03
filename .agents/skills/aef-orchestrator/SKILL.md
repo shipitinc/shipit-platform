@@ -273,6 +273,11 @@ Dispatch `integrator` only after independent approval. The Manager's integration
 - delete the lane worktree/branch **only** after the push is verified;
 - stop at `RESULT: MERGE_APPROVED` / `READY_FOR_INTEGRATION` unless repository policy explicitly authorizes
   integration. If authorization is ambiguous, stop there rather than asking a routine question.
+  **This repository's standing policy (human-granted 2026-11-03): the Manager merges on
+  `MERGE_APPROVED` without asking.** Per-merge permission prompts are explicitly unwanted — the
+  integrator's MERGE_APPROVED plus the independent review's approval IS the authorization.
+  Scope: local `main` merge only — this does not grant push, production promotion, or any other
+  authority beyond the merge itself.
 
 ## 11. Parallelism
 
