@@ -1546,3 +1546,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | impl-qa-producer-resolution | implement | IN_FLIGHT | /private/tmp/shipit-fix-producer-res | fix/qa-producer-resolution | 00d236b | PRECISION | fix contract-blind producer resolution (F-253) | 73f41f4b running |
 | impl-qa-producer-resolution | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-producer-res | fix/qa-producer-resolution | 00d236b | PRECISION | 1c37bf3: requiredRole-scoped producer resolution (contract-aware) | → reviewer 07864c28 |
 | review-qa-producer-resolution | review | IN_FLIGHT | (read-only) | fix/qa-producer-resolution | 00d236b | PRECISION | await result |
+| review-qa-producer-resolution | review | CLOSED | (read-only) | fix/qa-producer-resolution | 00d236b | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (mechanism+mapping verified) | → integrator |
+| integrate-qa-producer-resolution | integrate | IN_FLIGHT | scratch rehearsal | fix/qa-producer-resolution | 00d236b | STANDARD | await result → merge (standing auth) |
