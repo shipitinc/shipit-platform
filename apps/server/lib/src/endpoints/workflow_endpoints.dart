@@ -14,6 +14,22 @@ class WorkflowEndpoints extends Endpoint {
   @override
   bool get logSessions => true;
 
+  /// Test/override seam for the service this endpoint builds.
+  ///
+  /// Production behaviour is unchanged: this returns the same
+  /// `ControlPlaneService(session)` the methods constructed before. It is
+  /// deliberately NOT a capability override — a test substitutes the STORE,
+  /// never the resolution path.
+  ///
+  /// `@doNotGenerate` is REQUIRED and is not decoration. Serverpod treats
+  /// every public, non-`@doNotGenerate`, `Session`-first method on an
+  /// `Endpoint` as a wire endpoint and fails generation unless it returns
+  /// `Future` or `Stream`; this returns a plain `ControlPlaneService`, so
+  /// without the annotation `serverpod generate` exits 1.
+  @doNotGenerate
+  ControlPlaneService serviceFor(Session session) =>
+      ControlPlaneService(session);
+
   /// Returns the jobs belonging to a work item, newest first.
   ///
   /// Read-only: the operator surface reports what the scheduler has committed
@@ -95,12 +111,7 @@ class WorkflowEndpoints extends Endpoint {
       final item = await service.readWorkItem(workItemId);
       final decisions = await service.readDecisionsForWorkItem(workItemId);
       return decisions
-          .map(
-            (d) => UiViewMappers.decisionView(
-              decision: d,
-              workItem: item,
-            ),
-          )
+          .map((d) => UiViewMappers.decisionView(decision: d, workItem: item))
           .toList();
     } catch (error, stackTrace) {
       service.logger.error('workflow.decisions.failed', {
@@ -126,6 +137,19 @@ class WorkflowEndpoints extends Endpoint {
   /// through `DurableWorkflowEngine` under the injected policy, both are
   /// idempotent under a client-minted key, and a repeated call replays the
   /// prior outcome instead of re-applying the transition.
+  ///
+  /// One class of decision is deliberately NOT routed through the engine:
+  /// tickets hung off a `system:` scope id (`system:provider-health` — every
+  /// `hd-provider-*`/`hd-all-down-*` infrastructure decision the
+  /// provider-health monitor raises) have no `work_item` row to move and a
+  /// choice vocabulary (`acknowledge`/`investigate`/`escalate`) that
+  /// `HumanDecisionChoice` does not contain. Before, both facts threw inside
+  /// this method — the `fromWire` parse, then the engine's `readWorkItem` —
+  /// and ~28 pending infra tickets could never be answered (F-250). The
+  /// service resolves those at the store and returns `workItem: null`; the
+  /// wire still requires a `WorkItemView`, so the scope itself is projected
+  /// with `state: 'system'` — visibly NOT a `WorkItemState`, because a scope
+  /// has no lifecycle to report.
   Future<ResolveDecisionView> resolveDecision(
     Session session, {
     required String decisionId,
@@ -137,11 +161,11 @@ class WorkflowEndpoints extends Endpoint {
     required String signature,
     required DateTime signedAt,
   }) async {
-    final service = ControlPlaneService(session);
+    final service = serviceFor(session);
     try {
-      final workItem = await service.resolveHumanDecision(
+      final result = await service.resolveDecision(
         decisionId: decisionId,
-        choice: HumanDecisionChoice.fromWire(choice),
+        choice: choice,
         decider: decider,
         rationale: rationale,
         signature: DecisionSignature(
@@ -151,18 +175,25 @@ class WorkflowEndpoints extends Endpoint {
           signedAt: signedAt,
         ),
       );
-      final decision = await service.readDecisionsForWorkItem(
-        workItem.workItemId,
-      );
+      final item = result.workItem;
+      final resolvedDecision = result.decision;
       return ResolveDecisionView(
-        workItem: UiViewMappers.workItemView(workItem),
-        decision: decision.isEmpty
-            ? null
-            : UiViewMappers.decisionView(
-                decision: decision.firstWhere(
-                  (d) => d.decisionId == decisionId,
-                ),
-                workItem: workItem,
+        workItem: item != null
+            ? UiViewMappers.workItemView(item)
+            : UiViewMappers.systemScopeWorkItemView(
+                scopeId: resolvedDecision.workItemId,
+                requestedAt: resolvedDecision.requestedAt,
+                updatedAt: resolvedDecision.updatedAt,
+                resolvedAt: resolvedDecision.timestamp,
+              ),
+        decision: item != null
+            ? UiViewMappers.decisionView(
+                decision: resolvedDecision,
+                workItem: item,
+              )
+            : UiViewMappers.scopeDecisionView(
+                decision: resolvedDecision,
+                scopeId: resolvedDecision.workItemId,
               ),
       );
     } catch (error, stackTrace) {
