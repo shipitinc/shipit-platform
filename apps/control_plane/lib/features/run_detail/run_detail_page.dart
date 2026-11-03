@@ -115,6 +115,7 @@ class _RunDetailView extends StatelessWidget {
                     description: state.description,
                   ),
                   titleKey: const Key('run-detail-title'),
+                  titleMaxLines: 2,
                   statusLabel: status.isOperatorTurn
                       ? 'WAITING FOR YOU'
                       : status.label.toUpperCase(),
