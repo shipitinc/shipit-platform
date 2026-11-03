@@ -91,12 +91,64 @@ class UiViewMappers {
   static DecisionView decisionView({
     required HumanDecision decision,
     required WorkItem workItem,
+  }) => _decisionView(
+    decision: decision,
+    workItemTitle: workItem.title,
+    workItemDescription: workItem.description,
+    workItemArtifactRefs: workItem.artifactRefs,
+  );
+
+  /// The [decisionView] projection for a decision hung off a scope id that has
+  /// no work item row — today `system:provider-health`, where every
+  /// `hd-provider-*`/`hd-all-down-*` ticket lives. The scope id stands in for
+  /// the title; nothing else is invented for an item that does not exist.
+  static DecisionView scopeDecisionView({
+    required HumanDecision decision,
+    required String scopeId,
+  }) => _decisionView(
+    decision: decision,
+    workItemTitle: scopeId,
+    workItemDescription: null,
+    workItemArtifactRefs: null,
+  );
+
+  /// The `WorkItemView` that `ResolveDecisionView.workItem` still requires
+  /// when the resolved decision hung off a scope id with no work item row.
+  /// The scope is projected AS the "item": its id stands in for the title,
+  /// and `state` is the literal `system` — deliberately NOT a
+  /// `WorkItemState.wire` value, because a scope has no lifecycle and
+  /// asserting one of the enum's states would claim a workflow it never
+  /// entered.
+  static WorkItemView systemScopeWorkItemView({
+    required String scopeId,
+    required DateTime updatedAt,
+    DateTime? requestedAt,
+    DateTime? resolvedAt,
+  }) {
+    return WorkItemView(
+      workItemId: scopeId,
+      title: scopeId,
+      description:
+          'Synthetic scope for system decisions — no durable work item '
+          'exists for this id.',
+      state: 'system',
+      createdAt: requestedAt ?? updatedAt,
+      updatedAt: updatedAt,
+      completedAt: resolvedAt,
+    );
+  }
+
+  static DecisionView _decisionView({
+    required HumanDecision decision,
+    required String workItemTitle,
+    String? workItemDescription,
+    List<ArtifactReference>? workItemArtifactRefs,
   }) {
     return DecisionView(
       decisionId: decision.decisionId,
       workItemId: decision.workItemId,
-      workItemTitle: workItem.title,
-      workItemDescription: workItem.description,
+      workItemTitle: workItemTitle,
+      workItemDescription: workItemDescription,
       decisionType: decision.decisionType.wire,
       status: decision.status.wire,
       question: decision.question,
@@ -119,7 +171,7 @@ class UiViewMappers {
       recommendation: decision.recommendation,
       blocking: decision.blocking ?? false,
       requestedAt: decision.requestedAt,
-      artifactRefs: artifactRefs(workItem.artifactRefs),
+      artifactRefs: artifactRefs(workItemArtifactRefs),
       choice: decision.choice?.wire,
       decider: decision.decider,
       rationale: decision.rationale,

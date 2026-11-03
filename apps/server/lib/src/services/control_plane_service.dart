@@ -30,6 +30,7 @@ import 'package:workflow_store/workflow_store.dart'
         ConcurrentModificationException,
         DesignContractStore,
         DurableWorkflowEngine,
+        WorkItemNotFoundException,
         WorkflowStore;
 import 'package:worker_runtime/worker_runtime.dart'
     show WorkerRegistrationStore, WorkerStore;
@@ -2351,6 +2352,154 @@ class ControlPlaneService {
     }
 
     return workItem;
+  }
+
+  /// Resolves a decision by id, routing on WHERE the decision hangs.
+  ///
+  /// This is the operation `WorkflowEndpoints.resolveDecision` performs: it
+  /// takes the RAW wire `choice` — a String — because the right parse depends
+  /// on the decision class:
+  ///
+  ///  * A decision on a real work item resolves through
+  ///    [resolveHumanDecision]: `HumanDecisionChoice.fromWire`, the verdict
+  ///    guards, the scope grant, the engine. The wire values are the enum's.
+  ///  * A decision hung off a `system:` scope id with NO work item row —
+  ///    today `system:provider-health`, where the provider-health monitor
+  ///    parks every `hd-provider-*`/`hd-all-down-*` ticket — resolves at the
+  ///    store via [_resolveSystemScopeDecision]. The engine's resolve reads
+  ///    the item BEFORE writing anything, so these threw
+  ///    `WorkItemNotFoundException`, and `HumanDecisionChoice` contains none
+  ///    of the infra menu's option ids (`acknowledge`/`investigate`/
+  ///    `escalate`), so `fromWire` threw in front of even that. Together they
+  ///    were the F-250 `Internal Server Error`: ~28 pending tickets with no
+  ///    legal answer path.
+  ///
+  /// A `system:` id that somehow DOES back a work item row resolves through
+  /// the engine like any other — the row may genuinely be blocked on the
+  /// decision.
+  ///
+  /// `workItem` comes back `null` for the scope path because there is none
+  /// to return; `decision` is always the resolved record as persisted.
+  Future<({WorkItem? workItem, HumanDecision decision})> resolveDecision({
+    required String decisionId,
+    required String choice,
+    required String decider,
+    required String rationale,
+    required DecisionSignature signature,
+  }) async {
+    final decision = await workflowStore.readHumanDecision(decisionId);
+
+    if (decision.workItemId.startsWith('system:')) {
+      WorkItem? scopeItem;
+      try {
+        scopeItem = await workflowStore.readWorkItem(decision.workItemId);
+      } on WorkItemNotFoundException {
+        scopeItem = null;
+      }
+      if (scopeItem == null) {
+        final resolved = await _resolveSystemScopeDecision(
+          decision: decision,
+          optionId: choice,
+          decider: decider,
+          rationale: rationale,
+          signature: signature,
+        );
+        return (workItem: null, decision: resolved);
+      }
+    }
+
+    final workItem = await resolveHumanDecision(
+      decisionId: decisionId,
+      choice: HumanDecisionChoice.fromWire(choice),
+      decider: decider,
+      rationale: rationale,
+      signature: signature,
+    );
+    return (
+      workItem: workItem,
+      decision: await workflowStore.readHumanDecision(decisionId),
+    );
+  }
+
+  /// Resolves a decision hung off a `system:` scope id that has no work item
+  /// row — today `system:provider-health`, where the provider-health monitor
+  /// parks every `hd-provider-*`/`hd-all-down-*` ticket.
+  ///
+  /// This is the same write `DurableWorkflowEngine.resolveHumanDecision`
+  /// performs for a decision that cannot move a work item — there is no item
+  /// to move — minus the `readWorkItem` that throws before it is reached.
+  /// The persisted shape mirrors the engine's resolved record:
+  ///
+  ///  * `status`/`decider`/`rationale`/`timestamp`/`signature` are set from
+  ///    the caller, and the resolution is durable in the same
+  ///    `human_decision` row the monitor raised;
+  ///  * `resolvedOptionId` carries the answered option id verbatim. The infra
+  ///    menus name their answers by option id (`acknowledge`, `investigate`,
+  ///    `escalate`) — a vocabulary `HumanDecisionChoice` does not contain —
+  ///    so `choice` stays NULL rather than record an enum member the
+  ///    operator was never shown;
+  ///  * an already-resolved decision replays its stored outcome untouched —
+  ///    the engine's idempotency rule verbatim: new arguments are ignored
+  ///    and the recorded answer is never mutated.
+  ///
+  /// When the decision carries an option menu the answer must be one of it;
+  /// a refusal writes NOTHING — the same discipline the verdict guards apply
+  /// to the engine path.
+  Future<HumanDecision> _resolveSystemScopeDecision({
+    required HumanDecision decision,
+    required String optionId,
+    required String decider,
+    required String rationale,
+    required DecisionSignature signature,
+  }) async {
+    if (decision.status.isResolved) {
+      return decision;
+    }
+
+    final offered =
+        decision.options?.map((o) => o.optionId).toSet() ?? const <String>{};
+    if (offered.isNotEmpty && !offered.contains(optionId)) {
+      logger.warning('workflow.system_scope_choice_refused', {
+        'decisionId': decision.decisionId,
+        'workItemId': decision.workItemId,
+        'optionId': optionId,
+        'offeredOptions': offered.toList(),
+      });
+      throw StateError(
+        'decision ${decision.decisionId} offers '
+        '${offered.join(', ')}; "$optionId" is not one of them. '
+        'Nothing was written.',
+      );
+    }
+
+    final resolvedAt = clock();
+    final resolved = HumanDecision(
+      decisionId: decision.decisionId,
+      workItemId: decision.workItemId,
+      decisionType: decision.decisionType,
+      status: HumanDecisionStatus.resolved,
+      question: decision.question,
+      context: decision.context,
+      options: decision.options,
+      recommendation: decision.recommendation,
+      blocking: decision.blocking,
+      requestedAt: decision.requestedAt,
+      decider: decider,
+      rationale: rationale,
+      timestamp: resolvedAt,
+      signature: signature,
+      resolvedOptionId: optionId,
+      metadata: decision.metadata,
+      updatedAt: resolvedAt,
+    );
+    await workflowStore.saveHumanDecision(resolved);
+    logger.info('workflow.system_scope_decision_resolved', {
+      'decisionId': decision.decisionId,
+      'workItemId': decision.workItemId,
+      'optionId': optionId,
+      'decider': decider,
+    });
+    return resolved;
   }
 
   /// Records the scoping lane's owned-path grant on the work item, at the
