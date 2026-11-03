@@ -1530,3 +1530,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-missing-success-artifact | review | IN_FLIGHT | (read-only) | fix/missing-success-artifact | 65c8a38 | PRECISION | await result |
 | review-missing-success-artifact | review | CLOSED | (read-only) | fix/missing-success-artifact | 65c8a38 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (check stays permanent) | → integrator |
 | integrate-missing-success-artifact | integrate | IN_FLIGHT | scratch rehearsal | fix/missing-success-artifact | 65c8a38 | STANDARD | await result |
+| integrate-missing-success-artifact | integrate | CLOSED | scratch rehearsal | fix/missing-success-artifact | 65c8a38 | STANDARD | MERGE_APPROVED (D-4 flake, green on main) → merged (human-authorized) | done |
