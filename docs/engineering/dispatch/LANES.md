@@ -1528,3 +1528,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | impl-missing-success-artifact | implement | IN_FLIGHT | /private/tmp/shipit-fix-artifact | fix/missing-success-artifact | 65c8a38 | PRECISION | investigate missing_success_artifact (no commit/verdict) (F-247) | 0ec762ad running |
 | impl-missing-success-artifact | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-artifact | fix/missing-success-artifact | 65c8a38 | PRECISION | 94208c5: denied-ask summary + getResult fallback + denial-aware reason | → reviewer 7580bb0c |
 | review-missing-success-artifact | review | IN_FLIGHT | (read-only) | fix/missing-success-artifact | 65c8a38 | PRECISION | await result |
+| review-missing-success-artifact | review | CLOSED | (read-only) | fix/missing-success-artifact | 65c8a38 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (check stays permanent) | → integrator |
+| integrate-missing-success-artifact | integrate | IN_FLIGHT | scratch rehearsal | fix/missing-success-artifact | 65c8a38 | STANDARD | await result |
