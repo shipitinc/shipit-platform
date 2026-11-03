@@ -1537,3 +1537,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-impl-qa-contract-instruction | review | CLOSED | (read-only) | fix/impl-qa-contract-instruction | 975d145 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (wording honest, inlining infeasible) | → integrator |
 | integrate-impl-qa-contract-instruction | integrate | IN_FLIGHT | scratch rehearsal | fix/impl-qa-contract-instruction | 975d145 | STANDARD | await result |
 | integrate-impl-qa-contract-instruction | integrate | CLOSED | scratch rehearsal | fix/impl-qa-contract-instruction | 975d145 | STANDARD | MERGE_APPROVED (test-integration +319) → merged (human-authorized) | done |
+| impl-infra-decision-resolve | implement | IN_FLIGHT | /private/tmp/shipit-fix-infra-decision | fix/infra-decision-resolve | 18172c6 | PRECISION | fix resolveDecision 500 on system:provider-health (F-250) | 1d72d339 running |
