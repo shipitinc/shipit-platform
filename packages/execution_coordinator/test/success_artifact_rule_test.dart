@@ -250,6 +250,75 @@ void main() {
       );
     });
 
+    test('a missing artifact after a denied ask still fails — and records WHY '
+        'the run ended', () async {
+      // F-247: every implementer missing-artifact run in live QA ended
+      // `end_turn` immediately after exactly one denied permission ask.
+      // The artifact is still provably absent, so the verdict is still
+      // `missing` and still permanent — but "the run finished cleanly" is
+      // not an honest description of a run the platform itself refused,
+      // and the denied ask's content is the evidence a human needs to
+      // tell an under-provisioned task from an out-of-bounds reach.
+      final git = GitWorkspaceFixture.create(temp.path);
+      addTearDown(git.dispose);
+      await readyItem();
+
+      final denials = [
+        {
+          'title': 'external_directory',
+          'kind': 'bash',
+          'input': '{"command":"cat /etc/qa-contract.yaml"}',
+        },
+      ];
+      final execution =
+          await coordinatorOf(
+            FakeAgentSession(
+              executionId: 'exec-denied',
+              workItemId: 'wi-1',
+              metadata: {'permissionDenials': denials},
+            ),
+          ).execute(
+            requestFor(
+              executionId: 'exec-denied',
+              role: AgentRole.implementer,
+              workspace: git.toWorkspace(),
+            ),
+          );
+
+      expect(
+        execution.status,
+        AgentSessionStatus.failed,
+        reason:
+            'a denied ask does not soften the verdict: the workspace is '
+            'still provably unchanged',
+      );
+      expect(execution.reason, startsWith(SuccessArtifactArtifacts.marker));
+      expect(
+        execution.reason,
+        contains('permission ask'),
+        reason: 'the reason names the refusal, not "finished cleanly"',
+      );
+      expect(execution.reason, contains('external_directory'));
+      expect(
+        execution.reason,
+        isNot(contains('the run finished cleanly')),
+        reason:
+            'that claim is for a run with no refusal behind it; a '
+            'denial-ended run gets the honest wording',
+      );
+
+      // The asks themselves ride the terminal event payload, greppable
+      // beside the marker.
+      final events = await executionStore.readEvents('exec-denied');
+      final failed = events.singleWhere(
+        (e) => e.type == AgentEventType.executionFailed,
+      );
+      expect(
+        (failed.payload?['permissionDenials'] as List?)?.first['title'],
+        equals('external_directory'),
+      );
+    });
+
     test('the work item lands at agent_failed, never agent_completed', () async {
       final git = GitWorkspaceFixture.create(temp.path);
       addTearDown(git.dispose);

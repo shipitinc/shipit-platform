@@ -278,6 +278,55 @@ void main() {
       await session.close();
     });
 
+    test('records WHAT was denied, not only the count', () async {
+      // F-247: every implementer missing-artifact run in QA ended `end_turn`
+      // immediately after a denied ask, and the durable record could not say
+      // whether the refusal was a doom-loop stop or an out-of-workspace
+      // reach — the ask's content was discarded. This pins it surviving.
+      final fake = FakeAcpTransport(
+        permissionAsks: 2,
+        deniedAskSummaries: const [
+          {
+            'title': 'external_directory',
+            'kind': 'bash',
+            'input': '{"command":"cat /etc/qa-contract.yaml"}',
+          },
+          {'title': 'doom_loop'},
+        ],
+      );
+      final session = OpenCodeSession(
+        executionId: 'exec-1',
+        workItemId: 'work-1',
+        transportFactory: (_) async => fake,
+      );
+
+      await session.start(
+        AgentSessionConfig(
+          executionId: 'exec-1',
+          workItemId: 'work-1',
+          workingDirectory: '/tmp/ws',
+          timeout: _generousBudget,
+        ),
+      );
+      await session.sendInstruction(
+        const AgentInstruction(instructionId: 'instr-1', content: 'go'),
+      );
+
+      final result = await session.getResult();
+      final denials = result.metadata?['permissionDenials'] as List<dynamic>?;
+      expect(denials, hasLength(2));
+      expect(denials!.first['title'], equals('external_directory'));
+      expect(denials.first['input'], contains('cat /etc/qa-contract.yaml'));
+      expect(denials.last['title'], equals('doom_loop'));
+
+      final warning = result.diagnostics.warnings.singleWhere(
+        (w) => w.code == 'permission_requests_denied',
+      );
+      expect(warning.message, contains('external_directory'));
+      expect(warning.message, contains('doom_loop'));
+      await session.close();
+    });
+
     test('resumes an existing session id when configured', () async {
       final fake = FakeAcpTransport();
       final session = OpenCodeSession(
@@ -464,6 +513,7 @@ class FakeAcpTransport implements AcpTransport {
     this.promptHold = false,
     this.failInitialize = false,
     this.permissionAsks = 0,
+    this.deniedAskSummaries = const [],
   });
 
   final Duration? promptDelay;
@@ -474,6 +524,11 @@ class FakeAcpTransport implements AcpTransport {
   /// matching what `OpenCodeProcessTransport` adds when it answers a
   /// `session/request_permission` with a deny.
   final int permissionAsks;
+
+  /// The `params.summary` carried on each emitted `acp/permission_denied`,
+  /// indexed with the ask — the bounded record the transport builds from the
+  /// denied `session/request_permission` params.
+  final List<Map<String, dynamic>> deniedAskSummaries;
 
   final _notifications = StreamController<Map<String, dynamic>>.broadcast(
     sync: true,
@@ -542,7 +597,11 @@ class FakeAcpTransport implements AcpTransport {
         for (var i = 0; i < permissionAsks; i++) {
           _notifications.add({
             'method': 'acp/permission_denied',
-            'params': {'requestId': 90 + i},
+            'params': {
+              'requestId': 90 + i,
+              if (i < deniedAskSummaries.length)
+                'summary': deniedAskSummaries[i],
+            },
           });
         }
         _emitSessionUpdate('agent_message_chunk', text: 'implemented');
