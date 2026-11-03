@@ -124,6 +124,36 @@ abstract interface class ProducerResolver {
   Future<ResolvedProducer?> resolveFor(WorkItem item);
 }
 
+/// The [AgentRole] whose output the QA contract named by [contractId]
+/// judges, or `null` when the contract judges whatever produced the item.
+///
+/// The contract KIND is carried by the id its provisioner minted:
+/// `triageQAContractIdForDefect` yields `qa-triage-<defectId>` and
+/// `productQAContractIdForWorkItem` yields `qa-product-<workItemId>` — two
+/// prefixes the provisioners keep deliberately disjoint
+/// (`product_qa_contract.dart`). A `qa-triage-*` contract's gates are all
+/// assertions about triage output (`triage-classification-structure`,
+/// `triage-evidence-grounding`, `triage-clarification-routing`), so its
+/// producer is the TRIAGE_DEFECT execution — never the implementer a rework
+/// cycle may have run since. The triage contract says the same thing on its
+/// own row: `metadata['requiredRole']` is `AgentRole.triageDefect.wire`,
+/// written by the same provisioner call that minted the id, so the two
+/// cannot disagree about a contract the platform provisioned.
+///
+/// ## F-253 — WHY THE CONTRACT KIND DECIDES THE PRODUCER ROLE
+///
+/// Reading the contract-blind rule handed the IMPLEMENTER's result to a
+/// triage contract whenever an implementer had run on the item — either
+/// stamped (a rework completion re-stamps `producerActorId`) or through the
+/// implementer-role fallback — and the triage gates failed a result that
+/// carried no triage fields even though the triage output was correct.
+AgentRole? producerRoleForQaContractId(String? contractId) {
+  if (contractId != null && contractId.startsWith('qa-triage-')) {
+    return AgentRole.triageDefect;
+  }
+  return null;
+}
+
 /// Resolves the execution that PRODUCED a work item, and its workspace.
 ///
 /// ## THE RULE IS THE PLATFORM'S, NOT THIS FILE'S
@@ -135,6 +165,16 @@ abstract interface class ProducerResolver {
 /// because the coordinator used to hand the guard "whatever ran most recently",
 /// which handed a review the REVIEWER's result, and it refuses closed rather
 /// than guessing.
+///
+/// The one input this file adds is the CONTRACT SCOPE: the item's own
+/// `qaContractId` names the contract the evaluation will run, and the
+/// contract kind decides whose output its gates judge — see
+/// [producerRoleForQaContractId]. A `qa-triage-*` contract therefore resolves
+/// the TRIAGE_DEFECT execution rather than the implementer. Every source
+/// reading through this resolver — the drain's `agentResult`, the role the
+/// producer-scoped gate checks, and the workspace F1/F2/F5 inspect — sees
+/// the same execution, because the resolution is still one rule in one
+/// place.
 ///
 /// This file does not have a second, kinder rule. It reads the platform's, so
 /// the QA gates and the scheduler's `producedCommitFor` answer the same
@@ -167,12 +207,18 @@ class ProducerWorkspaceResolver implements ProducerResolver {
   }
 
   /// Resolves the producer of [item].
+  ///
+  /// The contract the item is governed by decides WHICH execution counts as
+  /// the producer: [producerRoleForQaContractId] maps the item's
+  /// `qaContractId` to the role whose output that contract's gates evaluate,
+  /// and the platform's rule resolves within it (F-253).
   @override
   Future<ResolvedProducer?> resolveFor(WorkItem item) async {
     final producer = await resolveProducerExecution(
       store: executionStore,
       workItemId: item.workItemId,
       producerActorId: item.metadata?['producerActorId'],
+      requiredRole: producerRoleForQaContractId(item.qaContractId),
     );
     if (!producer.isResolved) return null;
 
@@ -567,7 +613,8 @@ class ProductionRevisionIdentitySource implements RevisionIdentitySource {
 /// the drain resolved the result under evaluation through. Two reads of the
 /// same rule agree, so the role this source answers is the role of the
 /// execution whose `AgentResult` the gates are judging — never a different
-/// run's.
+/// run's. That includes the contract scope: a `qa-triage-*` item resolves
+/// its TRIAGE_DEFECT producer here just as it does for the drain (F-253).
 ///
 /// `null` propagates the resolver's own "no producer identified" answer: it is
 /// not an empty role and it is not an error, and the gate treats it as

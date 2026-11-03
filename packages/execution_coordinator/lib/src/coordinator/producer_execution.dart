@@ -82,8 +82,33 @@ enum ProducerResolution {
   /// implementer is the one whose success put it here.
   implementerRole,
 
-  /// No producer could be identified: no usable stamp and no implementer
-  /// execution, or the stamp names an execution that does not exist.
+  /// No usable stamp for the DECLARED role, so the newest execution whose
+  /// [AgentExecution.role] is the role [resolveProducerExecution] was told the
+  /// contract judges (`requiredRole`) was taken instead.
+  ///
+  /// ## WHY A DECLARED ROLE CHANGES THE QUESTION — F-253
+  ///
+  /// The QA drain evaluates a contract against the result of the execution
+  /// the contract's gates are about. A `qa-triage-*` contract's gates are all
+  /// assertions about triage output, so its producer is the TRIAGE_DEFECT
+  /// execution — not the implementer a rework cycle ran since. Reading the
+  /// stamp or the implementer-role fallback there handed the IMPLEMENTER's
+  /// `structuredResult` to gates that assert `classification`, `status`,
+  /// `confidence` and `suspectedCategory`, so a correct triage classification
+  /// failed "cites no evidence" / missing classification on every evaluation
+  /// after a rework — the approve -> implement -> contract-fails -> waiver ->
+  /// reject -> re-implement churn loop F-253 records.
+  ///
+  /// The stamp is still consulted first when it names an execution OF the
+  /// declared role — it remains the co-written identity — but a stamp naming
+  /// a different role is not a wrong answer to "who completed this item
+  /// last"; it is the right answer to a different question, so the role
+  /// fallback runs rather than the stamped result being judged.
+  requiredRole,
+
+  /// No producer could be identified: no usable stamp for the role the
+  /// caller needs and no execution of that role, or — for an unscoped
+  /// caller — a stamp naming an execution that does not exist.
   ///
   /// Carries no result, so a caller that supplies it to `agentResultValid()`
   /// omits the key and the engine refuses the edge. That is the honest answer —
@@ -167,6 +192,19 @@ class ProducerExecution {
 /// `test/producer_execution_resolution_test.dart` — the happy path alone would
 /// have passed with the original defect in place.
 ///
+/// ## THE OPTIONAL CONTRACT SCOPE — [requiredRole]
+///
+/// Callers that know WHICH producer's output is being judged declare it.
+/// The QA drain's question is not "who completed this item last" — it is
+/// "whose result does this contract's gate set evaluate", and a
+/// `qa-triage-*` contract's gates evaluate TRIAGE output specifically. With
+/// [requiredRole] set, the stamp only wins when it names an execution of
+/// that role (the stamped producer is still the co-written identity when it
+/// is the right one), and the role fallback resolves the newest execution
+/// of the declared role rather than the newest implementer.
+///
+/// A caller that declares nothing gets the original rule verbatim.
+///
 /// ## WHAT THIS DELIBERATELY NEVER DOES
 ///
 /// It never falls back to "the newest execution of any role", and it never
@@ -175,45 +213,66 @@ Future<ProducerExecution> resolveProducerExecution({
   required ExecutionStore store,
   required String workItemId,
   Object? producerActorId,
+  AgentRole? requiredRole,
 }) async {
   final stamped = producerActorId;
   if (stamped is String && stamped.isNotEmpty) {
     final execution = await store.readExecutionOrNull(stamped);
-    if (execution == null) {
-      return ProducerExecution.absent(
-        'the producerActorId recorded on this work item ($stamped) names no '
-        'execution, so nothing identifies what produced it and nothing may be '
-        'guessed at',
+    if (execution != null &&
+        (requiredRole == null || execution.role == requiredRole)) {
+      return ProducerExecution._(
+        how: ProducerResolution.stampedProducer,
+        executionId: execution.executionId,
+        result: await store.readResult(execution.executionId),
+        note:
+            'read the producer execution named by the work item\'s own '
+            'producerActorId ($stamped), role ${execution.role.wire}',
       );
     }
-    return ProducerExecution._(
-      how: ProducerResolution.stampedProducer,
-      executionId: execution.executionId,
-      result: await store.readResult(execution.executionId),
-      note:
-          'read the producer execution named by the work item\'s own '
-          'producerActorId ($stamped), role ${execution.role.wire}',
-    );
+    if (requiredRole == null) {
+      return ProducerExecution.absent(
+        'the producerActorId recorded on this work item ($stamped) names no '
+        'execution, so nothing identifies what produced it and nothing may '
+        'be guessed at',
+      );
+    }
+    // The stamp cannot name the producer THIS caller needs: it names no
+    // execution, or it names one of a different role than the contract being
+    // evaluated judges. A stamp naming a different role is the right answer
+    // to a different question ("who completed this item last"), so the
+    // role-scoped fallback below answers the caller's question — or refuses,
+    // exactly as it does when no stamp exists.
   }
 
+  final role = requiredRole ?? AgentRole.implementer;
   final candidates = (await store.listExecutions(
     workItemId: workItemId,
-  )).where((e) => e.role == AgentRole.implementer).toList();
+  )).where((e) => e.role == role).toList();
   if (candidates.isEmpty) {
     return ProducerExecution.absent(
-      'this work item records no producerActorId and has no implementer '
-      'execution, so nothing identifies what produced it and nothing may be '
-      'guessed at',
+      requiredRole == null
+          ? 'this work item records no producerActorId and has no implementer '
+                'execution, so nothing identifies what produced it and nothing '
+                'may be guessed at'
+          : 'the contract being evaluated names ${role.wire} as the role '
+                'whose output it judges, and this work item has no ${role.wire} '
+                'execution, so nothing identifies what produced it and nothing '
+                'may be guessed at',
     );
   }
   final producer = _newest(candidates);
   return ProducerExecution._(
-    how: ProducerResolution.implementerRole,
+    how: requiredRole == null
+        ? ProducerResolution.implementerRole
+        : ProducerResolution.requiredRole,
     executionId: producer.executionId,
     result: await store.readResult(producer.executionId),
-    note:
-        'no producerActorId is recorded, so the newest implementer execution '
-        '(${producer.executionId}) was read by role',
+    note: requiredRole == null
+        ? 'no producerActorId is recorded, so the newest implementer '
+              'execution (${producer.executionId}) was read by role'
+        : 'the contract being evaluated names ${role.wire} as the role whose '
+              'output it judges, so the newest ${role.wire} execution '
+              '(${producer.executionId}) was read by role',
   );
 }
 
