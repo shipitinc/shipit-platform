@@ -1540,3 +1540,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | impl-infra-decision-resolve | implement | IN_FLIGHT | /private/tmp/shipit-fix-infra-decision | fix/infra-decision-resolve | 18172c6 | PRECISION | fix resolveDecision 500 on system:provider-health (F-250) | 1d72d339 running |
 | impl-infra-decision-resolve | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-infra-decision | fix/infra-decision-resolve | 18172c6 | PRECISION | ccb6538: system-scope decision resolve router + scope-aware view | → reviewer d05a28ac |
 | review-infra-decision-resolve | review | IN_FLIGHT | (read-only) | fix/infra-decision-resolve | 18172c6 | PRECISION | await result |
+| review-infra-decision-resolve | review | CLOSED | (read-only) | fix/infra-decision-resolve | 18172c6 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (router verified; residuals filed F-251/F-252) | → integrator |
+| integrate-infra-decision-resolve | integrate | IN_FLIGHT | scratch rehearsal | fix/infra-decision-resolve | 18172c6 | STANDARD | await result → merge (standing auth) |
