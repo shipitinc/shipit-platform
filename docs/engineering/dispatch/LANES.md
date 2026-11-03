@@ -1548,3 +1548,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-qa-producer-resolution | review | IN_FLIGHT | (read-only) | fix/qa-producer-resolution | 00d236b | PRECISION | await result |
 | review-qa-producer-resolution | review | CLOSED | (read-only) | fix/qa-producer-resolution | 00d236b | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (mechanism+mapping verified) | → integrator |
 | integrate-qa-producer-resolution | integrate | IN_FLIGHT | scratch rehearsal | fix/qa-producer-resolution | 00d236b | STANDARD | await result → merge (standing auth) |
+| integrate-qa-producer-resolution | integrate | CLOSED | scratch rehearsal | fix/qa-producer-resolution | 00d236b | STANDARD | MERGE_APPROVED (test-integration +319) → merged (standing auth) | done |
