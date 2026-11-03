@@ -256,6 +256,11 @@ class OpenCodeProcessTransport implements AcpTransport, StderrTail {
             'requestId': id,
             'toolCall':
                 (message['params'] as Map<String, dynamic>?)?['toolCall'],
+            // What the agent was refused, as a bounded record. The count alone
+            // used to be all that survived — which is why a run that ended its
+            // turn on a denial was indistinguishable in the durable record
+            // from one that simply produced nothing.
+            'summary': _deniedAskSummary(message['params']),
           },
         });
       }
@@ -307,6 +312,61 @@ class OpenCodeProcessTransport implements AcpTransport, StderrTail {
   static Map<String, dynamic> _selectedOutcome(String optionId) => {
     'outcome': {'outcome': 'selected', 'optionId': optionId},
   };
+
+  /// Upper bound on any one field's contribution to [_deniedAskSummary] —
+  /// this is recorded evidence, not a transcript.
+  static const int _deniedAskDetailLimit = 240;
+
+  /// The bounded, persistable summary of a denied `session/request_permission`
+  /// ask: WHAT the agent was refused.
+  ///
+  /// On opencode 1.18.x `toolCall.title` names the permission kind —
+  /// `external_directory` (a path outside the workspace, including a bash
+  /// command whose arguments resolve there) or `doom_loop` (the repeated-call
+  /// detector) — and the call's own input sits in `toolCall.rawInput` and,
+  /// for bash asks, in the ask `metadata` as `{command, directories}`.
+  /// Whichever of those fields a runtime actually fills is captured verbatim
+  /// and bounded; the classification between an agent looping and an agent
+  /// reaching outside its workspace is the whole point of recording it.
+  static Map<String, dynamic> _deniedAskSummary(Object? params) {
+    final summary = <String, dynamic>{};
+    if (params is! Map) return summary;
+    final toolCall = params['toolCall'];
+    if (toolCall is Map) {
+      final title = toolCall['title'];
+      if (title is String && title.isNotEmpty) summary['title'] = title;
+      final kind = toolCall['kind'];
+      if (kind is String && kind.isNotEmpty) summary['kind'] = kind;
+      final rawInput = toolCall['rawInput'];
+      if (rawInput != null) {
+        summary['input'] = _boundedText(rawInput, _deniedAskDetailLimit);
+      }
+      final toolCallMetadata = toolCall['metadata'];
+      if (toolCallMetadata != null) {
+        summary['metadata'] = _boundedText(
+          toolCallMetadata,
+          _deniedAskDetailLimit,
+        );
+      }
+    }
+    final metadata = params['metadata'];
+    if (metadata != null) {
+      summary['metadata'] = _boundedText(metadata, _deniedAskDetailLimit);
+    }
+    return summary;
+  }
+
+  /// [value] encoded compactly and capped at [limit] characters, so an
+  /// unbounded command line or path list cannot bloat the record.
+  static String _boundedText(Object? value, int limit) {
+    String encoded;
+    try {
+      encoded = value is String ? value : jsonEncode(value);
+    } on Object {
+      encoded = value.toString();
+    }
+    return encoded.length <= limit ? encoded : encoded.substring(0, limit);
+  }
 
   void _handleChildExit(String reason) {
     final died = _isOpen;

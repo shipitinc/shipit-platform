@@ -242,6 +242,21 @@ class OpenCodeSession implements AgentSession {
   /// — the opposite of the silence that made exec 194's stall invisible.
   int _permissionDenials = 0;
 
+  /// Bounded record of WHAT was denied, one entry per ask the transport
+  /// summarised ([OpenCodeProcessTransport._deniedAskSummary]).
+  ///
+  /// The count alone could not distinguish "the agent repeated a call until
+  /// the doom-loop detector refused it" from "the agent reached for a path
+  /// outside its workspace" — and that distinction is what a run that ended
+  /// its turn on a denial needs recorded, because the turn ended and no
+  /// artifact was produced. Live QA: every implementer missing-artifact run
+  /// ended `end_turn` immediately after exactly one denied ask.
+  ///
+  /// Capped so a runaway ask loop cannot bloat the result record; the count
+  /// above still covers any asks past the cap.
+  static const int _maxDeniedAskRecords = 8;
+  final List<Map<String, dynamic>> _deniedAsks = [];
+
   @override
   String get sessionId => _sessionId;
 
@@ -696,6 +711,13 @@ class OpenCodeSession implements AgentSession {
       // asked for permission and the platform responder denied it. Counted
       // for the result diagnostic; not a session lifecycle event.
       _permissionDenials++;
+      if (_deniedAsks.length < _maxDeniedAskRecords) {
+        final params = message['params'];
+        final summary = params is Map ? params['summary'] : null;
+        if (summary is Map) {
+          _deniedAsks.add(Map<String, dynamic>.from(summary));
+        }
+      }
       return;
     }
     if (message['method'] != 'session/update') return;
@@ -949,7 +971,21 @@ class OpenCodeSession implements AgentSession {
       _providerErrorFromStderr();
     }
     final text = _finalText();
-    final payload = _structuredPayload(text);
+    // The payload search ALSO covers the complete `agent_message` texts, not
+    // only the joined chunk stream. `_finalText` prefers streamed chunks —
+    // they stay primary here, because a runtime that echoes the finished
+    // message may report it trimmed — but a runtime that streamed reasoning
+    // prose and then delivered the answer whole (an `agent_message` with no
+    // corresponding chunks) had that answer dropped even though it was on
+    // the wire. Full messages are searched last-first because the agent's
+    // answer is its final message. This reads what the runtime emitted and
+    // nothing else — a payload is still never synthesised.
+    Map<String, dynamic> payload = _structuredPayload(text);
+    if (payload.isEmpty) {
+      for (var i = _fullMessages.length - 1; i >= 0 && payload.isEmpty; i--) {
+        payload = _structuredPayload(_fullMessages[i]);
+      }
+    }
     final structured = payload.isEmpty
         ? const <String, dynamic>{}
         : _canonicaliseContractTokens(payload);
@@ -1008,7 +1044,8 @@ class OpenCodeSession implements AgentSession {
                   'the agent raised $_permissionDenials permission '
                   'request(s) on the wire; each was denied by the transport '
                   'responder (policy: deny — an autonomous worker does not '
-                  'grant access that was not pre-allowed)',
+                  'grant access that was not pre-allowed)'
+                  '${_deniedAsksDescription()}',
               severity: 'warning',
             ),
         ],
@@ -1033,6 +1070,13 @@ class OpenCodeSession implements AgentSession {
             _status == AgentSessionStatus.failed,
         if (_stopReason.isNotEmpty) 'stopReason': _stopReason,
         'structuredResultPresent': structured.isNotEmpty,
+        // The persisted record of WHAT was refused — one bounded entry per
+        // denied ask (kind + the call's own input/metadata). Present only
+        // when at least one ask carried a summary; the count above in the
+        // diagnostic covers asks past the cap. This is what lets a run that
+        // ended its turn on a denial be told apart from one that simply
+        // produced nothing.
+        if (_deniedAsks.isNotEmpty) 'permissionDenials': _deniedAsks,
         'usage': {'used': _used, 'size': _size, 'cost': _cost},
         'chunkCount': _chunks.length,
         'escalationIndex': _escalationIndex,
@@ -1040,6 +1084,24 @@ class OpenCodeSession implements AgentSession {
           'providerError': _lastProviderError!.toJson(),
       },
     );
+  }
+
+  /// A short suffix for the `permission_requests_denied` diagnostic naming
+  /// what was refused — `; denied asks: external_directory ({"command":...}),
+  /// doom_loop` — or empty when no summaries were captured. Bounded by the
+  /// ask cap and the per-field bound applied at the transport.
+  String _deniedAsksDescription() {
+    if (_deniedAsks.isEmpty) return '';
+    final parts = <String>[
+      for (final ask in _deniedAsks)
+        [
+          ask['title'] ?? ask['kind'] ?? 'permission',
+          if (ask['input'] is String) ask['input'],
+          if (ask['input'] == null && ask['metadata'] is String)
+            ask['metadata'],
+        ].join(' '),
+    ];
+    return '; denied ask(s): ${parts.join('; ')}';
   }
 
   /// The agent's final assistant text. Streamed `agent_message_chunk` deltas

@@ -197,6 +197,16 @@ void main() {
           hasLength(1),
           reason: 'the denial must be signalled so the session can record it',
         );
+        // The signal carries WHAT was refused, not only that a refusal
+        // happened: `toolCall.title` names the permission kind and the
+        // call's own input is summarised, bounded. This is the evidence a
+        // missing-artifact record needs to say WHY the run ended.
+        final summary =
+            (permissionSignals.single['params']
+                    as Map<String, dynamic>)['summary']
+                as Map<String, dynamic>;
+        expect(summary['title'], equals('external_directory'));
+        expect(summary['input'], contains('/etc/passwd'));
         expect(transport.pendingRequestCount, isZero);
 
         await sub.cancel();

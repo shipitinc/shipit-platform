@@ -203,6 +203,41 @@ abstract final class SuccessArtifactArtifacts {
   static bool undeterminedFlagFor(ArtifactSatisfaction satisfaction) =>
       satisfaction == ArtifactSatisfaction.undetermined;
 
+  /// The denied permission asks a result carries, read from the
+  /// `permissionDenials` metadata key `OpenCodeSession` writes — a list of
+  /// bounded summaries produced by `OpenCodeProcessTransport` when it denies
+  /// a `session/request_permission`. Null when the run asked for nothing or
+  /// the record predates the key.
+  ///
+  /// ## WHY THIS IS READ HERE
+  ///
+  /// Live QA (F-247): every implementer `missing_success_artifact` run ended
+  /// `end_turn` immediately after exactly one denied ask, on capable paid
+  /// models as well as cheap ones — the model treated the refusal as the end
+  /// of the work. The denial does not change the verdict: the artifact is
+  /// still provably absent, by probe or by result. It changes what the
+  /// RECORD says: "the run finished cleanly and produced nothing" is not an
+  /// honest description of a run the platform itself interrupted with a
+  /// refusal, and the denied ask's content is the only evidence of whether
+  /// the refused call was something the task needed or something the agent
+  /// reached for unprompted.
+  static List<dynamic>? denialsOf(AgentResult result) {
+    final denials = result.metadata?['permissionDenials'];
+    return denials is List && denials.isNotEmpty ? denials : null;
+  }
+
+  /// The permission kinds of [denials], for a reason string —
+  /// `external_directory, doom_loop`. Falls back to a generic label when a
+  /// summary carried neither a title nor a kind.
+  static String denialTitles(List<dynamic> denials) => denials
+      .map((d) {
+        if (d is Map) {
+          return (d['title'] ?? d['kind'] ?? 'permission').toString();
+        }
+        return 'permission';
+      })
+      .join(', ');
+
   /// `kind` for the ordinary artifact-missing path. Deliberately NOT one of the
   /// transient markers: a run that finished cleanly and produced nothing will
   /// produce nothing again on an automatic retry, so it must not be returned to
@@ -211,34 +246,63 @@ abstract final class SuccessArtifactArtifacts {
     required String executionId,
     required String role,
     required WorkspaceDelta delta,
+    List<dynamic>? denials,
   }) =>
       '$marker $role execution $executionId produced no commit: its '
       'workspace is identical to the revision it started from '
       '(HEAD ${delta.headRevision ?? 'unknown'}, '
       'starting ${delta.startingRevision ?? 'unknown'}, no modified, staged or '
-      'untracked paths). It produced a report, not an artifact. This is a '
-      'permanent failure: the run finished cleanly, so an automatic retry would '
-      'produce nothing again, and it is left for a human whose retry is '
-      'uncounted.';
+      'untracked paths). It produced a report, not an artifact. '
+      '${denials == null || denials.isEmpty ? 'This is a permanent failure: the run finished cleanly, so an '
+                'automatic retry would produce nothing again, and it is left '
+                'for a human whose retry is uncounted.' : 'This is a permanent failure: the run ended after the platform '
+                'denied ${denials.length} permission ask(s) '
+                '(${denialTitles(denials)}). Whether the refused call(s) were '
+                'required for the artifact cannot be told from the record, and '
+                'the workspace is still provably unchanged — so it is recorded '
+                'as produced-nothing, not as a platform fault, and it is left '
+                'for a human whose retry is uncounted.'}';
 
   static String noClassificationReason({
     required String executionId,
     required String detail,
+    List<dynamic>? denials,
   }) =>
       '$marker TRIAGE_DEFECT execution $executionId completed without a '
       'structured classification result: $detail. Triage writes its '
       'deliverable as a classification and never as code, so an empty or '
-      'unparseable result is this lane having produced nothing.';
+      'unparseable result is this lane having produced nothing.'
+      '${denialClause(denials)}';
 
   static String noVerdictReason({
     required String executionId,
     required String detail,
+    List<dynamic>? denials,
   }) =>
       '$marker ENGINEERING_REVIEWER execution $executionId completed without a '
       'parseable verdict: $detail. The review is its verdict; a run that '
       'concluded nothing cannot be recorded as a review that concluded '
       'something, and the platform never supplies one on the reviewer\'s '
-      'behalf.';
+      'behalf.'
+      '${denialClause(denials)}';
+
+  /// The sentence appended to a missing-artifact reason when the run's own
+  /// record shows the platform refused permission asks during it. Empty when
+  /// there were none, so every existing reason is byte-identical in the case
+  /// this feature does not touch.
+  ///
+  /// It does not soften the verdict — the artifact is still provably absent —
+  /// and it does not claim causation: a denied ask followed by `end_turn` is
+  /// evidence the refusal ended the work, not proof, and the reason says
+  /// exactly that.
+  static String denialClause(List<dynamic>? denials) =>
+      denials == null || denials.isEmpty
+      ? ''
+      : ' The platform denied ${denials.length} permission ask(s) during '
+            'this run (${denialTitles(denials)}); the asks themselves are in '
+            'the verdict details and the result\'s metadata. Whether the '
+            'refused call(s) were required for the artifact cannot be told '
+            'from the record.';
 }
 
 /// The role-aware rule.
@@ -312,6 +376,7 @@ class RoleAwareSuccessArtifacts implements SuccessArtifactChecker {
         executionId,
         role,
         workspace,
+        result,
       ),
       SuccessArtifactKind.classificationResult => classificationVerdict(
         executionId,
@@ -328,6 +393,7 @@ class RoleAwareSuccessArtifacts implements SuccessArtifactChecker {
     String executionId,
     AgentRole role,
     AgentWorkspace workspace,
+    AgentResult result,
   ) async {
     final delta = await probe.probe(
       workingDirectory: workspace.path,
@@ -350,17 +416,20 @@ class RoleAwareSuccessArtifacts implements SuccessArtifactChecker {
         SuccessArtifactKind.committedCode,
       );
     }
+    final denials = SuccessArtifactArtifacts.denialsOf(result);
     return SuccessArtifactVerdict.missing(
       SuccessArtifactKind.committedCode,
       SuccessArtifactArtifacts.noCommitReason(
         executionId: executionId,
         role: role.wire,
         delta: delta,
+        denials: denials,
       ),
       details: {
         'headRevision': delta.headRevision,
         'startingRevision': delta.startingRevision,
         'changedFileCount': delta.changedPaths.length,
+        if (denials != null) 'permissionDenials': denials,
       },
     );
   }
@@ -422,6 +491,7 @@ SuccessArtifactVerdict classificationVerdict(
   AgentResult result,
 ) {
   final missing = classificationMissingIn(result);
+  final denials = SuccessArtifactArtifacts.denialsOf(result);
   return missing == null
       ? const SuccessArtifactVerdict.satisfied(
           SuccessArtifactKind.classificationResult,
@@ -431,8 +501,12 @@ SuccessArtifactVerdict classificationVerdict(
           SuccessArtifactArtifacts.noClassificationReason(
             executionId: executionId,
             detail: missing,
+            denials: denials,
           ),
-          details: {'missingReason': missing},
+          details: {
+            'missingReason': missing,
+            if (denials != null) 'permissionDenials': denials,
+          },
         );
 }
 
@@ -499,6 +573,7 @@ String? reviewVerdictMissingIn(AgentResult result) {
 /// Wraps [reviewVerdictMissingIn] in the verdict.
 SuccessArtifactVerdict reviewVerdict(String executionId, AgentResult result) {
   final missing = reviewVerdictMissingIn(result);
+  final denials = SuccessArtifactArtifacts.denialsOf(result);
   return missing == null
       ? const SuccessArtifactVerdict.satisfied(
           SuccessArtifactKind.reviewVerdict,
@@ -508,7 +583,11 @@ SuccessArtifactVerdict reviewVerdict(String executionId, AgentResult result) {
           SuccessArtifactArtifacts.noVerdictReason(
             executionId: executionId,
             detail: missing,
+            denials: denials,
           ),
-          details: {'missingReason': missing},
+          details: {
+            'missingReason': missing,
+            if (denials != null) 'permissionDenials': denials,
+          },
         );
 }

@@ -18,6 +18,7 @@ class FakeAgentSession implements AgentSession {
     this.throwOnStart = false,
     this.throwTransportOnStart = false,
     this.structuredResult = const {},
+    this.metadata,
   });
 
   final String executionId;
@@ -51,6 +52,11 @@ class FakeAgentSession implements AgentSession {
   /// (triage's classification, review's verdict) set it here, so those tests
   /// exercise the real `structuredResult` field rather than a stand-in.
   final Map<String, dynamic> structuredResult;
+
+  /// Optional `AgentResult.metadata`, so tests can carry the signals the
+  /// session layer records there — e.g. the `permissionDenials` list the
+  /// opencode adapter writes when the transport denies an ask.
+  final Map<String, dynamic>? metadata;
 
   final _events = StreamController<AgentEvent>.broadcast(sync: true);
   AgentSessionStatus _status = AgentSessionStatus.starting;
@@ -248,6 +254,7 @@ class FakeAgentSession implements AgentSession {
           ? 'implemented and verified the calculator'
           : 'did not complete',
       completedAt: DateTime.now(),
+      metadata: metadata,
     );
   }
 

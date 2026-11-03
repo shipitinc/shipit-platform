@@ -315,6 +315,55 @@ void main() {
       },
     );
 
+    test('recovers a payload delivered ONLY as a complete agent_message '
+        'alongside streamed prose', () async {
+      // F-247 regression: the streamed channel carried reasoning prose and
+      // the runtime reported the answer as a complete `agent_message` with
+      // no corresponding chunks. The old search looked at the joined
+      // chunks alone, so the answer was on the wire and `structuredResult`
+      // still came back {} — a produced artifact recorded as absent.
+      final result = await _runTriageTurn([
+        _chunk('Let me reason about the evidence.\n'),
+        _chunk('The defect is clearly in the parser.\n'),
+        _message(
+          '{"classification":"implementation_defect","status":"triaging",'
+          '"confidence":0.8,"suspectedCategory":"backend",'
+          '"suspectedComponents":["parser"],"reproductionSupported":true,'
+          '"evidenceUsed":["ev-1"],"clarificationRequired":[],'
+          '"recommendedNextAction":"fix","summary":"Parser drops rows."}',
+        ),
+      ]);
+
+      expect(result.structuredResult, isNotEmpty);
+      final parsed = parseLikeTriageProcessor(result.structuredResult);
+      expect(parsed.classification, DefectClassification.implementationDefect);
+      expect(parsed.confidence, closeTo(0.8, 1e-9));
+      // The summary still reports the streamed text — the extraction source
+      // and the human-readable summary are different channels.
+      expect(result.summary, contains('reason about the evidence'));
+    });
+
+    test(
+      'a streamed payload still wins over a later partial agent_message echo',
+      () async {
+        // The converse guard: the chunk stream stays primary, because a
+        // runtime may report the complete message trimmed — searching it
+        // first would lose fields the chunks carried whole.
+        final result = await _runTriageTurn([
+          _chunk(
+            '{"classification":"implementation_defect","status":"triaged",'
+            '"confidence":0.62,"suspectedCategory":"backend",'
+            '"suspectedComponents":[],"reproductionSupported":false,'
+            '"evidenceUsed":[],"clarificationRequired":[],'
+            '"recommendedNextAction":"fix","summary":"Full answer."}',
+          ),
+          _message('{"classification":"implementation_defect"}'),
+        ]);
+
+        expect(result.structuredResult['confidence'], closeTo(0.62, 1e-9));
+      },
+    );
+
     test('leaves an unrecognised classification token untouched', () async {
       final result = await _runTriageTurn([
         _chunk(
