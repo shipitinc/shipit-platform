@@ -1532,3 +1532,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-missing-success-artifact | integrate | IN_FLIGHT | scratch rehearsal | fix/missing-success-artifact | 65c8a38 | STANDARD | await result |
 | integrate-missing-success-artifact | integrate | CLOSED | scratch rehearsal | fix/missing-success-artifact | 65c8a38 | STANDARD | MERGE_APPROVED (D-4 flake, green on main) → merged (human-authorized) | done |
 | impl-impl-qa-contract-instruction | implement | IN_FLIGHT | /private/tmp/shipit-fix-contract-instr | fix/impl-qa-contract-instruction | 975d145 | PRECISION | fix DB-resident QA contract in implement instruction (F-248) | eb82ef0f running |
+| impl-impl-qa-contract-instruction | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-contract-instr | fix/impl-qa-contract-instruction | 975d145 | PRECISION | eb58bf8: contract id marked unreachable, criteria named | → reviewer fa151f30 |
+| review-impl-qa-contract-instruction | review | IN_FLIGHT | (read-only) | fix/impl-qa-contract-instruction | 975d145 | PRECISION | await result |
