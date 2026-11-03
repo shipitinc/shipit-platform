@@ -1534,3 +1534,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | impl-impl-qa-contract-instruction | implement | IN_FLIGHT | /private/tmp/shipit-fix-contract-instr | fix/impl-qa-contract-instruction | 975d145 | PRECISION | fix DB-resident QA contract in implement instruction (F-248) | eb82ef0f running |
 | impl-impl-qa-contract-instruction | implement | CLOSED — IMPLEMENTED | /private/tmp/shipit-fix-contract-instr | fix/impl-qa-contract-instruction | 975d145 | PRECISION | eb58bf8: contract id marked unreachable, criteria named | → reviewer fa151f30 |
 | review-impl-qa-contract-instruction | review | IN_FLIGHT | (read-only) | fix/impl-qa-contract-instruction | 975d145 | PRECISION | await result |
+| review-impl-qa-contract-instruction | review | CLOSED | (read-only) | fix/impl-qa-contract-instruction | 975d145 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP (wording honest, inlining infeasible) | → integrator |
+| integrate-impl-qa-contract-instruction | integrate | IN_FLIGHT | scratch rehearsal | fix/impl-qa-contract-instruction | 975d145 | STANDARD | await result |
