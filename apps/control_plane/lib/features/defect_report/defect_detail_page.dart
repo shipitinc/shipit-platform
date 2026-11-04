@@ -445,6 +445,7 @@ class _EvidenceBlock extends StatelessWidget {
       artifactTitle: _humaniseWire(first.kind),
       artifactSubtitle: first.description,
       compact: mobile,
+      onLinkTap: (_) => _showEvidence(context),
       links: [
         ('Open the evidence', ''),
         if (screenshots > 0)
@@ -454,6 +455,47 @@ class _EvidenceBlock extends StatelessWidget {
         ('Captured by', first.sourceRef ?? 'reporter'),
         ('Items on file', '${evidence.length}'),
       ],
+    );
+  }
+}
+
+extension on _EvidenceBlock {
+  void _showEvidence(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Evidence'),
+        content: SizedBox(
+          width: 480,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final e in evidence)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: SelectableText(
+                      [
+                        _humaniseWire(e.kind),
+                        if (e.description != null) e.description!,
+                        if (e.sourceRef != null) 'Source: ${e.sourceRef}',
+                        if (e.artifactId != null) 'Artifact: ${e.artifactId}',
+                        'Captured: ${e.capturedAt.toIso8601String()}',
+                      ].join('\n'),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
     );
   }
 }
