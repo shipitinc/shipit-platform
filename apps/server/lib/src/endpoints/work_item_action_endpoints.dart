@@ -1,15 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:crypto/crypto.dart' as crypto;
-
-// Narrow: the reviewer's own execution store, and the producer resolution the
-// deploy advance reads its artifact from. The provenance read below is
+// Narrow: the reviewer's own execution store. The provenance read below is
 // separate from the decision's own claim precisely because it must never
 // consult the decision for evidence; the producer read is separate from
 // "whatever ran last" for the same reason.
 import 'package:execution_coordinator/execution_coordinator.dart'
-    show ExecutionStore, resolveProducerExecution;
+    show ExecutionStore;
 import 'package:platform_contracts/platform_contracts.dart';
 // `scheduler.dart` does not barrel-export its capacity directory yet — see the
 // identical, identical-reasoned import in `apps/server/lib/server.dart`, and the
@@ -18,8 +15,6 @@ import 'package:platform_contracts/platform_contracts.dart';
 // ignore: implementation_imports
 import 'package:scheduler/src/capacity/execution_capacity.dart'
     show ExecutionCapacityResolution, agentExecutionBudget;
-import 'package:scheduler/scheduler.dart'
-    show CommitProduced, producedCommitFor;
 import 'package:serverpod/serverpod.dart';
 import 'package:workflow_engine/workflow_engine.dart' show WorkItemTransitions;
 // `product_registry` and `postgres_defect_store` each export a
@@ -33,6 +28,8 @@ import 'package:workflow_store/workflow_store.dart'
         OperatorActionRecord,
         WorkflowTransitionRejectedException;
 
+import '../deploy/deploy_advance.dart'
+    show deploymentArtifactFor, raiseDeploymentApproval;
 import '../generated/execution_capacity_view.dart';
 import '../generated/operator_action_summary_view.dart';
 import '../generated/review_repair_result.dart';
@@ -525,11 +522,14 @@ class WorkItemActionEndpoints extends Endpoint {
     // the dead-button class this surface exists to close.
     final deployable =
         item.state == WorkItemState.qaPassed &&
-        await _deploymentArtifactFor(
-              service,
-              item,
-              requestId: 'offer',
-              requestedBy: 'offer',
+        await deploymentArtifactFor(
+              executionStore: service.executionStore,
+              workerStore: service.workerStore,
+              item: item,
+              advanceId: 'offer',
+              builtBy: 'offer',
+              raisedBy: 'work_item_action.advanceToDeploy',
+              log: (event, data) => service.logger.info(event, data),
             ) !=
             null;
     final stranded =
@@ -910,7 +910,14 @@ class WorkItemActionEndpoints extends Endpoint {
         null) {
       var item = await service.readWorkItem(workItemId);
       if (item.state == WorkItemState.deploying) {
-        item = await _raiseDeploymentApproval(service, item);
+        item = await raiseDeploymentApproval(
+          workflowEngine: service.workflowEngine,
+          workflowStore: service.workflowStore,
+          item: item,
+          actor: _operatorDeployActor,
+          raisedBy: 'work_item_action.advanceToDeploy',
+          log: (event, data) => service.logger.info(event, data),
+        );
       }
       return _result(
         outcome: 'accepted',
@@ -953,7 +960,14 @@ class WorkItemActionEndpoints extends Endpoint {
           createdAt: DateTime.now().toUtc(),
         ),
       );
-      final parked = await _raiseDeploymentApproval(service, item);
+      final parked = await raiseDeploymentApproval(
+        workflowEngine: service.workflowEngine,
+        workflowStore: service.workflowStore,
+        item: item,
+        actor: _operatorDeployActor,
+        raisedBy: 'work_item_action.advanceToDeploy',
+        log: (event, data) => service.logger.info(event, data),
+      );
       service.logger.info('work_item.deploy.gate_raised', {
         'workItemId': workItemId,
         'requestId': requestId,
@@ -993,11 +1007,14 @@ class WorkItemActionEndpoints extends Endpoint {
 
     // (5) THE ARTIFACT. No durable producer result means there is nothing
     // honest to deploy — refused rather than fabricated.
-    final artifact = await _deploymentArtifactFor(
-      service,
-      item,
-      requestId: requestId,
-      requestedBy: trimmedBy,
+    final artifact = await deploymentArtifactFor(
+      executionStore: service.executionStore,
+      workerStore: service.workerStore,
+      item: item,
+      advanceId: requestId,
+      builtBy: trimmedBy,
+      raisedBy: 'work_item_action.advanceToDeploy',
+      log: (event, data) => service.logger.info(event, data),
     );
     if (artifact == null) {
       service.logger.info('work_item.deploy.no_artifact', {
@@ -1037,10 +1054,14 @@ class WorkItemActionEndpoints extends Endpoint {
           createdAt: DateTime.now().toUtc(),
         ),
       );
-      final parked = await _raiseDeploymentApproval(
-        service,
-        updated,
+      final parked = await raiseDeploymentApproval(
+        workflowEngine: service.workflowEngine,
+        workflowStore: service.workflowStore,
+        item: updated,
+        actor: _operatorDeployActor,
         artifactId: artifact.artifactId,
+        raisedBy: 'work_item_action.advanceToDeploy',
+        log: (event, data) => service.logger.info(event, data),
       );
       service.logger.info('work_item.deploy.accepted', {
         'workItemId': workItemId,
@@ -1217,139 +1238,10 @@ class WorkItemActionEndpoints extends Endpoint {
     actorType: ActorType.orchestrator,
   );
 
-  /// Builds the [DeploymentArtifact] `artifactBuilt()` requires, from the
-  /// producer's own durable `AgentResult`.
-  ///
-  /// Returns `null` when there is no honest artifact to build: no resolvable
-  /// producer, a result that is not completed, or no revision the artifact can
-  /// name (`producedCommitFor` — the platform's own answer to "what did this
-  /// producer leave" — first, then the workspace base it was built against).
-  /// Nothing here invents a revision or a file.
-  Future<DeploymentArtifact?> _deploymentArtifactFor(
-    ControlPlaneService service,
-    WorkItem item, {
-    required String requestId,
-    required String requestedBy,
-  }) async {
-    final producer = await resolveProducerExecution(
-      store: service.executionStore,
-      workItemId: item.workItemId,
-      producerActorId: item.metadata?['producerActorId'],
-    );
-    final result = producer.result;
-    if (result == null || result.status != AgentResultStatus.completed) {
-      service.logger.info('work_item.deploy.no_producer', {
-        'workItemId': item.workItemId,
-        'producer': producer.note,
-      });
-      return null;
-    }
-
-    final produced = await producedCommitFor(service.workerStore, item);
-    final execution = producer.executionId == null
-        ? null
-        : await service.executionStore.readExecutionOrNull(
-            producer.executionId!,
-          );
-    final (gitCommit, basis) = switch (produced) {
-      CommitProduced(:final commit) => (commit, 'producedCommit'),
-      _ => (execution?.workspace.startingRevision, 'workspaceStartingRevision'),
-    };
-    if (gitCommit == null || gitCommit.isEmpty) {
-      service.logger.info('work_item.deploy.no_revision', {
-        'workItemId': item.workItemId,
-        'producerExecutionId': producer.executionId,
-      });
-      return null;
-    }
-
-    final manifest = ArtifactManifest(
-      name: item.productId,
-      version: gitCommit,
-      gitCommit: gitCommit,
-      files: [
-        for (final a in result.artifacts)
-          ArtifactFile(
-            path: a.path,
-            sha256: a.sha256,
-            sizeBytes: a.sizeBytes,
-            mediaType: a.mediaType,
-          ),
-      ],
-      sbom: const SoftwareBillOfMaterials(
-        format: 'CycloneDX',
-        version: '1.5',
-        components: [],
-      ),
-      metadata: {
-        'workItemId': item.workItemId,
-        'producerExecutionId': producer.executionId ?? '',
-        'commitBasis': basis,
-      },
-    );
-    return DeploymentArtifact(
-      // Deterministic in the request id: the artifact record one operator
-      // intent built. The ledger's replay guard means it is minted once.
-      artifactId: 'artifact-deploy-${item.workItemId}-$requestId',
-      contentHash: crypto.sha256
-          .convert(utf8.encode(jsonEncode(manifest.toJson())))
-          .toString(),
-      manifest: manifest,
-      builtAt: DateTime.now().toUtc(),
-      builtBy: requestedBy,
-      labels: {
-        'raisedBy': 'work_item_action.advanceToDeploy',
-        'producerExecutionId': producer.executionId ?? '',
-        'commitBasis': basis,
-      },
-    );
-  }
-
-  /// Raises the blocking `deploymentApproval` decision, parking the item at
-  /// `waiting_for_human_decision`.
-  ///
-  /// A refusal — the item moved concurrently — is logged and swallowed: the
-  /// caller returns the item's current state either way, and the durable rows
-  /// still record the rejected attempt.
-  Future<WorkItem> _raiseDeploymentApproval(
-    ControlPlaneService service,
-    WorkItem item, {
-    String? artifactId,
-  }) async {
-    try {
-      await service.workflowEngine.requestHumanDecision(
-        workItemId: item.workItemId,
-        decisionType: HumanDecisionType.deploymentApproval,
-        question:
-            'This work passed QA. Approve deploying it to its target '
-            'environment?',
-        options: const [
-          HumanDecisionOption(
-            optionId: 'approve',
-            label: 'Deploy it',
-            description: 'The work item moves to deployed.',
-          ),
-          HumanDecisionOption(
-            optionId: 'reject',
-            label: 'Do not deploy',
-            description: 'The work item is marked deployment_failed.',
-          ),
-        ],
-        blocking: true,
-        metadata: {
-          'raisedBy': 'work_item_action.advanceToDeploy',
-          if (artifactId != null) 'deploymentArtifactId': artifactId,
-        },
-        actor: _operatorDeployActor,
-      );
-    } on WorkflowTransitionRejectedException catch (error) {
-      service.logger.info('work_item.deploy.decision_refused', {
-        'workItemId': item.workItemId,
-        'reason': error.record.reason ?? error.record.outcome.wire,
-      });
-    }
-    return service.readWorkItem(item.workItemId);
-  }
+  // The artifact build and the decision raise the deploy advance is made of
+  // are SHARED with the deploy-gate sweep in `../deploy/deploy_advance.dart`:
+  // the sweep fires the same advance for every `qa_passed` item, and two
+  // constructions of "what is being deployed" must never drift apart.
 
   /// The first ledger row for this exact operator intent, by raw wire token —
   /// the 'deploy'/'reclaim' actions are not [OperatorActionKind] members.
