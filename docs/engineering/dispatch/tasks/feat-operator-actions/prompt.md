@@ -1,52 +1,62 @@
-# Dispatch — feat-operator-actions (F-254)
+# Dispatch — feat-operator-actions (F-254, re-dispatch with corrected ownership)
 
 ```yaml
 MANAGER: orchestrator-main
 TASK_ID: feat-operator-actions
 TASK_TYPE: implement
 FEATURE: expose operator actions for states the UI currently shows none — qa_passed -> advance to deploy, stranded agent_executing -> reclaim/retry
-AREA: work_item_action endpoints + actionContext + control-plane UI actions
+AREA: work_item_action endpoints + actionContext + generated serverpod connectors + control-plane UI actions
 WORKTREE: /private/tmp/shipit-feat-operator-actions
 BRANCH: feat/operator-actions
-BASE_SHA: HEAD
-OWNED_PATHS: [apps/server/lib/src/endpoints/**, apps/server/lib/src/services/**, apps/control_plane/lib/features/**, apps/control_plane/test/**]
-READ_ONLY_PATHS: [packages/workflow_engine/**, packages/workflow_store/**, packages/control_plane_client/lib/src/generated/**]
-PROHIBITED_PATHS: [.agents/ .claude/ AGENTS.md docs/adr/** .decisions/** **/generated/**]
+BASE_SHA: 6a4d307
+OWNED_PATHS: [apps/server/lib/src/endpoints/**, apps/server/lib/src/services/**, apps/server/lib/src/generated/**, apps/server/test/**, packages/control_plane_client/lib/src/**, apps/control_plane/lib/**, apps/control_plane/test/**]
+READ_ONLY_PATHS: [packages/workflow_engine/**, packages/workflow_store/**]
+PROHIBITED_PATHS: [.agents/ .claude/ AGENTS.md docs/adr/** .decisions/**]
 VALIDATION_COMMANDS: [dart format --output=none --set-exit-if-changed . (root, dart pub get first), dart analyze (apps/server + apps/control_plane + touched packages), dart run tool/run_unit_tests.dart (apps/server), flutter test (apps/control_plane)]
 ROUTING_CLASS: PRECISION
 ```
 
-## Confirmed gap (live)
+## Re-dispatch context — the prior lane's verified findings (reuse, don't re-derive)
 
-`actionContext` returns `actions: []` for BOTH states:
-- `qa_passed` — the deploy advance (`qa_passed -> deploying` — orchestrator-guarded +
-  `artifactBuilt()`) is orchestrator-level, no endpoint -> no UI action.
-- `agent_executing` (stranded — no live execution) — `retryFailedWorkItem` is notApplicable
-  (only agent_failed); the stranded item can't be retried -> no UI action.
+The prior lane blocked on ownership and verified the implementation plan end-to-end:
+- `qa_passed -> deploying` (`work_item_transitions.dart:852`, orchestrator + artifactBuilt) has
+  NO caller — that's why actionContext is empty. The honest deploy sequence: `qaPassed ->
+  deploying` (orchestrator + artifactBuilt), THEN `requestHumanDecision(deploymentApproval)` ->
+  `deploying -> waiting_for_human_decision`. `deploymentApproval` can't be raised from
+  qaPassed directly.
+- `artifactBuilt()` reads `context['deploymentArtifact']` as DeploymentArtifact — derivable
+  from the producer's AgentResult (ArtifactFile is the same shape).
+- The stranded `agent_executing` case needs a NEW operator action — the F-235 `_reclaimZombie`
+  only fires on held-job/stale-execution reconciliation, not a jobless stranded item.
+- `OperatorActionRecord.action` is a free-form string — new audit tokens ('deploy','reclaim')
+  don't need OperatorActionKind changes.
+- Both actions can return the existing `WorkItemActionResult` (no new wire models needed).
 
-The operator should be able to handle both from the UI, not via a lane.
+## Ownership correction
 
-## Task
+This re-dispatch grants ownership of the generated surface — `serverpod generate` output in
+`apps/server/lib/src/generated/**` and `packages/control_plane_client/lib/src/protocol/**` is a
+PERMITTED artifact of this lane (mechanically produced by the sanctioned schema/endpoint
+change). You may run `serverpod generate` to produce the connectors. `apps/control_plane/lib/**`
+(including `lib/data/control_plane_repository.dart` — the sole client->server path) is owned.
 
-1. Server — operator action(s):
-   - `advanceToDeploy(workItemId)` for `qa_passed` items: fires `qa_passed -> deploying`
-     (orchestrator-actor, artifactBuilt() gate) — or raises the `deploymentApproval` decision
-     honestly if that's the real first step (verify the flow — the `deploying ->
-     waiting_for_human_decision` edge raises `deploymentApproval`; which transition the
-     action should fire).
-   - A stranded `agent_executing` repair: detect "agent_executing with no live
-     agent_execution" and allow the operator to reclaim/force `agent_executing ->
-     agent_failed` so it becomes retriable — or whatever the honest reclaim is (verify the
-     F-235 reclaim path handles this or that a new operator action is needed).
-   - Expose both via `actionContext` so the UI can render them.
-2. Client — surface the actions: the needs-you/action buttons for `qa_passed` (deploy) and
-   `agent_executing` (reclaim) — following the existing actionContext-driven action pattern.
-3. Regression tests: `actionContext` returns the deploy action for qa_passed + the reclaim
-   for a stranded agent_executing; the actions fire the right transition/decision.
-4. Report ROOT CAUSE of why these states had no action + the actions added.
+## Task (per the prior lane's verified plan)
+
+1. Server: `advanceToDeploy` — transition(qaPassed->deploying, actor=orchestrator,
+   context={deploymentArtifact built from the producer's AgentResult}), then
+   requestHumanDecision(deploymentApproval) so the item parks at the human gate.
+   `reclaimStrandedExecution` — detect agent_executing + no non-terminal AgentExecution + no
+   active job -> transition(agent_executing->agent_failed) audited as a new 'reclaim' operator
+   action (retriable via the existing retry path). Expose both via `actionContext.actions` as
+   new WorkItemActionView tokens.
+2. `serverpod generate` for the new endpoints + client protocol.
+3. Client: `control_plane_repository.dart` calls + surface the actions (needs-you/action
+   buttons for qa_passed-deploy + agent_executing-reclaim).
+4. Regression tests: actionContext returns the deploy action for qa_passed + the reclaim for
+   a stranded agent_executing; the actions fire the right transition/decision.
 
 ## Rules
-New commits; no push; no docker/DB writes (read-only OK); nothing outside OWNED_PATHS —
-IMPLEMENTATION_BLOCKED if the deploy advance genuinely needs engine composition outside
-owned paths. Report per subtask-report.md: `RESULT: IMPLEMENTED` / `IMPLEMENTATION_BLOCKED`,
-HEAD_SHA, `READY_FOR_INDEPENDENT_REVIEW:`, `ACTIONS ADDED:`.
+New commits; no push; no docker/DB writes (read-only OK); generated output only via `serverpod
+generate`; nothing outside OWNED_PATHS. Report per subtask-report.md:
+`RESULT: IMPLEMENTED` / `IMPLEMENTATION_BLOCKED`, HEAD_SHA, `READY_FOR_INDEPENDENT_REVIEW:`,
+`ACTIONS ADDED:`.
