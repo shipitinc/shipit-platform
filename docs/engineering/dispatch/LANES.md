@@ -1555,3 +1555,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | focused-review-operator-actions | review | IN_FLIGHT | (read-only) | feat/operator-actions | 6a4d307 | PRECISION | await result |
 | focused-review-operator-actions | review | CLOSED | (read-only) | feat/operator-actions | 6a4d307 | PRECISION | APPROVE_CORRECTIONS → merged c8d30bb (standing auth) | done |
 | impl-qa-passed-auto-deploy | implement | IN_FLIGHT | /private/tmp/shipit-feat-qa-deploy | feat/qa-passed-auto-deploy | 4eb53c4 | PRECISION | auto-raise deploymentApproval on qa_passed -> Needs You (F-256) | b5b43db6 running |
+| review-qa-passed-auto-deploy | review | IN_FLIGHT | (read-only) | feat/qa-passed-auto-deploy | 4eb53c4 | PRECISION | await result on 7df90d7 |
