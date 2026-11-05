@@ -396,6 +396,84 @@ const String reviewRepairSemanticsLabel =
     're-queue the review. It is a repair, not an approval.';
 
 // ---------------------------------------------------------------------------
+// THE DEPLOY ADVANCE AND THE STRANDED RECLAIM
+//
+// Same boundary as everything above: the server sends wire values
+// ('deploy' | 'reclaim'), this maps them to words. Neither action reads as a
+// peer of "try again" or "stop" — one asks for a decision, the other hands a
+// stranded item back to the failure surface.
+// ---------------------------------------------------------------------------
+
+/// Panel heading for a QA-passed item. Says what is true, not what will happen.
+const String deployPanelHeading = 'It passed its checks';
+
+/// What moving forward actually does — asks the operator to decide, first.
+const String deployPanelExplanation =
+    'Nothing is deployed yet, and nothing is deployed without you. Moving '
+    'this forward puts a deployment decision on your plate to approve or '
+    'turn down.';
+
+/// The deploy action button. "Move forward", never "Deploy" — the action does
+/// not deploy anything; it raises the question that does.
+const String deployActionLabel = 'Move it forward';
+
+/// What the confirm strip says about the advance. True by construction: the
+/// item parks on a deployment_approval decision.
+const String deployConsequenceSentence =
+    'Parks the work on a deployment decision for you to answer. Nothing is '
+    'deployed yet.';
+
+/// Panel heading for a stranded run — the record claims execution, nothing is.
+const String reclaimPanelHeading = 'It says it is running — nothing is';
+
+/// What a stranded reclaim does, in plain words.
+const String reclaimPanelExplanation =
+    'The record claims an agent is working, but there is no live execution '
+    'and no queued job behind it. Handing it back marks it as stopped, where '
+    'you can try it again.';
+
+/// The reclaim action button.
+const String reclaimActionLabel = 'Hand it back';
+
+/// What the confirm strip says about a reclaim.
+const String reclaimConsequenceSentence =
+    'Marks the work as stopped so it can be tried again. The record of what '
+    'happened is kept.';
+
+/// The accepted announcement for a deploy advance — parks, not deploys.
+const String deployAcceptedSentence =
+    'Done — it is waiting on your deployment decision now.';
+
+/// The accepted announcement for a reclaim — lands at the failure surface.
+const String reclaimAcceptedSentence =
+    'Done — it is marked as stopped. You can try it again now.';
+
+/// The announcement for one resolved operator action, per action.
+///
+/// Deploy and reclaim get their own accepted sentences because
+/// [acceptedOutcomeSentence] — "it will start as soon as a machine is free" —
+/// is false for both: a deploy parks on a human, a reclaim only re-parks.
+/// Every refusal reuses the existing vocabulary verbatim.
+String operatorActionAnnouncementFor(
+  String action,
+  String outcome, {
+  bool capacityFull = false,
+  int attemptLimit = 0,
+  bool retryLimitResolved = true,
+}) {
+  if (outcome == 'accepted') {
+    if (action == 'deploy') return deployAcceptedSentence;
+    if (action == 'reclaim') return reclaimAcceptedSentence;
+  }
+  return operatorActionAnnouncement(
+    outcome,
+    capacityFull: capacityFull,
+    attemptLimit: attemptLimit,
+    retryLimitResolved: retryLimitResolved,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // A REFUSED TRANSITION IS NOT A MOVE
 // ---------------------------------------------------------------------------
 

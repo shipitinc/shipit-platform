@@ -2425,6 +2425,84 @@ class _WorkItemActionEndpoints {
     });
   }
 
+  _i3.Future<_i38.WorkItemActionResult> advanceToDeploy(
+    _i1.TestSessionBuilder sessionBuilder, {
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async {
+    return _i1.callAwaitableFunctionAndHandleExceptions(() async {
+      var _localUniqueSession =
+          (sessionBuilder as _i1.InternalTestSessionBuilder).internalBuild(
+            endpoint: 'workItemActionEndpoints',
+            method: 'advanceToDeploy',
+          );
+      try {
+        var _localCallContext = await _endpointDispatch.getMethodCallContext(
+          createSessionCallback: (_) => _localUniqueSession,
+          endpointPath: 'workItemActionEndpoints',
+          methodName: 'advanceToDeploy',
+          parameters: _i1.testObjectToJson({
+            'workItemId': workItemId,
+            'requestId': requestId,
+            'requestedBy': requestedBy,
+            'reason': reason,
+          }),
+          serializationManager: _serializationManager,
+        );
+        var _localReturnValue =
+            await (_localCallContext.method.call(
+                  _localUniqueSession,
+                  _localCallContext.arguments,
+                )
+                as _i3.Future<_i38.WorkItemActionResult>);
+        return _localReturnValue;
+      } finally {
+        await _localUniqueSession.close();
+      }
+    });
+  }
+
+  _i3.Future<_i38.WorkItemActionResult> reclaimStrandedExecution(
+    _i1.TestSessionBuilder sessionBuilder, {
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async {
+    return _i1.callAwaitableFunctionAndHandleExceptions(() async {
+      var _localUniqueSession =
+          (sessionBuilder as _i1.InternalTestSessionBuilder).internalBuild(
+            endpoint: 'workItemActionEndpoints',
+            method: 'reclaimStrandedExecution',
+          );
+      try {
+        var _localCallContext = await _endpointDispatch.getMethodCallContext(
+          createSessionCallback: (_) => _localUniqueSession,
+          endpointPath: 'workItemActionEndpoints',
+          methodName: 'reclaimStrandedExecution',
+          parameters: _i1.testObjectToJson({
+            'workItemId': workItemId,
+            'requestId': requestId,
+            'requestedBy': requestedBy,
+            'reason': reason,
+          }),
+          serializationManager: _serializationManager,
+        );
+        var _localReturnValue =
+            await (_localCallContext.method.call(
+                  _localUniqueSession,
+                  _localCallContext.arguments,
+                )
+                as _i3.Future<_i38.WorkItemActionResult>);
+        return _localReturnValue;
+      } finally {
+        await _localUniqueSession.close();
+      }
+    });
+  }
+
   _i3.Future<_i39.ReviewRepairResult> repairUnreviewedReview(
     _i1.TestSessionBuilder sessionBuilder, {
     required String workItemId,

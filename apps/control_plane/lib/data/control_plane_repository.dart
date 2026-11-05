@@ -540,6 +540,48 @@ class ControlPlaneRepository {
     return _workItemActionResult(result);
   }
 
+  /// `qaPassed -> deploying`, then parked on a `deployment_approval` decision.
+  ///
+  /// The deploy is never TAKEN here — it is asked for. The server builds the
+  /// deployment artifact from the producer's own durable result, takes the
+  /// `qaPassed -> deploying` edge, and raises the human gate; the item lands
+  /// at `waiting_for_human_decision` for a real approve/reject.
+  Future<WorkItemActionResultResponse> advanceToDeploy({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async {
+    final result = await _client.workItemActionEndpoints.advanceToDeploy(
+      workItemId: workItemId,
+      requestId: requestId,
+      requestedBy: requestedBy,
+      reason: reason,
+    );
+    revision.value++;
+    return _workItemActionResult(result);
+  }
+
+  /// `agentExecuting -> agentFailed`, for an item that claims to be running
+  /// but nothing holds — no non-terminal execution and no active job. It lands
+  /// at `agent_failed`, where the ordinary retry surface takes over.
+  Future<WorkItemActionResultResponse> reclaimStrandedExecution({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async {
+    final result = await _client.workItemActionEndpoints
+        .reclaimStrandedExecution(
+          workItemId: workItemId,
+          requestId: requestId,
+          requestedBy: requestedBy,
+          reason: reason,
+        );
+    revision.value++;
+    return _workItemActionResult(result);
+  }
+
   /// Retires an engineering-review decision that no reviewer ever backed, and
   /// puts the work back in the queue for a real one.
   ///

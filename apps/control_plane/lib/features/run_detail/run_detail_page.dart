@@ -12,6 +12,7 @@ import '../../shared/state_views.dart';
 import '../../shared/detail_sections.dart';
 import '../../shared/mobile_chrome.dart';
 import 'failed_work_item_action_panel.dart';
+import 'operator_action_panel.dart';
 import 'review_repair_affordance.dart';
 import 'run_detail_bloc.dart';
 import 'run_detail_event.dart';
@@ -713,6 +714,30 @@ class _RightColumn extends StatelessWidget {
     // audit." (AC-2, §8.4).
     final actionContext = state.actionContext;
     if (actionContext case final a? when a.actions.isNotEmpty) {
+      // The deploy advance and the stranded reclaim are not failure-panel
+      // actions — the copy there is "it failed", which is false for both.
+      // They get their own panel; the action sets are state-exclusive so at
+      // most one of the two surfaces can ever be offered.
+      if (a.actions.any((x) => x.action == 'deploy' || x.action == 'reclaim')) {
+        return OperatorActionPanel(
+          actionContext: a,
+          pendingAction: state.pendingAction,
+          submitting: state.isSubmittingAction,
+          outcomeAnnouncement: state.actionAnnouncement,
+          onActionPressed: (action) =>
+              context.read<RunDetailBloc>().add(RunDetailActionStarted(action)),
+          onSubmit: (action, reason, requestId) =>
+              context.read<RunDetailBloc>().add(
+                RunDetailActionSubmitted(
+                  action: action,
+                  reason: reason,
+                  requestId: requestId,
+                ),
+              ),
+          onCancel: () =>
+              context.read<RunDetailBloc>().add(RunDetailActionCancelled()),
+        );
+      }
       return FailedWorkItemActionPanel(
         actionContext: a,
         haltCount: state.events.where((e) => e.type == 'agent_failed').length,

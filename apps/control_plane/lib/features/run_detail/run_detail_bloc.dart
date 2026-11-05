@@ -159,26 +159,39 @@ class RunDetailBloc extends Bloc<RunDetailEvent, RunDetailState> {
   ) async {
     emit(state.copyWith(isSubmittingAction: true));
     try {
-      final isRetry = event.action == 'retry';
-      final result = isRetry
-          ? await _repository.retryFailedWorkItem(
-              workItemId: _runId,
-              requestId: event.requestId,
-              requestedBy: _operatorName(),
-              reason: event.reason,
-            )
-          : await _repository.stopFailedWorkItem(
-              workItemId: _runId,
-              requestId: event.requestId,
-              requestedBy: _operatorName(),
-              reason: event.reason,
-            );
+      final result = await switch (event.action) {
+        'retry' => _repository.retryFailedWorkItem(
+          workItemId: _runId,
+          requestId: event.requestId,
+          requestedBy: _operatorName(),
+          reason: event.reason,
+        ),
+        'deploy' => _repository.advanceToDeploy(
+          workItemId: _runId,
+          requestId: event.requestId,
+          requestedBy: _operatorName(),
+          reason: event.reason,
+        ),
+        'reclaim' => _repository.reclaimStrandedExecution(
+          workItemId: _runId,
+          requestId: event.requestId,
+          requestedBy: _operatorName(),
+          reason: event.reason,
+        ),
+        _ => _repository.stopFailedWorkItem(
+          workItemId: _runId,
+          requestId: event.requestId,
+          requestedBy: _operatorName(),
+          reason: event.reason,
+        ),
+      };
 
       // Every terminal outcome has a stated operator-facing sentence (N7), and
       // the strip always closes: the action resolved, one way or another, so
       // leaving a confirm strip up would invite a second spend of something
       // that has already been decided.
-      final announcement = operatorActionAnnouncement(
+      final announcement = operatorActionAnnouncementFor(
+        event.action,
         result.outcome,
         capacityFull: actionContextCapacityFull(state.actionContext?.capacity),
         attemptLimit: result.attemptLimit,

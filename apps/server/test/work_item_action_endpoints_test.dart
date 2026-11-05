@@ -1,6 +1,10 @@
 import 'package:control_plane_server/src/endpoints/work_item_action_endpoints.dart';
 import 'package:control_plane_server/src/services/control_plane_service.dart';
+import 'package:execution_coordinator/execution_coordinator.dart'
+    show ExecutionStore, InMemoryExecutionStore;
 import 'package:platform_contracts/platform_contracts.dart';
+import 'package:worker_runtime/worker_runtime.dart'
+    show InMemoryWorkerStore, WorkerStore;
 import 'package:scheduler/scheduler.dart'
     show triageDefectDedupeKey, triageDefectDefinition;
 import 'package:serverpod/serverpod.dart';
@@ -1141,6 +1145,509 @@ void main() {
       expect(await ledger('w-ok'), isEmpty);
     },
   );
+
+  // ==================================================================
+  // The deploy advance — qa_passed -> deploying -> deployment_approval.
+  // ==================================================================
+
+  group('advanceToDeploy', () {
+    /// A QA-passed item. The producer is a completed implementer execution
+    /// carrying a completed result with one artifact — resolved by the
+    /// implementer-role fallback when no `producerActorId` is stamped.
+    Future<String> seedQaPassed({
+      String id = 'wi-qa-1',
+      bool withProducer = true,
+    }) async {
+      await store.saveWorkItem(
+        WorkItem(
+          workItemId: id,
+          productId: 'shipit',
+          category: WorkItemCategory.bugfix,
+          title: 'A passed item',
+          description: 'Passed QA',
+          state: WorkItemState.qaPassed,
+          createdAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+          version: 1,
+        ),
+      );
+      if (withProducer) {
+        await endpoints.executionStore.saveExecution(
+          AgentExecution(
+            executionId: 'ex-prod',
+            workItemId: id,
+            requestId: 'req-prod',
+            runtimeTypeId: 'local',
+            role: AgentRole.implementer,
+            status: AgentSessionStatus.completed,
+            workspace: const AgentWorkspace(
+              workspaceId: 'ws-1',
+              path: '/tmp/ws',
+              startingRevision: 'base-abc',
+            ),
+            startedAt: DateTime.utc(2026),
+          ),
+        );
+        await endpoints.executionStore.saveResult(
+          'ex-prod',
+          AgentResult(
+            resultId: 'res-prod',
+            sessionId: 'sess-prod',
+            workItemId: id,
+            status: AgentResultStatus.completed,
+            artifacts: const [
+              AgentArtifact(
+                artifactId: 'a-1',
+                type: 'build',
+                path: 'bin/app',
+                sha256: 'deadbeef',
+                sizeBytes: 42,
+                mediaType: 'application/octet-stream',
+              ),
+            ],
+            diagnostics: const AgentDiagnostics(
+              exitCode: 0,
+              durationMs: 1,
+              toolCalls: 1,
+              errors: [],
+              warnings: [],
+            ),
+            structuredResult: const {},
+            completedAt: DateTime.utc(2026),
+          ),
+        );
+      }
+      return id;
+    }
+
+    test(
+      'actionContext offers deploy for a deployable qa_passed item',
+      () async {
+        final id = await seedQaPassed();
+
+        final context = await endpoints.actionContext(
+          session,
+          workItemId: id,
+        );
+
+        expect(context.actions.map((a) => a.action), ['deploy']);
+        expect(
+          context.actions.single.toState,
+          WorkItemState.waitingForHumanDecision.wire,
+        );
+        expect(context.actions.single.confirmRequired, isTrue);
+        expect(context.actions.single.destructive, isFalse);
+      },
+    );
+
+    test(
+      'actionContext withholds deploy when no producer result exists',
+      () async {
+        final id = await seedQaPassed(withProducer: false);
+
+        final context = await endpoints.actionContext(
+          session,
+          workItemId: id,
+        );
+
+        expect(context.actions, isEmpty);
+      },
+    );
+
+    test('accepted: transition + gate + ONE audit row', () async {
+      final id = await seedQaPassed();
+
+      final result = await endpoints.advanceToDeploy(
+        session,
+        workItemId: id,
+        requestId: 'req-d1',
+        requestedBy: 'dana',
+        reason: 'ready for production',
+      );
+
+      expect(result.outcome, 'accepted');
+
+      // The item is parked at the human gate, NOT deployed.
+      final item = await store.readWorkItem(id);
+      expect(item.state, WorkItemState.waitingForHumanDecision);
+      expect(item.blockingHumanDecisionId, isNotNull);
+
+      final decision = await store.readHumanDecision(
+        item.blockingHumanDecisionId!,
+      );
+      expect(decision.decisionType, HumanDecisionType.deploymentApproval);
+      expect(decision.status, HumanDecisionStatus.pending);
+
+      // One audit row, naming the human and the action.
+      final rows = await ledger(id);
+      expect(rows, hasLength(1));
+      expect(rows.single.action, 'deploy');
+      expect(rows.single.fromState, WorkItemState.qaPassed.wire);
+      expect(rows.single.toState, WorkItemState.deploying.wire);
+      expect(rows.single.requestedBy, 'dana');
+      expect(rows.single.reason, 'ready for production');
+      expect(rows.single.transitionId, isNotNull);
+
+      // The durable transition record carries the accepted edge.
+      final history = await store.readTransitionHistory(id);
+      final deploy = history.lastWhere(
+        (t) => t.toState == WorkItemState.deploying,
+      );
+      expect(deploy.outcome, TransitionOutcome.accepted);
+      expect(deploy.idempotencyKey, 'operator-deploy:req-d1');
+    });
+
+    test(
+      'refusals: wrong state, blank reason, live job, no producer',
+      () async {
+        // Wrong state.
+        await store.saveWorkItem(
+          WorkItem(
+            workItemId: 'w-live',
+            productId: 'shipit',
+            category: WorkItemCategory.bugfix,
+            title: 'In flight',
+            description: 'running',
+            state: WorkItemState.agentExecuting,
+            createdAt: DateTime.utc(2026),
+            updatedAt: DateTime.utc(2026),
+            version: 1,
+          ),
+        );
+        final wrong = await endpoints.advanceToDeploy(
+          session,
+          workItemId: 'w-live',
+          requestId: 'req-x',
+          requestedBy: 'dana',
+          reason: 'go',
+        );
+        expect(wrong.outcome, 'notApplicable');
+
+        // Blank reason.
+        final id = await seedQaPassed();
+        final blank = await endpoints.advanceToDeploy(
+          session,
+          workItemId: id,
+          requestId: 'req-b',
+          requestedBy: 'dana',
+          reason: '   ',
+        );
+        expect(blank.outcome, 'invalidRequest');
+
+        // Live job.
+        endpoints.jobs = [_job(id, JobState.running)];
+        final live = await endpoints.advanceToDeploy(
+          session,
+          workItemId: id,
+          requestId: 'req-j',
+          requestedBy: 'dana',
+          reason: 'go',
+        );
+        expect(live.outcome, 'alreadyRunning');
+        endpoints.jobs = const [];
+
+        // No producer result at all.
+        final bare = await seedQaPassed(id: 'wi-bare', withProducer: false);
+        final noProducer = await endpoints.advanceToDeploy(
+          session,
+          workItemId: bare,
+          requestId: 'req-p',
+          requestedBy: 'dana',
+          reason: 'go',
+        );
+        expect(noProducer.outcome, 'notApplicable');
+
+        // Every refusal wrote NOTHING.
+        expect(await ledger(id), isEmpty);
+        expect(await ledger(bare), isEmpty);
+      },
+    );
+
+    test('a replay spends nothing twice', () async {
+      final id = await seedQaPassed();
+      await endpoints.advanceToDeploy(
+        session,
+        workItemId: id,
+        requestId: 'req-replay',
+        requestedBy: 'dana',
+        reason: 'go',
+      );
+
+      final replay = await endpoints.advanceToDeploy(
+        session,
+        workItemId: id,
+        requestId: 'req-replay',
+        requestedBy: 'dana',
+        reason: 'go',
+      );
+
+      expect(replay.outcome, 'accepted');
+      expect(await ledger(id), hasLength(1));
+      // And still exactly one pending deployment_approval decision.
+      final decisions = await store.readHumanDecisionsForWorkItem(id);
+      expect(
+        decisions.where(
+          (d) => d.decisionType == HumanDecisionType.deploymentApproval,
+        ),
+        hasLength(1),
+      );
+    });
+
+    test(
+      'a gateless `deploying` item is finished, not re-transitioned',
+      () async {
+        // The interrupted advance: the transition committed but the decision
+        // raise never did (a crash between the two writes). The SAME action
+        // finishes it — no second deploy edge is taken.
+        await store.saveWorkItem(
+          WorkItem(
+            workItemId: 'wi-dep',
+            productId: 'shipit',
+            category: WorkItemCategory.bugfix,
+            title: 'Mid-advance',
+            description: 'gate missing',
+            state: WorkItemState.deploying,
+            createdAt: DateTime.utc(2026),
+            updatedAt: DateTime.utc(2026),
+            version: 1,
+          ),
+        );
+
+        final context = await endpoints.actionContext(
+          session,
+          workItemId: 'wi-dep',
+        );
+        expect(context.actions.map((a) => a.action), ['deploy']);
+
+        final result = await endpoints.advanceToDeploy(
+          session,
+          workItemId: 'wi-dep',
+          requestId: 'req-finish',
+          requestedBy: 'dana',
+          reason: 'finish the interrupted advance',
+        );
+
+        expect(result.outcome, 'accepted');
+        final item = await store.readWorkItem('wi-dep');
+        expect(item.state, WorkItemState.waitingForHumanDecision);
+        expect(item.blockingHumanDecisionId, isNotNull);
+        final rows = await ledger('wi-dep');
+        expect(rows.single.action, 'deploy');
+        expect(rows.single.fromState, WorkItemState.deploying.wire);
+      },
+    );
+  });
+
+  // ==================================================================
+  // The stranded reclaim — agent_executing -> agent_failed.
+  // ==================================================================
+
+  group('reclaimStrandedExecution', () {
+    Future<String> seedStranded({String id = 'wi-stranded'}) async {
+      await store.saveWorkItem(
+        WorkItem(
+          workItemId: id,
+          productId: 'shipit',
+          category: WorkItemCategory.bugfix,
+          title: 'Says it is running',
+          description: 'nothing holds it',
+          state: WorkItemState.agentExecuting,
+          createdAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+          version: 1,
+        ),
+      );
+      return id;
+    }
+
+    AgentExecution execution(String id, AgentSessionStatus status) =>
+        AgentExecution(
+          executionId: 'ex-$status',
+          workItemId: id,
+          requestId: 'req-ex',
+          runtimeTypeId: 'local',
+          role: AgentRole.implementer,
+          status: status,
+          workspace: const AgentWorkspace(workspaceId: 'ws', path: '/tmp/w'),
+          startedAt: DateTime.utc(2026),
+        );
+
+    test('actionContext offers reclaim for a stranded item only', () async {
+      // Stranded: no executions, no jobs.
+      final id = await seedStranded();
+      var context = await endpoints.actionContext(session, workItemId: id);
+      expect(context.actions.map((a) => a.action), ['reclaim']);
+      expect(
+        context.actions.single.toState,
+        WorkItemState.agentFailed.wire,
+      );
+
+      // NOT stranded: a non-terminal execution exists.
+      await endpoints.executionStore.saveExecution(
+        execution(id, AgentSessionStatus.running),
+      );
+      context = await endpoints.actionContext(session, workItemId: id);
+      expect(context.actions, isEmpty);
+    });
+
+    test('an active job withholds the offer too', () async {
+      final id = await seedStranded();
+      endpoints.jobs = [_job(id, JobState.claimed)];
+
+      final context = await endpoints.actionContext(
+        session,
+        workItemId: id,
+      );
+      expect(context.actions, isEmpty);
+    });
+
+    test('accepted: agent_failed, audited reclaim, retriable after', () async {
+      final id = await seedStranded();
+
+      final result = await endpoints.reclaimStrandedExecution(
+        session,
+        workItemId: id,
+        requestId: 'req-rc',
+        requestedBy: 'dana',
+        reason: 'the run that held it is gone',
+      );
+
+      expect(result.outcome, 'accepted');
+      expect(
+        (await store.readWorkItem(id)).state,
+        WorkItemState.agentFailed,
+      );
+
+      final rows = await ledger(id);
+      expect(rows, hasLength(1));
+      expect(rows.single.action, 'reclaim');
+      expect(rows.single.fromState, WorkItemState.agentExecuting.wire);
+      expect(rows.single.toState, WorkItemState.agentFailed.wire);
+      expect(rows.single.requestedBy, 'dana');
+
+      // The whole point of the landing state: the ordinary retry surface now
+      // takes the item.
+      final retry = await endpoints.retryFailedWorkItem(
+        session,
+        workItemId: id,
+        requestId: 'req-after',
+        requestedBy: 'dana',
+        reason: 'try it again',
+      );
+      expect(retry.outcome, 'accepted');
+      expect(
+        (await store.readWorkItem(id)).state,
+        WorkItemState.designNotRequired,
+      );
+    });
+
+    test('refusals: live execution, live job, wrong state, blank', () async {
+      final id = await seedStranded();
+
+      // A non-terminal execution means the item is NOT stranded.
+      await endpoints.executionStore.saveExecution(
+        execution(id, AgentSessionStatus.running),
+      );
+      final live = await endpoints.reclaimStrandedExecution(
+        session,
+        workItemId: id,
+        requestId: 'req-1',
+        requestedBy: 'dana',
+        reason: 'because',
+      );
+      expect(live.outcome, 'alreadyRunning');
+
+      // A TERMINAL execution is fine — the drive finished and never moved the
+      // item; that is the stranded shape.
+      await endpoints.executionStore.saveExecution(
+        AgentExecution(
+          executionId: 'ex-dead',
+          workItemId: id,
+          requestId: 'req-dead',
+          runtimeTypeId: 'local',
+          role: AgentRole.implementer,
+          status: AgentSessionStatus.failed,
+          workspace: const AgentWorkspace(workspaceId: 'ws', path: '/tmp/w'),
+          startedAt: DateTime.utc(2026),
+        ),
+      );
+      // ...but the earlier running one still holds it. Remove it by starting a
+      // fresh store item instead — an active job is the next check anyway.
+      final id2 = await seedStranded(id: 'wi-stranded-2');
+      endpoints.jobs = [_job(id2, JobState.queued)];
+      final liveJob = await endpoints.reclaimStrandedExecution(
+        session,
+        workItemId: id2,
+        requestId: 'req-2',
+        requestedBy: 'dana',
+        reason: 'because',
+      );
+      expect(liveJob.outcome, 'alreadyRunning');
+      endpoints.jobs = const [];
+
+      // Wrong state — a genuinely-failed item is not a reclaim candidate; it
+      // belongs to the retry/stop surface.
+      await store.saveWorkItem(
+        WorkItem(
+          workItemId: 'w-failed',
+          productId: 'shipit',
+          category: WorkItemCategory.bugfix,
+          title: 'Actually failed',
+          description: 'failed',
+          state: WorkItemState.agentFailed,
+          createdAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+          version: 1,
+        ),
+      );
+      final wrong = await endpoints.reclaimStrandedExecution(
+        session,
+        workItemId: 'w-failed',
+        requestId: 'req-3',
+        requestedBy: 'dana',
+        reason: 'because',
+      );
+      expect(wrong.outcome, 'notApplicable');
+
+      // Blank reason.
+      final id3 = await seedStranded(id: 'wi-stranded-3');
+      final blank = await endpoints.reclaimStrandedExecution(
+        session,
+        workItemId: id3,
+        requestId: 'req-4',
+        requestedBy: 'dana',
+        reason: '  ',
+      );
+      expect(blank.outcome, 'invalidRequest');
+
+      // Nothing was written anywhere.
+      expect(await ledger(id), isEmpty);
+      expect(await ledger(id2), isEmpty);
+      expect(await ledger(id3), isEmpty);
+    });
+
+    test('a replay spends nothing twice', () async {
+      final id = await seedStranded();
+      await endpoints.reclaimStrandedExecution(
+        session,
+        workItemId: id,
+        requestId: 'req-rep',
+        requestedBy: 'dana',
+        reason: 'because',
+      );
+
+      final replay = await endpoints.reclaimStrandedExecution(
+        session,
+        workItemId: id,
+        requestId: 'req-rep',
+        requestedBy: 'dana',
+        reason: 'because',
+      );
+
+      expect(replay.outcome, 'accepted');
+      expect(await ledger(id), hasLength(1));
+    });
+  });
 }
 
 /// Drives the REAL endpoint methods over in-memory stores.
@@ -1154,6 +1661,13 @@ class _TestEndpoints extends WorkItemActionEndpoints {
 
   /// The jobs `listJobsForWorkItem` reports.
   List<Job> jobs = const [];
+
+  /// The execution store the deploy/reclaim paths read. In-memory, so a test
+  /// can seed a producer result or a non-terminal execution directly.
+  final InMemoryExecutionStore executionStore = InMemoryExecutionStore();
+
+  /// The worker store `producedCommitFor` reads.
+  final InMemoryWorkerStore workerStore = InMemoryWorkerStore();
 
   /// The retry limit this endpoint resolves. Injected so the tests never read
   /// or mutate the host environment.
@@ -1199,6 +1713,12 @@ class _TestService extends ControlPlaneService {
   @override
   Future<List<Job>> listJobsForWorkItem(String workItemId) async =>
       _owner.jobs.where((j) => j.workItemId == workItemId).toList();
+
+  @override
+  ExecutionStore get executionStore => _owner.executionStore;
+
+  @override
+  WorkerStore get workerStore => _owner.workerStore;
 }
 
 /// A job in the given state, for the non-terminal / terminal assertions.

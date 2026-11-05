@@ -1,11 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
 
-// Narrow: only the reviewer's own execution store is needed, and the reason the
-// provenance read below is separate from the decision's own claim is precisely
-// that it must never consult the decision for evidence.
+import 'package:crypto/crypto.dart' as crypto;
+
+// Narrow: the reviewer's own execution store, and the producer resolution the
+// deploy advance reads its artifact from. The provenance read below is
+// separate from the decision's own claim precisely because it must never
+// consult the decision for evidence; the producer read is separate from
+// "whatever ran last" for the same reason.
 import 'package:execution_coordinator/execution_coordinator.dart'
-    show ExecutionStore;
+    show ExecutionStore, resolveProducerExecution;
 import 'package:platform_contracts/platform_contracts.dart';
 // `scheduler.dart` does not barrel-export its capacity directory yet — see the
 // identical, identical-reasoned import in `apps/server/lib/server.dart`, and the
@@ -14,6 +18,8 @@ import 'package:platform_contracts/platform_contracts.dart';
 // ignore: implementation_imports
 import 'package:scheduler/src/capacity/execution_capacity.dart'
     show ExecutionCapacityResolution, agentExecutionBudget;
+import 'package:scheduler/scheduler.dart'
+    show CommitProduced, producedCommitFor;
 import 'package:serverpod/serverpod.dart';
 import 'package:workflow_engine/workflow_engine.dart' show WorkItemTransitions;
 // `product_registry` and `postgres_defect_store` each export a
@@ -392,6 +398,26 @@ extension WorkItemActionEdge on OperatorActionKind {
 /// (design-brief.md §13.1, N12, AC-13).
 const String operatorRetryIdempotencyKeyPrefix = 'operator-retry:';
 
+/// The deploy-advance idempotency-key prefix. A REPLAY KEY ONLY, exactly like
+/// [operatorRetryIdempotencyKeyPrefix]: a caller that formats it correctly has
+/// authorised nothing, and nothing treats it as a predicate.
+const String operatorDeployIdempotencyKeyPrefix = 'operator-deploy:';
+
+/// The stranded-execution reclaim idempotency-key prefix. Same replay-key-only
+/// rule.
+const String operatorReclaimIdempotencyKeyPrefix = 'operator-reclaim:';
+
+/// The `operator_action.action` wire token for the deploy advance.
+///
+/// A free-form string rather than an [OperatorActionKind] member: the enum is
+/// closed over the failed-work actions and lives in `workflow_store`, which
+/// this lane does not own. The column stores `action` as a plain string, so a
+/// new token needs no schema change and no enum widening.
+const String operatorDeployActionWire = 'deploy';
+
+/// The `operator_action.action` wire token for the stranded-execution reclaim.
+const String operatorReclaimActionWire = 'reclaim';
+
 /// Operator actions on a work item parked in a failure state.
 ///
 /// The SECOND legal request-side write path, after
@@ -494,6 +520,28 @@ class WorkItemActionEndpoints extends Endpoint {
     final jobs = await service.listJobsForWorkItem(workItemId);
     final history = await service.readTransitionHistory(workItemId);
 
+    // The two newer offers are computed from the same durable facts their
+    // write paths re-check, so an offered button is one that can complete —
+    // the dead-button class this surface exists to close.
+    final deployable =
+        item.state == WorkItemState.qaPassed &&
+        await _deploymentArtifactFor(
+              service,
+              item,
+              requestId: 'offer',
+              requestedBy: 'offer',
+            ) !=
+            null;
+    final stranded =
+        item.state == WorkItemState.agentExecuting &&
+        !jobs.any((j) => j.state.isActive) &&
+        !(await service.executionStore.listExecutions(
+          workItemId: workItemId,
+        )).any((e) => !e.isTerminal);
+    final deployGateMissing =
+        item.state == WorkItemState.deploying &&
+        item.blockingHumanDecisionId == null;
+
     return WorkItemActionContextView(
       workItemId: workItemId,
       state: item.state.wire,
@@ -501,6 +549,9 @@ class WorkItemActionEndpoints extends Endpoint {
         item.state,
         retryCount: _retryCount(recorded),
         limit: limit,
+        deployableArtifact: deployable,
+        deployGateMissing: deployGateMissing,
+        strandedExecution: stranded,
       ),
       failure: _failureView(history, jobs),
       capacity: ExecutionCapacityView(
@@ -823,6 +874,493 @@ class WorkItemActionEndpoints extends Endpoint {
     }
   }
 
+  /// WRITE. `qaPassed -> deploying`, then the `deploymentApproval` gate.
+  ///
+  /// The honest deploy sequence, in two durable steps: the transition asserts
+  /// the artifact exists (`artifactBuilt()` reads `context['deploymentArtifact']`,
+  /// built here from the PRODUCER'S OWN durable `AgentResult` — resolved by
+  /// `resolveProducerExecution`, the platform's rule, never "whatever ran
+  /// last"), and [requestHumanDecision] then parks the item at
+  /// `waiting_for_human_decision` for a real approve/reject. A deploy is never
+  /// TAKEN by this endpoint; it is asked for.
+  ///
+  /// The audit row ('deploy') rides the transition's own transaction. A crash
+  /// between the two halves leaves the item at `deploying` with no gate: a
+  /// replay of the same `requestId` finds its ledger row and finishes the
+  /// raise, and a FRESH `requestId` on an item still at `deploying` with no
+  /// blocking decision finishes it too — the interrupted advance is the same
+  /// intent, not a second deploy.
+  Future<WorkItemActionResult> advanceToDeploy(
+    Session session, {
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async {
+    final service = serviceFor(session);
+    final limit = resolveRetryLimit();
+    final recorded = await service.workflowStore.readOperatorActionsForWorkItem(
+      workItemId,
+    );
+
+    // (1) REPLAY. If the original request crashed between the transition and
+    // the raise, the item sits at `deploying` gateless; finishing the raise
+    // IS that intent, not a new action.
+    if (_priorForAction(recorded, requestId, operatorDeployActionWire) !=
+        null) {
+      var item = await service.readWorkItem(workItemId);
+      if (item.state == WorkItemState.deploying) {
+        item = await _raiseDeploymentApproval(service, item);
+      }
+      return _result(
+        outcome: 'accepted',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    final item = await service.readWorkItem(workItemId);
+    final trimmedReason = reason.trim();
+    final trimmedBy = requestedBy.trim();
+
+    // (2) Blank reason or requester is refused before anything is written.
+    if (trimmedReason.isEmpty || trimmedBy.isEmpty) {
+      return _result(
+        outcome: 'invalidRequest',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    // (3) THE INTERRUPTED ADVANCE — `deploying` with no gate. The transition
+    // already committed under an earlier intent; only the raise is owed. The
+    // audit row is written first so a crash after it still converges: a
+    // replay finds the row and finishes the raise.
+    if (item.state == WorkItemState.deploying &&
+        item.blockingHumanDecisionId == null) {
+      await service.workflowStore.appendOperatorAction(
+        OperatorActionRecord(
+          actionId: 'oa-deploy-$requestId',
+          workItemId: workItemId,
+          action: operatorDeployActionWire,
+          fromState: item.state.wire,
+          toState: WorkItemState.waitingForHumanDecision.wire,
+          requestedBy: trimmedBy,
+          reason: trimmedReason,
+          requestId: requestId,
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      final parked = await _raiseDeploymentApproval(service, item);
+      service.logger.info('work_item.deploy.gate_raised', {
+        'workItemId': workItemId,
+        'requestId': requestId,
+        'requestedBy': trimmedBy,
+      });
+      return _result(
+        outcome: 'accepted',
+        item: parked,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    if (item.state != WorkItemState.qaPassed ||
+        !WorkItemTransitions.isLegalTransition(
+          item.state,
+          WorkItemState.deploying,
+        )) {
+      return _result(
+        outcome: 'notApplicable',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    // (4) A live attempt is never stacked on.
+    final jobs = await service.listJobsForWorkItem(workItemId);
+    if (jobs.any((j) => j.state.isActive)) {
+      return _result(
+        outcome: 'alreadyRunning',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    // (5) THE ARTIFACT. No durable producer result means there is nothing
+    // honest to deploy — refused rather than fabricated.
+    final artifact = await _deploymentArtifactFor(
+      service,
+      item,
+      requestId: requestId,
+      requestedBy: trimmedBy,
+    );
+    if (artifact == null) {
+      service.logger.info('work_item.deploy.no_artifact', {
+        'workItemId': workItemId,
+      });
+      return _result(
+        outcome: 'notApplicable',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    // (6) THE ONE DURABLE WRITE, then the gate.
+    try {
+      final updated = await service.workflowEngine.transition(
+        workItemId: workItemId,
+        to: WorkItemState.deploying,
+        trigger: TransitionTrigger.systemEvent,
+        actor: _operatorDeployActor,
+        context: {
+          'deploymentArtifact': artifact,
+          'operatorDeploy': true,
+          'requestedBy': trimmedBy,
+        },
+        idempotencyKey: '$operatorDeployIdempotencyKeyPrefix$requestId',
+        reason: trimmedReason,
+        operatorAction: OperatorActionRecord(
+          actionId: 'oa-deploy-$requestId',
+          workItemId: workItemId,
+          action: operatorDeployActionWire,
+          fromState: item.state.wire,
+          toState: WorkItemState.deploying.wire,
+          requestedBy: trimmedBy,
+          reason: trimmedReason,
+          requestId: requestId,
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      final parked = await _raiseDeploymentApproval(
+        service,
+        updated,
+        artifactId: artifact.artifactId,
+      );
+      service.logger.info('work_item.deploy.accepted', {
+        'workItemId': workItemId,
+        'requestId': requestId,
+        'requestedBy': trimmedBy,
+        'state': parked.state.wire,
+      });
+      return _result(
+        outcome: 'accepted',
+        item: parked,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    } on WorkflowTransitionRejectedException {
+      return _result(
+        outcome: 'notApplicable',
+        item: await service.readWorkItem(workItemId),
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+  }
+
+  /// WRITE. `agentExecuting -> agentFailed`, for a work item that claims to be
+  /// running but nothing holds: no non-terminal `AgentExecution` and no active
+  /// job.
+  ///
+  /// The scheduler's `_reclaimZombie` cannot reach this item — it only fires
+  /// on held-job/stale-execution reconciliation, and a JOBLESS stranded item
+  /// has no job to be reconciled through. This is the operator path for that
+  /// hole: the item lands at `agent_failed`, where the existing retry surface
+  /// takes over, and the audit row records the reclaim as its own action.
+  ///
+  /// Refusals mirror the retry's: a live execution or an active job means the
+  /// item is NOT stranded (`alreadyRunning`), a blank reason is `invalidRequest`,
+  /// and a refusal writes NOTHING.
+  Future<WorkItemActionResult> reclaimStrandedExecution(
+    Session session, {
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async {
+    final service = serviceFor(session);
+    final limit = resolveRetryLimit();
+    final recorded = await service.workflowStore.readOperatorActionsForWorkItem(
+      workItemId,
+    );
+
+    // (1) REPLAY — same rule as retry: the ledger is the idempotency record.
+    if (_priorForAction(recorded, requestId, operatorReclaimActionWire) !=
+        null) {
+      final item = await service.readWorkItem(workItemId);
+      return _result(
+        outcome: 'accepted',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    final item = await service.readWorkItem(workItemId);
+    final trimmedReason = reason.trim();
+    final trimmedBy = requestedBy.trim();
+
+    if (trimmedReason.isEmpty || trimmedBy.isEmpty) {
+      return _result(
+        outcome: 'invalidRequest',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    if (item.state != WorkItemState.agentExecuting ||
+        !WorkItemTransitions.isLegalTransition(
+          item.state,
+          WorkItemState.agentFailed,
+        )) {
+      return _result(
+        outcome: 'notApplicable',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    // (2) STRANDED, PROVED — a non-terminal agent_execution row or a live job
+    // means the item is not stranded at all, and reclaiming it would stack an
+    // operator failure on top of live work.
+    final executions = await service.executionStore.listExecutions(
+      workItemId: workItemId,
+    );
+    if (executions.any((e) => !e.isTerminal)) {
+      return _result(
+        outcome: 'alreadyRunning',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+    final jobs = await service.listJobsForWorkItem(workItemId);
+    if (jobs.any((j) => j.state.isActive)) {
+      return _result(
+        outcome: 'alreadyRunning',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    // (3) THE ONE DURABLE WRITE. `agent_failed` is the honest landing: the
+    // `_reclaimZombie` precedent — the only non-terminal exit out of
+    // `agent_executing`, recoverable via the existing retry surface.
+    try {
+      final updated = await service.workflowEngine.transition(
+        workItemId: workItemId,
+        to: WorkItemState.agentFailed,
+        trigger: TransitionTrigger.systemEvent,
+        actor: _operatorReclaimActor,
+        context: {'operatorReclaim': true, 'requestedBy': trimmedBy},
+        idempotencyKey: '$operatorReclaimIdempotencyKeyPrefix$requestId',
+        reason: trimmedReason,
+        operatorAction: OperatorActionRecord(
+          actionId: 'oa-reclaim-$requestId',
+          workItemId: workItemId,
+          action: operatorReclaimActionWire,
+          fromState: item.state.wire,
+          toState: WorkItemState.agentFailed.wire,
+          requestedBy: trimmedBy,
+          reason: trimmedReason,
+          requestId: requestId,
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      service.logger.info('work_item.reclaim.accepted', {
+        'workItemId': workItemId,
+        'requestId': requestId,
+        'requestedBy': trimmedBy,
+        'state': updated.state.wire,
+      });
+      return _result(
+        outcome: 'accepted',
+        item: updated,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    } on WorkflowTransitionRejectedException {
+      return _result(
+        outcome: 'notApplicable',
+        item: await service.readWorkItem(workItemId),
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Deploy + reclaim internals
+  // ---------------------------------------------------------------------
+
+  /// The actor the deploy advance transitions as: [ActorType.orchestrator],
+  /// the only type `qaPassed -> deploying` permits, named for the path the
+  /// human acted through — exactly the convention [operatorRetryActor] keeps.
+  static const WorkflowActor _operatorDeployActor = WorkflowActor(
+    actorId: 'operator-deploy',
+    actorType: ActorType.orchestrator,
+  );
+
+  /// The actor the reclaim transitions as. `agentExecuting -> agentFailed`
+  /// permits the orchestrator alone; `operator-reclaim` names the path.
+  static const WorkflowActor _operatorReclaimActor = WorkflowActor(
+    actorId: 'operator-reclaim',
+    actorType: ActorType.orchestrator,
+  );
+
+  /// Builds the [DeploymentArtifact] `artifactBuilt()` requires, from the
+  /// producer's own durable `AgentResult`.
+  ///
+  /// Returns `null` when there is no honest artifact to build: no resolvable
+  /// producer, a result that is not completed, or no revision the artifact can
+  /// name (`producedCommitFor` — the platform's own answer to "what did this
+  /// producer leave" — first, then the workspace base it was built against).
+  /// Nothing here invents a revision or a file.
+  Future<DeploymentArtifact?> _deploymentArtifactFor(
+    ControlPlaneService service,
+    WorkItem item, {
+    required String requestId,
+    required String requestedBy,
+  }) async {
+    final producer = await resolveProducerExecution(
+      store: service.executionStore,
+      workItemId: item.workItemId,
+      producerActorId: item.metadata?['producerActorId'],
+    );
+    final result = producer.result;
+    if (result == null || result.status != AgentResultStatus.completed) {
+      service.logger.info('work_item.deploy.no_producer', {
+        'workItemId': item.workItemId,
+        'producer': producer.note,
+      });
+      return null;
+    }
+
+    final produced = await producedCommitFor(service.workerStore, item);
+    final execution = producer.executionId == null
+        ? null
+        : await service.executionStore.readExecutionOrNull(
+            producer.executionId!,
+          );
+    final (gitCommit, basis) = switch (produced) {
+      CommitProduced(:final commit) => (commit, 'producedCommit'),
+      _ => (execution?.workspace.startingRevision, 'workspaceStartingRevision'),
+    };
+    if (gitCommit == null || gitCommit.isEmpty) {
+      service.logger.info('work_item.deploy.no_revision', {
+        'workItemId': item.workItemId,
+        'producerExecutionId': producer.executionId,
+      });
+      return null;
+    }
+
+    final manifest = ArtifactManifest(
+      name: item.productId,
+      version: gitCommit,
+      gitCommit: gitCommit,
+      files: [
+        for (final a in result.artifacts)
+          ArtifactFile(
+            path: a.path,
+            sha256: a.sha256,
+            sizeBytes: a.sizeBytes,
+            mediaType: a.mediaType,
+          ),
+      ],
+      sbom: const SoftwareBillOfMaterials(
+        format: 'CycloneDX',
+        version: '1.5',
+        components: [],
+      ),
+      metadata: {
+        'workItemId': item.workItemId,
+        'producerExecutionId': producer.executionId ?? '',
+        'commitBasis': basis,
+      },
+    );
+    return DeploymentArtifact(
+      // Deterministic in the request id: the artifact record one operator
+      // intent built. The ledger's replay guard means it is minted once.
+      artifactId: 'artifact-deploy-${item.workItemId}-$requestId',
+      contentHash: crypto.sha256
+          .convert(utf8.encode(jsonEncode(manifest.toJson())))
+          .toString(),
+      manifest: manifest,
+      builtAt: DateTime.now().toUtc(),
+      builtBy: requestedBy,
+      labels: {
+        'raisedBy': 'work_item_action.advanceToDeploy',
+        'producerExecutionId': producer.executionId ?? '',
+        'commitBasis': basis,
+      },
+    );
+  }
+
+  /// Raises the blocking `deploymentApproval` decision, parking the item at
+  /// `waiting_for_human_decision`.
+  ///
+  /// A refusal — the item moved concurrently — is logged and swallowed: the
+  /// caller returns the item's current state either way, and the durable rows
+  /// still record the rejected attempt.
+  Future<WorkItem> _raiseDeploymentApproval(
+    ControlPlaneService service,
+    WorkItem item, {
+    String? artifactId,
+  }) async {
+    try {
+      await service.workflowEngine.requestHumanDecision(
+        workItemId: item.workItemId,
+        decisionType: HumanDecisionType.deploymentApproval,
+        question:
+            'This work passed QA. Approve deploying it to its target '
+            'environment?',
+        options: const [
+          HumanDecisionOption(
+            optionId: 'approve',
+            label: 'Deploy it',
+            description: 'The work item moves to deployed.',
+          ),
+          HumanDecisionOption(
+            optionId: 'reject',
+            label: 'Do not deploy',
+            description: 'The work item is marked deployment_failed.',
+          ),
+        ],
+        blocking: true,
+        metadata: {
+          'raisedBy': 'work_item_action.advanceToDeploy',
+          if (artifactId != null) 'deploymentArtifactId': artifactId,
+        },
+        actor: _operatorDeployActor,
+      );
+    } on WorkflowTransitionRejectedException catch (error) {
+      service.logger.info('work_item.deploy.decision_refused', {
+        'workItemId': item.workItemId,
+        'reason': error.record.reason ?? error.record.outcome.wire,
+      });
+    }
+    return service.readWorkItem(item.workItemId);
+  }
+
+  /// The first ledger row for this exact operator intent, by raw wire token —
+  /// the 'deploy'/'reclaim' actions are not [OperatorActionKind] members.
+  static OperatorActionRecord? _priorForAction(
+    List<OperatorActionRecord> recorded,
+    String requestId,
+    String actionWire,
+  ) => recorded
+      .where((a) => a.requestId == requestId && a.action == actionWire)
+      .firstOrNull;
+
   // ---------------------------------------------------------------------
   // The server-computed action set
   // ---------------------------------------------------------------------
@@ -895,7 +1433,68 @@ class WorkItemActionEndpoints extends Endpoint {
     WorkItemState from, {
     required int retryCount,
     required OperatorRetryLimitResolution limit,
+    bool deployableArtifact = false,
+    bool deployGateMissing = false,
+    bool strandedExecution = false,
   }) {
+    // THE DEPLOY ADVANCE — `qaPassed -> deploying`, offered only when the
+    // caller has already established that the producer's durable result can
+    // build the artifact `artifactBuilt()` requires (the write path builds it
+    // again; the flag only decides whether the BUTTON exists). The second arm
+    // is the interrupted advance: an item at `deploying` whose
+    // `deployment_approval` gate was never raised (a crash between the
+    // transition and the decision write) has no other way out, so the same
+    // action is offered to finish it.
+    final deployOffered =
+        (from == WorkItemState.qaPassed &&
+            deployableArtifact &&
+            WorkItemTransitions.isLegalTransition(
+              from,
+              WorkItemState.deploying,
+            )) ||
+        (from == WorkItemState.deploying &&
+            deployGateMissing &&
+            WorkItemTransitions.isLegalTransition(
+              from,
+              WorkItemState.waitingForHumanDecision,
+            ));
+    if (deployOffered) {
+      return [
+        WorkItemActionView(
+          action: operatorDeployActionWire,
+          toState: WorkItemState.waitingForHumanDecision.wire,
+          // Asking to deploy is asking for a decision, not taking one — the
+          // confirm strip is still required, and the decision itself stays
+          // the human's.
+          confirmRequired: true,
+          destructive: false,
+          attemptLimit: limit.wireAttemptLimit,
+        ),
+      ];
+    }
+
+    // THE STRANDED RECLAIM — offered only when the caller PROVED the item is
+    // stranded: `agent_executing` with no non-terminal AgentExecution and no
+    // active job. Offered blindly it would be a button that "reclaims" live
+    // work, so the flag is computed from durable rows in `actionContext`, and
+    // the write path re-checks it.
+    if (from == WorkItemState.agentExecuting &&
+        strandedExecution &&
+        WorkItemTransitions.isLegalTransition(
+          from,
+          WorkItemState.agentFailed,
+        )) {
+      return [
+        WorkItemActionView(
+          action: operatorReclaimActionWire,
+          toState: WorkItemState.agentFailed.wire,
+          confirmRequired: true,
+          destructive: false,
+          attemptLimit: limit.wireAttemptLimit,
+        ),
+      ];
+    }
+
     if (!_isOperatorActionSurface(from)) return const [];
 
     final attemptsUsed = _retryCountFrom(retryCount);
