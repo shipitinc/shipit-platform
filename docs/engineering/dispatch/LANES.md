@@ -1553,3 +1553,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | impl-operator-actions | implement | IN_FLIGHT (re-dispatch, generated-surface ownership) | /private/tmp/shipit-feat-operator-actions | feat/operator-actions | 6a4d307 | PRECISION | operator actions for qa_passed-deploy + stranded agent_executing (F-254) | ed8e9626 running |
 | impl-operator-actions | implement | CLOSED — CORRECTED | /private/tmp/shipit-feat-operator-actions | feat/operator-actions | 6a4d307 | PRECISION | 5b56608 + correction c8d30bb (Flutter coverage + contract-doc) | → focused reviewer 18e48465 |
 | focused-review-operator-actions | review | IN_FLIGHT | (read-only) | feat/operator-actions | 6a4d307 | PRECISION | await result |
+| focused-review-operator-actions | review | CLOSED | (read-only) | feat/operator-actions | 6a4d307 | PRECISION | APPROVE_CORRECTIONS → merged c8d30bb (standing auth) | done |
