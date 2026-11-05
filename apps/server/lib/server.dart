@@ -137,6 +137,7 @@ import 'src/review/engineering_review_gate.dart';
 import 'package:qa_orchestration/qa_orchestration.dart'
     show QAGateEvaluationService, QAOrchestration;
 import 'src/persistence/postgres_qa_contract_store.dart';
+import 'src/deploy/deploy_gate_sweep.dart' show runDeployGateSweep;
 import 'src/qa/production_qa_sources.dart'
     show
         ProducerWorkspaceResolver,
@@ -1625,6 +1626,51 @@ void run(List<String> args) async {
           'stack': st.toString(),
           'action':
               'QA evaluation is retried on the next tick; other lanes unaffected',
+        });
+      }
+
+      // ---- The deploy-gate sweep. ----
+      //
+      // AFTER the QA drain, so an item the drain just settled `qaPassed` is
+      // advanced in the same tick rather than the next one. `qa_passed` has
+      // no blocking decision of its own, so `pendingDecisions` — the Needs
+      // You surface — never listed it: the `deploymentApproval` gate that
+      // makes it visible existed only as a manual operator action. The
+      // sweep fires the same advance the operator's does
+      // (`deploy_advance.dart` is the shared construction): `qaPassed ->
+      // deploying` on the artifact the producer's own durable AgentResult
+      // builds, then the `deploymentApproval` decision that parks it at
+      // `waiting_for_human_decision`.
+      //
+      // In its OWN try, like every other section: a sweep that throws must
+      // not take the lanes down with it, and the next tick retries.
+      try {
+        final deployResult = await runDeployGateSweep(
+          workflowEngine: durableWorkflowEngine,
+          workflowStore: workflowStore,
+          executionStore: agentExecutionStore(db),
+          workerStore: workerStore,
+          jobStore: jobStore,
+          log: _log,
+        );
+        if (deployResult.movedAnything || deployResult.faulted > 0) {
+          _log('deploy.sweep.completed', {
+            'considered': deployResult.considered,
+            'advanced': deployResult.advanced,
+            'gateRaised': deployResult.gateRaised,
+            'deferred': deployResult.deferred,
+            'faulted': deployResult.faulted,
+            'awaitingHuman': deployResult.awaitingHuman,
+          });
+        }
+      } catch (e, st) {
+        outcome.failedSections.add('deploy');
+        _log('deploy.sweep.failed', {
+          'error': '$e',
+          'stack': st.toString(),
+          'action':
+              'the deploy-gate sweep is retried on the next tick; other '
+              'lanes are unaffected',
         });
       }
 
