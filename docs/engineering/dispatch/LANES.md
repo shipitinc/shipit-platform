@@ -1558,3 +1558,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-qa-passed-auto-deploy | review | IN_FLIGHT | (read-only) | feat/qa-passed-auto-deploy | 4eb53c4 | PRECISION | await result on 7df90d7 |
 | review-qa-passed-auto-deploy | review | CLOSED | (read-only) | feat/qa-passed-auto-deploy | 4eb53c4 | PRECISION | APPROVE_FOR_MERGE on 7df90d7 → integrator 0c20c52e |
 | integrate-qa-passed-auto-deploy | integrate | IN_FLIGHT | (read-only) | feat/qa-passed-auto-deploy | 4eb53c4 | PRECISION | await MERGE_APPROVED |
+| integrate-qa-passed-auto-deploy | integrate | CLOSED | (read-only) | feat/qa-passed-auto-deploy | 4eb53c4 | PRECISION | MERGE_APPROVED → merged 7df90d7 (standing auth) | done |
