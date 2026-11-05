@@ -34,10 +34,21 @@ enum OperatorActionKind {
 /// reason — a row that cannot say who acted, or why, is not an audit record.
 ///
 /// Rows are written **inside the transaction that moves the work item**, by
-/// `DurableWorkflowEngine.transition`. There is deliberately no way to append
-/// one on its own, so an audit row and the state change it authorises cannot
-/// disagree after a crash, and a refused attempt — which takes the rejected
-/// path before any transaction opens — leaves nothing to audit.
+/// `DurableWorkflowEngine.transition`, so an audit row and the state change
+/// it authorises cannot disagree after a crash, and a refused attempt —
+/// which takes the rejected path before any transaction opens — leaves
+/// nothing to audit.
+///
+/// The ONE exception is deliberate and named: the interrupted deploy advance
+/// in `advanceToDeploy`
+/// (`apps/server/lib/src/endpoints/work_item_action_endpoints.dart`) appends
+/// standalone when the item is already at `deploying` with no gate — its
+/// transition committed under an earlier intent, so there is no transaction
+/// left to ride. The row is written FIRST, before the `deployment_approval`
+/// raise it authorises, so a crash in between still leaves the audit and a
+/// replay of the same `requestId` converges by finishing the raise.
+/// Audit-first is the rule that makes a standalone append converge; it is
+/// not a licence for a second one.
 class OperatorActionRecord {
   const OperatorActionRecord({
     required this.actionId,
@@ -60,7 +71,11 @@ class OperatorActionRecord {
   /// The work item the operator acted on.
   final String workItemId;
 
-  /// 'retry' | 'stop' — the closed set of [OperatorActionKind].
+  /// 'retry' | 'stop' | 'deploy' | 'reclaim'. The first two are the closed
+  /// set of [OperatorActionKind]; 'deploy' and 'reclaim' are the endpoint's
+  /// own wire tokens (`operatorDeployActionWire` /
+  /// `operatorReclaimActionWire` in `work_item_action_endpoints.dart`),
+  /// stored here as plain strings — the column carries no enum.
   final String action;
 
   /// Wire state the item was in when the action was taken.

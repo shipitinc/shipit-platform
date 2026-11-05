@@ -36,10 +36,27 @@ abstract interface class WorkflowStore {
   /// APPENDS one operator action. Append-only: there is no update or delete
   /// counterpart on this interface, and none may be added.
   ///
-  /// This is the only way an [OperatorActionRecord] is written. In particular
-  /// there is no code path that appends one outside the transaction
+  /// This is the only way an [OperatorActionRecord] is written. Every append
+  /// that accompanies a state change rides the transaction
   /// `DurableWorkflowEngine.transition` already opens, which is what makes an
-  /// audit row and the state change it authorises commit or roll back together.
+  /// audit row and the state change it authorises commit or roll back
+  /// together.
+  ///
+  /// ## THE ONE STANDALONE APPEND, AND ITS RULE
+  ///
+  /// Exactly one caller appends outside that transaction, deliberately: the
+  /// interrupted-advance completion in `advanceToDeploy`
+  /// (`apps/server/lib/src/endpoints/work_item_action_endpoints.dart`). An
+  /// item already at `deploying` with no blocking decision had its deploy
+  /// transition commit under an earlier intent, and only the
+  /// `deployment_approval` raise is still owed — there is no transition left
+  /// for the row to ride. The rule that keeps the standalone write honest is
+  /// AUDIT-FIRST: the row is appended before the raise, so a crash between
+  /// the two still leaves the ledger saying the intent landed, and a replay
+  /// of the same `requestId` finds the row and finishes the raise. No second
+  /// standalone append may be added: a state change that has not yet
+  /// committed has no business leaving an audit row behind it.
+  ///
   /// Implementations MUST enforce `operator_action_request_unique` on
   /// `(workItemId, requestId)`: a replay of the same operator intent collides
   /// rather than creating a second row, a second job, or a second spend.

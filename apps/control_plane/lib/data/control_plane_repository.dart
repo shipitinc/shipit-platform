@@ -2922,9 +2922,9 @@ class WorkItemActionResponse {
     this.attemptNumber,
   });
 
-  /// 'retry' | 'stop' — a closed set. The panel renders NOTHING for a value
-  /// it does not recognise, so an unknown action is inert rather than
-  /// dangerous (design-brief.md §10 N4).
+  /// 'retry' | 'stop' | 'deploy' | 'reclaim' — a closed set. The panel
+  /// renders NOTHING for a value it does not recognise, so an unknown action
+  /// is inert rather than dangerous (design-brief.md §10 N4).
   final String action;
   final String toState;
   final bool confirmRequired;
@@ -3000,7 +3000,7 @@ class OperatorActionSummaryResponse {
     this.attemptNumber,
   });
 
-  /// 'retry' | 'stop'.
+  /// 'retry' | 'stop' | 'deploy' | 'reclaim'.
   final String action;
 
   /// THE HUMAN. `work_item_transition.actorId` deliberately holds the path the

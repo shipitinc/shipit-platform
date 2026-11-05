@@ -1153,10 +1153,12 @@ void main() {
   group('advanceToDeploy', () {
     /// A QA-passed item. The producer is a completed implementer execution
     /// carrying a completed result with one artifact — resolved by the
-    /// implementer-role fallback when no `producerActorId` is stamped.
+    /// implementer-role fallback when no `producerActorId` is stamped, or by
+    /// the stamp itself when [stampProducer] is set.
     Future<String> seedQaPassed({
       String id = 'wi-qa-1',
       bool withProducer = true,
+      bool stampProducer = false,
     }) async {
       await store.saveWorkItem(
         WorkItem(
@@ -1166,6 +1168,10 @@ void main() {
           title: 'A passed item',
           description: 'Passed QA',
           state: WorkItemState.qaPassed,
+          // The stamp `producedCommitFor` joins on: it names the producing
+          // AGENT execution, and the matching worker execution carries it as
+          // `agentExecutionId`.
+          metadata: stampProducer ? const {'producerActorId': 'ex-prod'} : null,
           createdAt: DateTime.utc(2026),
           updatedAt: DateTime.utc(2026),
           version: 1,
@@ -1436,6 +1442,85 @@ void main() {
         expect(rows.single.fromState, WorkItemState.deploying.wire);
       },
     );
+
+    test(
+      'a STAMPED producer names its own commit — commitBasis producedCommit',
+      () async {
+        // `producedCommitFor`'s CommitProduced arm, driven for the first time:
+        // every other test here resolves the producer by the implementer-role
+        // fallback, so `producedCommitFor` answered `producerNotIdentified`
+        // and the artifact fell back to the workspace's starting revision.
+        //
+        // The artifact is real but ephemeral — it satisfies `artifactBuilt()`
+        // inside the transition's context and is never persisted — so the
+        // recording engine captures it at the one boundary it crosses.
+        final id = await seedQaPassed(stampProducer: true);
+        await endpoints.workerStore.saveWorkerExecution(
+          const WorkerExecution(
+            workerExecutionId: 'wx-prod',
+            workItemId: 'wi-qa-1',
+            repositoryPath: '/durable/clone',
+            requestedStartingRevision: 'base-abc',
+            requiredCapabilities: {
+              WorkerCapability.linux,
+              WorkerCapability.git,
+            },
+            agentExecutionId: 'ex-prod',
+            endingRevision: 'c0ffee-prod',
+            status: WorkerExecutionStatus.executedPass,
+            cleanupPolicy: WorkerCleanupPolicy.removeAlways,
+          ),
+        );
+
+        final result = await endpoints.advanceToDeploy(
+          session,
+          workItemId: id,
+          requestId: 'req-stamped',
+          requestedBy: 'dana',
+          reason: 'ship the produced commit',
+        );
+
+        expect(result.outcome, 'accepted');
+        final artifact = endpoints.deploymentArtifacts.single;
+        expect(
+          artifact.manifest.metadata?['commitBasis'],
+          'producedCommit',
+          reason:
+              'a stamped producer that left a commit is the artifact\'s '
+              'source, not the workspace it started from',
+        );
+        expect(artifact.manifest.gitCommit, 'c0ffee-prod');
+        expect(artifact.labels?['commitBasis'], 'producedCommit');
+      },
+    );
+
+    test(
+      'an UNSTAMPED producer falls back to the workspace base — '
+      'commitBasis workspaceStartingRevision',
+      () async {
+        // The paired arm: without the stamp `producedCommitFor` refuses
+        // (`producerNotIdentified`), and the artifact names the revision the
+        // producer's workspace was built against — still a real revision,
+        // never an invented one.
+        final id = await seedQaPassed();
+
+        final result = await endpoints.advanceToDeploy(
+          session,
+          workItemId: id,
+          requestId: 'req-unstamped',
+          requestedBy: 'dana',
+          reason: 'ship it',
+        );
+
+        expect(result.outcome, 'accepted');
+        final artifact = endpoints.deploymentArtifacts.single;
+        expect(
+          artifact.manifest.metadata?['commitBasis'],
+          'workspaceStartingRevision',
+        );
+        expect(artifact.manifest.gitCommit, 'base-abc');
+      },
+    );
   });
 
   // ==================================================================
@@ -1669,6 +1754,12 @@ class _TestEndpoints extends WorkItemActionEndpoints {
   /// The worker store `producedCommitFor` reads.
   final InMemoryWorkerStore workerStore = InMemoryWorkerStore();
 
+  /// The `DeploymentArtifact`s handed to the transition context, captured by
+  /// [_RecordingEngine]. The artifact is ephemeral by design — it satisfies
+  /// `artifactBuilt()` and is never persisted — so the transition boundary is
+  /// the only place a test can read what the endpoint actually built.
+  final List<DeploymentArtifact> deploymentArtifacts = [];
+
   /// The retry limit this endpoint resolves. Injected so the tests never read
   /// or mutate the host environment.
   OperatorRetryLimitResolution? limit;
@@ -1705,7 +1796,7 @@ class _TestService extends ControlPlaneService {
 
   @override
   DurableWorkflowEngine get workflowEngine =>
-      DurableWorkflowEngine(store: _store);
+      _RecordingEngine(store: _store, sink: _owner.deploymentArtifacts);
 
   @override
   Future<List<Job>> listJobs() async => _owner.jobs;
@@ -1719,6 +1810,52 @@ class _TestService extends ControlPlaneService {
 
   @override
   WorkerStore get workerStore => _owner.workerStore;
+}
+
+/// The REAL engine, with one observation added: the `DeploymentArtifact` a
+/// transition call carries in its context is recorded before the call runs.
+///
+/// ## WHY RECORD AND NOT REPLACE
+///
+/// The artifact is built inside the endpoint and consumed by the
+/// `artifactBuilt()` guard inside the same call — it is never persisted, so
+/// the context map is the only boundary where what the endpoint built can be
+/// read. The engine is the REAL one and every transition still runs through
+/// it; recording substitutes nothing. `requestHumanDecision` does not pass
+/// through [transition], so only direct transition calls are observed.
+class _RecordingEngine extends DurableWorkflowEngine {
+  _RecordingEngine({required super.store, required this.sink});
+
+  final List<DeploymentArtifact> sink;
+
+  @override
+  Future<WorkItem> transition({
+    required String workItemId,
+    required WorkItemState to,
+    required TransitionTrigger trigger,
+    WorkflowActor actor = DurableWorkflowEngine.operatorRetryActor,
+    Map<String, dynamic> context = const {},
+    String? decisionId,
+    String? idempotencyKey,
+    String? reason,
+    OperatorActionRecord? operatorAction,
+    Map<String, dynamic>? metadataMerge,
+  }) {
+    final artifact = context['deploymentArtifact'];
+    if (artifact is DeploymentArtifact) sink.add(artifact);
+    return super.transition(
+      workItemId: workItemId,
+      to: to,
+      trigger: trigger,
+      actor: actor,
+      context: context,
+      decisionId: decisionId,
+      idempotencyKey: idempotencyKey,
+      reason: reason,
+      operatorAction: operatorAction,
+      metadataMerge: metadataMerge,
+    );
+  }
 }
 
 /// A job in the given state, for the non-terminal / terminal assertions.

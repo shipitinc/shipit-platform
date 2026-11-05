@@ -64,6 +64,112 @@ class MockControlPlaneRepository
     return result;
   }
 
+  // --- the operator actions ----------------------------------------------
+  //
+  // Recorded rather than merely faked, for the same reason as the repair: the
+  // load-bearing claim is about WHICH endpoint the submitted action reaches —
+  // the bloc's `switch` is the only thing standing between 'deploy' on the
+  // wire and `advanceToDeploy` on the repository, and a fake that returned a
+  // result without recording could not see a misroute at all.
+  WorkItemActionResultResponse? actionResult;
+  Object? actionError;
+  final List<
+    ({String method, String requestId, String requestedBy, String reason})
+  >
+  actionCalls = [];
+
+  Future<WorkItemActionResultResponse> _recordAction(
+    String method, {
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) {
+    actionCalls.add((
+      method: method,
+      requestId: requestId,
+      requestedBy: requestedBy,
+      reason: reason,
+    ));
+    final error = actionError;
+    if (error != null) throw error;
+    final result = actionResult;
+    if (result == null) throw StateError('no action result in fake');
+    return Future.value(result);
+  }
+
+  @override
+  Future<WorkItemActionResultResponse> retryFailedWorkItem({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) => _recordAction(
+    'retryFailedWorkItem',
+    requestId: requestId,
+    requestedBy: requestedBy,
+    reason: reason,
+  );
+
+  @override
+  Future<WorkItemActionResultResponse> stopFailedWorkItem({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) => _recordAction(
+    'stopFailedWorkItem',
+    requestId: requestId,
+    requestedBy: requestedBy,
+    reason: reason,
+  );
+
+  @override
+  Future<WorkItemActionResultResponse> advanceToDeploy({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) => _recordAction(
+    'advanceToDeploy',
+    requestId: requestId,
+    requestedBy: requestedBy,
+    reason: reason,
+  );
+
+  @override
+  Future<WorkItemActionResultResponse> reclaimStrandedExecution({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) => _recordAction(
+    'reclaimStrandedExecution',
+    requestId: requestId,
+    requestedBy: requestedBy,
+    reason: reason,
+  );
+
+  /// The action-context read the load performs. An empty action list is a
+  /// real answer — the server offers nothing for this item — and it keeps the
+  /// routing tests honest about what the panel would show.
+  @override
+  Future<WorkItemActionContextResponse> workItemActionContext(
+    String workItemId,
+  ) async => WorkItemActionContextResponse(
+    workItemId: workItemId,
+    state: 'qa_passed',
+    actions: const [],
+    capacity: const CapacitySnapshotResponse(
+      budget: 'agent_executions',
+      cap: 2,
+      inFlight: 0,
+      snapshotOnly: true,
+      resolved: true,
+    ),
+    retryLimitResolved: true,
+    retryLimitDiagnostic: 'ok',
+  );
+
   @override
   Future<ProductDetailResponse> getProductDetail(String productId) async {
     final d = productDetail;
@@ -619,6 +725,159 @@ void main() {
 
         expect(repository.repairCalls, isEmpty);
         expect(repository.revision.value, 0);
+      },
+    );
+  });
+
+  group('operator action routing', () {
+    late MockControlPlaneRepository repository;
+
+    WorkItemDetailResponse qaPassed() => WorkItemDetailResponse(
+      workItem: WorkItemResponse(
+        workItemId: 'wi-001',
+        title: 'A passed item',
+        state: 'qa_passed',
+        createdAt: DateTime(2026, 1, 1),
+        updatedAt: DateTime(2026, 1, 1),
+      ),
+      transitionHistory: const [],
+    );
+
+    WorkItemActionResultResponse accepted() => WorkItemActionResultResponse(
+      outcome: 'accepted',
+      workItem: WorkItemResponse(
+        workItemId: 'wi-001',
+        title: 'A passed item',
+        state: 'waiting_for_human_decision',
+        createdAt: DateTime(2026, 1, 1),
+        updatedAt: DateTime(2026, 1, 1),
+      ),
+      attemptNumber: 0,
+      retryLimitResolved: true,
+      attemptLimit: 0,
+    );
+
+    Future<RunDetailBloc> loaded() async {
+      final bloc = RunDetailBloc(runId: 'wi-001', repository: repository)
+        ..add(RunDetailLoaded());
+      await bloc.stream.firstWhere((s) => !s.isLoading);
+      return bloc;
+    }
+
+    /// Submits [action] through the bloc and returns once it has resolved.
+    Future<void> submit(RunDetailBloc bloc, String action) async {
+      bloc.add(
+        RunDetailActionSubmitted(
+          action: action,
+          reason: 'operator said so',
+          requestId: 'op-1',
+        ),
+      );
+      await bloc.stream.firstWhere(
+        (s) => s.actionAnnouncement != null && !s.isSubmittingAction,
+      );
+    }
+
+    setUp(() {
+      repository = MockControlPlaneRepository();
+      repository.workItemDetailResponse = qaPassed();
+      repository.actionResult = accepted();
+    });
+
+    /// The routing, asserted arm by arm. Each wire action must reach exactly
+    /// one repository method — the `switch` in `_onActionSubmitted` is the
+    /// ONLY thing standing between 'deploy' on the wire and `advanceToDeploy`
+    /// on the repository, and a misroute spends real money or parks the wrong
+    /// kind of work under a sentence that says the opposite.
+    for (final (wireAction, method) in [
+      ('retry', 'retryFailedWorkItem'),
+      ('stop', 'stopFailedWorkItem'),
+      ('deploy', 'advanceToDeploy'),
+      ('reclaim', 'reclaimStrandedExecution'),
+      // The fallthrough arm: an action the panel never renders still resolves
+      // to SOMETHING rather than throwing, and that something is the same
+      // terminal action 'stop' names.
+      ('an_action_added_later', 'stopFailedWorkItem'),
+    ]) {
+      test("'$wireAction' reaches $method and nothing else", () async {
+        final bloc = await loaded();
+
+        await submit(bloc, wireAction);
+
+        expect(
+          repository.actionCalls.map((c) => c.method).toList(),
+          [method],
+          reason:
+              'exactly one repository call, to the endpoint this action '
+              'names',
+        );
+      });
+    }
+
+    test(
+      'the requestId, reason and operator name cross the wire verbatim',
+      () async {
+        final bloc = await loaded();
+
+        await submit(bloc, 'deploy');
+
+        final call = repository.actionCalls.single;
+        expect(call.requestId, 'op-1');
+        expect(call.reason, 'operator said so');
+        expect(call.requestedBy, isNotEmpty);
+      },
+    );
+
+    test(
+      'an accepted DEPLOY announces the parks-not-deploys sentence',
+      () async {
+        final bloc = await loaded();
+
+        await submit(bloc, 'deploy');
+
+        // "Done — it will start as soon as a machine is free." would be FALSE:
+        // a deploy parks on a human's decision, so the announcement is its own
+        // sentence, not the retry's.
+        expect(bloc.state.actionAnnouncement, deployAcceptedSentence);
+        // And the strip closed: leaving it up invites a second spend of
+        // something already committed.
+        expect(bloc.state.pendingAction, isNull);
+      },
+    );
+
+    test('an accepted RECLAIM announces the re-parked sentence', () async {
+      final bloc = await loaded();
+
+      await submit(bloc, 'reclaim');
+
+      expect(bloc.state.actionAnnouncement, reclaimAcceptedSentence);
+      expect(bloc.state.pendingAction, isNull);
+    });
+
+    test(
+      'a transport failure keeps the strip so the SAME requestId can retry',
+      () async {
+        repository.actionError = Exception('connection reset');
+        final bloc = await loaded();
+
+        bloc.add(RunDetailActionStarted('deploy'));
+        await bloc.stream.firstWhere((s) => s.pendingAction == 'deploy');
+        bloc.add(
+          RunDetailActionSubmitted(
+            action: 'deploy',
+            reason: 'operator said so',
+            requestId: 'op-7',
+          ),
+        );
+        await bloc.stream.firstWhere(
+          (s) => s.actionAnnouncement != null && !s.isSubmittingAction,
+        );
+
+        // Nothing changed and the screen says so — and the strip is KEPT,
+        // with the operator's reason and the one request id this intent owns.
+        expect(bloc.state.actionAnnouncement, failedSentence);
+        expect(bloc.state.pendingAction, 'deploy');
+        expect(repository.actionCalls.single.requestId, 'op-7');
       },
     );
   });

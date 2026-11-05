@@ -434,4 +434,109 @@ void main() {
       }
     });
   });
+
+  group('the deploy advance and the stranded reclaim', () {
+    test('the two panels and buttons are stated verbatim', () {
+      // Deploy asks for a decision; it never claims to BE one. "Move it
+      // forward", never "Deploy": the action does not deploy anything, it
+      // raises the question that does.
+      expect(deployPanelHeading, 'It passed its checks');
+      expect(deployActionLabel, 'Move it forward');
+      expect(
+        deployConsequenceSentence,
+        'Parks the work on a deployment decision for you to answer. Nothing '
+        'is deployed yet.',
+      );
+      expect(deployPanelExplanation, contains('Nothing is deployed yet'));
+
+      // Reclaim lands at the failure surface — it says so, and it never
+      // promises a restart the operator has not asked for.
+      expect(reclaimPanelHeading, 'It says it is running — nothing is');
+      expect(reclaimActionLabel, 'Hand it back');
+      expect(
+        reclaimConsequenceSentence,
+        'Marks the work as stopped so it can be tried again. The record of '
+        'what happened is kept.',
+      );
+    });
+
+    test('deploy + accepted gets the parks-not-deploys sentence, verbatim', () {
+      expect(
+        operatorActionAnnouncementFor('deploy', 'accepted'),
+        deployAcceptedSentence,
+      );
+      expect(
+        deployAcceptedSentence,
+        'Done — it is waiting on your deployment decision now.',
+      );
+      // And it is NOT the retry's promise of a free machine: a deploy parks
+      // on a human, so borrowing it would be false.
+      expect(deployAcceptedSentence, isNot(acceptedOutcomeSentence));
+    });
+
+    test('reclaim + accepted gets the re-parked sentence, verbatim', () {
+      expect(
+        operatorActionAnnouncementFor('reclaim', 'accepted'),
+        reclaimAcceptedSentence,
+      );
+      expect(
+        reclaimAcceptedSentence,
+        'Done — it is marked as stopped. You can try it again now.',
+      );
+      expect(reclaimAcceptedSentence, isNot(acceptedOutcomeSentence));
+    });
+
+    test(
+      'every other outcome DELEGATES to the existing vocabulary, unchanged',
+      () {
+        // The per-action function adds exactly two sentences — the two
+        // accepted ones. Every refusal and every other action routes to
+        // `operatorActionAnnouncement` verbatim, so a new outcome lands on
+        // the vocabulary the rest of the product already uses rather than on
+        // a silent default.
+        for (final action in ['deploy', 'reclaim', 'retry', 'stop', 'new1']) {
+          for (final outcome in [
+            'alreadyRunning',
+            'alreadyStopped',
+            'notApplicable',
+            'notConfigured',
+            'invalidRequest',
+            'an_outcome_added_later',
+          ]) {
+            expect(
+              operatorActionAnnouncementFor(action, outcome, attemptLimit: 3),
+              operatorActionAnnouncement(outcome, attemptLimit: 3),
+              reason: '$action/$outcome must delegate, not re-word',
+            );
+          }
+        }
+
+        // `accepted` delegates too for every action that is not deploy or
+        // reclaim — including an action id nobody knows yet.
+        expect(
+          operatorActionAnnouncementFor('retry', 'accepted'),
+          acceptedOutcomeSentence,
+        );
+        expect(
+          operatorActionAnnouncementFor('stop', 'accepted'),
+          acceptedOutcomeSentence,
+        );
+        expect(
+          operatorActionAnnouncementFor('something_invented_later', 'accepted'),
+          acceptedOutcomeSentence,
+        );
+
+        // The delegation carries the flags through, not just the outcome:
+        // `capacityFull` still picks the queued sentence for the retry lane.
+        expect(
+          operatorActionAnnouncementFor(
+            'retry',
+            'accepted',
+            capacityFull: true,
+          ),
+          queuedOutcomeSentence,
+        );
+      },
+    );
+  });
 }

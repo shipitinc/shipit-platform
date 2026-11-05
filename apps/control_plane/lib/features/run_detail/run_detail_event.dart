@@ -7,7 +7,8 @@ class RunDetailLoaded extends RunDetailEvent {}
 class RunDetailActionStarted extends RunDetailEvent {
   RunDetailActionStarted(this.action);
 
-  /// Durable `operator_action` wire value: 'retry' | 'stop'.
+  /// Durable `operator_action` wire value: 'retry' | 'stop' | 'deploy' |
+  /// 'reclaim'.
   final String action;
 }
 
