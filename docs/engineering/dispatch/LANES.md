@@ -1550,3 +1550,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-qa-producer-resolution | integrate | IN_FLIGHT | scratch rehearsal | fix/qa-producer-resolution | 00d236b | STANDARD | await result → merge (standing auth) |
 | integrate-qa-producer-resolution | integrate | CLOSED | scratch rehearsal | fix/qa-producer-resolution | 00d236b | STANDARD | MERGE_APPROVED (test-integration +319) → merged (standing auth) | done |
 | impl-operator-actions | implement | IN_FLIGHT | /private/tmp/shipit-feat-operator-actions | feat/operator-actions | 6a4d307 | PRECISION | operator actions for qa_passed-deploy + stranded agent_executing (F-254) | 63c25b75 running |
+| impl-operator-actions | implement | IN_FLIGHT (re-dispatch, generated-surface ownership) | /private/tmp/shipit-feat-operator-actions | feat/operator-actions | 6a4d307 | PRECISION | operator actions for qa_passed-deploy + stranded agent_executing (F-254) | ed8e9626 running |
