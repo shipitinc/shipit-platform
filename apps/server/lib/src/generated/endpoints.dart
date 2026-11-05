@@ -2021,6 +2021,84 @@ class Endpoints extends _i1.EndpointDispatch {
                         reason: params['reason'],
                       ),
         ),
+        'advanceToDeploy': _i1.MethodConnector(
+          name: 'advanceToDeploy',
+          params: {
+            'workItemId': _i1.ParameterDescription(
+              name: 'workItemId',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'requestId': _i1.ParameterDescription(
+              name: 'requestId',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'requestedBy': _i1.ParameterDescription(
+              name: 'requestedBy',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'reason': _i1.ParameterDescription(
+              name: 'reason',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+          },
+          call:
+              (
+                _i1.Session session,
+                Map<String, dynamic> params,
+              ) async =>
+                  (endpoints['workItemActionEndpoints']
+                          as _i12.WorkItemActionEndpoints)
+                      .advanceToDeploy(
+                        session,
+                        workItemId: params['workItemId'],
+                        requestId: params['requestId'],
+                        requestedBy: params['requestedBy'],
+                        reason: params['reason'],
+                      ),
+        ),
+        'reclaimStrandedExecution': _i1.MethodConnector(
+          name: 'reclaimStrandedExecution',
+          params: {
+            'workItemId': _i1.ParameterDescription(
+              name: 'workItemId',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'requestId': _i1.ParameterDescription(
+              name: 'requestId',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'requestedBy': _i1.ParameterDescription(
+              name: 'requestedBy',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+            'reason': _i1.ParameterDescription(
+              name: 'reason',
+              type: _i1.getType<String>(),
+              nullable: false,
+            ),
+          },
+          call:
+              (
+                _i1.Session session,
+                Map<String, dynamic> params,
+              ) async =>
+                  (endpoints['workItemActionEndpoints']
+                          as _i12.WorkItemActionEndpoints)
+                      .reclaimStrandedExecution(
+                        session,
+                        workItemId: params['workItemId'],
+                        requestId: params['requestId'],
+                        requestedBy: params['requestedBy'],
+                        reason: params['reason'],
+                      ),
+        ),
         'repairUnreviewedReview': _i1.MethodConnector(
           name: 'repairUnreviewedReview',
           params: {

@@ -1276,6 +1276,67 @@ class EndpointWorkItemActionEndpoints extends _i1.EndpointRef {
     },
   );
 
+  /// WRITE. `qaPassed -> deploying`, then the `deploymentApproval` gate.
+  ///
+  /// The honest deploy sequence, in two durable steps: the transition asserts
+  /// the artifact exists (`artifactBuilt()` reads `context['deploymentArtifact']`,
+  /// built here from the PRODUCER'S OWN durable `AgentResult` — resolved by
+  /// `resolveProducerExecution`, the platform's rule, never "whatever ran
+  /// last"), and [requestHumanDecision] then parks the item at
+  /// `waiting_for_human_decision` for a real approve/reject. A deploy is never
+  /// TAKEN by this endpoint; it is asked for.
+  ///
+  /// The audit row ('deploy') rides the transition's own transaction. A crash
+  /// between the two halves leaves the item at `deploying` with no gate: a
+  /// replay of the same `requestId` finds its ledger row and finishes the
+  /// raise, and a FRESH `requestId` on an item still at `deploying` with no
+  /// blocking decision finishes it too — the interrupted advance is the same
+  /// intent, not a second deploy.
+  _i2.Future<_i37.WorkItemActionResult> advanceToDeploy({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) => caller.callServerEndpoint<_i37.WorkItemActionResult>(
+    'workItemActionEndpoints',
+    'advanceToDeploy',
+    {
+      'workItemId': workItemId,
+      'requestId': requestId,
+      'requestedBy': requestedBy,
+      'reason': reason,
+    },
+  );
+
+  /// WRITE. `agentExecuting -> agentFailed`, for a work item that claims to be
+  /// running but nothing holds: no non-terminal `AgentExecution` and no active
+  /// job.
+  ///
+  /// The scheduler's `_reclaimZombie` cannot reach this item — it only fires
+  /// on held-job/stale-execution reconciliation, and a JOBLESS stranded item
+  /// has no job to be reconciled through. This is the operator path for that
+  /// hole: the item lands at `agent_failed`, where the existing retry surface
+  /// takes over, and the audit row records the reclaim as its own action.
+  ///
+  /// Refusals mirror the retry's: a live execution or an active job means the
+  /// item is NOT stranded (`alreadyRunning`), a blank reason is `invalidRequest`,
+  /// and a refusal writes NOTHING.
+  _i2.Future<_i37.WorkItemActionResult> reclaimStrandedExecution({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) => caller.callServerEndpoint<_i37.WorkItemActionResult>(
+    'workItemActionEndpoints',
+    'reclaimStrandedExecution',
+    {
+      'workItemId': workItemId,
+      'requestId': requestId,
+      'requestedBy': requestedBy,
+      'reason': reason,
+    },
+  );
+
   /// WRITE. Returns a work item parked behind a fabricated engineering-review
   /// decision to `agentCompleted` — retryable and dispatchable — and retires the
   /// decision without destroying it.
@@ -1518,6 +1579,19 @@ class EndpointWorkflowEndpoints extends _i1.EndpointRef {
   /// through `DurableWorkflowEngine` under the injected policy, both are
   /// idempotent under a client-minted key, and a repeated call replays the
   /// prior outcome instead of re-applying the transition.
+  ///
+  /// One class of decision is deliberately NOT routed through the engine:
+  /// tickets hung off a `system:` scope id (`system:provider-health` — every
+  /// `hd-provider-*`/`hd-all-down-*` infrastructure decision the
+  /// provider-health monitor raises) have no `work_item` row to move and a
+  /// choice vocabulary (`acknowledge`/`investigate`/`escalate`) that
+  /// `HumanDecisionChoice` does not contain. Before, both facts threw inside
+  /// this method — the `fromWire` parse, then the engine's `readWorkItem` —
+  /// and ~28 pending infra tickets could never be answered (F-250). The
+  /// service resolves those at the store and returns `workItem: null`; the
+  /// wire still requires a `WorkItemView`, so the scope itself is projected
+  /// with `state: 'system'` — visibly NOT a `WorkItemState`, because a scope
+  /// has no lifecycle to report.
   _i2.Future<_i44.ResolveDecisionView> resolveDecision({
     required String decisionId,
     required String choice,
