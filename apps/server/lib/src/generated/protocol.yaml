@@ -65,6 +65,7 @@ workItemActionEndpoints:
   - stopFailedWorkItem:
   - advanceToDeploy:
   - reclaimStrandedExecution:
+  - relandDeployedWorkItem:
   - repairUnreviewedReview:
 workerEndpoints:
   - listWorkers:
