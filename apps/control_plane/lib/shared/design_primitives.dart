@@ -463,6 +463,7 @@ class DetailHeader extends StatelessWidget {
     this.statusColor,
     this.facts = const [],
     this.titleKey,
+    this.titleMaxLines,
     this.showBreadcrumb = true,
     this.compact = false,
     this.titleStyle,
@@ -491,6 +492,9 @@ class DetailHeader extends StatelessWidget {
 
   /// Key applied to the title, so tests can assert the headline directly.
   final Key? titleKey;
+
+  /// Clamp the title to this many lines, ellipsised. Null = unbounded.
+  final int? titleMaxLines;
 
   /// Mobile hides this: the shell already shows a back bar, and repeating the
   /// breadcrumb would give two ways back within 60px of each other.
@@ -545,6 +549,8 @@ class DetailHeader extends StatelessWidget {
         Text(
           title,
           key: titleKey,
+          maxLines: titleMaxLines,
+          overflow: titleMaxLines == null ? null : TextOverflow.ellipsis,
           style: (titleStyle ?? ShipItType.pageTitle).copyWith(
             color: palette.inkPrimary,
           ),
