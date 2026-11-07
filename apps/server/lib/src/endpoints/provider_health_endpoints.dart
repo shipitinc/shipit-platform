@@ -125,7 +125,7 @@ class ProviderHealthEndpoints extends Endpoint {
         );
       } else {
         // This would need a listAll or similar method
-        records = [];
+        records = await service.modelExecutionRecordStore.listAll();
       }
 
       // Apply additional filters in memory for now

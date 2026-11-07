@@ -161,6 +161,13 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
     return rows.map(_fromRow).toList();
   }
 
+  Future<List<ModelExecutionRecord>> listAll() async {
+    final rows = await _db.query(
+      'SELECT * FROM "model_execution_record" ORDER BY "startedAt" DESC',
+    );
+    return rows.map(_fromRow).toList();
+  }
+
   Future<ModelExecutionStats> getStats({
     DateTime? from,
     DateTime? to,
@@ -204,10 +211,10 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
     final rows = await _db.query(
       '''SELECT $selectColumns
             COUNT(*) as "count",
-            SUM("inputTokens") as "totalInputTokens",
-            SUM("outputTokens") as "totalOutputTokens",
-            SUM("totalTokens") as "totalTokens",
-            SUM("cachedReadTokens") as "totalCachedReadTokens",
+            SUM("inputTokens")::bigint as "totalInputTokens",
+            SUM("outputTokens")::bigint as "totalOutputTokens",
+            SUM("totalTokens")::bigint as "totalTokens",
+            SUM("cachedReadTokens")::bigint as "totalCachedReadTokens",
             SUM("costUsd") as "totalCostUsd",
             AVG("costUsd") as "avgCostUsd",
             COUNT(*) FILTER (WHERE "success") as "successCount",
@@ -224,7 +231,7 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
         rows.map((r) {
           final m = r.toColumnMap();
           return GroupedModelExecutionStats(
-            groupKey: m[groupByColumn] as String,
+            groupKey: m[groupByColumn.replaceAll('"', '')].toString(),
             count: m['count'] as int,
             totalInputTokens: m['totalInputTokens'] as int? ?? 0,
             totalOutputTokens: m['totalOutputTokens'] as int? ?? 0,
