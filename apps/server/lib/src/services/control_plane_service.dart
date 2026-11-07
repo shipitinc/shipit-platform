@@ -38,6 +38,7 @@ import 'package:worker_protocol/worker_protocol.dart' show WorkerRegistration;
 
 import '../baseline/durable_workspace_runtime.dart'
     show DurableWorkspaceRuntime;
+import '../deploy/deploy_landing.dart' show maybeLandApprovedDeployment;
 import '../design/design_approval_handoff.dart' show DesignApprovalHandoff;
 import '../design/design_review_recorder.dart'
     show
@@ -2299,6 +2300,40 @@ class ControlPlaneService {
     // item has NOT moved. That is the safe order — the grant is a fact about
     // the plan, and an item still parked at its gate dispatches nothing.
     await _recordDesignScopeGrant(decision: decision, choice: choice);
+
+    // THE DEPLOY LANDING (F-257) — before the engine moves anything.
+    //
+    // `deployed` used to be a label: resolving a deploymentApproval with
+    // `approve` fired `waiting_for_human_decision -> deployed`
+    // synchronously and the producer's commit never left its worktree
+    // branch — the item was called deployed and nothing had gone anywhere.
+    // For that one resolution the approve now owes a verified land FIRST:
+    // the produced commit is merged into the product's recorded repo
+    // checkout and proven reachable from its target branch, the evidence is
+    // stamped onto the item, and only then is the engine handed the
+    // resolution that writes `deployed`.
+    //
+    // A land that cannot happen throws `DeployLandingException` and writes
+    // NOTHING — the decision stays pending, so a failed merge does not
+    // consume the human's approve: they retry it once the cause is cleared,
+    // or reject and reach `deployment_failed` through the edge that already
+    // exists. Every other resolution is unaffected — the land is owed by
+    // the approved deployment alone, and the type check sits at the call
+    // site so a non-deployment resolution never even builds the stores the
+    // land reads (the worker/execution store getters are backed by the
+    // real persistence database, which a resolution of any other type has
+    // no business touching).
+    if (decision.decisionType == HumanDecisionType.deploymentApproval) {
+      await maybeLandApprovedDeployment(
+        executionStore: executionStore,
+        workerStore: workerStore,
+        workflowStore: workflowStore,
+        decision: decision,
+        choice: choice,
+        clock: clock,
+        log: (event, data) => logger.info(event, data),
+      );
+    }
 
     final workItem = await workflowEngine.resolveHumanDecision(
       decisionId: decisionId,
