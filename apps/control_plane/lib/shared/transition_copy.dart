@@ -171,6 +171,12 @@ String? knownTransitionMessage(String from, String to) => switch ((from, to)) {
   ('deploying', 'deployment_failed') => 'Deploy hit an error',
   ('deployment_failed', 'deploying') => 'Deploy retried',
   ('deployed', 'completed') => 'Work finished',
+  // THE REROUTE OUT OF `deployed` (F-261): the audited `reroute` operator
+  // action sends a deployed item back to the implementation lane's entry
+  // state, the same landing every other rework route takes. The copy is the
+  // queue — "sent back to build again", like the `-> implementation_ready`
+  // arms above — and never claims a build has started.
+  ('deployed', 'implementation_ready') => 'Sent back to build again',
   (_, 'cancelled') => 'Work cancelled',
   (_, 'terminated') => 'Work stopped',
   _ => null,
