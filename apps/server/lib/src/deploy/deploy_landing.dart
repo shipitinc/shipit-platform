@@ -84,7 +84,14 @@ class DeployLanding {
   /// merge can actually reach it.
   final String repositoryPath;
 
-  /// The checkout's own current branch — the target the deploy landed into.
+  /// The product's DEFAULT branch — the target the deploy landed into.
+  ///
+  /// Resolved by [_resolveDefaultBranch] from the clone's own record
+  /// (`refs/remotes/origin/HEAD`, then the recorded `main` convention), never
+  /// from whichever branch the checkout happened to have checked out: that
+  /// was the F-261 defect — the durable clone sits on the lane branch the
+  /// last produced commit was made on, so seven deploys merged
+  /// `--no-ff` into `shipit/impl/<workItemId>` instead of `main`.
   final String targetBranch;
 
   /// `HEAD` of the target branch after the land.
@@ -246,10 +253,10 @@ Future<DeployLanding?> maybeLandApprovedDeployment({
 ///
 /// A [DeployLandingException] is a refusal, not a verdict on the work:
 /// missing producer, no commit to land, commit absent from the recorded
-/// checkout, a detached checkout that names no target branch, or a merge
-/// that failed or could not be verified. On a failed merge the checkout is
-/// aborted back to clean before the throw, so the next attempt starts from
-/// the same state.
+/// checkout, a default branch that cannot be resolved or selected, or a
+/// merge that failed or could not be verified. On a failed merge the
+/// checkout is aborted back to clean before the throw, so the next attempt
+/// starts from the same state.
 Future<DeployLanding> landApprovedDeployment({
   required ExecutionStore executionStore,
   required WorkerStore workerStore,
@@ -337,23 +344,49 @@ Future<DeployLanding> landApprovedDeployment({
         'Nothing was merged.',
   );
 
-  // (4) THE TARGET BRANCH — the recorded checkout's own branch. A detached
-  // checkout names no branch, and inventing one would land the work
-  // somewhere the product did not record.
-  final branchResult = await _gitRun(git, [
+  // (4) THE TARGET BRANCH — the product's DEFAULT branch, resolved honestly,
+  // then checked out so the merge below lands into it for real.
+  //
+  // The old rule merged into whatever branch the recorded checkout happened
+  // to be sitting on, and that is F-261: the durable clone is left on the
+  // lane branch the produced commit was made on, so seven deploys merged
+  // `--no-ff` into `shipit/impl/<workItemId>` — into the work's own branch —
+  // instead of the product's `main`. A deploy lands where the product
+  // releases from, not where a worker last left HEAD.
+  final targetBranch = await _resolveDefaultBranch(
+    git,
+    repositoryPath,
+    commit,
+    gitTimeout,
+    log: log,
+    workItemId: item.workItemId,
+  );
+
+  // `git merge` lands into HEAD, so HEAD must BE the resolved branch.
+  // `git checkout` also materializes a local tracking branch from
+  // `origin/<target>` when only the remote-tracking ref exists; a checkout
+  // git cannot perform — a dirty tree, a branch held by another worktree —
+  // is a refusal, not a place to invent one.
+  final checkout = await _gitRun(git, [
     '-C',
     repositoryPath,
-    'symbolic-ref',
-    '--short',
-    '-q',
-    'HEAD',
+    'checkout',
+    targetBranch,
   ], gitTimeout);
-  final targetBranch = (branchResult.stdout as String).trim();
-  if (branchResult.exitCode != 0 || targetBranch.isEmpty) {
+  if (checkout.exitCode != 0) {
+    log?.call('deploy.landing.checkout_failed', {
+      'workItemId': item.workItemId,
+      'commit': commit,
+      'repositoryPath': repositoryPath,
+      'targetBranch': targetBranch,
+      'exitCode': checkout.exitCode,
+      'stderr': _stderr(checkout),
+    });
     throw DeployLandingException(
-      'the recorded checkout $repositoryPath is not on a branch (detached '
-      'HEAD), so it names no target branch to land into. Nothing was '
-      'merged; the approval decision stays pending.',
+      'the recorded checkout $repositoryPath resolved its default branch to '
+      '$targetBranch but would not check it out (exit ${checkout.exitCode}: '
+      '${_stderr(checkout)}), so there is no branch to merge $commit into. '
+      'Nothing was merged; the approval decision stays pending.',
     );
   }
 
@@ -562,6 +595,115 @@ Future<DeployLanding> relandDeployedItem({
     git: git,
     gitTimeout: gitTimeout,
     log: log,
+  );
+}
+
+/// The product's DEFAULT branch in [repositoryPath], resolved honestly — or
+/// a [DeployLandingException] when it cannot be.
+///
+/// ## THE LADDER, IN ORDER
+///
+///  1. `symbolic-ref refs/remotes/origin/HEAD` — the clone's own record of
+///     which branch the remote declares default. Read rather than guessed:
+///     a clone that tracks `origin/trunk` lands on `trunk`, not on a
+///     hardcoded `main`.
+///  2. `main`, verified to exist — the platform's recorded convention for a
+///     checkout with no remote HEAD (`init.defaultBranch=main` is what every
+///     clone this platform makes is seeded with). `refs/heads/main` counts,
+///     and so does `refs/remotes/origin/main` alone: `git checkout main`
+///     materializes the local tracking branch from it.
+///  3. refuse — a checkout whose default cannot be resolved gets NOTHING
+///     merged, and the refusal names both arms that were tried. Falling back
+///     to the checkout's current branch here is exactly the F-261 defect
+///     this resolution exists to remove.
+///
+/// The merge itself still lands into HEAD — this function only answers the
+/// NAME — so the caller checks the resolved branch out before merging.
+/// A name is resolved honestly and a merge still fails honestly; neither is
+/// the other's business.
+Future<String> _resolveDefaultBranch(
+  String git,
+  String repositoryPath,
+  String commit,
+  Duration gitTimeout, {
+  void Function(String event, Map<String, dynamic> data)? log,
+  required String workItemId,
+}) async {
+  // Arm 1 — the clone's own record of the remote's default. With `--short`
+  // this prints `origin/<name>`; the remote-name prefix is stripped by the
+  // first '/', so a remote default with a '/' in the branch name survives.
+  final remoteHead = await _gitRun(git, [
+    '-C',
+    repositoryPath,
+    'symbolic-ref',
+    '--short',
+    '-q',
+    'refs/remotes/origin/HEAD',
+  ], gitTimeout);
+  final remoteRef = (remoteHead.stdout as String).trim();
+  if (remoteHead.exitCode == 0 && remoteRef.isNotEmpty) {
+    final slash = remoteRef.indexOf('/');
+    if (slash > 0 && slash < remoteRef.length - 1) {
+      final branch = remoteRef.substring(slash + 1);
+      log?.call('deploy.landing.default_branch', {
+        'workItemId': workItemId,
+        'repositoryPath': repositoryPath,
+        'targetBranch': branch,
+        'resolvedBy': 'origin/HEAD',
+      });
+      return branch;
+    }
+  }
+
+  // Arm 2 — the recorded convention for a checkout with no remote HEAD.
+  // The branch must actually EXIST somewhere `git checkout` can reach it:
+  // a missing `main` is not silently promoted to "the default".
+  final mainHead = await _gitExitCode(git, [
+    '-C',
+    repositoryPath,
+    'rev-parse',
+    '--verify',
+    '-q',
+    'refs/heads/main',
+  ], gitTimeout);
+  if (mainHead == 0) {
+    log?.call('deploy.landing.default_branch', {
+      'workItemId': workItemId,
+      'repositoryPath': repositoryPath,
+      'targetBranch': 'main',
+      'resolvedBy': 'refs/heads/main',
+    });
+    return 'main';
+  }
+  final originMain = await _gitExitCode(git, [
+    '-C',
+    repositoryPath,
+    'rev-parse',
+    '--verify',
+    '-q',
+    'refs/remotes/origin/main',
+  ], gitTimeout);
+  if (originMain == 0) {
+    log?.call('deploy.landing.default_branch', {
+      'workItemId': workItemId,
+      'repositoryPath': repositoryPath,
+      'targetBranch': 'main',
+      'resolvedBy': 'refs/remotes/origin/main',
+    });
+    return 'main';
+  }
+
+  log?.call('deploy.landing.no_default_branch', {
+    'workItemId': workItemId,
+    'repositoryPath': repositoryPath,
+  });
+  throw DeployLandingException(
+    'the recorded checkout $repositoryPath names no default branch: '
+    'refs/remotes/origin/HEAD does not resolve and no local or remote-'
+    'tracking `main` branch exists, so there is no honest target to land '
+    '$commit into — landing it on whatever branch the checkout happens to '
+    'be sitting on is exactly what this resolution refuses. Nothing was '
+    'merged; the approval decision stays pending.',
   );
 }
 

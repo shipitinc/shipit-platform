@@ -896,6 +896,28 @@ class WorkItemTransitions {
     (WorkItemState.deployed, WorkItemState.completed): [
       GuardConditions.actorAllowed([ActorType.orchestrator]),
     ],
+    // THE REROUTE OUT OF `deployed` (F-261). `deployed` had exactly one exit
+    // — `-> completed` — so an item that can never be made true (its
+    // producer left no commit for the re-land to merge) was parked forever.
+    // This edge is the rework path back to the implementation lane's own
+    // entry state, the same landing `OD-3` sent the review and QA rework
+    // routes to.
+    //
+    // It is deliberately NOT free: `operatorRerouteRequested()` admits only
+    // the audited `reroute` operator action — a scheduler hop, a sweep, or
+    // any other caller holding an orchestrator actor is refused, because a
+    // `deployed` item re-entering production is a consequential move the
+    // audit ledger must be able to name.
+    //
+    // `implementationReady` is `implementFeatureDefinition.entryStates`' sole
+    // member, so a rerouted item is dispatchable on the ordinary tick; the
+    // `triageAttempt` bump the action writes alongside the transition is
+    // what keeps the re-run's `implement_feature` dedupe key from colliding
+    // with the one the previous run already consumed.
+    (WorkItemState.deployed, WorkItemState.implementationReady): [
+      GuardConditions.actorAllowed([ActorType.orchestrator]),
+      GuardConditions.operatorRerouteRequested(),
+    ],
   };
 
   /// Any non-terminal work item may be cancelled or terminated by the

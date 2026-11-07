@@ -1408,6 +1408,83 @@ class EndpointWorkItemActionEndpoints extends _i1.EndpointRef {
     },
   );
 
+  /// WRITE. `deployed -> implementationReady` — the rework path for a deploy
+  /// that can never be made true (F-261).
+  ///
+  /// ## THE SHAPE IT EXISTS FOR
+  ///
+  /// A `deployed` item whose re-land refuses — the producer completed but
+  /// left NO commit, so there is nothing honest to merge — has no other
+  /// exit: `deployed -> completed` is the only edge out, and completing it
+  /// would record work that was never produced as shipped. The reroute is
+  /// the honest answer: the item goes back to the implementation lane's own
+  /// entry state, where the ordinary tick re-dispatches it, and one
+  /// `reroute` audit row names the human who asked. Measured live: six
+  /// items stranded in exactly this shape.
+  ///
+  /// It applies to a `deployed` item whether or not it carries a
+  /// `deployedCommit` stamp — the owed test is the STATE alone, because the
+  /// question this action answers ("send this back to implementation") is
+  /// the same question for a label-only deploy and for a real deploy being
+  /// reworked. A non-`deployed` item is `notApplicable`: every other state
+  /// has its own surface.
+  ///
+  /// ## THE EDGE IS NOT FREE
+  ///
+  /// The transition goes through [DurableWorkflowEngine.transition] against
+  /// the real table, which guards `deployed -> implementationReady` with
+  /// `actorAllowed([orchestrator])` AND `operatorRerouteRequested()`. The
+  /// second guard reads [operatorRerouteContextKey] from the transition
+  /// context — set below and only below — so no sweep or engine path that
+  /// happens to hold an orchestrator actor can walk a deployed item
+  /// backwards without the audit row this action writes in the same
+  /// transaction.
+  ///
+  /// ## THE DISCRIMINATOR
+  ///
+  /// The item re-enters `implementationReady`, whose `implement_feature`
+  /// dedupe key the run that produced this deploy already consumed —
+  /// `enqueueIfAbsent` would refuse the re-run's key and the rerouted item
+  /// would sit dispatchable forever with nothing running, which is the
+  /// exact silent no-op the `triageAttempt` marker exists to close. The
+  /// bump is [DurableWorkflowEngine.nextTriageAttempt] with the highest
+  /// attempt this item's own `implement_feature` jobs consumed as the
+  /// floor — the same second-watermark rule the review repair applies to
+  /// `engineering_review` jobs — computed BEFORE the write so an
+  /// unreadable marker fails with nothing written.
+  ///
+  /// ## REFUSALS WRITE NOTHING
+  ///
+  /// Replay (`accepted` reporting the prior intent), blank reason or
+  /// requester (`invalidRequest`), a non-`deployed` state
+  /// (`notApplicable`), a live job (`alreadyRunning`), and the engine's own
+  /// rejection all return before or inside a write that never happens —
+  /// the `operatorAction` audit row rides the transition's transaction, so
+  /// a rejected transition writes no row.
+  ///
+  /// ## WHY IT IS NOT OFFERED THROUGH `actionContext`
+  ///
+  /// Same reason as [relandDeployedWorkItem]: the control plane dispatches
+  /// offered actions by wire token and would dead-button an action it does
+  /// not name. The UI arm — one switch arm plus its copy — is the flagged
+  /// follow-up; the generated client method is the invocation path until
+  /// then, which is how the orchestrator fires it per stranded item.
+  _i2.Future<_i37.WorkItemActionResult> rerouteToImplementation({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) => caller.callServerEndpoint<_i37.WorkItemActionResult>(
+    'workItemActionEndpoints',
+    'rerouteToImplementation',
+    {
+      'workItemId': workItemId,
+      'requestId': requestId,
+      'requestedBy': requestedBy,
+      'reason': reason,
+    },
+  );
+
   /// WRITE. Returns a work item parked behind a fabricated engineering-review
   /// decision to `agentCompleted` — retryable and dispatchable — and retires the
   /// decision without destroying it.

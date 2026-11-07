@@ -16,7 +16,8 @@ import 'package:platform_contracts/platform_contracts.dart';
 import 'package:scheduler/src/capacity/execution_capacity.dart'
     show ExecutionCapacityResolution, agentExecutionBudget;
 import 'package:serverpod/serverpod.dart';
-import 'package:workflow_engine/workflow_engine.dart' show WorkItemTransitions;
+import 'package:workflow_engine/workflow_engine.dart'
+    show WorkItemTransitions, operatorRerouteContextKey;
 // `product_registry` and `postgres_defect_store` each export a
 // `ConcurrentModificationException` of their own; this is the work-item
 // compare-and-swap one, named by the single import that shows it.
@@ -412,6 +413,10 @@ const String operatorDeployIdempotencyKeyPrefix = 'operator-deploy:';
 /// rule.
 const String operatorReclaimIdempotencyKeyPrefix = 'operator-reclaim:';
 
+/// The `deployed -> implementation_ready` reroute idempotency-key prefix.
+/// Same replay-key-only rule.
+const String operatorRerouteIdempotencyKeyPrefix = 'operator-reroute:';
+
 /// The `operator_action.action` wire token for the deploy advance.
 ///
 /// A free-form string rather than an [OperatorActionKind] member: the enum is
@@ -432,6 +437,16 @@ const String operatorReclaimActionWire = 'reclaim';
 /// failed-work actions and lives in `workflow_store`, which this lane does
 /// not own.
 const String operatorRelandActionWire = 'reland';
+
+/// The `operator_action.action` wire token for the reroute of a `deployed`
+/// item back to implementation entry (F-261).
+///
+/// Same free-form-string rule as [operatorRelandActionWire]: the ledger
+/// column carries a plain string, so a new token needs no schema change and
+/// no [OperatorActionKind] widening — the enum is closed over the
+/// failed-work actions and lives in `workflow_store`, which this lane does
+/// not own.
+const String operatorRerouteActionWire = 'reroute';
 
 /// Operator actions on a work item parked in a failure state.
 ///
@@ -1456,6 +1471,208 @@ class WorkItemActionEndpoints extends Endpoint {
     );
   }
 
+  /// WRITE. `deployed -> implementationReady` — the rework path for a deploy
+  /// that can never be made true (F-261).
+  ///
+  /// ## THE SHAPE IT EXISTS FOR
+  ///
+  /// A `deployed` item whose re-land refuses — the producer completed but
+  /// left NO commit, so there is nothing honest to merge — has no other
+  /// exit: `deployed -> completed` is the only edge out, and completing it
+  /// would record work that was never produced as shipped. The reroute is
+  /// the honest answer: the item goes back to the implementation lane's own
+  /// entry state, where the ordinary tick re-dispatches it, and one
+  /// `reroute` audit row names the human who asked. Measured live: six
+  /// items stranded in exactly this shape.
+  ///
+  /// It applies to a `deployed` item whether or not it carries a
+  /// `deployedCommit` stamp — the owed test is the STATE alone, because the
+  /// question this action answers ("send this back to implementation") is
+  /// the same question for a label-only deploy and for a real deploy being
+  /// reworked. A non-`deployed` item is `notApplicable`: every other state
+  /// has its own surface.
+  ///
+  /// ## THE EDGE IS NOT FREE
+  ///
+  /// The transition goes through [DurableWorkflowEngine.transition] against
+  /// the real table, which guards `deployed -> implementationReady` with
+  /// `actorAllowed([orchestrator])` AND `operatorRerouteRequested()`. The
+  /// second guard reads [operatorRerouteContextKey] from the transition
+  /// context — set below and only below — so no sweep or engine path that
+  /// happens to hold an orchestrator actor can walk a deployed item
+  /// backwards without the audit row this action writes in the same
+  /// transaction.
+  ///
+  /// ## THE DISCRIMINATOR
+  ///
+  /// The item re-enters `implementationReady`, whose `implement_feature`
+  /// dedupe key the run that produced this deploy already consumed —
+  /// `enqueueIfAbsent` would refuse the re-run's key and the rerouted item
+  /// would sit dispatchable forever with nothing running, which is the
+  /// exact silent no-op the `triageAttempt` marker exists to close. The
+  /// bump is [DurableWorkflowEngine.nextTriageAttempt] with the highest
+  /// attempt this item's own `implement_feature` jobs consumed as the
+  /// floor — the same second-watermark rule the review repair applies to
+  /// `engineering_review` jobs — computed BEFORE the write so an
+  /// unreadable marker fails with nothing written.
+  ///
+  /// ## REFUSALS WRITE NOTHING
+  ///
+  /// Replay (`accepted` reporting the prior intent), blank reason or
+  /// requester (`invalidRequest`), a non-`deployed` state
+  /// (`notApplicable`), a live job (`alreadyRunning`), and the engine's own
+  /// rejection all return before or inside a write that never happens —
+  /// the `operatorAction` audit row rides the transition's transaction, so
+  /// a rejected transition writes no row.
+  ///
+  /// ## WHY IT IS NOT OFFERED THROUGH `actionContext`
+  ///
+  /// Same reason as [relandDeployedWorkItem]: the control plane dispatches
+  /// offered actions by wire token and would dead-button an action it does
+  /// not name. The UI arm — one switch arm plus its copy — is the flagged
+  /// follow-up; the generated client method is the invocation path until
+  /// then, which is how the orchestrator fires it per stranded item.
+  Future<WorkItemActionResult> rerouteToImplementation(
+    Session session, {
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async {
+    final service = serviceFor(session);
+    final limit = resolveRetryLimit();
+    final recorded = await service.workflowStore.readOperatorActionsForWorkItem(
+      workItemId,
+    );
+
+    // (1) REPLAY, before any read that could refuse: the ledger is the
+    // idempotency record, exactly as it is for retry, deploy, reclaim and
+    // reland. A request that already happened reports what it did.
+    if (_priorForAction(recorded, requestId, operatorRerouteActionWire) !=
+        null) {
+      final item = await service.readWorkItem(workItemId);
+      return _result(
+        outcome: 'accepted',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    final item = await service.readWorkItem(workItemId);
+    final trimmedReason = reason.trim();
+    final trimmedBy = requestedBy.trim();
+
+    // (2) Who and why. Sending deployed work back into production is a
+    // consequential move, so the record must name both before anything
+    // happens.
+    if (trimmedReason.isEmpty || trimmedBy.isEmpty) {
+      return _result(
+        outcome: 'invalidRequest',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    // (3) THE OWED TEST — `deployed`, and the reroute edge exists in the
+    // real table. Anything else has a different path or nothing owed.
+    if (item.state != WorkItemState.deployed ||
+        !WorkItemTransitions.isLegalTransition(
+          item.state,
+          WorkItemState.implementationReady,
+        )) {
+      service.logger.info('work_item.reroute.not_owed', {
+        'workItemId': workItemId,
+        'state': item.state.wire,
+      });
+      return _result(
+        outcome: 'notApplicable',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    // (4) A live attempt is never stacked on.
+    final jobs = await service.listJobsForWorkItem(workItemId);
+    if (jobs.any((j) => j.state.isActive)) {
+      return _result(
+        outcome: 'alreadyRunning',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    // (5) THE DISCRIMINATOR, before the write — the same ordering the
+    // review repair keeps: an unreadable `triageAttempt` marker throws here
+    // with nothing written rather than landing an item whose next dedupe
+    // key collides with the job that stranded it.
+    final attempt = DurableWorkflowEngine.nextTriageAttempt(
+      item,
+      floor: _consumedImplementAttempt(jobs),
+    );
+
+    // (6) THE ONE DURABLE WRITE. State, transition record, audit row and
+    // the `triageAttempt` marker are one commit — the `operatorReroute`
+    // context key is what the edge's second guard reads.
+    try {
+      final updated = await service.workflowEngine.transition(
+        workItemId: workItemId,
+        to: WorkItemState.implementationReady,
+        trigger: TransitionTrigger.systemEvent,
+        actor: _operatorRerouteActor,
+        context: {
+          operatorRerouteContextKey: true,
+          'requestedBy': trimmedBy,
+        },
+        idempotencyKey: '$operatorRerouteIdempotencyKeyPrefix$requestId',
+        reason: trimmedReason,
+        // MERGED, never replacing: the defect payload the re-run's
+        // instruction reads must survive the reroute.
+        metadataMerge: {
+          DurableWorkflowEngine.triageAttemptMetadataKey: attempt,
+        },
+        operatorAction: OperatorActionRecord(
+          actionId: 'oa-reroute-$requestId',
+          workItemId: workItemId,
+          action: operatorRerouteActionWire,
+          fromState: item.state.wire,
+          toState: WorkItemState.implementationReady.wire,
+          requestedBy: trimmedBy,
+          reason: trimmedReason,
+          requestId: requestId,
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      service.logger.info('work_item.reroute.accepted', {
+        'workItemId': workItemId,
+        'requestId': requestId,
+        'requestedBy': trimmedBy,
+        'state': updated.state.wire,
+        'version': updated.version,
+        'triageAttempt': attempt,
+      });
+      return _result(
+        outcome: 'accepted',
+        item: updated,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    } on WorkflowTransitionRejectedException {
+      // The edge refused — a concurrent move, or a context the guard does
+      // not admit. Nothing was taken, so nothing is audited; the rejected
+      // transition record already carries the attempt and its key.
+      return _result(
+        outcome: 'notApplicable',
+        item: await service.readWorkItem(workItemId),
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+  }
+
   // ---------------------------------------------------------------------
   // Deploy + reclaim internals
   // ---------------------------------------------------------------------
@@ -1472,6 +1689,15 @@ class WorkItemActionEndpoints extends Endpoint {
   /// permits the orchestrator alone; `operator-reclaim` names the path.
   static const WorkflowActor _operatorReclaimActor = WorkflowActor(
     actorId: 'operator-reclaim',
+    actorType: ActorType.orchestrator,
+  );
+
+  /// The actor the reroute transitions as. `deployed -> implementationReady`
+  /// permits the orchestrator alone; `operator-reroute` names the path —
+  /// the second guard on that edge additionally requires the
+  /// [operatorRerouteContextKey] marker this action alone sets.
+  static const WorkflowActor _operatorRerouteActor = WorkflowActor(
+    actorId: 'operator-reroute',
     actorType: ActorType.orchestrator,
   );
 
@@ -2182,6 +2408,30 @@ class WorkItemActionEndpoints extends Endpoint {
     for (final job in jobs) {
       if (job.jobType != JobType.engineeringReview) continue;
       final match = RegExp(r':engineering_review:a(\d+)$').firstMatch(
+        job.dedupeKey,
+      );
+      if (match == null) continue;
+      final value = int.tryParse(match.group(1)!);
+      if (value != null && value > floor) floor = value;
+    }
+    return floor;
+  }
+
+  /// The highest attempt number this item's OWN `implement_feature` jobs
+  /// have already consumed, as the second watermark for the reroute's
+  /// discriminator — the same shape [_consumedReviewAttempt] computes for
+  /// review jobs, for the same reason: the only place an
+  /// `implement_feature` dedupe key can already have a holder is a job, so
+  /// taking the max over the jobs is what makes the `triageAttempt` the
+  /// reroute writes provably unheld. An UNSUFFIXED key consumes no attempt
+  /// and so contributes nothing; the bump to `1` is what moves a rerouted
+  /// item off the bare `<workItemId>:implement_feature` key its stranded
+  /// run still holds.
+  static int _consumedImplementAttempt(List<Job> jobs) {
+    var floor = 0;
+    for (final job in jobs) {
+      if (job.jobType != JobType.implementFeature) continue;
+      final match = RegExp(r':implement_feature:a(\d+)$').firstMatch(
         job.dedupeKey,
       );
       if (match == null) continue;
