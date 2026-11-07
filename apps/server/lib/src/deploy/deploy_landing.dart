@@ -1,0 +1,555 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:execution_coordinator/execution_coordinator.dart'
+    show ExecutionStore, resolveProducerExecution;
+import 'package:platform_contracts/platform_contracts.dart';
+import 'package:scheduler/scheduler.dart'
+    show CommitProduced, producedCommitFor;
+import 'package:worker_runtime/worker_runtime.dart' show WorkerStore;
+import 'package:workflow_store/workflow_store.dart' show WorkflowStore;
+
+/// Raised when an approved deployment cannot be made true.
+///
+/// The reason is safe to surface to the operator who approved the deploy:
+/// every interpolated value is a work item id, an execution id, a git
+/// revision, a repository path or a git exit report — never a credential.
+///
+/// ## WHAT A THROW MEANS, EXACTLY
+///
+/// Nothing durable was written: no resolved decision, no moved work item.
+/// The `deploymentApproval` decision stays PENDING and the item stays
+/// parked at `waiting_for_human_decision`, so the human's approve is not
+/// consumed by a platform failure — they can retry the same approve after
+/// the cause is fixed, or reject and reach `deployment_failed` through the
+/// edge that already exists.
+class DeployLandingException implements Exception {
+  const DeployLandingException(this.reason);
+
+  final String reason;
+
+  @override
+  String toString() => 'DeployLandingException: $reason';
+}
+
+/// The work item metadata keys that record what an approved deploy landed.
+///
+/// Written by [maybeLandApprovedDeployment] BEFORE the engine moves the
+/// item to `deployed`, so the item carries the evidence that made the state
+/// true rather than `deployed` being a bare label.
+const deployedCommitMetadataKey = 'deployedCommit';
+const deployedIntoMetadataKey = 'deployedInto';
+const deployedAtMetadataKey = 'deployedAt';
+const deployedCommitBasisMetadataKey = 'deployedCommitBasis';
+const deployedByMetadataKey = 'deployedBy';
+
+/// The mechanism name stamped into [deployedByMetadataKey] and the log.
+const deployLandingMechanismName = 'deploy_landing';
+
+/// What one verified land concluded.
+///
+/// Returned only when the produced commit is PROVABLY reachable from the
+/// target branch of the product's recorded checkout — either the merge
+/// just created that ancestry, or the commit was already reachable (the
+/// replay shape of a retry, which must never merge twice).
+class DeployLanding {
+  const DeployLanding({
+    required this.commit,
+    required this.repositoryPath,
+    required this.targetBranch,
+    required this.headAfter,
+    required this.alreadyLanded,
+    required this.commitBasis,
+  });
+
+  /// The revision that was landed.
+  final String commit;
+
+  /// The product's recorded repo checkout — `WorkerExecution.repositoryPath`,
+  /// the clone the producing execution was dispatched against. This is where
+  /// the produced commit already lived, which is what makes it the place a
+  /// merge can actually reach it.
+  final String repositoryPath;
+
+  /// The checkout's own current branch — the target the deploy landed into.
+  final String targetBranch;
+
+  /// `HEAD` of the target branch after the land.
+  final String headAfter;
+
+  /// True when the commit was already reachable from the target branch —
+  /// a replayed approve, or a producer whose base revision is the land.
+  /// No merge was run for it.
+  final bool alreadyLanded;
+
+  /// `producedCommit` or `workspaceStartingRevision` — the same basis the
+  /// deployment artifact records, so the artifact's `version` and the landed
+  /// commit cannot silently name different revisions.
+  final String commitBasis;
+}
+
+/// Whether resolving [decision] with [choice] is a deployment approval that
+/// will move [item] — the one resolution that owes a verified land FIRST.
+///
+/// The conditions mirror `DurableWorkflowEngine.resolveHumanDecision`'s own
+/// `isBlocking` test plus the routing table's
+/// `(deploymentApproval, approve) -> deployed` arm, so this predicate is
+/// true exactly when the engine is about to write `deployed`. Reading the
+/// effective choice the same way the engine does — the stored choice when
+/// the decision is already resolved — is what makes a REPLAY of an
+/// interrupted resolution owe the same land: a crash between the engine's
+/// `saveHumanDecision` and its transition write leaves a resolved approve
+/// parked at the gate, and the replay must still land before it deploys.
+bool deployLandingIsOwed({
+  required HumanDecision decision,
+  required HumanDecisionChoice choice,
+  required WorkItem item,
+}) {
+  if (decision.decisionType != HumanDecisionType.deploymentApproval) {
+    return false;
+  }
+  if (decision.blocking == false) return false;
+  if (item.state != WorkItemState.waitingForHumanDecision) return false;
+  if (item.blockingHumanDecisionId != decision.decisionId) return false;
+  final effective = decision.status.isResolved && decision.choice != null
+      ? decision.choice!
+      : choice;
+  return effective == HumanDecisionChoice.approve;
+}
+
+/// Lands the approved deploy for [item], or returns `null` when this
+/// resolution is not an approved deployment.
+///
+/// This is the deploy EXECUTION the resolution path dispatches: called from
+/// `ControlPlaneService.resolveHumanDecision` after the verdict guards and
+/// BEFORE `DurableWorkflowEngine.resolveHumanDecision`, so the engine's
+/// `waiting_for_human_decision -> deployed` write happens only after the
+/// produced commit is provably in the product's target branch.
+///
+/// On success the landed commit is recorded on the work item's own metadata
+/// (the `deployed*` keys above) through the same compare-and-swap
+/// `saveWorkItem` the design scope grant write uses — a concurrent move
+/// fails the write and the whole resolution, which is the honest order: a
+/// stale item is not recorded as landed.
+///
+/// A [DeployLandingException] propagates with NOTHING written. The merge is
+/// git-idempotent — an already-merged commit verifies as already-landed
+/// without merging again — so a retry of the same approve completes the
+/// interrupted sequence rather than merging twice.
+Future<DeployLanding?> maybeLandApprovedDeployment({
+  required ExecutionStore executionStore,
+  required WorkerStore workerStore,
+  required WorkflowStore workflowStore,
+  required HumanDecision decision,
+  required HumanDecisionChoice choice,
+  DateTime Function() clock = DateTime.now,
+  String git = 'git',
+  Duration gitTimeout = const Duration(seconds: 60),
+  void Function(String event, Map<String, dynamic> data)? log,
+}) async {
+  if (decision.decisionType != HumanDecisionType.deploymentApproval) {
+    return null;
+  }
+  final item = await workflowStore.readWorkItem(decision.workItemId);
+  if (!deployLandingIsOwed(
+    decision: decision,
+    choice: choice,
+    item: item,
+  )) {
+    return null;
+  }
+
+  final landing = await landApprovedDeployment(
+    executionStore: executionStore,
+    workerStore: workerStore,
+    item: item,
+    git: git,
+    gitTimeout: gitTimeout,
+    log: log,
+  );
+
+  // The durable evidence that made `deployed` true, written BEFORE the
+  // engine's transition. Compare-and-swap on the item's own version: a
+  // concurrent move is a refusal, not a silent overwrite — the resolution
+  // aborts, and the retry re-reads the item it actually is.
+  await workflowStore.saveWorkItem(
+    item.copyWith(
+      metadata: {
+        ...?item.metadata,
+        deployedCommitMetadataKey: landing.commit,
+        deployedIntoMetadataKey:
+            '${landing.repositoryPath}#${landing.targetBranch}',
+        deployedCommitBasisMetadataKey: landing.commitBasis,
+        deployedAtMetadataKey: clock().toUtc().toIso8601String(),
+        deployedByMetadataKey: deployLandingMechanismName,
+      },
+      updatedAt: clock(),
+      version: item.version + 1,
+    ),
+    expectedVersion: item.version,
+  );
+
+  log?.call('deploy.landing.recorded', {
+    'workItemId': item.workItemId,
+    'decisionId': decision.decisionId,
+    'commit': landing.commit,
+    'repositoryPath': landing.repositoryPath,
+    'targetBranch': landing.targetBranch,
+    'headAfter': landing.headAfter,
+    'alreadyLanded': landing.alreadyLanded,
+    'commitBasis': landing.commitBasis,
+  });
+  return landing;
+}
+
+/// Resolves what [item]'s producer left and merges it into the product's
+/// recorded checkout, verifying the result.
+///
+/// ## THE RESOLUTION RULE IS THE ARTIFACT'S OWN
+///
+/// The commit is resolved exactly as `deploy_advance.dart` resolves the
+/// artifact's `gitCommit`: `producedCommitFor` first — the platform's own
+/// answer to "what did this producer leave" — then the producing
+/// execution's `workspace.startingRevision`. The repository is the
+/// producer's recorded checkout: `CommitProduced.repositoryPath`, or the
+/// producing worker execution's `repositoryPath` on the fallback arm. The
+/// worktree from `agent_execution.workspaceJson` is deliberately NOT
+/// merged into: it is a detached worktree of that checkout, it may already
+/// be reaped by workspace retention, and the object store — where the
+/// produced commit lives — is the checkout's.
+///
+/// A [DeployLandingException] is a refusal, not a verdict on the work:
+/// missing producer, no commit to land, commit absent from the recorded
+/// checkout, a detached checkout that names no target branch, or a merge
+/// that failed or could not be verified. On a failed merge the checkout is
+/// aborted back to clean before the throw, so the next attempt starts from
+/// the same state.
+Future<DeployLanding> landApprovedDeployment({
+  required ExecutionStore executionStore,
+  required WorkerStore workerStore,
+  required WorkItem item,
+  String git = 'git',
+  Duration gitTimeout = const Duration(seconds: 60),
+  void Function(String event, Map<String, dynamic> data)? log,
+}) async {
+  // (1) THE PRODUCER — resolved by the platform's own rule, the same one the
+  // deployment artifact is built from. An approved deploy of a result that
+  // does not exist is nothing honest to land.
+  final producer = await resolveProducerExecution(
+    store: executionStore,
+    workItemId: item.workItemId,
+    producerActorId: item.metadata?['producerActorId'],
+  );
+  final result = producer.result;
+  if (!producer.isResolved ||
+      result == null ||
+      result.status != AgentResultStatus.completed) {
+    log?.call('deploy.landing.no_producer', {
+      'workItemId': item.workItemId,
+      'producer': producer.note,
+    });
+    throw DeployLandingException(
+      'the approved deploy of work item ${item.workItemId} has no completed '
+      'producer result to land (${producer.note}). Nothing was merged; the '
+      'approval decision stays pending and can be retried or rejected.',
+    );
+  }
+
+  // (2) THE COMMIT AND THE CHECKOUT.
+  final produced = await producedCommitFor(workerStore, item);
+  final String? commit;
+  final String? repositoryPath;
+  final String commitBasis;
+  if (produced is CommitProduced) {
+    commit = produced.commit;
+    repositoryPath = produced.repositoryPath;
+    commitBasis = 'producedCommit';
+  } else {
+    commitBasis = 'workspaceStartingRevision';
+    final execution = producer.executionId == null
+        ? null
+        : await executionStore.readExecutionOrNull(producer.executionId!);
+    commit = execution?.workspace.startingRevision;
+    repositoryPath = await _producerRepositoryPath(
+      workerStore: workerStore,
+      item: item,
+      producerExecutionId: producer.executionId,
+    );
+    log?.call('deploy.landing.commit_fallback', {
+      'workItemId': item.workItemId,
+      'producerExecutionId': producer.executionId,
+      'producedCommit': '$produced',
+    });
+  }
+  if (commit == null || commit.isEmpty) {
+    throw DeployLandingException(
+      'the approved deploy of work item ${item.workItemId} resolves to no '
+      'commit — the producer left no produced commit and recorded no '
+      'starting revision ($produced). Nothing was merged; the approval '
+      'decision stays pending.',
+    );
+  }
+  if (repositoryPath == null || repositoryPath.isEmpty) {
+    throw DeployLandingException(
+      'the approved deploy of work item ${item.workItemId} names commit '
+      '$commit but no recorded checkout could be resolved for the '
+      'producing execution (${producer.executionId}), so there is nowhere '
+      'honest to land it. Nothing was merged.',
+    );
+  }
+
+  // (3) THE COMMIT MUST EXIST IN THE RECORDED CHECKOUT. A revision that
+  // resolves but is not an object in that repository cannot be merged and
+  // must not read as landed.
+  await _gitMust(
+    git,
+    ['-C', repositoryPath, 'rev-parse', '--verify', '$commit^{commit}'],
+    gitTimeout,
+    failure:
+        'the commit the deploy resolves to ($commit) is not an object in '
+        'the recorded checkout $repositoryPath, so it cannot be landed. '
+        'Nothing was merged.',
+  );
+
+  // (4) THE TARGET BRANCH — the recorded checkout's own branch. A detached
+  // checkout names no branch, and inventing one would land the work
+  // somewhere the product did not record.
+  final branchResult = await _gitRun(git, [
+    '-C',
+    repositoryPath,
+    'symbolic-ref',
+    '--short',
+    '-q',
+    'HEAD',
+  ], gitTimeout);
+  final targetBranch = (branchResult.stdout as String).trim();
+  if (branchResult.exitCode != 0 || targetBranch.isEmpty) {
+    throw DeployLandingException(
+      'the recorded checkout $repositoryPath is not on a branch (detached '
+      'HEAD), so it names no target branch to land into. Nothing was '
+      'merged; the approval decision stays pending.',
+    );
+  }
+
+  // (5) ALREADY LANDED IS A VERIFIED ANSWER. `merge-base --is-ancestor` is
+  // the same check the post-merge verification below runs — a replayed
+  // approve takes this arm and merges nothing.
+  final alreadyAncestor = await _gitExitCode(git, [
+    '-C',
+    repositoryPath,
+    'merge-base',
+    '--is-ancestor',
+    commit,
+    'HEAD',
+  ], gitTimeout);
+  if (alreadyAncestor != 0 && alreadyAncestor != 1) {
+    throw DeployLandingException(
+      'git merge-base --is-ancestor could not be evaluated in '
+      '$repositoryPath (exit $alreadyAncestor); the land cannot be '
+      'verified and was not attempted. Nothing was merged.',
+    );
+  }
+  if (alreadyAncestor == 0) {
+    final headAfter = (await _gitMust(git, [
+      '-C',
+      repositoryPath,
+      'rev-parse',
+      'HEAD',
+    ], gitTimeout)).trim();
+    log?.call('deploy.landing.already_landed', {
+      'workItemId': item.workItemId,
+      'commit': commit,
+      'repositoryPath': repositoryPath,
+      'targetBranch': targetBranch,
+    });
+    return DeployLanding(
+      commit: commit,
+      repositoryPath: repositoryPath,
+      targetBranch: targetBranch,
+      headAfter: headAfter,
+      alreadyLanded: true,
+      commitBasis: commitBasis,
+    );
+  }
+
+  // (6) THE MERGE. Authored as the platform, unsigned, deterministic
+  // message — the same discipline `ArtifactCommitter` applies so the land
+  // does not depend on ambient git configuration. `--no-ff` makes the land
+  // a deliberate record in the target branch's history.
+  final mergeArgs = [
+    '-c',
+    'user.name=shipit-deploy',
+    '-c',
+    'user.email=shipit-deploy@localhost',
+    '-c',
+    'commit.gpgsign=false',
+    '-C',
+    repositoryPath,
+    'merge',
+    '--no-ff',
+    '-m',
+    'deploy: land $commit for work item ${item.workItemId}',
+    commit,
+  ];
+  final merge = await _gitRun(git, mergeArgs, gitTimeout);
+  if (merge.exitCode != 0) {
+    // Leave the checkout clean for the next attempt. A failed abort is
+    // reported in the refusal, not swallowed — the operator must know the
+    // checkout may be mid-merge.
+    final abort = await _gitRun(git, [
+      '-C',
+      repositoryPath,
+      'merge',
+      '--abort',
+    ], gitTimeout);
+    final abortNote = abort.exitCode == 0
+        ? 'the checkout was aborted back to clean'
+        : 'git merge --abort ALSO failed (exit ${abort.exitCode}: '
+              '${_stderr(abort)}), so the checkout may still be mid-merge '
+              'and needs an operator';
+    log?.call('deploy.landing.merge_failed', {
+      'workItemId': item.workItemId,
+      'commit': commit,
+      'repositoryPath': repositoryPath,
+      'targetBranch': targetBranch,
+      'exitCode': merge.exitCode,
+      'stderr': _stderr(merge),
+      'abort': abortNote,
+    });
+    throw DeployLandingException(
+      'merging $commit into $targetBranch of $repositoryPath failed '
+      '(exit ${merge.exitCode}): ${_stderr(merge)}; $abortNote. The '
+      'approval decision stays pending and can be retried or rejected.',
+    );
+  }
+
+  // (7) VERIFY — a reported success is not proof. The commit must be
+  // reachable from the target branch's HEAD, checked the same way the
+  // already-landed arm checks it.
+  final verified = await _gitExitCode(git, [
+    '-C',
+    repositoryPath,
+    'merge-base',
+    '--is-ancestor',
+    commit,
+    'HEAD',
+  ], gitTimeout);
+  if (verified != 0) {
+    throw DeployLandingException(
+      'git merge of $commit into $targetBranch of $repositoryPath reported '
+      'success, but the commit is not reachable from the branch HEAD '
+      '(merge-base --is-ancestor exited $verified). The deploy is NOT '
+      'claimed; the approval decision stays pending and the checkout needs '
+      'an operator.',
+    );
+  }
+  final headAfter = (await _gitMust(git, [
+    '-C',
+    repositoryPath,
+    'rev-parse',
+    'HEAD',
+  ], gitTimeout)).trim();
+  log?.call('deploy.landing.merged', {
+    'workItemId': item.workItemId,
+    'commit': commit,
+    'repositoryPath': repositoryPath,
+    'targetBranch': targetBranch,
+    'headAfter': headAfter,
+  });
+  return DeployLanding(
+    commit: commit,
+    repositoryPath: repositoryPath,
+    targetBranch: targetBranch,
+    headAfter: headAfter,
+    alreadyLanded: false,
+    commitBasis: commitBasis,
+  );
+}
+
+/// The `repositoryPath` of the producing WORKER execution — the fallback
+/// arm's checkout, where [producedCommitFor] already reads
+/// `CommitProduced.repositoryPath` from on the produced arm.
+///
+/// The match is the same shape `producedCommitFor` applies to the stamped
+/// identity, bound to the producer `resolveProducerExecution` resolved:
+/// the item's own work, the producing agent execution, and never a
+/// reviewer's run. Zero or more-than-one matches answer `null` — guessing
+/// a checkout would land work into a repository it was not recorded
+/// against.
+Future<String?> _producerRepositoryPath({
+  required WorkerStore workerStore,
+  required WorkItem item,
+  required String? producerExecutionId,
+}) async {
+  if (producerExecutionId == null || producerExecutionId.isEmpty) {
+    return null;
+  }
+  final matches = <WorkerExecution>[];
+  for (final execution in await workerStore.listWorkerExecutions()) {
+    if (execution.workItemId != item.workItemId) continue;
+    if (execution.agentExecutionId != producerExecutionId) continue;
+    if (execution.requiredCapabilities.contains(
+      WorkerCapability.engineeringReview,
+    )) {
+      continue;
+    }
+    matches.add(execution);
+  }
+  if (matches.length != 1) return null;
+  return matches.single.repositoryPath;
+}
+
+/// A git invocation whose non-zero exit is a [DeployLandingException].
+Future<String> _gitMust(
+  String git,
+  List<String> args,
+  Duration timeout, {
+  String failure = 'a required git read failed',
+}) async {
+  final result = await _gitRun(git, args, timeout);
+  if (result.exitCode != 0) {
+    throw DeployLandingException(
+      '$failure git ${args.join(' ')} exited ${result.exitCode}: '
+      '${_stderr(result)}',
+    );
+  }
+  return result.stdout as String;
+}
+
+/// A git invocation whose exit code is the answer (0/1 semantics).
+Future<int> _gitExitCode(String git, List<String> args, Duration timeout) =>
+    _gitRun(git, args, timeout).then((r) => r.exitCode);
+
+/// Runs git with a hard timeout, mirroring `ArtifactCommitter`'s
+/// discipline: a tool failure is a typed refusal, never a caller crash.
+Future<ProcessResult> _gitRun(
+  String git,
+  List<String> args,
+  Duration timeout,
+) async {
+  try {
+    return await Process.run(
+      git,
+      args,
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    ).timeout(timeout);
+  } on TimeoutException {
+    throw DeployLandingException(
+      'git ${args.join(' ')} exceeded $timeout; the land is unfinished and '
+      'the approval decision stays pending — retry it after the cause is '
+      'cleared.',
+    );
+  } on ProcessException catch (e) {
+    throw DeployLandingException(
+      'git could not be run ($e); the land was not attempted and the '
+      'approval decision stays pending.',
+    );
+  }
+}
+
+String _stderr(ProcessResult result) {
+  final stderr = result.stderr.toString().trim();
+  return stderr.isEmpty ? '(no stderr)' : stderr;
+}
