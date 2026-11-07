@@ -1560,3 +1560,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-qa-passed-auto-deploy | integrate | IN_FLIGHT | (read-only) | feat/qa-passed-auto-deploy | 4eb53c4 | PRECISION | await MERGE_APPROVED |
 | integrate-qa-passed-auto-deploy | integrate | CLOSED | (read-only) | feat/qa-passed-auto-deploy | 4eb53c4 | PRECISION | MERGE_APPROVED → merged 7df90d7 (standing auth) | done |
 | impl-real-deploy-exec | implement | IN_FLIGHT | /private/tmp/shipit-feat-real-deploy | feat/real-deploy-exec | HEAD | PRECISION | make `deployed` land the produced commit (F-257) | 8ea00d79 running |
+| review-real-deploy-exec | review | IN_FLIGHT | (read-only) | feat/real-deploy-exec | 3fd55e0 | PRECISION | await result on 7e83f4e |
