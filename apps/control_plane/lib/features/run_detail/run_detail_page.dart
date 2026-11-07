@@ -110,7 +110,7 @@ class _RunDetailView extends StatelessWidget {
                   parentLabel: 'All work',
                   parentRef: PlainLanguage.refLabel(state.runId),
                   onParentTap: () => context.go('/runs'),
-                  title: PlainLanguage.headline(
+                  title: PlainLanguage.shortenedHeadline(
                     title: state.name,
                     description: state.description,
                   ),
@@ -272,7 +272,7 @@ class _LeftColumn extends StatelessWidget {
     return [
       DefinitionEntry(
         label: 'WHAT THIS IS ABOUT',
-        value: PlainLanguage.headline(
+        value: PlainLanguage.shortenedHeadline(
           title: state.name,
           description: state.description,
         ),

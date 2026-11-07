@@ -255,6 +255,31 @@ class PlainLanguage {
   static bool headlineIsTechnical({String? description}) =>
       (description?.trim() ?? '').isEmpty;
 
+  /// The longest headline a header will show before it is shortened.
+  ///
+  /// A run title can be a full technical sentence; left whole it dominates the
+  /// run detail header. The cutoff keeps a short explanation of what the run
+  /// pertained to rather than the entire string.
+  static const int headlineMaxLength = 64;
+
+  /// [headline] shortened to a single, readable line.
+  ///
+  /// Truncates on a word boundary and appends an ellipsis, so a header never
+  /// shows an unbounded title. The full text stays available under the
+  /// technical details disclosure.
+  static String shortenedHeadline({
+    required String title,
+    String? description,
+  }) {
+    final full = headline(title: title, description: description);
+    if (full.length <= headlineMaxLength) return full;
+    final cut = full.substring(0, headlineMaxLength);
+    final lastSpace = cut.lastIndexOf(' ');
+    final trimmed = (lastSpace > 0 ? cut.substring(0, lastSpace) : cut)
+        .trimRight();
+    return '$trimmed…';
+  }
+
   /// Why the run is parked, phrased for an operator, derived from the state
   /// it halted in.
   static String haltExplanation(String stateWire) => switch (stateWire) {
