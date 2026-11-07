@@ -4,6 +4,19 @@ import '../states/workflow_state.dart';
 import 'design_contract_resolution.dart';
 import 'transition_validator.dart';
 
+/// The transition-context key the audited `reroute` operator action sets and
+/// [GuardConditions.operatorRerouteRequested] reads — F-261.
+///
+/// Public for the same reason [designContractResolutionContextKey] is: the
+/// WRITER (`WorkItemActionEndpoints.rerouteToImplementation`, in a different
+/// package) and the READER (the guard this file declares) must agree on one
+/// string, and a shared constant is the only way that agreement survives a
+/// rename on either side. Planting the key in a context map is not
+/// authorization — it merely asks for the edge; whether the write carries an
+/// `operator_action` audit row naming who asked is the endpoint's
+/// discipline, and the transition record persists either way.
+const String operatorRerouteContextKey = 'operatorReroute';
+
 class GuardConditions {
   static GuardCondition<WorkItemState> actorAllowed(
     Iterable<ActorType> allowed,
@@ -72,6 +85,25 @@ class GuardConditions {
   escalationIndexWithinLimitForDecisionTypes({
     required Set<HumanDecisionType> escalationDecisionTypes,
   }) => _ConditionalEscalationIndexGuard(escalationDecisionTypes);
+
+  /// The `deployed -> implementationReady` edge must be ASKED FOR by the
+  /// audited `reroute` operator action — `context[operatorRerouteContextKey]
+  /// == true` — and is not a free transition.
+  ///
+  /// ## WHY THE EDGE IS NOT FREE
+  ///
+  /// `deployed` is the state a human-approved land left the item in, and
+  /// moving it back to implementation entry is re-doing deployed work — the
+  /// same class of consequential move the retry, deploy and reclaim surfaces
+  /// take through a named, audited operator action rather than through a
+  /// bare edge. `actorAllowed([orchestrator])` alone would admit ANY caller
+  /// that holds an orchestrator actor: a scheduler hop, a reconcile sweep,
+  /// or a future engine path could walk a deployed item backwards into
+  /// production with no audit row saying who asked. The marker narrows the
+  /// edge to the action that sets it; every other orchestrator caller is
+  /// refused.
+  static GuardCondition<WorkItemState> operatorRerouteRequested() =>
+      _OperatorRerouteRequestedGuard();
 }
 
 WorkflowActor? _actorOf(Map<String, dynamic>? context) =>
@@ -643,5 +675,28 @@ class _ConditionalEscalationIndexGuard extends GuardCondition<WorkItemState> {
       );
     }
     return GuardResult.pass(name);
+  }
+}
+
+class _OperatorRerouteRequestedGuard extends GuardCondition<WorkItemState> {
+  @override
+  String get name => 'operator_reroute_requested';
+
+  @override
+  GuardResult evaluate(
+    WorkflowState<WorkItemState> from,
+    WorkflowState<WorkItemState> to,
+    Map<String, dynamic>? context,
+  ) {
+    return context?[operatorRerouteContextKey] == true
+        ? GuardResult.pass(name)
+        : GuardResult.fail(
+            name,
+            'deployed -> implementation_ready is the reroute operator '
+            'action\'s edge, not a free transition: the context must carry '
+            '$operatorRerouteContextKey=true, which the audited action sets '
+            'when it records who asked. An orchestrator actor alone does '
+            'not admit it.',
+          );
   }
 }

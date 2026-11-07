@@ -189,6 +189,10 @@ final class WorkItemWorkflowState extends WorkflowState<WorkItemState> {
     ],
     WorkItemState.deployed => [
       WorkItemWorkflowState.completed,
+      // The reroute (F-261): the audited `reroute` operator action's edge
+      // back to the implementation lane's entry state. The real table guards
+      // it with `operatorRerouteRequested()` — it is not a free transition.
+      WorkItemWorkflowState.implementationReady,
       WorkItemWorkflowState.cancelled,
       WorkItemWorkflowState.terminated,
     ],

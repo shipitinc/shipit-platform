@@ -339,6 +339,215 @@ void main() {
     );
   });
 
+  group('the land targets the product DEFAULT branch — F-261', () {
+    test(
+      'lands on `main` even when the recorded checkout sits on the '
+      'produced lane branch',
+      () async {
+        // The live defect: the durable clone is left on the lane branch
+        // the produced commit was made on, and the land used to merge
+        // `--no-ff` into it — seven items landed on `shipit/impl/...`.
+        await _git(repo.path, ['checkout', 'shipit/impl/$_itemId']);
+        await harness.seedParkedForApproval(
+          stampProducer: true,
+          repositoryPath: repo.path,
+          startingRevision: base,
+          endingRevision: produced,
+        );
+        final decision = await harness.blockingDecision();
+
+        final landing = await harness.maybeLand(
+          decision: decision,
+          choice: HumanDecisionChoice.approve,
+        );
+
+        expect(landing, isNotNull);
+        expect(
+          landing!.targetBranch,
+          'main',
+          reason:
+              'the merge target is the product\'s default branch, not '
+              'whatever branch the checkout happened to be sitting on',
+        );
+        // REAL: the produced commit is reachable from `main`'s tip — the
+        // merge went into the default branch.
+        expect(
+          await _exit(repo.path, [
+            'merge-base',
+            '--is-ancestor',
+            produced,
+            'refs/heads/main',
+          ]),
+          0,
+          reason:
+              'landed must mean on the default branch — before this fix '
+              'the commit merged into the lane branch instead',
+        );
+        expect(
+          await _git(repo.path, [
+            'rev-parse',
+            'refs/heads/shipit/impl/$_itemId',
+          ]),
+          produced,
+          reason:
+              'the lane branch tip is still the produced commit — it was '
+              'not merged into itself a second time',
+        );
+        expect(
+          await _git(repo.path, ['symbolic-ref', '--short', 'HEAD']),
+          'main',
+          reason:
+              'HEAD is left on the default branch the land selected, which '
+              'is also the correct resting state for the durable clone',
+        );
+        final deployed = await harness.resolve(
+          decisionId: decision.decisionId,
+          choice: HumanDecisionChoice.approve,
+        );
+        expect(deployed.metadata?['deployedInto'], '${repo.path}#main');
+      },
+    );
+
+    test(
+      'a clone whose remote declares a NON-`main` default lands on THAT '
+      'branch — the default is read, not hardcoded',
+      () async {
+        // A real clone carries `refs/remotes/origin/HEAD`: the remote's own
+        // record of its default. Seed a bare origin whose default is
+        // `trunk` so the assertion is the READ, not the constant.
+        final remote = await Directory.systemTemp.createTemp(
+          'deploy_default_remote_',
+        );
+        final seed = await Directory.systemTemp.createTemp(
+          'deploy_default_seed_',
+        );
+        final clone = await Directory.systemTemp.createTemp(
+          'deploy_default_clone_',
+        );
+        try {
+          // The remote must already carry `trunk` when the clone is made —
+          // cloning an EMPTY remote records no `origin/HEAD`, which is the
+          // ref under test.
+          await _git(remote.path, ['init', '--bare', '-b', 'trunk']);
+          await _git(seed.path, ['init', '-b', 'trunk']);
+          final cloneBase = await _initBase(seed.path);
+          await _git(seed.path, ['remote', 'add', 'origin', remote.path]);
+          await _git(seed.path, ['push', 'origin', 'trunk']);
+          await _git(clone.path, ['clone', remote.path, '.']);
+          final cloneProduced = await _produceCommitOn(
+            clone.path,
+            _itemId,
+            'trunk',
+          );
+          // Sit on the lane branch — the shape that landed on the lane.
+          await _git(clone.path, ['checkout', 'shipit/impl/$_itemId']);
+          await harness.seedParkedForApproval(
+            stampProducer: true,
+            repositoryPath: clone.path,
+            startingRevision: cloneBase,
+            endingRevision: cloneProduced,
+          );
+          final decision = await harness.blockingDecision();
+
+          final landing = await harness.maybeLand(
+            decision: decision,
+            choice: HumanDecisionChoice.approve,
+          );
+
+          expect(landing, isNotNull);
+          expect(
+            landing!.targetBranch,
+            'trunk',
+            reason:
+                'origin/HEAD names trunk, so trunk is where the land must '
+                'go — a hardcoded `main` would have refused or invented',
+          );
+          expect(
+            await _exit(clone.path, [
+              'merge-base',
+              '--is-ancestor',
+              cloneProduced,
+              'refs/heads/trunk',
+            ]),
+            0,
+          );
+        } finally {
+          if (remote.existsSync()) await remote.delete(recursive: true);
+          if (seed.existsSync()) await seed.delete(recursive: true);
+          if (clone.existsSync()) await clone.delete(recursive: true);
+        }
+      },
+    );
+
+    test(
+      'a checkout whose default branch cannot be resolved refuses — '
+      'nothing merged, decision pending',
+      () async {
+        // No `refs/remotes/origin/HEAD`, and no `main` anywhere: there is
+        // no honest target, so the land must refuse rather than fall back
+        // to whatever branch the checkout happens to be sitting on.
+        final odd = await Directory.systemTemp.createTemp(
+          'deploy_nodefault_',
+        );
+        try {
+          await _git(odd.path, ['init', '-b', 'trunk']);
+          final oddBase = await _initBase(odd.path);
+          final oddProduced = await _produceCommitOn(
+            odd.path,
+            _itemId,
+            'trunk',
+          );
+          await harness.seedParkedForApproval(
+            stampProducer: true,
+            repositoryPath: odd.path,
+            startingRevision: oddBase,
+            endingRevision: oddProduced,
+          );
+          final decision = await harness.blockingDecision();
+          final headBefore = await _git(odd.path, ['rev-parse', 'HEAD']);
+
+          await expectLater(
+            harness.maybeLand(
+              decision: decision,
+              choice: HumanDecisionChoice.approve,
+            ),
+            throwsA(isA<DeployLandingException>()),
+          );
+
+          expect(
+            await _git(odd.path, ['rev-parse', 'HEAD']),
+            headBefore,
+            reason: 'an unresolved default merges nothing',
+          );
+          expect(
+            await _exit(odd.path, [
+              'merge-base',
+              '--is-ancestor',
+              oddProduced,
+              'refs/heads/trunk',
+            ]),
+            isNot(0),
+            reason:
+                'trunk must NOT contain the produced commit — keeping the '
+                'current branch as the target is exactly what was refused',
+          );
+          // NOTHING was written: item parked, decision pending.
+          final parked = await harness.store.readWorkItem(_itemId);
+          expect(parked.state, WorkItemState.waitingForHumanDecision);
+          expect(parked.metadata?['deployedCommit'], isNull);
+          expect(
+            (await harness.store.readHumanDecision(
+              decision.decisionId,
+            )).status,
+            HumanDecisionStatus.pending,
+          );
+        } finally {
+          if (odd.existsSync()) await odd.delete(recursive: true);
+        }
+      },
+    );
+  });
+
   group('resolutions that are not approved deployments owe no land', () {
     test('a reject merges nothing and resolves to deployment_failed', () async {
       await harness.seedParkedForApproval(
@@ -525,7 +734,18 @@ Future<String> _initBase(String dir) async {
 
 /// A produced implementation commit on `shipit/impl/<workItemId>` — the
 /// shape `ArtifactCommitter` leaves behind.
-Future<String> _produceCommit(String dir, String workItemId) async {
+Future<String> _produceCommit(String dir, String workItemId) =>
+    _produceCommitOn(dir, workItemId, 'main');
+
+/// [_produceCommit] parameterized on the branch the checkout returns to —
+/// the F-261 fixtures need the lane produced against a non-`main` default
+/// (`trunk`), and the sit-on-lane test needs no return at all handled by
+/// its own checkout.
+Future<String> _produceCommitOn(
+  String dir,
+  String workItemId,
+  String backTo,
+) async {
   await _git(dir, ['checkout', '-b', 'shipit/impl/$workItemId']);
   await File('$dir/feature.txt').writeAsString('the produced change\n');
   await _git(dir, ['add', 'feature.txt']);
@@ -539,7 +759,7 @@ Future<String> _produceCommit(String dir, String workItemId) async {
     'implement $workItemId',
   ]);
   final produced = await _git(dir, ['rev-parse', 'HEAD']);
-  await _git(dir, ['checkout', 'main']);
+  await _git(dir, ['checkout', backTo]);
   return produced;
 }
 
