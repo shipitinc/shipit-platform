@@ -1564,3 +1564,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-real-deploy-exec | review | CLOSED | (read-only) | feat/real-deploy-exec | 3fd55e0 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP on 7e83f4e → integrator 4e80a41b |
 | integrate-real-deploy-exec | integrate | IN_FLIGHT | (read-only) | feat/real-deploy-exec | 3fd55e0 | PRECISION | await MERGE_APPROVED |
 | integrate-real-deploy-exec | integrate | CLOSED | (read-only) | feat/real-deploy-exec | 3fd55e0 | PRECISION | MERGE_APPROVED → merged 7e83f4e (standing auth) | done |
+| impl-reland-stranded | implement | IN_FLIGHT | /private/tmp/shipit-feat-reland | feat/reland-stranded-deployed | 1457603 | PRECISION | re-land path for 13 label-only deployed items (F-259) | 238913d4 running |
