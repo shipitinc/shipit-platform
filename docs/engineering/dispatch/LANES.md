@@ -1571,3 +1571,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-reland-stranded | integrate | CLOSED | (read-only) | feat/reland-stranded-deployed | 1457603 | PRECISION | MERGE_APPROVED → merged 959bef4 (standing auth) | done |
 | impl-deploy-main-reroute | implement | IN_FLIGHT | /private/tmp/shipit-feat-deploy-main | feat/deploy-main-reland-reroute | aa83787 | PRECISION | land on default branch + deployed->implementation_ready rework (F-261) | 7e6d868d running |
 | review-deploy-main-reroute | review | IN_FLIGHT | (read-only) | feat/deploy-main-reland-reroute | aa83787 | PRECISION | await result on a3a6bc5 |
+| review-deploy-main-reroute | review | CLOSED | (read-only) | feat/deploy-main-reland-reroute | aa83787 | PRECISION | DO_NOT_MERGE (transition_copy arm missing) → corrector fcb8ae81 |
+| correct-deploy-main-reroute | correct | IN_FLIGHT | /private/tmp/shipit-feat-deploy-main | feat/deploy-main-reland-reroute | aa83787 | PRECISION | one-line copy arm |
