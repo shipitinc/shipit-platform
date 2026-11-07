@@ -8,6 +8,7 @@ import '../../core/theme.dart';
 import '../../data/client_provider.dart';
 import '../../data/control_plane_repository.dart';
 import '../../shared/design_primitives.dart';
+import '../../shared/periodic_refresh.dart';
 import '../../shared/state_views.dart';
 import '../../shared/detail_sections.dart';
 import '../../shared/mobile_chrome.dart';
@@ -48,7 +49,11 @@ class RunDetailPage extends StatelessWidget {
               runId: runId,
               repository: ClientProvider.repository,
             )..add(RunDetailLoaded()),
-            child: _RunDetailView(clock: clock),
+            child: PeriodicRefresh(
+              onRefresh: (context) =>
+                  context.read<RunDetailBloc>().add(RunDetailLoaded()),
+              child: _RunDetailView(clock: clock),
+            ),
           );
   }
 }
@@ -119,6 +124,12 @@ class _RunDetailView extends StatelessWidget {
                       ? 'WAITING FOR YOU'
                       : status.label.toUpperCase(),
                   statusColor: status.textColor(palette),
+                  liveLabel: 'LIVE',
+                  freshness: state.events.isEmpty
+                      ? null
+                      : PlainLanguage.updatedAgo(
+                          now.difference(state.events.last.timestamp),
+                        ),
                   facts: [
                     if (state.startedAt != null)
                       (

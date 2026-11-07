@@ -7,6 +7,7 @@ import '../../data/client_provider.dart';
 import '../../data/control_plane_repository.dart';
 import '../../shared/design_primitives.dart';
 import '../../shared/mobile_chrome.dart' show isMobile;
+import '../../shared/periodic_refresh.dart';
 import '../../shared/state_views.dart';
 import 'model_stats_bloc.dart';
 
@@ -21,7 +22,7 @@ class ModelStatsPage extends StatelessWidget {
     return provided != null
         ? BlocProvider<ModelStatsBloc>.value(
             value: provided,
-            child: const _ModelStatsView(),
+            child: const _ModelStatsView(autoRefresh: false),
           )
         : BlocProvider<ModelStatsBloc>(
             create: (_) =>
@@ -33,7 +34,11 @@ class ModelStatsPage extends StatelessWidget {
 }
 
 class _ModelStatsView extends StatefulWidget {
-  const _ModelStatsView();
+  const _ModelStatsView({this.autoRefresh = true});
+
+  /// True on the production path. A page under test injects its own bloc and
+  /// disables the timer so a periodic read cannot outlive the assertions.
+  final bool autoRefresh;
 
   @override
   State<_ModelStatsView> createState() => _ModelStatsViewState();
@@ -46,97 +51,101 @@ class _ModelStatsViewState extends State<_ModelStatsView> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<ModelStatsBloc, ModelStatsState>(
-      builder: (context, state) {
-        if (state.isLoading && state.stats == null) {
-          return const DesignLoadingSkeleton(
-            title: 'Model Stats',
-            showColumns: false,
-          );
-        }
-        if (state.errorMessage != null && state.stats == null) {
-          return DesignErrorState(
-            title: "We could not reach the system's records.",
-            detail: state.errorMessage!,
-            onRetry: () =>
-                context.read<ModelStatsBloc>().add(const ModelStatsLoaded()),
-          );
-        }
+    return PeriodicRefresh(
+      interval: widget.autoRefresh ? kLiveRefreshInterval : Duration.zero,
+      onRefresh: (context) => _loadStats(context),
+      child: BlocBuilder<ModelStatsBloc, ModelStatsState>(
+        builder: (context, state) {
+          if (state.isLoading && state.stats == null) {
+            return const DesignLoadingSkeleton(
+              title: 'Model Stats',
+              showColumns: false,
+            );
+          }
+          if (state.errorMessage != null && state.stats == null) {
+            return DesignErrorState(
+              title: "We could not reach the system's records.",
+              detail: state.errorMessage!,
+              onRetry: () =>
+                  context.read<ModelStatsBloc>().add(const ModelStatsLoaded()),
+            );
+          }
 
-        final stats = state.stats;
-        if (stats == null) {
-          return const Center(child: Text('No data available'));
-        }
+          final stats = state.stats;
+          if (stats == null) {
+            return const Center(child: Text('No data available'));
+          }
 
-        if (isMobile(context)) {
-          return _MobileModelStats(
-            stats: stats,
-            timeRange: _timeRange,
-            customRange: _customRange,
-            groupBy: _groupBy,
-            onTimeRangeChanged: (r) => setState(() => _timeRange = r),
-            onCustomRangeChanged: (r) => setState(() => _customRange = r),
-            onGroupByChanged: (g) => setState(() => _groupBy = g),
-            onRefresh: () => _loadStats(context),
-          );
-        }
+          if (isMobile(context)) {
+            return _MobileModelStats(
+              stats: stats,
+              timeRange: _timeRange,
+              customRange: _customRange,
+              groupBy: _groupBy,
+              onTimeRangeChanged: (r) => setState(() => _timeRange = r),
+              onCustomRangeChanged: (r) => setState(() => _customRange = r),
+              onGroupByChanged: (g) => setState(() => _groupBy = g),
+              onRefresh: () => _loadStats(context),
+            );
+          }
 
-        return SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              ShipItMetrics.contentGutter,
-              30,
-              ShipItMetrics.contentGutter,
-              23,
+          return SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                ShipItMetrics.contentGutter,
+                30,
+                ShipItMetrics.contentGutter,
+                23,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  PageHeader(
+                    title: 'Model Cost & Usage Stats',
+                    subtitle: _buildSubtitle(stats),
+                    liveLabel: 'LIVE',
+                  ),
+                  const SizedBox(height: 25),
+                  _ControlBar(
+                    timeRange: _timeRange,
+                    customRange: _customRange,
+                    groupBy: _groupBy,
+                    onTimeRangeChanged: (r) {
+                      setState(() => _timeRange = r);
+                      _loadStats(context);
+                    },
+                    onCustomRangeChanged: (r) {
+                      setState(() => _customRange = r);
+                      _loadStats(context);
+                    },
+                    onGroupByChanged: (g) {
+                      setState(() => _groupBy = g);
+                      _loadStats(context);
+                    },
+                  ),
+                  const SizedBox(height: 24),
+                  _SummaryCards(stats: stats),
+                  const SizedBox(height: 24),
+                  _ChartsSection(stats: stats, groupBy: _groupBy),
+                  const SizedBox(height: 46),
+                  TechnicalDetails(
+                    note:
+                        'Stats are aggregated from durable execution records. Costs in USD.',
+                    lines: [
+                      'range=${_timeRange.label}${_customRange != null ? ' (${_customRange!.start.toIso8601String()}..${_customRange!.end.toIso8601String()})' : ''}',
+                      'groupBy=${_groupBy.name}',
+                      'totalCost=\$${stats.totalCostUsd.toStringAsFixed(2)}',
+                      'totalTokens=${stats.totalTokens}',
+                      'totalExecutions=${stats.totalExecutions}',
+                      'successRate=${(stats.successRate * 100).toStringAsFixed(1)}%',
+                    ],
+                  ),
+                ],
+              ),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                PageHeader(
-                  title: 'Model Cost & Usage Stats',
-                  subtitle: _buildSubtitle(stats),
-                  liveLabel: 'LIVE',
-                ),
-                const SizedBox(height: 25),
-                _ControlBar(
-                  timeRange: _timeRange,
-                  customRange: _customRange,
-                  groupBy: _groupBy,
-                  onTimeRangeChanged: (r) {
-                    setState(() => _timeRange = r);
-                    _loadStats(context);
-                  },
-                  onCustomRangeChanged: (r) {
-                    setState(() => _customRange = r);
-                    _loadStats(context);
-                  },
-                  onGroupByChanged: (g) {
-                    setState(() => _groupBy = g);
-                    _loadStats(context);
-                  },
-                ),
-                const SizedBox(height: 24),
-                _SummaryCards(stats: stats),
-                const SizedBox(height: 24),
-                _ChartsSection(stats: stats, groupBy: _groupBy),
-                const SizedBox(height: 46),
-                TechnicalDetails(
-                  note:
-                      'Stats are aggregated from durable execution records. Costs in USD.',
-                  lines: [
-                    'range=${_timeRange.label}${_customRange != null ? ' (${_customRange!.start.toIso8601String()}..${_customRange!.end.toIso8601String()})' : ''}',
-                    'groupBy=${_groupBy.name}',
-                    'totalCost=\$${stats.totalCostUsd.toStringAsFixed(2)}',
-                    'totalTokens=${stats.totalTokens}',
-                    'totalExecutions=${stats.totalExecutions}',
-                    'successRate=${(stats.successRate * 100).toStringAsFixed(1)}%',
-                  ],
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 

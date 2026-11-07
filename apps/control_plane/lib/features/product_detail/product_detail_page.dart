@@ -11,6 +11,7 @@ import '../../data/control_plane_repository.dart';
 import '../../shared/design_primitives.dart';
 import '../../shared/form_primitives.dart';
 import '../../shared/mobile_chrome.dart';
+import '../../shared/periodic_refresh.dart';
 import '../../shared/state_views.dart';
 import 'product_detail_bloc.dart';
 
@@ -60,7 +61,12 @@ class ProductDetailPage extends StatelessWidget {
             create: (_) => ProductDetailBloc(
               repository: repository ?? ClientProvider.repository,
             )..add(ProductDetailLoaded(productId)),
-            child: _ProductDetailView(productId: productId),
+            child: PeriodicRefresh(
+              onRefresh: (context) => context.read<ProductDetailBloc>().add(
+                ProductDetailLoaded(productId),
+              ),
+              child: _ProductDetailView(productId: productId),
+            ),
           );
   }
 }
@@ -720,11 +726,33 @@ class _ProductDetailView extends StatelessWidget {
                   onTap: () => context.go('/products'),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  detail.name,
-                  style: ShipItType.pageTitle.copyWith(
-                    color: context.palette.inkPrimary,
-                  ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        detail.name,
+                        style: ShipItType.pageTitle.copyWith(
+                          color: context.palette.inkPrimary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Row(
+                      children: [
+                        Container(
+                          width: 5,
+                          height: 5,
+                          decoration: BoxDecoration(
+                            color: context.palette.positive,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        MicroLabel('LIVE', color: context.palette.inkSecondary),
+                      ],
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 10),
                 _StatusLine(detail: detail, status: status),
@@ -1819,11 +1847,33 @@ class _MobileDetail extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    detail.name,
-                    style: ShipItType.pageTitle.copyWith(
-                      color: palette.inkPrimary,
-                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          detail.name,
+                          style: ShipItType.pageTitle.copyWith(
+                            color: palette.inkPrimary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Row(
+                        children: [
+                          Container(
+                            width: 5,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: palette.positive,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 7),
+                          MicroLabel('LIVE', color: palette.inkSecondary),
+                        ],
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 10),
                   Row(

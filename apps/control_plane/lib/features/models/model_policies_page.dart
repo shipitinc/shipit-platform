@@ -7,6 +7,7 @@ import '../../data/client_provider.dart';
 import '../../data/control_plane_repository.dart';
 import '../../shared/design_primitives.dart';
 import '../../shared/mobile_chrome.dart';
+import '../../shared/periodic_refresh.dart';
 import '../../shared/state_views.dart';
 import 'model_policies_bloc.dart';
 
@@ -27,7 +28,12 @@ class ModelPoliciesPage extends StatelessWidget {
             create: (_) =>
                 ModelPoliciesBloc(repository: ClientProvider.repository)
                   ..add(const ModelPoliciesLoaded()),
-            child: const _ModelPoliciesView(),
+            child: PeriodicRefresh(
+              onRefresh: (context) => context.read<ModelPoliciesBloc>().add(
+                const ModelPoliciesLoaded(),
+              ),
+              child: const _ModelPoliciesView(),
+            ),
           );
   }
 }
