@@ -1574,3 +1574,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-deploy-main-reroute | review | CLOSED | (read-only) | feat/deploy-main-reland-reroute | aa83787 | PRECISION | DO_NOT_MERGE (transition_copy arm missing) → corrector fcb8ae81 |
 | correct-deploy-main-reroute | correct | IN_FLIGHT | /private/tmp/shipit-feat-deploy-main | feat/deploy-main-reland-reroute | aa83787 | PRECISION | one-line copy arm |
 | correct-deploy-main-reroute | correct | CLOSED | /private/tmp/shipit-feat-deploy-main | feat/deploy-main-reland-reroute | aa83787 | PRECISION | corrected a3a6bc5 → d6e995d (copy arm) → focused review 61cbcd11 |
+| integrate-deploy-main-reroute | integrate | IN_FLIGHT | (read-only) | feat/deploy-main-reland-reroute | aa83787 | PRECISION | await MERGE_APPROVED on d6e995d |
