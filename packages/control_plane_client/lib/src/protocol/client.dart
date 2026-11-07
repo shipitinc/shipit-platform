@@ -1337,6 +1337,77 @@ class EndpointWorkItemActionEndpoints extends _i1.EndpointRef {
     },
   );
 
+  /// WRITE. `deployed` -> `deployed`, with the land the label always claimed.
+  ///
+  /// ## THE SHAPE IT EXISTS FOR — F-259
+  ///
+  /// An item whose `deployment_approval` resolved under the pre-deploy
+  /// artifact — before `deploy_landing` existed — sits at `deployed` as a
+  /// bare LABEL: `deployedCommit` NULL, nothing merged into any recorded
+  /// checkout. The approval arm cannot reach it:
+  /// `maybeLandApprovedDeployment` fires only on a PENDING
+  /// `deployment_approval` resolution, and `deployed` has no edge back to a
+  /// state that could raise one. Measured live: 13 items in exactly this
+  /// shape.
+  ///
+  /// This is the operator action for that shape. It lands the produced
+  /// commit through the SAME mechanism the approve path dispatches —
+  /// [relandDeployedItem] over `landApprovedDeployment`: same producer
+  /// resolution, same commit resolution, same verify-not-remerge merge —
+  /// then stamps the `deployed*` evidence and writes one `reland` audit row.
+  /// The item does not move; the stamp is the change.
+  ///
+  /// ## THE OWED TEST
+  ///
+  /// [deployRelandIsOwed] is the whole predicate, kept in the deploy module
+  /// next to the stamp keys it reads: `deployed` AND `deployedCommit`
+  /// absent. A STAMPED item is `notApplicable` — nothing is owed, and
+  /// re-landing it would overwrite the evidence it already carries (a
+  /// stamped-but-unmerged item is a fabricated stamp, a different repair).
+  /// A non-`deployed` item is `notApplicable` — the pending-approval path
+  /// already owns that land. A no-producer, no-commit, missing-checkout or
+  /// unverifiable-merge item is refused by the land itself as a
+  /// [DeployLandingException], mapped here to `notApplicable` with the
+  /// reason logged — every refusal writes NOTHING.
+  ///
+  /// ## ORDERING, AND WHAT A CRASH LEAVES
+  ///
+  /// The merge runs BEFORE any durable write and is verify-not-remerge, so a
+  /// crash after it leaves the commit landed but unstamped — the next call
+  /// takes the already-landed arm and stamps it, finishing the interrupted
+  /// intent rather than merging twice. The stamp's compare-and-swap and the
+  /// audit row commit in one transaction, in that order: a concurrent move
+  /// fails the CAS before the audit row exists, so a refusal still writes
+  /// nothing.
+  ///
+  /// ## WHY IT IS NOT OFFERED THROUGH `actionContext`
+  ///
+  /// The control plane dispatches an offered action by wire token
+  /// (`run_detail_bloc.dart`): an action it does not name falls through to
+  /// `stopFailedWorkItem` — a button that calls the wrong method and is
+  /// refused — and the panel that would render the offer shows failure copy
+  /// with no buttons for an action that is neither `retry` nor `stop`. That
+  /// dispatch and that panel live in `apps/control_plane`, which this
+  /// surface does not own; offering the action without them would be the
+  /// dead-button class this surface exists to close. The action is invoked
+  /// through the generated client method directly until the client names it
+  /// — one switch arm plus its copy is the whole follow-up.
+  _i2.Future<_i37.WorkItemActionResult> relandDeployedWorkItem({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) => caller.callServerEndpoint<_i37.WorkItemActionResult>(
+    'workItemActionEndpoints',
+    'relandDeployedWorkItem',
+    {
+      'workItemId': workItemId,
+      'requestId': requestId,
+      'requestedBy': requestedBy,
+      'reason': reason,
+    },
+  );
+
   /// WRITE. Returns a work item parked behind a fabricated engineering-review
   /// decision to `agentCompleted` — retryable and dispatchable — and retires the
   /// decision without destroying it.

@@ -30,6 +30,14 @@ import 'package:workflow_store/workflow_store.dart'
 
 import '../deploy/deploy_advance.dart'
     show deploymentArtifactFor, raiseDeploymentApproval;
+import '../deploy/deploy_landing.dart'
+    show
+        DeployLanding,
+        DeployLandingException,
+        deployLandingStampedItem,
+        deployRelandIsOwed,
+        deployRelandMechanismName,
+        relandDeployedItem;
 import '../generated/execution_capacity_view.dart';
 import '../generated/operator_action_summary_view.dart';
 import '../generated/review_repair_result.dart';
@@ -414,6 +422,16 @@ const String operatorDeployActionWire = 'deploy';
 
 /// The `operator_action.action` wire token for the stranded-execution reclaim.
 const String operatorReclaimActionWire = 'reclaim';
+
+/// The `operator_action.action` wire token for the re-land of a `deployed`
+/// item that was never stamped (F-259).
+///
+/// Same free-form-string rule as [operatorDeployActionWire]: the ledger
+/// column carries a plain string, so a new token needs no schema change and
+/// no [OperatorActionKind] widening — the enum is closed over the
+/// failed-work actions and lives in `workflow_store`, which this lane does
+/// not own.
+const String operatorRelandActionWire = 'reland';
 
 /// Operator actions on a work item parked in a failure state.
 ///
@@ -1217,6 +1235,225 @@ class WorkItemActionEndpoints extends Endpoint {
         retryCount: _retryCount(recorded),
       );
     }
+  }
+
+  /// WRITE. `deployed` -> `deployed`, with the land the label always claimed.
+  ///
+  /// ## THE SHAPE IT EXISTS FOR — F-259
+  ///
+  /// An item whose `deployment_approval` resolved under the pre-deploy
+  /// artifact — before `deploy_landing` existed — sits at `deployed` as a
+  /// bare LABEL: `deployedCommit` NULL, nothing merged into any recorded
+  /// checkout. The approval arm cannot reach it:
+  /// `maybeLandApprovedDeployment` fires only on a PENDING
+  /// `deployment_approval` resolution, and `deployed` has no edge back to a
+  /// state that could raise one. Measured live: 13 items in exactly this
+  /// shape.
+  ///
+  /// This is the operator action for that shape. It lands the produced
+  /// commit through the SAME mechanism the approve path dispatches —
+  /// [relandDeployedItem] over `landApprovedDeployment`: same producer
+  /// resolution, same commit resolution, same verify-not-remerge merge —
+  /// then stamps the `deployed*` evidence and writes one `reland` audit row.
+  /// The item does not move; the stamp is the change.
+  ///
+  /// ## THE OWED TEST
+  ///
+  /// [deployRelandIsOwed] is the whole predicate, kept in the deploy module
+  /// next to the stamp keys it reads: `deployed` AND `deployedCommit`
+  /// absent. A STAMPED item is `notApplicable` — nothing is owed, and
+  /// re-landing it would overwrite the evidence it already carries (a
+  /// stamped-but-unmerged item is a fabricated stamp, a different repair).
+  /// A non-`deployed` item is `notApplicable` — the pending-approval path
+  /// already owns that land. A no-producer, no-commit, missing-checkout or
+  /// unverifiable-merge item is refused by the land itself as a
+  /// [DeployLandingException], mapped here to `notApplicable` with the
+  /// reason logged — every refusal writes NOTHING.
+  ///
+  /// ## ORDERING, AND WHAT A CRASH LEAVES
+  ///
+  /// The merge runs BEFORE any durable write and is verify-not-remerge, so a
+  /// crash after it leaves the commit landed but unstamped — the next call
+  /// takes the already-landed arm and stamps it, finishing the interrupted
+  /// intent rather than merging twice. The stamp's compare-and-swap and the
+  /// audit row commit in one transaction, in that order: a concurrent move
+  /// fails the CAS before the audit row exists, so a refusal still writes
+  /// nothing.
+  ///
+  /// ## WHY IT IS NOT OFFERED THROUGH `actionContext`
+  ///
+  /// The control plane dispatches an offered action by wire token
+  /// (`run_detail_bloc.dart`): an action it does not name falls through to
+  /// `stopFailedWorkItem` — a button that calls the wrong method and is
+  /// refused — and the panel that would render the offer shows failure copy
+  /// with no buttons for an action that is neither `retry` nor `stop`. That
+  /// dispatch and that panel live in `apps/control_plane`, which this
+  /// surface does not own; offering the action without them would be the
+  /// dead-button class this surface exists to close. The action is invoked
+  /// through the generated client method directly until the client names it
+  /// — one switch arm plus its copy is the whole follow-up.
+  Future<WorkItemActionResult> relandDeployedWorkItem(
+    Session session, {
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async {
+    final service = serviceFor(session);
+    final limit = resolveRetryLimit();
+    final recorded = await service.workflowStore.readOperatorActionsForWorkItem(
+      workItemId,
+    );
+
+    // (1) REPLAY, before any read that could refuse: the ledger is the
+    // idempotency record, exactly as it is for retry, deploy and reclaim. A
+    // request that already happened reports what it did.
+    if (_priorForAction(recorded, requestId, operatorRelandActionWire) !=
+        null) {
+      final item = await service.readWorkItem(workItemId);
+      return _result(
+        outcome: 'accepted',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    final item = await service.readWorkItem(workItemId);
+    final trimmedReason = reason.trim();
+    final trimmedBy = requestedBy.trim();
+
+    // (2) Who and why. A merge into the product's own checkout is the most
+    // consequential write on this surface, so the record must name both
+    // before anything happens.
+    if (trimmedReason.isEmpty || trimmedBy.isEmpty) {
+      return _result(
+        outcome: 'invalidRequest',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    // (3) THE OWED TEST, asked of the deploy module that owns the stamp
+    // vocabulary: `deployed` AND no `deployedCommit`. Anything else has a
+    // different path or nothing owed.
+    if (!deployRelandIsOwed(item)) {
+      service.logger.info('work_item.reland.not_owed', {
+        'workItemId': workItemId,
+        'state': item.state.wire,
+        'deployedCommit': item.metadata?['deployedCommit'],
+      });
+      return _result(
+        outcome: 'notApplicable',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    // (4) A live attempt is never merged on top of.
+    final jobs = await service.listJobsForWorkItem(workItemId);
+    if (jobs.any((j) => j.state.isActive)) {
+      return _result(
+        outcome: 'alreadyRunning',
+        item: item,
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    // (5) THE LAND. A [DeployLandingException] is the land's own refusal —
+    // no producer, no commit, no recorded checkout, a merge that failed or
+    // could not be verified — and nothing was merged or written. It is
+    // mapped onto the surface's refusal vocabulary rather than thrown at
+    // the operator.
+    final DeployLanding landing;
+    try {
+      landing = await relandDeployedItem(
+        executionStore: service.executionStore,
+        workerStore: service.workerStore,
+        item: item,
+        log: (event, data) => service.logger.info(event, data),
+      );
+    } on DeployLandingException catch (e) {
+      service.logger.info('work_item.reland.refused', {
+        'workItemId': workItemId,
+        'reason': e.reason,
+      });
+      return _result(
+        outcome: 'notApplicable',
+        item: await service.readWorkItem(workItemId),
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    // (6) THE DURABLE WRITES. The stamp's compare-and-swap goes FIRST — it
+    // is the statement that can fail on a concurrent writer, so ordering it
+    // first is what keeps "a refusal writes nothing" true on a store that
+    // cannot roll back. The audit row commits in the same transaction: a
+    // crash between merge and stamp leaves the commit landed but unstamped,
+    // which the next call finishes through the already-landed arm rather
+    // than merging twice.
+    final now = DateTime.now().toUtc();
+    try {
+      await service.workflowStore.inTransaction((tx) async {
+        await tx.saveWorkItem(
+          deployLandingStampedItem(
+            item,
+            landing: landing,
+            mechanism: deployRelandMechanismName,
+            at: now,
+          ),
+          expectedVersion: item.version,
+        );
+        await tx.appendOperatorAction(
+          OperatorActionRecord(
+            actionId: 'oa-reland-$requestId',
+            workItemId: workItemId,
+            action: operatorRelandActionWire,
+            // The state does not move — `deployed` was already the label; the
+            // stamp is the change — so from and to are honestly the same.
+            fromState: item.state.wire,
+            toState: item.state.wire,
+            requestedBy: trimmedBy,
+            reason: trimmedReason,
+            requestId: requestId,
+            createdAt: now,
+          ),
+        );
+      });
+    } on ConcurrentModificationException {
+      // Someone else moved the item between the read and this write. The
+      // merge is already verified idempotent, so the next attempt finishes
+      // the same intent on the item it actually is — nothing was stamped,
+      // nothing was audited.
+      return _result(
+        outcome: 'notApplicable',
+        item: await service.readWorkItem(workItemId),
+        limit: limit,
+        retryCount: _retryCount(recorded),
+      );
+    }
+
+    service.logger.info('work_item.reland.accepted', {
+      'workItemId': workItemId,
+      'requestId': requestId,
+      'requestedBy': trimmedBy,
+      'commit': landing.commit,
+      'repositoryPath': landing.repositoryPath,
+      'targetBranch': landing.targetBranch,
+      'headAfter': landing.headAfter,
+      'alreadyLanded': landing.alreadyLanded,
+      'commitBasis': landing.commitBasis,
+    });
+    return _result(
+      outcome: 'accepted',
+      item: await service.readWorkItem(workItemId),
+      limit: limit,
+      retryCount: _retryCount(recorded),
+    );
   }
 
   // ---------------------------------------------------------------------

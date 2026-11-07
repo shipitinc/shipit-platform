@@ -47,6 +47,18 @@ const deployedByMetadataKey = 'deployedBy';
 /// The mechanism name stamped into [deployedByMetadataKey] and the log.
 const deployLandingMechanismName = 'deploy_landing';
 
+/// The mechanism name stamped into [deployedByMetadataKey] by a RE-LAND —
+/// the operator action that lands a `deployed` item the approval arm could
+/// never reach (F-259).
+///
+/// Distinct from [deployLandingMechanismName] on purpose. The merge is the
+/// same mechanism, but "which path made `deployed` true" is a question the
+/// item's own metadata must answer: the stranded items this was built for
+/// were stamped by nothing at all, and a re-landed one says so. The
+/// `operator_action` ledger row names the human who asked; this names the
+/// path.
+const deployRelandMechanismName = 'deploy_landing_reland';
+
 /// What one verified land concluded.
 ///
 /// Returned only when the produced commit is PROVABLY reachable from the
@@ -118,6 +130,26 @@ bool deployLandingIsOwed({
   return effective == HumanDecisionChoice.approve;
 }
 
+/// Whether [item] is a `deployed` item that was never made true — the
+/// stranded, label-only shape a re-land exists for (F-259).
+///
+/// The owed test is `deployed` AND [deployedCommitMetadataKey] absent, and
+/// the commit key alone is the right predicate. The five `deployed*` keys
+/// are written in ONE `saveWorkItem` — see
+/// [maybeLandApprovedDeployment] — so they cannot be half-present: the
+/// commit's presence is the stamp's presence, and `deployedBy`/
+/// `deployedInto` add no second fact to test against.
+///
+/// A `deployed` item WITH the stamp is NOT owed, deliberately: nothing is
+/// missing, and re-landing it would overwrite the evidence it already
+/// carries. A stamped item whose commit is somehow not on the branch is a
+/// fabricated stamp — a different repair, not a re-land.
+bool deployRelandIsOwed(WorkItem item) {
+  if (item.state != WorkItemState.deployed) return false;
+  final stamp = item.metadata?[deployedCommitMetadataKey];
+  return stamp is! String || stamp.isEmpty;
+}
+
 /// Lands the approved deploy for [item], or returns `null` when this
 /// resolution is not an approved deployment.
 ///
@@ -174,18 +206,11 @@ Future<DeployLanding?> maybeLandApprovedDeployment({
   // concurrent move is a refusal, not a silent overwrite — the resolution
   // aborts, and the retry re-reads the item it actually is.
   await workflowStore.saveWorkItem(
-    item.copyWith(
-      metadata: {
-        ...?item.metadata,
-        deployedCommitMetadataKey: landing.commit,
-        deployedIntoMetadataKey:
-            '${landing.repositoryPath}#${landing.targetBranch}',
-        deployedCommitBasisMetadataKey: landing.commitBasis,
-        deployedAtMetadataKey: clock().toUtc().toIso8601String(),
-        deployedByMetadataKey: deployLandingMechanismName,
-      },
-      updatedAt: clock(),
-      version: item.version + 1,
+    deployLandingStampedItem(
+      item,
+      landing: landing,
+      mechanism: deployLandingMechanismName,
+      at: clock(),
     ),
     expectedVersion: item.version,
   );
@@ -464,6 +489,79 @@ Future<DeployLanding> landApprovedDeployment({
     headAfter: headAfter,
     alreadyLanded: false,
     commitBasis: commitBasis,
+  );
+}
+
+/// The item with one verified land stamped on it.
+///
+/// A PURE transform — the durable write is the caller's
+/// (`saveWorkItem` compare-and-swap), which is the same discipline both
+/// writers keep. Shared between [maybeLandApprovedDeployment] and the
+/// operator re-land so "what made `deployed` true" is ONE definition the two
+/// stamp writers cannot drift apart on: same five keys, same shapes, and
+/// [mechanism] is the only thing that differs — [deployLandingMechanismName]
+/// on the approval path, [deployRelandMechanismName] on the re-land.
+WorkItem deployLandingStampedItem(
+  WorkItem item, {
+  required DeployLanding landing,
+  required String mechanism,
+  required DateTime at,
+}) => item.copyWith(
+  metadata: {
+    ...?item.metadata,
+    deployedCommitMetadataKey: landing.commit,
+    deployedIntoMetadataKey:
+        '${landing.repositoryPath}#${landing.targetBranch}',
+    deployedCommitBasisMetadataKey: landing.commitBasis,
+    deployedAtMetadataKey: at.toUtc().toIso8601String(),
+    deployedByMetadataKey: mechanism,
+  },
+  updatedAt: at,
+  version: item.version + 1,
+);
+
+/// Lands the produced commit for a `deployed` item that was never stamped —
+/// the re-land path (F-259).
+///
+/// The land itself IS [landApprovedDeployment], unchanged: same producer
+/// resolution, same commit resolution, same verify-not-remerge merge, same
+/// refusals. What differs is the TRIGGER and the owed test —
+/// [deployRelandIsOwed] instead of [deployLandingIsOwed] — so this is the
+/// arm for an item whose `deployment_approval` already resolved (under the
+/// pre-deploy artifact, before the land existed) and can never fire the
+/// approval path again.
+///
+/// The owed test is re-asserted HERE and not only in the calling endpoint,
+/// for the same reason the endpoint checks it there: a re-land over an
+/// existing stamp would overwrite the evidence the stamp carries, and an
+/// item that is not `deployed` at all has a different path. A refusal —
+/// either this guard's or the land's own — is a [DeployLandingException]
+/// with NOTHING written: no merge the land could not verify, and no stamp.
+/// Stamping is deliberately left to the caller, which commits the stamp and
+/// its audit row in one transaction.
+Future<DeployLanding> relandDeployedItem({
+  required ExecutionStore executionStore,
+  required WorkerStore workerStore,
+  required WorkItem item,
+  String git = 'git',
+  Duration gitTimeout = const Duration(seconds: 60),
+  void Function(String event, Map<String, dynamic> data)? log,
+}) async {
+  if (!deployRelandIsOwed(item)) {
+    throw DeployLandingException(
+      'work item ${item.workItemId} is not a deployed item missing its '
+      'landed stamp (state ${item.state.wire}, deployedCommit '
+      '${item.metadata?[deployedCommitMetadataKey] ?? 'absent'}), so no '
+      're-land is owed. Nothing was merged and nothing was written.',
+    );
+  }
+  return landApprovedDeployment(
+    executionStore: executionStore,
+    workerStore: workerStore,
+    item: item,
+    git: git,
+    gitTimeout: gitTimeout,
+    log: log,
   );
 }
 
