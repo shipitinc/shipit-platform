@@ -48,7 +48,10 @@ abstract class OperatorActionSummaryView implements _i1.SerializableModel {
     );
   }
 
-  /// 'retry' | 'stop'.
+  /// 'retry' | 'stop' | 'deploy' | 'reclaim' | 'reland' | 'reroute' — the
+  /// same plain-string tokens `operator_action.action` carries; only 'retry'
+  /// and 'stop' are OperatorActionKind members, the rest are the endpoint's
+  /// own wire tokens.
   String action;
 
   String requestedBy;
@@ -57,8 +60,8 @@ abstract class OperatorActionSummaryView implements _i1.SerializableModel {
 
   DateTime at;
 
-  /// 1-based position among this item's retries. Null for a `stop`, which
-  /// consumes no attempt.
+  /// 1-based position among this item's retries. Null for every other
+  /// action — `retry` is the only one that consumes an attempt.
   int? attemptNumber;
 
   /// Returns a shallow copy of this [OperatorActionSummaryView]

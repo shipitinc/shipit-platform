@@ -5,10 +5,18 @@ serverOnly: true
 ### to leave a record of who and why that cannot be quietly edited afterwards,
 ### so there is no update path and no delete path — on the model, on
 ### WorkflowStore, or in any store. The only write the contract declares is
-### `appendOperatorAction`, and the only producer is the transaction
-### DurableWorkflowEngine.transition already opens, so an audit row and the
-### state change it authorises commit or roll back together. A refused attempt
-### writes none: nothing was taken, so there is nothing to audit.
+### `appendOperatorAction`, and every append that accompanies a state change
+### rides the transaction DurableWorkflowEngine.transition already opens, so
+### an audit row and the state change it authorises commit or roll back
+### together. The ONE exception is deliberate and named: the interrupted
+### deploy advance in `advanceToDeploy` (work_item_action_endpoints.dart)
+### appends standalone when the item is already at `deploying` with no
+### blocking decision — its deploy transition committed under an earlier
+### intent, so there is no transaction left to ride. The row is written
+### FIRST, before the `deployment_approval` raise it authorises, so a crash
+### in between still leaves the audit and a replay of the same `requestId`
+### converges by finishing the raise. A refused attempt writes none: nothing
+### was taken, so there is nothing to audit.
 indexes:
   operator_action_id_unique:
     fields: actionId
@@ -29,7 +37,12 @@ indexes:
 fields:
   actionId: String
   workItemId: String
-  ### Closed set: 'retry' | 'stop'.
+  ### 'retry' | 'stop' | 'deploy' | 'reclaim' | 'reland' | 'reroute'. The
+  ### first two are the closed set of OperatorActionKind; the other four are
+  ### the endpoint's own wire tokens (operatorDeployActionWire /
+  ### operatorReclaimActionWire / operatorRelandActionWire /
+  ### operatorRerouteActionWire in work_item_action_endpoints.dart), stored
+  ### here as plain strings — the column carries no enum.
   action: String
   fromState: String
   toState: String

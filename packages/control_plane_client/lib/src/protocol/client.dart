@@ -1380,18 +1380,16 @@ class EndpointWorkItemActionEndpoints extends _i1.EndpointRef {
   /// fails the CAS before the audit row exists, so a refusal still writes
   /// nothing.
   ///
-  /// ## WHY IT IS NOT OFFERED THROUGH `actionContext`
+  /// ## OFFERED THROUGH `actionContext` — THE UI ARM LANDED WITH IT
   ///
-  /// The control plane dispatches an offered action by wire token
-  /// (`run_detail_bloc.dart`): an action it does not name falls through to
-  /// `stopFailedWorkItem` — a button that calls the wrong method and is
-  /// refused — and the panel that would render the offer shows failure copy
-  /// with no buttons for an action that is neither `retry` nor `stop`. That
-  /// dispatch and that panel live in `apps/control_plane`, which this
-  /// surface does not own; offering the action without them would be the
-  /// dead-button class this surface exists to close. The action is invoked
-  /// through the generated client method directly until the client names it
-  /// — one switch arm plus its copy is the whole follow-up.
+  /// This action was originally withheld from [actionContext] on purpose:
+  /// the control plane dispatches an offered action by wire token
+  /// (`run_detail_bloc.dart`), and an action it did not name fell through to
+  /// `stopFailedWorkItem` — a button that called the wrong method. The UI
+  /// arm — the `reland` switch arm, its panel copy and its repository call —
+  /// is now in place (F-260), so [actionsFor] offers it for a `deployed`
+  /// item with no `deployedCommit` stamp and nothing live holding it, which
+  /// is exactly the owed test plus the live-job refusal below.
   _i2.Future<_i37.WorkItemActionResult> relandDeployedWorkItem({
     required String workItemId,
     required String requestId,
@@ -1462,13 +1460,13 @@ class EndpointWorkItemActionEndpoints extends _i1.EndpointRef {
   /// the `operatorAction` audit row rides the transition's transaction, so
   /// a rejected transition writes no row.
   ///
-  /// ## WHY IT IS NOT OFFERED THROUGH `actionContext`
+  /// ## OFFERED THROUGH `actionContext` — THE UI ARM LANDED WITH IT
   ///
-  /// Same reason as [relandDeployedWorkItem]: the control plane dispatches
-  /// offered actions by wire token and would dead-button an action it does
-  /// not name. The UI arm — one switch arm plus its copy — is the flagged
-  /// follow-up; the generated client method is the invocation path until
-  /// then, which is how the orchestrator fires it per stranded item.
+  /// Same history as [relandDeployedWorkItem]: the action was withheld
+  /// until the control plane could dispatch and render it, and that arm —
+  /// the `reroute` switch arm, its panel copy and its repository call — is
+  /// now in place (F-262). [actionsFor] offers it for any idle `deployed`
+  /// item, stamped or not, because the owed test here is the state alone.
   _i2.Future<_i37.WorkItemActionResult> rerouteToImplementation({
     required String workItemId,
     required String requestId,
