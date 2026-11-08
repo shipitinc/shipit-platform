@@ -1278,8 +1278,9 @@ class WorkItemActionEndpoints extends Endpoint {
   /// This is the operator action for that shape. It lands the produced
   /// commit through the SAME mechanism the approve path dispatches —
   /// [relandDeployedItem] over `landApprovedDeployment`: same producer
-  /// resolution, same commit resolution, same verify-not-remerge merge —
-  /// then stamps the `deployed*` evidence and writes one `reland` audit row.
+  /// resolution, same commit resolution, same verify-not-remerge merge, and
+  /// since F-258 the same verified push to the product remote — then stamps
+  /// the `deployed*` evidence and writes one `reland` audit row.
   /// The item does not move; the stamp is the change.
   ///
   /// ## THE OWED TEST
@@ -1397,6 +1398,7 @@ class WorkItemActionEndpoints extends Endpoint {
         executionStore: service.executionStore,
         workerStore: service.workerStore,
         item: item,
+        deployPush: service.deployPusher,
         log: (event, data) => service.logger.info(event, data),
       );
     } on DeployLandingException catch (e) {

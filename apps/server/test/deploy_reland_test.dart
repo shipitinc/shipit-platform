@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:control_plane_server/src/deploy/deploy_landing.dart';
+import 'package:control_plane_server/src/deploy/deploy_push.dart';
 import 'package:control_plane_server/src/endpoints/work_item_action_endpoints.dart';
 import 'package:control_plane_server/src/services/control_plane_service.dart';
 import 'package:execution_coordinator/execution_coordinator.dart'
@@ -264,6 +265,7 @@ void main() {
           executionStore: harness.executionStore,
           workerStore: harness.workerStore,
           item: item,
+          deployPush: harness.pusher,
         );
         expect(crashed.alreadyLanded, isFalse);
         expect(
@@ -555,6 +557,7 @@ class _Harness {
   final InMemoryWorkflowStore store = InMemoryWorkflowStore();
   final InMemoryExecutionStore executionStore = InMemoryExecutionStore();
   final InMemoryWorkerStore workerStore = InMemoryWorkerStore();
+  final _FakeDeployPusher pusher = _FakeDeployPusher();
 
   late final _TestEndpoints endpoints = _TestEndpoints(this);
 
@@ -709,6 +712,38 @@ class _TestService extends ControlPlaneService {
 
   @override
   WorkerStore get workerStore => _harness.workerStore;
+
+  @override
+  DeployPusher get deployPusher => _harness.pusher;
+}
+
+/// A [DeployPusher] that records its calls and reports the branch pushed —
+/// the same seam `deploy_landing_test.dart` drives. The push's own
+/// transport and credential resolution are exercised for real in
+/// `deploy_push_test.dart`; here the merge and the stamp are the subject.
+class _FakeDeployPusher implements DeployPusher {
+  final List<({String repositoryPath, String targetBranch, String localHead})>
+  calls = [];
+
+  @override
+  Future<DeployPush> pushLandedBranch({
+    required WorkItem item,
+    required String repositoryPath,
+    required String targetBranch,
+    required String localHead,
+  }) async {
+    calls.add((
+      repositoryPath: repositoryPath,
+      targetBranch: targetBranch,
+      localHead: localHead,
+    ));
+    return DeployPush(
+      state: DeployPushState.pushed,
+      remoteUrl: 'ssh://git@remote.test:22/org/repo.git',
+      branch: targetBranch,
+      remoteHead: localHead,
+    );
+  }
 }
 
 /// A [Session] that records log lines and never touches a database.

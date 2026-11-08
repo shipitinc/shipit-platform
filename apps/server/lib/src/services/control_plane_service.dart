@@ -38,7 +38,13 @@ import 'package:worker_protocol/worker_protocol.dart' show WorkerRegistration;
 
 import '../baseline/durable_workspace_runtime.dart'
     show DurableWorkspaceRuntime;
+import '../credentials/secret_provider.dart' show SecretProvider;
+import '../credentials/secret_provider_resolver.dart'
+    show resolveSecretProvider;
+import '../credentials/secretless_error.dart' show secretlessText;
 import '../deploy/deploy_landing.dart' show maybeLandApprovedDeployment;
+import '../deploy/deploy_push.dart'
+    show DeployPusher, RegistryDeployPusher, SshDeployPushTransport;
 import '../design/design_approval_handoff.dart' show DesignApprovalHandoff;
 import '../design/design_review_recorder.dart'
     show
@@ -257,6 +263,42 @@ class ControlPlaneService {
     store: productRegistryStore,
     humanDecisionStore: humanDecisionStore,
   );
+
+  /// The deploy push (F-258) — the pusher `landApprovedDeployment` requires
+  /// so that `deployed` means the landed branch reached the product remote.
+  ///
+  /// Resolved LAZILY, for two reasons. First, it is only consulted inside
+  /// the `deploymentApproval` arm of [resolveHumanDecision] and inside the
+  /// operator re-land, so a resolution of any other decision type never
+  /// builds the credential path at all. Second, a custody substrate that
+  /// cannot be selected must not prevent the service from being
+  /// constructed — [resolveSecretProvider] fails closed by design, so the
+  /// resolution failure is recorded here and the pusher is built with a
+  /// `null` provider, which makes the push itself refuse honestly as a
+  /// `DeployLandingException` rather than crashing the service at resolve
+  /// time. The refusal names the missing configuration; the decision stays
+  /// pending.
+  DeployPusher? _deployPusher;
+  DeployPusher get deployPusher => _deployPusher ??= _resolveDeployPusher();
+
+  DeployPusher _resolveDeployPusher() {
+    SecretProvider? provider;
+    try {
+      provider = resolveSecretProvider(
+        log: (event, fields) => logger.info('deploy.push.$event', fields),
+      ).provider;
+    } on Object catch (error) {
+      logger.info('deploy.push.custody_unavailable', {
+        'error': secretlessText(error),
+      });
+    }
+    return RegistryDeployPusher(
+      engine: productRegistryEngine,
+      secretProvider: provider,
+      transport: const SshDeployPushTransport(),
+      log: (event, data) => logger.info(event, data),
+    );
+  }
 
   // ---------------------------------------------------------------------
   // HumanDirection (Inbox) — reads + write paths
@@ -2322,7 +2364,9 @@ class ControlPlaneService {
     // site so a non-deployment resolution never even builds the stores the
     // land reads (the worker/execution store getters are backed by the
     // real persistence database, which a resolution of any other type has
-    // no business touching).
+    // no business touching). `deployPusher` is read ONLY inside this arm,
+    // for the same reason: it is what makes `deployed` mean the branch
+    // reached the product remote (F-258).
     if (decision.decisionType == HumanDecisionType.deploymentApproval) {
       await maybeLandApprovedDeployment(
         executionStore: executionStore,
@@ -2330,6 +2374,7 @@ class ControlPlaneService {
         workflowStore: workflowStore,
         decision: decision,
         choice: choice,
+        deployPush: deployPusher,
         clock: clock,
         log: (event, data) => logger.info(event, data),
       );

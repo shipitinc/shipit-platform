@@ -10,6 +10,9 @@ import 'package:scheduler/scheduler.dart'
 import 'package:worker_runtime/worker_runtime.dart' show WorkerStore;
 import 'package:workflow_store/workflow_store.dart' show WorkflowStore;
 
+import '../credentials/secretless_error.dart' show secretlessText;
+import 'deploy_push.dart' show DeployPush, DeployPusher;
+
 /// Raised when an approved deployment cannot be made true.
 ///
 /// The reason is safe to surface to the operator who approved the deploy:
@@ -44,6 +47,12 @@ const deployedAtMetadataKey = 'deployedAt';
 const deployedCommitBasisMetadataKey = 'deployedCommitBasis';
 const deployedByMetadataKey = 'deployedBy';
 
+/// The product remote the landed branch was pushed to — `url#branch`
+/// (F-258). An address, never a credential: it records WHERE the deploy
+/// reached, paired with [deployedIntoMetadataKey]'s record of where it
+/// merged.
+const deployedRemoteMetadataKey = 'deployedRemote';
+
 /// The mechanism name stamped into [deployedByMetadataKey] and the log.
 const deployLandingMechanismName = 'deploy_landing';
 
@@ -73,6 +82,7 @@ class DeployLanding {
     required this.headAfter,
     required this.alreadyLanded,
     required this.commitBasis,
+    required this.push,
   });
 
   /// The revision that was landed.
@@ -106,6 +116,12 @@ class DeployLanding {
   /// deployment artifact records, so the artifact's `version` and the landed
   /// commit cannot silently name different revisions.
   final String commitBasis;
+
+  /// What the push to the product remote established (F-258): which branch
+  /// the remote now carries the landed head on, and the verified remote
+  /// tip. `deployed` is only claimed AFTER this exists — a land that
+  /// merges but cannot push throws before returning.
+  final DeployPush push;
 }
 
 /// Whether resolving [decision] with [choice] is a deployment approval that
@@ -176,12 +192,20 @@ bool deployRelandIsOwed(WorkItem item) {
 /// git-idempotent — an already-merged commit verifies as already-landed
 /// without merging again — so a retry of the same approve completes the
 /// interrupted sequence rather than merging twice.
+///
+/// [deployPush] is REQUIRED (F-258): `deployed` now means the landed branch
+/// reached the product remote, and a caller that cannot wire the push must
+/// not be able to claim it. A pusher that throws is rendered as a
+/// [DeployLandingException] — nothing durable written, the decision stays
+/// pending, and a retried approve finishes the interrupted push through the
+/// already-landed arm.
 Future<DeployLanding?> maybeLandApprovedDeployment({
   required ExecutionStore executionStore,
   required WorkerStore workerStore,
   required WorkflowStore workflowStore,
   required HumanDecision decision,
   required HumanDecisionChoice choice,
+  required DeployPusher deployPush,
   DateTime Function() clock = DateTime.now,
   String git = 'git',
   Duration gitTimeout = const Duration(seconds: 60),
@@ -203,6 +227,7 @@ Future<DeployLanding?> maybeLandApprovedDeployment({
     executionStore: executionStore,
     workerStore: workerStore,
     item: item,
+    deployPush: deployPush,
     git: git,
     gitTimeout: gitTimeout,
     log: log,
@@ -253,14 +278,30 @@ Future<DeployLanding?> maybeLandApprovedDeployment({
 ///
 /// A [DeployLandingException] is a refusal, not a verdict on the work:
 /// missing producer, no commit to land, commit absent from the recorded
-/// checkout, a default branch that cannot be resolved or selected, or a
-/// merge that failed or could not be verified. On a failed merge the
-/// checkout is aborted back to clean before the throw, so the next attempt
-/// starts from the same state.
+/// checkout, a default branch that cannot be resolved or selected, a merge
+/// that failed or could not be verified, or a push to the product remote
+/// that was refused (F-258). On a failed merge the checkout is aborted back
+/// to clean before the throw, so the next attempt starts from the same
+/// state.
+///
+/// ## THE PUSH IS PART OF THE LAND (F-258)
+///
+/// The merge used to be where the deploy ended: the commit landed in the
+/// recorded checkout's default branch and the item was stamped `deployed`
+/// — while the product's origin remote never received anything. `deployed`
+/// now means the branch reached the remote: after the land is verified —
+/// on BOTH arms, the merge and the already-landed replay — the landed head
+/// is pushed to the checkout's `origin` via the product's verified deploy
+/// key. A push that is refused throws a [DeployLandingException] like every
+/// other refusal here: nothing durable was written, the approve is not
+/// consumed, and a retry completes the interrupted sequence — the
+/// already-landed arm re-verifies the local merge and the push's own
+/// idempotency turns a partially-completed push into `alreadyCurrent`.
 Future<DeployLanding> landApprovedDeployment({
   required ExecutionStore executionStore,
   required WorkerStore workerStore,
   required WorkItem item,
+  required DeployPusher deployPush,
   String git = 'git',
   Duration gitTimeout = const Duration(seconds: 60),
   void Function(String event, Map<String, dynamic> data)? log,
@@ -421,6 +462,18 @@ Future<DeployLanding> landApprovedDeployment({
       'repositoryPath': repositoryPath,
       'targetBranch': targetBranch,
     });
+    // The push runs on the already-landed arm too: a crash between merge
+    // and push is exactly the retry shape this arm exists for, and the
+    // push's own idempotency makes "remote already contains the head" a
+    // success rather than a failure.
+    final push = await _pushLandedBranch(
+      deployPush: deployPush,
+      item: item,
+      repositoryPath: repositoryPath,
+      targetBranch: targetBranch,
+      localHead: headAfter,
+      log: log,
+    );
     return DeployLanding(
       commit: commit,
       repositoryPath: repositoryPath,
@@ -428,6 +481,7 @@ Future<DeployLanding> landApprovedDeployment({
       headAfter: headAfter,
       alreadyLanded: true,
       commitBasis: commitBasis,
+      push: push,
     );
   }
 
@@ -515,6 +569,20 @@ Future<DeployLanding> landApprovedDeployment({
     'targetBranch': targetBranch,
     'headAfter': headAfter,
   });
+
+  // (8) THE PUSH (F-258) — the land is not claimed until the product remote
+  // carries the landed head. A refused push throws like every other
+  // refusal above: the merge stays local, nothing durable was written, and
+  // the approval decision stays pending — a retried approve takes the
+  // already-landed arm and completes the push rather than merging twice.
+  final push = await _pushLandedBranch(
+    deployPush: deployPush,
+    item: item,
+    repositoryPath: repositoryPath,
+    targetBranch: targetBranch,
+    localHead: headAfter,
+    log: log,
+  );
   return DeployLanding(
     commit: commit,
     repositoryPath: repositoryPath,
@@ -522,7 +590,62 @@ Future<DeployLanding> landApprovedDeployment({
     headAfter: headAfter,
     alreadyLanded: false,
     commitBasis: commitBasis,
+    push: push,
   );
+}
+
+/// Runs [deployPush] and renders ANY refusal as a [DeployLandingException].
+///
+/// The pusher's own refusal type is `DeployPushRefusedException`, and the
+/// credential path underneath it can raise any of the audited failures; all
+/// of them are rendered through `secretlessText` — an audited failure
+/// supplies its own description and anything else is suppressed to a type
+/// name — so a refusal reason that reaches the durable record can never
+/// carry key material.
+///
+/// The honesty point worth stating: a throw here comes AFTER the merge.
+/// That is the honest order — the merge is local and idempotent, the push
+/// is what reaches the product, and the state model stays truthful about
+/// "merged locally, push failed" precisely because the decision stays
+/// pending and the stamp is never written.
+Future<DeployPush> _pushLandedBranch({
+  required DeployPusher deployPush,
+  required WorkItem item,
+  required String repositoryPath,
+  required String targetBranch,
+  required String localHead,
+  void Function(String event, Map<String, dynamic> data)? log,
+}) async {
+  try {
+    final push = await deployPush.pushLandedBranch(
+      item: item,
+      repositoryPath: repositoryPath,
+      targetBranch: targetBranch,
+      localHead: localHead,
+    );
+    log?.call('deploy.push.${push.state.name}', {
+      'workItemId': item.workItemId,
+      'repositoryPath': repositoryPath,
+      'targetBranch': targetBranch,
+      'remoteUrl': push.remoteUrl,
+      'remoteHead': push.remoteHead,
+    });
+    return push;
+  } on Object catch (error) {
+    log?.call('deploy.push.refused', {
+      'workItemId': item.workItemId,
+      'repositoryPath': repositoryPath,
+      'targetBranch': targetBranch,
+      'reason': secretlessText(error),
+    });
+    throw DeployLandingException(
+      'the land merged into $targetBranch of $repositoryPath but the push '
+      'to the product remote was refused — ${secretlessText(error)}. The '
+      'merge stays local; nothing durable was written; the approval '
+      'decision stays pending and a retried approve completes the '
+      'interrupted push through the already-landed arm.',
+    );
+  }
 }
 
 /// The item with one verified land stamped on it.
@@ -545,6 +668,8 @@ WorkItem deployLandingStampedItem(
     deployedCommitMetadataKey: landing.commit,
     deployedIntoMetadataKey:
         '${landing.repositoryPath}#${landing.targetBranch}',
+    deployedRemoteMetadataKey:
+        '${landing.push.remoteUrl}#${landing.push.branch}',
     deployedCommitBasisMetadataKey: landing.commitBasis,
     deployedAtMetadataKey: at.toUtc().toIso8601String(),
     deployedByMetadataKey: mechanism,
@@ -572,10 +697,16 @@ WorkItem deployLandingStampedItem(
 /// with NOTHING written: no merge the land could not verify, and no stamp.
 /// Stamping is deliberately left to the caller, which commits the stamp and
 /// its audit row in one transaction.
+///
+/// [deployPush] is required for the same reason it is on
+/// [maybeLandApprovedDeployment] (F-258): a re-land that merges but cannot
+/// push re-creates the exact stranded shape it exists to repair — a
+/// `deployed` label the product remote never received.
 Future<DeployLanding> relandDeployedItem({
   required ExecutionStore executionStore,
   required WorkerStore workerStore,
   required WorkItem item,
+  required DeployPusher deployPush,
   String git = 'git',
   Duration gitTimeout = const Duration(seconds: 60),
   void Function(String event, Map<String, dynamic> data)? log,
@@ -592,6 +723,7 @@ Future<DeployLanding> relandDeployedItem({
     executionStore: executionStore,
     workerStore: workerStore,
     item: item,
+    deployPush: deployPush,
     git: git,
     gitTimeout: gitTimeout,
     log: log,
