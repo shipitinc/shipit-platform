@@ -1584,3 +1584,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | impl-gen-doc-drift | implement | IN_FLIGHT | /private/tmp/shipit-fix-gen-drift | fix/gen-doc-drift | 6779b84 | PRECISION | F-255/F-263 yaml doc + regen mirrors | 94af0dc2 running |
 | impl-schema-drift-migration | implement | IN_FLIGHT | /private/tmp/shipit-feat-schema-drift | feat/schema-drift-migration | 6779b84 | PRECISION | F-264 declared_owned_paths + indexes migration | b412236d running |
 | impl-schema-drift-migration | implement | CLOSED-BLOCKED | /private/tmp/shipit-feat-schema-drift | feat/schema-drift-migration | 6779b84 | PRECISION | premise falsified — warnings are model-side, no migration needed; decided fix is Protocol override (in-flight WI) | done |
+| impl-gen-doc-drift | implement | CLOSED | /private/tmp/shipit-fix-gen-drift | fix/gen-doc-drift | 6779b84 | PRECISION | acdd602 — six-token vocab + offered-through-actionContext docs | → reviewer f0579a24 |
+| review-gen-doc-drift | review | IN_FLIGHT | (read-only) | fix/gen-doc-drift | 6779b84 | PRECISION | await result on acdd602 |
