@@ -1581,3 +1581,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-operator-action-ui-arms | review | CLOSED | (read-only) | feat/operator-action-ui-arms | d28bb9a | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP on 79675d7 → integrator 30eef887 |
 | integrate-operator-action-ui-arms | integrate | IN_FLIGHT | (read-only) | feat/operator-action-ui-arms | d28bb9a | PRECISION | await MERGE_APPROVED |
 | integrate-operator-action-ui-arms | integrate | CLOSED | (read-only) | feat/operator-action-ui-arms | d28bb9a | PRECISION | MERGE_APPROVED → merged 79675d7 (standing auth) | done |
+| impl-gen-doc-drift | implement | IN_FLIGHT | /private/tmp/shipit-fix-gen-drift | fix/gen-doc-drift | 6779b84 | PRECISION | F-255/F-263 yaml doc + regen mirrors | 94af0dc2 running |
+| impl-schema-drift-migration | implement | IN_FLIGHT | /private/tmp/shipit-feat-schema-drift | feat/schema-drift-migration | 6779b84 | PRECISION | F-264 declared_owned_paths + indexes migration | b412236d running |
