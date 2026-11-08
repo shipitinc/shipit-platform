@@ -784,6 +784,16 @@ class ControlPlaneService {
   /// sort identically. Product names are resolved from the registry; a request
   /// whose product row is missing resolves to no name at all rather than an
   /// invented label.
+  ///
+  /// Defect-derived work items are excluded. A human-reported defect also
+  /// passes through `WorkItem(category: feature)` — its triage item
+  /// (`defect-{defectId}`) and, when triage classifies it as a design flaw, its
+  /// design remediation item (`design-remediation-{defectId}`). Filtering on
+  /// category alone listed those among genuine feature requests, which the
+  /// `Feature requests` tab must not do. Both provisioners stamp the defect's
+  /// id into `metadata['defectId']` as durable provenance, whereas a genuine
+  /// request created by [createFeatureWorkItem] carries no such key, so that
+  /// stamp is what separates the two without coupling to either id scheme.
   Future<List<FeatureRequestSummaryView>> listFeatureRequests({
     String? productId,
     String? state,
@@ -793,6 +803,7 @@ class ControlPlaneService {
     final features =
         all
             .where((item) => item.category == WorkItemCategory.feature)
+            .where((item) => !_isDefectDerived(item))
             .where((item) => productId == null || item.productId == productId)
             .where((item) => state == null || item.state.wire == state)
             .toList()
@@ -822,6 +833,19 @@ class ControlPlaneService {
           completedAt: item.completedAt,
         ),
     ];
+  }
+
+  /// Whether [item] exists because of a human-reported defect rather than a
+  /// human-filed feature request.
+  ///
+  /// Both defect-derived feature work items — the triage item and the design
+  /// remediation item — record the originating defect's id under `defectId` in
+  /// their metadata. A genuine feature request created by
+  /// [createFeatureWorkItem] writes no metadata at all, so the presence of a
+  /// non-empty `defectId` key is a defect-provenance stamp and nothing else.
+  bool _isDefectDerived(WorkItem item) {
+    final defectId = item.metadata?['defectId'];
+    return defectId is String && defectId.isNotEmpty;
   }
 
   /// Reporter per feature work item, recovered from its intake direction.
