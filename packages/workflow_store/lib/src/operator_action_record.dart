@@ -71,10 +71,11 @@ class OperatorActionRecord {
   /// The work item the operator acted on.
   final String workItemId;
 
-  /// 'retry' | 'stop' | 'deploy' | 'reclaim'. The first two are the closed
-  /// set of [OperatorActionKind]; 'deploy' and 'reclaim' are the endpoint's
-  /// own wire tokens (`operatorDeployActionWire` /
-  /// `operatorReclaimActionWire` in `work_item_action_endpoints.dart`),
+  /// 'retry' | 'stop' | 'deploy' | 'reclaim' | 'reland' | 'reroute'. The
+  /// first two are the closed set of [OperatorActionKind]; the other four
+  /// are the endpoint's own wire tokens (`operatorDeployActionWire` /
+  /// `operatorReclaimActionWire` / `operatorRelandActionWire` /
+  /// `operatorRerouteActionWire` in `work_item_action_endpoints.dart`),
   /// stored here as plain strings — the column carries no enum.
   final String action;
 
@@ -97,8 +98,10 @@ class OperatorActionRecord {
   /// second job, or a second spend.
   final String requestId;
 
-  /// The job this action armed. Set for 'retry'; null for 'stop', which arms
-  /// nothing.
+  /// The job this action armed. Declared for the audit shape, but no current
+  /// producer sets it: every construction site omits it and the engine's
+  /// [copyWith] stamps only [transitionId], so a stored row today always
+  /// carries null here.
   final String? jobId;
 
   /// The `work_item_transition` row this action authorised.
