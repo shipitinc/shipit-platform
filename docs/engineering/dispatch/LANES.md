@@ -1603,3 +1603,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-jobid-doc-drift | integrate | CLOSED | (read-only) | fix/jobid-doc-drift | ef89c92 | PRECISION | MERGE_APPROVED → merged 7293b2c (standing auth) | done |
 | impl-deploy-push-remote | implement | IN_FLIGHT | /private/tmp/shipit-feat-deploy-push | feat/deploy-push-remote | HEAD | PRECISION | F-258 — push merged default branch to remote via verified deploy key | eb644862 running |
 | impl-deploy-push-remote | implement | RE-DISPATCHED | /private/tmp/shipit-feat-deploy-push | feat/deploy-push-remote | d027477 | PRECISION | prior lane died post-design (0 writes); resumed 27aa1d20 with completed design |
+| impl-deploy-push-remote | implement | CLOSED | /private/tmp/shipit-feat-deploy-push | feat/deploy-push-remote | d027477 | PRECISION | c9fc77e — push on both land arms + SSH transport + tests | → reviewer 4adf2411 |
+| review-deploy-push-remote | review | IN_FLIGHT | (read-only) | feat/deploy-push-remote | d027477 | PRECISION | await result on c9fc77e |
