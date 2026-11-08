@@ -842,6 +842,47 @@ void main() {
     expect(find.textContaining('dana'), findsOneWidget);
     expect(find.textContaining('the host rebooted mid-run'), findsOneWidget);
   });
+
+  testWidgets(
+    'F-260/F-262: reland and reroute rows are NOT labelled "STARTED AGAIN"',
+    (tester) async {
+      // The defect: every non-'stop' audit row rendered 'STARTED AGAIN' and
+      // "Started again by …". An item that was rerouted back to build and
+      // failed again carries a 'reroute' row in its ledger — the label used
+      // to claim a restart that never happened.
+      await pump(
+        tester,
+        FailedWorkItemActionPanel(
+          actionContext: context(
+            actions: [retryAction(attempt: 2), stopAction],
+            priorActions: [
+              OperatorActionSummaryResponse(
+                action: 'reroute',
+                requestedBy: 'dana',
+                reason: 'the produced commit was never real',
+                at: DateTime(2026, 10, 11, 9, 15),
+              ),
+              OperatorActionSummaryResponse(
+                action: 'reland',
+                requestedBy: 'dana',
+                reason: 'the label was never true',
+                at: DateTime(2026, 10, 11, 10, 30),
+              ),
+            ],
+          ),
+          haltCount: 2,
+          now: now,
+        ),
+      );
+
+      expect(find.text('SENT BACK'), findsOneWidget);
+      expect(find.text('LANDED AFTERWARDS'), findsOneWidget);
+      expect(find.text('STARTED AGAIN'), findsNothing);
+      expect(find.textContaining('Sent back by dana'), findsOneWidget);
+      expect(find.textContaining('Landed by dana'), findsOneWidget);
+      expect(find.textContaining('Started again'), findsNothing);
+    },
+  );
 }
 
 /// Plays the part `RunDetailBloc` plays in production: owns the pending action,

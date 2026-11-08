@@ -178,6 +178,18 @@ class RunDetailBloc extends Bloc<RunDetailEvent, RunDetailState> {
           requestedBy: _operatorName(),
           reason: event.reason,
         ),
+        'reland' => _repository.relandDeployedWorkItem(
+          workItemId: _runId,
+          requestId: event.requestId,
+          requestedBy: _operatorName(),
+          reason: event.reason,
+        ),
+        'reroute' => _repository.rerouteToImplementation(
+          workItemId: _runId,
+          requestId: event.requestId,
+          requestedBy: _operatorName(),
+          reason: event.reason,
+        ),
         _ => _repository.stopFailedWorkItem(
           workItemId: _runId,
           requestId: event.requestId,

@@ -539,4 +539,154 @@ void main() {
       },
     );
   });
+
+  group('the deployed pair — reland and reroute (F-260, F-262)', () {
+    test('the two panels and buttons are stated verbatim', () {
+      // Reland: the deploy is a label, so the heading says the record is
+      // not true — it never claims a landing that did not happen.
+      expect(relandPanelHeading, 'It says it is deployed — nothing was landed');
+      expect(relandPanelExplanation, contains('land it now'));
+      expect(relandActionLabel, 'Land it now');
+      expect(relandConsequenceSentence, contains('the stamp is the'));
+
+      // Reroute alone (a stamped item): the landing is real, the panel says
+      // so, and the offer is rework — not a restart.
+      expect(reroutePanelHeading, 'It is deployed');
+      expect(reroutePanelExplanation, contains('send it back'));
+      expect(rerouteActionLabel, 'Send it back');
+      expect(rerouteConsequenceSentence, contains('build queue'));
+    });
+
+    test('reland + accepted gets the record-made-true sentence, verbatim', () {
+      expect(
+        operatorActionAnnouncementFor('reland', 'accepted'),
+        relandAcceptedSentence,
+      );
+      expect(
+        relandAcceptedSentence,
+        'Done — the produced commit is landed and the record now says so.',
+      );
+      // A reland starts nothing — borrowing the retry's promise would be false.
+      expect(relandAcceptedSentence, isNot(acceptedOutcomeSentence));
+    });
+
+    test('reroute + accepted gets the back-to-build sentence, verbatim', () {
+      expect(
+        operatorActionAnnouncementFor('reroute', 'accepted'),
+        rerouteAcceptedSentence,
+      );
+      expect(
+        rerouteAcceptedSentence,
+        'Done — it is back in the build queue. The deploy record is kept.',
+      );
+      expect(rerouteAcceptedSentence, isNot(acceptedOutcomeSentence));
+
+      // And a reroute IS a queued build, so a full budget reads the same
+      // honest "queued" sentence the retry gets.
+      expect(
+        operatorActionAnnouncementFor(
+          'reroute',
+          'accepted',
+          capacityFull: true,
+        ),
+        queuedOutcomeSentence,
+      );
+    });
+
+    test('every refusal delegates to the existing vocabulary, unchanged', () {
+      for (final action in ['reland', 'reroute']) {
+        for (final outcome in [
+          'alreadyRunning',
+          'alreadyStopped',
+          'notApplicable',
+          'notConfigured',
+          'invalidRequest',
+          'an_outcome_added_later',
+        ]) {
+          expect(
+            operatorActionAnnouncementFor(action, outcome, attemptLimit: 3),
+            operatorActionAnnouncement(outcome, attemptLimit: 3),
+            reason: '$action/$outcome must delegate, not re-word',
+          );
+        }
+      }
+    });
+
+    test('the WHAT YOU CAN DO row is stated from the offered actions', () {
+      expect(
+        whatYouCanDoSentence(['reland', 'reroute']),
+        'Land the produced commit, or send the work back to be built again.',
+      );
+      expect(
+        whatYouCanDoSentence(['reroute']),
+        'Send the work back to be built again.',
+      );
+      // The failed-work sentence survives — but only for the failed-work set.
+      expect(
+        whatYouCanDoSentence(['retry', 'stop']),
+        'Start it again, or stop it.',
+      );
+      // The mutation this pins: an action set that is not the failure pair
+      // must never read "Start it again, or stop it."
+      expect(
+        whatYouCanDoSentence(['reland', 'reroute']),
+        isNot('Start it again, or stop it.'),
+      );
+    });
+  });
+
+  group('the priorActions ledger — every action carries its own word', () {
+    test(
+      'reland and reroute rows are NOT labelled "STARTED AGAIN" (F-260/F-262)',
+      () {
+        // The defect: every non-'stop' row rendered 'STARTED AGAIN' and
+        // "Started again by …" — a rerouted item's ledger claimed a restart
+        // that never happened.
+        expect(priorActionLabelFor('reland'), isNot('STARTED AGAIN'));
+        expect(priorActionLabelFor('reroute'), isNot('STARTED AGAIN'));
+        expect(
+          priorActionSentence('reland', 'dana', '9:15', 'why'),
+          isNot(contains('Started again')),
+        );
+        expect(
+          priorActionSentence('reroute', 'dana', '9:15', 'why'),
+          isNot(contains('Started again')),
+        );
+      },
+    );
+
+    test('each known action has its own label and verb', () {
+      expect(priorActionLabelFor('retry'), 'STARTED AGAIN');
+      expect(priorActionLabelFor('stop'), 'STOPPED BEFORE');
+      expect(priorActionLabelFor('deploy'), 'MOVED FORWARD');
+      expect(priorActionLabelFor('reclaim'), 'HANDED BACK');
+      expect(priorActionLabelFor('reland'), 'LANDED AFTERWARDS');
+      expect(priorActionLabelFor('reroute'), 'SENT BACK');
+
+      expect(
+        priorActionSentence('retry', 'dana', '9:15', 'why'),
+        'Started again by dana on 9:15 — why',
+      );
+      expect(
+        priorActionSentence('reroute', 'dana', '9:15', 'why'),
+        'Sent back by dana on 9:15 — why',
+      );
+      expect(
+        priorActionSentence('reland', 'dana', '9:15', 'why'),
+        'Landed by dana on 9:15 — why',
+      );
+    });
+
+    test('an unrecognised action shows its own recorded token — never a '
+        'sentence about an action it did not take', () {
+      expect(
+        priorActionLabelFor('an_action_added_later'),
+        'AN_ACTION_ADDED_LATER',
+      );
+      expect(
+        priorActionSentence('an_action_added_later', 'dana', '9:15', 'why'),
+        'Recorded by dana on 9:15 — why',
+      );
+    });
+  });
 }

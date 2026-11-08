@@ -51,6 +51,64 @@ void main() {
         retryLimitDiagnostic: 'ok',
       );
 
+  /// The context for a label-only deploy: `deployed` with no `deployedCommit`
+  /// stamp and nothing live holding it — both deployed actions offered.
+  WorkItemActionContextResponse relandContext() =>
+      const WorkItemActionContextResponse(
+        workItemId: 'wi-label-only',
+        state: 'deployed',
+        actions: [
+          WorkItemActionResponse(
+            action: 'reland',
+            toState: 'deployed',
+            confirmRequired: true,
+            destructive: false,
+            attemptLimit: 0,
+          ),
+          WorkItemActionResponse(
+            action: 'reroute',
+            toState: 'implementation_ready',
+            confirmRequired: true,
+            destructive: false,
+            attemptLimit: 0,
+          ),
+        ],
+        capacity: CapacitySnapshotResponse(
+          budget: 'agent_executions',
+          cap: 2,
+          inFlight: 0,
+          snapshotOnly: true,
+          resolved: true,
+        ),
+        retryLimitResolved: true,
+        retryLimitDiagnostic: 'ok',
+      );
+
+  /// The context for a stamped deploy: `reroute` alone — the landing is real.
+  WorkItemActionContextResponse stampedDeployedContext() =>
+      const WorkItemActionContextResponse(
+        workItemId: 'wi-stamped',
+        state: 'deployed',
+        actions: [
+          WorkItemActionResponse(
+            action: 'reroute',
+            toState: 'implementation_ready',
+            confirmRequired: true,
+            destructive: false,
+            attemptLimit: 0,
+          ),
+        ],
+        capacity: CapacitySnapshotResponse(
+          budget: 'agent_executions',
+          cap: 2,
+          inFlight: 0,
+          snapshotOnly: true,
+          resolved: true,
+        ),
+        retryLimitResolved: true,
+        retryLimitDiagnostic: 'ok',
+      );
+
   /// The context for the stranded reclaim: `agent_executing` with no live
   /// execution and no active job behind it.
   WorkItemActionContextResponse reclaimContext() =>
@@ -401,6 +459,141 @@ void main() {
 
     handle.dispose();
   });
+
+  // -------------------------------------------------------------------
+  // The deployed pair (F-260, F-262): 'reland' and 'reroute' render with
+  // their own copy, and each confirm strip submits its own action.
+  // -------------------------------------------------------------------
+
+  testWidgets('a label-only deploy renders RELAND copy and BOTH actions, never '
+      'reclaim or deploy copy', (tester) async {
+    await pump(
+      tester,
+      OperatorActionPanel(
+        actionContext: relandContext(),
+        pendingAction: null,
+        submitting: false,
+      ),
+    );
+
+    expect(find.text(relandPanelHeading), findsOneWidget);
+    expect(find.text(relandPanelExplanation), findsOneWidget);
+    expect(find.text(relandActionLabel), findsOneWidget);
+    expect(find.text(rerouteActionLabel), findsOneWidget);
+
+    // The mutation this pins: keying the copy on anything but the offered
+    // actions puts "it failed" or "nothing is running" on a deployed item —
+    // the false state this panel exists against.
+    expect(find.text(reclaimPanelHeading), findsNothing);
+    expect(find.text(deployPanelHeading), findsNothing);
+    expect(find.text(reroutePanelHeading), findsNothing);
+  });
+
+  testWidgets('a stamped deploy renders REROUTE copy and the one action', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      OperatorActionPanel(
+        actionContext: stampedDeployedContext(),
+        pendingAction: null,
+        submitting: false,
+      ),
+    );
+
+    expect(find.text(reroutePanelHeading), findsOneWidget);
+    expect(find.text(reroutePanelExplanation), findsOneWidget);
+    expect(find.text(rerouteActionLabel), findsOneWidget);
+
+    // The landing is real — the panel must not claim nothing was landed.
+    expect(find.text(relandPanelHeading), findsNothing);
+    expect(find.text(relandActionLabel), findsNothing);
+  });
+
+  testWidgets('the reland strip submits its own action and wording', (
+    tester,
+  ) async {
+    final submits = <(String, String, String)>[];
+    await pump(
+      tester,
+      OperatorActionPanel(
+        actionContext: relandContext(),
+        pendingAction: 'reland',
+        submitting: false,
+        onSubmit: (action, reason, requestId) =>
+            submits.add((action, reason, requestId)),
+      ),
+    );
+
+    expect(find.text('You chose: $relandActionLabel'), findsOneWidget);
+    expect(find.text(relandConsequenceSentence), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'the label was never true');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save: $relandActionLabel'));
+    await tester.pumpAndSettle();
+
+    expect(submits, hasLength(1));
+    expect(submits.single.$1, 'reland');
+    expect(submits.single.$2, 'the label was never true');
+  });
+
+  testWidgets('the reroute strip submits its own action and wording', (
+    tester,
+  ) async {
+    final submits = <(String, String, String)>[];
+    await pump(
+      tester,
+      OperatorActionPanel(
+        actionContext: stampedDeployedContext(),
+        pendingAction: 'reroute',
+        submitting: false,
+        onSubmit: (action, reason, requestId) =>
+            submits.add((action, reason, requestId)),
+      ),
+    );
+
+    expect(find.text('You chose: $rerouteActionLabel'), findsOneWidget);
+    expect(find.text(rerouteConsequenceSentence), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'needs a real build');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save: $rerouteActionLabel'));
+    await tester.pumpAndSettle();
+
+    expect(submits, hasLength(1));
+    expect(submits.single.$1, 'reroute');
+    expect(submits.single.$2, 'needs a real build');
+  });
+
+  testWidgets(
+    'the deployed strips refuse a missing AND a whitespace-only reason',
+    (tester) async {
+      final submits = <(String, String, String)>[];
+      await pump(
+        tester,
+        OperatorActionPanel(
+          actionContext: relandContext(),
+          pendingAction: 'reland',
+          submitting: false,
+          onSubmit: (action, reason, requestId) =>
+              submits.add((action, reason, requestId)),
+        ),
+      );
+
+      // No reason: disabled, so the tap is inert.
+      await tester.tap(find.text('Save: $relandActionLabel'));
+      await tester.pumpAndSettle();
+      expect(submits, isEmpty, reason: 'a missing reason must not commit');
+
+      // Whitespace-only is a blank reason — the strip trims before it judges.
+      await tester.enterText(find.byType(TextField), '   ');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save: $relandActionLabel'));
+      await tester.pumpAndSettle();
+      expect(submits, isEmpty, reason: 'a blank reason must not commit');
+    },
+  );
 }
 
 /// Plays the part `RunDetailBloc` plays in production: owns the pending

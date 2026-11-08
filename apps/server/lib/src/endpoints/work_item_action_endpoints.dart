@@ -575,6 +575,14 @@ class WorkItemActionEndpoints extends Endpoint {
         item.state == WorkItemState.deploying &&
         item.blockingHumanDecisionId == null;
 
+    // The deployed offers are computed from the same durable facts their
+    // write paths re-check — the owed test each method applies and the
+    // live-job refusal both share — so an offered button is one that can
+    // complete, the same rule the deploy and reclaim offers keep.
+    final deployedIdle =
+        item.state == WorkItemState.deployed &&
+        !jobs.any((j) => j.state.isActive);
+
     return WorkItemActionContextView(
       workItemId: workItemId,
       state: item.state.wire,
@@ -585,6 +593,8 @@ class WorkItemActionEndpoints extends Endpoint {
         deployableArtifact: deployable,
         deployGateMissing: deployGateMissing,
         strandedExecution: stranded,
+        relandOwed: deployRelandIsOwed(item),
+        deployedIdle: deployedIdle,
       ),
       failure: _failureView(history, jobs),
       capacity: ExecutionCapacityView(
@@ -1295,18 +1305,16 @@ class WorkItemActionEndpoints extends Endpoint {
   /// fails the CAS before the audit row exists, so a refusal still writes
   /// nothing.
   ///
-  /// ## WHY IT IS NOT OFFERED THROUGH `actionContext`
+  /// ## OFFERED THROUGH `actionContext` — THE UI ARM LANDED WITH IT
   ///
-  /// The control plane dispatches an offered action by wire token
-  /// (`run_detail_bloc.dart`): an action it does not name falls through to
-  /// `stopFailedWorkItem` — a button that calls the wrong method and is
-  /// refused — and the panel that would render the offer shows failure copy
-  /// with no buttons for an action that is neither `retry` nor `stop`. That
-  /// dispatch and that panel live in `apps/control_plane`, which this
-  /// surface does not own; offering the action without them would be the
-  /// dead-button class this surface exists to close. The action is invoked
-  /// through the generated client method directly until the client names it
-  /// — one switch arm plus its copy is the whole follow-up.
+  /// This action was originally withheld from [actionContext] on purpose:
+  /// the control plane dispatches an offered action by wire token
+  /// (`run_detail_bloc.dart`), and an action it did not name fell through to
+  /// `stopFailedWorkItem` — a button that called the wrong method. The UI
+  /// arm — the `reland` switch arm, its panel copy and its repository call —
+  /// is now in place (F-260), so [actionsFor] offers it for a `deployed`
+  /// item with no `deployedCommit` stamp and nothing live holding it, which
+  /// is exactly the owed test plus the live-job refusal below.
   Future<WorkItemActionResult> relandDeployedWorkItem(
     Session session, {
     required String workItemId,
@@ -1525,13 +1533,13 @@ class WorkItemActionEndpoints extends Endpoint {
   /// the `operatorAction` audit row rides the transition's transaction, so
   /// a rejected transition writes no row.
   ///
-  /// ## WHY IT IS NOT OFFERED THROUGH `actionContext`
+  /// ## OFFERED THROUGH `actionContext` — THE UI ARM LANDED WITH IT
   ///
-  /// Same reason as [relandDeployedWorkItem]: the control plane dispatches
-  /// offered actions by wire token and would dead-button an action it does
-  /// not name. The UI arm — one switch arm plus its copy — is the flagged
-  /// follow-up; the generated client method is the invocation path until
-  /// then, which is how the orchestrator fires it per stranded item.
+  /// Same history as [relandDeployedWorkItem]: the action was withheld
+  /// until the control plane could dispatch and render it, and that arm —
+  /// the `reroute` switch arm, its panel copy and its repository call — is
+  /// now in place (F-262). [actionsFor] offers it for any idle `deployed`
+  /// item, stamped or not, because the owed test here is the state alone.
   Future<WorkItemActionResult> rerouteToImplementation(
     Session session, {
     required String workItemId,
@@ -1791,6 +1799,8 @@ class WorkItemActionEndpoints extends Endpoint {
     bool deployableArtifact = false,
     bool deployGateMissing = false,
     bool strandedExecution = false,
+    bool relandOwed = false,
+    bool deployedIdle = false,
   }) {
     // THE DEPLOY ADVANCE — `qaPassed -> deploying`, offered only when the
     // caller has already established that the producer's durable result can
@@ -1847,6 +1857,51 @@ class WorkItemActionEndpoints extends Endpoint {
           destructive: false,
           attemptLimit: limit.wireAttemptLimit,
         ),
+      ];
+    }
+
+    // THE DEPLOYED PAIR (F-260, F-262).
+    //
+    // 'reland' is offered only for a LABEL-ONLY deploy — `deployed` with no
+    // `deployedCommit` stamp — because [deployRelandIsOwed] is the whole owed
+    // test: a stamped item has nothing owed, and re-landing it would
+    // overwrite the evidence it already carries.
+    //
+    // 'reroute' is offered for ANY deployed item, stamped or not. That is the
+    // honest condition — the write path's owed test is the STATE alone,
+    // because "send this back to implementation" is the same question for a
+    // label-only deploy and for a real deploy being reworked: a landed item
+    // can legitimately be sent back to build. An unstamped item therefore
+    // gets both: land it (make the record true) or send it back.
+    //
+    // `deployedIdle` is the caller's PROOF that nothing live holds the item,
+    // computed in `actionContext` from the same job rows both write paths
+    // refuse on (`alreadyRunning`) — the same durable-facts rule the deploy
+    // and reclaim offers keep: an offered button is one that can complete.
+    if (from == WorkItemState.deployed && deployedIdle) {
+      return [
+        if (relandOwed)
+          WorkItemActionView(
+            action: operatorRelandActionWire,
+            // The item does not move — `deployed` was already the label and
+            // the stamp is the change — so the target is honestly the same
+            // state. There is no edge to ask the table about.
+            toState: WorkItemState.deployed.wire,
+            confirmRequired: true,
+            destructive: false,
+            attemptLimit: limit.wireAttemptLimit,
+          ),
+        if (WorkItemTransitions.isLegalTransition(
+          from,
+          WorkItemState.implementationReady,
+        ))
+          WorkItemActionView(
+            action: operatorRerouteActionWire,
+            toState: WorkItemState.implementationReady.wire,
+            confirmRequired: true,
+            destructive: false,
+            attemptLimit: limit.wireAttemptLimit,
+          ),
       ];
     }
 

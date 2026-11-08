@@ -9,6 +9,7 @@ import 'package:scheduler/scheduler.dart'
     show triageDefectDedupeKey, triageDefectDefinition;
 import 'package:serverpod/serverpod.dart';
 import 'package:test/test.dart';
+import 'package:workflow_engine/workflow_engine.dart' show WorkItemTransitions;
 import 'package:workflow_store/workflow_store.dart'
     show
         DurableWorkflowEngine,
@@ -1732,6 +1733,192 @@ void main() {
       expect(replay.outcome, 'accepted');
       expect(await ledger(id), hasLength(1));
     });
+  });
+
+  // ==================================================================
+  // The deployed pair — 'reland' for a label-only deploy, 'reroute' for
+  // any deployed item (F-260, F-262).
+  //
+  // Until the UI arm existed these endpoints were invocable but never
+  // OFFERED, because the control plane would have dead-buttoned them.
+  // These tests pin the offer: which state gets which actions, and which
+  // durable facts withhold them — the same facts the write paths re-check.
+  // ==================================================================
+
+  group('the deployed pair — actionContext offers (F-260, F-262)', () {
+    /// A `deployed` item. [stamped] pre-writes the `deployed*` evidence, so
+    /// `deployRelandIsOwed` answers false — the landing already happened.
+    Future<String> seedDeployed({
+      String id = 'wi-deployed',
+      bool stamped = false,
+    }) async {
+      await store.saveWorkItem(
+        WorkItem(
+          workItemId: id,
+          productId: 'shipit',
+          category: WorkItemCategory.bugfix,
+          title: 'Deployed work',
+          description: 'landed or label-only',
+          state: WorkItemState.deployed,
+          metadata: stamped
+              ? const {
+                  'deployedCommit': 'c0ffee-landed',
+                  'deployedInto': '/durable/clone#main',
+                  'deployedCommitBasis': 'producedCommit',
+                  'deployedAt': '2026-10-20T00:00:00.000Z',
+                  'deployedBy': 'deploy_landing',
+                }
+              : null,
+          createdAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+          version: 1,
+        ),
+      );
+      return id;
+    }
+
+    test(
+      'an UNSTAMPED deployed item is offered [reland, reroute], in order',
+      () async {
+        final id = await seedDeployed();
+
+        final context = await endpoints.actionContext(
+          session,
+          workItemId: id,
+        );
+
+        expect(context.actions.map((a) => a.action), [
+          'reland',
+          'reroute',
+        ]);
+
+        final reland = context.actions.first;
+        // The item does not move — `deployed` was already the label, so the
+        // target is honestly the same state.
+        expect(reland.toState, WorkItemState.deployed.wire);
+        expect(reland.confirmRequired, isTrue);
+        expect(reland.destructive, isFalse);
+        expect(reland.attemptNumber, isNull);
+
+        final reroute = context.actions.last;
+        expect(reroute.toState, WorkItemState.implementationReady.wire);
+        expect(reroute.confirmRequired, isTrue);
+        expect(reroute.destructive, isFalse);
+        // And the edge the offer names is really in the table.
+        expect(
+          WorkItemTransitions.isLegalTransition(
+            WorkItemState.deployed,
+            WorkItemState.implementationReady,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'a STAMPED deployed item is offered reroute alone — nothing is owed',
+      () async {
+        final id = await seedDeployed(stamped: true);
+
+        final context = await endpoints.actionContext(
+          session,
+          workItemId: id,
+        );
+
+        // The honest condition, stated: the reroute's owed test is the STATE
+        // alone, because a landed item can legitimately be sent back to
+        // build. 'reland' is withheld — a stamped item has nothing owed.
+        expect(context.actions.map((a) => a.action), ['reroute']);
+      },
+    );
+
+    test(
+      'a live job withholds BOTH offers — an offered button can complete',
+      () async {
+        final id = await seedDeployed();
+        endpoints.jobs = [_job(id, JobState.running)];
+
+        final context = await endpoints.actionContext(
+          session,
+          workItemId: id,
+        );
+
+        expect(
+          context.actions,
+          isEmpty,
+          reason:
+              'both write paths refuse alreadyRunning, so offering either '
+              'would be the dead button this surface exists to close',
+        );
+      },
+    );
+
+    test('no other state offers the deployed pair', () async {
+      // The offers are scoped at the ENUM, not assumed: enumerate every
+      // state through the real computation and prove only `deployed` can
+      // produce 'reland' or 'reroute'.
+      for (final state in WorkItemState.values) {
+        if (state == WorkItemState.deployed) continue;
+        final actions = endpoints.actionsFor(
+          state,
+          retryCount: 0,
+          limit: OperatorRetryLimitResolution.fromEnvironment(const {}),
+          relandOwed: true,
+          deployedIdle: true,
+        );
+        expect(
+          actions.map((a) => a.action),
+          isNot(anyOf(contains('reland'), contains('reroute'))),
+          reason: '$state must never offer a deployed-item action',
+        );
+      }
+    });
+
+    test(
+      'actionsFor honours the flags independently: owed without idle is '
+      'nothing, idle without owed is reroute alone',
+      () async {
+        final limit = OperatorRetryLimitResolution.fromEnvironment(const {});
+
+        // Owed but not idle: withheld — the write would refuse alreadyRunning.
+        expect(
+          endpoints.actionsFor(
+            WorkItemState.deployed,
+            retryCount: 0,
+            limit: limit,
+            relandOwed: true,
+          ),
+          isEmpty,
+        );
+
+        // Idle but not owed (a stamped item): reroute alone.
+        expect(
+          endpoints
+              .actionsFor(
+                WorkItemState.deployed,
+                retryCount: 0,
+                limit: limit,
+                deployedIdle: true,
+              )
+              .map((a) => a.action),
+          ['reroute'],
+        );
+
+        // Both: the full pair.
+        expect(
+          endpoints
+              .actionsFor(
+                WorkItemState.deployed,
+                retryCount: 0,
+                limit: limit,
+                relandOwed: true,
+                deployedIdle: true,
+              )
+              .map((a) => a.action),
+          ['reland', 'reroute'],
+        );
+      },
+    );
   });
 }
 

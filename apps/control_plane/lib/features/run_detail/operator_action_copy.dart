@@ -168,10 +168,49 @@ String retryLimitReachedSentence(int limit) {
       '${limit == 1 ? 'time' : 'times'}. Stop it, or leave it for review.';
 }
 
-/// OQ-1 — who restarted this, from the append-only audit ledger the retry
-/// writes. Reuses `PlainLanguage.timeOfDay` and the existing `DefinitionList`.
-String priorActionSentence(String requestedBy, String when, String reason) =>
-    'Started again by $requestedBy on $when — $reason';
+/// OQ-1 — the ledger row's micro-label, per action.
+///
+/// Every action gets its own label, because the old rule — 'STOPPED BEFORE'
+/// for a stop and 'STARTED AGAIN' for EVERYTHING else — labelled a 'reland'
+/// or 'reroute' row as the restart it never was (F-260/F-262). An action id
+/// this copy does not name shows its own recorded token, uppercased: the
+/// only honest label for an unrecognised action is the name the ledger
+/// itself carries — never a sentence about an action it did not take.
+String priorActionLabelFor(String action) => switch (action) {
+  'stop' => 'STOPPED BEFORE',
+  'deploy' => 'MOVED FORWARD',
+  'reclaim' => 'HANDED BACK',
+  'reland' => 'LANDED AFTERWARDS',
+  'reroute' => 'SENT BACK',
+  'retry' => 'STARTED AGAIN',
+  _ => action.toUpperCase(),
+};
+
+/// The past-tense verb for one ledger row — every action states what IT did.
+///
+/// Same fix as [priorActionLabelFor]: 'Started again by …' was the sentence
+/// for every non-stop row, so a rerouted item's ledger claimed a restart that
+/// never happened. An unrecognised action falls back to 'Recorded', which is
+/// the one statement always true of a row in an append-only ledger.
+String priorActionVerbFor(String action) => switch (action) {
+  'stop' => 'Stopped',
+  'deploy' => 'Moved forward',
+  'reclaim' => 'Handed back',
+  'reland' => 'Landed',
+  'reroute' => 'Sent back',
+  'retry' => 'Started again',
+  _ => 'Recorded',
+};
+
+/// OQ-1 — who did what, from the append-only audit ledger each operator
+/// action writes. Reuses `PlainLanguage.timeOfDay` and the existing
+/// `DefinitionList`. The verb is the action's own — see [priorActionVerbFor].
+String priorActionSentence(
+  String action,
+  String requestedBy,
+  String when,
+  String reason,
+) => '${priorActionVerbFor(action)} by $requestedBy on $when — $reason';
 
 /// The WHY-IT-STOPPED classifier (design-brief.md §5.6).
 ///
@@ -448,12 +487,73 @@ const String deployAcceptedSentence =
 const String reclaimAcceptedSentence =
     'Done — it is marked as stopped. You can try it again now.';
 
+// ---------------------------------------------------------------------------
+// THE DEPLOYED-ITEM ACTIONS — 'reland' and 'reroute' (F-260, F-262)
+//
+// Same boundary as everything above: the server sends wire values, this maps
+// them to words. `reland` fixes a deploy that is only a label — approved
+// before the landing step existed, so nothing was ever merged. `reroute`
+// sends deployed work back to be built again, whether or not it was ever
+// landed. Neither reads as a peer of "try again" or "stop": one makes the
+// record true, the other takes the work back.
+// ---------------------------------------------------------------------------
+
+/// Panel heading for a LABEL-ONLY deploy — 'reland' is offered, so the stamp
+/// is missing and the heading says what that means rather than restating the
+/// label.
+const String relandPanelHeading = 'It says it is deployed — nothing was landed';
+
+/// What a reland actually is, in plain words.
+const String relandPanelExplanation =
+    'The deploy was approved before the landing step existed, so the produced '
+    'work was never merged into the product’s own code. You can land it now '
+    'so the record becomes true, or send the work back to be built again.';
+
+/// Panel heading for a stamped deploy — 'reroute' is the only offer, the
+/// landing is real, and the heading says so.
+const String reroutePanelHeading = 'It is deployed';
+
+/// What a reroute actually is, in plain words.
+const String reroutePanelExplanation =
+    'The produced commit was landed and the record is true. If the work '
+    'itself needs changing you can send it back to be built again — the '
+    'landing record is kept, and your reason is saved with your name.';
+
+/// The reland button — "land", never "redeploy": nothing new is deployed;
+/// the produced commit is finally merged where the deploy always claimed.
+const String relandActionLabel = 'Land it now';
+
+/// The reroute button.
+const String rerouteActionLabel = 'Send it back';
+
+/// What the confirm strip says about a reland. True by construction: the
+/// item does not move — the stamp is the change.
+const String relandConsequenceSentence =
+    'Merges the produced commit into the product’s own code and writes the '
+    'landing down. The work stays marked as deployed — the stamp is the '
+    'change.';
+
+/// What the confirm strip says about a reroute.
+const String rerouteConsequenceSentence =
+    'Sends the work back to the build queue to be made again. The deploy '
+    'record is kept.';
+
+/// The accepted announcement for a reland — the record becomes true.
+const String relandAcceptedSentence =
+    'Done — the produced commit is landed and the record now says so.';
+
+/// The accepted announcement for a reroute — back to build, not deleted.
+const String rerouteAcceptedSentence =
+    'Done — it is back in the build queue. The deploy record is kept.';
+
 /// The announcement for one resolved operator action, per action.
 ///
-/// Deploy and reclaim get their own accepted sentences because
-/// [acceptedOutcomeSentence] — "it will start as soon as a machine is free" —
-/// is false for both: a deploy parks on a human, a reclaim only re-parks.
-/// Every refusal reuses the existing vocabulary verbatim.
+/// Deploy, reclaim and the deployed pair get their own accepted sentences
+/// because [acceptedOutcomeSentence] — "it will start as soon as a machine
+/// is free" — is false or incomplete for each: a deploy parks on a human, a
+/// reclaim only re-parks, a reland starts nothing at all, and a reroute is
+/// queued for a build rather than a restart. Every refusal reuses the
+/// existing vocabulary verbatim.
 String operatorActionAnnouncementFor(
   String action,
   String outcome, {
@@ -464,6 +564,12 @@ String operatorActionAnnouncementFor(
   if (outcome == 'accepted') {
     if (action == 'deploy') return deployAcceptedSentence;
     if (action == 'reclaim') return reclaimAcceptedSentence;
+    if (action == 'reland') return relandAcceptedSentence;
+    if (action == 'reroute') {
+      // A reroute queues a real build, so a full budget gets the same honest
+      // "queued" sentence a retry gets — the same §5.4 distinction.
+      return capacityFull ? queuedOutcomeSentence : rerouteAcceptedSentence;
+    }
   }
   return operatorActionAnnouncement(
     outcome,
@@ -471,6 +577,29 @@ String operatorActionAnnouncementFor(
     attemptLimit: attemptLimit,
     retryLimitResolved: retryLimitResolved,
   );
+}
+
+/// The "WHAT YOU CAN DO" definition row, stated from the offered action set.
+///
+/// The row exists for every non-empty offer, so it must be derived from the
+/// actions the server actually sent: a `deployed` item offered 'reland' or
+/// 'reroute' would otherwise read "Start it again, or stop it." — the
+/// failed-work pair's words on an item that is not failed, the same lie the
+/// ledger mislabel was.
+String whatYouCanDoSentence(Iterable<String> actions) {
+  final offered = actions.toSet();
+  if (offered.contains('reland') || offered.contains('reroute')) {
+    return offered.contains('reland')
+        ? 'Land the produced commit, or send the work back to be built again.'
+        : 'Send the work back to be built again.';
+  }
+  if (offered.contains('deploy')) {
+    return 'Move it forward to a deployment decision.';
+  }
+  if (offered.contains('reclaim')) {
+    return 'Hand it back so it can be tried again.';
+  }
+  return 'Start it again, or stop it.';
 }
 
 // ---------------------------------------------------------------------------
