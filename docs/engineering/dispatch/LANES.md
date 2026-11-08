@@ -1593,3 +1593,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | impl-store-doc-drift | implement | CLOSED | /private/tmp/shipit-fix-store-drift | fix/store-doc-drift | 277331c | PRECISION | e60ace6 — six-token + honest jobId docs | → reviewer 22d771c9 |
 | review-store-doc-drift | review | IN_FLIGHT | (read-only) | fix/store-doc-drift | 277331c | PRECISION | await result on e60ace6 |
 | impl-jobid-doc-drift | implement | IN_FLIGHT | /private/tmp/shipit-fix-jobid-drift | fix/jobid-doc-drift | HEAD | PRECISION | F-265 residual — spy.yaml jobId doc + regen mirror | 024b0465 running |
+| review-store-doc-drift | review | CLOSED | (read-only) | fix/store-doc-drift | 277331c | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP on e60ace6 → integrator 7967fa31 |
+| integrate-store-doc-drift | integrate | IN_FLIGHT | (read-only) | fix/store-doc-drift | 277331c | PRECISION | await MERGE_APPROVED |
