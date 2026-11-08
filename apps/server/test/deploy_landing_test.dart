@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:control_plane_server/src/deploy/deploy_landing.dart';
+import 'package:control_plane_server/src/deploy/deploy_push.dart';
 import 'package:execution_coordinator/execution_coordinator.dart'
     show InMemoryExecutionStore;
 import 'package:platform_contracts/platform_contracts.dart';
@@ -256,6 +257,75 @@ void main() {
         expect(
           (await harness.store.readWorkItem(_itemId)).state,
           WorkItemState.waitingForHumanDecision,
+        );
+      },
+    );
+
+    test(
+      'a refused push throws — the merge stays local, nothing is stamped, '
+      'and the decision stays pending (F-258)',
+      () async {
+        await harness.seedParkedForApproval(
+          stampProducer: true,
+          repositoryPath: repo.path,
+          startingRevision: base,
+          endingRevision: produced,
+        );
+        final decision = await harness.blockingDecision();
+        harness.pusher.failure = const DeployPushRefusedException(
+          'the remote rejected the push',
+        );
+
+        await expectLater(
+          harness.maybeLand(
+            decision: decision,
+            choice: HumanDecisionChoice.approve,
+          ),
+          throwsA(isA<DeployLandingException>()),
+        );
+
+        // NOTHING durable was written — the parked item and the pending
+        // decision are exactly as the approve left them, while the merge
+        // DID land locally (and a retry completes through the
+        // already-landed arm rather than merging twice).
+        final parked = await harness.store.readWorkItem(_itemId);
+        expect(parked.state, WorkItemState.waitingForHumanDecision);
+        expect(parked.metadata?['deployedCommit'], isNull);
+        expect(parked.metadata?['deployedRemote'], isNull);
+        expect(
+          (await harness.store.readHumanDecision(decision.decisionId)).status,
+          HumanDecisionStatus.pending,
+        );
+        expect(
+          await _exit(repo.path, [
+            'merge-base',
+            '--is-ancestor',
+            produced,
+            'HEAD',
+          ]),
+          0,
+          reason:
+              'the local merge is real — the push is what failed, and the '
+              'state model stays honest about "merged locally, push '
+              'refused": pending, not deployed',
+        );
+
+        // The retry: pusher healthy again, the already-landed arm
+        // completes the interrupted push and stamps for real.
+        harness.pusher.failure = null;
+        final landing = await harness.maybeLand(
+          decision: decision,
+          choice: HumanDecisionChoice.approve,
+        );
+        expect(landing!.alreadyLanded, isTrue);
+        final deployed = await harness.resolve(
+          decisionId: decision.decisionId,
+          choice: HumanDecisionChoice.approve,
+        );
+        expect(deployed.state, WorkItemState.deployed);
+        expect(
+          deployed.metadata?['deployedRemote'],
+          'ssh://git@remote.test:22/org/repo.git#main',
         );
       },
     );
@@ -800,6 +870,7 @@ class _Harness {
   final InMemoryWorkflowStore store = InMemoryWorkflowStore();
   final InMemoryExecutionStore executionStore = InMemoryExecutionStore();
   final InMemoryWorkerStore workerStore = InMemoryWorkerStore();
+  final _FakeDeployPusher pusher = _FakeDeployPusher();
   final List<String> logEvents = [];
 
   late final DurableWorkflowEngine engine = DurableWorkflowEngine(
@@ -927,6 +998,7 @@ class _Harness {
     workflowStore: store,
     decision: decision,
     choice: choice,
+    deployPush: pusher,
     clock: () => DateTime.utc(2026, 10, 21),
     log: (event, data) => logEvents.add(event),
   );
@@ -944,4 +1016,39 @@ class _Harness {
     rationale: 'the human answer',
     signature: _signature,
   );
+}
+
+/// A [DeployPusher] that records its calls and reports the branch pushed.
+///
+/// F-258 made the push part of the land; the push's own transport and
+/// credential resolution are exercised for real in `deploy_push_test.dart`,
+/// so the land tests drive it through this recording fake — the same way
+/// the stores are substituted but the refusals never are.
+class _FakeDeployPusher implements DeployPusher {
+  final List<({String repositoryPath, String targetBranch, String localHead})>
+  calls = [];
+
+  Object? failure;
+
+  @override
+  Future<DeployPush> pushLandedBranch({
+    required WorkItem item,
+    required String repositoryPath,
+    required String targetBranch,
+    required String localHead,
+  }) async {
+    calls.add((
+      repositoryPath: repositoryPath,
+      targetBranch: targetBranch,
+      localHead: localHead,
+    ));
+    final toThrow = failure;
+    if (toThrow != null) throw toThrow;
+    return DeployPush(
+      state: DeployPushState.pushed,
+      remoteUrl: 'ssh://git@remote.test:22/org/repo.git',
+      branch: targetBranch,
+      remoteHead: localHead,
+    );
+  }
 }
