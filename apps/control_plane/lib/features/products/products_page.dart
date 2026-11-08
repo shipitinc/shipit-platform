@@ -104,6 +104,7 @@ class _ProductsViewState extends State<_ProductsView> {
                     state.products.map((p) => p.status).toList(),
                   ),
                   liveLabel: 'LIVE',
+                  freshness: PlainLanguage.updatedAgo(Duration.zero),
                 ),
                 const SizedBox(height: 25),
                 FilterTabs(

@@ -57,8 +57,6 @@ class _NeedsYouView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.palette;
-
     return BlocBuilder<NeedsYouBloc, NeedsYouState>(
       builder: (context, state) {
         if (state.isLoading) {
@@ -105,21 +103,8 @@ class _NeedsYouView extends StatelessWidget {
                   PageHeader(
                     title: 'Needs you',
                     subtitle: _subtitle(pending.length),
-                    trailing: pending.isEmpty
-                        ? null
-                        : Row(
-                            children: [
-                              AccentTick(
-                                color: palette.attentionTick,
-                                height: ShipItMetrics.metricTickHeight,
-                              ),
-                              const SizedBox(width: 8),
-                              MicroLabel(
-                                '${pending.length} WAITING',
-                                color: palette.attention,
-                              ),
-                            ],
-                          ),
+                    liveLabel: 'LIVE',
+                    freshness: PlainLanguage.updatedAgo(Duration.zero),
                   ),
                   const SizedBox(height: 25),
                   if (pending.isEmpty)
