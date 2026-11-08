@@ -255,6 +255,20 @@ mixin UnimplementedRepositoryApis {
     required String reason,
   }) async => throw UnimplementedError();
 
+  Future<WorkItemActionResultResponse> relandDeployedWorkItem({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async => throw UnimplementedError();
+
+  Future<WorkItemActionResultResponse> rerouteToImplementation({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async => throw UnimplementedError();
+
   // The review repair.
   //
   // `UnimplementedError` for the same reason as the two above, sharpened: a

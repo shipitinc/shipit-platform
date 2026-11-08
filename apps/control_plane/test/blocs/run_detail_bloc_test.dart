@@ -149,6 +149,32 @@ class MockControlPlaneRepository
     reason: reason,
   );
 
+  @override
+  Future<WorkItemActionResultResponse> relandDeployedWorkItem({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) => _recordAction(
+    'relandDeployedWorkItem',
+    requestId: requestId,
+    requestedBy: requestedBy,
+    reason: reason,
+  );
+
+  @override
+  Future<WorkItemActionResultResponse> rerouteToImplementation({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) => _recordAction(
+    'rerouteToImplementation',
+    requestId: requestId,
+    requestedBy: requestedBy,
+    reason: reason,
+  );
+
   /// The action-context read the load performs. An empty action list is a
   /// real answer — the server offers nothing for this item — and it keeps the
   /// routing tests honest about what the panel would show.
@@ -794,6 +820,11 @@ void main() {
       ('stop', 'stopFailedWorkItem'),
       ('deploy', 'advanceToDeploy'),
       ('reclaim', 'reclaimStrandedExecution'),
+      // The deployed pair (F-260, F-262). Before these arms existed both
+      // wire tokens fell through `_ =>` to stopFailedWorkItem — a button
+      // that called the wrong method. That misroute is the whole defect.
+      ('reland', 'relandDeployedWorkItem'),
+      ('reroute', 'rerouteToImplementation'),
       // The fallthrough arm: an action the panel never renders still resolves
       // to SOMETHING rather than throwing, and that something is the same
       // terminal action 'stop' names.
@@ -851,6 +882,29 @@ void main() {
       await submit(bloc, 'reclaim');
 
       expect(bloc.state.actionAnnouncement, reclaimAcceptedSentence);
+      expect(bloc.state.pendingAction, isNull);
+    });
+
+    test(
+      'an accepted RELAND announces the record-made-true sentence',
+      () async {
+        final bloc = await loaded();
+
+        await submit(bloc, 'reland');
+
+        // A reland starts nothing — "it will start as soon as a machine is
+        // free" would be false; the stamp is the whole change.
+        expect(bloc.state.actionAnnouncement, relandAcceptedSentence);
+        expect(bloc.state.pendingAction, isNull);
+      },
+    );
+
+    test('an accepted REROUTE announces the back-to-build sentence', () async {
+      final bloc = await loaded();
+
+      await submit(bloc, 'reroute');
+
+      expect(bloc.state.actionAnnouncement, rerouteAcceptedSentence);
       expect(bloc.state.pendingAction, isNull);
     });
 

@@ -177,10 +177,12 @@ class FailedWorkItemActionPanel extends StatelessWidget {
                 entries: [
                   for (final prior in actionContext.priorActions)
                     DefinitionEntry(
-                      label: prior.action == 'stop'
-                          ? 'STOPPED BEFORE'
-                          : 'STARTED AGAIN',
+                      // The label and the verb are the action's own — a
+                      // 'reland' or 'reroute' row is not "STARTED AGAIN" and
+                      // never was (F-260/F-262).
+                      label: priorActionLabelFor(prior.action),
                       value: priorActionSentence(
+                        prior.action,
                         prior.requestedBy,
                         PlainLanguage.timeOfDay(prior.at, now: now),
                         prior.reason,

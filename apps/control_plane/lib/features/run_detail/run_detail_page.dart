@@ -12,6 +12,7 @@ import '../../shared/state_views.dart';
 import '../../shared/detail_sections.dart';
 import '../../shared/mobile_chrome.dart';
 import 'failed_work_item_action_panel.dart';
+import 'operator_action_copy.dart';
 import 'operator_action_panel.dart';
 import 'review_repair_affordance.dart';
 import 'run_detail_bloc.dart';
@@ -345,9 +346,12 @@ class _LeftColumn extends StatelessWidget {
           ),
         ),
       if (state.actionContext case final a? when a.actions.isNotEmpty)
-        const DefinitionEntry(
+        DefinitionEntry(
           label: 'WHAT YOU CAN DO',
-          value: 'Start it again, or stop it.',
+          // Stated from the offered actions, not the failed-work pair's
+          // words: a 'reland'/'reroute' offer is not "start it again", and
+          // neither is a deploy or a reclaim.
+          value: whatYouCanDoSentence(a.actions.map((x) => x.action)),
           prose: true,
         ),
       if (state.heldUpJobs.isNotEmpty)
@@ -718,7 +722,13 @@ class _RightColumn extends StatelessWidget {
       // actions — the copy there is "it failed", which is false for both.
       // They get their own panel; the action sets are state-exclusive so at
       // most one of the two surfaces can ever be offered.
-      if (a.actions.any((x) => x.action == 'deploy' || x.action == 'reclaim')) {
+      if (a.actions.any(
+        (x) =>
+            x.action == 'deploy' ||
+            x.action == 'reclaim' ||
+            x.action == 'reland' ||
+            x.action == 'reroute',
+      )) {
         return OperatorActionPanel(
           actionContext: a,
           pendingAction: state.pendingAction,

@@ -582,6 +582,47 @@ class ControlPlaneRepository {
     return _workItemActionResult(result);
   }
 
+  /// `deployed -> deployed`: lands the produced commit for a `deployed` item
+  /// that was never stamped — the label-only deploy left behind before
+  /// `deploy_landing` existed. The item does not move; the `deployed*`
+  /// evidence is the change, and one `reland` audit row names the human.
+  Future<WorkItemActionResultResponse> relandDeployedWorkItem({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async {
+    final result = await _client.workItemActionEndpoints.relandDeployedWorkItem(
+      workItemId: workItemId,
+      requestId: requestId,
+      requestedBy: requestedBy,
+      reason: reason,
+    );
+    revision.value++;
+    return _workItemActionResult(result);
+  }
+
+  /// `deployed -> implementation_ready`: sends deployed work back into the
+  /// implementation lane's own entry state, stamped or not — the rework path
+  /// for a deploy that needs building again. One `reroute` audit row names
+  /// the human who asked.
+  Future<WorkItemActionResultResponse> rerouteToImplementation({
+    required String workItemId,
+    required String requestId,
+    required String requestedBy,
+    required String reason,
+  }) async {
+    final result = await _client.workItemActionEndpoints
+        .rerouteToImplementation(
+          workItemId: workItemId,
+          requestId: requestId,
+          requestedBy: requestedBy,
+          reason: reason,
+        );
+    revision.value++;
+    return _workItemActionResult(result);
+  }
+
   /// Retires an engineering-review decision that no reviewer ever backed, and
   /// puts the work back in the queue for a real one.
   ///
@@ -2922,9 +2963,10 @@ class WorkItemActionResponse {
     this.attemptNumber,
   });
 
-  /// 'retry' | 'stop' | 'deploy' | 'reclaim' — a closed set. The panel
-  /// renders NOTHING for a value it does not recognise, so an unknown action
-  /// is inert rather than dangerous (design-brief.md §10 N4).
+  /// 'retry' | 'stop' | 'deploy' | 'reclaim' | 'reland' | 'reroute' — a
+  /// closed set. The panel renders NOTHING for a value it does not
+  /// recognise, so an unknown action is inert rather than dangerous
+  /// (design-brief.md §10 N4).
   final String action;
   final String toState;
   final bool confirmRequired;
@@ -3000,7 +3042,7 @@ class OperatorActionSummaryResponse {
     this.attemptNumber,
   });
 
-  /// 'retry' | 'stop' | 'deploy' | 'reclaim'.
+  /// 'retry' | 'stop' | 'deploy' | 'reclaim' | 'reland' | 'reroute'.
   final String action;
 
   /// THE HUMAN. `work_item_transition.actorId` deliberately holds the path the
