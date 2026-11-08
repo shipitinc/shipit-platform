@@ -86,6 +86,23 @@ void main() {
     },
   );
 
+  testWidgets('an over-long title is shortened in the header', (tester) async {
+    const long =
+        'Scheduler claim-CAS dedupe patch across every worker and region '
+        'that must be reviewed before it can land';
+    await pump(
+      tester,
+      detail: detail(description: long),
+    );
+
+    final headline = tester.widget<Text>(
+      find.byKey(const Key('run-detail-title')),
+    );
+    expect(headline.data, isNot(long));
+    expect(headline.data!.length, lessThanOrEqualTo(65));
+    expect(headline.data, endsWith('…'));
+  });
+
   testWidgets('known transition renders plain copy', (tester) async {
     await pump(
       tester,
