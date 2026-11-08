@@ -8,8 +8,8 @@ AREA: apps/server/migrations + generated schema
 WORKTREE: /private/tmp/shipit-feat-schema-drift
 BRANCH: feat/schema-drift-migration
 BASE_SHA: HEAD
-OWNED_PATHS: [apps/server/migrations/**, apps/server/lib/src/generated/**, apps/server/test/**]
-READ_ONLY_PATHS: [packages/workflow_store/**, packages/workflow_engine/**]
+OWNED_PATHS: [apps/server/migrations/**, apps/server/test/schema_drift_migration_test.dart]
+READ_ONLY_PATHS: [packages/workflow_store/**, packages/workflow_engine/**, apps/server/lib/src/generated/**, apps/server/lib/src/database/**]
 PROHIBITED_PATHS: [.agents/ .claude/ AGENTS.md docs/adr/** .decisions/**]
 ROUTING_CLASS: PRECISION
 ```
