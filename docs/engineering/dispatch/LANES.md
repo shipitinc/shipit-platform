@@ -1578,3 +1578,5 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | integrate-deploy-main-reroute | integrate | CLOSED | (read-only) | feat/deploy-main-reland-reroute | aa83787 | PRECISION | MERGE_APPROVED → merged d6e995d (standing auth) | done |
 | impl-operator-action-ui-arms | implement | IN_FLIGHT | /private/tmp/shipit-feat-ui-arms | feat/operator-action-ui-arms | d28bb9a | PRECISION | expose reland + reroute via actionContext + UI arms (F-260 + F-262) | 6987f9a5 running |
 | review-operator-action-ui-arms | review | IN_FLIGHT | (read-only) | feat/operator-action-ui-arms | d28bb9a | PRECISION | await result on 79675d7 |
+| review-operator-action-ui-arms | review | CLOSED | (read-only) | feat/operator-action-ui-arms | d28bb9a | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP on 79675d7 → integrator 30eef887 |
+| integrate-operator-action-ui-arms | integrate | IN_FLIGHT | (read-only) | feat/operator-action-ui-arms | d28bb9a | PRECISION | await MERGE_APPROVED |
