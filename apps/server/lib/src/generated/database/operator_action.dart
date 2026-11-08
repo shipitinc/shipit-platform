@@ -101,7 +101,10 @@ abstract class OperatorActionRow
   /// what makes a network replay of one press spend nothing twice.
   String requestId;
 
-  /// Set for 'retry'; null for 'stop', which arms nothing.
+  /// The job this action armed. Declared for the audit shape, but no
+  /// current producer sets it: every construction site omits it and the
+  /// engine's copyWith stamps only transitionId, so a stored row today
+  /// always carries null here.
   String? jobId;
 
   /// The work_item_transition row this action authorised. The engine mints the
@@ -411,7 +414,10 @@ class OperatorActionRowTable extends _i1.Table<int?> {
   /// what makes a network replay of one press spend nothing twice.
   late final _i1.ColumnString requestId;
 
-  /// Set for 'retry'; null for 'stop', which arms nothing.
+  /// The job this action armed. Declared for the audit shape, but no
+  /// current producer sets it: every construction site omits it and the
+  /// engine's copyWith stamps only transitionId, so a stored row today
+  /// always carries null here.
   late final _i1.ColumnString jobId;
 
   /// The work_item_transition row this action authorised. The engine mints the

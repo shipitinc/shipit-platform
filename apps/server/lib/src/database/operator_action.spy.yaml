@@ -54,7 +54,10 @@ fields:
   ### Client-minted, stable per operator intent. Unique per work item — this is
   ### what makes a network replay of one press spend nothing twice.
   requestId: String
-  ### Set for 'retry'; null for 'stop', which arms nothing.
+  ### The job this action armed. Declared for the audit shape, but no
+  ### current producer sets it: every construction site omits it and the
+  ### engine's copyWith stamps only transitionId, so a stored row today
+  ### always carries null here.
   jobId: String?
   ### The work_item_transition row this action authorised. The engine mints the
   ### transition id before it opens its transaction, so both rows commit
