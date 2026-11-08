@@ -41,3 +41,37 @@ Gates: `dart format --output=none --set-exit-if-changed .` (root, dart pub get f
 push succeeds via mock/git-local-remote; honest refusal when no verified credential;
 idempotent re-push. New commits; no push; no docker/DB. Report `RESULT: IMPLEMENTED`/
 `BLOCKED`, HEAD_SHA, `READY_FOR_INDEPENDENT_REVIEW:`.
+
+## Resumption note (lane died after design phase — worktree clean at base)
+
+The first lane completed the design investigation then exited without writing code.
+Its verified design (reuse it — do not re-investigate):
+
+- Push is part of `landApprovedDeployment` (both the merge arm and the already-landed
+  arm) — `relandDeployedItem` gets it for free; a retried approve/reland completes an
+  interrupted push. Push failure throws `DeployLandingException` → nothing durable
+  written → decision stays pending (NOT deploymentFailed — the approve is not consumed
+  by a platform failure; the merge stays local and honestly reported).
+- Wiring constraint: the only callers (`control_plane_service.dart`,
+  `work_item_action_endpoints.dart`) were outside that lane's ownership, so dependencies
+  arrive via optional params + a production default resolving `ProductRegistryEngine`
+  over `Serverpod.instance.internalSession` + `resolveSecretProvider()`, plus a
+  `deployPushEnvironmentOverride` hook for endpoint-driven tests. (This lane's OWNED_PATHS
+  additionally includes `apps/server/lib/src/endpoints/**` and
+  `apps/server/lib/src/services/**` so the callers can be wired directly instead —
+  prefer real wiring over the optional-params workaround if it's cleaner.)
+- Credential resolution: `git remote get-url origin` → normalized `SshRemote` match
+  against the product's registered repositories → `readActiveCredential` → same
+  provenance checks the workspace provisioner runs → one secret read by name, wiped in
+  `finally`.
+- Transport: `SshDeployPushTransport` reuses the scan-then-match + wrapper
+  materialization; `pushBranchToRemote` does fetch→ancestry→push→re-fetch→verify
+  (idempotent: already-contained → `alreadyCurrent`; non-ff + concurrent pusher →
+  recheck before refusing).
+- Tests at TOP-LEVEL `test/deploy_push_test.dart` — the runner (`run_unit_tests.dart`)
+  is non-recursive by construction; `test/deploy/` subdirs would never execute.
+
+OWNED_PATHS amended to: [apps/server/lib/src/deploy/**, apps/server/lib/src/credentials/**,
+apps/server/lib/src/endpoints/work_item_action_endpoints.dart,
+apps/server/lib/src/services/control_plane_service.dart,
+apps/server/test/*.dart]
