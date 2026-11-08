@@ -1580,3 +1580,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-operator-action-ui-arms | review | IN_FLIGHT | (read-only) | feat/operator-action-ui-arms | d28bb9a | PRECISION | await result on 79675d7 |
 | review-operator-action-ui-arms | review | CLOSED | (read-only) | feat/operator-action-ui-arms | d28bb9a | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP on 79675d7 → integrator 30eef887 |
 | integrate-operator-action-ui-arms | integrate | IN_FLIGHT | (read-only) | feat/operator-action-ui-arms | d28bb9a | PRECISION | await MERGE_APPROVED |
+| integrate-operator-action-ui-arms | integrate | CLOSED | (read-only) | feat/operator-action-ui-arms | d28bb9a | PRECISION | MERGE_APPROVED → merged 79675d7 (standing auth) | done |
