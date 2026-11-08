@@ -1600,3 +1600,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-jobid-doc-drift | review | IN_FLIGHT | (read-only) | fix/jobid-doc-drift | ef89c92 | PRECISION | await result on 7293b2c |
 | review-jobid-doc-drift | review | CLOSED | (read-only) | fix/jobid-doc-drift | ef89c92 | PRECISION | APPROVE_FOR_MERGE on 7293b2c → integrator 4b3be3a1 |
 | integrate-jobid-doc-drift | integrate | IN_FLIGHT | (read-only) | fix/jobid-doc-drift | ef89c92 | PRECISION | await MERGE_APPROVED |
+| integrate-jobid-doc-drift | integrate | CLOSED | (read-only) | fix/jobid-doc-drift | ef89c92 | PRECISION | MERGE_APPROVED → merged 7293b2c (standing auth) | done |
