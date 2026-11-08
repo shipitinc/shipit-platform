@@ -1576,3 +1576,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | correct-deploy-main-reroute | correct | CLOSED | /private/tmp/shipit-feat-deploy-main | feat/deploy-main-reland-reroute | aa83787 | PRECISION | corrected a3a6bc5 → d6e995d (copy arm) → focused review 61cbcd11 |
 | integrate-deploy-main-reroute | integrate | IN_FLIGHT | (read-only) | feat/deploy-main-reland-reroute | aa83787 | PRECISION | await MERGE_APPROVED on d6e995d |
 | integrate-deploy-main-reroute | integrate | CLOSED | (read-only) | feat/deploy-main-reland-reroute | aa83787 | PRECISION | MERGE_APPROVED → merged d6e995d (standing auth) | done |
+| impl-operator-action-ui-arms | implement | IN_FLIGHT | /private/tmp/shipit-feat-ui-arms | feat/operator-action-ui-arms | d28bb9a | PRECISION | expose reland + reroute via actionContext + UI arms (F-260 + F-262) | 6987f9a5 running |
