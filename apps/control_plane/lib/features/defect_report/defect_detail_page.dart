@@ -11,6 +11,7 @@ import '../../data/control_plane_repository.dart';
 import '../../shared/design_primitives.dart';
 import '../../shared/detail_sections.dart';
 import '../../shared/mobile_chrome.dart' show isMobile;
+import '../../shared/periodic_refresh.dart';
 import '../../shared/state_views.dart';
 import 'defect_detail_bloc.dart';
 import 'defect_detail_event.dart';
@@ -54,7 +55,11 @@ class DefectDetailPage extends StatelessWidget {
               repository: ClientProvider.repository,
               defectId: defectId,
             )..add(DefectDetailLoaded()),
-            child: _DefectDetailView(defectId: defectId, clock: clock),
+            child: PeriodicRefresh(
+              onRefresh: (context) =>
+                  context.read<DefectDetailBloc>().add(DefectDetailRefreshed()),
+              child: _DefectDetailView(defectId: defectId, clock: clock),
+            ),
           );
   }
 }
@@ -128,6 +133,10 @@ class _DefectDetailView extends StatelessWidget {
             statusColor: operatorTurn
                 ? context.palette.attention
                 : DefectStatusBadge.textColor(status, context.palette),
+            liveLabel: 'LIVE',
+            freshness: PlainLanguage.updatedAgo(
+              now.difference(defect.updatedAt),
+            ),
             facts: [
               (
                 'reported ${PlainLanguage.timeOfDay(defect.createdAt, now: now)}',
