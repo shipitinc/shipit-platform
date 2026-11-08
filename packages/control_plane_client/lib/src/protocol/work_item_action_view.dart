@@ -54,9 +54,13 @@ abstract class WorkItemActionView implements _i1.SerializableModel {
     );
   }
 
-  /// 'retry' | 'stop' — a closed set. The client renders NOTHING for an action
-  /// id it does not recognise, so an unknown value is inert rather than
-  /// dangerous (§10 N4).
+  /// 'retry' | 'stop' | 'deploy' | 'reclaim' | 'reland' | 'reroute'. The
+  /// first two are the closed set of OperatorActionKind; the other four are
+  /// the endpoint's own wire tokens (operatorDeployActionWire and friends in
+  /// work_item_action_endpoints.dart), offered here as plain strings — the
+  /// wire carries no enum. The client renders NOTHING for an action id it
+  /// does not recognise, so an unknown value is inert rather than dangerous
+  /// (§10 N4).
   String action;
 
   /// The state this edge lands in, as a durable wire value.

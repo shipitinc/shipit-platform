@@ -6,11 +6,14 @@
 ### name; see design-brief.md P-4 and OQ-1).
 class: OperatorActionSummaryView
 fields:
-  ### 'retry' | 'stop'.
+  ### 'retry' | 'stop' | 'deploy' | 'reclaim' | 'reland' | 'reroute' — the
+  ### same plain-string tokens `operator_action.action` carries; only 'retry'
+  ### and 'stop' are OperatorActionKind members, the rest are the endpoint's
+  ### own wire tokens.
   action: String
   requestedBy: String
   reason: String
   at: DateTime
-  ### 1-based position among this item's retries. Null for a `stop`, which
-  ### consumes no attempt.
+  ### 1-based position among this item's retries. Null for every other
+  ### action — `retry` is the only one that consumes an attempt.
   attemptNumber: int?

@@ -78,7 +78,12 @@ abstract class OperatorActionRow
 
   String workItemId;
 
-  /// Closed set: 'retry' | 'stop'.
+  /// 'retry' | 'stop' | 'deploy' | 'reclaim' | 'reland' | 'reroute'. The
+  /// first two are the closed set of OperatorActionKind; the other four are
+  /// the endpoint's own wire tokens (operatorDeployActionWire /
+  /// operatorReclaimActionWire / operatorRelandActionWire /
+  /// operatorRerouteActionWire in work_item_action_endpoints.dart), stored
+  /// here as plain strings — the column carries no enum.
   String action;
 
   String fromState;
@@ -383,7 +388,12 @@ class OperatorActionRowTable extends _i1.Table<int?> {
 
   late final _i1.ColumnString workItemId;
 
-  /// Closed set: 'retry' | 'stop'.
+  /// 'retry' | 'stop' | 'deploy' | 'reclaim' | 'reland' | 'reroute'. The
+  /// first two are the closed set of OperatorActionKind; the other four are
+  /// the endpoint's own wire tokens (operatorDeployActionWire /
+  /// operatorReclaimActionWire / operatorRelandActionWire /
+  /// operatorRerouteActionWire in work_item_action_endpoints.dart), stored
+  /// here as plain strings — the column carries no enum.
   late final _i1.ColumnString action;
 
   late final _i1.ColumnString fromState;
