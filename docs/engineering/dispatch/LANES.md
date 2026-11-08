@@ -1606,3 +1606,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | impl-deploy-push-remote | implement | CLOSED | /private/tmp/shipit-feat-deploy-push | feat/deploy-push-remote | d027477 | PRECISION | c9fc77e — push on both land arms + SSH transport + tests | → reviewer 4adf2411 |
 | review-deploy-push-remote | review | IN_FLIGHT | (read-only) | feat/deploy-push-remote | d027477 | PRECISION | await result on c9fc77e |
 | review-deploy-push-remote | review | CLOSED | (read-only) | feat/deploy-push-remote | d027477 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP on c9fc77e; MEDIUM scope-deviation RATIFIED — resumption note amended OWNED_PATHS to include the wired callers + test root; LOWs → F-266 |
+| integrate-deploy-push-remote | integrate | CLOSED | (read-only) | feat/deploy-push-remote | d027477 | PRECISION | MERGE_APPROVED → merged c9fc77e (standing auth) | done |
