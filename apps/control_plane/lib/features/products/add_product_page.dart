@@ -1134,7 +1134,9 @@ class _MobileAddProduct extends StatelessWidget {
     final deployKey = state.deployKey;
     return Column(
       children: [
-        MobileBackBar(label: 'Products', onTap: () => context.go('/products')),
+        // The `Back` bar is shell chrome: AppShell renders it for
+        // `/products/new`, so drawing a second one here stacked it under the
+        // brand bar and produced two top bars where the board has one.
         Expanded(
           child: SingleChildScrollView(
             child: Padding(
