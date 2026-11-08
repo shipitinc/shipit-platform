@@ -1588,3 +1588,4 @@ dedupe lane owns `packages/scheduler/lib/src/queue/**`, `packages/scheduler/test
 | review-gen-doc-drift | review | IN_FLIGHT | (read-only) | fix/gen-doc-drift | 6779b84 | PRECISION | await result on acdd602 |
 | review-gen-doc-drift | review | CLOSED | (read-only) | fix/gen-doc-drift | 6779b84 | PRECISION | APPROVE_WITH_NON_BLOCKING_FOLLOWUP on acdd602 → integrator 9a517b48 |
 | integrate-gen-doc-drift | integrate | IN_FLIGHT | (read-only) | fix/gen-doc-drift | 6779b84 | PRECISION | await MERGE_APPROVED |
+| integrate-gen-doc-drift | integrate | CLOSED | (read-only) | fix/gen-doc-drift | 6779b84 | PRECISION | MERGE_APPROVED → merged acdd602 (standing auth) | done |
