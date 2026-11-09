@@ -165,6 +165,13 @@ class PostgresModelExecutionRecordStore implements ModelExecutionRecordStore {
     return rows.map(_fromRow).toList();
   }
 
+  Future<List<ModelExecutionRecord>> listAll() async {
+    final rows = await _db.query(
+      'SELECT * FROM "model_execution_record" ORDER BY "startedAt" DESC',
+    );
+    return rows.map(_fromRow).toList();
+  }
+
   Future<ModelExecutionStats> getStats({
     DateTime? from,
     DateTime? to,
