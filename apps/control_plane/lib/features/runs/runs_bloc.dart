@@ -208,6 +208,8 @@ class RunItem {
   final String agent;
   final String category;
 
+  /// The description when there is one, shortened for a single line of list
+  /// title. Same rule as every other screen's headline.
   String get plainName =>
-      description != null && description!.isNotEmpty ? description! : name;
+      PlainLanguage.headline(title: name, description: description);
 }

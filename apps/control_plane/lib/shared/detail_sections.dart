@@ -157,7 +157,11 @@ class EvidencePanel extends StatelessWidget {
     this.links = const [],
     this.facts = const [],
     this.compact = false,
+    this.onLinkTap,
   });
+
+  /// Called with the index of the tapped entry in [links].
+  final void Function(int index)? onLinkTap;
 
   /// Uppercase mono panel label, e.g. "WHAT YOU'RE APPROVING".
   final String title;
@@ -214,10 +218,15 @@ class EvidencePanel extends StatelessWidget {
                       ),
                     ],
                     SizedBox(height: compact ? 6 : 8),
-                    for (final link in links)
+                    for (var i = 0; i < links.length; i++)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 4),
-                        child: InlineLink(label: '${link.$1} ↗'),
+                        child: InlineLink(
+                          label: '${links[i].$1} ↗',
+                          onTap: onLinkTap == null
+                              ? null
+                              : () => onLinkTap!(i),
+                        ),
                       ),
                   ],
                 ),

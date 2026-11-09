@@ -146,7 +146,12 @@ class HomeEndpoints extends Endpoint {
           )
           .toList(),
       machinesBusy: busyWorkerIds.length,
-      machinesTotal: workers.length,
+      // A worker running an execution is a machine even when its
+      // registration is missing or stale, so busy can never exceed total.
+      machinesTotal: {
+        ...workers.map((worker) => worker.workerId),
+        ...busyWorkerIds,
+      }.length,
     );
   }
 

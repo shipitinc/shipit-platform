@@ -7,6 +7,7 @@ import '../../core/plain_language.dart';
 import '../../core/theme.dart';
 import '../../data/client_provider.dart';
 import '../../shared/design_primitives.dart';
+import '../../shared/periodic_refresh.dart';
 import '../../shared/state_views.dart';
 import '../../shared/mobile_chrome.dart';
 import 'runs_bloc.dart';
@@ -42,7 +43,11 @@ class RunsPage extends StatelessWidget {
             create: (_) =>
                 RunsBloc(repository: ClientProvider.repository)
                   ..add(RunsLoaded()),
-            child: _RunsView(clock: clock),
+            child: PeriodicRefresh(
+              onRefresh: (context) =>
+                  context.read<RunsBloc>().add(RunsLoaded()),
+              child: _RunsView(clock: clock),
+            ),
           );
   }
 }

@@ -7,6 +7,7 @@ import '../../core/plain_language.dart';
 import '../../core/theme.dart';
 import '../../data/client_provider.dart';
 import '../../shared/design_primitives.dart';
+import '../../shared/periodic_refresh.dart';
 import '../../shared/state_views.dart';
 import '../../shared/decision_choice.dart';
 import '../../shared/detail_sections.dart';
@@ -60,7 +61,12 @@ class DecisionDetailPage extends StatelessWidget {
               runId: workItemId ?? decisionId,
               repository: ClientProvider.repository,
             )..add(DecisionDetailLoaded()),
-            child: _DecisionView(clock: clock),
+            child: PeriodicRefresh(
+              onRefresh: (context) => context.read<DecisionDetailBloc>().add(
+                DecisionDetailLoaded(),
+              ),
+              child: _DecisionView(clock: clock),
+            ),
           );
   }
 }
@@ -134,6 +140,12 @@ class _DecisionView extends StatelessWidget {
                       : settled
                       ? palette.positive
                       : palette.attention,
+                  liveLabel: 'LIVE',
+                  freshness: state.createdAt == null
+                      ? null
+                      : PlainLanguage.updatedAgo(
+                          now.difference(state.createdAt!),
+                        ),
                   facts: [
                     if (state.createdAt != null)
                       (

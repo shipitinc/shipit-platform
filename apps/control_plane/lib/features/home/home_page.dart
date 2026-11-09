@@ -7,6 +7,7 @@ import '../../core/plain_language.dart';
 import '../../core/theme.dart';
 import '../../data/client_provider.dart';
 import '../../shared/design_primitives.dart';
+import '../../shared/periodic_refresh.dart';
 import '../../shared/state_views.dart';
 import '../../shared/mobile_chrome.dart';
 import 'home_bloc.dart';
@@ -41,7 +42,11 @@ class HomePage extends StatelessWidget {
             create: (_) =>
                 HomeBloc(repository: ClientProvider.repository)
                   ..add(HomeLoaded()),
-            child: _HomeView(clock: clock),
+            child: PeriodicRefresh(
+              onRefresh: (context) =>
+                  context.read<HomeBloc>().add(HomeLoaded()),
+              child: _HomeView(clock: clock),
+            ),
           );
   }
 }

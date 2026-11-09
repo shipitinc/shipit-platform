@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/plain_language.dart';
 import '../../data/client_provider.dart';
 import '../../data/control_plane_repository.dart';
+import '../../shared/periodic_refresh.dart';
 import '../defect_report/defect_list_bloc.dart';
 import '../defect_report/defect_list_event.dart';
 import '../defect_report/defect_list_page.dart';
@@ -112,18 +113,39 @@ class _ReportsPageState extends State<ReportsPage> {
           ),
       ],
       child: Builder(
-        builder: (context) => switch (_tab) {
-          ReportsTab.defects => _DefectsRegister(
-            bloc: context.read<DefectListBloc>(),
-            clock: widget.clock,
-            onTabSelected: _selectTab,
-          ),
-          ReportsTab.featureRequests => _FeatureRegister(
-            bloc: context.read<FeatureRequestListBloc>(),
-            clock: widget.clock,
-            onTabSelected: _selectTab,
-          ),
-        },
+        builder: (context) => PeriodicRefresh(
+          // Only the register on screen is re-read: leaving a tab stops its
+          // polling with the widget, and reading the hidden one would fire a
+          // request nothing is displaying.
+          onRefresh: (context) => switch (_tab) {
+            ReportsTab.defects => context.read<DefectListBloc>().add(
+              DefectListRefreshed(),
+            ),
+            ReportsTab.featureRequests =>
+              context.read<FeatureRequestListBloc>().add(
+                // Preserve the register's own product filter: a bare
+                // `Requested()` would silently widen the list on every tick.
+                FeatureRequestListRequested(
+                  productId: context
+                      .read<FeatureRequestListBloc>()
+                      .state
+                      .productId,
+                ),
+              ),
+          },
+          child: switch (_tab) {
+            ReportsTab.defects => _DefectsRegister(
+              bloc: context.read<DefectListBloc>(),
+              clock: widget.clock,
+              onTabSelected: _selectTab,
+            ),
+            ReportsTab.featureRequests => _FeatureRegister(
+              bloc: context.read<FeatureRequestListBloc>(),
+              clock: widget.clock,
+              onTabSelected: _selectTab,
+            ),
+          },
+        ),
       ),
     );
   }

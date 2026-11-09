@@ -8,6 +8,7 @@ import '../../core/theme.dart';
 import '../../data/client_provider.dart';
 import '../../shared/decision_choice.dart';
 import '../../shared/design_primitives.dart';
+import '../../shared/periodic_refresh.dart';
 import '../../shared/state_views.dart';
 import '../../shared/mobile_chrome.dart';
 import '../../shared/detail_sections.dart';
@@ -45,7 +46,11 @@ class NeedsYouPage extends StatelessWidget {
             create: (_) =>
                 NeedsYouBloc(repository: ClientProvider.repository)
                   ..add(NeedsYouLoaded()),
-            child: _NeedsYouView(clock: clock),
+            child: PeriodicRefresh(
+              onRefresh: (context) =>
+                  context.read<NeedsYouBloc>().add(NeedsYouLoaded()),
+              child: _NeedsYouView(clock: clock),
+            ),
           );
   }
 }
@@ -57,8 +62,6 @@ class _NeedsYouView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.palette;
-
     return BlocBuilder<NeedsYouBloc, NeedsYouState>(
       builder: (context, state) {
         if (state.isLoading) {
@@ -105,21 +108,8 @@ class _NeedsYouView extends StatelessWidget {
                   PageHeader(
                     title: 'Needs you',
                     subtitle: _subtitle(pending.length),
-                    trailing: pending.isEmpty
-                        ? null
-                        : Row(
-                            children: [
-                              AccentTick(
-                                color: palette.attentionTick,
-                                height: ShipItMetrics.metricTickHeight,
-                              ),
-                              const SizedBox(width: 8),
-                              MicroLabel(
-                                '${pending.length} WAITING',
-                                color: palette.attention,
-                              ),
-                            ],
-                          ),
+                    liveLabel: 'LIVE',
+                    freshness: PlainLanguage.updatedAgo(Duration.zero),
                   ),
                   const SizedBox(height: 25),
                   if (pending.isEmpty)

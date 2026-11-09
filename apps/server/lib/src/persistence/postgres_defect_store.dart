@@ -160,7 +160,7 @@ class PostgresDefectStore implements DefectStore {
 
     if (productId != null) {
       where.add(
-        '"affectedWorkItemId" IN (SELECT "workItemId" FROM "work_item" WHERE "productId" = @productId)',
+        '"productId" = @productId',
       );
       params['productId'] = productId;
     }
@@ -196,7 +196,7 @@ class PostgresDefectStore implements DefectStore {
 
     if (productId != null) {
       where.add(
-        '"affectedWorkItemId" IN (SELECT "workItemId" FROM "work_item" WHERE "productId" = @productId)',
+        '"productId" = @productId',
       );
       params['productId'] = productId;
     }

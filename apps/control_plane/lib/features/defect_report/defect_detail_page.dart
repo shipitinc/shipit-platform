@@ -11,6 +11,7 @@ import '../../data/control_plane_repository.dart';
 import '../../shared/design_primitives.dart';
 import '../../shared/detail_sections.dart';
 import '../../shared/mobile_chrome.dart' show isMobile;
+import '../../shared/periodic_refresh.dart';
 import '../../shared/state_views.dart';
 import 'defect_detail_bloc.dart';
 import 'defect_detail_event.dart';
@@ -54,7 +55,11 @@ class DefectDetailPage extends StatelessWidget {
               repository: ClientProvider.repository,
               defectId: defectId,
             )..add(DefectDetailLoaded()),
-            child: _DefectDetailView(defectId: defectId, clock: clock),
+            child: PeriodicRefresh(
+              onRefresh: (context) =>
+                  context.read<DefectDetailBloc>().add(DefectDetailRefreshed()),
+              child: _DefectDetailView(defectId: defectId, clock: clock),
+            ),
           );
   }
 }
@@ -128,6 +133,10 @@ class _DefectDetailView extends StatelessWidget {
             statusColor: operatorTurn
                 ? context.palette.attention
                 : DefectStatusBadge.textColor(status, context.palette),
+            liveLabel: 'LIVE',
+            freshness: PlainLanguage.updatedAgo(
+              now.difference(defect.updatedAt),
+            ),
             facts: [
               (
                 'reported ${PlainLanguage.timeOfDay(defect.createdAt, now: now)}',
@@ -445,6 +454,7 @@ class _EvidenceBlock extends StatelessWidget {
       artifactTitle: _humaniseWire(first.kind),
       artifactSubtitle: first.description,
       compact: mobile,
+      onLinkTap: (_) => _showEvidence(context),
       links: [
         ('Open the evidence', ''),
         if (screenshots > 0)
@@ -454,6 +464,47 @@ class _EvidenceBlock extends StatelessWidget {
         ('Captured by', first.sourceRef ?? 'reporter'),
         ('Items on file', '${evidence.length}'),
       ],
+    );
+  }
+}
+
+extension on _EvidenceBlock {
+  void _showEvidence(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Evidence'),
+        content: SizedBox(
+          width: 480,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final e in evidence)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: SelectableText(
+                      [
+                        _humaniseWire(e.kind),
+                        if (e.description != null) e.description!,
+                        if (e.sourceRef != null) 'Source: ${e.sourceRef}',
+                        if (e.artifactId != null) 'Artifact: ${e.artifactId}',
+                        'Captured: ${e.capturedAt.toIso8601String()}',
+                      ].join('\n'),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
     );
   }
 }

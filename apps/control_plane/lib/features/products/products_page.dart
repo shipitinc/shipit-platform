@@ -8,6 +8,7 @@ import '../../core/theme.dart';
 import '../../data/client_provider.dart';
 import '../../shared/design_primitives.dart';
 import '../../shared/mobile_chrome.dart';
+import '../../shared/periodic_refresh.dart';
 import '../../shared/state_views.dart';
 import 'products_bloc.dart';
 
@@ -41,7 +42,11 @@ class ProductsPage extends StatelessWidget {
             create: (_) =>
                 ProductsBloc(repository: ClientProvider.repository)
                   ..add(const ProductsLoaded()),
-            child: const _ProductsView(),
+            child: PeriodicRefresh(
+              onRefresh: (context) =>
+                  context.read<ProductsBloc>().add(const ProductsLoaded()),
+              child: const _ProductsView(),
+            ),
           );
   }
 }
@@ -104,6 +109,7 @@ class _ProductsViewState extends State<_ProductsView> {
                     state.products.map((p) => p.status).toList(),
                   ),
                   liveLabel: 'LIVE',
+                  freshness: PlainLanguage.updatedAgo(Duration.zero),
                 ),
                 const SizedBox(height: 25),
                 FilterTabs(

@@ -9,7 +9,6 @@ import '../../data/control_plane_repository.dart';
 import '../../data/operator_attestation.dart';
 import '../../shared/design_primitives.dart';
 import '../../shared/form_primitives.dart';
-import '../../shared/mobile_chrome.dart';
 import '../../shared/state_views.dart';
 
 class AddProductPage extends StatelessWidget {
@@ -1161,7 +1160,9 @@ class _MobileAddProduct extends StatelessWidget {
     final deployKey = state.deployKey;
     return Column(
       children: [
-        MobileBackBar(label: 'Products', onTap: () => context.go('/products')),
+        // The `Back` bar is shell chrome: AppShell renders it for
+        // `/products/new`, so drawing a second one here stacked it under the
+        // brand bar and produced two top bars where the board has one.
         Expanded(
           child: SingleChildScrollView(
             child: Padding(

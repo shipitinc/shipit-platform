@@ -149,6 +149,12 @@ class FileJsonJobStore implements JobStore {
   @override
   Future<void> appendEvent(SchedulerEventRecord event) async {
     final events = _events.putIfAbsent(event.jobId, () => []);
+    if (event.sequence != events.length + 1) {
+      throw StateError(
+        'Event sequence ${event.sequence} for job ${event.jobId} must be '
+        '${events.length + 1}',
+      );
+    }
     events.add(event);
     await _persist();
   }

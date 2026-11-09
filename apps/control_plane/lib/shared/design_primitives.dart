@@ -467,6 +467,8 @@ class DetailHeader extends StatelessWidget {
     this.compact = false,
     this.titleStyle,
     this.headerGap = 11,
+    this.liveLabel,
+    this.freshness,
   });
 
   /// e.g. "All work" / "Needs you".
@@ -509,6 +511,14 @@ class DetailHeader extends StatelessWidget {
   /// stacks its `L Title` tighter than the detail boards do.
   final double headerGap;
 
+  /// e.g. `LIVE`. Detail screens carry the same freshness stamp as the root
+  /// boards, so a record that a worker is still changing is visibly being
+  /// re-read rather than frozen at the moment it was opened.
+  final String? liveLabel;
+
+  /// e.g. `updated 12 seconds ago`.
+  final String? freshness;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
@@ -542,12 +552,51 @@ class DetailHeader extends StatelessWidget {
           ),
           const SizedBox(height: 6),
         ],
-        Text(
-          title,
-          key: titleKey,
-          style: (titleStyle ?? ShipItType.pageTitle).copyWith(
-            color: palette.inkPrimary,
-          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                key: titleKey,
+                maxLines: titleMaxLines,
+                overflow:
+                    titleMaxLines == null ? null : TextOverflow.ellipsis,
+                style: (titleStyle ?? ShipItType.pageTitle).copyWith(
+                  color: palette.inkPrimary,
+                ),
+              ),
+            ),
+            if (liveLabel != null)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 5,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: palette.positive,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 7),
+                      MicroLabel(liveLabel!, color: palette.inkSecondary),
+                    ],
+                  ),
+                  if (freshness != null) ...[
+                    const SizedBox(height: 5),
+                    Text(
+                      freshness!,
+                      style: ShipItType.monoMeta.copyWith(
+                        color: palette.inkTertiary,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+          ],
         ),
         SizedBox(height: headerGap),
         if (label == null)

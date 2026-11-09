@@ -10,6 +10,7 @@ import '../../data/client_provider.dart';
 import '../../data/control_plane_repository.dart';
 import '../../shared/design_primitives.dart';
 import '../../shared/mobile_chrome.dart';
+import '../../shared/periodic_refresh.dart';
 import 'defect_list_bloc.dart';
 import 'defect_list_event.dart';
 import 'defect_list_state.dart';
@@ -53,7 +54,11 @@ class DefectListPage extends StatelessWidget {
             create: (_) =>
                 DefectListBloc(repository: ClientProvider.repository)
                   ..add(DefectListLoaded()),
-            child: _DefectListView(clock: clock, header: header),
+            child: PeriodicRefresh(
+              onRefresh: (context) =>
+                  context.read<DefectListBloc>().add(DefectListRefreshed()),
+              child: _DefectListView(clock: clock, header: header),
+            ),
           );
   }
 }

@@ -78,7 +78,16 @@ class _CreateDefectViewState extends State<_CreateDefectView> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<CreateDefectBloc, CreateDefectState>(
+    return BlocConsumer<CreateDefectBloc, CreateDefectState>(
+      // Land on the new defect's detail page. When evidence failed to attach
+      // the inline success view stays so the operator sees that warning.
+      listenWhen: (previous, current) => !previous.success && current.success,
+      listener: (context, state) {
+        final id = state.createdDefectId;
+        if (id != null && state.errorMessage == null) {
+          context.go('/reports/$id');
+        }
+      },
       builder: (context, state) {
         final mobile = isMobile(context);
         return Scaffold(

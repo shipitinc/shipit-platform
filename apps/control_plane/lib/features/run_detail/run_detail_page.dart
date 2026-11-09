@@ -119,6 +119,7 @@ class _RunDetailView extends StatelessWidget {
                     description: state.description,
                   ),
                   titleKey: const Key('run-detail-title'),
+                  titleMaxLines: 2,
                   statusLabel: status.isOperatorTurn
                       ? 'WAITING FOR YOU'
                       : status.label.toUpperCase(),
@@ -323,10 +324,12 @@ class _LeftColumn extends StatelessWidget {
     return [
       DefinitionEntry(
         label: 'WHAT THIS IS ABOUT',
-        value: PlainLanguage.headline(
-          title: state.name,
-          description: state.description,
-        ),
+        // The full description, not the shortened headline: this row is where
+        // the run's own record is kept, and a clipped title above must not
+        // truncate it here.
+        value: state.description.trim().isEmpty
+            ? state.name
+            : state.description.trim(),
         ref: PlainLanguage.refLabel(state.runId),
       ),
       DefinitionEntry(label: 'STATUS', value: status.label),

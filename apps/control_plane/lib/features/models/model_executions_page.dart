@@ -9,6 +9,7 @@ import '../../data/control_plane_repository.dart';
 import '../../shared/design_primitives.dart';
 import '../../shared/form_primitives.dart';
 import '../../shared/mobile_chrome.dart' show isMobile;
+import '../../shared/periodic_refresh.dart';
 import '../../shared/state_views.dart';
 import 'model_executions_bloc.dart';
 
@@ -23,7 +24,7 @@ class ModelExecutionsPage extends StatelessWidget {
     return provided != null
         ? BlocProvider<ModelExecutionsBloc>.value(
             value: provided,
-            child: const _ModelExecutionsView(),
+            child: const _ModelExecutionsView(autoRefresh: false),
           )
         : BlocProvider<ModelExecutionsBloc>(
             create: (_) =>
@@ -35,7 +36,11 @@ class ModelExecutionsPage extends StatelessWidget {
 }
 
 class _ModelExecutionsView extends StatefulWidget {
-  const _ModelExecutionsView();
+  const _ModelExecutionsView({this.autoRefresh = true});
+
+  /// True on the production path. A page under test injects its own bloc and
+  /// disables the timer so a periodic read cannot outlive the assertions.
+  final bool autoRefresh;
 
   @override
   State<_ModelExecutionsView> createState() => _ModelExecutionsViewState();
@@ -61,114 +66,119 @@ class _ModelExecutionsViewState extends State<_ModelExecutionsView> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<ModelExecutionsBloc, ModelExecutionsState>(
-      builder: (context, state) {
-        if (state.isLoading && state.executions.isEmpty) {
-          return const DesignLoadingSkeleton(
-            title: 'Model Executions',
-            showColumns: true,
-          );
-        }
-        if (state.errorMessage != null && state.executions.isEmpty) {
-          return DesignErrorState(
-            title: "We could not reach the system's records.",
-            detail: state.errorMessage!,
-            onRetry: () => context.read<ModelExecutionsBloc>().add(
-              const ModelExecutionsLoaded(),
-            ),
-          );
-        }
+    return PeriodicRefresh(
+      interval: widget.autoRefresh ? kLiveRefreshInterval : Duration.zero,
+      onRefresh: (context) => _refresh(context),
+      child: BlocBuilder<ModelExecutionsBloc, ModelExecutionsState>(
+        builder: (context, state) {
+          if (state.isLoading && state.executions.isEmpty) {
+            return const DesignLoadingSkeleton(
+              title: 'Model Executions',
+              showColumns: true,
+            );
+          }
+          if (state.errorMessage != null && state.executions.isEmpty) {
+            return DesignErrorState(
+              title: "We could not reach the system's records.",
+              detail: state.errorMessage!,
+              onRetry: () => context.read<ModelExecutionsBloc>().add(
+                const ModelExecutionsLoaded(),
+              ),
+            );
+          }
 
-        final rows = state.executions;
+          final rows = state.executions;
 
-        if (isMobile(context)) {
-          return _MobileModelExecutions(
-            rows: rows,
-            totalCount: state.totalCount,
-            page: _page,
-            pageSize: _pageSize,
-            onPageChanged: _onPageChanged,
-            filters: _Filters(
-              workItemId: _workItemIdController.text,
-              provider: _providerController.text,
-              modelId: _modelIdController.text,
-              taskType: _taskTypeFilter,
-              success: _successFilter,
-              dateRange: _dateRange,
-            ),
-            onFilterChanged: _onFilterChanged,
-            onClearFilters: _clearFilters,
-            taskTypes: state.taskTypes,
-          );
-        }
+          if (isMobile(context)) {
+            return _MobileModelExecutions(
+              rows: rows,
+              totalCount: state.totalCount,
+              page: _page,
+              pageSize: _pageSize,
+              onPageChanged: _onPageChanged,
+              filters: _Filters(
+                workItemId: _workItemIdController.text,
+                provider: _providerController.text,
+                modelId: _modelIdController.text,
+                taskType: _taskTypeFilter,
+                success: _successFilter,
+                dateRange: _dateRange,
+              ),
+              onFilterChanged: _onFilterChanged,
+              onClearFilters: _clearFilters,
+              taskTypes: state.taskTypes,
+            );
+          }
 
-        return SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              ShipItMetrics.contentGutter,
-              30,
-              ShipItMetrics.contentGutter,
-              23,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                PageHeader(
-                  title: 'Model Executions',
-                  subtitle: '${rows.length} of ${state.totalCount} executions',
-                  liveLabel: 'LIVE',
-                ),
-                const SizedBox(height: 25),
-                _FilterPanel(
-                  workItemIdController: _workItemIdController,
-                  providerController: _providerController,
-                  modelIdController: _modelIdController,
-                  taskTypeFilter: _taskTypeFilter,
-                  successFilter: _successFilter,
-                  dateRange: _dateRange,
-                  taskTypes: state.taskTypes,
-                  onFilterChanged: _onFilterChanged,
-                  onClearFilters: _clearFilters,
-                  onDateRangeChanged: _onDateRangeChanged,
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  '${rows.length} of ${state.totalCount} executions',
-                  style: ShipItType.sectionTitle.copyWith(
-                    color: context.palette.inkPrimary,
+          return SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                ShipItMetrics.contentGutter,
+                30,
+                ShipItMetrics.contentGutter,
+                23,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  PageHeader(
+                    title: 'Model Executions',
+                    subtitle:
+                        '${rows.length} of ${state.totalCount} executions',
+                    liveLabel: 'LIVE',
                   ),
-                ),
-                const SizedBox(height: 9),
-                _ExecutionsTable(
-                  rows: rows,
-                  emptyMessage: 'No executions match the current filters.',
-                ),
-                const SizedBox(height: 16),
-                _PaginationControls(
-                  totalCount: state.totalCount,
-                  page: _page,
-                  pageSize: _pageSize,
-                  onPageChanged: _onPageChanged,
-                ),
-                const SizedBox(height: 46),
-                TechnicalDetails(
-                  note:
-                      'Executions are read from durable records. Costs are in USD.',
-                  lines: [
-                    'page=${_page + 1} · size=$_pageSize · total=${state.totalCount}',
-                    'filters: wi=${_workItemIdController.text.isEmpty ? 'all' : _workItemIdController.text} '
-                        'provider=${_providerController.text.isEmpty ? 'all' : _providerController.text} '
-                        'model=${_modelIdController.text.isEmpty ? 'all' : _modelIdController.text} '
-                        'taskType=${_taskTypeFilter ?? 'all'} '
-                        'success=${_successFilter?.toString() ?? 'all'} '
-                        'range=${_dateRange?.start.toIso8601String() ?? 'none'}..${_dateRange?.end.toIso8601String() ?? 'none'}',
-                  ],
-                ),
-              ],
+                  const SizedBox(height: 25),
+                  _FilterPanel(
+                    workItemIdController: _workItemIdController,
+                    providerController: _providerController,
+                    modelIdController: _modelIdController,
+                    taskTypeFilter: _taskTypeFilter,
+                    successFilter: _successFilter,
+                    dateRange: _dateRange,
+                    taskTypes: state.taskTypes,
+                    onFilterChanged: _onFilterChanged,
+                    onClearFilters: _clearFilters,
+                    onDateRangeChanged: _onDateRangeChanged,
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    '${rows.length} of ${state.totalCount} executions',
+                    style: ShipItType.sectionTitle.copyWith(
+                      color: context.palette.inkPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 9),
+                  _ExecutionsTable(
+                    rows: rows,
+                    emptyMessage: 'No executions match the current filters.',
+                  ),
+                  const SizedBox(height: 16),
+                  _PaginationControls(
+                    totalCount: state.totalCount,
+                    page: _page,
+                    pageSize: _pageSize,
+                    onPageChanged: _onPageChanged,
+                  ),
+                  const SizedBox(height: 46),
+                  TechnicalDetails(
+                    note:
+                        'Executions are read from durable records. Costs are in USD.',
+                    lines: [
+                      'page=${_page + 1} · size=$_pageSize · total=${state.totalCount}',
+                      'filters: wi=${_workItemIdController.text.isEmpty ? 'all' : _workItemIdController.text} '
+                          'provider=${_providerController.text.isEmpty ? 'all' : _providerController.text} '
+                          'model=${_modelIdController.text.isEmpty ? 'all' : _modelIdController.text} '
+                          'taskType=${_taskTypeFilter ?? 'all'} '
+                          'success=${_successFilter?.toString() ?? 'all'} '
+                          'range=${_dateRange?.start.toIso8601String() ?? 'none'}..${_dateRange?.end.toIso8601String() ?? 'none'}',
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 
@@ -246,6 +256,32 @@ class _ModelExecutionsViewState extends State<_ModelExecutionsView> {
         to: _dateRange?.end,
         limit: _pageSize,
         offset: page * _pageSize,
+      ),
+    );
+  }
+
+  /// Re-reads the current page without disturbing the operator's filters.
+  ///
+  /// A plain [ModelExecutionsLoaded] resets every filter to its default, which
+  /// would silently drop the rows the operator is looking at on each tick.
+  void _refresh(BuildContext context) {
+    context.read<ModelExecutionsBloc>().add(
+      ModelExecutionsLoaded(
+        workItemId: _workItemIdController.text.isEmpty
+            ? null
+            : _workItemIdController.text,
+        provider: _providerController.text.isEmpty
+            ? null
+            : _providerController.text,
+        modelId: _modelIdController.text.isEmpty
+            ? null
+            : _modelIdController.text,
+        taskType: _taskTypeFilter,
+        success: _successFilter,
+        from: _dateRange?.start,
+        to: _dateRange?.end,
+        limit: _pageSize,
+        offset: _page * _pageSize,
       ),
     );
   }
