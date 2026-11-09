@@ -8,7 +8,6 @@ import '../../core/theme.dart';
 import '../../data/client_provider.dart';
 import '../../data/control_plane_repository.dart';
 import '../../shared/design_primitives.dart';
-import '../../shared/periodic_refresh.dart';
 import '../../shared/state_views.dart';
 import '../../shared/detail_sections.dart';
 import '../../shared/mobile_chrome.dart';
@@ -49,11 +48,7 @@ class RunDetailPage extends StatelessWidget {
               runId: runId,
               repository: ClientProvider.repository,
             )..add(RunDetailLoaded()),
-            child: PeriodicRefresh(
-              onRefresh: (context) =>
-                  context.read<RunDetailBloc>().add(RunDetailLoaded()),
-              child: _RunDetailView(clock: clock),
-            ),
+            child: _RunDetailView(clock: clock),
           );
   }
 }
@@ -115,21 +110,16 @@ class _RunDetailView extends StatelessWidget {
                   parentLabel: 'All work',
                   parentRef: PlainLanguage.refLabel(state.runId),
                   onParentTap: () => context.go('/runs'),
-                  title: PlainLanguage.shortenedHeadline(
+                  title: PlainLanguage.headline(
                     title: state.name,
                     description: state.description,
                   ),
                   titleKey: const Key('run-detail-title'),
+                  titleMaxLines: 2,
                   statusLabel: status.isOperatorTurn
                       ? 'WAITING FOR YOU'
                       : status.label.toUpperCase(),
                   statusColor: status.textColor(palette),
-                  liveLabel: 'LIVE',
-                  freshness: state.events.isEmpty
-                      ? null
-                      : PlainLanguage.updatedAgo(
-                          now.difference(state.events.last.timestamp),
-                        ),
                   facts: [
                     if (state.startedAt != null)
                       (
@@ -283,10 +273,12 @@ class _LeftColumn extends StatelessWidget {
     return [
       DefinitionEntry(
         label: 'WHAT THIS IS ABOUT',
-        value: PlainLanguage.shortenedHeadline(
-          title: state.name,
-          description: state.description,
-        ),
+        // The full description, not the shortened headline: this row is where
+        // the run's own record is kept, and a clipped title above must not
+        // truncate it here.
+        value: state.description.trim().isEmpty
+            ? state.name
+            : state.description.trim(),
         ref: PlainLanguage.refLabel(state.runId),
       ),
       DefinitionEntry(label: 'STATUS', value: status.label),

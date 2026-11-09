@@ -559,6 +559,9 @@ class DetailHeader extends StatelessWidget {
               child: Text(
                 title,
                 key: titleKey,
+                maxLines: titleMaxLines,
+                overflow:
+                    titleMaxLines == null ? null : TextOverflow.ellipsis,
                 style: (titleStyle ?? ShipItType.pageTitle).copyWith(
                   color: palette.inkPrimary,
                 ),

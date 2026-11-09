@@ -238,6 +238,15 @@ class PlainLanguage {
     return 'in the last day · $passed passed, $failed failed';
   }
 
+  /// The longest headline a screen draws before it is shortened.
+  ///
+  /// A work item's description is written as a report — "Human-reported defect
+  /// awaiting AI triage. Reported by operator at 2026-10-11T02:34:45.546076Z.
+  /// Reproduction steps: …" — and a headline is read, not read through. Kept
+  /// whole, it wraps the H1 over several lines and pushes the status strip and
+  /// everything below it down the page.
+  static const headlineMaxLength = 72;
+
   /// What a work item is called on screen.
   ///
   /// The design leads with the plain-language description and shows the
@@ -246,9 +255,41 @@ class PlainLanguage {
   /// `title: Scheduler claim-CAS dedupe patch` appears in the technical
   /// block. Items with no description fall back to the title so the row is
   /// never blank.
-  static String headline({required String title, String? description}) {
+  ///
+  /// The headline is the *short* explanation of what the run pertained to, not
+  /// the whole record: the leading sentence, held to [maxLength]. The full
+  /// description stays on the run's own page under "What this is about", so
+  /// shortening a headline never discards evidence.
+  static String headline({
+    required String title,
+    String? description,
+    int maxLength = headlineMaxLength,
+  }) {
     final plain = description?.trim() ?? '';
-    return plain.isEmpty ? title : plain;
+    return _shorten(plain.isEmpty ? title.trim() : plain, maxLength);
+  }
+
+  /// The leading sentence of [value], trimmed to [maxLength] on a word
+  /// boundary. Returns [value] unchanged when it already fits.
+  static String _shorten(String value, int maxLength) {
+    if (maxLength <= 0 || value.length <= maxLength) return value;
+
+    final sentence = value.indexOf(RegExp(r'[.!?](\s|$)'));
+    final head = sentence > 0 && sentence <= maxLength
+        ? value.substring(0, sentence + 1).trimRight()
+        : _clip(value, maxLength);
+
+    // A single sentence longer than the budget is still clipped, but a
+    // sentence that already fits is never clipped further.
+    return head.length > maxLength ? _clip(head, maxLength) : head;
+  }
+
+  /// The first [maxLength] characters of [value], cut at a word boundary.
+  static String _clip(String value, int maxLength) {
+    final cut = value.substring(0, maxLength);
+    final space = cut.lastIndexOf(' ');
+    final body = space > maxLength ~/ 2 ? cut.substring(0, space) : cut;
+    return '${body.trimRight()}…';
   }
 
   /// True when [headline] fell back to the technical title.
