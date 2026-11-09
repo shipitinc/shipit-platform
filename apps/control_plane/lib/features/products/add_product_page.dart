@@ -9,6 +9,7 @@ import '../../data/control_plane_repository.dart';
 import '../../data/operator_attestation.dart';
 import '../../shared/design_primitives.dart';
 import '../../shared/form_primitives.dart';
+import '../../shared/mobile_chrome.dart';
 import '../../shared/state_views.dart';
 
 class AddProductPage extends StatelessWidget {

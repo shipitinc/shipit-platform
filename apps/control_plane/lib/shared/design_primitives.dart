@@ -469,6 +469,7 @@ class DetailHeader extends StatelessWidget {
     this.headerGap = 11,
     this.liveLabel,
     this.freshness,
+    this.titleMaxLines,
   });
 
   /// e.g. "All work" / "Needs you".
@@ -518,6 +519,7 @@ class DetailHeader extends StatelessWidget {
 
   /// e.g. `updated 12 seconds ago`.
   final String? freshness;
+  final int? titleMaxLines;
 
   @override
   Widget build(BuildContext context) {

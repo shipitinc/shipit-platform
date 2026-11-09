@@ -336,13 +336,6 @@ class PlainLanguage {
   static bool headlineIsTechnical({String? description}) =>
       (description?.trim() ?? '').isEmpty;
 
-  /// The longest headline a header will show before it is shortened.
-  ///
-  /// A run title can be a full technical sentence; left whole it dominates the
-  /// run detail header. The cutoff keeps a short explanation of what the run
-  /// pertained to rather than the entire string.
-  static const int headlineMaxLength = 64;
-
   /// [headline] shortened to a single, readable line.
   ///
   /// Truncates on a word boundary and appends an ellipsis, so a header never
